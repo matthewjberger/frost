@@ -67,7 +67,7 @@ Scene :: struct {
     pipeline: RenderPipeline,
     cull_pipeline: ComputePipeline,
     frame_group: BindGroup,
-    material_groups: []BindGroup,
+    material_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
 }
@@ -86,15 +86,15 @@ struct ObjectData {
     base_color: vec4<f32>,
     surface: vec4<f32>,
     batch: u32,
-    pad_one: u32,
-    pad_two: u32,
+    radius: f32,
+    material: u32,
     pad_three: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
 @group(1) @binding(1) var<storage, read> visible: array<u32>;
-@group(2) @binding(0) var surface_texture: texture_2d<f32>;
+@group(2) @binding(0) var surface_texture: texture_2d_array<f32>;
 @group(2) @binding(1) var surface_sampler: sampler;
 
 struct VertexOut {
@@ -125,7 +125,10 @@ fn vs_main(@location(0) position: vec3<f32>,
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let object = objects[in.object_index];
-    let sampled = textureSample(surface_texture, surface_sampler, in.texcoord);
+    // The layer this thing wears, out of the same buffer its matrix came from.
+    // One array bound once, so nothing is chosen between draws.
+    let sampled = textureSample(surface_texture, surface_sampler, in.texcoord,
+        object.material);
     let albedo = object.base_color.rgb * sampled.rgb;
 
     let facing = normalize(in.normal);
@@ -161,20 +164,12 @@ draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
         no_pointer())
     geometry_bind(pass, unsafe { s^.store^ })
 
-    // A batch is a mesh and a material together, so the image is bound once
-    // per batch and every instance the draw covers wears it. How many those
-    // are is still the compute pass's answer: this loop is over meshes and
-    // materials, which a scene has a handful of, and not over things.
-    mut index : i64 = 0
-    while (index < render_world_batches(held)) {
-        wears := render_world_batch_material(held, index)
-        if (wears >= 0) {
-            render_pass_encoder_set_bind_group(pass, 2,
-                unsafe { s^.material_groups[wears] }, 0, no_pointer())
-        }
-        render_world_draw_batch(pass, held, index)
-        index = index + 1
-    }
+    // Every image at once, bound here and never again. What each thing reads
+    // is a layer number it carries, so a draw covers every material and the
+    // count of draws is the count of meshes.
+    render_pass_encoder_set_bind_group(pass, 2, unsafe { s^.material_group }, 0,
+        no_pointer())
+    render_world_draw(pass, held)
 }
 
 // The pass that decides what is drawn. One thread per thing, and what it leaves
@@ -231,14 +226,14 @@ uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-// An image and the sampler that reads it, which are two entries of one group
-// because they are used together and neither is any use alone.
+// Every image and the sampler that reads them, which are two entries of one
+// group because they are used together and neither is any use alone.
 surface_layout :: fn(device: Device) -> BindGroupLayout {
     mut entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
     entries[0].binding = 0
     entries[0].visibility = ShaderStage::Fragment
     entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
-    entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
+    entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D_ARRAY
     entries[1].binding = 1
     entries[1].visibility = ShaderStage::Fragment
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
@@ -440,19 +435,17 @@ main :: fn() -> i64 {
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
 
-    // One texture per material, made once and bound once per run of things
-    // that share it.
-    mut textures := heap_slice($Texture2D, LOOKS)
-    mut material_groups := heap_slice($BindGroup, LOOKS)
+    // Every material's image in one array, made once and bound once for the
+    // whole frame. Which layer a thing reads is a number it carries.
+    images := texture_array_new(device, IMAGE_SIZE, IMAGE_SIZE, LOOKS)
     mut built : i64 = 0
     while (built < LOOKS) {
         mut picture := build_image(built)
-        textures[built] = texture_upload(device, queue, picture)
-        material_groups[built] = surface_group(device, material_layout,
-            textures[built])
+        texture_array_write(images, queue, built, picture)
         image_free(picture)
         built = built + 1
     }
+    material_group := surface_group(device, material_layout, images)
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
     frame_group := uniform_group(device, frame_layout, frame_uniform,
@@ -501,7 +494,7 @@ main :: fn() -> i64 {
         cull_pipeline = make_cull_pipeline(device,
             render_world_cull_layout(render)),
         frame_group = frame_group,
-        material_groups = material_groups,
+        material_group = material_group,
         render = ptr_to(render),
         store = ptr_to(store),
     }
@@ -556,13 +549,7 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    mut freed : i64 = 0
-    while (freed < LOOKS) {
-        texture_free(textures[freed])
-        freed = freed + 1
-    }
-    heap_release_slice($BindGroup, material_groups)
-    heap_release_slice($Texture2D, textures)
+    texture_free(images)
     render_world_free(render)
     geometry_free(store)
     schedule_free(frame_schedule)

@@ -24,7 +24,8 @@ export Image, image_new, image_free, image_set, image_fill,
     image_checker, image_bricks, image_rings, image_corner_marks,
     Texture2D, no_texture2d, texture_upload, texture_free, texture_view_of,
     texture_sampler_of,
-    texture_render_target, texture_depth_target, comparison_sampler
+    texture_render_target, texture_depth_target, comparison_sampler,
+    texture_array_new, texture_array_write
 
 // Four bytes a texel, red first, which is what `RGBA8_UNORM` reads.
 CHANNELS :: 4
@@ -349,4 +350,94 @@ comparison_sampler :: fn(device: Device) -> Sampler {
     descriptor.compare = COMPARE_FUNCTION_LESS
     descriptor.max_anisotropy = 1
     device_create_sampler(device, ptr_to(descriptor))
+}
+
+// Several images of one size under one handle, sampled by a number the thing
+// being drawn carries.
+//
+//   mut layered := texture_array_new(device, IMAGE_SIZE, IMAGE_SIZE, LOOKS)
+//   texture_array_write(layered, queue, 0, first)
+//   ...
+//
+// This is what takes the last per-draw decision away from the CPU. An image per
+// material means a binding per material, and a binding can only be set between
+// draws, so a pass that wanted thirty-six things in four materials had to issue
+// four draws and choose between them. One array bound once and indexed per
+// object is one draw, and which layer a thing reads is a number in the same
+// buffer as its matrix.
+//
+// Every layer is the same size and format, which is what an array is. A program
+// with images of different sizes has an atlas or several arrays, and either way
+// that is its decision rather than this one's.
+texture_array_new :: fn(device: Device, width: i64, height: i64,
+    layers: i64) -> Texture2D {
+    mut descriptor := texture_descriptor_init()
+    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
+    descriptor.dimension = TEXTURE_DIMENSION_2D
+    descriptor.size = layered_extent(width, height, layers)
+    descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
+    descriptor.mip_level_count = 1
+    descriptor.sample_count = 1
+    made := device_create_texture(device, ptr_to(descriptor))
+
+    mut view_descriptor := texture_view_descriptor_init()
+    view_descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
+    view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D_ARRAY
+    view_descriptor.mip_level_count = 1
+    view_descriptor.array_layer_count = cast($u32, layers)
+    view_descriptor.aspect = TEXTURE_ASPECT_ALL
+    view := texture_create_view(made, ptr_to(view_descriptor))
+
+    mut sampler_descriptor := sampler_descriptor_init()
+    sampler_descriptor.address_mode_u = ADDRESS_MODE_REPEAT
+    sampler_descriptor.address_mode_v = ADDRESS_MODE_REPEAT
+    sampler_descriptor.address_mode_w = ADDRESS_MODE_REPEAT
+    sampler_descriptor.mag_filter = FILTER_MODE_LINEAR
+    sampler_descriptor.min_filter = FILTER_MODE_LINEAR
+    sampler_descriptor.mipmap_filter = MIPMAP_FILTER_MODE_NEAREST
+    sampler_descriptor.lod_min_clamp = 0.0
+    sampler_descriptor.lod_max_clamp = 1.0
+    sampler_descriptor.max_anisotropy = 1
+    sampler := device_create_sampler(device, ptr_to(sampler_descriptor))
+
+    Texture2D { texture = made, view = view, sampler = sampler }
+}
+
+// One layer's bytes. The image has to be the size the array was made at, since
+// a layer is a slice of one allocation rather than a texture of its own.
+texture_array_write :: fn(held: Texture2D, queue: Queue, layer: i64,
+    given: Image) {
+    mut destination := texel_copy_texture_info_init()
+    destination.texture = held.texture
+    destination.mip_level = 0
+    destination.aspect = TEXTURE_ASPECT_ALL
+    destination.origin = layer_origin(layer)
+
+    mut layout := texel_copy_buffer_layout_init()
+    layout.offset = 0
+    layout.bytes_per_row = cast($u32, given.width * CHANNELS)
+    layout.rows_per_image = cast($u32, given.height)
+
+    mut written := layered_extent(given.width, given.height, 1)
+    queue_write_texture(queue, ptr_to(destination), ptr_to(given.pixels[0]),
+        cast($u64, given.width * given.height * CHANNELS), ptr_to(layout),
+        ptr_to(written))
+}
+
+// A layer's own corner of the allocation, which is where the third coordinate
+// stops meaning depth and starts meaning which one.
+layer_origin :: fn(layer: i64) -> Origin3D {
+    mut at := origin_3D_init()
+    at.x = 0
+    at.y = 0
+    at.z = cast($u32, layer)
+    at
+}
+
+layered_extent :: fn(width: i64, height: i64, layers: i64) -> Extent3D {
+    mut size := extent_3D_init()
+    size.width = cast($u32, width)
+    size.height = cast($u32, height)
+    size.depth_or_array_layers = cast($u32, layers)
+    size
 }
