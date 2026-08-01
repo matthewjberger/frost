@@ -40,7 +40,7 @@ standard library is the last of them.
 | `math64.frost` | The same library at `f64` | [math.md](math.md) |
 | `ecs.frost` | An archetype entity-component system | [ecs.md](ecs.md) |
 
-[graphics.md](graphics.md) covers `examples/graphics/`, which is not part of
+[graphics.md](graphics.md) covers `lib/` and `examples/graphics/`, which are not part of
 `std/`. It is SDL3 and WebGPU bound to Frost, and it is the worked example of
 what a binding to a real C library looks like.
 

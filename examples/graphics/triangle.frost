@@ -20,10 +20,10 @@
 // SDL3
 // ---------------------------------------------------------------------------
 
-import "sdl.frost"
+import "../../lib/platform/sdl.frost"
 // wgpu, from the generated bindings. `just bindgen` rebuilds wgpu.frost
 // from webgpu.json, which is the same file webgpu.h is generated from.
-import "wgpu.frost"
+import "../../lib/renderer/wgpu.frost"
 // Vectors and matrices. Found on the standard library search path, so this is
 // the same `math.frost` every other example imports.
 import "math.frost"

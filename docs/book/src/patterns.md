@@ -114,7 +114,7 @@ questions about the number underneath, and the declaration exists to say that
 the number is not what this is.
 
 This replaced two `distinct` types and nine loose constants in
-`examples/graphics/sdl.frost`, and five families of them in the generated wgpu
+`lib/platform/sdl.frost`, and five families of them in the generated wgpu
 binding.
 
 ## When constants are right

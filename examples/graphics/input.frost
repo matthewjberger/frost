@@ -10,7 +10,7 @@
 // Move the mouse, press some keys, scroll, resize the window, then press
 // escape.
 
-import "platform.frost"
+import "../../lib/platform/platform.frost"
 import "io.frost"
 import "format.frost"
 

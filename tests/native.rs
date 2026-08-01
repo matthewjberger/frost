@@ -16572,7 +16572,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
     let frost = env!("CARGO_BIN_EXE_frost");
     // wgpu.frost is generated from a schema that is not in the repository, so
     // a checkout without it can still check the hand-written binding.
-    let generated = root.join("examples").join("graphics").join("wgpu.frost");
+    let generated = graphics_source(&root, "wgpu.frost");
     // Every demo, so one that imports `renderer.frost` is among them. The two
     // that import nothing were the whole list, and a renderer the region check
     // refused compiled here for as long as nobody named it.
@@ -16593,7 +16593,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
         &["window.frost"]
     };
     for example in examples {
-        let source = root.join("examples").join("graphics").join(example);
+        let source = graphics_source(&root, example);
         let object =
             std::env::temp_dir().join(format!("frost_gfx_{example}.o"));
         let output = Command::new(frost)
@@ -16638,12 +16638,11 @@ fn the_graphics_examples_compile_against_their_bindings() {
 #[test]
 fn the_render_graph_orders_its_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let graphics = root.join("examples").join("graphics");
-    let Some(libraries) = graphics_libraries(&graphics) else {
+    let Some(libraries) = graphics_libraries(&root) else {
         return;
     };
-    let source = graphics.join("graph.frost");
-    let search = library_search_path(&graphics);
+    let source = graphics_source(&root, "graph.frost");
+    let search = library_search_path(&root);
     // Both backends, because a difference between them is a difference in what
     // the graph decides.
     for emit_c in [false, true] {
@@ -16691,12 +16690,11 @@ fn the_render_graph_orders_its_passes() {
 #[test]
 fn the_frame_moves_the_world_it_was_given() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let graphics = root.join("examples").join("graphics");
-    let Some(libraries) = graphics_libraries(&graphics) else {
+    let Some(libraries) = graphics_libraries(&root) else {
         return;
     };
-    let source = graphics.join("world.frost");
-    let search = library_search_path(&graphics);
+    let source = graphics_source(&root, "world.frost");
+    let search = library_search_path(&root);
     for emit_c in [false, true] {
         if emit_c && c_compiler().is_none() {
             continue;
@@ -16732,7 +16730,7 @@ fn the_frame_moves_the_world_it_was_given() {
 }
 
 // A binary glTF file read back into geometry, materials and a tree of nodes,
-// against `examples/graphics/assets/shapes.glb`. That file is written by
+// against `lib/engine/assets/shapes.glb`. That file is written by
 // `assets/generate.py` and is deliberately awkward in the ways real exporters
 // are: two index widths and a primitive with none, an explicit byte stride and
 // views without one, a primitive missing its normal, a node giving three parts
@@ -16744,12 +16742,11 @@ fn the_frame_moves_the_world_it_was_given() {
 #[test]
 fn a_binary_gltf_file_reads_back_as_geometry() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let graphics = root.join("examples").join("graphics");
-    let Some(libraries) = graphics_libraries(&graphics) else {
+    let Some(libraries) = graphics_libraries(&root) else {
         return;
     };
-    let source = graphics.join("gltf.frost");
-    let search = library_search_path(&graphics);
+    let source = graphics_source(&root, "gltf.frost");
+    let search = library_search_path(&root);
     for emit_c in [false, true] {
         if emit_c && c_compiler().is_none() {
             continue;
@@ -16783,18 +16780,104 @@ fn a_binary_gltf_file_reads_back_as_geometry() {
         );
     }
 }
+// The graphics code is four layers and they are directories: `lib/platform`
+// binds the window and the input, `lib/renderer` binds the device and owns what
+// it needs of an entity, `lib/engine` works out where everything ended up, and
+// the programs under `examples/graphics` use all three. Each may reach the ones
+// below it and none may reach the ones above.
+//
+// Frost has no crates, so nothing in the compiler stops a file reaching the
+// wrong way. This is what stops it instead: the boundary is worth having only
+// if crossing it fails, and a boundary held up by the file comments alone is
+// one that has already been crossed by the time anybody reads them.
+const LAYER_ORDER: &[&str] = &["platform", "renderer", "engine"];
+
+#[test]
+fn the_graphics_layers_only_reach_downwards() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut crossings = Vec::new();
+    for (rank, layer) in LAYER_ORDER.iter().enumerate() {
+        let directory = root.join("lib").join(layer);
+        for entry in std::fs::read_dir(&directory).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.extension().is_some_and(|kind| kind == "frost") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            for line in source.lines() {
+                let Some(rest) = line.trim().strip_prefix("import ") else {
+                    continue;
+                };
+                let named = rest.trim_matches('"');
+                // A bare name is a neighbour or the standard library, and
+                // either is allowed. Only a path names another layer, which is
+                // what makes a crossing visible where it is written.
+                let Some(other) = named.strip_prefix("../") else {
+                    continue;
+                };
+                let Some(other) = other.split('/').next() else {
+                    continue;
+                };
+                let Some(above) =
+                    LAYER_ORDER.iter().position(|named| named == &other)
+                else {
+                    continue;
+                };
+                if above > rank {
+                    crossings.push(format!(
+                        "lib/{layer}/{} imports {named}",
+                        path.file_name().unwrap().to_string_lossy()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        crossings.is_empty(),
+        "a graphics layer reached upwards:{}{}",
+        LAYER_BREAK,
+        crossings.join(LAYER_BREAK)
+    );
+}
+
+// The indent a crossing is listed under, kept out of the format string so the
+// escape survives every editor this file passes through.
+const LAYER_BREAK: &str = "
+  ";
+
+// Where a graphics module lives. The layers are directories, so a test names a
+// file and this says which one holds it; a module moving between layers is one
+// line here rather than an edit in every test that compiles it.
+fn graphics_source(root: &Path, name: &str) -> PathBuf {
+    let layer = match name {
+        "sdl.frost" | "platform.frost" => "lib/platform",
+        "wgpu.frost" | "renderer.frost" | "graph.frost" | "mesh.frost"
+        | "material.frost" | "texture.frost" | "render_world.frost" => {
+            "lib/renderer"
+        }
+        "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost" => {
+            "lib/engine"
+        }
+        _ => "examples/graphics",
+    };
+    root.join(layer).join(name)
+}
+
 // Where the loader has to look for the graphics libraries, in front of
 // whatever it already searched. On Windows this is `PATH` and elsewhere it is
 // `LD_LIBRARY_PATH`; both are read at load time by the process being started,
 // which is why it is set on the compiler that starts it.
-fn library_search_path(graphics: &Path) -> std::ffi::OsString {
+fn library_search_path(root: &Path) -> std::ffi::OsString {
     let variable = if cfg!(windows) {
         "PATH"
     } else {
         "LD_LIBRARY_PATH"
     };
     let existing = std::env::var_os(variable).unwrap_or_default();
-    let mut directories = vec![graphics.to_path_buf(), graphics.join("wgpu")];
+    let mut directories = vec![
+        root.join("lib").join("platform"),
+        root.join("lib").join("renderer").join("wgpu"),
+    ];
     directories.extend(std::env::split_paths(&existing));
     std::env::join_paths(directories).unwrap_or(existing)
 }
@@ -16803,13 +16886,15 @@ fn library_search_path(graphics: &Path) -> std::ffi::OsString {
 // here. wgpu-native is downloaded beside the examples by `just deps` and is not
 // in the repository, so its absence is what says a checkout has not run it.
 // SDL3 is beside the examples on Windows and the system's package elsewhere.
-fn graphics_libraries(graphics: &Path) -> Option<Vec<String>> {
-    if !graphics.join("wgpu.frost").exists() {
+fn graphics_libraries(root: &Path) -> Option<Vec<String>> {
+    let platform = root.join("lib").join("platform");
+    let renderer = root.join("lib").join("renderer");
+    if !renderer.join("wgpu.frost").exists() {
         return None;
     }
     if cfg!(windows) {
-        let sdl = graphics.join("SDL3.dll");
-        let wgpu = graphics.join("wgpu").join("wgpu_native.dll");
+        let sdl = platform.join("SDL3.dll");
+        let wgpu = renderer.join("wgpu").join("wgpu_native.dll");
         if !sdl.exists() || !wgpu.exists() {
             return None;
         }
@@ -16819,7 +16904,7 @@ fn graphics_libraries(graphics: &Path) -> Option<Vec<String>> {
         ]);
     }
     for name in ["libwgpu_native.so", "libwgpu_native.dylib"] {
-        let wgpu = graphics.join("wgpu").join(name);
+        let wgpu = renderer.join("wgpu").join(name);
         if wgpu.exists() {
             return Some(vec![
                 "-lSDL3".to_string(),
@@ -16851,14 +16936,14 @@ fn self_hosted_compiles_the_sdl_binding() {
     // not in the repository, so a checkout without it checks the hand-written
     // binding and stops there. Its sibling above has always said so and this one
     // did not, which is a checkout that builds here and fails on the runner.
-    let generated = root.join("examples").join("graphics").join("wgpu.frost");
+    let generated = graphics_source(&root, "wgpu.frost");
     let examples: &[&str] = if generated.exists() {
         &["window.frost", "textured.frost", "shadowed.frost"]
     } else {
         &["window.frost"]
     };
     for example in examples {
-        let source = root.join("examples").join("graphics").join(example);
+        let source = graphics_source(&root, example);
         let emitted =
             std::env::temp_dir().join(format!("frost_gfxsh_{example}.c"));
         let run = Command::new(&compiler)
@@ -17016,8 +17101,7 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
         return;
     }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let graphics = root.join("examples").join("graphics");
-    let library = graphics.join("SDL3.dll");
+    let library = root.join("lib").join("platform").join("SDL3.dll");
     if !library.exists() {
         return;
     }
@@ -17032,9 +17116,23 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
         let (installed, work) =
             installed_layout(&format!("libs_{label}"), compiler)
                 .expect("could not lay out an installed compiler");
-        for name in ["window.frost", "sdl.frost"] {
-            std::fs::copy(graphics.join(name), work.join(name)).unwrap();
-        }
+        // Copied under the shape the program was written against, since it
+        // names the binding by where that sits relative to it. Copying the two
+        // into one directory would be a different program.
+        let program = work.join("examples").join("graphics");
+        let binding = work.join("lib").join("platform");
+        std::fs::create_dir_all(&program).unwrap();
+        std::fs::create_dir_all(&binding).unwrap();
+        std::fs::copy(
+            graphics_source(&root, "window.frost"),
+            program.join("window.frost"),
+        )
+        .unwrap();
+        std::fs::copy(
+            graphics_source(&root, "sdl.frost"),
+            binding.join("sdl.frost"),
+        )
+        .unwrap();
         // The library has to sit beside the program it was linked against, or
         // neither build starts and the comparison below proves nothing.
         std::fs::copy(&library, work.join("SDL3.dll")).unwrap();
@@ -17046,7 +17144,7 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
             .arg(&library)
             .arg("-o")
             .arg(&exe)
-            .arg("window.frost")
+            .arg("examples/graphics/window.frost")
             .output()
             .unwrap();
         assert!(

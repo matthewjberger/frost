@@ -26,8 +26,8 @@
 // so a length that runs past the end is a file that gets refused rather than a
 // read that goes wherever the arithmetic pointed.
 
-import "mesh.frost"
-import "material.frost"
+import "../renderer/mesh.frost"
+import "../renderer/material.frost"
 import "json.frost"
 import "strings.frost"
 import "fs.frost"
@@ -660,7 +660,7 @@ read_integer :: fn(binary: ^u8, held: Accessor, index: i64) -> i64 {
 // primitive missing its normal and its texture coordinate, a node giving three
 // parts and a node giving a whole matrix, and two roots.
 
-FIXTURE :: "examples/graphics/assets/shapes.glb"
+FIXTURE :: "lib/engine/assets/shapes.glb"
 
 test "a binary glTF file reads as meshes, materials and nodes" {
     mut model := gltf_read(FIXTURE)
@@ -797,13 +797,13 @@ test "reading a file leaves nothing behind" {
 }
 
 test "a file that is not one is refused rather than read" {
-    mut missing := gltf_read("examples/graphics/assets/no-such-file.glb")
+    mut missing := gltf_read("lib/engine/assets/no-such-file.glb")
     assert(gltf_ok(missing) == false)
     assert(gltf_mesh_count(missing) == 0)
     gltf_free(missing)
     // The generator itself is text, so this is a file that is there and is not
     // a glb, which is the other way a read fails.
-    mut wrong := gltf_read("examples/graphics/assets/generate.py")
+    mut wrong := gltf_read("lib/engine/assets/generate.py")
     assert(gltf_ok(wrong) == false)
     gltf_free(wrong)
 }

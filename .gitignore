@@ -11,20 +11,23 @@ selfhosted/.run_target*.s
 !bench/generate.py
 bench/generated
 .frost-build
-examples/graphics/SDL3.dll
-examples/graphics/SDL3.lib
+lib/platform/SDL3.dll
+lib/platform/SDL3.lib
 examples/graphics/window
-examples/graphics/wgpu/
+lib/renderer/wgpu/
+# The libraries the justfile copies beside a built demo, so the loader
+# finds them. The originals live beside the bindings that name them.
 examples/graphics/wgpu_native.dll
+examples/graphics/SDL3.dll
 examples/graphics/triangle
 examples/graphics/*.png
 examples/graphics/*.exe
 tools/*.exe
-examples/graphics/wgpu.frost
+lib/renderer/wgpu.frost
 
 # The rendered book. The source is docs/book/src.
 /docs/book/book
-examples/graphics/SDL3/
+lib/platform/SDL3/
 
 # Scratch output from compiling a file to check it, which every sweep over the
 # tree leaves behind.

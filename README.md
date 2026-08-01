@@ -113,7 +113,7 @@ just shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
 ```
 
 From `scene` on, what runs and in what order is a render graph
-([`examples/graphics/graph.frost`](examples/graphics/graph.frost)). A pass
+([`lib/renderer/graph.frost`](lib/renderer/graph.frost)). A pass
 declares the targets it reads and writes; the graph works out the order from
 those declarations, makes every target the window does not own, and decides each
 load op. `shadowed` is what that buys: five passes written in whatever order reads
@@ -129,7 +129,7 @@ it should.
 that reaches the network, and it is needed once. Set `SDL3_DIR` to use an SDL
 already on the machine instead.
 
-The bindings in [`examples/graphics/wgpu.frost`](examples/graphics) are generated
+The bindings in [`lib/renderer/wgpu.frost`](lib/renderer) are generated
 from `webgpu.json` rather than written, which is why there are three thousand
 lines of them and no hand-maintained header.
 
