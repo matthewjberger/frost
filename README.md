@@ -110,6 +110,7 @@ just scene       # entities in an ECS, two passes, depth deciding what is in fro
 just spinning    # lit surfaces: a mesh cache, a material registry, two bind groups
 just textured    # the same field with its surfaces read off an image
 just shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
+just gltf        # a model read out of a file and spawned into the world
 ```
 
 From `scene` on, what runs and in what order is a render graph
