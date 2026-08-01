@@ -931,12 +931,23 @@ emit_handles :: fn(mut out: Builder, mut names: Builder,
         append_pascal(out, document, name)
         builder_str_value(out, ")
 ")
+        // A handle that names nothing is given back by doing nothing. Opening
+        // is a sequence of acquisitions and any of them can fail, so a thing
+        // that half opened holds real handles for the steps that worked and
+        // `no_x()` for the rest, and closing it walks all of them. Without this
+        // the close after a failed open is what crashes, on the machine that
+        // was already having trouble.
         append_snake(out, document, name)
         builder_str_value(out, "_release :: fn(handle: ")
         append_snake(names, document, name)
         builder_str_value(names, "_release, ")
         append_pascal(out, document, name)
         builder_str_value(out, ") {
+    if (handle == no_")
+        append_snake(out, document, name)
+        builder_str_value(out, "()) {
+        return
+    }
     unsafe { wgpu")
         append_pascal(out, document, name)
         builder_str_value(out, "Release(handle) }
