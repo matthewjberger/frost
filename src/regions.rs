@@ -1100,6 +1100,14 @@ fn expression_sources(
             union(&mut values.iter())
         }
         Expression::Literal(_) | Expression::Boolean(_) => HashSet::new(),
+        // A type argument names no parameter. It is erased before anything runs
+        // and there is no storage behind it, the same way a literal has none,
+        // which is what `value_provenance` already answers for one. Falling to
+        // the arm below instead read `heap_slice($T, count)` as naming every
+        // parameter of whatever called it, so a function answering with a
+        // struct that holds one heap slice was recorded as naming every
+        // argument it was handed, and a caller could not hand that struct back.
+        Expression::TypeValue(_) => HashSet::new(),
         Expression::Call(callee, arguments) => {
             let Expression::Identifier(name) = callee.as_ref() else {
                 return union(&mut arguments.iter());

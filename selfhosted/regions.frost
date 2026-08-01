@@ -1009,7 +1009,33 @@ expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
             && consumes_block(p, node.val, off, len, true)
     }
     if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
-        return args_consume(p, left, off, len)
+        return items_consume(p, left, off, len)
+    }
+    false
+}
+
+// A value named in a struct literal or an array literal is moved into it. The
+// literal holds it from there on and whoever holds the literal owes the
+// consumption, which is how a linear thing is built out of linear parts.
+//
+// This is not `args_consume`, because a call is the other way round: naming a
+// value as an argument lends it, and only a `move` parameter takes it, which is
+// what `call_consumes` reads. Sharing the one walk read `Held { one = h }` as
+// leaving `h` unconsumed, and refused every function that assembles a resource
+// out of resources.
+items_consume :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        if (is_var_named(p, value, off, len)) {
+            return true
+        }
+        if (expr_consumes(p, value, off, len)) {
+            return true
+        }
+        id = next_id
     }
     false
 }
