@@ -15459,6 +15459,126 @@ main :: fn() -> i64 {
     assert_eq!(output, "42\n7\n7\n6\n8\n");
 }
 
+// The same five, through the other compiler. A program one compiler builds and
+// the other cannot find the pieces of is two languages, and the manifest was
+// exactly that until this was written: the bootstrap read `frost.json` and the
+// self-hosted compiler had never heard of it, so a project that declared where
+// its libraries live compiled with one and not the other.
+#[test]
+fn the_self_hosted_compiler_finds_the_same_search_roots() {
+    if !linker_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("shroots") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_self_search_roots");
+    let elsewhere = directory.join("elsewhere");
+    let declared = directory.join("declared");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::create_dir_all(&declared).unwrap();
+
+    let library = "export twice
+twice :: fn(x: i64) -> i64 { x * 2 }
+";
+    std::fs::write(elsewhere.join("helper.frost"), library).unwrap();
+    std::fs::write(declared.join("helper.frost"), library).unwrap();
+    std::fs::write(directory.join("beside.frost"), library).unwrap();
+
+    let program = |import: &str| {
+        format!(
+            "printf :: extern fn(fmt: ^i8, value: i64) -> i32
+             import \"{import}\"
+             main :: fn() -> i64 {{ unsafe {{ printf(\"%lld
+\", twice(21)) }}  0 }}
+"
+        )
+    };
+
+    let build =
+        |name: &str, source: &str, args: &[&str], env: &[(&str, &str)]| {
+            let root = directory.join(format!("{name}.frost"));
+            std::fs::write(&root, source).unwrap();
+            let exe = directory
+                .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+            let mut command = Command::new(&compiler);
+            for (key, value) in env {
+                command.env(key, value);
+            }
+            let built = command
+                .args(args)
+                .arg("--link")
+                .arg("-o")
+                .arg(&exe)
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                built.status.success(),
+                "the self-hosted compiler could not build {name}:
+{}",
+                String::from_utf8_lossy(&built.stderr)
+            );
+            let ran = Command::new(&exe).output().unwrap();
+            normalize_newlines(&ran.stdout)
+        };
+
+    assert_eq!(
+        build("neighbour", &program("beside.frost"), &[], &[]),
+        "42
+"
+    );
+    assert_eq!(
+        build(
+            "flagged",
+            &program("helper.frost"),
+            &["-L", elsewhere.to_str().unwrap()],
+            &[]
+        ),
+        "42
+"
+    );
+    assert_eq!(
+        build(
+            "environment",
+            &program("helper.frost"),
+            &[],
+            &[("FROST_PATH", elsewhere.to_str().unwrap())]
+        ),
+        "42
+"
+    );
+    std::fs::write(
+        directory.join("frost.json"),
+        r#"{ "name": "demo", "paths": ["declared"] }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        build("manifest", &program("helper.frost"), &[], &[]),
+        "42
+"
+    );
+    std::fs::remove_file(directory.join("frost.json")).unwrap();
+
+    let uses_std = "printf :: extern fn(fmt: ^i8, value: i64) -> i32
+         import \"option.frost\"
+         main :: fn() -> i64 {
+             m := option_some($i64, 42)
+             unsafe { printf(\"%lld
+\", option_unwrap_or($i64, m, 0)) }
+             0
+         }
+";
+    assert_eq!(
+        build("standard", uses_std, &[], &[]),
+        "42
+"
+    );
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // Import resolution has four ways to find a module beyond the importing file's
 // own directory, and this exercises each one on the same program so the only
 // thing that differs is how the library was reached. Getting any of them wrong

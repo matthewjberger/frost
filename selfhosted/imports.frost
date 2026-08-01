@@ -1,11 +1,12 @@
 // Import resolution puts every file's text into one buffer, dependencies first.
 
 import "core.frost"
+import "json.frost"
 import "lexer.frost"
 
 export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
     joined_path, module_at, report_where, line_of, column_of, file_of,
-    resolve_imports, search_roots_from, source_with_room
+    resolve_imports, search_roots_from, manifest_roots, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
     mut i : i64 = 0
@@ -488,6 +489,62 @@ directory_part :: fn(path: ^i8, upto: i64) -> i64 {
         }
     }
     0
+}
+
+// What a project declares about where its own libraries live, beside the file
+// named on the command line.
+//
+// A project without one is the common case and is no error: a file that imports
+// its neighbours needs nothing declared. One that cannot be read as JSON is an
+// error, because a manifest that is there and says nothing readable is a
+// project saying something it meant.
+MANIFEST_NAME :: "frost.json"
+
+manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>) {
+    length := cstr_len(entry)
+    directory := directory_part(entry, length)
+    path := joined_path(entry, directory, MANIFEST_NAME)
+    if (unsafe { frost_rt_file_exists(path) } == 0) {
+        return
+    }
+    text := cstr_slice(unsafe { frost_rt_read_file(path) })
+    mut document := json_parse(text)
+    root := json_root(document)
+    if (root < 0 || json_kind(document, root) != JsonKind::Object) {
+        // Nothing is given back here, since the next thing this does is stop.
+        report("frost: cannot read '")
+        report_cstr(path)
+        report("' as a manifest")
+        frost_rt_die()
+    }
+    // Each declared directory is relative to the manifest, which is what lets
+    // one name a sibling of the project rather than of whatever directory the
+    // build was started from.
+    mut named := json_at(document, json_member(document, root, "paths"), 0)
+    while (named >= 0) {
+        if (json_kind(document, named) == JsonKind::String) {
+            off := json_text_off(document, named)
+            len := json_text_len(document, named)
+            add_root(roots, normalise_path(
+                join_under(prefix_of(entry, directory), text, off, len)))
+        }
+        named = json_next(document, named)
+    }
+    json_free(document)
+}
+
+// The leading part of a path, as a string of its own, which is what a declared
+// directory is joined under. `directory_part` answers with a length rather than
+// a string, since every other caller wants to keep walking back through it.
+prefix_of :: fn(path: ^i8, length: i64) -> ^i8 {
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 1)) }
+    mut k : i64 = 0
+    while (k < length) {
+        byte_set(out, k, byte_at(path, k))
+        k = k + 1
+    }
+    byte_set(out, length, 0)
+    out
 }
 
 // The directories an import may be found under, most deliberate first: what the
