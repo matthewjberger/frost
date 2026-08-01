@@ -11,13 +11,15 @@
 // and writes files names none of them.
 
 import "mem.frost"
+import "strings.frost"
 
-export ReadResult, fs_read, fs_write, fs_free, fs_exists
+export ReadResult, fs_read, fs_write, fs_free, fs_exists, fs_remove
 
 frost_rt_file_read   :: extern fn(path: ^i8) -> ^u8
 frost_rt_file_size   :: extern fn() -> i64
 frost_rt_file_write  :: extern fn(path: ^i8, bytes: ^u8, length: i64) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
+frost_rt_remove_file :: extern fn(path: ^i8) -> i64
 frost_rt_heap_free   :: extern fn(block: ^u8)
 
 // `ok` is false when the file could not be opened, in which case `text` is
@@ -84,4 +86,42 @@ fs_exists :: fn(path: str) -> bool {
     found := unsafe { frost_rt_file_exists(ptr_cast($i8, held)) }
     heap_release($u8, held)
     found == 1
+}
+
+// Take a file away, answering whether it went. What a program that wrote one
+// reaches for, and what lets these tests leave the directory as they found it.
+fs_remove :: fn(path: str) -> bool {
+    held := path_bytes(path)
+    gone := unsafe { frost_rt_remove_file(ptr_cast($i8, held)) }
+    heap_release($u8, held)
+    gone == 1
+}
+
+SCRATCH :: "frost_fs_round_trip.txt"
+
+test "a file written is a file read back" {
+    before := heap_live()
+    assert(fs_write(SCRATCH, "one line and then some"))
+    assert(fs_exists(SCRATCH))
+    mut held := fs_read(SCRATCH)
+    assert(held.ok)
+    assert(str_eq(held.text, "one line and then some"))
+    fs_free(held)
+    assert(fs_remove(SCRATCH))
+    assert(fs_exists(SCRATCH) == false)
+    // What a read takes it gives back. The block comes from the runtime and
+    // goes back through the counted free, so a read that took it any other way
+    // would show up here as a count that moved.
+    assert(heap_live() == before)
+}
+
+test "a read that failed still gives back what it was handed" {
+    before := heap_live()
+    mut missing := fs_read("frost_no_such_file_is_here.txt")
+    assert(missing.ok == false)
+    assert(str_len(missing.text) == 0)
+    // The failing read is handed a block like any other, so freeing it is a
+    // program giving back storage it took rather than storage it never had.
+    fs_free(missing)
+    assert(heap_live() == before)
 }
