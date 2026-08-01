@@ -2673,6 +2673,99 @@ main :: fn() -> i64 { 0 }
     );
 }
 
+// A `$T` written as an argument is a type. Nothing runs it and there is no
+// storage behind it, so an answer built with one names no parameter of whoever
+// wrote it.
+//
+// The walk that decides which parameters an answer can name read an unfamiliar
+// expression as naming every one of them, which is the right default and the
+// wrong answer here: `heap_slice($i64, room)` made `store_new`'s answer name its
+// `view` parameter too, and a caller holding a short-lived `view` was then
+// refused for handing the store back. `render_world_new(device, room)` is the
+// shape that found it, and an `App` holding a `RenderWorld` could not be built.
+const TYPE_ARGUMENT_STORAGE: &str = "import \"mem.frost\"\n\
+     Owner :: struct { items: []i64, tag: i64 }\n\
+     Store :: struct { room: []i64 }\n\
+     owner_items :: fn(o: Owner) -> []i64 { o.items }\n\
+     store_new :: fn(view: []i64, room: i64) -> Store {\n\
+     \x20   Store { room = heap_slice($i64, room) }\n\
+     }\n\
+     make :: fn() -> Store {\n\
+     \x20   mut cells : [2]i64 = [0; 2]\n\
+     \x20   o := Owner { items = cells, tag = 7 }\n\
+     \x20   held := owner_items(o)\n\
+     \x20   store_new(held, 4)\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut s := make()\n\
+     \x20   s.room[0] = 5\n\
+     \x20   print s.room[0]\n\
+     \x20   heap_release_slice($i64, s.room)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn a_type_argument_names_no_caller_storage() {
+    let Some(output) =
+        compile_and_run_unaudited("typearg_storage", TYPE_ARGUMENT_STORAGE)
+    else {
+        return;
+    };
+    assert_eq!(output, "5\n");
+}
+
+#[test]
+fn self_hosted_takes_a_type_argument_as_naming_no_storage() {
+    let Some(output) =
+        selfhosted_unaudited_output("shtypearg", TYPE_ARGUMENT_STORAGE)
+    else {
+        return;
+    };
+    assert_eq!(output, "5\n");
+}
+
+// A resource named in a struct literal is moved into it. The struct holds it
+// from there on, and whoever holds the struct owes the consumption.
+//
+// The self-hosted compiler read a struct literal's initializers with the walk it
+// reads call arguments with, where naming a value lends it rather than handing
+// it over, so `Pair { one = h, tag = 1 }` left `h` looking unconsumed and every
+// function that assembles a resource out of resources was refused.
+const RESOURCE_INTO_A_STRUCT: &str = "Held :: linear struct { id: i64 }\n\
+     Pair :: linear struct { one: Held, tag: i64 }\n\
+     open :: fn(id: i64) -> Held { Held { id = id } }\n\
+     close :: fn(move h: Held) -> i64 { h.id }\n\
+     pair_new :: fn() -> Pair {\n\
+     \x20   mut h := open(3)\n\
+     \x20   Pair { one = h, tag = 1 }\n\
+     }\n\
+     pair_close :: fn(move p: Pair) -> i64 { close(p.one) + p.tag }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut p := pair_new()\n\
+     \x20   print pair_close(p)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn a_resource_is_consumed_by_the_struct_that_holds_it() {
+    let Some(output) =
+        compile_and_run_unaudited("res_into_struct", RESOURCE_INTO_A_STRUCT)
+    else {
+        return;
+    };
+    assert_eq!(output, "4\n");
+}
+
+#[test]
+fn self_hosted_takes_a_struct_literal_as_consuming_what_it_names() {
+    let Some(output) =
+        selfhosted_unaudited_output("shresstruct", RESOURCE_INTO_A_STRUCT)
+    else {
+        return;
+    };
+    assert_eq!(output, "4\n");
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {
