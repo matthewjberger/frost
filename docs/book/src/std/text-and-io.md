@@ -223,7 +223,7 @@ what the node fields are exported for.
 
 ## Where they add up
 
-`tools/wgpu_bindgen.frost` reads `examples/graphics/wgpu/webgpu.json` with
+`tools/wgpu_bindgen.frost` reads `lib/renderer/wgpu/webgpu.json` with
 `fs_read`, walks it with `json_member` and `json_at`, classifies bytes with
 `str_byte_is_digit` and friends, assembles the whole generated module in two
 `Builder`s, and writes it with `fs_write`. That is a code generator in eleven

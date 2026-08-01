@@ -17,7 +17,7 @@
 // declared through an extern's parameter list must take its context first, so
 // Win32's WNDPROC, which has no context parameter, cannot be declared that way.
 
-import "sdl.frost"
+import "../../lib/platform/sdl.frost"
 
 main :: fn() -> i64 {
     if (sdl_init(InitFlags::Video) == false) {

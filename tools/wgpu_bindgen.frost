@@ -10,8 +10,8 @@ import "fs.frost"
 import "format.frost"
 import "strings.frost"
 
-IDL :: "examples/graphics/wgpu/webgpu.json"
-OUT :: "examples/graphics/wgpu.frost"
+IDL :: "lib/renderer/wgpu/webgpu.json"
+OUT :: "lib/renderer/wgpu.frost"
 
 // ---------------------------------------------------------------------------
 // Names

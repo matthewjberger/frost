@@ -21,7 +21,7 @@
 // over it: a program with two cameras keeps two of these, and a camera a system
 // moves is one the world holds.
 
-import "platform.frost"
+import "../platform/platform.frost"
 import "math.frost"
 
 export Camera, camera_default, camera_advance, camera_forward, camera_view,

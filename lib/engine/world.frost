@@ -18,8 +18,9 @@
 // `Input`, and where the camera is in a `Camera`. The slot each of those sits
 // in is fixed by the order `world_prepare` registers them.
 
+import "../renderer/render_world.frost"
 import "scene_sync.frost"
-import "platform.frost"
+import "../platform/platform.frost"
 import "camera.frost"
 import "ecs.frost"
 import "math.frost"

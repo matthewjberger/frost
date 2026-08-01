@@ -28,7 +28,7 @@
 // graph builds on: the frame's own surface texture, and `frame_pass_into`,
 // which opens a render pass over whatever target it is given.
 
-import "sdl.frost"
+import "../platform/sdl.frost"
 import "wgpu.frost"
 
 export Renderer, Frame, Target,

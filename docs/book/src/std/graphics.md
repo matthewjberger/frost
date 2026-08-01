@@ -1,30 +1,65 @@
-# Graphics bindings
+# Graphics
 
-`examples/graphics/` sits outside `std/`. It is two C libraries bound to Frost,
-the pieces a drawing program is built out of, and six programs that use them. It
-is here because those bindings are the working answer to what a Frost program
-does when it has to talk to a real graphics API, and because the math they use
-comes straight out of [math.md](math.md).
+`lib/` sits outside `std/`: two C libraries bound to Frost and the pieces a
+drawing program is built out of, with the programs that use them under
+`examples/graphics/`. It is here because those bindings are the working answer
+to what a Frost program does when it has to talk to a real graphics API, and
+because the math they use comes straight out of [math.md](math.md).
+
+## Four layers, reaching one way
+
+Each layer may name the ones below it and none may name the ones above.
+
+**`lib/platform/`** is the machine: a window, what was pressed, and the clock.
 
 | File | What it is |
 | --- | --- |
 | `sdl.frost` | SDL3: a window, its events, and the clock that paces them. Hand-written |
-| `wgpu.frost` | The whole WebGPU API. Generated, and not committed |
 | `platform.frost` | The window, the keyboard and the frame clock under one handle |
+
+**`lib/renderer/`** is the device, and the two components it asks of an entity.
+
+| File | What it is |
+| --- | --- |
+| `wgpu.frost` | The whole WebGPU API. Generated, and not committed |
 | `renderer.frost` | The device, the surface and the frame under one handle |
 | `graph.frost` | A render graph: passes declare their targets, the order follows |
-| `camera.frost` | Where the eye is and what it looks at |
 | `mesh.frost` | Geometry on the device, and the cache a program names it through |
 | `material.frost` | A registry of surfaces, so a thing that is drawn carries a number |
 | `texture.frost` | Images on the device, and render targets to draw into |
-| `scene_sync.frost` | The walk from a world to the flat run a pass draws |
+| `render_world.frost` | What the renderer needs of an entity, and the run a pass walks |
+
+**`lib/engine/`** works out where everything ended up and hands that over.
+
+| File | What it is |
+| --- | --- |
 | `world.frost` | Placements, turns, a tree and the schedule that resolves them |
+| `camera.frost` | Where the eye is and what it looks at |
+| `scene_sync.frost` | The walk from a world to the flat run a pass draws |
+| `gltf.frost` | A binary glTF file, read into geometry, materials and nodes |
+
+**`examples/graphics/`** are the programs.
+
+| File | What it is |
+| --- | --- |
 | `window.frost` | Opens a window and pumps it until it is closed |
+| `input.frost` | Drives the platform layer for a few seconds and reports |
 | `triangle.frost` | Draws a rotating triangle into that window |
 | `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
 | `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
 | `textured.frost` | The same field with its surfaces read off an image |
 | `shadowed.frost` | An ECS schedule driving compute, shadows, a bloom chain and a second view |
+
+Frost has no crates, so nothing in the compiler refuses a file that reaches the
+wrong way. What refuses it is a test: `the_graphics_layers_only_reach_downwards`
+reads every import in `lib/` and fails on one that names a layer above. A
+crossing is visible where it is written, because reaching another layer is a
+path and reaching a neighbour is a bare name:
+
+```frost
+import "wgpu.frost"              // beside it, in the same layer
+import "../platform/sdl.frost"   // a layer below, and it says so
+```
 
 ```bash
 just window
@@ -81,7 +116,7 @@ examples need, and a call added to it is one line beside its extern.
 
 ## The wgpu binding is generated, and not in the repository
 
-`examples/graphics/wgpu.frost` is gitignored. It has to be built before
+`lib/renderer/wgpu.frost` is gitignored. It has to be built before
 `just triangle` will compile:
 
 ```bash
@@ -90,17 +125,17 @@ just triangle
 ```
 
 `just bindgen` builds `tools/wgpu_bindgen.frost` and runs it. It reads
-`examples/graphics/wgpu/webgpu.json`, the same file upstream generates
+`lib/renderer/wgpu/webgpu.json`, the same file upstream generates
 `webgpu.h` from, so the binding follows the schema rather than a parse of the C
-header. It writes `examples/graphics/wgpu.frost`. Both paths are constants at
+header. It writes `lib/renderer/wgpu.frost`. Both paths are constants at
 the top of the tool, so neither is configurable.
 
-`examples/graphics/wgpu/` is gitignored too, all of it. A reader has to put a
+`lib/renderer/wgpu/` is gitignored too, all of it. A reader has to put a
 wgpu-native distribution there: `webgpu.json` for the bindgen to read, and the
 library itself to link against. On Windows the `triangle` recipe links
-`examples/graphics/wgpu/wgpu_native.dll` and copies it beside the executable. On
+`lib/renderer/wgpu/wgpu_native.dll` and copies it beside the executable. On
 Unix it links `-lwgpu_native` from the system. SDL3 is the same story, from the
-system on Unix and from `examples/graphics/SDL3.dll` on Windows, with `SDL3_DIR`
+system on Unix and from `lib/platform/SDL3.dll` on Windows, with `SDL3_DIR`
 to point the recipe somewhere else.
 
 `just bindgen` prints ten numbers when it finishes: how many handles,
@@ -321,25 +356,25 @@ state a pass carries, and each of the five graphs that cannot run at all.
 ## From a world to a run
 
 Four of the five demos draw what an ECS world holds, and the walk from one to
-the other is split across two files with a line between them that is worth
-naming.
+the other is where two of the layers meet.
 
-`examples/graphics/world.frost` is the far side. A thing there has a placement,
-a turn and somewhere it hangs from, and a frame works out where it ended up.
-Nothing in it holds a device or records a command.
-
-`examples/graphics/scene_sync.frost` is the near side. It asks an entity for two
-components and no more:
+`lib/renderer/render_world.frost` is the renderer's side. It asks an entity for
+two components and no more:
 
 ```frost
 Model :: struct { matrix: Mat4 }
 Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 ```
 
-Where a thing ended up is somebody else's answer by the time it arrives here,
-which is what lets the renderer stay ignorant of placements, trees, clocks and
-windows. The dependency runs one way: `world.frost` reaches for those two types,
-and nothing on the renderer side reaches back.
+Where a thing ended up is somebody else's answer by the time it arrives, which
+is what lets the renderer stay ignorant of placements, trees, clocks and
+windows. Beside those two sit the uniform buffer and binding each entity is
+given, and the flat run a pass records from.
+
+`lib/engine/world.frost` is the other side. A thing there has a placement, a
+turn and somewhere it hangs from, and a frame works out where it ended up.
+`lib/engine/scene_sync.frost` fills the run from that. Both reach down for the
+two components above; nothing on the renderer's side reaches back.
 
 `world_prepare` registers both of those along with the two the far side owns:
 

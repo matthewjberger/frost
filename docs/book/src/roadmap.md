@@ -57,7 +57,7 @@ the -1 owner wildcard that lets a tuple recorded inside one generic reach
 another.
 
 The wgpu binding is generated with a safe wrapper per call, so the 325 `unsafe`
-blocks in `examples/graphics/wgpu.frost` are the whole of the FFI perimeter for
+blocks in `lib/renderer/wgpu.frost` are the whole of the FFI perimeter for
 the calls themselves. Two patterns still leave `unsafe` in the caller, and
 `examples/graphics/triangle.frost` writes 21 blocks between them: an async
 request hands its result to a callback through a `userdata` pointer the caller
