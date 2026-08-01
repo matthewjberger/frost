@@ -19,7 +19,7 @@ import "strings.frost"
 
 export JsonKind, Json, JsonNode, json_parse, json_free, json_root, json_kind,
     json_number, json_real, json_text_eq, json_member, json_at, json_count,
-    json_is_null, json_text_off, json_text_len
+    json_next, json_is_null, json_text_off, json_text_len
 
 // What a node is. A parsed document is a run of these, and the kind is what a
 // reader asks about first.
@@ -84,6 +84,16 @@ json_real :: fn(mut document: Json, node: i64) -> f64 {
         return 0.0
     }
     str_to_f64(str_slice(document.source, held.text_off, held.text_len))
+}
+
+// The next child of whatever holds this one, or -1 at the end. Walking a
+// container this way costs one step per element, where `json_at` walks from the
+// start each time and costs a walk per element.
+json_next :: fn(mut document: Json, node: i64) -> i64 {
+    if (node < 0) {
+        return -1
+    }
+    vec_slice($JsonNode, document.nodes)[node].next
 }
 
 json_is_null :: fn(mut document: Json, node: i64) -> bool {
