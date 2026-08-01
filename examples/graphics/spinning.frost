@@ -81,8 +81,8 @@ struct ObjectData {
     base_color: vec4<f32>,
     surface: vec4<f32>,
     batch: u32,
-    pad_one: u32,
-    pad_two: u32,
+    radius: f32,
+    material: u32,
     pad_three: u32,
 }
 

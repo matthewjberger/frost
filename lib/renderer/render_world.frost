@@ -42,7 +42,7 @@ export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
     render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
     render_world_cull_layout, render_world_cull_group, render_world_dispatch,
-    render_world_draw, render_world_draw_batch, render_world_batch_material,
+    render_world_draw, render_world_draw_batch,
     CULL_SHADER, OBJECT_BYTES, MAX_PER_BATCH
 
 // Where a thing ended up, and what it is drawn as. These are the components the
@@ -75,7 +75,11 @@ ObjectData :: struct {
     // culling pass tests is a sphere, and it works out where that ended up
     // from the matrix rather than being told twice.
     radius: f32,
-    pad_two: u32,
+    // Which material this wears, for a pass that reads an image per material.
+    // A number rather than a binding, so the pass binds one array once and
+    // every instance of every draw picks its own layer out of it. This is what
+    // keeps a batch a mesh rather than a mesh and a material.
+    material: u32,
     pad_three: u32,
 }
 
@@ -103,13 +107,11 @@ RenderWorld :: struct {
     // What the walk filled, on this side of the copy.
     objects: []ObjectData,
     count: i64,
-    // What each batch draws. A batch is a mesh and a material together: an
-    // indexed draw names one range of indices, and a pass that binds an image
-    // per material can only do it between draws. Where nothing is bound per
-    // material the second half of the key never splits a batch, since every
-    // thing sharing a mesh shares it.
+    // What each batch draws, which is a mesh. An indexed draw names one range
+    // of indices, so without multi-draw that is one call each; what material a
+    // thing wears is its own and travels in the object rather than splitting
+    // the batch.
     batches: []MeshSpan,
-    batch_materials: []i64,
     batch_count: i64,
     object_buffer: Buffer,
     visible_buffer: Buffer,
@@ -160,7 +162,6 @@ render_world_new :: fn(device: Device, room: i64) -> RenderWorld {
         objects = heap_slice($ObjectData, room),
         count = 0,
         batches = heap_slice($MeshSpan, room),
-        batch_materials = heap_slice($i64, room),
         batch_count = 0,
         object_buffer = object_buffer,
         visible_buffer = visible_buffer,
@@ -191,7 +192,6 @@ render_world_free :: fn(mut held: RenderWorld) {
     release_buffer(held.totals_buffer)
     heap_release_slice($ObjectData, held.objects)
     heap_release_slice($MeshSpan, held.batches)
-    heap_release_slice($i64, held.batch_materials)
     held.count = 0
     held.batch_count = 0
 }
@@ -217,7 +217,7 @@ render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, surface: Material,
         print "render: more things to draw than the world was made room for"
         return
     }
-    batch := batch_of(held, span, material)
+    batch := batch_of(held, span)
     if (batch < 0) {
         return
     }
@@ -228,33 +228,31 @@ render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, surface: Material,
         surface = material_surface(surface),
         batch = cast($u32, batch),
         radius = span.radius,
-        pad_two = 0, pad_three = 0,
+        material = cast($u32, material),
+        pad_three = 0,
     }
     held.count = held.count + 1
 }
 
 // Which batch a mesh is, adding one where it is new. A scene has a handful of
 // meshes, so this is a walk rather than a table.
-batch_of :: fn(mut held: RenderWorld, span: MeshSpan, material: i64) -> i64 {
+batch_of :: fn(mut held: RenderWorld, span: MeshSpan) -> i64 {
     mut known := held.batches
-    mut wears := held.batch_materials
     mut index : i64 = 0
     while (index < held.batch_count) {
         one := known[index]
         if (one.first_index == span.first_index
             && one.index_count == span.index_count
-            && one.base_vertex == span.base_vertex
-            && wears[index] == material) {
+            && one.base_vertex == span.base_vertex) {
             return index
         }
         index = index + 1
     }
     if (held.batch_count >= held.room) {
-        print "render: more batches drawn at once than there was room for"
+        print "render: more meshes drawn at once than there was room for"
         return -1
     }
     known[held.batch_count] = span
-    wears[held.batch_count] = material
     held.batch_count = held.batch_count + 1
     held.batch_count - 1
 }
@@ -347,7 +345,7 @@ struct ObjectData {
     surface: vec4<f32>,
     batch: u32,
     radius: f32,
-    pad_two: u32,
+    material: u32,
     pad_three: u32,
 }
 
@@ -430,17 +428,11 @@ render_world_draw :: fn(pass: RenderPassEncoder, held: RenderWorld) {
     }
 }
 
-// One batch, for a pass that binds something of its own between them.
+// One batch, for a pass with something of its own to do between them.
 render_world_draw_batch :: fn(pass: RenderPassEncoder, held: RenderWorld,
     index: i64) {
     render_pass_encoder_draw_indexed_indirect(pass, held.indirect_buffer,
         index * INDIRECT_BYTES)
-}
-
-// Which material a batch wears, for a pass that binds one.
-render_world_batch_material :: fn(held: RenderWorld, index: i64) -> i64 {
-    wears := held.batch_materials
-    wears[index]
 }
 
 storage_buffer :: fn(device: Device, size: i64) -> Buffer {
