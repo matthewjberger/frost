@@ -398,6 +398,10 @@ main :: fn() -> i64 {
         // is an offset into a single source no matter which file wrote it.
         buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
         mut scratch : Arena<Token> = arena_make($Token, 262144)
+        // What the project declares, after anything the command line named and
+        // before the standard library, which is the order the other compiler
+        // assembles them in.
+        manifest_roots(input_path, options.roots)
         search_roots_from(options.roots)
         resolve_imports(buffer, input_path, export_names, modules, exports,
             import_edges, renames, scratch, options.roots)
