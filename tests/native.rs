@@ -16706,6 +16706,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "shadowed.frost",
             "graph.frost",
             "scene_sync.frost",
+            "geometry.frost",
             "world.frost",
             "gltf.frost",
             "gltf_model.frost",
@@ -16973,9 +16974,8 @@ fn graphics_source(root: &Path, name: &str) -> PathBuf {
     let layer = match name {
         "sdl.frost" | "platform.frost" => "lib/platform",
         "wgpu.frost" | "renderer.frost" | "graph.frost" | "mesh.frost"
-        | "material.frost" | "texture.frost" | "render_world.frost" => {
-            "lib/renderer"
-        }
+        | "material.frost" | "texture.frost" | "render_world.frost"
+        | "geometry.frost" => "lib/renderer",
         "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost" => {
             "lib/engine"
         }

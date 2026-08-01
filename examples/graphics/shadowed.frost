@@ -63,6 +63,7 @@ import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
 import "../../lib/renderer/texture.frost"
+import "../../lib/renderer/geometry.frost"
 import "../../lib/renderer/mesh.frost"
 import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
@@ -122,6 +123,11 @@ INSET_MARGIN :: 24
 MAX_DRAWN :: 40
 GLOW_BYTES :: 160
 
+// How much geometry the shared buffers hold, which is a cube and a sphere with
+// room to spare.
+VERTEX_ROOM :: 4096
+INDEX_ROOM :: 8192
+
 // The camera, the light, and the matrix the light sees the world through.
 FRAME_FLOATS :: 48
 FRAME_BYTES :: 192
@@ -138,10 +144,18 @@ Scene :: struct {
     // What to draw, filled from the world once a frame. All three passes that
     // draw the scene point at the one run rather than each holding a copy: it
     // is written after the schedule and read by every one of them.
-    list: ^DrawList,
+    render: ^RenderWorld,
+    store: ^Geometry,
     shadow_group: BindGroup,
     glow_group: BindGroup,
     samples_shadow: i64,
+}
+
+// What decides which of them are drawn. Its own state, since the three drawing
+// passes share one run and the culling that fills it happens once.
+Culling :: struct {
+    pipeline: ComputePipeline,
+    render: ^RenderWorld,
 }
 
 SHADER :: "
@@ -154,25 +168,33 @@ struct Frame {
     ambient: vec4<f32>,
 }
 
-struct Object {
+struct ObjectData {
     model: mat4x4<f32>,
     base_color: vec4<f32>,
     surface: vec4<f32>,
+    batch: u32,
+    pad_one: u32,
+    pad_two: u32,
+    pad_three: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(1) @binding(0) var<uniform> object: Object;
+@group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
+@group(1) @binding(1) var<storage, read> visible: array<u32>;
 @group(2) @binding(0) var shadow_map: texture_depth_2d;
 @group(2) @binding(1) var shadow_reader: sampler_comparison;
-// What the compute pass left, one value per thing drawn. Which one belongs to
-// this thing is carried in the object's own uniform, since every thing is drawn
-// with its own binding and knows nothing else about the run.
+// What the compute pass left, one value per thing drawn, read at the object's
+// own index. Every thing already knows that number, since it is how it found
+// itself in the run.
 @group(3) @binding(0) var<storage, read> glow: array<f32>;
 
 // The shadow pass. No colour attachment and no fragment stage: what it writes
 // is depth, and depth is written whether or not anything shades.
 @vertex
-fn vs_shadow(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+fn vs_shadow(@location(0) position: vec3<f32>,
+             @builtin(instance_index) instance: u32)
+    -> @builtin(position) vec4<f32> {
+    let object = objects[visible[instance]];
     return frame.light_view_projection * object.model * vec4<f32>(position, 1.0);
 }
 
@@ -181,17 +203,22 @@ struct VertexOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) light_clip: vec4<f32>,
+    @location(3) @interpolate(flat) object_index: u32,
 }
 
 @vertex
 fn vs_main(@location(0) position: vec3<f32>,
-           @location(1) normal: vec3<f32>) -> VertexOut {
+           @location(1) normal: vec3<f32>,
+           @builtin(instance_index) instance: u32) -> VertexOut {
     var out: VertexOut;
+    let object_index = visible[instance];
+    let object = objects[object_index];
     let world = object.model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
     out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
     out.light_clip = frame.light_view_projection * world;
+    out.object_index = object_index;
     return out;
 }
 
@@ -229,6 +256,7 @@ fn light_reaching(light_clip: vec4<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let object = objects[in.object_index];
     let facing = normalize(in.normal);
     let toward_light = normalize(-frame.light_direction.xyz);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
@@ -238,7 +266,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let rough = clamp(object.surface.x, 0.05, 1.0);
     let tightness = 2.0 / (rough * rough) - 2.0;
     let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
-        * (1.0 - rough);
+        * (1.0 - rough) * lambert * 0.3;
 
     // A surface facing away from the light is dark whatever the map says, so
     // the two are multiplied rather than one of them deciding.
@@ -250,9 +278,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // A glow of its own, from the run the compute pass wrote. It is added
     // rather than lit, so it reaches past one and is what the bloom below
     // picks up.
-    // Bounded, because which slot a thing was given comes from a table that
-    // grows and the run does not.
-    let which = u32(object.surface.z);
+    // The object's own index, which is what the compute pass indexed the run
+    // by. Bounded, because the run is as long as the world has room for and a
+    // frame may hold fewer.
+    let which = in.object_index;
     var pulse = 0.0;
     if (which < arrayLength(&glow)) {
         pulse = glow[which];
@@ -396,19 +425,24 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
             unsafe { s^.glow_group }, 0, no_pointer())
     }
 
-    // What to draw came out of the world this frame. The pass walks the run
-    // and knows nothing about entities or components.
-    list := unsafe { s^.list^ }
-    mut index : i64 = 0
-    while (index < draw_list_count(list)) {
-        one := draw_list_at(list, index)
-        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
-            no_pointer())
-        mesh_bind(pass, one.geometry)
-        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
-            0, 0)
-        index = index + 1
-    }
+    // What to draw came out of the world this frame, and which of it survived
+    // came off the GPU. The pass binds the run once and issues one indirect
+    // draw per batch, counting nothing.
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(unsafe { s^.render^ }), 0, no_pointer())
+    geometry_bind(pass, unsafe { s^.store^ })
+    render_world_draw(pass, unsafe { s^.render^ })
+}
+
+// The pass that decides what is drawn, once for all three that draw it.
+cull_things :: fn(pass: ComputePassEncoder, state: ^u8) {
+    mut s := unsafe { ptr_cast($Culling, state) }
+    held := unsafe { s^.render^ }
+    compute_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
+    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
+        0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass,
+        render_world_dispatch(held), 1, 1)
 }
 
 // Where the light is looking from, as a matrix. A directional light has no
@@ -592,6 +626,30 @@ make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     descriptor.multisample.mask = 4294967295
     descriptor.depth_stencil = ptr_to(depth)
     device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+// The culling pass's pipeline. Its shader is the renderer's, since what it
+// writes is the renderer's own three buffers and their shapes have to agree.
+make_cull_pipeline :: fn(device: Device,
+    layout: BindGroupLayout) -> ComputePipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
+    device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
 make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
@@ -862,9 +920,10 @@ main :: fn() -> i64 {
     device := renderer_device(r)
     queue := renderer_queue(r)
 
+    mut store := geometry_new(device, VERTEX_ROOM, INDEX_ROOM)
     mut cache := mesh_cache_new(4)
-    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
-    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.7, 16, 24))
+    mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
+    mesh_cache_insert(cache, "sphere", sphere_mesh(store, queue, 0.7, 16, 24))
     cube := mesh_cache_find(cache, "cube")
     sphere := mesh_cache_find(cache, "sphere")
 
@@ -885,10 +944,11 @@ main :: fn() -> i64 {
         base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
         metallic = 0.0 })
 
+    mut render := render_world_new(device, MAX_DRAWN)
+
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
-    object_layout := uniform_layout(device, OBJECT_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
+    object_layout := render_world_layout(render)
     map_layout := shadow_layout(device)
     // The same buffer through two bindings: the compute pass writes it, the
     // scene pass only reads it, and which of those a binding allows belongs to
@@ -936,8 +996,7 @@ main :: fn() -> i64 {
     // the run of draw items one frame produces. Room for more than the scene
     // starts with, since the point of keying by entity is that a thing spawned
     // later needs nothing resized.
-    mut slot_table := slot_table_new(MAX_DRAWN, object_layout)
-    mut list := draw_list_new(MAX_DRAWN)
+
 
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
@@ -1025,7 +1084,7 @@ main :: fn() -> i64 {
     inset_frame_group := uniform_group(device, frame_layout, inset_uniform,
         FRAME_BYTES)
 
-    mut graph := graph_new(device, 8, 8)
+    mut graph := graph_new(device, 10, 10)
     screen := graph_backbuffer(graph)
     shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
         DEPTH_FORMAT)
@@ -1053,7 +1112,8 @@ main :: fn() -> i64 {
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
         frame_group = frame_group,
-        list = ptr_to(list),
+        render = ptr_to(render),
+        store = ptr_to(store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 0,
     }
@@ -1067,7 +1127,8 @@ main :: fn() -> i64 {
         pipeline = make_scene_pipeline(device, shader, renderer_format(r),
             scene_pipeline_layout),
         frame_group = frame_group,
-        list = ptr_to(list),
+        render = ptr_to(render),
+        store = ptr_to(store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 1,
     }
@@ -1085,6 +1146,21 @@ main :: fn() -> i64 {
             make_post_shader(device, PULSE_SHADER), pulse_pipeline_layout),
         frame_group = frame_group, glow_group = no_bind_group(), groups = 2,
     }
+    // What is drawn at all, decided once for the three passes that draw it.
+    // The shadow pass, the scene pass and the inset all run off the one run, so
+    // one culling pass fills it and all three read what it wrote.
+    mut culling := Culling {
+        pipeline = make_cull_pipeline(device, render_world_cull_layout(render)),
+        render = ptr_to(render),
+    }
+    arguments := graph_external_buffer(graph, "draw arguments")
+    graph_set_external_buffer(graph, arguments, render_world_indirect(render))
+    cull_pass := graph_compute_pass(graph, "cull", cull_things,
+        ptr_to(culling))
+    graph_writes(graph, cull_pass, arguments)
+    graph_reads(graph, shadow_pass, arguments)
+    graph_reads(graph, lit_pass, arguments)
+
     pulse_pass := graph_compute_pass(graph, "pulse", dispatch_pulse,
         ptr_to(pulse))
     graph_writes(graph, pulse_pass, glow)
@@ -1154,7 +1230,8 @@ main :: fn() -> i64 {
     mut inset_scene := Scene {
         pipeline = lit_scene.pipeline,
         frame_group = inset_frame_group,
-        list = ptr_to(list),
+        render = ptr_to(render),
+        store = ptr_to(store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 1,
     }
@@ -1251,8 +1328,9 @@ main :: fn() -> i64 {
             INSET_HEIGHT)
         // From the world to what the passes draw, once a frame. Every pass that
         // draws the scene walks the same run.
-        scene_sync(world, list, slot_table, device, queue, registry, cache,
-            all_drawn(model, drawn))
+        render_world_begin(render)
+        scene_sync(world, render, registry, cache, all_drawn(model, drawn))
+        render_world_upload(render, queue)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -1265,8 +1343,8 @@ main :: fn() -> i64 {
     schedule_free(frame_schedule)
     giving := ecs_resource($Hierarchy, world, TREE_SLOT)
     hierarchy_free(giving)
-    draw_list_free(list)
-    slot_table_free(slot_table)
+    render_world_free(render)
+    geometry_free(store)
     heap_release_slice($Entity, entities)
     materials_free(registry)
     mesh_cache_free(cache)

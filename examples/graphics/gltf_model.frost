@@ -25,6 +25,7 @@ import "../../lib/platform/platform.frost"
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
+import "../../lib/renderer/geometry.frost"
 import "../../lib/renderer/mesh.frost"
 import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
@@ -44,6 +45,10 @@ HEIGHT :: 720
 // and nothing else. A loaded model is as big as its file says.
 MAX_DRAWN :: 64
 
+// How much geometry the shared buffers hold, which is what a file may bring.
+VERTEX_ROOM :: 65536
+INDEX_ROOM :: 131072
+
 // What is loaded, named from the root of the checkout.
 MODEL :: "lib/engine/assets/shapes.glb"
 
@@ -54,8 +59,10 @@ FRAME_BYTES :: 128
 // What a pass records with, which is the run a frame produced and nothing else.
 Scene :: struct {
     pipeline: RenderPipeline,
+    cull_pipeline: ComputePipeline,
     frame_group: BindGroup,
-    list: ^DrawList,
+    render: ^RenderWorld,
+    store: ^Geometry,
 }
 
 SHADER :: "
@@ -67,34 +74,50 @@ struct Frame {
     ambient: vec4<f32>,
 }
 
-struct Object {
+struct ObjectData {
     model: mat4x4<f32>,
     base_color: vec4<f32>,
     surface: vec4<f32>,
+    batch: u32,
+    pad_one: u32,
+    pad_two: u32,
+    pad_three: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(1) @binding(0) var<uniform> object: Object;
+// Every thing to draw, and which of them survived culling. Nothing is bound per
+// object: the draw says how many instances it covers and each one finds itself.
+@group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
+@group(1) @binding(1) var<storage, read> visible: array<u32>;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) @interpolate(flat) object_index: u32,
 }
 
 @vertex
 fn vs_main(@location(0) position: vec3<f32>,
-           @location(1) normal: vec3<f32>) -> VertexOut {
+           @location(1) normal: vec3<f32>,
+           @builtin(instance_index) instance: u32) -> VertexOut {
     var out: VertexOut;
+    // The draw's first instance is where this mesh's slice of the visible list
+    // begins, and `instance_index` counts from there, so this one expression
+    // covers every batch.
+    let object_index = visible[instance];
+    let object = objects[object_index];
     let world = object.model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
     out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.object_index = object_index;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let object = objects[in.object_index];
     let facing = normalize(in.normal);
     let toward_light = normalize(-frame.light_direction.xyz);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
@@ -103,12 +126,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let lambert = max(dot(facing, toward_light), 0.0);
     let rough = clamp(object.surface.x, 0.05, 1.0);
     let tightness = 2.0 / (rough * rough) - 2.0;
-    // Scaled by how much light reaches the surface at all, and kept small.
-    // Without the first, a face turned away from the light still catches a
-    // highlight; without the second, the lobe carries as much energy as the
-    // whole rest of the shading, and a large flat face lying along it comes
-    // out white. Both show up on a loaded model long before they show up on a
-    // field of spheres.
     let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
         * (1.0 - rough) * lambert * 0.3;
 
@@ -120,27 +137,31 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "
 
-// One pass over everything. Both bindings are set here and neither is built
-// here: what a pass does is record, and what it records was decided before it
-// ran. The encoder comes from the graph, which made the targets this draws
-// into and chose their load ops from what the pass declared.
+// One pass over everything, and nothing in it counts anything. Two bind groups
+// and the geometry are set once, and then one indirect draw per mesh: how many
+// instances each covers is a number the compute pass wrote into the buffer the
+// draw reads its arguments from, and this never looks at it.
 draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut s := unsafe { ptr_cast($Scene, state) }
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
     render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
         no_pointer())
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(unsafe { s^.render^ }), 0, no_pointer())
+    geometry_bind(pass, unsafe { s^.store^ })
+    render_world_draw(pass, unsafe { s^.render^ })
+}
 
-    list := unsafe { s^.list^ }
-    mut index : i64 = 0
-    while (index < draw_list_count(list)) {
-        one := draw_list_at(list, index)
-        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
-            no_pointer())
-        mesh_bind(pass, one.geometry)
-        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
-            0, 0)
-        index = index + 1
-    }
+// The pass that decides what is drawn. One thread per thing, and what it leaves
+// behind is the visible list and the instance counts the draw above runs on.
+cull_scene :: fn(pass: ComputePassEncoder, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    held := unsafe { s^.render^ }
+    compute_pass_encoder_set_pipeline(pass, unsafe { s^.cull_pipeline })
+    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
+        0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass,
+        render_world_dispatch(held), 1, 1)
 }
 
 // The camera and the light, as the bytes the shader reads them as.
@@ -207,6 +228,30 @@ uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
     descriptor.entries_count = 1
     descriptor.entries = ptr_to(entry)
     device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// The culling pass's pipeline. Its shader is the renderer's, since what it
+// writes is the renderer's own three buffers and their shapes have to agree.
+make_cull_pipeline :: fn(device: Device,
+    layout: BindGroupLayout) -> ComputePipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
+    device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
 make_pipeline :: fn(device: Device, format: u32,
@@ -282,12 +327,14 @@ main :: fn() -> i64 {
     queue := renderer_queue(r)
 
     // Empty. What goes in them is whatever the file turns out to hold.
+    mut store := geometry_new(device, VERTEX_ROOM, INDEX_ROOM)
     mut cache := mesh_cache_new(MAX_DRAWN)
     mut registry := materials_new(MAX_DRAWN)
+    mut render := render_world_new(device, MAX_DRAWN)
 
     frame_layout := uniform_layout(device, FRAME_BYTES)
-    object_layout := uniform_layout(device, OBJECT_BYTES)
-    mut layouts : [2]BindGroupLayout = [frame_layout, object_layout]
+    mut layouts : [2]BindGroupLayout = [frame_layout,
+        render_world_layout(render)]
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -303,15 +350,13 @@ main :: fn() -> i64 {
     model := ids.model
     drawn := ids.drawn
 
-    mut slot_table := slot_table_new(MAX_DRAWN, object_layout)
-    mut list := draw_list_new(MAX_DRAWN)
     mut frame_schedule := world_schedule()
 
     // The whole of what this demo has to say about what is drawn. The path is
     // from the root of the checkout, which is where `just gltf` runs it.
     mut held := gltf_read(MODEL)
     loaded := gltf_ok(held)
-    root := gltf_spawn(world, held, device, queue, registry, cache, ids)
+    root := gltf_spawn(world, held, store, queue, registry, cache, ids)
     gltf_free(held)
     if (loaded == false) {
         print_str_line("no model at:")
@@ -326,17 +371,25 @@ main :: fn() -> i64 {
 
     mut scene := Scene {
         pipeline = make_pipeline(device, renderer_format(r), pipeline_layout),
+        cull_pipeline = make_cull_pipeline(device,
+            render_world_cull_layout(render)),
         frame_group = frame_group,
-        list = ptr_to(list),
+        render = ptr_to(render),
+        store = ptr_to(store),
     }
-    mut graph := graph_new(device, 2, 1)
+    mut graph := graph_new(device, 3, 2)
     screen := graph_backbuffer(graph)
     depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
         DEPTH_FORMAT)
+    arguments := graph_external_buffer(graph, "draw arguments")
+    graph_set_external_buffer(graph, arguments, render_world_indirect(render))
+    cull_pass := graph_compute_pass(graph, "cull", cull_scene, ptr_to(scene))
+    graph_writes(graph, cull_pass, arguments)
     scene_pass := graph_pass(graph, "scene", draw_scene, ptr_to(scene))
     graph_writes_color(graph, scene_pass, screen,
         Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
     graph_writes_depth(graph, scene_pass, depth)
+    graph_reads(graph, scene_pass, arguments)
     scheduled := graph_schedule(graph)
     if (scheduled == false) {
         print_str_line("the render graph cannot run")
@@ -360,8 +413,9 @@ main :: fn() -> i64 {
         schedule_run(frame_schedule, world, ANY_STATE)
         write_frame(queue, frame_uniform, world_camera(world), width(p),
             height(p))
-        scene_sync(world, list, slot_table, device, queue, registry, cache,
-            all_drawn(model, drawn))
+        render_world_begin(render)
+        scene_sync(world, render, registry, cache, all_drawn(model, drawn))
+        render_world_upload(render, queue)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -371,8 +425,8 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    draw_list_free(list)
-    slot_table_free(slot_table)
+    render_world_free(render)
+    geometry_free(store)
     schedule_free(frame_schedule)
     giving := ecs_resource($Hierarchy, world, TREE_SLOT)
     hierarchy_free(giving)
