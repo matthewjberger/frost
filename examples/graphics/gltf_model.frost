@@ -365,8 +365,8 @@ main :: fn() -> i64 {
     } else {
         // The model turns as one thing. Its own tree is untouched: this is a
         // spin on the entity everything the file spawned hangs off.
-        ecs_set($Spin, world, root, ids.spin, Spin {
-            axis = vec3(0.0, 1.0, 0.0), speed = 0.4, angle = 0.0 })
+        ecs_set($Spin, world, root, ids.spin,
+            spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity()))
     }
 
     mut scene := Scene {

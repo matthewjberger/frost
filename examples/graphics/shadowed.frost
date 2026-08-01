@@ -1011,8 +1011,8 @@ main :: fn() -> i64 {
     ecs_set($Placement, world, floor, placement, Placement {
         position = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
         scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
-    ecs_set($Spin, world, floor, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
-        speed = 0.0, angle = 0.0 })
+    ecs_set($Spin, world, floor, spin,
+        spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
     ecs_set($Drawn, world, floor, drawn, Drawn { mesh = cube,
         material = looks[3], layer = ONE_LAYER })
     entities[0] = floor
@@ -1038,8 +1038,8 @@ main :: fn() -> i64 {
         // move differently rather than as one shape.
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed : f32 = 0.5 + 0.11 * made
-        ecs_set($Spin, world, entity, spin, Spin { axis = turning,
-            speed = speed, angle = 0.0 })
+        ecs_set($Spin, world, entity, spin,
+            spinning(turning, speed, quat_identity()))
 
         mut shape := cube
         if (made - (made / 2) * 2 == 1) {
@@ -1062,8 +1062,8 @@ main :: fn() -> i64 {
     ecs_set($Placement, world, root, placement, Placement {
         position = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
         scale = vec3(1.0, 1.0, 1.0) })
-    ecs_set($Spin, world, root, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
-        speed = 0.25, angle = 0.0 })
+    ecs_set($Spin, world, root, spin,
+        spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
     // Hung off the root before the root is put in the table, since putting it
     // there is handing it over and the name does not hold it afterwards.
     mut hung : i64 = 1

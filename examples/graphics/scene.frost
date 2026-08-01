@@ -347,8 +347,8 @@ main :: fn() -> i64 {
         ecs_set($Placement, world, held, placement, Placement {
             position = vec3(spread[made], 0.0, depths[made]),
             rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
-        ecs_set($Spin, world, held, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
-            speed = rates[made], angle = 0.0 })
+        ecs_set($Spin, world, held, spin,
+            spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
         mut shape := cube
         if (layers[made] == FAR) {
             shape = sphere
