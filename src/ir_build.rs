@@ -5179,10 +5179,27 @@ impl<'a> FunctionLowering<'a> {
 
         let binop = binop_of(operator)?;
         if binop.is_comparison() {
-            let (left_operand, left_type) =
-                self.lower_expression(left, None)?;
-            let (right_operand, right_type) =
-                self.lower_expression(right, Some(&left_type))?;
+            // A bare number takes its type from what it is compared against,
+            // whichever side it is written on. Lowering the left with nothing
+            // to go on gives a float literal the widest float there is, and
+            // `0.6 == x` then widens an `f32` to compare it against a number
+            // no `f32` holds: true for the values a float represents exactly
+            // and false for the rest, which is the shape of a wrong answer
+            // that looks right in a test written with round numbers.
+            let (left_operand, left_type, right_operand, right_type) =
+                if is_bare_number(left) && !is_bare_number(right) {
+                    let (right_operand, right_type) =
+                        self.lower_expression(right, None)?;
+                    let (left_operand, left_type) =
+                        self.lower_expression(left, Some(&right_type))?;
+                    (left_operand, left_type, right_operand, right_type)
+                } else {
+                    let (left_operand, left_type) =
+                        self.lower_expression(left, None)?;
+                    let (right_operand, right_type) =
+                        self.lower_expression(right, Some(&left_type))?;
+                    (left_operand, left_type, right_operand, right_type)
+                };
             self.check_flags_operator(
                 binop,
                 (left, &left_type),
@@ -9236,6 +9253,18 @@ fn operator_text(binop: IrBinOp) -> &'static str {
         IrBinOp::LessThanOrEqual => "<=",
         IrBinOp::GreaterThan => ">",
         IrBinOp::GreaterThanOrEqual => ">=",
+    }
+}
+
+// Whether an expression is a number written down rather than a value with a
+// type of its own. One of these takes the type of whatever it sits beside; a
+// negated one counts, since `-0.6` is the same literal with a sign.
+fn is_bare_number(expression: &Expression) -> bool {
+    match expression {
+        Expression::Literal(Literal::Integer(_))
+        | Expression::Literal(Literal::Float(_)) => true,
+        Expression::Prefix(Operator::Negate, inner) => is_bare_number(inner),
+        _ => false,
     }
 }
 

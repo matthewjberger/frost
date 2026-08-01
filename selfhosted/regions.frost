@@ -643,6 +643,21 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
+        // A bare number takes its width from what it is compared against,
+        // whichever side it is written on. A comparison stops a width reaching
+        // in from outside, since it answers a truth value however wide its
+        // operands are, so the two operands are all either of them has to go
+        // on. Without this the literal keeps the widest float there is and the
+        // `f32` beside it widens to meet it: true for the values a float holds
+        // exactly and false for the rest, which is a wrong answer that looks
+        // right wherever the numbers are round.
+        if (kind == NodeKind::Bin && op_answers_truth(node.val)) {
+            if (untyped_literal(p, node.b)) {
+                want_single(p, node.b, type_of(p, node.a))
+            } else if (untyped_literal(p, node.a)) {
+                want_single(p, node.a, type_of(p, node.b))
+            }
+        }
         return
     }
     if (kind == NodeKind::Field || kind == NodeKind::Deref
