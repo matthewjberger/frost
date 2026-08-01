@@ -25,10 +25,14 @@ import "ecs.frost"
 import "math.frost"
 import "mem.frost"
 
-export Drawable, DrawList, SlotTable, ObjectIds, Drawn, Model,
+export Drawable, DrawList, SlotTable, ObjectIds,
+    Placement, Spin, Drawn, Model, WorldIds,
     draw_list_new, draw_list_free, draw_list_count, draw_list_at,
+    draw_list_group_by_material,
     slot_table_new, slot_table_free,
-    scene_sync, OBJECT_BYTES
+    world_prepare, world_step, world_tree, world_schedule,
+    all_drawn, drawn_in_layer,
+    scene_sync, OBJECT_BYTES, ONE_LAYER, WORLD_SLOT, TREE_SLOT
 
 // One thing's own: its model matrix, its colour, and the two numbers that say
 // how the surface behaves, with the fourth of those carrying which entry of a
@@ -36,12 +40,19 @@ export Drawable, DrawList, SlotTable, ObjectIds, Drawn, Model,
 OBJECT_FLOATS :: 24
 OBJECT_BYTES :: 96
 
-// One thing to draw, as the pass wants it: what to bind and what geometry.
-// Which slot of a per-object run belongs to it is written into the uniform
-// rather than carried here, since the shader is what reads it.
+// One thing to draw, as the pass wants it: what to bind, what geometry, and
+// which material it wears. Which slot of a per-object run belongs to it is
+// written into the uniform rather than carried here, since the shader is what
+// reads it.
+//
+// The material is a number rather than a binding, because what a material
+// means to a pass is the pass's own business: one binds a texture for it and
+// another reads only the colour already in the uniform. What this says is which
+// one, and whether it changed since the last item.
 Drawable :: struct {
     binding: BindGroup,
     geometry: Mesh,
+    material: i64,
 }
 
 // What one frame produced. Filled from nothing every frame, because what is in
@@ -67,11 +78,28 @@ SlotTable :: struct {
     layout: BindGroupLayout,
 }
 
-// Which component is which, since a system reaches them by number and the
-// numbers belong to the world that registered them.
+// Which component is which, and which layer this run is for, since a system
+// reaches a component by number and the numbers belong to the world that
+// registered them.
+//
+// A layer of -1 takes everything. Two passes over different halves of a world
+// are two runs built from two layers, so each pass is handed a run holding only
+// what it draws: which things those are is decided here, once a frame, rather
+// than in a pass on every item it records.
 ObjectIds :: struct {
     model: i64,
     drawn: i64,
+    layer: i64,
+}
+
+// Everything that is drawn, whatever layer it is in.
+all_drawn :: fn(model: i64, drawn: i64) -> ObjectIds {
+    ObjectIds { model = model, drawn = drawn, layer = -1 }
+}
+
+// One layer of what is drawn, for a program whose passes divide the world.
+drawn_in_layer :: fn(model: i64, drawn: i64, layer: i64) -> ObjectIds {
+    ObjectIds { model = model, drawn = drawn, layer = layer }
 }
 
 draw_list_new :: fn(room: i64) -> DrawList {
@@ -167,16 +195,18 @@ scene_sync :: fn(mut world: World, mut list: DrawList, mut table: SlotTable,
         mut row : i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
-            slot := slot_for(table, device, entity)
-            if (slot < 0) {
-                return
-            }
             shown := ecs_get($Drawn, world, entity, ids.drawn)
-            model := ecs_get($Model, world, entity, ids.model).matrix
-            write_object(queue, table, slot, model,
-                materials_at(registry, shown.material))
-            push_drawable(list, table, slot,
-                mesh_cache_at(cache, shown.mesh))
+            if (ids.layer < 0 || shown.layer == ids.layer) {
+                slot := slot_for(table, device, entity)
+                if (slot < 0) {
+                    return
+                }
+                model := ecs_get($Model, world, entity, ids.model).matrix
+                write_object(queue, table, slot, model,
+                    materials_at(registry, shown.material))
+                push_drawable(list, table, slot,
+                    mesh_cache_at(cache, shown.mesh), shown.material)
+            }
             row = row + 1
         }
     }
@@ -211,8 +241,31 @@ write_object :: fn(queue: Queue, mut table: SlotTable, slot: i64, model: Mat4,
         OBJECT_BYTES)
 }
 
+// The run reordered so the things sharing a material sit together. A pass pays
+// for a material once per run of them rather than once per thing, which is the
+// whole reason a material is a number here. Insertion order is kept within a
+// material, so what a pass draws over what does not move around under it.
+//
+// An insertion sort, because a run is already nearly grouped: the world hands
+// things back an archetype at a time, and things sharing a material tend to
+// share the rest of what they carry.
+draw_list_group_by_material :: fn(mut list: DrawList) {
+    mut items := list.items
+    mut index : i64 = 1
+    while (index < list.count) {
+        held := items[index]
+        mut at := index
+        while (at > 0 && items[at - 1].material > held.material) {
+            items[at] = items[at - 1]
+            at = at - 1
+        }
+        items[at] = held
+        index = index + 1
+    }
+}
+
 push_drawable :: fn(mut list: DrawList, table: SlotTable, slot: i64,
-    geometry: Mesh) {
+    geometry: Mesh, material: i64) {
     if (list.count >= slice_len(list.items)) {
         print "scene: more things to draw than the list was made room for"
         return
@@ -220,12 +273,152 @@ push_drawable :: fn(mut list: DrawList, table: SlotTable, slot: i64,
     held := table.slots
     mut items := list.items
     items[list.count] = Drawable { binding = held[slot].binding,
-        geometry = geometry }
+        geometry = geometry, material = material }
     list.count = list.count + 1
 }
 
-// What a component of a thing that is drawn looks like. Declared here because
-// the walk reads them, and a program that wants other components on the same
-// entity adds them without this knowing.
-Drawn :: struct { mesh: i64, material: i64 }
+// Where a thing is and how big, how it turns, where it ended up, and what it is
+// drawn as. Declared here because the systems below and the walk above are what
+// read them; a program that wants other components on the same entity adds them
+// without this knowing.
+Placement :: struct { position: Vec3, scale: Vec3 }
+Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
 Model :: struct { matrix: Mat4 }
+
+// What a thing is drawn as, and which of a program's layers draws it. A program
+// with one pass over everything gives every thing the same layer and never
+// looks at it again.
+Drawn :: struct { mesh: i64, material: i64, layer: i64 }
+
+// What that one layer is called. A program dividing its world between passes
+// numbers its own.
+ONE_LAYER :: 0
+
+// Which component is which, and how long the frame was. A system captures
+// nothing, so this is what it reads to find its way around the world.
+WorldIds :: struct {
+    placement: i64,
+    spin: i64,
+    model: i64,
+    drawn: i64,
+    step: f32,
+}
+
+// Which resource slot holds what. Registered in this order by `world_prepare`,
+// so a program never writes either number.
+WORLD_SLOT :: 0
+TREE_SLOT :: 1
+
+// The components and resources every drawing program registers, in one call, so
+// the two slot numbers above are true by construction. The tree starts empty:
+// a program hangs whatever it wants off whatever it wants, and a thing attached
+// to nothing is a root.
+world_prepare :: fn(mut world: World) -> WorldIds {
+    ids := WorldIds {
+        placement = ecs_register($Placement, world),
+        spin = ecs_register($Spin, world),
+        model = ecs_register($Model, world),
+        drawn = ecs_register($Drawn, world),
+        step = 0.0,
+    }
+    ecs_resource_register($WorldIds, world)
+    ecs_resource_register($Hierarchy, world)
+    ecs_resource_set($WorldIds, world, WORLD_SLOT, ids)
+    ecs_resource_set($Hierarchy, world, TREE_SLOT, hierarchy_new())
+    // What the world holds, rather than the name that held it: setting a
+    // resource hands it over, so this answers by asking.
+    ecs_resource($WorldIds, world, WORLD_SLOT)
+}
+
+// How long this frame was, written where it lives. Handing the whole resource
+// over again would move what is in it, and this is the one field that changes.
+world_step :: fn(mut world: World, step: f32) {
+    mut held := ecs_resource_slice($WorldIds, world, WORLD_SLOT)
+    held[0].step = step
+}
+
+// The tree the world holds, for a program hanging one thing off another.
+world_tree :: fn(mut world: World) -> ref Hierarchy {
+    ecs_resource_ref($Hierarchy, world, TREE_SLOT)
+}
+
+// What a frame does to the world: every turn advanced, then where everything
+// ended up. What comes of that is `scene_sync`, which needs a device and is
+// therefore not a system.
+world_schedule :: fn() -> Schedule {
+    mut held := schedule_new()
+    schedule_add(held, Stage::First, turn_things)
+    schedule_add(held, Stage::Update, place_things)
+    held
+}
+
+// Every turn advanced by the frame's step.
+turn_things :: fn(mut world: World) {
+    ids := ecs_resource($WorldIds, world, WORLD_SLOT)
+    mut q := query_begin(world)
+    query_with(q, ids.spin)
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            mut turn := ecs_get($Spin, world, entity, ids.spin)
+            turn.angle = turn.angle + turn.speed * ids.step
+            ecs_set($Spin, world, entity, ids.spin, turn)
+            row = row + 1
+        }
+    }
+}
+
+// Where everything ended up, walked down the tree from every root, so a thing
+// is placed after whatever it hangs off however deep it hangs. A thing attached
+// to nothing is a root and is placed against nothing.
+place_things :: fn(mut world: World) {
+    ids := ecs_resource($WorldIds, world, WORLD_SLOT)
+    mut q := query_begin(world)
+    query_with(q, ids.model)
+    query_with(q, ids.placement)
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            tree := ecs_resource_ref($Hierarchy, world, TREE_SLOT)
+            if (is_no_entity(hierarchy_parent(tree, entity))) {
+                place_subtree(world, ids.placement, ids.spin, ids.model,
+                    entity, mat4_identity())
+            }
+            row = row + 1
+        }
+    }
+}
+
+// One thing and everything under it, each placed against what it hangs off.
+place_subtree :: fn(mut world: World, placement: i64, spin: i64, model: i64,
+    entity: Entity, above: Mat4) {
+    ecs_set($Model, world, entity, model, Model {
+        matrix = mat4_mul(above, local_of(world, placement, spin, entity)) })
+    tree := ecs_resource_ref($Hierarchy, world, TREE_SLOT)
+    mut child := hierarchy_first_child(tree, entity)
+    while (is_no_entity(child) == false) {
+        // Read before the walk goes down, since the tree is read again in
+        // there and this is the last thing wanted from it here.
+        following := hierarchy_next_sibling(tree, child)
+        // Read back rather than carried, because a matrix written into a
+        // component has been handed over and the name that held it does not
+        // hold it for the next child.
+        here := ecs_get($Model, world, entity, model)
+        place_subtree(world, placement, spin, model, child, here.matrix)
+        child = following
+    }
+}
+
+// A thing's own placement, before anything above it is applied.
+local_of :: fn(mut world: World, placement: i64, spin: i64,
+    entity: Entity) -> Mat4 {
+    place := ecs_get($Placement, world, entity, placement)
+    turn := ecs_get($Spin, world, entity, spin)
+    mat4_mul(mat4_translation(place.position),
+        mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
+            mat4_scale(place.scale)))
+}

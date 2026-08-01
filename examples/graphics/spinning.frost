@@ -26,6 +26,7 @@ import "platform.frost"
 import "camera.frost"
 import "renderer.frost"
 import "graph.frost"
+import "scene_sync.frost"
 import "mesh.frost"
 import "material.frost"
 import "wgpu.frost"
@@ -44,31 +45,15 @@ INSTANCES :: 36
 FRAME_FLOATS :: 32
 FRAME_BYTES :: 128
 
-// One thing's own: its model matrix, its colour, and the two numbers that say
-// how the surface behaves.
-OBJECT_FLOATS :: 24
-OBJECT_BYTES :: 96
+// What one thing's own uniform holds is `scene_sync`'s, since that is what
+// fills it, and `OBJECT_BYTES` arrives from there.
 
-// Where a thing is, how it turns, and what it is drawn as. Three components
-// because they change at three different times: the first never, the second
-// every frame, the third only when the scene is built.
-Placement :: struct { x: f32, y: f32, z: f32 }
-Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
-Drawn :: struct { mesh: i64, material: i64 }
-
-// The buffer and binding a thing is drawn with. One each, because each carries
-// its own matrix. A scene with thousands would write them into one buffer at
-// different offsets and bind it once with a dynamic offset; at thirty-six the
-// shape is the same and the bookkeeping is not worth it.
-Slot :: struct { uniform: Buffer, group: BindGroup }
-
+// What a pass records with. What to draw comes out of the world every frame
+// and the pass walks the run, so nothing here counts anything.
 Scene :: struct {
     pipeline: RenderPipeline,
     frame_group: BindGroup,
-    slots: []Slot,
-    entities: []Entity,
-    meshes: []Mesh,
-    count: i64,
+    list: ^DrawList,
 }
 
 SHADER :: "
@@ -137,53 +122,15 @@ draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
     render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
         no_pointer())
 
+    list := unsafe { s^.list^ }
     mut index : i64 = 0
-    while (index < unsafe { s^.count }) {
-        render_pass_encoder_set_bind_group(pass, 1,
-            unsafe { s^.slots[index].group }, 0, no_pointer())
-        held := unsafe { s^.meshes[index] }
-        mesh_bind(pass, held)
-        render_pass_encoder_draw_indexed(pass, held.index_count, 1, 0, 0, 0)
-        index = index + 1
-    }
-}
-
-// The frame's read of the world: turn everything, work out where it is, and
-// leave each matrix in the buffer its binding points at.
-prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
-    slots: []Slot, registry: Materials, placement: i64, spin: i64, drawn: i64,
-    step: f32) {
-    mut index : i64 = 0
-    while (index < slice_len(entities)) {
-        entity := entities[index]
-        mut turn := ecs_get($Spin, world, entity, spin)
-        turn.angle = turn.angle + turn.speed * step
-        ecs_set($Spin, world, entity, spin, turn)
-
-        place := ecs_get($Placement, world, entity, placement)
-        shown := ecs_get($Drawn, world, entity, drawn)
-        model := mat4_mul(mat4_translation(vec3(place.x, place.y, place.z)),
-            quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)))
-        surface := materials_at(registry, shown.material)
-
-        mut values : [OBJECT_FLOATS]f32 = [0.0; OBJECT_FLOATS]
-        mut element : i64 = 0
-        while (element < 16) {
-            values[element] = model.m[element]
-            element = element + 1
-        }
-        colour := material_color(surface)
-        values[16] = colour.x
-        values[17] = colour.y
-        values[18] = colour.z
-        values[19] = colour.w
-        behaviour := material_surface(surface)
-        values[20] = behaviour.x
-        values[21] = behaviour.y
-        values[22] = behaviour.z
-        values[23] = behaviour.w
-        queue_write_buffer(queue, slots[index].uniform, 0,
-            ptr_to(values[0]), OBJECT_BYTES)
+    while (index < draw_list_count(list)) {
+        one := draw_list_at(list, index)
+        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
+            no_pointer())
+        mesh_bind(pass, one.geometry)
+        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
+            0, 0)
         index = index + 1
     }
 }
@@ -358,15 +305,18 @@ main :: fn() -> i64 {
         FRAME_BYTES)
 
     mut world := ecs_new()
-    placement := ecs_register($Placement, world)
-    spin := ecs_register($Spin, world)
-    drawn := ecs_register($Drawn, world)
-    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
-        drawn)
+    ids := world_prepare(world)
+    placement := ids.placement
+    spin := ids.spin
+    drawn := ids.drawn
+    model := ids.model
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
+        spin), drawn), model)
 
-    mut entities := heap_slice($Entity, INSTANCES)
-    mut slots := heap_slice($Slot, INSTANCES)
-    mut meshes := heap_slice($Mesh, INSTANCES)
+    // A binding per thing, keyed by the entity, and the run one frame produces.
+    mut slot_table := slot_table_new(INSTANCES * 2, object_layout)
+    mut list := draw_list_new(INSTANCES * 2)
+    mut frame_schedule := world_schedule()
 
     half : f32 = 2.5
     mut made : i64 = 0
@@ -377,7 +327,8 @@ main :: fn() -> i64 {
         up : f32 = row
         entity := ecs_spawn_with(world, wanted)
         ecs_set($Placement, world, entity, placement, Placement {
-            x = (across - half) * 1.8, y = (up - half) * 1.8, z = 0.0 })
+            position = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
+            scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the field does not read
         // as one object drawn thirty-six times.
@@ -391,21 +342,15 @@ main :: fn() -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
-            material = looks[made - (made / 4) * 4] })
+            material = looks[made - (made / 4) * 4], layer = ONE_LAYER })
 
-        entities[made] = entity
-        meshes[made] = mesh_cache_at(cache, shape)
-        held := uniform_buffer(device, OBJECT_BYTES)
-        slots[made] = Slot { uniform = held,
-            group = uniform_group(device, object_layout, held, OBJECT_BYTES) }
         made = made + 1
     }
 
     mut scene := Scene {
         pipeline = make_pipeline(device, renderer_format(r), pipeline_layout),
         frame_group = frame_group,
-        slots = slots, entities = entities, meshes = meshes,
-        count = INSTANCES,
+        list = ptr_to(list),
     }
     // One pass, and the two targets it writes. The graph makes the depth
     // buffer, sizes it with the window and decides both load ops, so the pass
@@ -442,8 +387,10 @@ main :: fn() -> i64 {
         step := delta_seconds(p)
         camera_advance(eye, p, step)
         write_frame(queue, frame_uniform, eye, width(p), height(p))
-        prepare(world, queue, entities, slots, registry, placement, spin,
-            drawn, step)
+        world_step(world, step)
+        schedule_run(frame_schedule, world, ANY_STATE)
+        scene_sync(world, list, slot_table, device, queue, registry, cache,
+            all_drawn(model, drawn))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -453,9 +400,11 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    heap_release_slice($Mesh, meshes)
-    heap_release_slice($Slot, slots)
-    heap_release_slice($Entity, entities)
+    draw_list_free(list)
+    slot_table_free(slot_table)
+    schedule_free(frame_schedule)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
     materials_free(registry)
     mesh_cache_free(cache)
     ecs_free(world)

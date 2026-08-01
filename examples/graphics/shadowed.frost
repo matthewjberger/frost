@@ -127,33 +127,6 @@ FRAME_BYTES :: 192
 // What one thing's own uniform holds is `scene_sync`'s, since that is what
 // fills it, and `OBJECT_BYTES` arrives from there.
 
-// Where a thing is and how big, how it turns, and what it is drawn as. The
-// floor is an entity like any other, with a scale that flattens it and a turn
-// rate of nothing.
-Placement :: struct { position: Vec3, scale: Vec3 }
-Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
-
-// `Drawn` and `Model` are declared in scene_sync.frost, because the walk from
-// the world to what a pass draws is what reads them. Where a thing ended up is
-// written by a system here and read there.
-
-// What the systems work on that is not a component. A system is a
-// `fn(mut World)` and captures nothing, so the queue it writes through, the
-// tables it indexes and the ids of the components themselves are a resource
-// like anything else. It holds a `Materials`, so it is read by borrow.
-Feed :: struct {
-    entities: []Entity,
-    placement: i64,
-    spin: i64,
-    model: i64,
-    step: f32,
-}
-
-// Which resource slot holds what. Registered in this order and read by name
-// rather than by a number written twice.
-FEED_SLOT :: 0
-TREE_SLOT :: 1
-
 // What a pass records with. The shadow pass reads the first three fields and
 // the scene pass reads all of them, which is why one struct serves both: the
 // two are the same walk over the same slots with a different pipeline.
@@ -434,65 +407,6 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
             0, 0)
         index = index + 1
     }
-}
-
-// The frame's read of the world, as three systems a schedule runs in order.
-// Turning happens first, where a thing ends up is worked out second, and the
-// buffers are filled last, so nothing reads a matrix in the same pass that
-// wrote it.
-
-// Every turn advanced by the frame's step. What a thing is drawn as is not
-// read here at all: turning and placing are about the world, and what comes of
-// that is scene_sync's to work out.
-turn_things :: fn(mut world: World) {
-    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
-    mut index : i64 = 0
-    while (index < slice_len(feed.entities)) {
-        entity := feed.entities[index]
-        mut turn := ecs_get($Spin, world, entity, feed.spin)
-        turn.angle = turn.angle + turn.speed * feed.step
-        ecs_set($Spin, world, entity, feed.spin, turn)
-        index = index + 1
-    }
-}
-
-// Where a thing is, its own placement and its parent's together. Two passes
-// rather than a walk down the tree, because everything here is either a root or
-// a child of one: a deeper tree wants the parents ordered before the children,
-// which is a sort rather than a second loop.
-place_things :: fn(mut world: World) {
-    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
-    tree := ecs_resource_ref($Hierarchy, world, TREE_SLOT)
-    mut index : i64 = 0
-    while (index < slice_len(feed.entities)) {
-        entity := feed.entities[index]
-        if (is_no_entity(hierarchy_parent(tree, entity))) {
-            ecs_set($Model, world, entity, feed.model,
-                Model { matrix = local_of(world, feed, entity) })
-        }
-        index = index + 1
-    }
-    mut child : i64 = 0
-    while (child < slice_len(feed.entities)) {
-        entity := feed.entities[child]
-        above := hierarchy_parent(tree, entity)
-        if (is_no_entity(above) == false) {
-            over := ecs_get($Model, world, above, feed.model)
-            ecs_set($Model, world, entity, feed.model,
-                Model { matrix = mat4_mul(over.matrix,
-                    local_of(world, feed, entity)) })
-        }
-        child = child + 1
-    }
-}
-
-// A thing's own placement, before anything above it is applied.
-local_of :: fn(mut world: World, feed: Feed, entity: Entity) -> Mat4 {
-    place := ecs_get($Placement, world, entity, feed.placement)
-    turn := ecs_get($Spin, world, entity, feed.spin)
-    mat4_mul(mat4_translation(place.position),
-        mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
-            mat4_scale(place.scale)))
 }
 
 // Where the light is looking from, as a matrix. A directional light has no
@@ -999,10 +913,13 @@ main :: fn() -> i64 {
         FRAME_BYTES)
 
     mut world := ecs_new()
-    placement := ecs_register($Placement, world)
-    spin := ecs_register($Spin, world)
-    drawn := ecs_register($Drawn, world)
-    model := ecs_register($Model, world)
+    // The components every drawing program has, the two resources the systems
+    // read, and the tree, in one call.
+    ids := world_prepare(world)
+    placement := ids.placement
+    spin := ids.spin
+    drawn := ids.drawn
+    model := ids.model
     wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
         spin), drawn), model)
     // The root has a place and a turn and nothing drawn, since it is what the
@@ -1011,7 +928,7 @@ main :: fn() -> i64 {
         spin), model)
 
     // One more than the things that are drawn: the last is the root every
-    // shape hangs off, walked by the systems and uploaded by none of them.
+    // shape hangs off, placed by the systems and drawn by nothing.
     mut entities := heap_slice($Entity, INSTANCES + 1)
     // A binding per thing, keyed by the entity rather than by a position, and
     // the run of draw items one frame produces. Room for more than the scene
@@ -1019,7 +936,6 @@ main :: fn() -> i64 {
     // later needs nothing resized.
     mut slot_table := slot_table_new(MAX_DRAWN, object_layout)
     mut list := draw_list_new(MAX_DRAWN)
-    mut tree := hierarchy_new()
 
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
@@ -1030,7 +946,7 @@ main :: fn() -> i64 {
     ecs_set($Spin, world, floor, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
         speed = 0.0, angle = 0.0 })
     ecs_set($Drawn, world, floor, drawn, Drawn { mesh = cube,
-        material = looks[3] })
+        material = looks[3], layer = ONE_LAYER })
     entities[0] = floor
 
     // The middle column and the middle row, so the grid is centred on the
@@ -1062,7 +978,7 @@ main :: fn() -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
-            material = looks[made - (made / 3) * 3] })
+            material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
 
         // Nothing here makes a buffer or a binding. What is drawn and where it
         // is are the world's; the device side of it is worked out from the
@@ -1083,30 +999,16 @@ main :: fn() -> i64 {
     // there is handing it over and the name does not hold it afterwards.
     mut hung : i64 = 1
     while (hung < INSTANCES) {
+        tree := world_tree(world)
         hierarchy_attach(tree, entities[hung], root)
         hung = hung + 1
     }
     entities[INSTANCES] = root
 
-    // What the systems work on. Registered in the order the slot constants
-    // name, and the tree is handed over: the world holds it from here.
-    feed_slot := ecs_resource_register($Feed, world)
-    tree_slot := ecs_resource_register($Hierarchy, world)
-    ecs_resource_set($Hierarchy, world, tree_slot, tree)
-    // Handed over once. What changes every frame is the step, and that is
-    // written where it lives rather than by handing the whole thing over
-    // again: setting a resource moves it, and the registry inside this one is
-    // released at the end.
-    ecs_resource_set($Feed, world, feed_slot, Feed {
-        entities = entities, placement = placement, spin = spin,
-        model = model, step = 0.0 })
-
-    // What a frame does to the world, read top to bottom: turning, then where
-    // everything ended up. What comes of that is scene_sync's, run after the
-    // schedule, so a system never touches the device.
-    mut frame_schedule := schedule_new()
-    schedule_add(frame_schedule, Stage::First, turn_things)
-    schedule_add(frame_schedule, Stage::Update, place_things)
+    // What a frame does to the world: turning, then where everything ended up.
+    // What comes of that is scene_sync's, run after the schedule, so a system
+    // never touches the device.
+    mut frame_schedule := world_schedule()
 
     shader := make_shader(device)
 
@@ -1340,13 +1242,12 @@ main :: fn() -> i64 {
         watcher.pitch = -0.35
         write_frame(queue, inset_uniform, watcher, light, elapsed, INSET_WIDTH,
             INSET_HEIGHT)
-        mut feeding := ecs_resource_slice($Feed, world, feed_slot)
-        feeding[0].step = step
+        world_step(world, step)
         schedule_run(frame_schedule, world, ANY_STATE)
         // From the world to what the passes draw, once a frame. Every pass that
         // draws the scene walks the same run.
         scene_sync(world, list, slot_table, device, queue, registry, cache,
-            ObjectIds { model = model, drawn = drawn })
+            all_drawn(model, drawn))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -1357,7 +1258,7 @@ main :: fn() -> i64 {
 
     graph_free(graph)
     schedule_free(frame_schedule)
-    giving := ecs_resource($Hierarchy, world, tree_slot)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
     hierarchy_free(giving)
     draw_list_free(list)
     slot_table_free(slot_table)
