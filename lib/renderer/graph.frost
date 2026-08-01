@@ -23,6 +23,7 @@ export ResourceId, PassId, Resource, GraphPass, Graph,
     graph_save_enabled, graph_restore_enabled,
     graph_run_phase, graph_set_phase, graph_phase_of, ANY_PHASE,
     graph_external_color, graph_set_external,
+    graph_external_buffer, graph_set_external_buffer,
     graph_sub, graph_sub_pass, graph_takes, graph_rebuilds, graph_device,
     WINDOW_SIZED, MAX_READS, MAX_WRITES, no_resource
 
@@ -340,6 +341,32 @@ graph_set_external :: fn(mut g: Graph, r: ResourceId, held: Texture2D) {
         return
     }
     kept[index].held = held
+    kept[index].made = true
+}
+
+// A buffer the graph orders passes around without owning. What a program keeps
+// across frames it makes itself, and a graph resource is how a pass says it
+// reads or writes one: the indirect arguments a culling pass fills in and a
+// draw takes its counts from are the reason this exists, since those live with
+// whatever holds the objects rather than with the graph.
+graph_external_buffer :: fn(mut g: Graph, name: str) -> ResourceId {
+    made := add_resource(g, name, ResourceKind::Buffer, 0, 0, 0)
+    if (resource_is_none(made) == false) {
+        mut held := g.resources
+        held[resource_index(made)].external = true
+    }
+    made
+}
+
+graph_set_external_buffer :: fn(mut g: Graph, r: ResourceId, held: Buffer) {
+    mut kept := g.resources
+    index := resource_index(r)
+    if (kept[index].external == false) {
+        print "graph: this resource is the graph's own, so it takes no buffer from outside:"
+        print kept[index].name
+        return
+    }
+    kept[index].buffer = held
     kept[index].made = true
 }
 

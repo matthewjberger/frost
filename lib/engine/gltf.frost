@@ -29,6 +29,7 @@
 import "world.frost"
 import "ecs.frost"
 import "../renderer/render_world.frost"
+import "../renderer/geometry.frost"
 import "../renderer/wgpu.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
@@ -828,7 +829,7 @@ test "a file that is not one is refused rather than read" {
 // entities carry is the numbers they came back as. After this the file has done
 // its job and `gltf_free` takes it away: nothing spawned points into it.
 
-gltf_spawn :: fn(mut world: World, mut model: Gltf, device: Device,
+gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     queue: Queue, mut registry: Materials, mut cache: MeshCache,
     ids: WorldIds) -> Entity {
     if (gltf_ok(model) == false) {
@@ -852,7 +853,7 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, device: Device,
         // primitive goes under the one name, since what a thing carries is the
         // number and nothing looks a loaded mesh up by name.
         meshes[index] = cache.count
-        mesh_cache_insert(cache, "gltf", mesh_upload(device, queue,
+        mesh_cache_insert(cache, "gltf", geometry_add(store, queue,
             held.vertices, held.indices))
         index = index + 1
     }

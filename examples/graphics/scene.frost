@@ -27,6 +27,7 @@ import "../../lib/platform/platform.frost"
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
+import "../../lib/renderer/geometry.frost"
 import "../../lib/renderer/mesh.frost"
 import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
@@ -42,6 +43,11 @@ WIDTH :: 960
 HEIGHT :: 540
 INSTANCES :: 4
 
+// How much geometry the shared buffers hold, which is a cube and a sphere with
+// room to spare.
+VERTEX_ROOM :: 4096
+INDEX_ROOM :: 8192
+
 // The camera, written once a frame: one matrix and nothing else. What a thing's
 // own uniform holds is `scene_sync`'s, since that is what fills it.
 FRAME_BYTES :: 64
@@ -55,38 +61,51 @@ FAR :: 1
 // draws.
 Scene :: struct {
     pipeline: RenderPipeline,
-    list: ^DrawList,
+    cull_pipeline: ComputePipeline,
     frame_group: BindGroup,
+    render: ^RenderWorld,
+    store: ^Geometry,
 }
 
 SHADER :: "
 struct Frame { view_projection: mat4x4<f32> }
-struct Object {
+struct ObjectData {
     model: mat4x4<f32>,
     base_color: vec4<f32>,
     surface: vec4<f32>,
+    batch: u32,
+    pad_one: u32,
+    pad_two: u32,
+    pad_three: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(1) @binding(0) var<uniform> object: Object;
+@group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
+@group(1) @binding(1) var<storage, read> visible: array<u32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) normal: vec3<f32>,
+    @location(1) @interpolate(flat) object_index: u32,
 }
 
 @vertex
 fn vs_main(@location(0) position: vec3<f32>,
-           @location(1) normal: vec3<f32>) -> VertexOut {
+           @location(1) normal: vec3<f32>,
+           @builtin(instance_index) instance: u32) -> VertexOut {
     var out: VertexOut;
+    let object_index = visible[instance];
+    let object = objects[object_index];
     let placed = object.model * vec4<f32>(position, 1.0);
     out.position = frame.view_projection * placed;
     out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.object_index = object_index;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let object = objects[in.object_index];
     let towards = normalize(vec3<f32>(-0.4, 0.9, 0.5));
     let lambert = max(dot(normalize(in.normal), towards), 0.0);
     return vec4<f32>(object.base_color.rgb * (0.25 + 0.75 * lambert),
@@ -106,18 +125,22 @@ draw_layer :: fn(pass: RenderPassEncoder, state: ^u8) {
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
     render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
         no_pointer())
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(unsafe { s^.render^ }), 0, no_pointer())
+    geometry_bind(pass, unsafe { s^.store^ })
+    render_world_draw(pass, unsafe { s^.render^ })
+}
 
-    list := unsafe { s^.list^ }
-    mut index : i64 = 0
-    while (index < draw_list_count(list)) {
-        one := draw_list_at(list, index)
-        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
-            no_pointer())
-        mesh_bind(pass, one.geometry)
-        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
-            0, 0)
-        index = index + 1
-    }
+// One culling pass per layer, since each layer is its own run. Both are the
+// same function over different state, the way the two drawing passes are.
+cull_layer :: fn(pass: ComputePassEncoder, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    held := unsafe { s^.render^ }
+    compute_pass_encoder_set_pipeline(pass, unsafe { s^.cull_pipeline })
+    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
+        0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass,
+        render_world_dispatch(held), 1, 1)
 }
 
 // The camera, as the bytes the shader reads it as.
@@ -157,6 +180,30 @@ uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
     descriptor.entries_count = 1
     descriptor.entries = ptr_to(entry)
     device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// The culling pass's pipeline. Its shader is the renderer's, since what it
+// writes is the renderer's own three buffers and their shapes have to agree.
+make_cull_pipeline :: fn(device: Device,
+    layout: BindGroupLayout) -> ComputePipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
+    device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
 make_pipeline :: fn(device: Device, format: u32,
@@ -235,9 +282,10 @@ main :: fn() -> i64 {
 
     // A cube for the near layer and a sphere for the far one, so which pass
     // drew a thing is readable off the screen.
+    mut store := geometry_new(device, VERTEX_ROOM, INDEX_ROOM)
     mut cache := mesh_cache_new(4)
-    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
-    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.6, 16, 24))
+    mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
+    mesh_cache_insert(cache, "sphere", sphere_mesh(store, queue, 0.6, 16, 24))
     cube := mesh_cache_find(cache, "cube")
     sphere := mesh_cache_find(cache, "sphere")
 
@@ -256,9 +304,15 @@ main :: fn() -> i64 {
         base_color = vec4(1.0, 0.85, 0.4, 1.0), roughness = 0.5,
         metallic = 0.0 })
 
+    // One run per layer, and each is its own set of buffers: what a pass draws
+    // is decided before it records, and two passes over two halves of a world
+    // are two runs.
+    mut near_render := render_world_new(device, INSTANCES)
+    mut far_render := render_world_new(device, INSTANCES)
+
     frame_layout := uniform_layout(device, FRAME_BYTES)
-    object_layout := uniform_layout(device, OBJECT_BYTES)
-    mut layouts : [2]BindGroupLayout = [frame_layout, object_layout]
+    mut layouts : [2]BindGroupLayout = [frame_layout,
+        render_world_layout(near_render)]
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -278,11 +332,6 @@ main :: fn() -> i64 {
     wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
         spin), drawn), model)
 
-    // One binding per thing, whichever layer it is in, and a run per layer. The
-    // slots are keyed by entity, so one table answers for both passes.
-    mut slot_table := slot_table_new(INSTANCES * 2, object_layout)
-    mut near_list := draw_list_new(INSTANCES)
-    mut far_list := draw_list_new(INSTANCES)
     mut frame_schedule := world_schedule()
 
     mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
@@ -310,25 +359,42 @@ main :: fn() -> i64 {
     }
 
     pipeline := make_pipeline(device, renderer_format(r), pipeline_layout)
-    mut near_scene := Scene { pipeline = pipeline, list = ptr_to(near_list),
-        frame_group = frame_group }
-    mut far_scene := Scene { pipeline = pipeline, list = ptr_to(far_list),
-        frame_group = frame_group }
+    culling := make_cull_pipeline(device, render_world_cull_layout(near_render))
+    mut near_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
+        frame_group = frame_group, render = ptr_to(near_render),
+        store = ptr_to(store) }
+    mut far_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
+        frame_group = frame_group, render = ptr_to(far_render),
+        store = ptr_to(store) }
 
     // Both passes write both targets, and nothing stands between them, so the
     // graph keeps them in the order they were declared: near clears, far draws
     // over what near left and sorts against the depth it wrote.
-    mut graph := graph_new(device, 2, 2)
+    mut graph := graph_new(device, 4, 4)
     screen := graph_backbuffer(graph)
     depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
         DEPTH_FORMAT)
     background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
+    near_arguments := graph_external_buffer(graph, "near arguments")
+    graph_set_external_buffer(graph, near_arguments,
+        render_world_indirect(near_render))
+    far_arguments := graph_external_buffer(graph, "far arguments")
+    graph_set_external_buffer(graph, far_arguments,
+        render_world_indirect(far_render))
+    near_cull := graph_compute_pass(graph, "near cull", cull_layer,
+        ptr_to(near_scene))
+    graph_writes(graph, near_cull, near_arguments)
+    far_cull := graph_compute_pass(graph, "far cull", cull_layer,
+        ptr_to(far_scene))
+    graph_writes(graph, far_cull, far_arguments)
     near_pass := graph_pass(graph, "near", draw_layer, ptr_to(near_scene))
     graph_writes_color(graph, near_pass, screen, background)
     graph_writes_depth(graph, near_pass, depth)
+    graph_reads(graph, near_pass, near_arguments)
     far_pass := graph_pass(graph, "far", draw_layer, ptr_to(far_scene))
     graph_writes_color(graph, far_pass, screen, background)
     graph_writes_depth(graph, far_pass, depth)
+    graph_reads(graph, far_pass, far_arguments)
     scheduled := graph_schedule(graph)
     if (scheduled == false) {
         print_str_line("the render graph cannot run")
@@ -347,10 +413,14 @@ main :: fn() -> i64 {
         schedule_run(frame_schedule, world, ANY_STATE)
         write_frame(queue, frame_uniform, world_camera(world), width(p),
             height(p))
-        scene_sync(world, near_list, slot_table, device, queue, registry,
-            cache, drawn_in_layer(model, drawn, NEAR))
-        scene_sync(world, far_list, slot_table, device, queue, registry,
-            cache, drawn_in_layer(model, drawn, FAR))
+        render_world_begin(near_render)
+        scene_sync(world, near_render, registry, cache,
+            drawn_in_layer(model, drawn, NEAR))
+        render_world_upload(near_render, queue)
+        render_world_begin(far_render)
+        scene_sync(world, far_render, registry, cache,
+            drawn_in_layer(model, drawn, FAR))
+        render_world_upload(far_render, queue)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -360,9 +430,9 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    draw_list_free(near_list)
-    draw_list_free(far_list)
-    slot_table_free(slot_table)
+    render_world_free(near_render)
+    render_world_free(far_render)
+    geometry_free(store)
     schedule_free(frame_schedule)
     giving := ecs_resource($Hierarchy, world, TREE_SLOT)
     hierarchy_free(giving)

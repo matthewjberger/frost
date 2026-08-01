@@ -1,0 +1,130 @@
+// Every mesh in one pair of buffers, and a mesh as a span of them.
+//
+//   mut store := geometry_new(device, MAX_VERTICES, MAX_INDICES)
+//   cube := geometry_add(store, queue, vertices, indices)
+//   geometry_bind(pass, store)
+//   ... draw with span.first_index, span.base_vertex
+//   geometry_free(store)
+//
+// One vertex buffer and one index buffer for the whole scene, and a mesh is
+// where it sits in them. What that buys is a draw that does not have to be one
+// mesh: an indirect draw names a range of indices and a base vertex, and those
+// are numbers a compute pass can write. A vertex buffer per mesh makes the CPU
+// the only thing that can decide what is drawn, because only the CPU can bind
+// the next one.
+//
+// The arithmetic is the reason a base vertex exists. Indices are written from
+// zero for each mesh as it is built, and the copy into the shared buffer does
+// not renumber them; the draw adds `base_vertex` to every index instead. So a
+// mesh is copied in as it was made and nothing walks its indices.
+
+import "wgpu.frost"
+import "math.frost"
+import "mem.frost"
+
+export Vertex, MeshSpan, Geometry,
+    geometry_new, geometry_add, geometry_bind, geometry_free,
+    geometry_vertices, geometry_indices,
+    VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET, INDEX_BYTES
+
+// Where the surface is, which way it faces, and where on an image it reads
+// from. A program that samples nothing pays the eight bytes and ignores the
+// attribute, which costs less than two vertex types and two of everything that
+// takes one.
+Vertex :: struct { position: Vec3, normal: Vec3, texcoord: Vec2 }
+
+VERTEX_STRIDE :: 32
+POSITION_OFFSET :: 0
+NORMAL_OFFSET :: 12
+TEXCOORD_OFFSET :: 24
+INDEX_BYTES :: 4
+
+// Where one mesh sits in the shared buffers. These three are exactly the three
+// an indexed draw takes, indirect or not, which is why they are kept in this
+// shape rather than as byte offsets.
+MeshSpan :: struct {
+    first_index: u32,
+    index_count: u32,
+    base_vertex: i32,
+}
+
+// The two buffers and how much of each is used. Sized up front: a scene says
+// how much geometry it will hold, and a buffer that grew would move, which
+// every span already handed out would be measured against.
+Geometry :: struct {
+    vertices: Buffer,
+    indices: Buffer,
+    vertex_room: i64,
+    index_room: i64,
+    vertex_count: i64,
+    index_count: i64,
+}
+
+geometry_new :: fn(device: Device, vertex_room: i64,
+    index_room: i64) -> Geometry {
+    mut vertex_descriptor := buffer_descriptor_init()
+    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+    vertex_descriptor.size = vertex_room * VERTEX_STRIDE
+
+    mut index_descriptor := buffer_descriptor_init()
+    index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+    index_descriptor.size = index_room * INDEX_BYTES
+
+    Geometry {
+        vertices = device_create_buffer(device, ptr_to(vertex_descriptor)),
+        indices = device_create_buffer(device, ptr_to(index_descriptor)),
+        vertex_room = vertex_room, index_room = index_room,
+        vertex_count = 0, index_count = 0,
+    }
+}
+
+geometry_free :: fn(mut store: Geometry) {
+    buffer_destroy(store.vertices)
+    buffer_release(store.vertices)
+    buffer_destroy(store.indices)
+    buffer_release(store.indices)
+    store.vertex_count = 0
+    store.index_count = 0
+}
+
+// One mesh copied in, answering with where it landed. A mesh that does not fit
+// comes back empty rather than writing past the end, and an empty span draws
+// nothing, so a scene that asked for too little room is a scene missing a shape
+// rather than one reading somebody else's vertices.
+geometry_add :: fn(mut store: Geometry, queue: Queue, vertices: []Vertex,
+    indices: []u32) -> MeshSpan {
+    added := slice_len(vertices)
+    ordered := slice_len(indices)
+    if (added == 0 || ordered == 0
+        || store.vertex_count + added > store.vertex_room
+        || store.index_count + ordered > store.index_room) {
+        print "geometry: more vertices or indices than the store was made room for"
+        return MeshSpan { first_index = 0, index_count = 0, base_vertex = 0 }
+    }
+    queue_write_buffer(queue, store.vertices,
+        store.vertex_count * VERTEX_STRIDE, ptr_to(vertices[0]),
+        added * VERTEX_STRIDE)
+    queue_write_buffer(queue, store.indices,
+        store.index_count * INDEX_BYTES, ptr_to(indices[0]),
+        ordered * INDEX_BYTES)
+    span := MeshSpan {
+        first_index = cast($u32, store.index_count),
+        index_count = cast($u32, ordered),
+        base_vertex = cast($i32, store.vertex_count),
+    }
+    store.vertex_count = store.vertex_count + added
+    store.index_count = store.index_count + ordered
+    span
+}
+
+// Both buffers onto the pass, once for the whole scene. What a draw says after
+// this is which part of them it wants.
+geometry_bind :: fn(pass: RenderPassEncoder, store: Geometry) {
+    render_pass_encoder_set_vertex_buffer(pass, 0, store.vertices, 0,
+        store.vertex_count * VERTEX_STRIDE)
+    render_pass_encoder_set_index_buffer(pass, store.indices,
+        INDEX_FORMAT_UINT32, 0, store.index_count * INDEX_BYTES)
+}
+
+geometry_vertices :: fn(store: Geometry) -> i64 { store.vertex_count }
+geometry_indices :: fn(store: Geometry) -> i64 { store.index_count }

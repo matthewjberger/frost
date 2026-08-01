@@ -164,7 +164,16 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         userdata1 = ptr_to(device_slot),
         userdata2 = no_pointer(),
     }
-    adapter_request_device(r.adapter, no_pointer(), ptr_to(device_info))
+    // What a draw whose arguments come off the GPU needs. An indirect draw may
+    // only name a non-zero first instance where the device says it can, and
+    // that number is how a batch finds its own slice of the list a compute pass
+    // wrote. Asked for rather than assumed: a device without it fails here,
+    // where the reason is one line, rather than inside a draw call.
+    mut wanted : [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
+    mut descriptor := device_descriptor_init()
+    descriptor.required_features_count = 1
+    descriptor.required_features = ptr_to(wanted[0])
+    adapter_request_device(r.adapter, ptr_to(descriptor), ptr_to(device_info))
     if (spin_until(r.instance, device_slot.ready, 2000000) == false) {
         return r
     }

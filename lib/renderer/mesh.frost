@@ -1,15 +1,16 @@
-// Geometry on the GPU, and the cache a program names it through.
+// The shapes a program builds, and the cache it names them through.
 //
+//   mut store := geometry_new(device, 4096, 8192)
 //   mut cache := mesh_cache_new(8)
-//   mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
+//   mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
 //   held := mesh_cache_at(cache, mesh_cache_find(cache, "cube"))
 //
-// A mesh is a vertex buffer, an index buffer and how many indices there are.
-// Indexed, because a cube drawn as bare triangles is thirty-six vertices with
-// eight distinct positions among them, and the normal is what makes the
-// duplication real: a corner belongs to three faces pointing three ways, so
-// twenty-four vertices is the honest count and the indices are what stop it
-// being thirty-six.
+// A mesh is where it sits in the shared buffers rather than buffers of its own,
+// which is `geometry.frost`. Indexed, because a cube drawn as bare triangles is
+// thirty-six vertices with eight distinct positions among them, and the normal
+// is what makes the duplication real: a corner belongs to three faces pointing
+// three ways, so twenty-four vertices is the honest count and the indices are
+// what stop it being thirty-six.
 //
 // The cache is by name rather than by handle so a thing that is drawn says what
 // it is rather than which slot it landed in, which is what lets the geometry be
@@ -18,54 +19,30 @@
 // entity is made, not once a frame.
 
 import "wgpu.frost"
+import "geometry.frost"
 import "math.frost"
 import "mem.frost"
 import "strings.frost"
 
-export Vertex, Mesh, MeshCache,
+export MeshCache,
     mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
-    mesh_cache_free, mesh_bind, mesh_upload,
-    cube_mesh, sphere_mesh,
-    VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET
+    mesh_cache_free,
+    cube_mesh, sphere_mesh
 
-// Where the surface is, which way it faces, and where on an image it reads
-// from. A program that samples nothing pays the eight bytes and ignores the
-// attribute, which costs less than two vertex types and two of everything that
-// takes one.
-Vertex :: struct { position: Vec3, normal: Vec3, texcoord: Vec2 }
-
-VERTEX_STRIDE :: 32
-POSITION_OFFSET :: 0
-NORMAL_OFFSET :: 12
-TEXCOORD_OFFSET :: 24
-INDEX_BYTES :: 4
-
-// The two buffers, how many indices there are, and how long each buffer is.
-// The lengths are kept rather than asked for with a sentinel, because a mesh
-// knows what it uploaded and the binding is exact: nothing downstream has to
-// mean "to the end" when it means a number it already had.
-Mesh :: struct {
-    vertices: Buffer,
-    indices: Buffer,
-    index_count: u32,
-    vertex_bytes: u64,
-    index_bytes: u64,
-}
-
-MeshCache :: struct { names: []str, meshes: []Mesh, count: i64 }
+MeshCache :: struct { names: []str, meshes: []MeshSpan, count: i64 }
 
 mesh_cache_new :: fn(capacity: i64) -> MeshCache {
     MeshCache { names = heap_slice($str, capacity),
-        meshes = heap_slice($Mesh, capacity), count = 0 }
+        meshes = heap_slice($MeshSpan, capacity), count = 0 }
 }
 
 mesh_cache_free :: fn(mut cache: MeshCache) {
     heap_release_slice($str, cache.names)
-    heap_release_slice($Mesh, cache.meshes)
+    heap_release_slice($MeshSpan, cache.meshes)
     cache.count = 0
 }
 
-mesh_cache_insert :: fn(mut cache: MeshCache, name: str, held: Mesh) {
+mesh_cache_insert :: fn(mut cache: MeshCache, name: str, held: MeshSpan) {
     if (cache.count >= slice_len(cache.meshes)) {
         return
     }
@@ -87,43 +64,11 @@ mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
     -1
 }
 
-mesh_cache_at :: fn(cache: MeshCache, index: i64) -> Mesh {
+mesh_cache_at :: fn(cache: MeshCache, index: i64) -> MeshSpan {
     cache.meshes[index]
 }
 
-// Both buffers onto the pass, in the order a draw needs them.
-mesh_bind :: fn(pass: RenderPassEncoder, held: Mesh) {
-    render_pass_encoder_set_vertex_buffer(pass, 0, held.vertices, 0,
-        held.vertex_bytes)
-    render_pass_encoder_set_index_buffer(pass, held.indices,
-        INDEX_FORMAT_UINT32, 0, held.index_bytes)
-}
 
-// The vertices and indices as they are, straight to the device. Written once at
-// startup, so the buffers are not mapped and nothing reads them back.
-mesh_upload :: fn(device: Device, queue: Queue, vertices: []Vertex,
-    indices: []u32) -> Mesh {
-    vertex_bytes := slice_len(vertices) * VERTEX_STRIDE
-    index_bytes := slice_len(indices) * INDEX_BYTES
-
-    mut vertex_descriptor := buffer_descriptor_init()
-    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
-    vertex_descriptor.size = vertex_bytes
-    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
-    queue_write_buffer(queue, vertex_buffer, 0,
-        ptr_to(vertices[0]), vertex_bytes)
-
-    mut index_descriptor := buffer_descriptor_init()
-    index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
-    index_descriptor.size = index_bytes
-    index_buffer := device_create_buffer(device, ptr_to(index_descriptor))
-    queue_write_buffer(queue, index_buffer, 0,
-        ptr_to(indices[0]), index_bytes)
-
-    Mesh { vertices = vertex_buffer, indices = index_buffer,
-        index_count = cast($u32, slice_len(indices)),
-        vertex_bytes = vertex_bytes, index_bytes = index_bytes }
-}
 
 // Two triangles over four corners, wound counter-clockwise seen from outside,
 // which is the winding the pipeline calls front. The four corners take the four
@@ -151,7 +96,7 @@ quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
 
 // A unit cube about the origin. Four vertices per face rather than eight in
 // total, because a corner has three normals and a vertex has one.
-cube_mesh :: fn(device: Device, queue: Queue) -> Mesh {
+cube_mesh :: fn(mut store: Geometry, queue: Queue) -> MeshSpan {
     mut vertices := heap_slice($Vertex, 24)
     mut indices := heap_slice($u32, 36)
     half : f32 = 0.5
@@ -176,7 +121,7 @@ cube_mesh :: fn(device: Device, queue: Queue) -> Mesh {
         vec3(half, low, low), vec3(low, low, low),
         vec3(low, half, low), vec3(half, half, low))
 
-    held := mesh_upload(device, queue, vertices, indices)
+    held := geometry_add(store, queue, vertices, indices)
     heap_release_slice($Vertex, vertices)
     heap_release_slice($u32, indices)
     held
@@ -189,8 +134,8 @@ cube_mesh :: fn(device: Device, queue: Queue) -> Mesh {
 // Both ends of a ring are separate vertices at the same place, which looks
 // wasteful and is not: the seam is where the texture coordinate would wrap, and
 // a shared vertex there cannot hold two of them.
-sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
-    segments: i64) -> Mesh {
+sphere_mesh :: fn(mut store: Geometry, queue: Queue, radius: f32,
+    rings: i64, segments: i64) -> MeshSpan {
     vertex_count := (rings + 1) * (segments + 1)
     index_count := rings * segments * 6
     mut vertices := heap_slice($Vertex, vertex_count)
@@ -237,7 +182,7 @@ sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
         row = row + 1
     }
 
-    held := mesh_upload(device, queue, vertices, indices)
+    held := geometry_add(store, queue, vertices, indices)
     heap_release_slice($Vertex, vertices)
     heap_release_slice($u32, indices)
     held

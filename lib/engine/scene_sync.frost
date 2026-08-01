@@ -1,28 +1,27 @@
-// The walk from a world to what a pass draws.
+// The walk from a world to what the GPU draws.
 //
-//     scene_sync(world, list, table, device, queue, registry, cache, ids)
-//     ...
-//     draw_list_at(list, index)
+//     render_world_begin(render)
+//     scene_sync(world, render, registry, cache, ids)
+//     render_world_upload(render, queue)
 //
 // A pass records commands and a world holds game state, and nothing should be
 // both. This is the one place they meet: it queries the world for everything
-// that has ended up somewhere and is drawn, gives each one a uniform buffer and
-// a binding, writes the matrix and the material into that buffer, and leaves a
-// flat run of draw items behind. The pass walks the run and knows nothing about
-// entities, components or tables.
+// that has ended up somewhere and is drawn, and fills the run the renderer
+// hands to the GPU. The pass knows nothing about entities, components or
+// tables.
 //
-// What that buys over a pass reading the world directly is where the numbers
-// come from. A binding belongs to an entity rather than to a position in an
-// array the program sized up front, so a thing spawned while the program runs
-// is drawn on the next frame with no table to resize and nothing to renumber.
-// The renderer stops knowing how many things there are.
+// What it fills is one flat array, one entry per thing, and nothing per-entity
+// is made or kept. A thing spawned while the program runs is drawn on the next
+// frame because the walk finds it, and a thing despawned stops being drawn
+// because the walk does not: the run is built from nothing every frame rather
+// than kept in step with the world. The renderer stops knowing how many things
+// there are, and nothing has to be renumbered when that changes.
 //
-// This sits on the world's side of that line. What it fills, and the two
+// This sits on the world's side of the line. What it fills, and the two
 // components it reads to fill it, are the renderer's and are declared in
 // `render_world.frost`; nothing here is reached from that side.
 
 import "../renderer/render_world.frost"
-import "../renderer/wgpu.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
 import "ecs.frost"
@@ -54,14 +53,11 @@ drawn_in_layer :: fn(model: i64, drawn: i64, layer: i64) -> ObjectIds {
     ObjectIds { model = model, drawn = drawn, layer = layer }
 }
 
-// Everything the world says is drawn, written into buffers and left as a run
-// of draw items. The list is emptied first: what is in the world now is the
-// answer, and a thing despawned since the last frame should stop being drawn
-// without anything having to say so.
-scene_sync :: fn(mut world: World, mut list: DrawList, mut table: SlotTable,
-    device: Device, queue: Queue, registry: Materials, cache: MeshCache,
-    ids: ObjectIds) {
-    list.count = 0
+// Everything the world says is drawn, pushed into the run. The caller empties
+// it first and uploads after, so a program drawing two layers walks twice into
+// two runs and a program drawing one walks once.
+scene_sync :: fn(mut world: World, mut render: RenderWorld,
+    registry: Materials, cache: MeshCache, ids: ObjectIds) {
     mut q := query_begin(world)
     query_with(q, ids.model)
     query_with(q, ids.drawn)
@@ -72,14 +68,9 @@ scene_sync :: fn(mut world: World, mut list: DrawList, mut table: SlotTable,
             entity := rows[row]
             shown := ecs_get($Drawn, world, entity, ids.drawn)
             if (ids.layer < 0 || shown.layer == ids.layer) {
-                slot := slot_for(table, device, entity)
-                if (slot < 0) {
-                    return
-                }
-                model := ecs_get($Model, world, entity, ids.model).matrix
-                write_object(queue, table, slot, model,
-                    materials_at(registry, shown.material))
-                push_drawable(list, table, slot,
+                render_world_push(render,
+                    ecs_get($Model, world, entity, ids.model).matrix,
+                    materials_at(registry, shown.material),
                     mesh_cache_at(cache, shown.mesh), shown.material)
             }
             row = row + 1
