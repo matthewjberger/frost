@@ -476,8 +476,8 @@ main :: fn() -> i64 {
 
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed : f32 = 0.4 + 0.09 * made
-        ecs_set($Spin, world, entity, spin, Spin { axis = turning,
-            speed = speed, angle = 0.0 })
+        ecs_set($Spin, world, entity, spin,
+            spinning(turning, speed, quat_identity()))
 
         mut shape := cube
         if (made - (made / 2) * 2 == 1) {

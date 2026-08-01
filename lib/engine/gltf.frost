@@ -948,6 +948,8 @@ spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
 place_and_still :: fn(mut world: World, ids: WorldIds, entity: Entity,
     place: Placement) {
     ecs_set($Placement, world, entity, ids.placement, place)
-    ecs_set($Spin, world, entity, ids.spin, Spin { axis = vec3(0.0, 1.0, 0.0),
-        speed = 0.0, angle = 0.0 })
+    // Turning from where the file put it, so a rest of anything else would
+    // swing a loaded node to face somewhere the file did not say.
+    ecs_set($Spin, world, entity, ids.spin,
+        spinning(vec3(0.0, 1.0, 0.0), 0.0, place.rotation))
 }
