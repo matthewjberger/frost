@@ -332,12 +332,38 @@ Model :: struct { matrix: Mat4 }
 Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 ```
 
-`world_schedule` is the frame. `turn_things` advances every angle in `First`,
+`world_schedule` is the frame. `move_camera` and `turn_things` run in `First`,
 and `place_things` walks down from every root in `Update`, leaving each thing's
 `Model` with whatever it hangs off applied over its own placement, however deep
 it hangs. A system is a `fn(mut World)` and captures nothing, so which component
-is which travels in a `WorldIds` resource, and how long the frame was is written
-there by `world_step`.
+is which travels in a `WorldIds` resource.
+
+### What a system knows about the machine
+
+`platform.frost` splits what a frame saw from what owns the window. `Platform`
+holds the window, the event queue and the clock; `Input` is the state a poll
+left behind, and `platform_input` hands out a copy. That copy is what a loop
+puts in the world:
+
+```frost
+world_input(world, platform_input(p))
+schedule_run(frame_schedule, world, ANY_STATE)
+write_frame(queue, frame_uniform, world_camera(world), width(p), height(p))
+```
+
+`move_camera` reads the `Input` and the `Camera` out of the world, moves one by
+the other, and writes it back. Nothing is captured and no window is held, which
+is what makes it a system at all. How long the frame took rides along in the
+`Input`, so the clock has one reading and everything paced by it reads the same
+one: `turn_things` takes its step from there too.
+
+Every accessor comes in two forms, `key_down(p, KEY_W)` and
+`input_key_down(held, KEY_W)`, because a main loop has the window in hand and a
+system has only what it was given. The first is a one-line call to the second.
+
+The camera lives in the world for the same reason: `world_camera_set` puts it
+where a program wants it to start, the schedule moves it, and the loop reads it
+back to write the frame uniform.
 
 Then `scene_sync` walks the world once and leaves a `DrawList` behind:
 

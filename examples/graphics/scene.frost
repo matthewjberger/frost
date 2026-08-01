@@ -308,7 +308,6 @@ main :: fn() -> i64 {
     }
 
     pipeline := make_pipeline(device, renderer_format(r), pipeline_layout)
-    mut eye := camera_default()
     mut near_scene := Scene { pipeline = pipeline, list = ptr_to(near_list),
         frame_group = frame_group }
     mut far_scene := Scene { pipeline = pipeline, list = ptr_to(far_list),
@@ -342,11 +341,10 @@ main :: fn() -> i64 {
             renderer_resize(r, width(p), height(p))
             graph_resize(graph, width(p), height(p))
         }
-        step := delta_seconds(p)
-        camera_advance(eye, p, step)
-        write_frame(queue, frame_uniform, eye, width(p), height(p))
-        world_step(world, step)
+        world_input(world, platform_input(p))
         schedule_run(frame_schedule, world, ANY_STATE)
+        write_frame(queue, frame_uniform, world_camera(world), width(p),
+            height(p))
         scene_sync(world, near_list, slot_table, device, queue, registry,
             cache, drawn_in_layer(model, drawn, NEAR))
         scene_sync(world, far_list, slot_table, device, queue, registry,
