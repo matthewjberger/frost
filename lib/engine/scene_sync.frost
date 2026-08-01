@@ -25,7 +25,6 @@ import "../renderer/render_world.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
 import "ecs.frost"
-import "math.frost"
 
 export ObjectIds, all_drawn, drawn_in_layer, scene_sync
 

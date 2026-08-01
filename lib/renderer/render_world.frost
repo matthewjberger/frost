@@ -29,10 +29,8 @@
 // mesh's slice of `visible` begins, so the one expression covers every batch.
 
 import "wgpu.frost"
-import "renderer.frost"
 import "geometry.frost"
 import "material.frost"
-import "ecs.frost"
 import "math.frost"
 import "mem.frost"
 

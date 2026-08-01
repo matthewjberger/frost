@@ -20,7 +20,6 @@
 
 import "wgpu.frost"
 import "math.frost"
-import "mem.frost"
 
 export Vertex, MeshSpan, Geometry,
     geometry_new, geometry_add, geometry_bind, geometry_free,
