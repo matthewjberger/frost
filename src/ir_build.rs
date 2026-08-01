@@ -3614,6 +3614,18 @@ fn substitute_expression(
     }
 }
 
+// What a struct or an enum is called, looking through a borrow of one, or
+// nothing for anything else. Two aggregates are the same type when they carry
+// the same name; everything else about a type is checked elsewhere, and a name
+// is what survives being turned into an address.
+fn aggregate_name(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Struct(name) | Type::Enum(name) => Some(name.as_str()),
+        Type::Ref(inner) | Type::RefMut(inner) => aggregate_name(inner),
+        _ => None,
+    }
+}
+
 fn needs_memory(ty: &Type) -> bool {
     matches!(
         ty,
@@ -6395,6 +6407,24 @@ impl<'a> FunctionLowering<'a> {
         target: &Type,
         consume: bool,
     ) -> Result<IrOperand> {
+        // An aggregate travels by address, and an address is a machine word:
+        // once this has taken one, nothing downstream can tell a pointer to one
+        // struct from a pointer to another. So the two are compared here, which
+        // is the one place every way of passing an aggregate goes through, and
+        // while both types are still spelled out.
+        //
+        // A `Vec3` passed where a `Mat4` was declared read sixty-four bytes off
+        // a twelve-byte value, and every check after this agreed, because what
+        // they were checking was a pointer.
+        if let Some(given) = self.probe_type(argument)
+            && let (Some(from), Some(into)) =
+                (aggregate_name(&given), aggregate_name(target))
+            && from != into
+        {
+            bail!(
+                "this argument is a '{given}' and a '{target}' is what is wanted here"
+            );
+        }
         // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice
         // view and hand over its address, rather than the array's.
         if let Type::Slice(element) = target
