@@ -301,12 +301,12 @@ deps:
     echo "SDL3 comes from the system here: install libsdl3-dev or sdl3."
     echo "ready. run: just bindgen; just triangle"
 
-# A spinning triangle through the platform and the renderer (Windows)
+# Two passes over two layers of one world, sorted by depth (Windows)
 [windows]
 scene:
     $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "examples/graphics/wgpu/wgpu_native.dll" -o examples/graphics/scene.exe examples/graphics/scene.frost; Copy-Item examples/graphics/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/scene.exe
 
-# A spinning triangle through the platform and the renderer (Unix)
+# Two passes over two layers of one world, sorted by depth (Unix)
 [unix]
 scene:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/scene examples/graphics/scene.frost

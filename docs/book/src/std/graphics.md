@@ -316,6 +316,73 @@ under `just test` with `no_device()` in place of a GPU: what runs first, which
 transients share a texture, what the load ops come out as, the phase and enabled
 state a pass carries, and each of the five graphs that cannot run at all.
 
+## From a world to a run
+
+Four of the five demos draw what an ECS world holds, and all four reach the GPU
+through one file, `examples/graphics/scene_sync.frost`. A pass records commands
+and a world holds game state; this is the one place the two meet.
+
+`world_prepare` registers the components a drawn thing carries, along with the
+two resources every one of these programs wants:
+
+```frost
+Placement :: struct { position: Vec3, scale: Vec3 }
+Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+Model :: struct { matrix: Mat4 }
+Drawn :: struct { mesh: i64, material: i64, layer: i64 }
+```
+
+`world_schedule` is the frame. `turn_things` advances every angle in `First`,
+and `place_things` walks down from every root in `Update`, leaving each thing's
+`Model` with whatever it hangs off applied over its own placement, however deep
+it hangs. A system is a `fn(mut World)` and captures nothing, so which component
+is which travels in a `WorldIds` resource, and how long the frame was is written
+there by `world_step`.
+
+Then `scene_sync` walks the world once and leaves a `DrawList` behind:
+
+```frost
+scene_sync(world, list, slot_table, device, queue, registry, cache,
+    all_drawn(model, drawn))
+```
+
+Each entity gets a uniform buffer and a binding of its own, made once and
+written every frame, keyed by the entity itself. Both halves of the handle are
+matched, so a slot left behind by a despawn stays where it is and the new entity
+gets a slot of its own. A thing spawned while the program runs is drawn on the
+next frame with no table to resize and nothing to renumber, and the renderer
+stops knowing how many things there are.
+
+What a pass walks is flat:
+
+```frost
+list := unsafe { s^.list^ }
+mut index : i64 = 0
+while (index < draw_list_count(list)) {
+    one := draw_list_at(list, index)
+    render_pass_encoder_set_bind_group(pass, 1, one.binding, 0, no_pointer())
+    mesh_bind(pass, one.geometry)
+    render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0, 0, 0)
+    index = index + 1
+}
+```
+
+### Layers, and one run per pass
+
+A thing carries the layer it belongs to, and `drawn_in_layer` builds a run from
+one of them. `scene.frost` divides its world that way: two calls over one slot
+table give the near pass and the far pass a run apiece, each holding only what
+that pass draws. Which things those are is decided once a frame in the walk, and
+a pass records every item it is handed.
+
+### Grouping by material
+
+`Drawable` carries a material number, and `draw_list_group_by_material` sorts a
+run so the things sharing one sit together. `textured.frost` sets group 2 where
+that number changes, which is four binding changes across thirty-six things.
+What a material means is the pass's own business: `textured` binds an image for
+it, and `spinning` reads the colour already in the uniform.
+
 ## The frame is linear
 
 Every WebGPU object is reference counted: `wgpuTextureRelease` and its

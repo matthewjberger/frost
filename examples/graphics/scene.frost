@@ -1,30 +1,35 @@
-// A scene the ECS holds and two passes draw, with depth sorting between them.
+// A world the ECS holds and two passes draw, with depth sorting between them.
 //
 //   just scene
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it,
-// and resizing works. Four triangles spin at different distances
-// and different speeds. Two passes draw them: the near ones clear the targets,
-// the far ones load and draw over. The far pass runs second and its triangles
-// still go behind, because depth decides that rather than order.
+// and resizing works. Four shapes spin at different distances and different
+// speeds. Two passes draw them: the near ones clear the targets, the far ones
+// load and draw over. The far pass runs second and its shapes still go behind,
+// because depth decides that rather than order.
 //
 // That is the point of drawing it this way. If the depth attachment were
 // missing, or the second pass cleared depth instead of loading it, the far
-// triangles would sit on top of the near ones and everything else would look
+// shapes would sit on top of the near ones and everything else would look
 // identical. It is a thing that is either right or obviously wrong on screen.
 //
 // Both passes declare the same two targets and the render graph decides the
 // rest: which runs first, and that the first write of a target clears it while
 // the second loads what is there. Neither pass body mentions a load op.
 //
-// The entities are ordinary ECS rows. `ecs_spawn_with` puts each one in its
-// archetype as it is made rather than migrating it there a component at a time,
-// and a query walks the columns.
+// Which shapes each pass draws is decided before either records. A thing
+// carries the layer it belongs to, and `scene_sync` walks the world once per
+// layer and leaves a run holding only that layer's things. The two passes are
+// the same function over two runs, which is what a pass being a value buys:
+// nothing had to be written twice to have two of them.
 
 import "platform.frost"
 import "camera.frost"
 import "renderer.frost"
 import "graph.frost"
+import "mesh.frost"
+import "material.frost"
+import "scene_sync.frost"
 import "wgpu.frost"
 import "ecs.frost"
 import "math.frost"
@@ -33,115 +38,123 @@ import "io.frost"
 
 WIDTH :: 960
 HEIGHT :: 540
-VERTEX_COUNT :: 3
-VERTEX_BYTES :: 96
-UNIFORM_BYTES :: 64
 INSTANCES :: 4
 
-Vertex :: struct { position: Vec4, colour: Vec4 }
+// The camera, written once a frame: one matrix and nothing else. What a thing's
+// own uniform holds is `scene_sync`'s, since that is what fills it.
+FRAME_BYTES :: 64
 
-// What an entity is: where it sits, how fast it turns, how far round it is now,
-// and which of the two passes draws it.
-Placement :: struct { x: f32, y: f32, z: f32 }
-Spin :: struct { rate: f32, angle: f32 }
-Layer :: struct { near: i64 }
+// The two layers this world is divided into, and which pass draws each.
+NEAR :: 0
+FAR :: 1
 
-// One uniform buffer and one binding per entity, because each is drawn with its
-// own matrix, and which layer it belongs to. A real scene would write the
-// matrices into one buffer at different offsets; four is not enough to be worth
-// it and the shape is the same.
-Slot :: struct { uniform: Buffer, group: BindGroup, near: i64 }
-
-// What a pass draws with. No world in it: the ECS is read once a frame, before
-// any pass runs, and what it produces is the matrix in each slot's buffer. So a
-// pass reads nothing that can change while it records, and the world is
-// borrowed in exactly one place rather than held by two passes at once.
-//
-// That split is not a workaround for the move checker refusing the other
-// arrangement, though it did. Preparing and executing are different jobs: one
-// walks game state and the other records commands, and keeping them apart is
-// what lets the second be handed a list of slots and nothing else.
+// What a pass records with: a pipeline and the run it was handed. Which layer
+// that run came from is not here, because a run is already only what this pass
+// draws.
 Scene :: struct {
     pipeline: RenderPipeline,
-    vertices: Buffer,
-    slots: []Slot,
-    draw_near: i64,
+    list: ^DrawList,
+    frame_group: BindGroup,
 }
 
 SHADER :: "
-struct Uniforms { mvp: mat4x4<f32> }
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+struct Frame { view_projection: mat4x4<f32> }
+struct Object {
+    model: mat4x4<f32>,
+    base_color: vec4<f32>,
+    surface: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var<uniform> object: Object;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) colour: vec4<f32>,
+    @location(0) normal: vec3<f32>,
 }
 
 @vertex
-fn vs_main(@location(0) position: vec4<f32>,
-           @location(1) colour: vec4<f32>) -> VertexOut {
+fn vs_main(@location(0) position: vec3<f32>,
+           @location(1) normal: vec3<f32>) -> VertexOut {
     var out: VertexOut;
-    out.position = uniforms.mvp * position;
-    out.colour = colour;
+    let placed = object.model * vec4<f32>(position, 1.0);
+    out.position = frame.view_projection * placed;
+    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    return in.colour;
+    let towards = normalize(vec3<f32>(-0.4, 0.9, 0.5));
+    let lambert = max(dot(normalize(in.normal), towards), 0.0);
+    return vec4<f32>(object.base_color.rgb * (0.25 + 0.75 * lambert),
+        object.base_color.a);
 }
 "
 
-// One pass body, told by its state which layer it is for. Both passes are the
-// same function with different state, which is what a pass being a value buys:
-// nothing had to be written twice to have two of them.
+// One pass body over one run. Both passes are this function with different
+// state, and neither knows there is another.
 //
 // What the two of them draw into, and whether each clears what is there or
 // draws over it, is not written here. Both passes declare the same colour and
 // depth targets, the graph puts the first writer first, and the first write of
-// a target clears it while every write after loads it. That used to be this
-// function reading its own state to pick between two load ops, which is a rule
-// a reader keeps rather than one the code does.
+// a target clears it while every write after loads it.
 draw_layer :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut s := unsafe { ptr_cast($Scene, state) }
-    near := unsafe { s^.draw_near }
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
-    render_pass_encoder_set_vertex_buffer(pass, 0, unsafe { s^.vertices }, 0,
-        VERTEX_BYTES)
+    render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
+        no_pointer())
 
+    list := unsafe { s^.list^ }
     mut index : i64 = 0
-    while (index < INSTANCES) {
-        slot := unsafe { s^.slots[index] }
-        if (slot.near == near) {
-            render_pass_encoder_set_bind_group(pass, 0, slot.group, 0,
-                no_pointer())
-            render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
-        }
+    while (index < draw_list_count(list)) {
+        one := draw_list_at(list, index)
+        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
+            no_pointer())
+        mesh_bind(pass, one.geometry)
+        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
+            0, 0)
         index = index + 1
     }
 }
 
-// The frame's read of the world: advance every angle, work out where each
-// entity is, and leave the matrix in the buffer its binding points at. This is
-// the only place the world is touched, and it happens before any pass records.
-prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
-    slots: []Slot, placement: i64, spin: i64, view_projection: Mat4,
-    step: f32) {
-    mut index : i64 = 0
-    while (index < slice_len(entities)) {
-        held := entities[index]
-        mut turn := ecs_get($Spin, world, held, spin)
-        turn.angle = turn.angle + turn.rate * step
-        ecs_set($Spin, world, held, spin, turn)
+// The camera, as the bytes the shader reads it as.
+write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
+    mut view_projection := camera_view_projection(eye, w, h)
+    queue_write_buffer(queue, uniform, 0, ptr_to(view_projection.m[0]),
+        FRAME_BYTES)
+}
 
-        place := ecs_get($Placement, world, held, placement)
-        model := mat4_mul(mat4_translation(vec3(place.x, place.y, place.z)),
-            mat4_rotation_y(turn.angle))
-        mut mvp := mat4_mul(view_projection, model)
-        queue_write_buffer(queue, slots[index].uniform, 0,
-            ptr_to(mvp.m[0]), UNIFORM_BYTES)
-        index = index + 1
-    }
+uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = ShaderStage::Vertex | ShaderStage::Fragment
+    entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entry.buffer.min_binding_size = size
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
+    size: i64) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = size
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group(device, ptr_to(descriptor))
 }
 
 make_pipeline :: fn(device: Device, format: u32,
@@ -153,16 +166,18 @@ make_pipeline :: fn(device: Device, format: u32,
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
+    // Where the surface faces is read and where it reads an image is not, so
+    // two of the three the mesh carries are described here.
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
-    attributes[0].format = VERTEX_FORMAT_FLOAT32X4
-    attributes[0].offset = 0
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
-    attributes[1].format = VERTEX_FORMAT_FLOAT32X4
-    attributes[1].offset = 16
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[1].offset = NORMAL_OFFSET
     attributes[1].shader_location = 1
 
     mut buffer_layout := vertex_buffer_layout_init()
-    buffer_layout.array_stride = 32
+    buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
@@ -192,7 +207,7 @@ make_pipeline :: fn(device: Device, format: u32,
     descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
-    descriptor.primitive.cull_mode = CULL_MODE_NONE
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
     descriptor.multisample.count = 1
     descriptor.multisample.mask = 4294967295
     descriptor.depth_stencil = ptr_to(depth)
@@ -216,92 +231,88 @@ main :: fn() -> i64 {
     device := renderer_device(r)
     queue := renderer_queue(r)
 
-    mut vertices : [VERTEX_COUNT]Vertex = [
-        Vertex { position = vec4(-0.6, -0.5, 0.0, 1.0),
-            colour = vec4(1.0, 0.3, 0.3, 1.0) },
-        Vertex { position = vec4(0.6, -0.5, 0.0, 1.0),
-            colour = vec4(0.3, 1.0, 0.4, 1.0) },
-        Vertex { position = vec4(0.0, 0.6, 0.0, 1.0),
-            colour = vec4(0.4, 0.5, 1.0, 1.0) },
-    ]
-    mut vertex_descriptor := buffer_descriptor_init()
-    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
-    vertex_descriptor.size = VERTEX_BYTES
-    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
-    queue_write_buffer(queue, vertex_buffer, 0,
-        ptr_to(vertices[0]), VERTEX_BYTES)
+    // A cube for the near layer and a sphere for the far one, so which pass
+    // drew a thing is readable off the screen.
+    mut cache := mesh_cache_new(4)
+    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
+    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.6, 16, 24))
+    cube := mesh_cache_find(cache, "cube")
+    sphere := mesh_cache_find(cache, "sphere")
 
-    mut layout_entry := bind_group_layout_entry_init()
-    layout_entry.binding = 0
-    layout_entry.visibility = ShaderStage::Vertex
-    layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
-    layout_entry.buffer.min_binding_size = UNIFORM_BYTES
-    mut group_layout_descriptor := bind_group_layout_descriptor_init()
-    group_layout_descriptor.entries_count = 1
-    group_layout_descriptor.entries =
-        ptr_to(layout_entry)
-    group_layout := device_create_bind_group_layout(device,
-        ptr_to(group_layout_descriptor))
+    mut registry := materials_new(8)
+    mut looks : [INSTANCES]i64 = [0; INSTANCES]
+    looks[0] = materials_add(registry, Material {
+        base_color = vec4(1.0, 0.35, 0.35, 1.0), roughness = 0.5,
+        metallic = 0.0 })
+    looks[1] = materials_add(registry, Material {
+        base_color = vec4(0.35, 1.0, 0.45, 1.0), roughness = 0.5,
+        metallic = 0.0 })
+    looks[2] = materials_add(registry, Material {
+        base_color = vec4(0.45, 0.55, 1.0, 1.0), roughness = 0.5,
+        metallic = 0.0 })
+    looks[3] = materials_add(registry, Material {
+        base_color = vec4(1.0, 0.85, 0.4, 1.0), roughness = 0.5,
+        metallic = 0.0 })
 
+    frame_layout := uniform_layout(device, FRAME_BYTES)
+    object_layout := uniform_layout(device, OBJECT_BYTES)
+    mut layouts : [2]BindGroupLayout = [frame_layout, object_layout]
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
-    pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts =
-        ptr_to(group_layout)
+    pipeline_layout_descriptor.bind_group_layouts_count = 2
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
 
-    // The world, and the three components a drawn thing has.
-    mut world := ecs_new()
-    placement := ecs_register($Placement, world)
-    spin := ecs_register($Spin, world)
-    layer := ecs_register($Layer, world)
-    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
-        layer)
+    frame_uniform := uniform_buffer(device, FRAME_BYTES)
+    frame_group := uniform_group(device, frame_layout, frame_uniform,
+        FRAME_BYTES)
 
-    mut entities := heap_slice($Entity, INSTANCES)
-    mut slots := heap_slice($Slot, INSTANCES)
+    mut world := ecs_new()
+    ids := world_prepare(world)
+    placement := ids.placement
+    spin := ids.spin
+    drawn := ids.drawn
+    model := ids.model
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
+        spin), drawn), model)
+
+    // One binding per thing, whichever layer it is in, and a run per layer. The
+    // slots are keyed by entity, so one table answers for both passes.
+    mut slot_table := slot_table_new(INSTANCES * 2, object_layout)
+    mut near_list := draw_list_new(INSTANCES)
+    mut far_list := draw_list_new(INSTANCES)
+    mut frame_schedule := world_schedule()
+
     mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
     mut depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
     mut rates : [INSTANCES]f32 = [1.0, -1.4, 0.7, -0.5]
-    mut nears : [INSTANCES]i64 = [1, 1, 0, 0]
+    mut layers : [INSTANCES]i64 = [NEAR, NEAR, FAR, FAR]
 
     mut made : i64 = 0
     while (made < INSTANCES) {
         // Straight into the archetype it belongs in, rather than spawning bare
         // and migrating once per component.
         held := ecs_spawn_with(world, wanted)
-        ecs_set($Placement, world, held, placement,
-            Placement { x = spread[made], y = 0.0, z = depths[made] })
-        ecs_set($Spin, world, held, spin,
-            Spin { rate = rates[made], angle = 0.0 })
-        ecs_set($Layer, world, held, layer, Layer { near = nears[made] })
-        entities[made] = held
-
-        mut uniform_descriptor := buffer_descriptor_init()
-        uniform_descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
-        uniform_descriptor.size = UNIFORM_BYTES
-        uniform := device_create_buffer(device, ptr_to(uniform_descriptor))
-        mut group_entry := bind_group_entry_init()
-        group_entry.binding = 0
-        group_entry.buffer = uniform
-        group_entry.size = UNIFORM_BYTES
-        mut group_descriptor := bind_group_descriptor_init()
-        group_descriptor.layout = group_layout
-        group_descriptor.entries_count = 1
-        group_descriptor.entries =
-            ptr_to(group_entry)
-        slots[made] = Slot { uniform = uniform,
-            group = device_create_bind_group(device, ptr_to(group_descriptor)),
-            near = nears[made] }
+        ecs_set($Placement, world, held, placement, Placement {
+            position = vec3(spread[made], 0.0, depths[made]),
+            scale = vec3(0.6, 0.6, 0.6) })
+        ecs_set($Spin, world, held, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
+            speed = rates[made], angle = 0.0 })
+        mut shape := cube
+        if (layers[made] == FAR) {
+            shape = sphere
+        }
+        ecs_set($Drawn, world, held, drawn, Drawn { mesh = shape,
+            material = looks[made], layer = layers[made] })
         made = made + 1
     }
 
     pipeline := make_pipeline(device, renderer_format(r), pipeline_layout)
     mut eye := camera_default()
-    mut near_scene := Scene { pipeline = pipeline, vertices = vertex_buffer,
-        slots = slots, draw_near = 1 }
-    mut far_scene := Scene { pipeline = pipeline, vertices = vertex_buffer,
-        slots = slots, draw_near = 0 }
+    mut near_scene := Scene { pipeline = pipeline, list = ptr_to(near_list),
+        frame_group = frame_group }
+    mut far_scene := Scene { pipeline = pipeline, list = ptr_to(far_list),
+        frame_group = frame_group }
 
     // Both passes write both targets, and nothing stands between them, so the
     // graph keeps them in the order they were declared: near clears, far draws
@@ -333,8 +344,13 @@ main :: fn() -> i64 {
         }
         step := delta_seconds(p)
         camera_advance(eye, p, step)
-        prepare(world, queue, entities, slots, placement, spin,
-            camera_view_projection(eye, width(p), height(p)), step)
+        write_frame(queue, frame_uniform, eye, width(p), height(p))
+        world_step(world, step)
+        schedule_run(frame_schedule, world, ANY_STATE)
+        scene_sync(world, near_list, slot_table, device, queue, registry,
+            cache, drawn_in_layer(model, drawn, NEAR))
+        scene_sync(world, far_list, slot_table, device, queue, registry,
+            cache, drawn_in_layer(model, drawn, FAR))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -344,8 +360,14 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    heap_release_slice($Slot, slots)
-    heap_release_slice($Entity, entities)
+    draw_list_free(near_list)
+    draw_list_free(far_list)
+    slot_table_free(slot_table)
+    schedule_free(frame_schedule)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
+    materials_free(registry)
+    mesh_cache_free(cache)
     ecs_free(world)
     renderer_close(r)
     platform_close(p)
