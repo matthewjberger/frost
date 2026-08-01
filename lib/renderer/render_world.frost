@@ -39,6 +39,7 @@ export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
     render_world_upload, render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
     render_world_cull_layout, render_world_cull_group, render_world_dispatch,
+    render_world_cull_pipeline,
     render_world_draw, render_world_draw_batch,
     CULL_SHADER, OBJECT_BYTES, MAX_PER_BATCH
 
@@ -133,6 +134,31 @@ render_world_indirect :: fn(held: RenderWorld) -> Buffer {
 render_world_cull_layout :: fn(held: RenderWorld) -> BindGroupLayout {
     held.cull_layout
 }
+// The pipeline that decides what is drawn. Its shader is `CULL_SHADER` and what
+// it writes is this file's own three buffers, so their shapes have to agree and
+// the pipeline is made here rather than by whoever happens to run the pass.
+render_world_cull_pipeline :: fn(device: Device,
+    layout: BindGroupLayout) -> ComputePipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
+    device_create_compute_pipeline(device, ptr_to(descriptor))
+}
+
 render_world_cull_group :: fn(held: RenderWorld) -> BindGroup {
     held.cull_group
 }

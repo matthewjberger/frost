@@ -2766,6 +2766,50 @@ fn self_hosted_takes_a_struct_literal_as_consuming_what_it_names() {
     assert_eq!(output, "4\n");
 }
 
+// The same rule for an array literal, which is the other half of the arm that
+// reads a literal's items. An element written into an array is handed to the
+// array exactly as a field written into a struct is handed to the struct, so
+// `pair` owes nothing for the two it opened once the array holds them.
+//
+// The array is handed straight to what consumes it. A resource can be taken out
+// of an array the call was given by `move`, and cannot be taken out of one a
+// frame is still holding, which is why `both` is a parameter here.
+const RESOURCE_INTO_AN_ARRAY: &str = "Held :: linear struct { id: i64 }\n\
+     open :: fn(id: i64) -> Held { Held { id = id } }\n\
+     close :: fn(move h: Held) -> i64 { h.id }\n\
+     both :: fn(move held: [2]Held) -> i64 {\n\
+     \x20   close(held[0]) + close(held[1])\n\
+     }\n\
+     pair :: fn() -> [2]Held {\n\
+     \x20   mut one := open(3)\n\
+     \x20   mut two := open(4)\n\
+     \x20   [one, two]\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print both(pair())\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn a_resource_is_consumed_by_the_array_that_holds_it() {
+    let Some(output) =
+        compile_and_run_unaudited("res_into_array", RESOURCE_INTO_AN_ARRAY)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
+#[test]
+fn self_hosted_takes_an_array_literal_as_consuming_what_it_names() {
+    let Some(output) =
+        selfhosted_unaudited_output("shresarray", RESOURCE_INTO_AN_ARRAY)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {
@@ -8027,7 +8071,7 @@ fn a_defer_in_a_test_body_runs() {
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
-    ("ecs.frost", "108 passed"),
+    ("ecs.frost", "112 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
     ("math.frost", "24 passed"),
@@ -16819,6 +16863,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "graph.frost",
             "scene_sync.frost",
             "geometry.frost",
+            "uniform.frost",
             "world.frost",
             "app.frost",
             "gltf.frost",
@@ -16957,8 +17002,61 @@ fn the_frame_moves_the_world_it_was_given() {
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
         assert!(
-            output.contains("4 passed, 0 failed"),
+            output.contains("5 passed, 0 failed"),
             "the frame's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+// Giving back a renderer that never opened. Opening is a run of acquisitions
+// and any of them can fail partway, so a renderer that got some of the way
+// holds real handles for the steps that worked and handles naming nothing for
+// the rest. Releasing one of those has to be a no-op: wgpu's release functions
+// abort the process when handed a null, so without the guard the close after a
+// failed open is what kills the program, on the machine that was already having
+// trouble opening a device.
+//
+// The guard is written by `tools/wgpu_bindgen.frost` into every one of the
+// twenty-three release wrappers, so this covers the shape rather than one of
+// them.
+#[test]
+fn a_renderer_that_never_opened_is_closed_safely() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(libraries) = graphics_libraries(&root) else {
+        return;
+    };
+    let source = graphics_source(&root, "renderer.frost");
+    let search = library_search_path(&root);
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("1 passed, 0 failed"),
+            "the renderer's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );
     }
@@ -17088,7 +17186,7 @@ fn graphics_source(root: &Path, name: &str) -> PathBuf {
         "sdl.frost" | "platform.frost" => "lib/platform",
         "wgpu.frost" | "renderer.frost" | "graph.frost" | "mesh.frost"
         | "material.frost" | "texture.frost" | "render_world.frost"
-        | "geometry.frost" => "lib/renderer",
+        | "geometry.frost" | "uniform.frost" => "lib/renderer",
         "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost"
         | "app.frost" => "lib/engine",
         _ => "examples/graphics",
