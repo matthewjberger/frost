@@ -18182,6 +18182,31 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A bare number takes its type from what it is compared against, whichever
+    // side it is written on. Neither compiler did: the bootstrap typed the left
+    // operand with nothing to go on and the self-hosted one typed a float literal
+    // as the widest float there is, so `0.6 == x` widened an `f32` to compare it
+    // against a number no `f32` holds. That is true for the values a float
+    // represents exactly and false for the rest, so a test written with halves
+    // and quarters passes and a glTF file full of measurements does not.
+    (
+        "a_float_literal_takes_the_width_it_is_compared_against",
+        "main :: fn() -> i64 {\n\
+         \x20   narrow : f32 = 0.6\n\
+         \x20   if (narrow == 0.6) { print 1 } else { print 0 }\n\
+         \x20   if (0.6 == narrow) { print 2 } else { print 0 }\n\
+         \x20   if (narrow != 0.6) { print 0 } else { print 3 }\n\
+         \x20   if (0.7 > narrow) { print 4 } else { print 0 }\n\
+         \x20   if (-0.6 == -narrow) { print 5 } else { print 0 }\n\
+         \x20   wide : f64 = 0.6\n\
+         \x20   if (wide == 0.6) { print 6 } else { print 0 }\n\
+         \x20   if (0.6 == wide) { print 7 } else { print 0 }\n\
+         \x20   exact : f32 = 0.25\n\
+         \x20   if (0.25 == exact) { print 8 } else { print 0 }\n\
+         \x20   0\n\
+         }\n",
+        "1\n2\n3\n4\n5\n6\n7\n8\n",
+    ),
     // An element of a compile-time list whose type is what a call to a generic
     // answers with. The element is written down while the call is parsed, and a
     // generic's concrete return type is worked out after that, so the
