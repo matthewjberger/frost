@@ -19,6 +19,8 @@
 
 import "wgpu.frost"
 import "renderer.frost"
+import "platform.frost"
+import "camera.frost"
 import "mesh.frost"
 import "material.frost"
 import "ecs.frost"
@@ -30,9 +32,11 @@ export Drawable, DrawList, SlotTable, ObjectIds,
     draw_list_new, draw_list_free, draw_list_count, draw_list_at,
     draw_list_group_by_material,
     slot_table_new, slot_table_free,
-    world_prepare, world_step, world_tree, world_schedule,
+    world_prepare, world_tree, world_schedule,
+    world_input, world_camera, world_camera_set,
     all_drawn, drawn_in_layer,
-    scene_sync, OBJECT_BYTES, ONE_LAYER, WORLD_SLOT, TREE_SLOT
+    scene_sync, OBJECT_BYTES, ONE_LAYER,
+    WORLD_SLOT, TREE_SLOT, INPUT_SLOT, CAMERA_SLOT
 
 // One thing's own: its model matrix, its colour, and the two numbers that say
 // how the surface behaves, with the fourth of those carrying which entry of a
@@ -294,24 +298,25 @@ Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 // numbers its own.
 ONE_LAYER :: 0
 
-// Which component is which, and how long the frame was. A system captures
-// nothing, so this is what it reads to find its way around the world.
+// Which component is which. A system captures nothing, so this is what it reads
+// to find its way around the world.
 WorldIds :: struct {
     placement: i64,
     spin: i64,
     model: i64,
     drawn: i64,
-    step: f32,
 }
 
 // Which resource slot holds what. Registered in this order by `world_prepare`,
-// so a program never writes either number.
+// so a program never writes any of these numbers.
 WORLD_SLOT :: 0
 TREE_SLOT :: 1
+INPUT_SLOT :: 2
+CAMERA_SLOT :: 3
 
 // The components and resources every drawing program registers, in one call, so
-// the two slot numbers above are true by construction. The tree starts empty:
-// a program hangs whatever it wants off whatever it wants, and a thing attached
+// the slot numbers above are true by construction. The tree starts empty: a
+// program hangs whatever it wants off whatever it wants, and a thing attached
 // to nothing is a root.
 world_prepare :: fn(mut world: World) -> WorldIds {
     ids := WorldIds {
@@ -319,22 +324,38 @@ world_prepare :: fn(mut world: World) -> WorldIds {
         spin = ecs_register($Spin, world),
         model = ecs_register($Model, world),
         drawn = ecs_register($Drawn, world),
-        step = 0.0,
     }
     ecs_resource_register($WorldIds, world)
     ecs_resource_register($Hierarchy, world)
+    ecs_resource_register($Input, world)
+    ecs_resource_register($Camera, world)
     ecs_resource_set($WorldIds, world, WORLD_SLOT, ids)
     ecs_resource_set($Hierarchy, world, TREE_SLOT, hierarchy_new())
+    // A resource starts zeroed, and a zeroed `Input` is a frame in which
+    // nothing was held and no time passed, so the first schedule before the
+    // first poll moves nothing.
+    ecs_resource_set($Camera, world, CAMERA_SLOT, camera_default())
     // What the world holds, rather than the name that held it: setting a
     // resource hands it over, so this answers by asking.
     ecs_resource($WorldIds, world, WORLD_SLOT)
 }
 
-// How long this frame was, written where it lives. Handing the whole resource
-// over again would move what is in it, and this is the one field that changes.
-world_step :: fn(mut world: World, step: f32) {
-    mut held := ecs_resource_slice($WorldIds, world, WORLD_SLOT)
-    held[0].step = step
+// What the platform saw, put where a system can read it. Called once a frame
+// before the schedule runs, since everything in the schedule that reacts to a
+// key or advances by the clock reads it from here.
+world_input :: fn(mut world: World, held: Input) {
+    ecs_resource_set($Input, world, INPUT_SLOT, held)
+}
+
+// The camera the world holds, which is what a frame uniform is written from.
+world_camera :: fn(world: World) -> Camera {
+    ecs_resource($Camera, world, CAMERA_SLOT)
+}
+
+// Where the camera starts, for a program that wants it somewhere other than
+// `camera_default` puts it.
+world_camera_set :: fn(mut world: World, move eye: Camera) {
+    ecs_resource_set($Camera, world, CAMERA_SLOT, eye)
 }
 
 // The tree the world holds, for a program hanging one thing off another.
@@ -342,19 +363,31 @@ world_tree :: fn(mut world: World) -> ref Hierarchy {
     ecs_resource_ref($Hierarchy, world, TREE_SLOT)
 }
 
-// What a frame does to the world: every turn advanced, then where everything
-// ended up. What comes of that is `scene_sync`, which needs a device and is
-// therefore not a system.
+// What a frame does to the world: the camera moved and every turn advanced,
+// then where everything ended up. What comes of that is `scene_sync`, which
+// needs a device and is therefore not a system.
 world_schedule :: fn() -> Schedule {
     mut held := schedule_new()
+    schedule_add(held, Stage::First, move_camera)
     schedule_add(held, Stage::First, turn_things)
     schedule_add(held, Stage::Update, place_things)
     held
 }
 
+// The camera moved by whatever was held this frame. Both the camera and the
+// input come out of the world, because a system is handed a world and nothing
+// else.
+move_camera :: fn(mut world: World) {
+    held := ecs_resource($Input, world, INPUT_SLOT)
+    mut eye := ecs_resource($Camera, world, CAMERA_SLOT)
+    camera_advance(eye, held, input_delta_seconds(held))
+    ecs_resource_set($Camera, world, CAMERA_SLOT, eye)
+}
+
 // Every turn advanced by the frame's step.
 turn_things :: fn(mut world: World) {
     ids := ecs_resource($WorldIds, world, WORLD_SLOT)
+    step := input_delta_seconds(ecs_resource($Input, world, INPUT_SLOT))
     mut q := query_begin(world)
     query_with(q, ids.spin)
     while (query_next(world, q)) {
@@ -363,7 +396,7 @@ turn_things :: fn(mut world: World) {
         while (row < slice_len(rows)) {
             entity := rows[row]
             mut turn := ecs_get($Spin, world, entity, ids.spin)
-            turn.angle = turn.angle + turn.speed * ids.step
+            turn.angle = turn.angle + turn.speed * step
             ecs_set($Spin, world, entity, ids.spin, turn)
             row = row + 1
         }
@@ -421,4 +454,111 @@ local_of :: fn(mut world: World, placement: i64, spin: i64,
     mat4_mul(mat4_translation(place.position),
         mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
             mat4_scale(place.scale)))
+}
+
+// What a frame does to a world is arithmetic over components and resources, so
+// these run with no device anywhere near them: what the camera does with what
+// was held, and where a thing three deep in a tree ends up.
+
+test "the camera moves by what the world was told was held" {
+    mut world := ecs_new()
+    world_prepare(world)
+    // A resource starts zeroed, so this is a frame in which nothing was held,
+    // with one key and the clock written into it.
+    mut held := ecs_resource($Input, world, INPUT_SLOT)
+    held.keys[KEY_W] = true
+    held.step = 0.5
+    world_input(world, held)
+
+    before := world_camera(world)
+    mut frame := world_schedule()
+    schedule_run(frame, world, ANY_STATE)
+    after := world_camera(world)
+    // Zero yaw looks down -Z, so forward is a smaller z.
+    assert(after.position.z < before.position.z)
+
+    schedule_free(frame)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
+
+test "the camera turns by what the world was told was held" {
+    mut world := ecs_new()
+    world_prepare(world)
+    mut held := ecs_resource($Input, world, INPUT_SLOT)
+    held.keys[KEY_LEFT] = true
+    held.step = 0.5
+    world_input(world, held)
+
+    before := world_camera(world)
+    mut frame := world_schedule()
+    schedule_run(frame, world, ANY_STATE)
+    after := world_camera(world)
+    assert(after.yaw > before.yaw)
+    assert(after.position.x == before.position.x)
+
+    schedule_free(frame)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
+
+test "a frame in which nothing was held moves nothing" {
+    mut world := ecs_new()
+    world_prepare(world)
+    // A frame that lasted a while with nothing held, since a frame of no time
+    // at all would hold the camera still whatever it was told.
+    mut held := ecs_resource($Input, world, INPUT_SLOT)
+    held.step = 0.5
+    world_input(world, held)
+
+    before := world_camera(world)
+    mut frame := world_schedule()
+    schedule_run(frame, world, ANY_STATE)
+    after := world_camera(world)
+    assert(after.position.z == before.position.z)
+    assert(after.yaw == before.yaw)
+
+    schedule_free(frame)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
+
+test "a thing is placed against whatever it hangs off, however deep" {
+    mut world := ecs_new()
+    ids := world_prepare(world)
+    wanted := mask_with(mask_with(mask_with(mask_empty(), ids.placement),
+        ids.spin), ids.model)
+    // Held in one place, since spawning three and naming each would hand every
+    // one of them over to the array anyway.
+    mut chain : [3]Entity = [ecs_spawn_with(world, wanted),
+        ecs_spawn_with(world, wanted), ecs_spawn_with(world, wanted)]
+    mut made : i64 = 0
+    while (made < 3) {
+        ecs_set($Placement, world, chain[made], ids.placement, Placement {
+            position = vec3(1.0, 0.0, 0.0), scale = vec3(1.0, 1.0, 1.0) })
+        ecs_set($Spin, world, chain[made], ids.spin, Spin {
+            axis = vec3(0.0, 1.0, 0.0), speed = 0.0, angle = 0.0 })
+        made = made + 1
+    }
+    tree := world_tree(world)
+    hierarchy_attach(tree, chain[1], chain[0])
+    hierarchy_attach(tree, chain[2], chain[1])
+
+    mut frame := world_schedule()
+    schedule_run(frame, world, ANY_STATE)
+
+    // One step along x each, applied down the chain, so the leaf lands at
+    // three. Two passes over roots and their children would leave it at two.
+    placed := ecs_get($Model, world, chain[2], ids.model)
+    assert(placed.matrix.m[12] > 2.999 && placed.matrix.m[12] < 3.001)
+    between := ecs_get($Model, world, chain[1], ids.model)
+    assert(between.matrix.m[12] > 1.999 && between.matrix.m[12] < 2.001)
+
+    schedule_free(frame)
+    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
+    hierarchy_free(giving)
+    ecs_free(world)
 }

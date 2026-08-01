@@ -375,6 +375,7 @@ main :: fn() -> i64 {
     mut eye := camera_default()
     eye.position = vec3(0.0, 0.0, 14.0)
     eye.pitch = 0.0
+    world_camera_set(world, eye)
 
     while (scheduled && platform_poll(p)) {
         if (key_pressed(p, KEY_ESCAPE)) {
@@ -384,11 +385,10 @@ main :: fn() -> i64 {
             renderer_resize(r, width(p), height(p))
             graph_resize(graph, width(p), height(p))
         }
-        step := delta_seconds(p)
-        camera_advance(eye, p, step)
-        write_frame(queue, frame_uniform, eye, width(p), height(p))
-        world_step(world, step)
+        world_input(world, platform_input(p))
         schedule_run(frame_schedule, world, ANY_STATE)
+        write_frame(queue, frame_uniform, world_camera(world), width(p),
+            height(p))
         scene_sync(world, list, slot_table, device, queue, registry, cache,
             all_drawn(model, drawn))
 

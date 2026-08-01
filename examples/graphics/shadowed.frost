@@ -1218,6 +1218,7 @@ main :: fn() -> i64 {
     mut eye := camera_default()
     eye.position = vec3(0.0, 1.5, 13.0)
     eye.pitch = -0.05
+    world_camera_set(world, eye)
     mut elapsed : f32 = 0.0
 
     while (scheduled && platform_poll(p)) {
@@ -1228,11 +1229,11 @@ main :: fn() -> i64 {
             renderer_resize(r, width(p), height(p))
             graph_resize(graph, width(p), height(p))
         }
-        step := delta_seconds(p)
-        camera_advance(eye, p, step)
-        elapsed = elapsed + step
-        write_frame(queue, frame_uniform, eye, light, elapsed, width(p),
-            height(p))
+        world_input(world, platform_input(p))
+        schedule_run(frame_schedule, world, ANY_STATE)
+        elapsed = elapsed + delta_seconds(p)
+        write_frame(queue, frame_uniform, world_camera(world), light, elapsed,
+            width(p), height(p))
         // The second camera, looking back at the scene from the other side and
         // fixed rather than driven, so the inset shows what the first one
         // cannot see.
@@ -1242,8 +1243,6 @@ main :: fn() -> i64 {
         watcher.pitch = -0.35
         write_frame(queue, inset_uniform, watcher, light, elapsed, INSET_WIDTH,
             INSET_HEIGHT)
-        world_step(world, step)
-        schedule_run(frame_schedule, world, ANY_STATE)
         // From the world to what the passes draw, once a frame. Every pass that
         // draws the scene walks the same run.
         scene_sync(world, list, slot_table, device, queue, registry, cache,

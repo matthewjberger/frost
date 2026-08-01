@@ -17,11 +17,19 @@
 // The keyboard is indexed by scancode, which is where a key sits on the board
 // rather than what it prints, so a program that reads WASD reads the same three
 // corners under any layout.
+//
+// That state is a value of its own. `Platform` owns the window, the event queue
+// and the clock, and `Input` is what a frame of them left behind;
+// `platform_input` hands out a copy. Anything that wants to know what was
+// pressed can be handed one, which is what lets a system read input out of the
+// world it was given: a system captures nothing, and it has no business holding
+// a window it could close.
 
 import "sdl.frost"
 
 export Platform, platform_open, platform_close, platform_poll, platform_window,
-    platform_ok, platform_error,
+    platform_ok, platform_error, platform_input,
+    Input,
     KEY_COUNT, BUTTON_COUNT,
     KEY_A, KEY_D, KEY_S, KEY_W, KEY_Q, KEY_E,
     KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
@@ -31,7 +39,12 @@ export Platform, platform_open, platform_close, platform_poll, platform_window,
     button_down, button_pressed, button_released,
     pointer_x, pointer_y, pointer_dx, pointer_dy, wheel,
     width, height, resized,
-    delta_seconds, elapsed_seconds, frame_index
+    delta_seconds, elapsed_seconds, frame_index,
+    input_key_down, input_key_pressed, input_key_released,
+    input_button_down, input_button_pressed, input_button_released,
+    input_pointer_x, input_pointer_y, input_pointer_dx, input_pointer_dy,
+    input_wheel, input_width, input_height, input_resized,
+    input_delta_seconds, input_elapsed_seconds, input_frame_index
 
 // SDL's scancode table is this long, so a scancode indexes the arrays below
 // without a bound of its own.
@@ -60,12 +73,15 @@ BUTTON_LEFT :: 1
 BUTTON_MIDDLE :: 2
 BUTTON_RIGHT :: 3
 
-// Two copies of every button, this frame's and last frame's. An edge is the
-// difference between them, which is why the pair is here rather than a flag set
-// when the event arrives: a key pressed and released inside one frame would
+// What one frame of the machine came to: which keys and buttons are down, which
+// were down last frame, where the pointer is and how far it moved, how big the
+// window is and whether that changed, and how long the frame took.
+//
+// Two copies of every key and button, this frame's and last frame's. An edge is
+// the difference between them, which is why the pair is here rather than a flag
+// set when the event arrives: a key pressed and released inside one frame would
 // otherwise report neither.
-Platform :: struct {
-    window: Window,
+Input :: struct {
     keys: [KEY_COUNT]bool,
     keys_before: [KEY_COUNT]bool,
     buttons: [BUTTON_COUNT]bool,
@@ -78,12 +94,20 @@ Platform :: struct {
     window_width: i64,
     window_height: i64,
     was_resized: bool,
-    closing: bool,
-    started_at: u64,
-    ticked_at: u64,
     step: f32,
     since_start: f32,
     frames: i64,
+}
+
+// The window, the clock it is paced by, and the state the last poll left. The
+// three fields above `state` are what only the loop that owns the window has
+// any use for.
+Platform :: struct {
+    window: Window,
+    closing: bool,
+    started_at: u64,
+    ticked_at: u64,
+    state: Input,
 }
 
 // Opens the window and starts the clock. A window that could not be made comes
@@ -96,15 +120,20 @@ platform_open :: fn(title: str, w: i64, h: i64) -> Platform {
     now := sdl_ticks()
     Platform {
         window = made,
-        keys = [false; KEY_COUNT],
-        keys_before = [false; KEY_COUNT],
-        buttons = [false; BUTTON_COUNT],
-        buttons_before = [false; BUTTON_COUNT],
-        at_x = 0.0, at_y = 0.0, moved_x = 0.0, moved_y = 0.0, scrolled = 0.0,
-        window_width = w, window_height = h,
-        was_resized = false, closing = false,
-        started_at = now, ticked_at = now,
-        step = 0.0, since_start = 0.0, frames = 0,
+        closing = false,
+        started_at = now,
+        ticked_at = now,
+        state = Input {
+            keys = [false; KEY_COUNT],
+            keys_before = [false; KEY_COUNT],
+            buttons = [false; BUTTON_COUNT],
+            buttons_before = [false; BUTTON_COUNT],
+            at_x = 0.0, at_y = 0.0, moved_x = 0.0, moved_y = 0.0,
+            scrolled = 0.0,
+            window_width = w, window_height = h,
+            was_resized = false,
+            step = 0.0, since_start = 0.0, frames = 0,
+        },
     }
 }
 
@@ -114,6 +143,9 @@ platform_close :: fn(mut p: Platform) {
 }
 
 platform_window :: fn(p: Platform) -> Window { p.window }
+
+// What the last poll left, as a value that carries no window with it.
+platform_input :: fn(p: Platform) -> Input { p.state }
 
 // Whether the window was made. A program checks this before drawing, and asks
 // `platform_error` when it is false.
@@ -138,18 +170,18 @@ platform_error :: fn() -> str { sdl_error() }
 platform_poll :: fn(mut p: Platform) -> bool {
     mut index : i64 = 0
     while (index < KEY_COUNT) {
-        p.keys_before[index] = p.keys[index]
+        p.state.keys_before[index] = p.state.keys[index]
         index = index + 1
     }
     mut button : i64 = 0
     while (button < BUTTON_COUNT) {
-        p.buttons_before[button] = p.buttons[button]
+        p.state.buttons_before[button] = p.state.buttons[button]
         button = button + 1
     }
-    p.moved_x = 0.0
-    p.moved_y = 0.0
-    p.scrolled = 0.0
-    p.was_resized = false
+    p.state.moved_x = 0.0
+    p.state.moved_y = 0.0
+    p.state.scrolled = 0.0
+    p.state.was_resized = false
 
     mut event := event_new()
     while (poll_event(event)) {
@@ -158,52 +190,52 @@ platform_poll :: fn(mut p: Platform) -> bool {
             p.closing = true
         }
         if (kind == EventKind::WindowResized) {
-            p.window_width = event_window_width(event)
-            p.window_height = event_window_height(event)
-            p.was_resized = true
+            p.state.window_width = event_window_width(event)
+            p.state.window_height = event_window_height(event)
+            p.state.was_resized = true
         }
         // A repeat is the system saying the key is still down, which the state
         // already says, so only the first press moves anything.
         if (kind == EventKind::KeyDown && event_key_repeat(event) == false) {
             code := event_scancode(event)
             if (code >= 0 && code < KEY_COUNT) {
-                p.keys[code] = true
+                p.state.keys[code] = true
             }
         }
         if (kind == EventKind::KeyUp) {
             code := event_scancode(event)
             if (code >= 0 && code < KEY_COUNT) {
-                p.keys[code] = false
+                p.state.keys[code] = false
             }
         }
         if (kind == EventKind::MouseMotion) {
-            p.at_x = event_mouse_x(event)
-            p.at_y = event_mouse_y(event)
-            p.moved_x = p.moved_x + event_mouse_dx(event)
-            p.moved_y = p.moved_y + event_mouse_dy(event)
+            p.state.at_x = event_mouse_x(event)
+            p.state.at_y = event_mouse_y(event)
+            p.state.moved_x = p.state.moved_x + event_mouse_dx(event)
+            p.state.moved_y = p.state.moved_y + event_mouse_dy(event)
         }
         if (kind == EventKind::MouseButtonDown) {
             held := event_button(event)
             if (held >= 0 && held < BUTTON_COUNT) {
-                p.buttons[held] = true
+                p.state.buttons[held] = true
             }
         }
         if (kind == EventKind::MouseButtonUp) {
             held := event_button(event)
             if (held >= 0 && held < BUTTON_COUNT) {
-                p.buttons[held] = false
+                p.state.buttons[held] = false
             }
         }
         if (kind == EventKind::MouseWheel) {
-            p.scrolled = p.scrolled + event_wheel_y(event)
+            p.state.scrolled = p.state.scrolled + event_wheel_y(event)
         }
     }
 
     now := sdl_ticks()
-    p.step = elapsed_between(p.ticked_at, now)
-    p.since_start = elapsed_between(p.started_at, now)
+    p.state.step = elapsed_between(p.ticked_at, now)
+    p.state.since_start = elapsed_between(p.started_at, now)
     p.ticked_at = now
-    p.frames = p.frames + 1
+    p.state.frames = p.state.frames + 1
     p.closing == false
 }
 
@@ -215,60 +247,105 @@ elapsed_between :: fn(from: u64, to: u64) -> f32 {
     held / 1000.0
 }
 
+// Every question about a frame is answered off the state, and asking the
+// platform asks the state it holds. Both forms are here because a main loop has
+// the window in hand and a system has only what it was given.
+
 // The state now.
-key_down :: fn(p: Platform, code: i64) -> bool {
+input_key_down :: fn(held: Input, code: i64) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
-    p.keys[code]
+    held.keys[code]
 }
 
 // The frame it went down, and the frame it came up. True for exactly one frame
 // each, which is what a program means by "pressed" rather than "held".
-key_pressed :: fn(p: Platform, code: i64) -> bool {
+input_key_pressed :: fn(held: Input, code: i64) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
-    p.keys[code] && p.keys_before[code] == false
+    held.keys[code] && held.keys_before[code] == false
 }
 
-key_released :: fn(p: Platform, code: i64) -> bool {
+input_key_released :: fn(held: Input, code: i64) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
-    p.keys[code] == false && p.keys_before[code]
+    held.keys[code] == false && held.keys_before[code]
 }
 
-button_down :: fn(p: Platform, held: i64) -> bool {
-    if (held < 0 || held >= BUTTON_COUNT) { return false }
-    p.buttons[held]
+input_button_down :: fn(held: Input, which: i64) -> bool {
+    if (which < 0 || which >= BUTTON_COUNT) { return false }
+    held.buttons[which]
 }
 
-button_pressed :: fn(p: Platform, held: i64) -> bool {
-    if (held < 0 || held >= BUTTON_COUNT) { return false }
-    p.buttons[held] && p.buttons_before[held] == false
+input_button_pressed :: fn(held: Input, which: i64) -> bool {
+    if (which < 0 || which >= BUTTON_COUNT) { return false }
+    held.buttons[which] && held.buttons_before[which] == false
 }
 
-button_released :: fn(p: Platform, held: i64) -> bool {
-    if (held < 0 || held >= BUTTON_COUNT) { return false }
-    p.buttons[held] == false && p.buttons_before[held]
+input_button_released :: fn(held: Input, which: i64) -> bool {
+    if (which < 0 || which >= BUTTON_COUNT) { return false }
+    held.buttons[which] == false && held.buttons_before[which]
 }
 
 // Where the pointer is, in window coordinates.
-pointer_x :: fn(p: Platform) -> f32 { p.at_x }
-pointer_y :: fn(p: Platform) -> f32 { p.at_y }
+input_pointer_x :: fn(held: Input) -> f32 { held.at_x }
+input_pointer_y :: fn(held: Input) -> f32 { held.at_y }
 
 // How far it moved this frame, which is what a look control reads rather than
 // the position.
-pointer_dx :: fn(p: Platform) -> f32 { p.moved_x }
-pointer_dy :: fn(p: Platform) -> f32 { p.moved_y }
+input_pointer_dx :: fn(held: Input) -> f32 { held.moved_x }
+input_pointer_dy :: fn(held: Input) -> f32 { held.moved_y }
 
 // Wheel notches this frame, positive away from the hand.
-wheel :: fn(p: Platform) -> f32 { p.scrolled }
+input_wheel :: fn(held: Input) -> f32 { held.scrolled }
 
-width :: fn(p: Platform) -> i64 { p.window_width }
-height :: fn(p: Platform) -> i64 { p.window_height }
+input_width :: fn(held: Input) -> i64 { held.window_width }
+input_height :: fn(held: Input) -> i64 { held.window_height }
 
 // Whether the window changed size this frame, which is when a surface has to be
 // configured again.
-resized :: fn(p: Platform) -> bool { p.was_resized }
+input_resized :: fn(held: Input) -> bool { held.was_resized }
 
 // Seconds since the last frame, and since the first.
-delta_seconds :: fn(p: Platform) -> f32 { p.step }
-elapsed_seconds :: fn(p: Platform) -> f32 { p.since_start }
+input_delta_seconds :: fn(held: Input) -> f32 { held.step }
+input_elapsed_seconds :: fn(held: Input) -> f32 { held.since_start }
 
-frame_index :: fn(p: Platform) -> i64 { p.frames }
+input_frame_index :: fn(held: Input) -> i64 { held.frames }
+
+key_down :: fn(p: Platform, code: i64) -> bool {
+    input_key_down(p.state, code)
+}
+
+key_pressed :: fn(p: Platform, code: i64) -> bool {
+    input_key_pressed(p.state, code)
+}
+
+key_released :: fn(p: Platform, code: i64) -> bool {
+    input_key_released(p.state, code)
+}
+
+button_down :: fn(p: Platform, which: i64) -> bool {
+    input_button_down(p.state, which)
+}
+
+button_pressed :: fn(p: Platform, which: i64) -> bool {
+    input_button_pressed(p.state, which)
+}
+
+button_released :: fn(p: Platform, which: i64) -> bool {
+    input_button_released(p.state, which)
+}
+
+pointer_x :: fn(p: Platform) -> f32 { p.state.at_x }
+pointer_y :: fn(p: Platform) -> f32 { p.state.at_y }
+pointer_dx :: fn(p: Platform) -> f32 { p.state.moved_x }
+pointer_dy :: fn(p: Platform) -> f32 { p.state.moved_y }
+
+wheel :: fn(p: Platform) -> f32 { p.state.scrolled }
+
+width :: fn(p: Platform) -> i64 { p.state.window_width }
+height :: fn(p: Platform) -> i64 { p.state.window_height }
+
+resized :: fn(p: Platform) -> bool { p.state.was_resized }
+
+delta_seconds :: fn(p: Platform) -> f32 { p.state.step }
+elapsed_seconds :: fn(p: Platform) -> f32 { p.state.since_start }
+
+frame_index :: fn(p: Platform) -> i64 { p.state.frames }

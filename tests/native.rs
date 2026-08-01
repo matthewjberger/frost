@@ -16651,6 +16651,57 @@ fn the_render_graph_orders_its_passes() {
     }
 }
 
+// What a frame does to a world, with no device anywhere near it: the camera
+// moved by what the world was told was held, a frame in which nothing was held
+// moving nothing, and a thing three deep in a tree placed against the whole
+// chain above it rather than against its own parent alone.
+//
+// The libraries and the search path are needed for the same reason the graph's
+// tests need them: the file imports the wgpu binding, which names symbols
+// whether or not a test calls them.
+#[test]
+fn the_frame_moves_the_world_it_was_given() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let graphics = root.join("examples").join("graphics");
+    let Some(libraries) = graphics_libraries(&graphics) else {
+        return;
+    };
+    let source = graphics.join("scene_sync.frost");
+    let search = library_search_path(&graphics);
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("4 passed, 0 failed"),
+            "the frame's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
 // Where the loader has to look for the graphics libraries, in front of
 // whatever it already searched. On Windows this is `PATH` and elsewhere it is
 // `LD_LIBRARY_PATH`; both are read at load time by the process being started,
