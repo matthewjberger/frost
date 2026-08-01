@@ -38,8 +38,7 @@ import "mem.frost"
 
 export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
     render_world_new, render_world_free, render_world_begin, render_world_push,
-    render_world_upload, render_world_upload_unculled,
-    render_world_count, render_world_batches,
+    render_world_upload, render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
     render_world_cull_layout, render_world_cull_group, render_world_dispatch,
     render_world_draw, render_world_draw_batch,
@@ -265,24 +264,7 @@ batch_of :: fn(mut held: RenderWorld, span: MeshSpan) -> i64 {
 // them.
 render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
     view_projection: Mat4) {
-    upload_with(held, queue, mat4_frustum_planes(view_projection))
-}
-
-// The same, with nothing culled.
-//
-// A plane of all zeros answers zero for every point, which is never less than
-// the negative of a radius, so the test lets everything through. What that is
-// for is a run drawn from more than one view: a thing behind the camera can
-// still cast a shadow into it, and one run culled by the camera is wrong for
-// every pass that is not the camera. The answer is a run per view, and until
-// there is one this says so rather than quietly dropping what the other views
-// wanted.
-render_world_upload_unculled :: fn(mut held: RenderWorld, queue: Queue) {
-    upload_with(held, queue, [vec4(0.0, 0.0, 0.0, 0.0); CULL_PLANES])
-}
-
-upload_with :: fn(mut held: RenderWorld, queue: Queue,
-    planes: [6]Vec4) {
+    planes := mat4_frustum_planes(view_projection)
     // The planes first, then the two counts. They are one binding and the
     // shader reads them as one struct.
     mut given : [28]f32 = [0.0; 28]
