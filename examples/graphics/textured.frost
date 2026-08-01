@@ -31,6 +31,7 @@ import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
 import "../../lib/renderer/render_world.frost"
+import "../../lib/renderer/uniform.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
 import "../../lib/engine/app.frost"
@@ -217,18 +218,6 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
         ptr_to(values[0]), FRAME_BYTES)
 }
 
-uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
-    mut entry := bind_group_layout_entry_init()
-    entry.binding = 0
-    entry.visibility = ShaderStage::Vertex | ShaderStage::Fragment
-    entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
-    entry.buffer.min_binding_size = size
-    mut descriptor := bind_group_layout_descriptor_init()
-    descriptor.entries_count = 1
-    descriptor.entries = ptr_to(entry)
-    device_create_bind_group_layout(device, ptr_to(descriptor))
-}
-
 // Every image and the sampler that reads them, which are two entries of one
 // group because they are used together and neither is any use alone.
 surface_layout :: fn(device: Device) -> BindGroupLayout {
@@ -258,50 +247,6 @@ surface_group :: fn(device: Device, layout: BindGroupLayout,
     descriptor.entries_count = 2
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group(device, ptr_to(descriptor))
-}
-
-uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
-    mut descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
-    descriptor.size = size
-    device_create_buffer(device, ptr_to(descriptor))
-}
-
-uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
-    size: i64) -> BindGroup {
-    mut entry := bind_group_entry_init()
-    entry.binding = 0
-    entry.buffer = held
-    entry.size = size
-    mut descriptor := bind_group_descriptor_init()
-    descriptor.layout = layout
-    descriptor.entries_count = 1
-    descriptor.entries = ptr_to(entry)
-    device_create_bind_group(device, ptr_to(descriptor))
-}
-
-// The culling pass's pipeline. Its shader is the renderer's, since what it
-// writes is the renderer's own three buffers and their shapes have to agree.
-make_cull_pipeline :: fn(device: Device,
-    layout: BindGroupLayout) -> ComputePipeline {
-    mut wgsl := shader_source_WGSL_init()
-    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
-    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
-    mut module_descriptor := shader_module_descriptor_init()
-    module_descriptor.next_in_chain = ptr_to(wgsl)
-    shader := device_create_shader_module(device, ptr_to(module_descriptor))
-
-    mut groups : [1]BindGroupLayout = [layout]
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
-    pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
-
-    mut descriptor := compute_pipeline_descriptor_init()
-    descriptor.layout = device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
-    descriptor.compute.module = shader
-    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
-    device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
 make_pipeline :: fn(device: Device, format: u32,
@@ -396,6 +341,9 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
+    // Escape closes it. A system rather than a rule inside the poll, so a
+    // program that wants that key for something else leaves this out.
+    app_install(app, exit_on_escape_plugin)
     device := app_device(app)
     queue := app_queue(app)
 
@@ -422,7 +370,8 @@ run :: fn(move app: App) -> i64 {
         base_color = vec4(0.98, 1.0, 0.94, 1.0), roughness = 0.45,
         metallic = 0.0 })
 
-    frame_layout := uniform_layout(device, FRAME_BYTES)
+    frame_layout := uniform_layout(device, FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment)
     material_layout := surface_layout(device)
     mut layouts : [3]BindGroupLayout = [frame_layout,
         render_world_layout(app.render), material_layout]
@@ -482,7 +431,7 @@ run :: fn(move app: App) -> i64 {
 
     mut scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
-        cull_pipeline = make_cull_pipeline(device,
+        cull_pipeline = render_world_cull_pipeline(device,
             render_world_cull_layout(app.render)),
         frame_group = frame_group,
         material_group = material_group,

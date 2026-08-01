@@ -1,0 +1,54 @@
+// A uniform buffer, the layout that describes it and the group that binds it.
+//
+//     layout := uniform_layout(device, FRAME_BYTES,
+//         ShaderStage::Vertex | ShaderStage::Fragment)
+//     held := uniform_buffer(device, FRAME_BYTES)
+//     group := uniform_group(device, layout, held, FRAME_BYTES)
+//
+// Three calls because they are made at three different times: the layout before
+// the pipeline that is built against it, the buffer when there is a device, and
+// the group once both exist. A program writing the frame's camera and light
+// once a frame needs exactly this and nothing about it differs between one
+// program and the next.
+//
+// Which stages read it is said rather than assumed. A binding a shader reads
+// from a stage the layout did not name is a pipeline that will not build, and
+// the error names the group rather than the stage, so the shape is easier to
+// get right when the answer is written at the call.
+
+import "wgpu.frost"
+
+export uniform_layout, uniform_buffer, uniform_group
+
+uniform_layout :: fn(device: Device, size: i64,
+    stages: ShaderStage) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = stages
+    entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entry.buffer.min_binding_size = size
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
+    size: i64) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = size
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group(device, ptr_to(descriptor))
+}
