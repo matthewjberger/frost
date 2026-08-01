@@ -16586,6 +16586,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "graph.frost",
             "scene_sync.frost",
             "world.frost",
+            "gltf.frost",
         ]
     } else {
         &["window.frost"]
@@ -16729,6 +16730,58 @@ fn the_frame_moves_the_world_it_was_given() {
     }
 }
 
+// A binary glTF file read back into geometry, materials and a tree of nodes,
+// against `examples/graphics/assets/shapes.glb`. That file is written by
+// `assets/generate.py` and is deliberately awkward in the ways real exporters
+// are: two index widths and a primitive with none, an explicit byte stride and
+// views without one, a primitive missing its normal, a node giving three parts
+// and a node giving a whole matrix, and two roots.
+//
+// One of these counts blocks rather than values. A reader that took a run twice
+// and let the second stand would answer every other test correctly and leak a
+// block per primitive, which is what that one is there to see.
+#[test]
+fn a_binary_gltf_file_reads_back_as_geometry() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let graphics = root.join("examples").join("graphics");
+    let Some(libraries) = graphics_libraries(&graphics) else {
+        return;
+    };
+    let source = graphics.join("gltf.frost");
+    let search = library_search_path(&graphics);
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("11 passed, 0 failed"),
+            "the glTF reader's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
 // Where the loader has to look for the graphics libraries, in front of
 // whatever it already searched. On Windows this is `PATH` and elsewhere it is
 // `LD_LIBRARY_PATH`; both are read at load time by the process being started,

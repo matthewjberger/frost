@@ -1,0 +1,809 @@
+// A glTF 2.0 binary file, read into geometry, materials and a tree of nodes.
+//
+//     mut model := gltf_read("thing.glb")
+//     if (gltf_ok(model)) { ... }
+//     gltf_free(model)
+//
+// What comes out is what the rest of these files already speak: runs of
+// `Vertex` and `u32` ready for `mesh_upload`, `Material`s ready for the
+// registry, and nodes carrying a translation, a rotation and a scale. Nothing
+// here touches a device, so a file can be read and checked with no GPU in the
+// room.
+//
+// A `.glb` is a twelve-byte header and then chunks: the first holds the JSON
+// that describes everything, the second holds the bytes the JSON points into.
+// Only the binary container is read. A `.gltf` names its buffers by URI, which
+// is a second file format's worth of rules about where those are allowed to
+// point, and the exporters worth reading from all write `.glb`.
+//
+// What is read is geometry and where it sits. Images, animations and skins are
+// in the files and are stepped over: an image is a PNG or a JPEG, which is a
+// decoder, and what an animation needs is a sampler and a clock this does not
+// have yet.
+//
+// Every offset the file gives is checked against the bytes actually there
+// before anything is read through it. A file is something a program was handed,
+// so a length that runs past the end is a file that gets refused rather than a
+// read that goes wherever the arithmetic pointed.
+
+import "mesh.frost"
+import "material.frost"
+import "json.frost"
+import "strings.frost"
+import "fs.frost"
+import "math.frost"
+import "mem.frost"
+import "vec.frost"
+import "io.frost"
+
+export Gltf, GltfNode, GltfPrimitive,
+    gltf_read, gltf_free, gltf_ok,
+    gltf_mesh_count, gltf_mesh_first, gltf_mesh_span,
+    gltf_primitive_count, gltf_primitive_at,
+    gltf_material_count, gltf_material_at,
+    gltf_node_count, gltf_node_at, gltf_node_children, gltf_root_count,
+    gltf_root_at, gltf_node_matrix
+
+// One drawable run: the vertices, the indices that order them, and which
+// material it wears, or -1 where the file named none.
+GltfPrimitive :: struct {
+    vertices: []Vertex,
+    indices: []u32,
+    material: i64,
+}
+
+// A mesh is a span of the primitives above, because a glTF mesh is a list of
+// them and a file that splits one shape across three materials is three
+// primitives under one name.
+GltfMesh :: struct {
+    first: i64,
+    count: i64,
+}
+
+// Where a node sits and what hangs off it. A node's children are a span of the
+// flat `children` run rather than a vector of their own, so the whole tree is
+// three allocations however deep it goes.
+GltfNode :: struct {
+    mesh: i64,
+    child_first: i64,
+    child_count: i64,
+    translation: Vec3,
+    rotation: Quat,
+    scale: Vec3,
+}
+
+// Everything one file came to. Linear, because the vertex and index runs are
+// heap blocks and a reader that dropped this on the floor would leak every one
+// of them.
+Gltf :: linear struct {
+    primitives: Vec<GltfPrimitive>,
+    meshes: Vec<GltfMesh>,
+    nodes: Vec<GltfNode>,
+    children: Vec<i64>,
+    materials: Vec<Material>,
+    roots: Vec<i64>,
+    ok: bool,
+}
+
+// The four bytes a glb starts with, and the two chunk kinds, as the little
+// endian numbers they are read back as.
+GLB_MAGIC :: 1179937895
+GLB_JSON :: 1313821514
+GLB_BIN :: 5130562
+
+// What a component of an accessor is stored as, by the numbers glTF uses.
+COMPONENT_BYTE :: 5120
+COMPONENT_UNSIGNED_BYTE :: 5121
+COMPONENT_SHORT :: 5122
+COMPONENT_UNSIGNED_SHORT :: 5123
+COMPONENT_UNSIGNED_INT :: 5125
+COMPONENT_FLOAT :: 5126
+
+// Where a run of numbers sits in the binary chunk and how it is laid out.
+// Resolved from the accessor and its buffer view once, so reading element three
+// hundred is arithmetic rather than another walk through the document.
+Accessor :: struct {
+    offset: i64,
+    stride: i64,
+    count: i64,
+    component: i64,
+    components: i64,
+    ok: bool,
+}
+
+gltf_ok :: fn(model: Gltf) -> bool { model.ok }
+
+gltf_mesh_count :: fn(model: Gltf) -> i64 { vec_len($GltfMesh, model.meshes) }
+
+gltf_mesh_first :: fn(mut model: Gltf, mesh: i64) -> i64 {
+    if (mesh < 0 || mesh >= vec_len($GltfMesh, model.meshes)) {
+        return 0
+    }
+    vec_slice($GltfMesh, model.meshes)[mesh].first
+}
+
+gltf_mesh_span :: fn(mut model: Gltf, mesh: i64) -> i64 {
+    if (mesh < 0 || mesh >= vec_len($GltfMesh, model.meshes)) {
+        return 0
+    }
+    vec_slice($GltfMesh, model.meshes)[mesh].count
+}
+
+gltf_primitive_count :: fn(model: Gltf) -> i64 {
+    vec_len($GltfPrimitive, model.primitives)
+}
+
+gltf_primitive_at :: fn(mut model: Gltf, index: i64) -> GltfPrimitive {
+    vec_slice($GltfPrimitive, model.primitives)[index]
+}
+
+gltf_material_count :: fn(model: Gltf) -> i64 {
+    vec_len($Material, model.materials)
+}
+
+gltf_material_at :: fn(mut model: Gltf, index: i64) -> Material {
+    vec_slice($Material, model.materials)[index]
+}
+
+gltf_node_count :: fn(model: Gltf) -> i64 { vec_len($GltfNode, model.nodes) }
+
+gltf_node_at :: fn(mut model: Gltf, index: i64) -> GltfNode {
+    vec_slice($GltfNode, model.nodes)[index]
+}
+
+// The children of a node, as the span of the flat run they were read into.
+gltf_node_children :: fn(mut model: Gltf, index: i64) -> []i64 {
+    held := vec_slice($GltfNode, model.nodes)[index]
+    slice_range($i64, vec_slice($i64, model.children), held.child_first,
+        held.child_count)
+}
+
+gltf_root_count :: fn(model: Gltf) -> i64 { vec_len($i64, model.roots) }
+
+gltf_root_at :: fn(mut model: Gltf, index: i64) -> i64 {
+    vec_slice($i64, model.roots)[index]
+}
+
+// A node's own transform, which is its translation, its rotation and its scale
+// in that order.
+gltf_node_matrix :: fn(node: GltfNode) -> Mat4 {
+    mat4_mul(mat4_translation(node.translation),
+        mat4_mul(quat_to_mat4(node.rotation), mat4_scale(node.scale)))
+}
+
+gltf_free :: fn(move model: Gltf) {
+    mut held := vec_slice($GltfPrimitive, model.primitives)
+    mut index : i64 = 0
+    while (index < vec_len($GltfPrimitive, model.primitives)) {
+        heap_release_slice($Vertex, held[index].vertices)
+        heap_release_slice($u32, held[index].indices)
+        index = index + 1
+    }
+    vec_free($GltfPrimitive, model.primitives)
+    vec_free($GltfMesh, model.meshes)
+    vec_free($GltfNode, model.nodes)
+    vec_free($i64, model.children)
+    vec_free($Material, model.materials)
+    vec_free($i64, model.roots)
+}
+
+empty_gltf :: fn(ok: bool) -> Gltf {
+    Gltf {
+        primitives = vec_new($GltfPrimitive, 8),
+        meshes = vec_new($GltfMesh, 8),
+        nodes = vec_new($GltfNode, 8),
+        children = vec_new($i64, 8),
+        materials = vec_new($Material, 8),
+        roots = vec_new($i64, 4),
+        ok = ok,
+    }
+}
+
+gltf_read :: fn(path: str) -> Gltf {
+    mut file := fs_read(path)
+    if (file.ok == false) {
+        print_str_line("gltf: cannot read the file")
+        fs_free(file)
+        return empty_gltf(false)
+    }
+    bytes := file.text
+    if (str_len(bytes) < 20 || read_u32(bytes, 0) != GLB_MAGIC) {
+        print_str_line("gltf: not a binary glTF file")
+        fs_free(file)
+        return empty_gltf(false)
+    }
+    if (read_u32(bytes, 4) != 2) {
+        print_str_line("gltf: the file is not glTF version 2")
+        fs_free(file)
+        return empty_gltf(false)
+    }
+
+    // The chunks, walked in order. A chunk is a length, a kind and that many
+    // bytes, padded out to four, and a file may carry kinds beyond these two.
+    mut json_at : i64 = -1
+    mut json_length : i64 = 0
+    mut binary_at : i64 = -1
+    mut binary_length : i64 = 0
+    mut at : i64 = 12
+    while (at + 8 <= str_len(bytes)) {
+        length := read_u32(bytes, at)
+        kind := read_u32(bytes, at + 4)
+        body := at + 8
+        if (length < 0 || body + length > str_len(bytes)) {
+            print_str_line("gltf: a chunk runs past the end of the file")
+            fs_free(file)
+            return empty_gltf(false)
+        }
+        if (kind == GLB_JSON && json_at < 0) {
+            json_at = body
+            json_length = length
+        }
+        if (kind == GLB_BIN && binary_at < 0) {
+            binary_at = body
+            binary_length = length
+        }
+        at = body + padded(length)
+    }
+    if (json_at < 0) {
+        print_str_line("gltf: the file carries no JSON chunk")
+        fs_free(file)
+        return empty_gltf(false)
+    }
+
+    mut document := json_parse(str_slice(bytes, json_at, json_length))
+    root := json_root(document)
+    if (root < 0) {
+        print_str_line("gltf: the JSON chunk does not parse")
+        json_free(document)
+        fs_free(file)
+        return empty_gltf(false)
+    }
+
+    mut model := empty_gltf(true)
+    // Where the binary chunk starts, as a pointer, since every accessor is an
+    // offset from there. The bounds every read is checked against are its own
+    // length, so nothing reaches outside the chunk the file declared.
+    binary := bytes_at(file.buffer, binary_at)
+    read_materials(document, root, model)
+    read_meshes(document, root, model, binary, binary_length)
+    read_nodes(document, root, model)
+    json_free(document)
+    fs_free(file)
+    model
+}
+
+// A chunk's length rounded up to the four bytes the next one starts on.
+padded :: fn(length: i64) -> i64 {
+    over := length - (length / 4) * 4
+    if (over == 0) { return length }
+    length + (4 - over)
+}
+
+// Four bytes, little endian. Read a byte at a time rather than through a
+// pointer, because a chunk header sits wherever the one before it ended and
+// nothing promises that is a multiple of four.
+read_u32 :: fn(bytes: str, at: i64) -> i64 {
+    if (at < 0 || at + 4 > str_len(bytes)) {
+        return -1
+    }
+    held : i64 = bytes[at]
+    second : i64 = bytes[at + 1]
+    third : i64 = bytes[at + 2]
+    fourth : i64 = bytes[at + 3]
+    held + second * 256 + third * 65536 + fourth * 16777216
+}
+
+// A number from the document, or what the file leaves it as when absent.
+number_or :: fn(mut document: Json, node: i64, fallback: i64) -> i64 {
+    if (node < 0) { return fallback }
+    json_number(document, node)
+}
+
+real_or :: fn(mut document: Json, node: i64, fallback: f32) -> f32 {
+    if (node < 0) { return fallback }
+    cast($f32, json_real(document, node))
+}
+
+// One element of a JSON array of numbers, as a float.
+element_or :: fn(mut document: Json, array: i64, index: i64,
+    fallback: f32) -> f32 {
+    if (array < 0) { return fallback }
+    real_or(document, json_at(document, array, index), fallback)
+}
+
+read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
+    materials := json_member(document, root, "materials")
+    if (materials < 0) { return }
+    mut index : i64 = 0
+    // Walked by the chain rather than by `json_at` per element, since that
+    // walks from the start every time and a file with a hundred materials
+    // would pay for it a hundred times over.
+    mut node := json_at(document, materials, 0)
+    while (node >= 0) {
+        pbr := json_member(document, node, "pbrMetallicRoughness")
+        colour := json_member(document, pbr, "baseColorFactor")
+        vec_push($Material, model.materials, Material {
+            base_color = vec4(element_or(document, colour, 0, 1.0),
+                element_or(document, colour, 1, 1.0),
+                element_or(document, colour, 2, 1.0),
+                element_or(document, colour, 3, 1.0)),
+            roughness = real_or(document,
+                json_member(document, pbr, "roughnessFactor"), 1.0),
+            metallic = real_or(document,
+                json_member(document, pbr, "metallicFactor"), 1.0),
+        })
+        index = index + 1
+        node = json_next(document, node)
+    }
+}
+
+read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
+    nodes := json_member(document, root, "nodes")
+    mut node := json_at(document, nodes, 0)
+    while (node >= 0) {
+        translation := json_member(document, node, "translation")
+        rotation := json_member(document, node, "rotation")
+        scale := json_member(document, node, "scale")
+        mut held := GltfNode {
+            mesh = number_or(document, json_member(document, node, "mesh"), -1),
+            child_first = vec_len($i64, model.children),
+            child_count = 0,
+            translation = vec3(element_or(document, translation, 0, 0.0),
+                element_or(document, translation, 1, 0.0),
+                element_or(document, translation, 2, 0.0)),
+            rotation = Quat { x = element_or(document, rotation, 0, 0.0),
+                y = element_or(document, rotation, 1, 0.0),
+                z = element_or(document, rotation, 2, 0.0),
+                w = element_or(document, rotation, 3, 1.0) },
+            scale = vec3(element_or(document, scale, 0, 1.0),
+                element_or(document, scale, 1, 1.0),
+                element_or(document, scale, 2, 1.0)),
+        }
+        // A node may give a whole matrix instead of the three above, which is
+        // what an exporter writes where a transform will not come apart into
+        // them. What is taken from it is the translation and the scale it was
+        // built from, since that is what the tree below is walked as.
+        matrix := json_member(document, node, "matrix")
+        if (matrix >= 0) {
+            held = from_matrix(document, matrix, held)
+        }
+        mut child := json_at(document, json_member(document, node, "children"),
+            0)
+        while (child >= 0) {
+            vec_push($i64, model.children, json_number(document, child))
+            held.child_count = held.child_count + 1
+            child = json_next(document, child)
+        }
+        vec_push($GltfNode, model.nodes, held)
+        node = json_next(document, node)
+    }
+
+    // The scene's own roots, or every node that nothing claims as a child where
+    // the file names no scene.
+    scenes := json_member(document, root, "scenes")
+    which := number_or(document, json_member(document, root, "scene"), 0)
+    scene := json_at(document, scenes, which)
+    listed := json_at(document, json_member(document, scene, "nodes"), 0)
+    if (listed >= 0) {
+        while (listed >= 0) {
+            vec_push($i64, model.roots, json_number(document, listed))
+            listed = json_next(document, listed)
+        }
+        return
+    }
+    mut claimed := heap_slice($bool, vec_len($GltfNode, model.nodes))
+    mut index : i64 = 0
+    while (index < slice_len(claimed)) {
+        claimed[index] = false
+        index = index + 1
+    }
+    held := vec_slice($i64, model.children)
+    index = 0
+    while (index < vec_len($i64, model.children)) {
+        one := held[index]
+        if (one >= 0 && one < slice_len(claimed)) {
+            claimed[one] = true
+        }
+        index = index + 1
+    }
+    index = 0
+    while (index < slice_len(claimed)) {
+        if (claimed[index] == false) {
+            vec_push($i64, model.roots, index)
+        }
+        index = index + 1
+    }
+    heap_release_slice($bool, claimed)
+}
+
+// The translation and the scale a whole matrix was built from. The rotation is
+// left alone: pulling one out of a matrix means dividing the basis by the scale
+// first, and a file that writes a matrix rather than the three parts is a file
+// whose transform did not come apart into them cleanly to begin with.
+from_matrix :: fn(mut document: Json, matrix: i64, node: GltfNode) -> GltfNode {
+    mut column : [16]f32 = [0.0; 16]
+    mut index : i64 = 0
+    mut element := json_at(document, matrix, 0)
+    while (element >= 0 && index < 16) {
+        column[index] = cast($f32, json_real(document, element))
+        index = index + 1
+        element = json_next(document, element)
+    }
+    first := vec3(column[0], column[1], column[2])
+    second := vec3(column[4], column[5], column[6])
+    third := vec3(column[8], column[9], column[10])
+    GltfNode {
+        mesh = node.mesh,
+        child_first = node.child_first,
+        child_count = node.child_count,
+        translation = vec3(column[12], column[13], column[14]),
+        rotation = node.rotation,
+        scale = vec3(vec3_length(first), vec3_length(second),
+            vec3_length(third)),
+    }
+}
+
+read_meshes :: fn(mut document: Json, root: i64, mut model: Gltf,
+    binary: ^u8, binary_length: i64) {
+    meshes := json_member(document, root, "meshes")
+    mut mesh := json_at(document, meshes, 0)
+    while (mesh >= 0) {
+        first := vec_len($GltfPrimitive, model.primitives)
+        mut count : i64 = 0
+        mut primitive := json_at(document,
+            json_member(document, mesh, "primitives"), 0)
+        while (primitive >= 0) {
+            if (read_primitive(document, primitive, model, binary,
+                binary_length)) {
+                count = count + 1
+            }
+            primitive = json_next(document, primitive)
+        }
+        vec_push($GltfMesh, model.meshes, GltfMesh { first = first,
+            count = count })
+        mesh = json_next(document, mesh)
+    }
+}
+
+read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
+    binary: ^u8, binary_length: i64) -> bool {
+    // Only triangles. A file that draws strips or lines is a file this cannot
+    // hand to a pipeline built for triangle lists, so it is left out rather
+    // than drawn as something it is not.
+    mode := number_or(document, json_member(document, primitive, "mode"), 4)
+    if (mode != 4) {
+        return false
+    }
+    attributes := json_member(document, primitive, "attributes")
+    position := accessor_of(document, root_of(document),
+        json_member(document, attributes, "POSITION"), binary_length)
+    if (position.ok == false || position.components < 3) {
+        return false
+    }
+    normal := accessor_of(document, root_of(document),
+        json_member(document, attributes, "NORMAL"), binary_length)
+    texcoord := accessor_of(document, root_of(document),
+        json_member(document, attributes, "TEXCOORD_0"), binary_length)
+
+    mut vertices := heap_slice($Vertex, position.count)
+    mut index : i64 = 0
+    while (index < position.count) {
+        mut held := Vertex {
+            position = read_vec3(binary, position, index),
+            normal = vec3(0.0, 1.0, 0.0),
+            texcoord = vec2(0.0, 0.0),
+        }
+        if (normal.ok && normal.count > index && normal.components >= 3) {
+            held.normal = read_vec3(binary, normal, index)
+        }
+        if (texcoord.ok && texcoord.count > index
+            && texcoord.components >= 2) {
+            held.texcoord = read_vec2(binary, texcoord, index)
+        }
+        vertices[index] = held
+        index = index + 1
+    }
+
+    // A primitive with no indices draws its vertices in order, and this hands
+    // one run downstream either way rather than two shapes of mesh. How long it
+    // is comes first, so the run is taken once: taking it twice and letting the
+    // second stand would leave the first behind on every primitive read.
+    indices := accessor_of(document, root_of(document),
+        json_member(document, primitive, "indices"), binary_length)
+    mut ordered := position.count
+    if (indices.ok) {
+        ordered = indices.count
+    }
+    mut order := heap_slice($u32, ordered)
+    index = 0
+    while (index < ordered) {
+        if (indices.ok) {
+            order[index] = cast($u32, read_integer(binary, indices, index))
+        } else {
+            order[index] = cast($u32, index)
+        }
+        index = index + 1
+    }
+
+    vec_push($GltfPrimitive, model.primitives, GltfPrimitive {
+        vertices = vertices, indices = order,
+        material = number_or(document,
+            json_member(document, primitive, "material"), -1) })
+    true
+}
+
+// The document's root, which every accessor lookup starts from. Held as a call
+// rather than threaded through, since a JSON document's root is a property of
+// the document.
+root_of :: fn(mut document: Json) -> i64 {
+    json_root(document)
+}
+
+// Where an accessor's numbers sit and how they are laid out, checked against
+// the binary chunk it claims to be inside. An accessor whose run would leave
+// that chunk comes back with `ok` false and is treated as absent.
+accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
+    binary_length: i64) -> Accessor {
+    absent := Accessor { offset = 0, stride = 0, count = 0, component = 0,
+        components = 0, ok = false }
+    if (accessor < 0) {
+        return absent
+    }
+    node := json_at(document, json_member(document, root, "accessors"),
+        json_number(document, accessor))
+    if (node < 0) {
+        return absent
+    }
+    component := number_or(document,
+        json_member(document, node, "componentType"), 0)
+    width := component_bytes(component)
+    if (width == 0) {
+        return absent
+    }
+    components := components_of(document,
+        json_member(document, node, "type"))
+    if (components == 0) {
+        return absent
+    }
+    count := number_or(document, json_member(document, node, "count"), 0)
+    if (count <= 0) {
+        return absent
+    }
+    // A sparse accessor overrides some of its elements from a second run, which
+    // is a whole second layout. None of the exporters worth reading write one
+    // for geometry, and reading the base run as though it were the answer would
+    // be quietly wrong, so it is refused instead.
+    if (json_member(document, node, "sparse") >= 0) {
+        return absent
+    }
+    view := json_at(document, json_member(document, root, "bufferViews"),
+        number_or(document, json_member(document, node, "bufferView"), -1))
+    if (view < 0) {
+        return absent
+    }
+    stride := number_or(document, json_member(document, view, "byteStride"),
+        width * components)
+    offset := number_or(document, json_member(document, view, "byteOffset"), 0)
+        + number_or(document, json_member(document, node, "byteOffset"), 0)
+    if (stride < width * components || offset < 0) {
+        return absent
+    }
+    // The last element ends here, and everything before it ends sooner, so one
+    // comparison covers the whole run.
+    last := offset + (count - 1) * stride + width * components
+    if (last > binary_length) {
+        print_str_line("gltf: an accessor runs past the binary chunk")
+        return absent
+    }
+    Accessor { offset = offset, stride = stride, count = count,
+        component = component, components = components, ok = true }
+}
+
+component_bytes :: fn(component: i64) -> i64 {
+    if (component == COMPONENT_BYTE) { return 1 }
+    if (component == COMPONENT_UNSIGNED_BYTE) { return 1 }
+    if (component == COMPONENT_SHORT) { return 2 }
+    if (component == COMPONENT_UNSIGNED_SHORT) { return 2 }
+    if (component == COMPONENT_UNSIGNED_INT) { return 4 }
+    if (component == COMPONENT_FLOAT) { return 4 }
+    0
+}
+
+components_of :: fn(mut document: Json, node: i64) -> i64 {
+    if (json_text_eq(document, node, "SCALAR")) { return 1 }
+    if (json_text_eq(document, node, "VEC2")) { return 2 }
+    if (json_text_eq(document, node, "VEC3")) { return 3 }
+    if (json_text_eq(document, node, "VEC4")) { return 4 }
+    if (json_text_eq(document, node, "MAT4")) { return 16 }
+    0
+}
+
+// Three floats of an element. glTF requires a float accessor's data to sit on a
+// four-byte boundary, which is what makes reading it as floats rather than as
+// bytes correct here.
+read_vec3 :: fn(binary: ^u8, held: Accessor, index: i64) -> Vec3 {
+    if (held.component != COMPONENT_FLOAT) {
+        return vec3(0.0, 0.0, 0.0)
+    }
+    floats := bytes_as($f32, bytes_at(binary, held.offset + index * held.stride),
+        3)
+    vec3(floats[0], floats[1], floats[2])
+}
+
+read_vec2 :: fn(binary: ^u8, held: Accessor, index: i64) -> Vec2 {
+    if (held.component != COMPONENT_FLOAT) {
+        return vec2(0.0, 0.0)
+    }
+    floats := bytes_as($f32, bytes_at(binary, held.offset + index * held.stride),
+        2)
+    vec2(floats[0], floats[1])
+}
+
+// One whole number of an element, whichever width the file stored it at.
+read_integer :: fn(binary: ^u8, held: Accessor, index: i64) -> i64 {
+    at := held.offset + index * held.stride
+    if (held.component == COMPONENT_UNSIGNED_INT) {
+        return cast($i64, bytes_as($u32, bytes_at(binary, at), 1)[0])
+    }
+    if (held.component == COMPONENT_UNSIGNED_SHORT) {
+        return cast($i64, bytes_as($u16, bytes_at(binary, at), 1)[0])
+    }
+    if (held.component == COMPONENT_UNSIGNED_BYTE) {
+        return cast($i64, bytes_as($u8, bytes_at(binary, at), 1)[0])
+    }
+    0
+}
+
+// Read against `assets/shapes.glb`, which `assets/generate.py` writes. That
+// file exists to be awkward in the ways real exporters are: two index widths
+// and a primitive with none, an explicit byte stride and views without one, a
+// primitive missing its normal and its texture coordinate, a node giving three
+// parts and a node giving a whole matrix, and two roots.
+
+FIXTURE :: "examples/graphics/assets/shapes.glb"
+
+test "a binary glTF file reads as meshes, materials and nodes" {
+    mut model := gltf_read(FIXTURE)
+    assert(gltf_ok(model))
+    assert(gltf_mesh_count(model) == 3)
+    assert(gltf_primitive_count(model) == 3)
+    assert(gltf_material_count(model) == 3)
+    assert(gltf_node_count(model) == 4)
+    gltf_free(model)
+}
+
+test "a primitive holds the vertices the file stored" {
+    mut model := gltf_read(FIXTURE)
+    cube := gltf_primitive_at(model, gltf_mesh_first(model, 0))
+    assert(slice_len(cube.vertices) == 24)
+    held := cube.vertices
+    assert(held[0].position.x == -0.5)
+    assert(held[0].position.y == -0.5)
+    assert(held[0].position.z == 0.5)
+    assert(held[0].normal.z == 1.0)
+    assert(held[1].texcoord.x == 1.0)
+    assert(cube.material == 0)
+    gltf_free(model)
+}
+
+test "indices are read at whatever width they were stored" {
+    mut model := gltf_read(FIXTURE)
+    // Unsigned short.
+    cube := gltf_primitive_at(model, gltf_mesh_first(model, 0))
+    assert(slice_len(cube.indices) == 36)
+    order := cube.indices
+    assert(order[0] == 0)
+    assert(order[1] == 1)
+    assert(order[2] == 2)
+    assert(order[35] == 23)
+    // Unsigned int, behind a view that names its stride.
+    pyramid := gltf_primitive_at(model, gltf_mesh_first(model, 1))
+    assert(slice_len(pyramid.vertices) == 16)
+    assert(slice_len(pyramid.indices) == 18)
+    corners := pyramid.vertices
+    assert(corners[0].position.x == -0.6)
+    assert(corners[0].position.z == 0.6)
+    gltf_free(model)
+}
+
+test "a primitive with no indices is handed on in the order it was stored" {
+    mut model := gltf_read(FIXTURE)
+    floor := gltf_primitive_at(model, gltf_mesh_first(model, 2))
+    assert(slice_len(floor.vertices) == 6)
+    assert(slice_len(floor.indices) == 6)
+    order := floor.indices
+    mut index : i64 = 0
+    while (index < 6) {
+        assert(cast($i64, order[index]) == index)
+        index = index + 1
+    }
+    gltf_free(model)
+}
+
+test "an attribute the file leaves out falls back rather than reading rubbish" {
+    mut model := gltf_read(FIXTURE)
+    floor := gltf_primitive_at(model, gltf_mesh_first(model, 2))
+    held := floor.vertices
+    assert(held[0].position.x == -2.0)
+    assert(held[0].position.z == 2.0)
+    // The floor primitive carries neither, so both are the fallback rather
+    // than whatever the bytes after the positions happen to be.
+    assert(held[0].normal.x == 0.0)
+    assert(held[0].normal.y == 1.0)
+    assert(held[0].normal.z == 0.0)
+    assert(held[0].texcoord.x == 0.0)
+    assert(held[0].texcoord.y == 0.0)
+    gltf_free(model)
+}
+
+test "a material is the colour and the two numbers the file gave it" {
+    mut model := gltf_read(FIXTURE)
+    first := gltf_material_at(model, 0)
+    assert(first.base_color.x == 0.85)
+    assert(first.base_color.w == 1.0)
+    assert(first.roughness == 0.6)
+    assert(first.metallic == 0.0)
+    second := gltf_material_at(model, 1)
+    assert(second.metallic == 0.9)
+    assert(second.roughness == 0.25)
+    gltf_free(model)
+}
+
+test "a node carries where it sits and what hangs off it" {
+    mut model := gltf_read(FIXTURE)
+    root := gltf_node_at(model, 0)
+    assert(root.mesh == -1)
+    assert(root.translation.y == 0.25)
+    assert(root.child_count == 2)
+    children := gltf_node_children(model, 0)
+    assert(children[0] == 1)
+    assert(children[1] == 2)
+
+    turned := gltf_node_at(model, 1)
+    assert(turned.mesh == 0)
+    assert(turned.translation.x == -1.5)
+    // An eighth of a turn, whose halves are irrational, so this is a range.
+    assert(turned.rotation.w > 0.923 && turned.rotation.w < 0.924)
+    assert(turned.scale.x == 1.0)
+    gltf_free(model)
+}
+
+test "a node that gives a whole matrix is read as where it sits and how big" {
+    mut model := gltf_read(FIXTURE)
+    held := gltf_node_at(model, 2)
+    assert(held.mesh == 1)
+    assert(held.translation.x == 1.5)
+    assert(held.translation.y == 0.0)
+    assert(held.scale.x == 1.5)
+    assert(held.scale.y == 1.5)
+    assert(held.scale.z == 1.5)
+    gltf_free(model)
+}
+
+test "the roots are the ones the scene named" {
+    mut model := gltf_read(FIXTURE)
+    assert(gltf_root_count(model) == 2)
+    assert(gltf_root_at(model, 0) == 0)
+    assert(gltf_root_at(model, 1) == 3)
+    gltf_free(model)
+}
+
+test "reading a file leaves nothing behind" {
+    before := heap_live()
+    mut model := gltf_read(FIXTURE)
+    assert(gltf_ok(model))
+    gltf_free(model)
+    assert(heap_live() == before)
+}
+
+test "a file that is not one is refused rather than read" {
+    mut missing := gltf_read("examples/graphics/assets/no-such-file.glb")
+    assert(gltf_ok(missing) == false)
+    assert(gltf_mesh_count(missing) == 0)
+    gltf_free(missing)
+    // The generator itself is text, so this is a file that is there and is not
+    // a glb, which is the other way a read fails.
+    mut wrong := gltf_read("examples/graphics/assets/generate.py")
+    assert(gltf_ok(wrong) == false)
+    gltf_free(wrong)
+}
