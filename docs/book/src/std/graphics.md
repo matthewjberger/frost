@@ -17,6 +17,8 @@ comes straight out of [math.md](math.md).
 | `mesh.frost` | Geometry on the device, and the cache a program names it through |
 | `material.frost` | A registry of surfaces, so a thing that is drawn carries a number |
 | `texture.frost` | Images on the device, and render targets to draw into |
+| `scene_sync.frost` | The walk from a world to the flat run a pass draws |
+| `world.frost` | Placements, turns, a tree and the schedule that resolves them |
 | `window.frost` | Opens a window and pumps it until it is closed |
 | `triangle.frost` | Draws a rotating triangle into that window |
 | `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
@@ -318,18 +320,32 @@ state a pass carries, and each of the five graphs that cannot run at all.
 
 ## From a world to a run
 
-Four of the five demos draw what an ECS world holds, and all four reach the GPU
-through one file, `examples/graphics/scene_sync.frost`. A pass records commands
-and a world holds game state; this is the one place the two meet.
+Four of the five demos draw what an ECS world holds, and the walk from one to
+the other is split across two files with a line between them that is worth
+naming.
 
-`world_prepare` registers the components a drawn thing carries, along with the
-two resources every one of these programs wants:
+`examples/graphics/world.frost` is the far side. A thing there has a placement,
+a turn and somewhere it hangs from, and a frame works out where it ended up.
+Nothing in it holds a device or records a command.
+
+`examples/graphics/scene_sync.frost` is the near side. It asks an entity for two
+components and no more:
+
+```frost
+Model :: struct { matrix: Mat4 }
+Drawn :: struct { mesh: i64, material: i64, layer: i64 }
+```
+
+Where a thing ended up is somebody else's answer by the time it arrives here,
+which is what lets the renderer stay ignorant of placements, trees, clocks and
+windows. The dependency runs one way: `world.frost` reaches for those two types,
+and nothing on the renderer side reaches back.
+
+`world_prepare` registers both of those along with the two the far side owns:
 
 ```frost
 Placement :: struct { position: Vec3, scale: Vec3 }
 Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
-Model :: struct { matrix: Mat4 }
-Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 ```
 
 `world_schedule` is the frame. `move_camera` and `turn_things` run in `First`,

@@ -16559,6 +16559,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "shadowed.frost",
             "graph.frost",
             "scene_sync.frost",
+            "world.frost",
         ]
     } else {
         &["window.frost"]
@@ -16657,8 +16658,8 @@ fn the_render_graph_orders_its_passes() {
 // chain above it rather than against its own parent alone.
 //
 // The libraries and the search path are needed for the same reason the graph's
-// tests need them: the file imports the wgpu binding, which names symbols
-// whether or not a test calls them.
+// tests need them: the file reaches the wgpu binding through the renderer side
+// it writes into, and that names symbols whether or not a test calls them.
 #[test]
 fn the_frame_moves_the_world_it_was_given() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -16666,7 +16667,7 @@ fn the_frame_moves_the_world_it_was_given() {
     let Some(libraries) = graphics_libraries(&graphics) else {
         return;
     };
-    let source = graphics.join("scene_sync.frost");
+    let source = graphics.join("world.frost");
     let search = library_search_path(&graphics);
     for emit_c in [false, true] {
         if emit_c && c_compiler().is_none() {
