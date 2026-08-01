@@ -944,7 +944,14 @@ main :: fn() -> i64 {
         base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
         metallic = 0.0 })
 
+    // One run per view, because culling is a question about a view and this
+    // demo draws the same world from three: the camera, the light, and the
+    // second camera in the corner. One run culled by any of them is wrong for
+    // the other two, and the shadow pass is where that shows worst: a thing
+    // behind the camera can still throw a shadow into it.
     mut render := render_world_new(device, MAX_DRAWN)
+    mut shadow_render := render_world_new(device, MAX_DRAWN)
+    mut inset_render := render_world_new(device, MAX_DRAWN)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
@@ -1084,7 +1091,7 @@ main :: fn() -> i64 {
     inset_frame_group := uniform_group(device, frame_layout, inset_uniform,
         FRAME_BYTES)
 
-    mut graph := graph_new(device, 10, 10)
+    mut graph := graph_new(device, 12, 12)
     screen := graph_backbuffer(graph)
     shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
         DEPTH_FORMAT)
@@ -1112,7 +1119,7 @@ main :: fn() -> i64 {
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
         frame_group = frame_group,
-        render = ptr_to(render),
+        render = ptr_to(shadow_render),
         store = ptr_to(store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 0,
@@ -1149,17 +1156,32 @@ main :: fn() -> i64 {
     // What is drawn at all, decided once for the three passes that draw it.
     // The shadow pass, the scene pass and the inset all run off the one run, so
     // one culling pass fills it and all three read what it wrote.
+    culling_pipeline := make_cull_pipeline(device,
+        render_world_cull_layout(render))
     mut culling := Culling {
-        pipeline = make_cull_pipeline(device, render_world_cull_layout(render)),
+        pipeline = culling_pipeline,
         render = ptr_to(render),
+    }
+    mut shadow_culling := Culling {
+        pipeline = culling_pipeline,
+        render = ptr_to(shadow_render),
     }
     arguments := graph_external_buffer(graph, "draw arguments")
     graph_set_external_buffer(graph, arguments, render_world_indirect(render))
     cull_pass := graph_compute_pass(graph, "cull", cull_things,
         ptr_to(culling))
     graph_writes(graph, cull_pass, arguments)
-    graph_reads(graph, shadow_pass, arguments)
     graph_reads(graph, lit_pass, arguments)
+
+    // The light's own, from the box it sees the world through. An orthographic
+    // projection has six planes like any other, so the same test answers it.
+    shadow_arguments := graph_external_buffer(graph, "shadow arguments")
+    graph_set_external_buffer(graph, shadow_arguments,
+        render_world_indirect(shadow_render))
+    shadow_cull := graph_compute_pass(graph, "shadow cull", cull_things,
+        ptr_to(shadow_culling))
+    graph_writes(graph, shadow_cull, shadow_arguments)
+    graph_reads(graph, shadow_pass, shadow_arguments)
 
     pulse_pass := graph_compute_pass(graph, "pulse", dispatch_pulse,
         ptr_to(pulse))
@@ -1223,23 +1245,35 @@ main :: fn() -> i64 {
     // own pass. It is handed to this one and run by a pass here, so where the
     // nested work falls in the order comes from what that pass declares it
     // writes, the same as everything else.
-    mut inset_graph := graph_new(device, 2, 1)
+    mut inset_graph := graph_new(device, 4, 3)
     inset_target := graph_external_color(inset_graph, "target")
     inset_depth := graph_depth(inset_graph, "depth", INSET_WIDTH, INSET_HEIGHT,
         DEPTH_FORMAT)
     mut inset_scene := Scene {
         pipeline = lit_scene.pipeline,
         frame_group = inset_frame_group,
-        render = ptr_to(render),
+        render = ptr_to(inset_render),
         store = ptr_to(store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 1,
     }
+    mut inset_culling := Culling {
+        pipeline = culling_pipeline,
+        render = ptr_to(inset_render),
+    }
+    inset_arguments := graph_external_buffer(inset_graph, "inset arguments")
+    graph_set_external_buffer(inset_graph, inset_arguments,
+        render_world_indirect(inset_render))
+    inset_cull := graph_compute_pass(inset_graph, "inset cull", cull_things,
+        ptr_to(inset_culling))
+    graph_writes(inset_graph, inset_cull, inset_arguments)
+
     inset_scene_pass := graph_pass(inset_graph, "inset scene", draw_things,
         ptr_to(inset_scene))
     graph_writes_color(inset_graph, inset_scene_pass, inset_target,
         Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 })
     graph_writes_depth(inset_graph, inset_scene_pass, inset_depth)
+    graph_reads(inset_graph, inset_scene_pass, inset_arguments)
     if (graph_schedule(inset_graph) == false) {
         print_str_line("the inset graph cannot run")
     }
@@ -1326,17 +1360,29 @@ main :: fn() -> i64 {
         watcher.pitch = -0.35
         write_frame(queue, inset_uniform, watcher, light, elapsed, INSET_WIDTH,
             INSET_HEIGHT)
-        // From the world to what the passes draw, once a frame. Every pass that
-        // draws the scene walks the same run.
+        // From the world to what the passes draw. The same world three times,
+        // each culled by the view that draws it: culling is a question about a
+        // view, and this one is drawn from the camera, from the light, and
+        // from the second camera in the corner. The walk is the same each time
+        // and only the frustum differs, which is what the three uploads are.
         render_world_begin(render)
         scene_sync(world, render, registry, cache, all_drawn(model, drawn))
-        // Nothing culled, because three passes draw this one run and only one
-        // of them is the camera: the shadow pass draws from where the light is
-        // and the inset from somewhere else again. Culling by the camera would
-        // drop a caster standing behind it whose shadow still lands in view.
-        // A run per view is what fixes that, and this says so until there is
-        // one.
-        render_world_upload_unculled(render, queue)
+
+        render_world_begin(shadow_render)
+        scene_sync(world, shadow_render, registry, cache,
+            all_drawn(model, drawn))
+        // The box the light sees the world through, which is what the shadow
+        // pass draws with and therefore what its run is culled by.
+        render_world_upload(shadow_render, queue, light_view_projection(light))
+
+        render_world_begin(inset_render)
+        scene_sync(world, inset_render, registry, cache,
+            all_drawn(model, drawn))
+        render_world_upload(inset_render, queue,
+            camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT))
+
+        render_world_upload(render, queue,
+            camera_view_projection(world_camera(world), width(p), height(p)))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -1350,6 +1396,8 @@ main :: fn() -> i64 {
     giving := ecs_resource($Hierarchy, world, TREE_SLOT)
     hierarchy_free(giving)
     render_world_free(render)
+    render_world_free(shadow_render)
+    render_world_free(inset_render)
     geometry_free(store)
     heap_release_slice($Entity, entities)
     materials_free(registry)
