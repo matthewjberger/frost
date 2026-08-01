@@ -49,7 +49,8 @@ import "ecs.frost"
 import "math.frost"
 import "io.frost"
 
-export AppConfig, App, AppError, app_config, app_open, app_close, app_failed,
+export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
+    app_failed, app_install, engine_plugin, exit_on_escape_plugin,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -62,24 +63,40 @@ AppConfig :: struct {
     title: str,
     width: i64,
     height: i64,
-    // How many things may be drawn, which sizes the mesh cache, the material
-    // registry and the run.
+    // How many things may be drawn at once, which is what the run holds.
     drawn: i64,
+    // How many distinct meshes and how many distinct materials. Three numbers
+    // rather than one, because they count different things: a scene of a
+    // thousand crates is one mesh and one material, and a table sized by the
+    // largest of the three is either wasteful or too small. `materials_add`
+    // past the end answers with the last slot rather than growing, so a
+    // registry sized by the wrong number draws the wrong material and says
+    // nothing.
+    meshes: i64,
+    materials: i64,
     vertices: i64,
     indices: i64,
 }
 
 // A window of the given size, with room for a scene of a few hundred things. A
-// program that loads more than that says so by writing the fields.
+// program that needs more than that says so by writing the fields.
 app_config :: fn(title: str, width: i64, height: i64) -> AppConfig {
     AppConfig { title = title, width = width, height = height,
-        drawn = 256, vertices = 65536, indices = 131072 }
+        drawn = 256, meshes = 64, materials = 64,
+        vertices = 65536, indices = 131072 }
 }
 
-// Why opening did not work. There is no half-open App: `app_open` gives back
-// whatever it took before it answers with one of these, so a program that gets
-// a failure has nothing left to close.
-AppError :: enum { NoWindow, NoDevice }
+// Why opening did not work, and what the platform said about it. There is no
+// half-open App: `app_open` gives back whatever it took before it answers with
+// one of these, so a program that gets a failure has nothing left to close.
+//
+// The reason travels in here rather than being asked for afterwards. Giving the
+// window back shuts SDL down, and what SDL says about a failure does not
+// outlive SDL, so the one moment the reason can be read is before the cleanup
+// that a caller has already had done for it.
+AppError :: struct { why: AppFault, said: str }
+
+AppFault :: enum { NoWindow, NoDevice }
 
 // `linear` because of what it holds. A window, a device and four tables are
 // taken once and given back once, and a path that opens one and returns without
@@ -98,38 +115,76 @@ App :: linear struct {
 app_open :: fn(config: AppConfig) -> App ! AppError {
     mut p := platform_open(config.title, config.width, config.height)
     if (platform_ok(p) == false) {
+        // Read before the close, because the close is what makes it
+        // unreadable.
+        said := platform_error()
         platform_close(p)
-        return AppError::NoWindow
+        return AppError { why = AppFault::NoWindow, said = said }
     }
     mut r := renderer_open(platform_window(p), config.width, config.height)
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)
-        return AppError::NoDevice
+        return AppError { why = AppFault::NoDevice,
+            said = "no adapter or no device that answers to this surface" }
     }
     device := renderer_device(r)
-    mut world := ecs_new()
-    world_prepare(world)
-    App {
+    mut app := App {
         platform = p,
         renderer = r,
-        world = world,
-        schedule = world_schedule(),
+        world = ecs_new(),
+        schedule = schedule_new(),
         store = geometry_new(device, config.vertices, config.indices),
-        meshes = mesh_cache_new(config.drawn),
-        materials = materials_new(config.drawn),
+        meshes = mesh_cache_new(config.meshes),
+        materials = materials_new(config.materials),
         render = render_world_new(device, config.drawn),
     }
+    // The one plugin an App is not an App without: the components a frame
+    // reads, the resources its systems need, and the three systems themselves.
+    // Everything else a program installs for itself.
+    engine_plugin(app)
+    app
+}
+
+// The engine's own registration. What every drawing program needs and nothing
+// a particular one does.
+engine_plugin :: fn(mut app: App) {
+    world_prepare(app.world)
+    world_systems(app.schedule)
+}
+
+// Escape closes the window. Installed by a demo rather than built into the
+// poll, so a program that wants that key for a menu simply does not install it.
+exit_on_escape_plugin :: fn(mut app: App) {
+    schedule_add(app.schedule, Stage::First, exit_on_escape)
+}
+
+// One plugin, built into this App.
+//
+// A plugin is a `fn(mut App)` and nothing else: it registers the components it
+// reads, the resources it needs at their defaults, and its systems. There is no
+// configuration on it, because what a program wants different it writes after
+// installing, the way `app_camera_set` follows `app_open`. One signature for
+// all of them is what makes a set of plugins a list of names rather than a
+// shape each caller has to know.
+//
+// The signature is spelled where it is used rather than named, because a
+// function type in Frost has no alias: `schedule_add` spells `fn(mut World)`
+// the same way.
+app_install :: fn(mut app: App, build: fn(mut App)) {
+    build(app)
 }
 
 // What a program says and answers when it could not open. Written here because
 // every program says the same thing, and because which half failed is this
-// file's own enum rather than something a caller should have to read.
-app_failed :: fn(why: AppError) -> i64 {
-    match why {
+// file's own enum rather than something a caller should have to read. What is
+// printed came out of the failure, so it says the same thing however long ago
+// the platform was shut down.
+app_failed :: fn(held: AppError) -> i64 {
+    print_str_line(held.said)
+    match held.why {
         case .NoWindow: {
             print_str_line("no window")
-            print_str_line(platform_error())
             1
         }
         case .NoDevice: {
@@ -148,7 +203,7 @@ app_close :: fn(move app: App) -> i64 {
     materials_free(app.materials)
     mesh_cache_free(app.meshes)
     schedule_free(app.schedule)
-    giving := ecs_resource($Hierarchy, app.world, TREE_SLOT)
+    giving := world_tree_take(app.world)
     hierarchy_free(giving)
     ecs_free(app.world)
     renderer_close(app.renderer)
@@ -157,16 +212,15 @@ app_close :: fn(move app: App) -> i64 {
 }
 
 // The far half of a frame: what the machine did, and what the world made of it.
-// False when the window asked to close or escape was pressed, which is what a
-// main loop runs until.
+// False when the window asked to close or a system asked the program to stop,
+// which is what a main loop runs until. Which keys mean stop is a system's
+// business, so `exit_on_escape_plugin` is what a demo installs and this reads
+// only the answer.
 //
 // The renderer and the graph are resized together, because a surface and every
 // target tested against it are the same size or nothing draws.
 app_next :: fn(mut app: App, mut graph: Graph) -> bool {
     if (platform_poll(app.platform) == false) {
-        return false
-    }
-    if (key_pressed(app.platform, KEY_ESCAPE)) {
         return false
     }
     if (resized(app.platform)) {
@@ -176,7 +230,9 @@ app_next :: fn(mut app: App, mut graph: Graph) -> bool {
     }
     world_input(app.world, platform_input(app.platform))
     schedule_run(app.schedule, app.world, ANY_STATE)
-    true
+    // A system deciding the program is finished is the last thing a frame does,
+    // so the frame it decided in is finished rather than half drawn.
+    world_exit_wanted(app.world) == false
 }
 
 // What the world says is drawn, put in the run the passes read. A program
