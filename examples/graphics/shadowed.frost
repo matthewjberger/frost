@@ -1330,7 +1330,13 @@ main :: fn() -> i64 {
         // draws the scene walks the same run.
         render_world_begin(render)
         scene_sync(world, render, registry, cache, all_drawn(model, drawn))
-        render_world_upload(render, queue)
+        // Nothing culled, because three passes draw this one run and only one
+        // of them is the camera: the shadow pass draws from where the light is
+        // and the inset from somewhere else again. Culling by the camera would
+        // drop a caster standing behind it whose shadow still lands in view.
+        // A run per view is what fixes that, and this says so until there is
+        // one.
+        render_world_upload_unculled(render, queue)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {

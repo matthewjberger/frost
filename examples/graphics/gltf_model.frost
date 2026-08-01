@@ -415,7 +415,8 @@ main :: fn() -> i64 {
             height(p))
         render_world_begin(render)
         scene_sync(world, render, registry, cache, all_drawn(model, drawn))
-        render_world_upload(render, queue)
+        render_world_upload(render, queue,
+            camera_view_projection(world_camera(world), width(p), height(p)))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {

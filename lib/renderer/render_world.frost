@@ -38,7 +38,8 @@ import "mem.frost"
 
 export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
     render_world_new, render_world_free, render_world_begin, render_world_push,
-    render_world_upload, render_world_count, render_world_batches,
+    render_world_upload, render_world_upload_unculled,
+    render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
     render_world_cull_layout, render_world_cull_group, render_world_dispatch,
     render_world_draw, render_world_draw_batch, render_world_batch_material,
@@ -70,7 +71,10 @@ ObjectData :: struct {
     base_color: Vec4,
     surface: Vec4,
     batch: u32,
-    pad_one: u32,
+    // How big the thing is about its own origin, before the matrix. What the
+    // culling pass tests is a sphere, and it works out where that ended up
+    // from the matrix rather than being told twice.
+    radius: f32,
     pad_two: u32,
     pad_three: u32,
 }
@@ -87,10 +91,12 @@ MAX_PER_BATCH :: 256
 INDIRECT_WORDS :: 5
 INDIRECT_BYTES :: 20
 
-// What the culling pass bounds itself with: how many objects there are and how
-// long a batch's slice is. Four numbers because a uniform's members align to
-// sixteen and two of these are spare.
-TOTALS_BYTES :: 16
+// What the culling pass is given: the six planes of what the camera can see,
+// then how many objects there are and how long a batch's slice is. The two
+// counts share a vector with two spare numbers, since a uniform's members align
+// to sixteen either way.
+CULL_PLANES :: 6
+CULL_BYTES :: 112
 
 // Everything a frame hands the GPU, and the bindings that reach it.
 RenderWorld :: struct {
@@ -139,7 +145,7 @@ render_world_new :: fn(device: Device, room: i64) -> RenderWorld {
     object_buffer := storage_buffer(device, room * OBJECT_BYTES)
     visible_buffer := storage_buffer(device, visible_room * 4)
     counts_buffer := storage_buffer(device, room * 4)
-    totals_buffer := small_uniform(device, TOTALS_BYTES)
+    totals_buffer := small_uniform(device, CULL_BYTES)
     // Both indirect and storage: the compute pass writes it and the draw reads
     // its arguments from it.
     mut descriptor := buffer_descriptor_init()
@@ -221,7 +227,8 @@ render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, surface: Material,
         base_color = material_color(surface),
         surface = material_surface(surface),
         batch = cast($u32, batch),
-        pad_one = 0, pad_two = 0, pad_three = 0,
+        radius = span.radius,
+        pad_two = 0, pad_three = 0,
     }
     held.count = held.count + 1
 }
@@ -258,11 +265,43 @@ batch_of :: fn(mut held: RenderWorld, span: MeshSpan, material: i64) -> i64 {
 // whose compute pass did not run draws nothing rather than drawing whatever the
 // last one left behind. The other four are the mesh's own and the CPU knows
 // them.
-render_world_upload :: fn(mut held: RenderWorld, queue: Queue) {
+render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
+    view_projection: Mat4) {
+    upload_with(held, queue, mat4_frustum_planes(view_projection))
+}
+
+// The same, with nothing culled.
+//
+// A plane of all zeros answers zero for every point, which is never less than
+// the negative of a radius, so the test lets everything through. What that is
+// for is a run drawn from more than one view: a thing behind the camera can
+// still cast a shadow into it, and one run culled by the camera is wrong for
+// every pass that is not the camera. The answer is a run per view, and until
+// there is one this says so rather than quietly dropping what the other views
+// wanted.
+render_world_upload_unculled :: fn(mut held: RenderWorld, queue: Queue) {
+    upload_with(held, queue, [vec4(0.0, 0.0, 0.0, 0.0); CULL_PLANES])
+}
+
+upload_with :: fn(mut held: RenderWorld, queue: Queue,
+    planes: [6]Vec4) {
+    // The planes first, then the two counts. They are one binding and the
+    // shader reads them as one struct.
+    mut given : [28]f32 = [0.0; 28]
+    mut plane : i64 = 0
+    while (plane < CULL_PLANES) {
+        given[plane * 4] = planes[plane].x
+        given[plane * 4 + 1] = planes[plane].y
+        given[plane * 4 + 2] = planes[plane].z
+        given[plane * 4 + 3] = planes[plane].w
+        plane = plane + 1
+    }
     mut totals : [4]u32 = [cast($u32, held.count),
         cast($u32, MAX_PER_BATCH), 0, 0]
-    queue_write_buffer(queue, held.totals_buffer, 0, ptr_to(totals[0]),
-        TOTALS_BYTES)
+    queue_write_buffer(queue, held.totals_buffer, 0, ptr_to(given[0]),
+        CULL_PLANES * 16)
+    queue_write_buffer(queue, held.totals_buffer, CULL_PLANES * 16,
+        ptr_to(totals[0]), 16)
     if (held.count > 0) {
         mut items := held.objects
         queue_write_buffer(queue, held.object_buffer, 0, ptr_to(items[0]),
@@ -307,9 +346,28 @@ struct ObjectData {
     base_color: vec4<f32>,
     surface: vec4<f32>,
     batch: u32,
-    pad_one: u32,
+    radius: f32,
     pad_two: u32,
     pad_three: u32,
+}
+
+struct Culling {
+    planes: array<vec4<f32>, 6>,
+    totals: vec4<u32>,
+}
+
+// Whether a sphere is on the inward side of all six planes. A plane is a unit
+// normal and a distance, so what it answers is how far the centre is from it
+// in world units, and a sphere is out only where the whole of it is.
+fn sphere_in_frustum(planes: array<vec4<f32>, 6>, centre: vec3<f32>,
+                     radius: f32) -> bool {
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let plane = planes[i];
+        if (dot(plane.xyz, centre) + plane.w < -radius) {
+            return false;
+        }
+    }
+    return true;
 }
 
 struct DrawArguments {
@@ -324,23 +382,33 @@ struct DrawArguments {
 @group(0) @binding(1) var<storage, read_write> visible: array<u32>;
 @group(0) @binding(2) var<storage, read_write> draws: array<DrawArguments>;
 @group(0) @binding(3) var<storage, read_write> counts: array<atomic<u32>>;
-@group(0) @binding(4) var<uniform> totals: vec4<u32>;
+@group(0) @binding(4) var<uniform> cull: Culling;
 
 @compute @workgroup_size(64)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     let object_index = id.x;
-    if (object_index >= totals.x) {
+    if (object_index >= cull.totals.x) {
         return;
     }
-    let batch = objects[object_index].batch;
-    // Everything is drawn for now. A frustum test goes here, and nothing after
-    // it changes when one arrives: what the pass writes is the same either way,
-    // and how many it writes is already the GPU's answer rather than the CPU's.
+    let object = objects[object_index];
+
+    // Where the thing ended up and how big it got. The matrix carries both, so
+    // neither has to be sent a second time: the centre is where its own origin
+    // landed, and the radius is its own scaled by the longest of the three
+    // axes, which is the smallest sphere that still holds it.
+    let centre = (object.matrix * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+    let scaling = max(length(object.matrix[0].xyz),
+        max(length(object.matrix[1].xyz), length(object.matrix[2].xyz)));
+    if (!sphere_in_frustum(cull.planes, centre, object.radius * scaling)) {
+        return;
+    }
+
+    let batch = object.batch;
     let slot = atomicAdd(&counts[batch], 1u);
-    if (slot >= totals.y) {
+    if (slot >= cull.totals.y) {
         return;
     }
-    visible[batch * totals.y + slot] = object_index;
+    visible[batch * cull.totals.y + slot] = object_index;
     atomicAdd(&draws[batch].instance_count, 1u);
 }
 "
@@ -437,7 +505,7 @@ culling_layout :: fn(device: Device) -> BindGroupLayout {
     entries[4].binding = 4
     entries[4].visibility = ShaderStage::Compute
     entries[4].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
-    entries[4].buffer.min_binding_size = TOTALS_BYTES
+    entries[4].buffer.min_binding_size = CULL_BYTES
     mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 5
     descriptor.entries = ptr_to(entries[0])
@@ -463,7 +531,7 @@ culling_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
     entries[3].size = count_bytes
     entries[4].binding = 4
     entries[4].buffer = totals
-    entries[4].size = TOTALS_BYTES
+    entries[4].size = CULL_BYTES
     mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 5

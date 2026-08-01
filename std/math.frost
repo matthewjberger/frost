@@ -23,6 +23,7 @@ export Vec2, Vec3, Vec4, Mat4, Quat,
     mat4_ortho_zo,
     mat4_look_at,
     mat4_transform_point, mat4_transform_dir,
+    mat4_frustum_planes,
     quat_identity, quat_from_axis_angle, quat_mul, quat_length,
     quat_normalize, quat_conjugate, quat_rotate_vec3, quat_to_mat4,
     radians, degrees,
@@ -315,6 +316,45 @@ mat4_look_at :: fn(eye: Vec3, center: Vec3, up: Vec3) -> Mat4 {
 }
 
 // ---------------------------------------------------------------------------
+// The six planes of what a view-projection can see, each as a normal and a
+// distance, pointing inwards: a point is inside where `dot(normal, point) + d`
+// is at least zero for all six, and a sphere is inside where that is at least
+// the negative of its radius.
+//
+// Read off the matrix by adding and subtracting rows, which is exact rather
+// than reconstructed: clip space is where `-w <= x <= w` and the same for y,
+// with z from zero to w, and each of those inequalities rearranges into one
+// row of the matrix combined with the last. The planes are normalised so the
+// distance is in world units and a radius can be compared against it.
+//
+// The order is left, right, bottom, top, near, far.
+mat4_frustum_planes :: fn(m: Mat4) -> [6]Vec4 {
+    mut planes : [6]Vec4 = [vec4(0.0, 0.0, 0.0, 0.0); 6]
+    planes[0] = plane_of(m.m[3] + m.m[0], m.m[7] + m.m[4], m.m[11] + m.m[8],
+        m.m[15] + m.m[12])
+    planes[1] = plane_of(m.m[3] - m.m[0], m.m[7] - m.m[4], m.m[11] - m.m[8],
+        m.m[15] - m.m[12])
+    planes[2] = plane_of(m.m[3] + m.m[1], m.m[7] + m.m[5], m.m[11] + m.m[9],
+        m.m[15] + m.m[13])
+    planes[3] = plane_of(m.m[3] - m.m[1], m.m[7] - m.m[5], m.m[11] - m.m[9],
+        m.m[15] - m.m[13])
+    // Depth runs from zero at the near plane rather than from minus one, so
+    // the near plane is the third row on its own and not a sum with the last.
+    planes[4] = plane_of(m.m[2], m.m[6], m.m[10], m.m[14])
+    planes[5] = plane_of(m.m[3] - m.m[2], m.m[7] - m.m[6], m.m[11] - m.m[10],
+        m.m[15] - m.m[14])
+    planes
+}
+
+// One plane, made unit so its distance is in world units.
+plane_of :: fn(a: f32, b: f32, c: f32, d: f32) -> Vec4 {
+    length := sqrtf(a * a + b * b + c * c)
+    if (length == 0.0) {
+        return vec4(0.0, 0.0, 0.0, 0.0)
+    }
+    vec4(a / length, b / length, c / length, d / length)
+}
+
 // Quaternion, stored (x, y, z, w) with w the scalar part.
 
 quat_identity :: fn() -> Quat { Quat { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } }
@@ -717,4 +757,40 @@ test "quaternion multiplication composes rotations" {
     assert(near(reversed.y, -about_y.y))
     assert(near(reversed.z, -about_y.z))
     assert(near(reversed.w, about_y.w))
+}
+
+test "the frustum planes face inwards and hold what the camera sees" {
+    // A camera at the origin looking down -Z, so what it sees is in front and
+    // what it does not is behind, beside and beyond.
+    view := mat4_look_at(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0),
+        vec3(0.0, 1.0, 0.0))
+    projection := mat4_perspective_zo(radians(60.0), 1.0, 1.0, 100.0)
+    planes := mat4_frustum_planes(mat4_mul(projection, view))
+
+    // Straight ahead and well inside: every plane says so.
+    assert(inside(planes, vec3(0.0, 0.0, -10.0), 0.0))
+    // Behind the camera, past the far plane, and off to one side.
+    assert(inside(planes, vec3(0.0, 0.0, 10.0), 0.0) == false)
+    assert(inside(planes, vec3(0.0, 0.0, -200.0), 0.0) == false)
+    assert(inside(planes, vec3(100.0, 0.0, -10.0), 0.0) == false)
+    // A radius is what makes a thing just outside still count, which is the
+    // whole reason the planes are normalised.
+    assert(inside(planes, vec3(100.0, 0.0, -10.0), 200.0))
+}
+
+// Whether a sphere is on the inward side of all six, which is what a culling
+// pass asks. Here so the test above says what it means; a program asks this of
+// the GPU rather than of the CPU.
+inside :: fn(planes: [6]Vec4, centre: Vec3, radius: f32) -> bool {
+    mut index : i64 = 0
+    while (index < 6) {
+        held := planes[index]
+        reach := held.x * centre.x + held.y * centre.y + held.z * centre.z
+            + held.w
+        if (reach < -radius) {
+            return false
+        }
+        index = index + 1
+    }
+    true
 }

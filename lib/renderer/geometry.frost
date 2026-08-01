@@ -46,6 +46,10 @@ MeshSpan :: struct {
     first_index: u32,
     index_count: u32,
     base_vertex: i32,
+    // How far the furthest vertex sits from the mesh's own origin. What a
+    // culling pass tests is a sphere, and this is its radius before anything
+    // has been scaled: the pass works out where it ended up from the matrix.
+    radius: f32,
 }
 
 // The two buffers and how much of each is used. Sized up front: a scene says
@@ -99,7 +103,19 @@ geometry_add :: fn(mut store: Geometry, queue: Queue, vertices: []Vertex,
         || store.vertex_count + added > store.vertex_room
         || store.index_count + ordered > store.index_room) {
         print "geometry: more vertices or indices than the store was made room for"
-        return MeshSpan { first_index = 0, index_count = 0, base_vertex = 0 }
+        return MeshSpan { first_index = 0, index_count = 0, base_vertex = 0,
+            radius = 0.0 }
+    }
+    // Measured here rather than asked of the caller, since the vertices are in
+    // hand and nothing else knows the shape.
+    mut radius : f32 = 0.0
+    mut at : i64 = 0
+    while (at < added) {
+        reach := vec3_length(vertices[at].position)
+        if (reach > radius) {
+            radius = reach
+        }
+        at = at + 1
     }
     queue_write_buffer(queue, store.vertices,
         store.vertex_count * VERTEX_STRIDE, ptr_to(vertices[0]),
@@ -111,6 +127,7 @@ geometry_add :: fn(mut store: Geometry, queue: Queue, vertices: []Vertex,
         first_index = cast($u32, store.index_count),
         index_count = cast($u32, ordered),
         base_vertex = cast($i32, store.vertex_count),
+        radius = radius,
     }
     store.vertex_count = store.vertex_count + added
     store.index_count = store.index_count + ordered
