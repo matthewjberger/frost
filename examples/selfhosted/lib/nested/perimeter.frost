@@ -1,0 +1,9 @@
+// A module in a directory of its own, reaching back up to one beside its
+// parent. What it names is one directory above it, so the path it writes has a
+// `..` in it.
+
+import "../shapes.frost"
+
+export perimeter
+
+perimeter :: fn(r: Rect) -> i64 { 2 * (r.width + r.height) }

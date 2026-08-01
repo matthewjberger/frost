@@ -1,0 +1,21 @@
+// One module reached two ways.
+//
+// `lib/shapes.frost` is named here, and named again by
+// `lib/nested/perimeter.frost` as `../shapes.frost`. Those are two spellings of
+// one file, and a file lands in a program once however many times it is named:
+// twice would put every declaration in it beside a copy of itself, and a name
+// that stands for two things stands for neither.
+//
+// Which is worth a program of its own because the second spelling only turns up
+// once a project keeps its modules in directories. A tree that is all one
+// directory never writes a `..` and never asks the question.
+
+import "lib/shapes.frost"
+import "lib/nested/perimeter.frost"
+
+main :: fn() -> i64 {
+    r := Rect { width = 3, height = 4 }
+    print area(r)
+    print perimeter(r)
+    0
+}

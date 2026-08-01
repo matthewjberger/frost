@@ -76,6 +76,105 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     out
 }
 
+// A path with its `.` and `..` steps taken, and one separator throughout.
+//
+// Whether two imports name the same file is asked by comparing their paths, so
+// two spellings of one file have to come out the same or it is placed twice and
+// every name in it collides with itself. `lib/engine/../renderer/mesh.frost`
+// and `examples/graphics/../../lib/renderer/mesh.frost` are one file, and a
+// program that reaches a module from two directories reaches it from two
+// directories.
+//
+// Lexical rather than a walk of the filesystem: what a `..` after a real
+// directory means is that directory's parent, which is what this takes, and no
+// question is asked of the disk. A leading `..` that nothing precedes is kept,
+// since there is nothing above it to cancel.
+normalise_path :: fn(path: ^i8) -> ^i8 {
+    length := cstr_len(path)
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 2)) }
+    mut at : i64 = 0
+    // A path that begins at the root stays at the root. Every separator after
+    // this is written by the segments themselves, and the first of them writes
+    // none, so without this `/tmp/x` comes back as `tmp/x` and names a
+    // different file.
+    if (length > 0) {
+        first := byte_at(path, 0)
+        if (first == CH_SLASH || first == CH_BACKSLASH) {
+            byte_set(out, 0, CH_SLASH)
+            at = 1
+        }
+    }
+    // Where the segments start, so the undo below knows the root is not one of
+    // them and stops there.
+    root_at := at
+    // Where each segment written so far starts, so a `..` knows what to undo.
+    mut starts : [MAX_PATH_STEPS]i64 = [0; MAX_PATH_STEPS]
+    mut depth : i64 = 0
+    mut read : i64 = 0
+    while (read < length) {
+        c := byte_at(path, read)
+        if (c == CH_SLASH || c == CH_BACKSLASH) {
+            read = read + 1
+            continue
+        }
+        // One segment, up to the next separator.
+        mut stop := read
+        while (stop < length) {
+            held := byte_at(path, stop)
+            if (held == CH_SLASH || held == CH_BACKSLASH) {
+                break
+            }
+            stop = stop + 1
+        }
+        span := stop - read
+        if (span == 1 && byte_at(path, read) == CH_DOT) {
+            read = stop
+            continue
+        }
+        if (span == 2 && byte_at(path, read) == CH_DOT
+            && byte_at(path, read + 1) == CH_DOT && depth > 0
+            && is_parent_step(out, starts[depth - 1], at) == false) {
+            depth = depth - 1
+            // Back to where the segment started, and back over the separator
+            // in front of it, or the next one written puts a second there.
+            at = starts[depth]
+            if (at > root_at) {
+                at = at - 1
+            }
+            read = stop
+            continue
+        }
+        if (at > root_at) {
+            byte_set(out, at, CH_SLASH)
+            at = at + 1
+        }
+        if (depth < MAX_PATH_STEPS) {
+            starts[depth] = at
+            depth = depth + 1
+        }
+        mut k : i64 = 0
+        while (k < span) {
+            byte_set(out, at + k, byte_at(path, read + k))
+            k = k + 1
+        }
+        at = at + span
+        read = stop
+    }
+    byte_set(out, at, 0)
+    out
+}
+
+// How many steps of a path this keeps track of, which is what bounds how deep
+// a `..` can reach back.
+MAX_PATH_STEPS :: 64
+
+// Whether the segment written at `start` is itself a `..`, which nothing above
+// it can cancel: `../../a` keeps both.
+is_parent_step :: fn(out: ^i8, start: i64, at: i64) -> bool {
+    at - start == 2 && byte_at(out, start) == CH_DOT
+        && byte_at(out, start + 1) == CH_DOT
+}
+
 // An import is found beside the file that named it first, then under
 // each directory the command line or the environment offered, then under the
 // standard library. Beside-first is what lets a project's own files name each
@@ -86,14 +185,14 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
 // names where the reader would have looked.
 find_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     mut roots: Arena<SearchRoot>) -> ^i8 {
-    beside := join_path(parent, src, off, len)
+    beside := normalise_path(join_path(parent, src, off, len))
     if (unsafe { frost_rt_file_exists(beside) } == 1) {
         return beside
     }
     mut i : i64 = 0
     while (i < roots.count) {
         entry := arena_at(roots, i)
-        candidate := join_under(entry.path, src, off, len)
+        candidate := normalise_path(join_under(entry.path, src, off, len))
         if (unsafe { frost_rt_file_exists(candidate) } == 1) {
             return candidate
         }
@@ -121,9 +220,14 @@ append_text :: fn(buffer: str, at: i64, text: str) -> i64 {
 // resolved where it is written rather than looked up later, so a file has to
 // reach the buffer after everything it depends on. A file already placed is
 // skipped, which is what makes a diamond one copy and a cycle terminate.
-place_module :: fn(buffer: str, at: i64, path: ^i8,
+place_module :: fn(buffer: str, at: i64, given: ^i8,
     mut modules: Arena<Module>, mut roots: Arena<SearchRoot>,
     mut scratch: Arena<Token>) -> i64 {
+    // The one the root file was named by comes in as the command line wrote it,
+    // which on this machine is as likely to hold backslashes as not. Every
+    // other path here has been through this already, and two spellings of one
+    // file are two modules.
+    path := normalise_path(given)
     if (module_seen(modules, path)) {
         return at
     }
