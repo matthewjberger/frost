@@ -7942,7 +7942,7 @@ const STD_MODULES: &[(&str, &str)] = &[
     ("slab.frost", "2 passed"),
     ("snapshot.frost", "6 passed"),
     ("sort.frost", "3 passed"),
-    ("strings.frost", "9 passed"),
+    ("strings.frost", "12 passed"),
     ("thread.frost", "3 passed"),
     ("vec.frost", "5 passed"),
 ];
@@ -15590,6 +15590,31 @@ fn the_standard_json_reader_walks_a_nested_document() {
         return;
     };
     assert_eq!(output, "6\n1\n2\n22\n1\n");
+}
+
+// A number is read twice over: `json_number` answers with the integer part and
+// `json_real` with the whole of it. What is worth checking is that the second
+// one keeps the fraction and the exponent the first one steps over, since a
+// reader that dropped them would still answer plausibly on every round value.
+#[test]
+fn the_standard_json_reader_answers_with_whole_numbers() {
+    let source = "import \"json.frost\"\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   text := \"{\\\"a\\\":2.75,\\\"b\\\":-0.25,\\\"c\\\":1.5e2,\\\"d\\\":7}\"\n\
+                  \x20   mut document := json_parse(text)\n\
+                  \x20   root := json_root(document)\n\
+                  \x20   if (json_real(document, json_member(document, root, \"a\")) == 2.75) { print 1 } else { print 0 }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"b\")) == -0.25) { print 1 } else { print 0 }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"c\")) == 150.0) { print 1 } else { print 0 }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"d\")) == 7.0) { print 1 } else { print 0 }\n\
+                  \x20   print json_number(document, json_member(document, root, \"a\"))\n\
+                  \x20   if (json_real(document, json_member(document, root, \"missing\")) == 0.0) { print 1 } else { print 0 }\n\
+                  \x20   json_free(document)\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run_unaudited("stdjsonreal", source) else {
+        return;
+    };
+    assert_eq!(output, "1\n1\n1\n1\n2\n1\n");
 }
 
 // The optional type is an ordinary generic enum in the standard library. Both

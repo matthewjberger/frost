@@ -8,16 +8,18 @@
 // so reading one is a comparison against the bytes already in memory and the
 // parse allocates nothing per string.
 //
-// Numbers are integers. The documents this exists to read (interface files,
-// manifests, C API descriptions) carry counts and sizes, not measurements, and
-// a float field would be a promise this cannot keep without a float parser.
+// A number is read twice over. `json_number` answers with the integer part,
+// which is what a count or a size is, and `json_real` answers with the whole of
+// it. A number node records where its digits sit the same way a string node
+// does, so the second of those is `str_to_f64` over bytes already in memory and
+// the parse still copies nothing.
 
 import "vec.frost"
 import "strings.frost"
 
 export JsonKind, Json, JsonNode, json_parse, json_free, json_root, json_kind,
-    json_number, json_text_eq, json_member, json_at, json_count, json_is_null,
-    json_text_off, json_text_len
+    json_number, json_real, json_text_eq, json_member, json_at, json_count,
+    json_is_null, json_text_off, json_text_len
 
 // What a node is. A parsed document is a run of these, and the kind is what a
 // reader asks about first.
@@ -69,6 +71,19 @@ json_number :: fn(mut document: Json, node: i64) -> i64 {
         return 0
     }
     vec_slice($JsonNode, document.nodes)[node].number
+}
+
+// The whole of a number, fraction and exponent included. What a measurement is
+// read with, where `json_number` is what a count is read with.
+json_real :: fn(mut document: Json, node: i64) -> f64 {
+    if (node < 0) {
+        return 0.0
+    }
+    held := vec_slice($JsonNode, document.nodes)[node]
+    if (held.kind != JsonKind::Number) {
+        return 0.0
+    }
+    str_to_f64(str_slice(document.source, held.text_off, held.text_len))
 }
 
 json_is_null :: fn(mut document: Json, node: i64) -> bool {
@@ -263,6 +278,9 @@ parse_string :: fn(mut document: Json) -> i64 {
 }
 
 parse_number :: fn(mut document: Json) -> i64 {
+    // Where the whole literal starts, sign and all, so `json_real` reads the
+    // same bytes rather than a second copy of them.
+    start := document.at
     mut negative : i64 = 0
     if (peek(document) == 45) {
         negative = 1
@@ -275,8 +293,9 @@ parse_number :: fn(mut document: Json) -> i64 {
         value = value * 10 + (source[document.at] - 48)
         document.at = document.at + 1
     }
-    // A fraction or an exponent is read past and dropped, since every number
-    // this reader is asked for is a count.
+    // A fraction or an exponent is read past here. What the integer part comes
+    // to is `number`, and the span recorded below is what the whole of it is
+    // read from.
     while (document.at < str_len(source)
         && (source[document.at] == 46
             || str_byte_is_digit(source[document.at])
@@ -294,6 +313,8 @@ parse_number :: fn(mut document: Json) -> i64 {
     } else {
         held.number = value
     }
+    held.text_off = start
+    held.text_len = document.at - start
     node
 }
 
