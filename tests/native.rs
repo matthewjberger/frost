@@ -16820,6 +16820,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "scene_sync.frost",
             "geometry.frost",
             "world.frost",
+            "app.frost",
             "gltf.frost",
             "gltf_model.frost",
         ]
@@ -17088,9 +17089,8 @@ fn graphics_source(root: &Path, name: &str) -> PathBuf {
         "wgpu.frost" | "renderer.frost" | "graph.frost" | "mesh.frost"
         | "material.frost" | "texture.frost" | "render_world.frost"
         | "geometry.frost" => "lib/renderer",
-        "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost" => {
-            "lib/engine"
-        }
+        "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost"
+        | "app.frost" => "lib/engine",
         _ => "examples/graphics",
     };
     root.join(layer).join(name)

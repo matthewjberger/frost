@@ -22,8 +22,11 @@
 // layer and leaves a run holding only that layer's things. The two passes are
 // the same function over two runs, which is what a pass being a value buys:
 // nothing had to be written twice to have two of them.
+//
+// The App holds one of those runs, which is what a program drawing its world
+// once uses. The second is this demo's own, made and freed here, because
+// dividing the world is the thing this demo is about.
 
-import "../../lib/platform/platform.frost"
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
@@ -33,10 +36,10 @@ import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
+import "../../lib/engine/app.frost"
 import "../../lib/renderer/wgpu.frost"
 import "ecs.frost"
 import "math.frost"
-import "mem.frost"
 import "io.frost"
 
 WIDTH :: 960
@@ -265,54 +268,52 @@ make_pipeline :: fn(device: Device, format: u32,
 }
 
 main :: fn() -> i64 {
-    mut p := platform_open("Frost scene", WIDTH, HEIGHT)
-    if (platform_ok(p) == false) {
-        print_str_line("no window")
-        print_str_line(platform_error())
-        return 1
+    mut config := app_config("Frost scene", WIDTH, HEIGHT)
+    config.vertices = VERTEX_ROOM
+    config.indices = INDEX_ROOM
+    config.drawn = INSTANCES
+    match app_open(config) {
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
     }
-    mut r := renderer_open(platform_window(p), WIDTH, HEIGHT)
-    if (renderer_ok(r) == false) {
-        print_str_line("no device")
-        platform_close(p)
-        return 2
-    }
-    device := renderer_device(r)
-    queue := renderer_queue(r)
+}
+
+run :: fn(move app: App) -> i64 {
+    device := app_device(app)
+    queue := app_queue(app)
 
     // A cube for the near layer and a sphere for the far one, so which pass
     // drew a thing is readable off the screen.
-    mut store := geometry_new(device, VERTEX_ROOM, INDEX_ROOM)
-    mut cache := mesh_cache_new(4)
-    mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
-    mesh_cache_insert(cache, "sphere", sphere_mesh(store, queue, 0.6, 16, 24))
-    cube := mesh_cache_find(cache, "cube")
-    sphere := mesh_cache_find(cache, "sphere")
+    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
+    mesh_cache_insert(app.meshes, "sphere",
+        sphere_mesh(app.store, queue, 0.6, 16, 24))
+    cube := mesh_cache_find(app.meshes, "cube")
+    sphere := mesh_cache_find(app.meshes, "sphere")
 
-    mut registry := materials_new(8)
     mut looks : [INSTANCES]i64 = [0; INSTANCES]
-    looks[0] = materials_add(registry, Material {
+    looks[0] = materials_add(app.materials, Material {
         base_color = vec4(1.0, 0.35, 0.35, 1.0), roughness = 0.5,
         metallic = 0.0 })
-    looks[1] = materials_add(registry, Material {
+    looks[1] = materials_add(app.materials, Material {
         base_color = vec4(0.35, 1.0, 0.45, 1.0), roughness = 0.5,
         metallic = 0.0 })
-    looks[2] = materials_add(registry, Material {
+    looks[2] = materials_add(app.materials, Material {
         base_color = vec4(0.45, 0.55, 1.0, 1.0), roughness = 0.5,
         metallic = 0.0 })
-    looks[3] = materials_add(registry, Material {
+    looks[3] = materials_add(app.materials, Material {
         base_color = vec4(1.0, 0.85, 0.4, 1.0), roughness = 0.5,
         metallic = 0.0 })
 
     // One run per layer, and each is its own set of buffers: what a pass draws
     // is decided before it records, and two passes over two halves of a world
-    // are two runs.
-    mut near_render := render_world_new(device, INSTANCES)
+    // are two runs. The App holds one of them, which is what a program drawing
+    // its world once uses; the second is this demo's own, because dividing the
+    // world is what this demo is about.
     mut far_render := render_world_new(device, INSTANCES)
 
     frame_layout := uniform_layout(device, FRAME_BYTES)
     mut layouts : [2]BindGroupLayout = [frame_layout,
-        render_world_layout(near_render)]
+        render_world_layout(app.render)]
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -323,16 +324,9 @@ main :: fn() -> i64 {
     frame_group := uniform_group(device, frame_layout, frame_uniform,
         FRAME_BYTES)
 
-    mut world := ecs_new()
-    ids := world_prepare(world)
-    placement := ids.placement
-    spin := ids.spin
-    drawn := ids.drawn
-    model := ids.model
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
-        spin), drawn), model)
-
-    mut frame_schedule := world_schedule()
+    ids := app_ids(app)
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(),
+        ids.placement), ids.spin), ids.drawn), ids.model)
 
     mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
     mut depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
@@ -343,29 +337,30 @@ main :: fn() -> i64 {
     while (made < INSTANCES) {
         // Straight into the archetype it belongs in, rather than spawning bare
         // and migrating once per component.
-        held := ecs_spawn_with(world, wanted)
-        ecs_set($Placement, world, held, placement, Placement {
+        held := ecs_spawn_with(app.world, wanted)
+        ecs_set($Placement, app.world, held, ids.placement, Placement {
             position = vec3(spread[made], 0.0, depths[made]),
             rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
-        ecs_set($Spin, world, held, spin,
+        ecs_set($Spin, app.world, held, ids.spin,
             spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
         mut shape := cube
         if (layers[made] == FAR) {
             shape = sphere
         }
-        ecs_set($Drawn, world, held, drawn, Drawn { mesh = shape,
+        ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
             material = looks[made], layer = layers[made] })
         made = made + 1
     }
 
-    pipeline := make_pipeline(device, renderer_format(r), pipeline_layout)
-    culling := make_cull_pipeline(device, render_world_cull_layout(near_render))
+    pipeline := make_pipeline(device, app_format(app), pipeline_layout)
+    culling := make_cull_pipeline(device,
+        render_world_cull_layout(app.render))
     mut near_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
-        frame_group = frame_group, render = ptr_to(near_render),
-        store = ptr_to(store) }
+        frame_group = frame_group, render = ptr_to(app.render),
+        store = ptr_to(app.store) }
     mut far_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
         frame_group = frame_group, render = ptr_to(far_render),
-        store = ptr_to(store) }
+        store = ptr_to(app.store) }
 
     // Both passes write both targets, and nothing stands between them, so the
     // graph keeps them in the order they were declared: near clears, far draws
@@ -377,7 +372,7 @@ main :: fn() -> i64 {
     background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
     near_arguments := graph_external_buffer(graph, "near arguments")
     graph_set_external_buffer(graph, near_arguments,
-        render_world_indirect(near_render))
+        render_world_indirect(app.render))
     far_arguments := graph_external_buffer(graph, "far arguments")
     graph_set_external_buffer(graph, far_arguments,
         render_world_indirect(far_render))
@@ -401,47 +396,23 @@ main :: fn() -> i64 {
     }
     graph_resize(graph, WIDTH, HEIGHT)
 
-    while (scheduled && platform_poll(p)) {
-        if (key_pressed(p, KEY_ESCAPE)) {
-            break
-        }
-        if (resized(p)) {
-            renderer_resize(r, width(p), height(p))
-            graph_resize(graph, width(p), height(p))
-        }
-        world_input(world, platform_input(p))
-        schedule_run(frame_schedule, world, ANY_STATE)
-        write_frame(queue, frame_uniform, world_camera(world), width(p),
-            height(p))
-        render_world_begin(near_render)
-        scene_sync(world, near_render, registry, cache,
-            drawn_in_layer(model, drawn, NEAR))
-        render_world_upload(near_render, queue,
-            camera_view_projection(world_camera(world), width(p), height(p)))
+    while (scheduled && app_next(app, graph)) {
+        write_frame(queue, frame_uniform, app_camera(app), app_width(app),
+            app_height(app))
+        // Two runs, so this walks the world twice rather than calling
+        // `app_extract`: which layer a run holds is what the two passes differ
+        // by, and the view they are culled against is the same one.
+        view := app_view(app)
+        app_extract(app, drawn_in_layer(ids.model, ids.drawn, NEAR), view)
         render_world_begin(far_render)
-        scene_sync(world, far_render, registry, cache,
-            drawn_in_layer(model, drawn, FAR))
-        render_world_upload(far_render, queue,
-            camera_view_projection(world_camera(world), width(p), height(p)))
+        scene_sync(app.world, far_render, app.materials, app.meshes,
+            drawn_in_layer(ids.model, ids.drawn, FAR))
+        render_world_upload(far_render, queue, view)
 
-        mut f := renderer_begin(r)
-        if (frame_ok(f)) {
-            graph_run(graph, f)
-        }
-        renderer_end(r, f)
+        app_draw(app, graph)
     }
 
     graph_free(graph)
-    render_world_free(near_render)
     render_world_free(far_render)
-    geometry_free(store)
-    schedule_free(frame_schedule)
-    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
-    hierarchy_free(giving)
-    materials_free(registry)
-    mesh_cache_free(cache)
-    ecs_free(world)
-    renderer_close(r)
-    platform_close(p)
-    0
+    app_close(app)
 }
