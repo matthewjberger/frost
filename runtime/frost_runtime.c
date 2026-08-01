@@ -821,12 +821,21 @@ const char *frost_rt_file_read(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == 0) {
         frost_rt_last_read_length = -1;
-        return "";
+        /* A block rather than a literal. The caller frees what it was handed
+           whether the read worked or not, and handing back a literal makes
+           that free a program giving back storage it never took. */
+        char *empty = (char *)frost_rt_heap_alloc(1);
+        empty[0] = 0;
+        return empty;
     }
     fseek(file, 0, SEEK_END);
     long length = ftell(file);
     fseek(file, 0, SEEK_SET);
-    char *buffer = (char *)malloc((size_t)length + 1);
+    /* Counted, because `fs_free` gives it back through `frost_rt_heap_free`,
+       which counts. A block allocated one way and freed the other leaves
+       `heap_live` one lower than it started, so a program that reads a file
+       reports a leak somewhere it does not have one and hides one it does. */
+    char *buffer = (char *)frost_rt_heap_alloc(length + 1);
     size_t read = fread(buffer, 1, (size_t)length, file);
     buffer[read] = 0;
     fclose(file);
