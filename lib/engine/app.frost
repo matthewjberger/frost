@@ -1,0 +1,232 @@
+// The window, the device, the world and the tables a drawing program keeps, as
+// one thing opened once and given back once.
+//
+//     main :: fn() -> i64 {
+//         match app_open(app_config("Frost", WIDTH, HEIGHT)) {
+//             case .Ok { value }: run(value)
+//             case .Err { error }: app_failed(error)
+//         }
+//     }
+//
+//     run :: fn(move app: App) -> i64 {
+//         mut graph := graph_new(app_device(app), 2, 1)
+//         ids := app_ids(app)
+//         ...
+//         while (app_next(app, graph)) {
+//             app_extract(app, all_drawn(ids.model, ids.drawn), app_view(app))
+//             app_draw(app, graph)
+//         }
+//         graph_free(graph)
+//         app_close(app)
+//     }
+//
+// What a program still writes for itself is what it draws: the shader, the
+// pipeline, the passes and how they are wired. Everything above that is the
+// same in every one of them, which is what this is.
+//
+// The graph is not in here and is passed to the two calls that need it. A graph
+// is what a program is for: which passes exist, what each reads and writes and
+// what each records are the whole of what one demo has to say and the whole of
+// what makes it different from the next. What the App holds is the rest, which
+// every program holds the same way.
+//
+// `main` is two calls because a window that did not open is a value rather than
+// a flag: `app_open` gives back whatever it took before answering with a
+// failure, so there is no half-open App and nothing to check for.
+
+import "../platform/platform.frost"
+import "../renderer/wgpu.frost"
+import "../renderer/renderer.frost"
+import "../renderer/graph.frost"
+import "../renderer/geometry.frost"
+import "../renderer/mesh.frost"
+import "../renderer/material.frost"
+import "../renderer/render_world.frost"
+import "world.frost"
+import "scene_sync.frost"
+import "camera.frost"
+import "ecs.frost"
+import "math.frost"
+import "io.frost"
+
+export AppConfig, App, AppError, app_config, app_open, app_close, app_failed,
+    app_next, app_extract, app_draw,
+    app_device, app_queue, app_format, app_ids, app_input,
+    app_width, app_height, app_camera, app_camera_set, app_view
+
+// How big a program says it is before it opens. The three rooms are the ones
+// that cannot grow: the geometry buffers and every table measured against a
+// draw are sized once, since a buffer that grew would move and every span
+// handed out is a place in the one that was there.
+AppConfig :: struct {
+    title: str,
+    width: i64,
+    height: i64,
+    // How many things may be drawn, which sizes the mesh cache, the material
+    // registry and the run.
+    drawn: i64,
+    vertices: i64,
+    indices: i64,
+}
+
+// A window of the given size, with room for a scene of a few hundred things. A
+// program that loads more than that says so by writing the fields.
+app_config :: fn(title: str, width: i64, height: i64) -> AppConfig {
+    AppConfig { title = title, width = width, height = height,
+        drawn = 256, vertices = 65536, indices = 131072 }
+}
+
+// Why opening did not work. There is no half-open App: `app_open` gives back
+// whatever it took before it answers with one of these, so a program that gets
+// a failure has nothing left to close.
+AppError :: enum { NoWindow, NoDevice }
+
+// `linear` because of what it holds. A window, a device and four tables are
+// taken once and given back once, and a path that opens one and returns without
+// closing it stops compiling.
+App :: linear struct {
+    platform: Platform,
+    renderer: Renderer,
+    world: World,
+    schedule: Schedule,
+    store: Geometry,
+    meshes: MeshCache,
+    materials: Materials,
+    render: RenderWorld,
+}
+
+app_open :: fn(config: AppConfig) -> App ! AppError {
+    mut p := platform_open(config.title, config.width, config.height)
+    if (platform_ok(p) == false) {
+        platform_close(p)
+        return AppError::NoWindow
+    }
+    mut r := renderer_open(platform_window(p), config.width, config.height)
+    if (renderer_ok(r) == false) {
+        renderer_close(r)
+        platform_close(p)
+        return AppError::NoDevice
+    }
+    device := renderer_device(r)
+    mut world := ecs_new()
+    world_prepare(world)
+    App {
+        platform = p,
+        renderer = r,
+        world = world,
+        schedule = world_schedule(),
+        store = geometry_new(device, config.vertices, config.indices),
+        meshes = mesh_cache_new(config.drawn),
+        materials = materials_new(config.drawn),
+        render = render_world_new(device, config.drawn),
+    }
+}
+
+// What a program says and answers when it could not open. Written here because
+// every program says the same thing, and because which half failed is this
+// file's own enum rather than something a caller should have to read.
+app_failed :: fn(why: AppError) -> i64 {
+    match why {
+        case .NoWindow: {
+            print_str_line("no window")
+            print_str_line(platform_error())
+            1
+        }
+        case .NoDevice: {
+            print_str_line("no device")
+            2
+        }
+    }
+}
+
+// Everything opening took, given back, and what `main` should answer. Children
+// before what made them: the tables are the device's, the world holds the tree,
+// and the window outlives the device it was drawn into.
+app_close :: fn(move app: App) -> i64 {
+    render_world_free(app.render)
+    geometry_free(app.store)
+    materials_free(app.materials)
+    mesh_cache_free(app.meshes)
+    schedule_free(app.schedule)
+    giving := ecs_resource($Hierarchy, app.world, TREE_SLOT)
+    hierarchy_free(giving)
+    ecs_free(app.world)
+    renderer_close(app.renderer)
+    platform_close(app.platform)
+    0
+}
+
+// The far half of a frame: what the machine did, and what the world made of it.
+// False when the window asked to close or escape was pressed, which is what a
+// main loop runs until.
+//
+// The renderer and the graph are resized together, because a surface and every
+// target tested against it are the same size or nothing draws.
+app_next :: fn(mut app: App, mut graph: Graph) -> bool {
+    if (platform_poll(app.platform) == false) {
+        return false
+    }
+    if (key_pressed(app.platform, KEY_ESCAPE)) {
+        return false
+    }
+    if (resized(app.platform)) {
+        renderer_resize(app.renderer, width(app.platform),
+            height(app.platform))
+        graph_resize(graph, width(app.platform), height(app.platform))
+    }
+    world_input(app.world, platform_input(app.platform))
+    schedule_run(app.schedule, app.world, ANY_STATE)
+    true
+}
+
+// What the world says is drawn, put in the run the passes read. A program
+// drawing one view calls this once; a program whose passes divide the world
+// calls `render_world_begin`, `scene_sync` and `render_world_upload` itself,
+// once per view, since which things a view draws and what it is culled against
+// are exactly what differs between the runs.
+app_extract :: fn(mut app: App, ids: ObjectIds, view_projection: Mat4) {
+    render_world_begin(app.render)
+    scene_sync(app.world, app.render, app.materials, app.meshes, ids)
+    render_world_upload(app.render, renderer_queue(app.renderer),
+        view_projection)
+}
+
+// The near half of a frame: the graph, recorded into whatever the surface
+// handed over. A frame that could not be acquired records nothing and is still
+// ended, because the handles it took are counted whether it drew or not.
+app_draw :: fn(mut app: App, mut graph: Graph) {
+    mut f := renderer_begin(app.renderer)
+    if (frame_ok(f)) {
+        graph_run(graph, f)
+    }
+    renderer_end(app.renderer, f)
+}
+
+app_device :: fn(app: App) -> Device { renderer_device(app.renderer) }
+app_queue :: fn(app: App) -> Queue { renderer_queue(app.renderer) }
+app_format :: fn(app: App) -> u32 { renderer_format(app.renderer) }
+
+app_width :: fn(app: App) -> i64 { width(app.platform) }
+app_height :: fn(app: App) -> i64 { height(app.platform) }
+
+// What the last poll left, for a program that wants the clock or a key the
+// schedule does not read. A system reads the same thing out of the world.
+app_input :: fn(app: App) -> Input { platform_input(app.platform) }
+
+// Which component is which, asked of the world each time rather than kept here,
+// so this and the world cannot disagree.
+app_ids :: fn(app: App) -> WorldIds { world_ids(app.world) }
+
+app_camera :: fn(app: App) -> Camera { world_camera(app.world) }
+
+app_camera_set :: fn(mut app: App, move eye: Camera) {
+    world_camera_set(app.world, eye)
+}
+
+// The camera the world holds, against the window as it is now. This is what
+// both the frame uniform and the culling pass are given, and they have to be
+// the same matrix or a thing is culled against a view it was not drawn in.
+app_view :: fn(app: App) -> Mat4 {
+    camera_view_projection(world_camera(app.world), width(app.platform),
+        height(app.platform))
+}

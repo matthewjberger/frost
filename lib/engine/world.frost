@@ -19,7 +19,6 @@
 // in is fixed by the order `world_prepare` registers them.
 
 import "../renderer/render_world.frost"
-import "scene_sync.frost"
 import "../platform/platform.frost"
 import "camera.frost"
 import "ecs.frost"
@@ -27,7 +26,7 @@ import "math.frost"
 
 export Placement, Spin, WorldIds, placed_at,
     world_prepare, world_tree, world_schedule, spinning,
-    world_input, world_camera, world_camera_set,
+    world_input, world_ids, world_camera, world_camera_set,
     WORLD_SLOT, TREE_SLOT, INPUT_SLOT, CAMERA_SLOT
 
 // Where a thing is, how it is turned and how big. This is the whole of where
@@ -112,6 +111,13 @@ world_prepare :: fn(mut world: World) -> WorldIds {
 // key or advances by the clock reads it from here.
 world_input :: fn(mut world: World, held: Input) {
     ecs_resource_set($Input, world, INPUT_SLOT, held)
+}
+
+// Which component is which, asked of the world rather than kept by whoever
+// called `world_prepare`. A thing that holds a world holds this too, and
+// asking keeps the two from drifting apart.
+world_ids :: fn(world: World) -> WorldIds {
+    ecs_resource($WorldIds, world, WORLD_SLOT)
 }
 
 // The camera the world holds, which is what a frame uniform is written from.

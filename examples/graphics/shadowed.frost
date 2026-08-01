@@ -57,18 +57,23 @@
 // from minus one, which is why the light's projection is `mat4_ortho_zo`. The
 // other one puts half the scene behind the near plane, and every fragment there
 // reads as lit.
+//
+// The window, the device, the world, the schedule and the four tables are an
+// `App`, and one of those tables is the run the camera's view draws from. The
+// light's and the inset's are this demo's own, made and freed here, because
+// three views is what this demo is about.
 
 import "../../lib/platform/platform.frost"
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
-import "../../lib/renderer/texture.frost"
 import "../../lib/renderer/geometry.frost"
 import "../../lib/renderer/mesh.frost"
 import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
+import "../../lib/engine/app.frost"
 import "../../lib/renderer/wgpu.frost"
 import "ecs.frost"
 import "math.frost"
@@ -905,42 +910,39 @@ make_post_shader :: fn(device: Device, source: str) -> ShaderModule {
 }
 
 main :: fn() -> i64 {
-    mut p := platform_open("Frost shadowed scene", WIDTH, HEIGHT)
-    if (platform_ok(p) == false) {
-        print_str_line("no window")
-        print_str_line(platform_error())
-        return 1
+    mut config := app_config("Frost shadowed scene", WIDTH, HEIGHT)
+    config.vertices = VERTEX_ROOM
+    config.indices = INDEX_ROOM
+    config.drawn = MAX_DRAWN
+    match app_open(config) {
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
     }
-    mut r := renderer_open(platform_window(p), WIDTH, HEIGHT)
-    if (renderer_ok(r) == false) {
-        print_str_line("no device")
-        platform_close(p)
-        return 2
-    }
-    device := renderer_device(r)
-    queue := renderer_queue(r)
+}
 
-    mut store := geometry_new(device, VERTEX_ROOM, INDEX_ROOM)
-    mut cache := mesh_cache_new(4)
-    mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
-    mesh_cache_insert(cache, "sphere", sphere_mesh(store, queue, 0.7, 16, 24))
-    cube := mesh_cache_find(cache, "cube")
-    sphere := mesh_cache_find(cache, "sphere")
+run :: fn(move app: App) -> i64 {
+    device := app_device(app)
+    queue := app_queue(app)
 
-    mut registry := materials_new(8)
+    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
+    mesh_cache_insert(app.meshes, "sphere",
+        sphere_mesh(app.store, queue, 0.7, 16, 24))
+    cube := mesh_cache_find(app.meshes, "cube")
+    sphere := mesh_cache_find(app.meshes, "sphere")
+
     mut looks : [4]i64 = [0; 4]
-    looks[0] = materials_add(registry, Material {
+    looks[0] = materials_add(app.materials, Material {
         base_color = vec4(0.86, 0.33, 0.3, 1.0), roughness = 0.4,
         metallic = 0.0 })
-    looks[1] = materials_add(registry, Material {
+    looks[1] = materials_add(app.materials, Material {
         base_color = vec4(0.32, 0.76, 0.48, 1.0), roughness = 0.55,
         metallic = 0.0 })
-    looks[2] = materials_add(registry, Material {
+    looks[2] = materials_add(app.materials, Material {
         base_color = vec4(0.36, 0.52, 0.92, 1.0), roughness = 0.25,
         metallic = 0.0 })
     // The floor, which is matte so the shadow on it reads as a shadow rather
     // than as a change in the highlight.
-    looks[3] = materials_add(registry, Material {
+    looks[3] = materials_add(app.materials, Material {
         base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
         metallic = 0.0 })
 
@@ -948,14 +950,14 @@ main :: fn() -> i64 {
     // demo draws the same world from three: the camera, the light, and the
     // second camera in the corner. One run culled by any of them is wrong for
     // the other two, and the shadow pass is where that shows worst: a thing
-    // behind the camera can still throw a shadow into it.
-    mut render := render_world_new(device, MAX_DRAWN)
+    // behind the camera can still throw a shadow into it. The App holds the
+    // camera's; the other two are this demo's own.
     mut shadow_render := render_world_new(device, MAX_DRAWN)
     mut inset_render := render_world_new(device, MAX_DRAWN)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
-    object_layout := render_world_layout(render)
+    object_layout := render_world_layout(app.render)
     map_layout := shadow_layout(device)
     // The same buffer through two bindings: the compute pass writes it, the
     // scene pass only reads it, and which of those a binding allows belongs to
@@ -981,10 +983,8 @@ main :: fn() -> i64 {
     frame_group := uniform_group(device, frame_layout, frame_uniform,
         FRAME_BYTES)
 
-    mut world := ecs_new()
-    // The components every drawing program has, the two resources the systems
-    // read, and the tree, in one call.
-    ids := world_prepare(world)
+    // Which component is which, asked of the world the App opened.
+    ids := app_ids(app)
     placement := ids.placement
     spin := ids.spin
     drawn := ids.drawn
@@ -1007,13 +1007,13 @@ main :: fn() -> i64 {
 
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
-    floor := ecs_spawn_with(world, wanted)
-    ecs_set($Placement, world, floor, placement, Placement {
+    floor := ecs_spawn_with(app.world, wanted)
+    ecs_set($Placement, app.world, floor, placement, Placement {
         position = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
         scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
-    ecs_set($Spin, world, floor, spin,
+    ecs_set($Spin, app.world, floor, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
-    ecs_set($Drawn, world, floor, drawn, Drawn { mesh = cube,
+    ecs_set($Drawn, app.world, floor, drawn, Drawn { mesh = cube,
         material = looks[3], layer = ONE_LAYER })
     entities[0] = floor
 
@@ -1027,8 +1027,8 @@ main :: fn() -> i64 {
         column := made - row * GRID
         across : f32 = column
         up : f32 = row
-        entity := ecs_spawn_with(world, wanted)
-        ecs_set($Placement, world, entity, placement, Placement {
+        entity := ecs_spawn_with(app.world, wanted)
+        ecs_set($Placement, app.world, entity, placement, Placement {
             position = vec3((across - half) * COLUMN_SPACING,
                 lowest + up * ROW_RISE,
                 (up - half) * ROW_DEPTH),
@@ -1038,14 +1038,14 @@ main :: fn() -> i64 {
         // move differently rather than as one shape.
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed : f32 = 0.5 + 0.11 * made
-        ecs_set($Spin, world, entity, spin,
+        ecs_set($Spin, app.world, entity, spin,
             spinning(turning, speed, quat_identity()))
 
         mut shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
-        ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
+        ecs_set($Drawn, app.world, entity, drawn, Drawn { mesh = shape,
             material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
 
         // Nothing here makes a buffer or a binding. What is drawn and where it
@@ -1058,26 +1058,21 @@ main :: fn() -> i64 {
     // The root, and the grid hung off it. Each shape keeps its own turn, and
     // the root turns too, so what a shape ends up doing is its own spin inside
     // an orbit and neither of them says anything about the other.
-    root := ecs_spawn_with(world, root_wanted)
-    ecs_set($Placement, world, root, placement, Placement {
+    root := ecs_spawn_with(app.world, root_wanted)
+    ecs_set($Placement, app.world, root, placement, Placement {
         position = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
         scale = vec3(1.0, 1.0, 1.0) })
-    ecs_set($Spin, world, root, spin,
+    ecs_set($Spin, app.world, root, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
     // Hung off the root before the root is put in the table, since putting it
     // there is handing it over and the name does not hold it afterwards.
     mut hung : i64 = 1
     while (hung < INSTANCES) {
-        tree := world_tree(world)
+        tree := world_tree(app.world)
         hierarchy_attach(tree, entities[hung], root)
         hung = hung + 1
     }
     entities[INSTANCES] = root
-
-    // What a frame does to the world: turning, then where everything ended up.
-    // What comes of that is scene_sync's, run after the schedule, so a system
-    // never touches the device.
-    mut frame_schedule := world_schedule()
 
     shader := make_shader(device)
 
@@ -1102,11 +1097,11 @@ main :: fn() -> i64 {
     // and consumed inside one frame, so the graph hands them one texture
     // between them wherever their lifetimes leave room.
     lit := graph_transient_color(graph, "lit", WINDOW_SIZED, WINDOW_SIZED,
-        renderer_format(r))
+        app_format(app))
     bright := graph_transient_color(graph, "bright", HALF, HALF,
-        renderer_format(r))
+        app_format(app))
     blurred := graph_transient_color(graph, "blurred", HALF, HALF,
-        renderer_format(r))
+        app_format(app))
     // A run of bytes rather than a picture. Nothing draws into it and nothing
     // samples it; one pass fills it and another reads it, which is the only
     // thing the graph needs to put them in order.
@@ -1114,13 +1109,13 @@ main :: fn() -> i64 {
     // What the second view is drawn into. Transient like the rest of the
     // chain, and a fixed size, so the binding that reads it is built once.
     inset := graph_transient_color(graph, "inset", INSET_WIDTH, INSET_HEIGHT,
-        renderer_format(r))
+        app_format(app))
 
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
         frame_group = frame_group,
         render = ptr_to(shadow_render),
-        store = ptr_to(store),
+        store = ptr_to(app.store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 0,
     }
@@ -1131,11 +1126,11 @@ main :: fn() -> i64 {
     // Declared second and reading what the first writes, which is the edge the
     // order follows. Declaring them the other way round changes nothing.
     mut lit_scene := Scene {
-        pipeline = make_scene_pipeline(device, shader, renderer_format(r),
+        pipeline = make_scene_pipeline(device, shader, app_format(app),
             scene_pipeline_layout),
         frame_group = frame_group,
-        render = ptr_to(render),
-        store = ptr_to(store),
+        render = ptr_to(app.render),
+        store = ptr_to(app.store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 1,
     }
@@ -1157,17 +1152,18 @@ main :: fn() -> i64 {
     // The shadow pass, the scene pass and the inset all run off the one run, so
     // one culling pass fills it and all three read what it wrote.
     culling_pipeline := make_cull_pipeline(device,
-        render_world_cull_layout(render))
+        render_world_cull_layout(app.render))
     mut culling := Culling {
         pipeline = culling_pipeline,
-        render = ptr_to(render),
+        render = ptr_to(app.render),
     }
     mut shadow_culling := Culling {
         pipeline = culling_pipeline,
         render = ptr_to(shadow_render),
     }
     arguments := graph_external_buffer(graph, "draw arguments")
-    graph_set_external_buffer(graph, arguments, render_world_indirect(render))
+    graph_set_external_buffer(graph, arguments,
+        render_world_indirect(app.render))
     cull_pass := graph_compute_pass(graph, "cull", cull_things,
         ptr_to(culling))
     graph_writes(graph, cull_pass, arguments)
@@ -1200,7 +1196,7 @@ main :: fn() -> i64 {
     two_layout := cover_layout(device, 2, two_groups)
 
     mut bright_step := Step {
-        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+        pipeline = make_cover_pipeline(device, post_shader, app_format(app),
             "fs_bright", one_layout),
         layout = sampled, source = lit, group = no_bind_group(),
         second_layout = sampled, second_source = lit,
@@ -1214,7 +1210,7 @@ main :: fn() -> i64 {
     graph_rebuilds(graph, bright_pass, rebuild_step)
 
     mut blur_step := Step {
-        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+        pipeline = make_cover_pipeline(device, post_shader, app_format(app),
             "fs_blur", one_layout),
         layout = sampled, source = bright, group = no_bind_group(),
         second_layout = sampled, second_source = bright,
@@ -1228,7 +1224,7 @@ main :: fn() -> i64 {
 
     mut compose_step := Step {
         pipeline = make_cover_pipeline(device, compose_shader,
-            renderer_format(r), "fs_compose", two_layout),
+            app_format(app), "fs_compose", two_layout),
         layout = sampled, source = lit, group = no_bind_group(),
         second_layout = sampled, second_source = blurred,
         second_group = no_bind_group(), reads_two = 1,
@@ -1253,7 +1249,7 @@ main :: fn() -> i64 {
         pipeline = lit_scene.pipeline,
         frame_group = inset_frame_group,
         render = ptr_to(inset_render),
-        store = ptr_to(store),
+        store = ptr_to(app.store),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
         samples_shadow = 1,
     }
@@ -1290,7 +1286,7 @@ main :: fn() -> i64 {
     // compose pass left. Both write the window, and the graph keeps them in the
     // order they were declared, so this one loads rather than clears.
     mut inset_step := Step {
-        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+        pipeline = make_cover_pipeline(device, post_shader, app_format(app),
             "fs_blit", one_layout),
         layout = sampled, source = inset, group = no_bind_group(),
         second_layout = sampled, second_source = inset,
@@ -1332,22 +1328,13 @@ main :: fn() -> i64 {
     mut eye := camera_default()
     eye.position = vec3(0.0, 1.5, 13.0)
     eye.pitch = -0.05
-    world_camera_set(world, eye)
+    app_camera_set(app, eye)
     mut elapsed : f32 = 0.0
 
-    while (scheduled && platform_poll(p)) {
-        if (key_pressed(p, KEY_ESCAPE)) {
-            break
-        }
-        if (resized(p)) {
-            renderer_resize(r, width(p), height(p))
-            graph_resize(graph, width(p), height(p))
-        }
-        world_input(world, platform_input(p))
-        schedule_run(frame_schedule, world, ANY_STATE)
-        elapsed = elapsed + delta_seconds(p)
-        write_frame(queue, frame_uniform, world_camera(world), light, elapsed,
-            width(p), height(p))
+    while (scheduled && app_next(app, graph)) {
+        elapsed = elapsed + input_delta_seconds(app_input(app))
+        write_frame(queue, frame_uniform, app_camera(app), light, elapsed,
+            app_width(app), app_height(app))
         // The second camera, looking back at the scene from the other side and
         // fixed rather than driven, so the inset shows what the first one
         // cannot see.
@@ -1365,45 +1352,27 @@ main :: fn() -> i64 {
         // view, and this one is drawn from the camera, from the light, and
         // from the second camera in the corner. The walk is the same each time
         // and only the frustum differs, which is what the three uploads are.
-        render_world_begin(render)
-        scene_sync(world, render, registry, cache, all_drawn(model, drawn))
-
         render_world_begin(shadow_render)
-        scene_sync(world, shadow_render, registry, cache,
+        scene_sync(app.world, shadow_render, app.materials, app.meshes,
             all_drawn(model, drawn))
         // The box the light sees the world through, which is what the shadow
         // pass draws with and therefore what its run is culled by.
         render_world_upload(shadow_render, queue, light_view_projection(light))
 
         render_world_begin(inset_render)
-        scene_sync(world, inset_render, registry, cache,
+        scene_sync(app.world, inset_render, app.materials, app.meshes,
             all_drawn(model, drawn))
         render_world_upload(inset_render, queue,
             camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT))
 
-        render_world_upload(render, queue,
-            camera_view_projection(world_camera(world), width(p), height(p)))
+        app_extract(app, all_drawn(model, drawn), app_view(app))
 
-        mut f := renderer_begin(r)
-        if (frame_ok(f)) {
-            graph_run(graph, f)
-        }
-        renderer_end(r, f)
+        app_draw(app, graph)
     }
 
     graph_free(graph)
-    schedule_free(frame_schedule)
-    giving := ecs_resource($Hierarchy, world, TREE_SLOT)
-    hierarchy_free(giving)
-    render_world_free(render)
     render_world_free(shadow_render)
     render_world_free(inset_render)
-    geometry_free(store)
     heap_release_slice($Entity, entities)
-    materials_free(registry)
-    mesh_cache_free(cache)
-    ecs_free(world)
-    renderer_close(r)
-    platform_close(p)
-    0
+    app_close(app)
 }
