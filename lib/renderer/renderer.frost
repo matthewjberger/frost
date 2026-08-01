@@ -371,3 +371,26 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) {
     release_acquired(f)
     f.ready = false
 }
+
+// A renderer that never opened, closed. Opening is a run of acquisitions and
+// any of them can fail, so a renderer that got partway holds real handles for
+// the steps that worked and `no_x()` for the rest, and closing it walks all of
+// them either way.
+//
+// This runs on a machine with no GPU, because nothing here asks for one: the
+// handles it gives back are the ones that name nothing, which is exactly what
+// the failed half of an open leaves behind.
+test "a renderer that never opened is closed without touching a handle" {
+    mut r := Renderer {
+        instance = no_instance(), surface = no_surface(),
+        adapter = no_adapter(), device = no_device(), queue = no_queue(),
+        format = 0, configuration = surface_configuration_init(),
+        opened = false,
+    }
+    assert(renderer_ok(r) == false)
+    // Every release in here is handed a handle that names nothing. Reaching the
+    // line below is the whole assertion: wgpu is not asked to give back
+    // something it never handed out.
+    renderer_close(r)
+    assert(renderer_ok(r) == false)
+}
