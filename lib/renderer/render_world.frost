@@ -35,7 +35,7 @@ import "math.frost"
 import "mem.frost"
 
 export Drawn, Transform, ONE_LAYER, ObjectData, RenderWorld,
-    render_world_new, render_world_free, render_world_begin, render_world_push,
+    render_world_new, render_world_at, render_world_free, render_world_begin, render_world_push,
     render_world_upload, render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
     render_world_cull_layout, render_world_cull_group, render_world_dispatch,
@@ -165,6 +165,15 @@ render_world_cull_pipeline :: fn(device: Device,
 
 render_world_cull_group :: fn(held: RenderWorld) -> BindGroup {
     held.cull_group
+}
+
+// The run a pass was pointed at. A pass declares what it draws before the first
+// frame and the run is filled every frame after, so it names the App's rather
+// than holding one, and this is where that name is read.
+render_world_at :: fn(held: ^RenderWorld) -> ref RenderWorld {
+    span : []RenderWorld = unsafe { slice_from($RenderWorld, held, 1) }
+    ref result := span[0]
+    result
 }
 
 render_world_new :: fn(device: Device, room: i64) -> RenderWorld {

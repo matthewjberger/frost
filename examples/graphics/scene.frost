@@ -29,6 +29,7 @@
 
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
+import "../../lib/renderer/frame.frost"
 import "../../lib/renderer/graph.frost"
 import "../../lib/renderer/geometry.frost"
 import "../../lib/renderer/mesh.frost"
@@ -124,23 +125,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // draws over it, is not written here. Both passes declare the same colour and
 // depth targets, the graph puts the first writer first, and the first write of
 // a target clears it while every write after loads it.
-draw_layer :: fn(pass: RenderPassEncoder, state: ^u8) {
-    mut s := unsafe { ptr_cast($Scene, state) }
-    render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
-    render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
+draw_layer :: fn(mut s: Scene, pass: RenderPassEncoder) {
+    render_pass_encoder_set_pipeline(pass, s.pipeline)
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
         no_pointer())
     render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(unsafe { s^.render^ }), 0, no_pointer())
-    geometry_bind(pass, unsafe { s^.store^ })
-    render_world_draw(pass, unsafe { s^.render^ })
+        render_world_group(render_world_at(s.render)), 0, no_pointer())
+    geometry_bind(pass, geometry_at(s.store))
+    render_world_draw(pass, render_world_at(s.render))
 }
 
 // One culling pass per layer, since each layer is its own run. Both are the
 // same function over different state, the way the two drawing passes are.
-cull_layer :: fn(pass: ComputePassEncoder, state: ^u8) {
-    mut s := unsafe { ptr_cast($Scene, state) }
-    held := unsafe { s^.render^ }
-    compute_pass_encoder_set_pipeline(pass, unsafe { s^.cull_pipeline })
+cull_layer :: fn(mut s: Scene, pass: ComputePassEncoder) {
+    held := render_world_at(s.render)
+    compute_pass_encoder_set_pipeline(pass, s.cull_pipeline)
     compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
         0, no_pointer())
     compute_pass_encoder_dispatch_workgroups(pass,
@@ -151,28 +150,58 @@ cull_layer :: fn(pass: ComputePassEncoder, state: ^u8) {
 // walked twice: once into the App's, which is the near layer, and once into this
 // demo's own. Which layer a run holds is what the two passes differ by, and the
 // view they are culled against is the same one.
-before_frame :: fn(mut app: App, state: ^u8) {
-    mut s := unsafe { ptr_cast($FrameState, state) }
+before_frame :: fn(mut s: FrameState, mut app: App) {
     queue := app_queue(app)
-    write_frame(queue, unsafe { s^.frame_uniform }, app_camera(app),
+    write_frame(queue, s.frame_uniform, app_camera(app),
         app_width(app), app_height(app))
     ids := app_ids(app)
     view := app_view(app)
     app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
         ids.drawn, NEAR), view)
-    unsafe {
-        ref far := s^.far^
-        render_world_begin(far)
-        scene_sync(app.world, far, app.materials, app.meshes,
-            drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR))
-        render_world_upload(far, queue, view)
-    }
+    far := render_world_at(s.far)
+    render_world_begin(far)
+    scene_sync(app.world, far, app.materials, app.meshes,
+        drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR))
+    render_world_upload(far, queue, view)
 }
 
-// What the hook above needs and the passes do not.
+// What the two hooks need and the passes do not: the uniform a frame is written
+// into, the run this demo keeps beside the App's, and the state each pass
+// records with.
 FrameState :: struct {
     frame_uniform: Buffer,
+    near: ^RenderWorld,
     far: ^RenderWorld,
+    near_scene: ^Scene,
+    far_scene: ^Scene,
+}
+
+// Both passes write both targets and nothing stands between them, so the graph
+// keeps them in the order they were declared: near clears, far draws over what
+// near left and sorts against the depth it wrote.
+declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
+    format: u32) {
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+    background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
+    near_arguments := graph_external_buffer(g, "near arguments")
+    graph_set_external_buffer(g, near_arguments,
+        render_world_indirect(render_world_at(s.near)))
+    far_arguments := graph_external_buffer(g, "far arguments")
+    graph_set_external_buffer(g, far_arguments,
+        render_world_indirect(render_world_at(s.far)))
+    near_cull := graph_compute_pass($Scene, g, "near cull", cull_layer, s.near_scene)
+    graph_writes(g, near_cull, near_arguments)
+    far_cull := graph_compute_pass($Scene, g, "far cull", cull_layer, s.far_scene)
+    graph_writes(g, far_cull, far_arguments)
+    near_pass := graph_pass($Scene, g, "near", draw_layer, s.near_scene)
+    graph_writes_color(g, near_pass, screen, background)
+    graph_writes_depth(g, near_pass, depth)
+    graph_reads(g, near_pass, near_arguments)
+    far_pass := graph_pass($Scene, g, "far", draw_layer, s.far_scene)
+    graph_writes_color(g, far_pass, screen, background)
+    graph_writes_depth(g, far_pass, depth)
+    graph_reads(g, far_pass, far_arguments)
 }
 
 // The camera, as the bytes the shader reads it as.
@@ -245,6 +274,8 @@ main :: fn() -> i64 {
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = INSTANCES
+    config.resources = 4
+    config.passes = 4
     match app_open(config) {
         case .Ok { value }: run(value)
         case .Err { error }: app_failed(error)
@@ -341,51 +372,13 @@ run :: fn(move app: App) -> i64 {
         frame_group = frame_group, render = ptr_to(far_render),
         store = ptr_to(app.store) }
 
-    // Both passes write both targets, and nothing stands between them, so the
-    // graph keeps them in the order they were declared: near clears, far draws
-    // over what near left and sorts against the depth it wrote.
-    mut graph := graph_new(device, 4, 4)
-    screen := graph_backbuffer(graph)
-    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
-        DEPTH_FORMAT)
-    background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
-    near_arguments := graph_external_buffer(graph, "near arguments")
-    graph_set_external_buffer(graph, near_arguments,
-        render_world_indirect(app.render))
-    far_arguments := graph_external_buffer(graph, "far arguments")
-    graph_set_external_buffer(graph, far_arguments,
-        render_world_indirect(far_render))
-    near_cull := graph_compute_pass(graph, "near cull", cull_layer,
-        ptr_to(near_scene))
-    graph_writes(graph, near_cull, near_arguments)
-    far_cull := graph_compute_pass(graph, "far cull", cull_layer,
-        ptr_to(far_scene))
-    graph_writes(graph, far_cull, far_arguments)
-    near_pass := graph_pass(graph, "near", draw_layer, ptr_to(near_scene))
-    graph_writes_color(graph, near_pass, screen, background)
-    graph_writes_depth(graph, near_pass, depth)
-    graph_reads(graph, near_pass, near_arguments)
-    far_pass := graph_pass(graph, "far", draw_layer, ptr_to(far_scene))
-    graph_writes_color(graph, far_pass, screen, background)
-    graph_writes_depth(graph, far_pass, depth)
-    graph_reads(graph, far_pass, far_arguments)
-    scheduled := graph_schedule(graph)
-    if (scheduled == false) {
-        print_str_line("the render graph cannot run")
-    }
-    graph_resize(graph, WIDTH, HEIGHT)
-
-    if (scheduled == false) {
-        graph_free(graph)
-        render_world_free(far_render)
-        return app_close(app)
-    }
     mut frame := FrameState { frame_uniform = frame_uniform,
-        far = ptr_to(far_render) }
-    app_before_render(app, before_frame, ptr_to(frame))
-    app_run(app, graph)
+        near = ptr_to(app.render), far = ptr_to(far_render),
+        near_scene = ptr_to(near_scene), far_scene = ptr_to(far_scene) }
+    app_configure_graph($FrameState, app, declare_passes, ptr_to(frame))
+    app_before_render($FrameState, app, before_frame, ptr_to(frame))
+    app_run(app)
 
-    graph_free(graph)
     render_world_free(far_render)
     app_close(app)
 }

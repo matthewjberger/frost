@@ -7276,7 +7276,14 @@ impl<'a> FunctionLowering<'a> {
         let Expression::TypeValue(target) = &arguments[0] else {
             bail!("ptr_cast's first argument must be a type, as in $Entity");
         };
-        let target = Type::Ptr(Box::new(target.clone()));
+        // A function type is already an address, so naming one asks for that
+        // function type rather than for a pointer to it. This is what lets a
+        // table of callbacks hold one shape while each registration is written
+        // against the state it belongs to.
+        let target = match target {
+            Type::Proc(_, _) => target.clone(),
+            _ => Type::Ptr(Box::new(target.clone())),
+        };
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
         let result = self.fresh_local(target.clone(), None);
         self.emit(IrStatement::Assign(result, IrRvalue::Use(pointer)));

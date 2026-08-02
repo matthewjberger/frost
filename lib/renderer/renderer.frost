@@ -1,14 +1,11 @@
 // The device, the surface, and the frame, under one handle a program opens
 // once and a pass draws into.
 //
-//   mut r := renderer_open(platform_window(p), width(p), height(p))
+//   mut r := renderer_open(platform_window(p), width(p), height(p), 8, 8)
 //   while (platform_poll(p)) {
-//       if (resized(p)) {
-//           renderer_resize(r, width(p), height(p))
-//           graph_resize(g, width(p), height(p))
-//       }
+//       if (resized(p)) { renderer_resize(r, width(p), height(p)) }
 //       mut f := renderer_begin(r)
-//       if (frame_ok(f)) { graph_run(g, f) }
+//       if (frame_ok(f)) { graph_run(r.graph, f) }
 //       renderer_end(r, f)
 //   }
 //
@@ -21,33 +18,22 @@
 // whose format the surface names rather than a guess. That is what this owns,
 // and it is where the window ends.
 //
-// What to draw, in what order, and into what belongs to `graph.frost`. A pass
-// declares the targets it reads and writes, the graph works out the order from
-// those declarations, makes every target that is not the window's, and hands
-// each pass an encoder over a `Target`. This module supplies the two halves the
-// graph builds on: the frame's own surface texture, and `frame_pass_into`,
-// which opens a render pass over whatever target it is given.
+// The graph is in here. What to draw, in what order and into what is declared
+// into it from above: a pass says the targets it reads and writes, the graph
+// works out the order, makes every target that is not the window's, and hands
+// each pass an encoder. It is made when the device is, since every target it
+// holds is the device's, and a resize is one call because the surface and every
+// target measured against it are the same size or nothing draws.
 
 import "../platform/sdl.frost"
 import "wgpu.frost"
+import "frame.frost"
+import "graph.frost"
 
-export Renderer, Frame, Target,
+export Renderer,
     renderer_open, renderer_close, renderer_ok, renderer_resize,
     renderer_begin, renderer_end,
-    renderer_device, renderer_queue, renderer_format,
-    frame_ok, frame_view, frame_encoder, frame_pass_into,
-    target_of, no_view,
-    DEPTH_FORMAT, no_pointer
-
-no_pointer :: fn() -> ^u8 {
-    zero := 0
-    unsafe { ptr_cast($u8, zero) }
-}
-
-// What depth is kept in. Twenty-four bits with no stencil is what a scene that
-// only sorts needs, and every backend has it. One name, so the texture and
-// every pipeline tested against it agree without either writing the number.
-DEPTH_FORMAT :: TEXTURE_FORMAT_DEPTH24_PLUS
+    renderer_device, renderer_queue, renderer_format
 
 // The pieces a draw needs, kept together because none of them is useful alone
 // and every one of them is made once.
@@ -59,26 +45,10 @@ Renderer :: struct {
     queue: Queue,
     format: u32,
     configuration: SurfaceConfiguration,
+    // What is drawn and in what order, made with the device and sized with the
+    // surface. Empty until something declares passes into it.
+    graph: Graph,
     opened: bool,
-}
-
-// One frame in flight, and `linear` because of what it holds. Every handle in
-// here is counted by wgpu and has to be given back exactly once: a surface
-// texture still held is a surface that cannot be configured, which is a resize
-// that fails. Rust reaches for `Drop` here. Frost has no destructors, and this
-// is the thing it has instead: the obligation is on the type, `renderer_end`
-// takes the frame by `move`, and a path that acquires one and returns without
-// ending it stops compiling.
-//
-// It is the frame rather than the handles that carries the obligation. A
-// `Device` or a `BindGroup` is refcounted and read out of a struct all over a
-// program, which is shared ownership and a different thing; these four are
-// taken and given back inside one frame, which is what linear describes.
-Frame :: linear struct {
-    texture: SurfaceTexture,
-    view: TextureView,
-    encoder: CommandEncoder,
-    ready: bool,
 }
 
 // Waits for a callback that answers on the instance's own event pump. wgpu
@@ -113,11 +83,15 @@ take_device :: fn(status: u32, handle: Device, value message: StringView,
 // Opens the device against a platform window. A renderer that could not be
 // brought up answers false to `renderer_ok`, and a caller checks that before
 // beginning a frame rather than drawing into nothing.
-renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
+renderer_open :: fn(window: Window, w: i64, h: i64, resources: i64,
+    passes: i64) -> Renderer {
     mut r := Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
+        // Made here so every path out of this call has one to give back. The
+        // device it records against arrives below, once there is one.
+        graph = graph_new(no_device(), resources, passes),
         opened = false,
     }
     r.instance = create_instance(no_pointer())
@@ -179,6 +153,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     }
     r.device = device_slot.handle
     r.queue = device_get_queue(r.device)
+    graph_set_device(r.graph, r.device)
 
     // The format the surface accepts, asked rather than assumed: which ones it
     // takes belongs to the driver and the window, not to the API.
@@ -212,13 +187,13 @@ renderer_format :: fn(r: Renderer) -> u32 { r.format }
 // live as long as the program does, so what this buys is a clean exit rather
 // than a working resize: the frame-scoped handles are the ones whose counting
 // decides whether the next frame draws, and those are `Frame`'s.
-renderer_close :: fn(mut r: Renderer) {
+renderer_close :: fn(move r: Renderer) {
+    graph_free(r.graph)
     queue_release(r.queue)
     device_release(r.device)
     adapter_release(r.adapter)
     surface_release(r.surface)
     instance_release(r.instance)
-    r.opened = false
 }
 
 // A surface has to be told the window changed. Every target tested against it
@@ -231,6 +206,7 @@ renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     r.configuration.width = cast($u32, w)
     r.configuration.height = cast($u32, h)
     surface_configure(r.surface, ptr_to(r.configuration))
+    graph_resize(r.graph, w, h)
 }
 
 // Whether what the surface answered with is something to draw into.
@@ -283,72 +259,6 @@ renderer_begin :: fn(mut r: Renderer) -> Frame {
     f
 }
 
-frame_ok :: fn(f: Frame) -> bool { f.ready }
-// The frame's own command encoder, which is what a pass recording something
-// other than a render pass opens its own encoder over.
-frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
-frame_view :: fn(f: Frame) -> TextureView { f.view }
-
-// Where a pass draws. A colour attachment, a depth attachment, or both: a
-// shadow map is depth with no colour, a post-process step is colour with no
-// depth, and an ordinary scene pass is both.
-Target :: struct {
-    color: TextureView,
-    depth: TextureView,
-    has_color: bool,
-    has_depth: bool,
-}
-
-// A target naming views a caller made, for a pass drawing somewhere other than
-// the window. `no_view()` fills the slot a pass does not use, which is the
-// colour slot for a depth-only pass and the depth slot for one that needs none.
-target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
-    has_depth: bool) -> Target {
-    Target { color = color, depth = depth, has_color = has_color,
-        has_depth = has_depth }
-}
-
-no_view :: fn() -> TextureView { no_texture_view() }
-
-// A pass into whatever it was given. The attachments a pass has are the ones
-// its target says it has, so a depth-only pass writes no colour and a
-// post-process step is not asked for a depth buffer it does not have.
-//
-// `load` says whether what is already in an attachment survives, which is what
-// lets a second pass draw over a first instead of erasing it. Depth follows the
-// same rule and it is the more important one: every pass after the first has to
-// load the depth the passes before it wrote, or each sorts only against itself
-// and the last to draw wins wherever they overlap. The graph decides both, from
-// what each pass declared it writes.
-frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
-    depth_load: u32) -> RenderPassEncoder {
-    mut attachment := render_pass_color_attachment_init()
-    attachment.view = into.color
-    attachment.load_op = load
-    attachment.store_op = STORE_OP_STORE
-    attachment.clear_value = clear
-
-    // Nearer is smaller, so the buffer starts at the far plane and every
-    // fragment that passes is closer than what was already there.
-    mut depth := render_pass_depth_stencil_attachment_init()
-    depth.view = into.depth
-    depth.depth_load_op = depth_load
-    depth.depth_store_op = STORE_OP_STORE
-    depth.depth_clear_value = 1.0
-
-    mut descriptor := render_pass_descriptor_init()
-    descriptor.color_attachments_count = 0
-    if (into.has_color) {
-        descriptor.color_attachments_count = 1
-        descriptor.color_attachments =
-            ptr_to(attachment)
-    }
-    if (into.has_depth) {
-        descriptor.depth_stencil_attachment = ptr_to(depth)
-    }
-    command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
-}
-
 // Closes the encoder, submits it, shows the result, and gives back everything
 // the frame took.
 //
@@ -385,12 +295,13 @@ test "a renderer that never opened is closed without touching a handle" {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
+        graph = graph_new(no_device(), 1, 1),
         opened = false,
     }
     assert(renderer_ok(r) == false)
     // Every release in here is handed a handle that names nothing. Reaching the
-    // line below is the whole assertion: wgpu is not asked to give back
-    // something it never handed out.
+    // end of this test is the whole assertion: wgpu is not asked to give back
+    // something it never handed out. Closing takes the renderer, since the
+    // graph it holds is given up with it, so there is nothing left to ask.
     renderer_close(r)
-    assert(renderer_ok(r) == false)
 }
