@@ -77,6 +77,7 @@ import "../../lib/renderer/render_world.frost"
 import "../../lib/renderer/uniform.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
+import "spin.frost"
 import "../../lib/engine/app.frost"
 import "../../lib/renderer/wgpu.frost"
 import "ecs.frost"
@@ -1128,6 +1129,7 @@ run :: fn(move app: App) -> i64 {
     app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
+    app_install(app, spin_plugin)
     device := app_device(app)
     queue := app_queue(app)
 
@@ -1193,7 +1195,7 @@ run :: fn(move app: App) -> i64 {
     // Which component is which, asked of the world the App opened.
     ids := app_ids(app)
     local := ids.local_transform
-    spin := ids.spin
+    spin := component_of($Spin, app.world)
     drawn := ids.drawn
     global := ids.global_transform
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(

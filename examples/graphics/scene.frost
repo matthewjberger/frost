@@ -38,6 +38,7 @@ import "../../lib/renderer/render_world.frost"
 import "../../lib/renderer/uniform.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
+import "spin.frost"
 import "../../lib/engine/app.frost"
 import "../../lib/renderer/wgpu.frost"
 import "ecs.frost"
@@ -284,6 +285,10 @@ run :: fn(move app: App) -> i64 {
     app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
+    app_install(app, spin_plugin)
+    // Turning is this program's, so which component it is is asked of the
+    // world here rather than read off the engine's list.
+    spin := component_of($Spin, app.world)
     device := app_device(app)
     queue := app_queue(app)
 
@@ -333,7 +338,7 @@ run :: fn(move app: App) -> i64 {
     ids := app_ids(app)
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
         mask_empty(),
-        ids.local_transform), ids.spin), ids.drawn),
+        ids.local_transform), spin), ids.drawn),
         ids.global_transform), ids.transform)
 
     mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
@@ -350,7 +355,7 @@ run :: fn(move app: App) -> i64 {
             ids.local_transform, LocalTransform {
             translation = vec3(spread[made], 0.0, depths[made]),
             rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
-        ecs_set($Spin, app.world, held, ids.spin,
+        ecs_set($Spin, app.world, held, spin,
             spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
         mut shape := cube
         if (layers[made] == FAR) {

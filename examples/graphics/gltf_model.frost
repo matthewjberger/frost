@@ -26,6 +26,7 @@ import "../../lib/renderer/render_world.frost"
 import "../../lib/renderer/uniform.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
+import "spin.frost"
 import "../../lib/engine/app.frost"
 import "../../lib/engine/gltf.frost"
 import "../../lib/renderer/wgpu.frost"
@@ -290,6 +291,10 @@ run :: fn(move app: App) -> i64 {
     app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
+    app_install(app, spin_plugin)
+    // Turning is this program's, so which component it is is asked of the
+    // world here rather than read off the engine's list.
+    spin := component_of($Spin, app.world)
     device := app_device(app)
     queue := app_queue(app)
 
@@ -322,8 +327,10 @@ run :: fn(move app: App) -> i64 {
         print_str_line("run this from the root of the checkout, or `just gltf`")
     } else {
         // The model turns as one thing. Its own tree is untouched: this is a
-        // spin on the entity everything the file spawned hangs off.
-        ecs_set($Spin, app.world, root, ids.spin,
+        // spin added to the entity everything the file spawned hangs off. Added
+        // rather than set, because turning is this program's idea and the loader
+        // spawned a node with no room for one.
+        ecs_add($Spin, app.world, root, spin,
             spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity()))
     }
 

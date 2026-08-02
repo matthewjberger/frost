@@ -1,0 +1,181 @@
+// A world drawn without a line of shader in it.
+//
+//   just app lit
+//
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+//
+// Every other demo here writes its own WGSL, its own pipeline, and its own pass
+// body, because each of them is about what a pass can be. This one is about what
+// is left once a program does not want to say any of that: compose the plugins,
+// put meshes and materials in the registries, spawn things and lights, and run.
+// There is no shader in this file, no bind group, no pipeline, and no pass.
+//
+// What draws it is `render_plugin`, which declares a culling pass and a lit pass
+// into the App's graph and fills both every frame. Which lights it uses is
+// whatever the world holds: a `Light` is a component on an entity with a
+// transform, so a lamp hung off something that moves moves with it.
+//
+// Three lights, one of each kind, so which is which reads off the screen. The
+// sun comes from over the left shoulder and lights everything a little. The lamp
+// sits among the shapes and falls off with distance, so what is near it is
+// bright and what is across the floor is not. The spot points down at the floor
+// from above and has an edge.
+
+import "../../lib/engine/app.frost"
+import "../../lib/engine/camera.frost"
+import "../../lib/engine/light.frost"
+import "../../lib/engine/world.frost"
+import "spin.frost"
+import "../../lib/renderer/geometry.frost"
+import "../../lib/renderer/mesh.frost"
+import "../../lib/renderer/material.frost"
+import "../../lib/renderer/render_world.frost"
+import "ecs.frost"
+import "math.frost"
+
+WIDTH :: 1280
+HEIGHT :: 720
+
+GRID :: 4
+SHAPES :: 16
+// The shapes, the floor, and the three lights, each of which is an entity.
+DRAWN :: 17
+
+VERTEX_ROOM :: 4096
+INDEX_ROOM :: 8192
+
+FLOOR_Y :: -2.0
+SPACING :: 2.2
+
+main :: fn() -> i64 {
+    mut config := app_config("Frost lit", WIDTH, HEIGHT)
+    config.vertices = VERTEX_ROOM
+    config.indices = INDEX_ROOM
+    config.drawn = DRAWN
+    match app_open(config) {
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
+    }
+}
+
+run :: fn(move app: App) -> i64 {
+    app_install_group(app, default_plugins())
+    app_install(app, render_plugin)
+    app_install(app, camera_controller_plugin)
+    app_install(app, exit_on_escape_plugin)
+    app_install(app, spin_plugin)
+    // Turning is this program's, so which component it is is asked of the
+    // world here rather than read off the engine's list.
+    spin := component_of($Spin, app.world)
+
+    queue := app_queue(app)
+    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
+    mesh_cache_insert(app.meshes, "sphere",
+        sphere_mesh(app.store, queue, 0.7, 16, 24))
+    cube := mesh_cache_find(app.meshes, "cube")
+    sphere := mesh_cache_find(app.meshes, "sphere")
+
+    mut looks : [4]i64 = [0; 4]
+    looks[0] = materials_add(app.materials, Material {
+        base_color = vec4(0.85, 0.32, 0.30, 1.0), roughness = 0.35,
+        metallic = 0.0 })
+    looks[1] = materials_add(app.materials, Material {
+        base_color = vec4(0.32, 0.76, 0.46, 1.0), roughness = 0.6,
+        metallic = 0.0 })
+    looks[2] = materials_add(app.materials, Material {
+        base_color = vec4(0.36, 0.52, 0.92, 1.0), roughness = 0.2,
+        metallic = 0.0 })
+    // The floor, matte, so what the lights do to it reads as what the lights do.
+    looks[3] = materials_add(app.materials, Material {
+        base_color = vec4(0.72, 0.70, 0.66, 1.0), roughness = 0.9,
+        metallic = 0.0 })
+
+    ids := app_ids(app)
+    lights := light_ids(app.world)
+    drawn := mask_with(mask_with(mask_with(mask_with(mask_with(
+        mask_empty(), ids.local_transform), spin), ids.drawn),
+        ids.global_transform), ids.transform)
+    // A light needs somewhere to be and nothing to draw.
+    lighting := mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.global_transform), lights.light)
+
+    floor := ecs_spawn_with(app.world, drawn)
+    app_place(app, floor, ids, spin, vec3(0.0, FLOOR_Y, 0.0),
+        vec3(9.0, 0.25, 9.0), 0.0)
+    ecs_set($Drawn, app.world, floor, ids.drawn, Drawn { mesh = cube,
+        material = looks[3], layer = ONE_LAYER })
+
+    half : f32 = 1.5
+    mut made : i64 = 0
+    while (made < SHAPES) {
+        row := made / GRID
+        column := made - row * GRID
+        across : f32 = column
+        along : f32 = row
+        held := ecs_spawn_with(app.world, drawn)
+        app_place(app, held, ids, spin,
+            vec3((across - half) * SPACING, FLOOR_Y + 1.4,
+                (along - half) * SPACING),
+            vec3(0.8, 0.8, 0.8), 0.4 + 0.1 * made)
+        mut shape := cube
+        if (made - (made / 2) * 2 == 1) {
+            shape = sphere
+        }
+        ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
+            material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
+        made = made + 1
+    }
+
+    // The sun, over the left shoulder. A directional light is aimed rather than
+    // placed, and what aims it is the entity's -Z, so this one is turned to face
+    // down and across.
+    sunlight := ecs_spawn_with(app.world, lighting)
+    app_aim(app, sunlight, ids, vec3(0.0, 6.0, 0.0), -0.9, 0.6)
+    ecs_set($Light, app.world, sunlight, lights.light, sun())
+
+    // The lamp, in among the shapes. Bright close by and gone across the floor,
+    // which is what an inverse square does and what a directional light does
+    // not.
+    held := ecs_spawn_with(app.world, lighting)
+    app_aim(app, held, ids, vec3(-2.4, FLOOR_Y + 1.0, 2.4), 0.0, 0.0)
+    ecs_set($Light, app.world, held, lights.light,
+        lamp(vec3(1.0, 0.55, 0.25), 14.0))
+
+    // The spot, above and pointing straight down, so the floor gets a disc with
+    // an edge to it.
+    pointed := ecs_spawn_with(app.world, lighting)
+    app_aim(app, pointed, ids, vec3(2.6, 4.2, -1.0), -1.35, 0.0)
+    ecs_set($Light, app.world, pointed, lights.light,
+        spot(vec3(0.55, 0.75, 1.0), 40.0, 0.25, 0.45))
+
+    mut eye := camera_default()
+    eye.position = vec3(0.0, 1.6, 11.0)
+    eye.pitch = -0.12
+    app_camera_set(app, eye)
+
+    app_run(app)
+    app_close(app)
+}
+
+// Something drawn: at a place, at a size, turning at a rate. A light is placed
+// by `app_aim` instead, since it has no spin to set and setting one on an entity
+// that was not spawned with it stops the program.
+app_place :: fn(mut app: App, held: Entity, ids: WorldIds, spin: i64, at: Vec3,
+    size: Vec3, rate: f32) {
+    ecs_set($LocalTransform, app.world, held, ids.local_transform,
+        LocalTransform { translation = at, rotation = quat_identity(),
+            scale = size })
+    ecs_set($Spin, app.world, held, spin,
+        spinning(vec3(0.3, 1.0, 0.2), rate, quat_identity()))
+}
+
+// The same, turned to face somewhere. A light is aimed by its transform, so
+// pitch and yaw become the rotation and the pass reads the matrix.
+app_aim :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3,
+    pitch: f32, yaw: f32) {
+    ecs_set($LocalTransform, app.world, held, ids.local_transform,
+        LocalTransform { translation = at,
+            rotation = quat_mul(quat_from_axis_angle(vec3(0.0, 1.0, 0.0), yaw),
+                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), pitch)),
+            scale = vec3(1.0, 1.0, 1.0) })
+}

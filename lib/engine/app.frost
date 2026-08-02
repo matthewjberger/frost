@@ -41,12 +41,15 @@ import "../renderer/geometry.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
 import "../renderer/render_world.frost"
+import "light.frost"
 import "log.frost"
+import "../renderer/lit.frost"
 import "world.frost"
 import "scene_sync.frost"
 import "camera.frost"
 import "ecs.frost"
 import "vec.frost"
+import "mem.frost"
 import "math.frost"
 import "io.frost"
 
@@ -61,7 +64,7 @@ export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
     plugin_group_set, plugin_group_disable, default_plugins,
     engine_plugin, exit_on_escape_plugin, camera_controller_plugin,
     app_configure_graph, app_before_render, app_update_graph, app_run,
-    log_plugin, app_log,
+    log_plugin, app_log, render_plugin,
     app_set_runner, app_set_runner_if_unset,
     app_add_system, app_add_systems, app_remove_system, app_insert_resource,
     app_next, app_extract, app_draw,
@@ -140,6 +143,14 @@ App :: linear struct {
     // program without it holds one that was never opened and writes nothing.
     log: Log,
     logging: bool,
+    // The standard pass and the run of lights it reads, once something composes
+    // the plugin that makes them. A program writing its own passes leaves both
+    // alone and nothing here is bound.
+    lit: Lit,
+    // What decides which of the run is drawn, made with the pass that draws it.
+    culling: ComputePipeline,
+    drawing: bool,
+    lights: []GpuLight,
     // Whether the graph can run at all, answered when it was scheduled.
     drawable: bool,
     // Whether the startup stage has run. A frame runs the stages after it, so
@@ -182,6 +193,10 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         has_runner = false,
         log = log_open("", log_config()),
         logging = false,
+        lit = lit_none(),
+        culling = no_compute_pipeline(),
+        drawing = false,
+        lights = heap_slice($GpuLight, MAX_LIGHTS),
         drawable = true,
         started = false,
     }
@@ -195,7 +210,6 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
 // a particular one does.
 engine_plugin :: fn(mut app: App) {
     world_prepare(app.world)
-    app_add_system(app, Stage::FrameUpdate, turn_things)
     app_add_system(app, Stage::FramePostUpdate, place_things)
 }
 
@@ -464,6 +478,58 @@ app_before_render :: fn($Ctx: Type, mut app: App,
         state = unsafe { ptr_cast($u8, state) } })
 }
 
+// The renderer, composed: a pass that draws what the world says is drawn, lit by
+// what the world says is a light. This is what a program gets instead of writing
+// a shader.
+//
+// It declares one culling pass and one drawing pass, and registers the hook that
+// fills the run and the lights every frame. Which targets they write is the
+// window and a depth buffer the graph makes, so a program that wants its own
+// chain writes its own passes instead and does not compose this.
+render_plugin :: fn(mut app: App) {
+    app.drawing = true
+    app.lit = lit_new(app_device(app), app_format(app), ptr_to(app.render),
+        ptr_to(app.store))
+    app.culling = render_world_cull_pipeline(app_device(app),
+        render_world_cull_layout(app.render))
+    app_configure_graph($App, app, declare_lit, ptr_to(app))
+    app_before_render($App, app, fill_lit, ptr_to(app))
+}
+
+// What the standard pass draws into: the window, cleared to the ambient colour,
+// and a depth buffer that follows it.
+declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+    arguments := graph_external_buffer(g, "draw arguments")
+    graph_set_external_buffer(g, arguments,
+        render_world_indirect(app.render))
+    culling := graph_compute_pass($App, g, "cull", cull_lit, ptr_to(app))
+    graph_writes(g, culling, arguments)
+    lit_declare(app.lit, g, screen, depth,
+        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }, arguments)
+}
+
+cull_lit :: fn(mut app: App, pass: ComputePassEncoder) {
+    compute_pass_encoder_set_pipeline(pass, app.culling)
+    compute_pass_encoder_set_bind_group(pass, 0,
+        render_world_cull_group(app.render), 0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass,
+        render_world_dispatch(app.render), 1, 1)
+}
+
+// The world into the run, and the world's lights into the buffer beside it.
+fill_lit :: fn(mut app: App, mut held: App) {
+    queue := app_queue(app)
+    ids := app_ids(app)
+    app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
+        app_view(app))
+    count := lights_of(app.world, light_ids(app.world), app.lights)
+    lit_write_lights(app.lit, queue, app.lights)
+    lit_write_frame(app.lit, queue, app_view(app),
+        camera_position(app_camera(app)), vec3(0.05, 0.05, 0.07), count)
+}
+
 // A system, onto a stage. The one registration door: `Stage::Startup` runs once
 // on the way into the first frame and the rest run every frame, which is what
 // the stage already decides, so this is the App saying it rather than a program
@@ -523,6 +589,8 @@ app_close :: fn(move app: App) -> i64 {
     vec_free($GraphConfig, app.graph_configs)
     vec_free($UpdateGraph, app.update_graph)
     vec_free($BeforeRender, app.before_render)
+    lit_free(app.lit)
+    heap_release_slice($GpuLight, app.lights)
     log_close(app.log)
     render_world_free(app.render)
     geometry_free(app.store)
