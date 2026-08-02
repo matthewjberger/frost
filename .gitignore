@@ -16,8 +16,13 @@ bench/generated
 # and a Linux build names what the system already has.
 lib/platform/SDL3.lib
 examples/graphics/window
-lib/renderer/wgpu/include/
-lib/renderer/wgpu/libwgpu_native.dll.a
+# Everything `just fetch` writes here except the two the tree carries: the
+# Windows runtime library and the schema the binding is generated from.
+# What a Unix host fetches is its own `libwgpu_native.so` or `.dylib`,
+# which nothing else on that host would want committed.
+lib/renderer/wgpu/*
+!lib/renderer/wgpu/wgpu_native.dll
+!lib/renderer/wgpu/webgpu.json
 # The libraries the justfile copies beside a built demo, so the loader
 # finds them. The originals live beside the bindings that name them.
 examples/graphics/wgpu_native.dll
@@ -35,3 +40,6 @@ lib/platform/SDL3/
 # tree leaves behind.
 *.tmp
 audit.tmp
+
+# What the log plugin writes beside a program it ran, named for the window.
+*.log

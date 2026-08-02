@@ -77,11 +77,26 @@ The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byt
 
 The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
 
+The engine is ordinary Frost too. [`lib/`](lib) is a window and input layer over SDL3, a renderer over wgpu with a render graph that orders passes by the resources between them, and an `App` a program composes plugins into. A plugin is a `fn(mut App)`, systems run in stages, a pass carries its own typed state, and no example in the tree says `unsafe`.
+
 ## Getting started
 
-```bash
-cargo build --release          # build the compiler
+Clone it and build. A Rust toolchain and a C compiler (gcc or clang) for linking
+are the whole of what has to be there first.
 
+```bash
+git clone https://github.com/matthewjberger/frost
+cd frost
+cargo build --release          # build the compiler
+just install                   # put `frost` on PATH, with std/ beside it
+```
+
+`just` runs everything below; `cargo build --release` alone leaves the compiler
+at `target/release/frost`. From here `just window` opens a window on Windows,
+and on Linux or macOS one more step is needed, which the
+[graphics demos](#the-graphics-demos) section says.
+
+```bash
 frost program.frost                              # compile, link, and run
 frost --link -o program program.frost            # link to a named executable
 frost --native -o program.o program.frost        # object file only
@@ -94,16 +109,14 @@ frost --link --freestanding -o program program.frost  # link no C standard libra
 frost --link -L vendor -o program program.frost       # add an import search path
 ```
 
-Requires a Rust toolchain and a C compiler (gcc or clang) for linking. An import is looked for beside the importing file, then on `-L` and `FROST_PATH`, then in the project's `frost.json`, then in the bundled [`std/`](std).
+An import is looked for beside the importing file, then on `-L` and `FROST_PATH`, then in the project's `frost.json`, then in the bundled [`std/`](std).
 
 ### The graphics demos
 
-Six programs that open a window and draw through wgpu, in the order they were
+Seven programs that open a window and draw through wgpu, in the order they were
 built, each one the smallest step past the last:
 
 ```bash
-just deps        # fetch SDL3 and wgpu-native, once
-
 just window      # a window that opens, resizes, and closes
 just triangle    # the first thing drawn: one triangle, one pipeline
 just scene       # entities in an ECS, two passes, depth deciding what is in front
@@ -111,7 +124,30 @@ just spinning    # lit surfaces: a mesh cache, a material registry, two bind gro
 just textured    # the same field with its surfaces read off an image
 just shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
 just gltf        # a model read out of a file and spawned into the world
+just input       # what the platform layer saw, for when a key misbehaves
 ```
+
+**On Windows these run straight from a clone.** The wgpu binding, the schema it
+is generated from, and the two runtime libraries a Windows build loads are all
+in the tree, so nothing is fetched and nothing is generated first.
+
+**On Linux and macOS, install SDL3 and run `just deps` once.** SDL3 comes from
+the package manager and wgpu-native is downloaded into the tree, which the demos
+name at link time and carry as an rpath, so a built one runs without
+`LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH`. The binding itself is already there.
+
+```bash
+brew install sdl3            # macOS
+sudo apt install libsdl3-dev # Debian and Ubuntu
+sudo pacman -S sdl3          # Arch
+
+just deps                    # wgpu-native, into lib/renderer/wgpu
+just spinning
+```
+
+`just deps` is also how either platform moves to a newer wgpu: the versions are
+pinned at the top of the [justfile](justfile), and what it writes is committed
+so a regenerated binding shows up as a diff.
 
 From `scene` on, what runs and in what order is a render graph
 ([`lib/renderer/graph.frost`](lib/renderer/graph.frost)). A pass
@@ -122,17 +158,17 @@ well, ordered by the resources between them, with the three targets in the
 middle sharing textures because the graph knows when each is last read.
 
 `W`/`A`/`S`/`D` move, `Q` and `E` drop and rise, the arrow keys look, and escape
-closes. Resizing works in all of them. `just input` opens a window and reports
-what the platform layer saw, which is what to run when a key is not doing what
-it should.
+closes. Resizing works in all of them. Holding `B` in `shadowed` turns its second
+view off, which is a system writing a resource and a hook turning two passes off
+without the graph being scheduled again.
 
-`just deps` puts SDL3 and wgpu-native beside the examples. It is the only step
-that reaches the network, and it is needed once. Set `SDL3_DIR` to use an SDL
-already on the machine instead.
+Set `SDL3_DIR` to use an SDL already on the machine instead of the one in the
+tree.
 
-The bindings in [`lib/renderer/wgpu.frost`](lib/renderer) are generated
-from `webgpu.json` rather than written, which is why there are three thousand
-lines of them and no hand-maintained header.
+The binding in [`lib/renderer/wgpu.frost`](lib/renderer/wgpu.frost) is generated
+from `webgpu.json` by [`tools/wgpu_bindgen.frost`](tools/wgpu_bindgen.frost)
+rather than written, which is why there are three thousand lines of it and no
+hand-maintained header. `just bindgen` regenerates it.
 
 ### Editor support
 
@@ -158,20 +194,33 @@ frost/
 ├── src/          # the bootstrap compiler, in Rust: builds stage 0, and is the oracle
 ├── std/          # the standard library, in Frost
 ├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
+├── lib/          # the engine, in Frost: platform, renderer, engine
+├── tools/        # the wgpu binding generator, and the highlighter
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
 ├── .vscode/      # editor settings, and the VS Code grammar for .frost
 └── docs/book/   # the documentation, as an mdBook
 ```
 
+`lib/` is four layers and each reaches one way: `platform` is the window and the
+input, `renderer` is wgpu and the render graph, `engine` is the ECS seam and the
+`App`, and `examples/graphics` sits on top. Which directory may import which is
+declared in [`frost.json`](frost.json) and enforced by both compilers, so a
+layer reaching upward is a compile error rather than a review comment.
+
 ## Tests
 
 ```bash
 cargo test              # everything, including both self-hosting fixpoints
+just check              # cargo check and the format check
+just ci-linux           # every gate the Linux runner runs, in a container
 just test-interfaces    # the whole suite again, built from module interfaces
 just bench-scaling      # how the pipeline scales
 just bench-incremental  # what --incremental saves
 ```
+
+The graphics tests skip themselves where the libraries a demo links are not
+there, so `cargo test` is green on a machine that has never run `just deps`.
 
 ## Contributing
 

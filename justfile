@@ -224,10 +224,15 @@ window:
     ./examples/graphics/window
 
 # Fetches the libraries the graphics examples link against, and the schema the
-# wgpu binding is generated from. A checkout does not need this: the two runtime
-# libraries, the schema and the generated binding are in the tree, so `just
-# triangle` works straight away. Run this to move to a newer version, and commit
-# what it writes.
+# wgpu binding is generated from.
+#
+# The tree carries the generated binding, the schema it came from, and the two
+# runtime libraries a Windows build loads, so a Windows checkout runs nothing
+# before `just triangle`. A Unix host links `-lSDL3 -lwgpu_native` against what
+# it has, so it still runs this once for wgpu-native and installs SDL3 from its
+# package manager; the binding itself it already has.
+#
+# Run it either way to move to a newer version, and commit what it writes.
 #
 # The three versions are pinned rather than tracking whatever is newest, and the
 # last two are not free to move apart. A wgpu release ships the schema it was
@@ -241,6 +246,13 @@ window:
 # release older than it does not answer to. That is not a build failure at the
 # boundary, it is a field named something else three hundred lines into a
 # program that was compiling yesterday.
+# Where a Unix build finds wgpu-native. `just deps` puts it in the tree rather
+# than in a system directory, so the link is told where to look and the built
+# program carries the same path, which is what keeps `just spinning` from
+# needing `LD_LIBRARY_PATH` on Linux or `DYLD_LIBRARY_PATH` on macOS. SDL3 comes
+# from the system on both.
+unix_wgpu := "--libs=-Llib/renderer/wgpu --libs=-Wl,-rpath,$PWD/lib/renderer/wgpu --libs=-lwgpu_native"
+
 sdl_version := "3.4.12"
 wgpu_version := "v29.0.1.1"
 webgpu_headers_rev := "673658bc2bd70ec39fc55ebe6bb0173cf6d0a603"
@@ -300,8 +312,11 @@ deps:
     echo "webgpu.json at {{webgpu_headers_rev}}"
     curl -fsSL -o lib/renderer/wgpu/webgpu.json \
       "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
-    echo "SDL3 comes from the system here: install libsdl3-dev or sdl3."
-    echo "ready. run: just bindgen; just triangle"
+    case "$(uname -s)" in
+      Darwin) echo "SDL3 comes from Homebrew here: brew install sdl3" ;;
+      *)      echo "SDL3 comes from the system here: apt install libsdl3-dev, or pacman -S sdl3" ;;
+    esac
+    echo "ready. run: just triangle"
 
 # Two passes over two layers of one world, sorted by depth (Windows)
 [windows]
@@ -311,7 +326,7 @@ scene:
 # Two passes over two layers of one world, sorted by depth (Unix)
 [unix]
 scene:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/scene examples/graphics/scene.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/scene examples/graphics/scene.frost
     ./examples/graphics/scene
 
 # A field of lit primitives, each turning about its own axis (Windows)
@@ -322,7 +337,7 @@ spinning:
 # A field of lit primitives, each turning about its own axis (Unix)
 [unix]
 spinning:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/spinning examples/graphics/spinning.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/spinning examples/graphics/spinning.frost
     ./examples/graphics/spinning
 
 # The same lit field with its surfaces read off an image (Windows)
@@ -333,7 +348,7 @@ textured:
 # The same lit field with its surfaces read off an image (Unix)
 [unix]
 textured:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/textured examples/graphics/textured.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/textured examples/graphics/textured.frost
     ./examples/graphics/textured
 
 # A model read out of a binary glTF file, drawn (Windows)
@@ -344,7 +359,7 @@ gltf:
 # A model read out of a binary glTF file, drawn (Unix)
 [unix]
 gltf:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/gltf_model examples/graphics/gltf_model.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/gltf_model examples/graphics/gltf_model.frost
     ./examples/graphics/gltf_model
 
 # A shadow pass and a scene pass, ordered by the map between them (Windows)
@@ -355,7 +370,7 @@ shadowed:
 # A shadow pass and a scene pass, ordered by the map between them (Unix)
 [unix]
 shadowed:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/shadowed examples/graphics/shadowed.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/shadowed examples/graphics/shadowed.frost
     ./examples/graphics/shadowed
 
 # Opens a window and reports what the platform layer saw (Windows)
@@ -387,7 +402,7 @@ triangle:
 # Draws a triangle with wgpu in an SDL3 window, needs SDL3 and wgpu-native (Unix)
 [unix]
 triangle:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/triangle examples/graphics/triangle.frost
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/triangle examples/graphics/triangle.frost
     ./examples/graphics/triangle
 
 # Builds the self-hosted compiler (frost written in frost)
