@@ -35,9 +35,9 @@ pub use self::{
     allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
     distinct_types::*, failure_sets::*, import_visibility::*, imports::*,
     interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
-    ir_ownership::*, ir_typecheck::*, layers::declare as declare_layers,
-    lexer::*, manifest::*, multi_returns::*, ownership::*, param_modes::*,
-    parser::*, regions::*, types::*, unsafety::*,
+    ir_ownership::*, ir_typecheck::*, layers::Layer, lexer::*, manifest::*,
+    multi_returns::*, ownership::*, param_modes::*, parser::*, regions::*,
+    types::*, unsafety::*,
 };
 
 use std::fmt::Display;

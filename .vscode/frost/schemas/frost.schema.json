@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Frost project manifest",
-  "description": "A frost.json sitting beside the file named on the command line. It answers one question a relative import cannot, which is where a library this project depends on lives.",
+  "description": "A frost.json at or above the file named on the command line. It answers what a relative import cannot: where a library this project depends on lives, and which of its directories may reach which.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -12,6 +12,14 @@
     "paths": {
       "type": "array",
       "description": "Directories to search for an import, relative to this manifest. Searched after the importing file's own directory and any -L path.",
+      "items": {
+        "type": "string",
+        "description": "A directory, relative to this manifest"
+      }
+    },
+    "layers": {
+      "type": "array",
+      "description": "The project's layers, lowest first, relative to this manifest. A file under one may import from its own layer or from any listed before it, and reaching a later one is refused when the import is resolved. A file under none of them is unconstrained.",
       "items": {
         "type": "string",
         "description": "A directory, relative to this manifest"

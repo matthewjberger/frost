@@ -10,6 +10,7 @@ use crate::build_cache::{
 };
 use crate::import_visibility::{FileNames, shadowed_imports, unimported_names};
 use crate::interface::ModuleInterface;
+use crate::layers::Layer;
 use crate::lexer::Lexer;
 use crate::lexer::Token;
 use crate::parser::Parser;
@@ -87,6 +88,7 @@ fn find_import(
     importing_dir: &Path,
     path: &str,
     roots: &[SearchRoot],
+    layers: &[Layer],
     project_root: &Path,
 ) -> Result<Option<Found>> {
     let Some(found) = locate_import(importing_dir, path, roots, project_root)
@@ -98,7 +100,7 @@ fn find_import(
     // that is. A path spelling its way back up and down again resolves to the
     // same file and is weighed the same.
     if let Some(complaint) =
-        crate::layers::reaching_upward(importing_dir, &found.path)
+        crate::layers::reaching_upward(layers, importing_dir, &found.path)
     {
         bail!("{complaint}");
     }
@@ -204,6 +206,7 @@ pub fn resolve_imports(
 pub struct Resolution<'a> {
     pub cache: Option<&'a BuildCache>,
     pub roots: &'a [SearchRoot],
+    pub layers: &'a [Layer],
 }
 
 // With a cache, a module whose own source and whose imported interfaces are
@@ -217,7 +220,11 @@ pub fn resolve_imports_cached(
     tests: Vec<(String, String)>,
     options: Resolution<'_>,
 ) -> Result<Resolved> {
-    let Resolution { cache, roots } = options;
+    let Resolution {
+        cache,
+        roots,
+        layers,
+    } = options;
     let resolved = Resolved {
         statements: Vec::new(),
         linear_types,
@@ -240,7 +247,8 @@ pub fn resolve_imports_cached(
         let mut stack = HashSet::new();
         for statement in &statements {
             if let Statement::Import(path, _) = &statement.node {
-                let Some(found) = find_import(base_dir, path, roots, &root)?
+                let Some(found) =
+                    find_import(base_dir, path, roots, layers, &root)?
                 else {
                     continue;
                 };
@@ -250,6 +258,7 @@ pub fn resolve_imports_cached(
                         root: &root,
                         cache,
                         roots,
+                        layers,
                     },
                     &mut plans,
                     &mut stack,
@@ -261,6 +270,7 @@ pub fn resolve_imports_cached(
     let mut walk = Walk {
         root: &root,
         roots,
+        layers,
         seen: HashSet::new(),
         resolved,
         plans,
@@ -273,7 +283,7 @@ pub fn resolve_imports_cached(
     walk.files.push(FileNames::of(
         "the entry file",
         &statements,
-        &import_identities(&statements, base_dir, roots, &root),
+        &import_identities(&statements, base_dir, roots, layers, &root),
     ));
     walk.resolve_into(statements, base_dir, "the entry file")?;
     let reports = unimported_names(&walk.files, &walk.module_exports);
@@ -385,6 +395,7 @@ struct Planning<'a> {
     root: &'a Path,
     cache: &'a BuildCache,
     roots: &'a [SearchRoot],
+    layers: &'a [Layer],
 }
 
 fn plan_module(
@@ -393,7 +404,12 @@ fn plan_module(
     plans: &mut Plans,
     stack: &mut HashSet<PathBuf>,
 ) -> Result<PathBuf> {
-    let Planning { root, cache, roots } = context;
+    let Planning {
+        root,
+        cache,
+        roots,
+        layers,
+    } = context;
     let full = found.path.as_path();
     let key = full.canonicalize().unwrap_or_else(|_| full.to_path_buf());
     if plans.contains_key(&key) || !stack.insert(key.clone()) {
@@ -425,6 +441,7 @@ fn plan_module(
                     &source,
                     &directory_of(full),
                     roots,
+                    layers,
                     root,
                 ),
             )?;
@@ -447,7 +464,8 @@ fn plan_module(
     let directory = full.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut closure: BTreeMap<String, String> = BTreeMap::new();
     for import in &imports {
-        let Some(child_found) = find_import(&directory, import, roots, root)?
+        let Some(child_found) =
+            find_import(&directory, import, roots, context.layers, root)?
         else {
             continue;
         };
@@ -475,7 +493,7 @@ fn plan_module(
             &source,
             file,
             full,
-            imported_generic_types(&source, &directory, roots, root),
+            imported_generic_types(&source, &directory, roots, layers, root),
         )?;
         interface = ModuleInterface::of(
             &module,
@@ -513,19 +531,21 @@ fn import_identities(
     statements: &[Spanned<Statement>],
     base_dir: &Path,
     roots: &[SearchRoot],
+    layers: &[Layer],
     root: &Path,
 ) -> Vec<PathBuf> {
     import_paths(statements)
         .iter()
         .filter_map(|path| {
-            find_import(base_dir, path, roots, root).ok().flatten().map(
-                |found| {
+            find_import(base_dir, path, roots, layers, root)
+                .ok()
+                .flatten()
+                .map(|found| {
                     found
                         .path
                         .canonicalize()
                         .unwrap_or_else(|_| found.path.clone())
-                },
-            )
+                })
         })
         .collect()
 }
@@ -568,6 +588,7 @@ fn relative_module_name(path: &Path, root: &Path) -> String {
 struct Walk<'a> {
     root: &'a Path,
     roots: &'a [SearchRoot],
+    layers: &'a [Layer],
     seen: HashSet<PathBuf>,
     resolved: Resolved,
     plans: Plans,
@@ -619,8 +640,13 @@ impl Walk<'_> {
             };
             let renames = renames.clone();
 
-            let Some(found) =
-                find_import(base_dir, path, self.roots, self.root)?
+            let Some(found) = find_import(
+                base_dir,
+                path,
+                self.roots,
+                self.layers,
+                self.root,
+            )?
             else {
                 bail!(
                     "failed to read imported file: '{path}' is not beside {} and is not on any library path",
@@ -726,7 +752,13 @@ impl Walk<'_> {
         self.files.push(FileNames::of(
             module,
             &imported,
-            &import_identities(&imported, &child_dir, self.roots, self.root),
+            &import_identities(
+                &imported,
+                &child_dir,
+                self.roots,
+                self.layers,
+                self.root,
+            ),
         ));
         self.module_exports
             .insert(key.to_path_buf(), (module.to_string(), exports.clone()));
@@ -824,6 +856,7 @@ impl Walk<'_> {
                 &source,
                 &directory_of(full),
                 self.roots,
+                self.layers,
                 self.root,
             ),
         )?;
@@ -914,12 +947,14 @@ pub fn imported_generic_types(
     source: &str,
     base_dir: &Path,
     roots: &[SearchRoot],
+    layers: &[Layer],
     project_root: &Path,
 ) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut seen = HashSet::new();
     let scan = Scan {
         roots,
+        layers,
         project_root,
     };
     for path in import_paths_in_source(source) {
@@ -932,6 +967,7 @@ pub fn imported_generic_types(
 // carries one reference rather than two positional arguments.
 struct Scan<'a> {
     roots: &'a [SearchRoot],
+    layers: &'a [Layer],
     project_root: &'a Path,
 }
 
@@ -942,11 +978,15 @@ fn collect_generic_types(
     names: &mut HashSet<String>,
     seen: &mut HashSet<PathBuf>,
 ) {
-    let Some(found) =
-        find_import(importing_dir, path, scan.roots, scan.project_root)
-            .ok()
-            .flatten()
-    else {
+    let Some(found) = find_import(
+        importing_dir,
+        path,
+        scan.roots,
+        scan.layers,
+        scan.project_root,
+    )
+    .ok()
+    .flatten() else {
         return;
     };
     let key = found
