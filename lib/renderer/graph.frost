@@ -226,11 +226,14 @@ Graph :: linear struct {
     height: i64,
 }
 
-graph_new :: fn(device: Device, resources: i64, passes: i64) -> Graph {
-    mut room := resources
-    if (room < 1) { room = 1 }
-    mut seats := passes
-    if (seats < 1) { seats = 1 }
+// How much a graph starts with. Every table doubles from here, so this is what
+// a graph that declares nothing costs rather than a bound on one that declares
+// a lot.
+FIRST_ROOM :: 8
+
+graph_new :: fn(device: Device) -> Graph {
+    room := FIRST_ROOM
+    seats := FIRST_ROOM
     Graph {
         device = device,
         resources = heap_slice($Resource, room),
@@ -406,9 +409,14 @@ graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
 add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     w: i64, h: i64) -> ResourceId {
     index := g.resource_count
+    // Grown here rather than in a helper, because handing this borrow to
+    // another `mut` parameter copies the header and the new storage would be
+    // written to the copy. A pool slot is held per resource, so the two grow
+    // together.
     if (index >= slice_len(g.resources)) {
-        print "graph: more resources than the graph was made room for"
-        return no_resource()
+        room := slice_len(g.resources) * 2
+        g.resources = heap_grow_slice($Resource, g.resources, room)
+        g.pool = heap_grow_slice($PoolSlot, g.pool, room)
     }
     mut held := g.resources
     held[index] = Resource {
@@ -453,9 +461,13 @@ add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
     draw: fn(^u8, RenderPassEncoder), dispatch: fn(^u8, ComputePassEncoder),
     state: ^u8) -> PassId {
     index := g.pass_count
+    // The order and the saved flags are read at a pass's own index, so they
+    // grow with the passes.
     if (index >= slice_len(g.passes)) {
-        print "graph: more passes than the graph was made room for"
-        return cast($PassId, -1)
+        seats := slice_len(g.passes) * 2
+        g.passes = heap_grow_slice($GraphPass, g.passes, seats)
+        g.order = heap_grow_slice($i64, g.order, seats)
+        g.saved = heap_grow_slice($bool, g.saved, seats)
     }
     mut held := g.passes
     held[index] = GraphPass {
@@ -478,9 +490,7 @@ add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
 graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
     index := g.sub_count
     if (index >= slice_len(g.subs)) {
-        print "graph: more sub-graphs than the graph was made room for"
-        graph_free(child)
-        return -1
+        g.subs = heap_grow_slice($Graph, g.subs, slice_len(g.subs) * 2)
     }
     mut held := g.subs
     held[index] = child
@@ -507,8 +517,8 @@ graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
 graph_takes :: fn(mut g: Graph, sub: i64, inner: ResourceId,
     outer: ResourceId) {
     if (g.binding_count >= slice_len(g.bindings)) {
-        print "graph: more sub-graph inputs than the graph was made room for"
-        return
+        g.bindings = heap_grow_slice($Binding, g.bindings,
+            slice_len(g.bindings) * 2)
     }
     mut held := g.bindings
     held[g.binding_count] = Binding { sub = sub,
@@ -632,8 +642,7 @@ graph_runs_after :: fn(mut g: Graph, after: PassId, before: PassId) {
         return
     }
     if (g.edge_count >= slice_len(g.edges)) {
-        print "graph: more orderings than the graph was made room for"
-        return
+        g.edges = heap_grow_slice($Edge, g.edges, slice_len(g.edges) * 2)
     }
     mut held := g.edges
     held[g.edge_count] = Edge { before = earlier, after = later }
@@ -806,8 +815,7 @@ slot_for :: fn(mut g: Graph, one: Resource) -> i64 {
     }
     made := g.pool_count
     if (made >= slice_len(g.pool)) {
-        print "graph: more pool slots than the graph was made room for"
-        return -1
+        g.pool = heap_grow_slice($PoolSlot, g.pool, slice_len(g.pool) * 2)
     }
     mut pool := g.pool
     pool[made] = PoolSlot {
@@ -1451,40 +1459,49 @@ target_for :: fn(mut g: Graph, f: Frame, one: GraphPass) -> Target {
 
 // The order is arithmetic over two tables, so it is answered without a device
 // and without drawing.
-// A pass records with its own state, and these tests are about the order rather
-// than about what any of them draws, so the state they take is a count nothing
-// reads.
-Nothing :: struct { count: i64 }
-nothing_drawn :: fn(mut s: Nothing, pass: RenderPassEncoder) { }
-nothing_dispatched :: fn(mut s: Nothing, pass: ComputePassEncoder) { }
-nothing_rebuilt :: fn(mut s: Nothing, g: Graph) { }
+// How many times a pass recorded. These tests schedule graphs and never run
+// one, so the count answers whether scheduling records anything, which is the
+// property the test below names.
+Recorded :: struct { times: i64 }
+nothing_drawn :: fn(mut s: Recorded, pass: RenderPassEncoder) {
+    s.times = s.times + 1
+}
+nothing_dispatched :: fn(mut s: Recorded, pass: ComputePassEncoder) {
+    s.times = s.times + 1
+}
+nothing_rebuilt :: fn(mut s: Recorded, g: Graph) {
+    s.times = s.times + 1
+}
 
 test "a pass runs after the pass whose write it reads" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     shadow := graph_depth(g, "shadow", 512, 512, 0)
     // Declared first, and it reads what the second writes.
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, shadow)
-    caster := graph_pass($Nothing, g, "shadow", nothing_drawn, ptr_to(nothing))
+    caster := graph_pass($Recorded, g, "shadow", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, caster, shadow)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 1)
     assert(graph_order_at(g, 1) == 0)
+    // Working out the order is not running it. Neither body has been called,
+    // which is what lets a graph be scheduled once and run every frame.
+    assert(nothing.times == 0)
     graph_free(g)
 }
 
 test "a graph with nothing to order runs exactly as it was written" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, second, screen, clear_black())
-    third := graph_pass($Nothing, g, "third", nothing_drawn, ptr_to(nothing))
+    third := graph_pass($Recorded, g, "third", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, third, screen, clear_black())
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 0)
@@ -1494,24 +1511,24 @@ test "a graph with nothing to order runs exactly as it was written" {
 }
 
 test "two passes over one are stable in declaration order" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     base := graph_depth(g, "base", 8, 8, 0)
     left := graph_depth(g, "left", 8, 8, 0)
     right := graph_depth(g, "right", 8, 8, 0)
     // Declared last to first, so only the edges can put them in order.
-    last := graph_pass($Nothing, g, "last", nothing_drawn, ptr_to(nothing))
+    last := graph_pass($Recorded, g, "last", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, last, screen, clear_black())
     graph_reads(g, last, left)
     graph_reads(g, last, right)
-    one := graph_pass($Nothing, g, "one", nothing_drawn, ptr_to(nothing))
+    one := graph_pass($Recorded, g, "one", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, one, left)
     graph_reads(g, one, base)
-    two := graph_pass($Nothing, g, "two", nothing_drawn, ptr_to(nothing))
+    two := graph_pass($Recorded, g, "two", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, two, right)
     graph_reads(g, two, base)
-    root := graph_pass($Nothing, g, "root", nothing_drawn, ptr_to(nothing))
+    root := graph_pass($Recorded, g, "root", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, root, base)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 3)
@@ -1522,14 +1539,14 @@ test "two passes over one are stable in declaration order" {
 }
 
 test "passes that wait on each other are refused" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     one := graph_depth(g, "one", 8, 8, 0)
     two := graph_depth(g, "two", 8, 8, 0)
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, first, one)
     graph_reads(g, first, two)
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, second, two)
     graph_reads(g, second, one)
     assert(graph_schedule(g) == false)
@@ -1537,11 +1554,11 @@ test "passes that wait on each other are refused" {
 }
 
 test "a read of a resource nothing writes is refused" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     orphan := graph_depth(g, "orphan", 8, 8, 0)
-    only := graph_pass($Nothing, g, "only", nothing_drawn, ptr_to(nothing))
+    only := graph_pass($Recorded, g, "only", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, only, screen, clear_black())
     graph_reads(g, only, orphan)
     assert(graph_schedule(g) == false)
@@ -1549,23 +1566,23 @@ test "a read of a resource nothing writes is refused" {
 }
 
 test "a pass that writes nothing is refused" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
-    idle := graph_pass($Nothing, g, "idle", nothing_drawn, ptr_to(nothing))
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
+    idle := graph_pass($Recorded, g, "idle", nothing_drawn, ptr_to(nothing))
     assert(graph_schedule(g) == false)
     graph_free(g)
 }
 
 test "a pass runs after the compute pass whose buffer it reads" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     visible := graph_buffer(g, "visible", 4096, BufferUsage::Storage)
     // Declared first, and it reads what the compute pass writes.
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, visible)
-    cull := graph_compute_pass($Nothing, g, "cull", nothing_dispatched, ptr_to(nothing))
+    cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
     graph_writes(g, cull, visible)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 1)
@@ -1574,13 +1591,13 @@ test "a pass runs after the compute pass whose buffer it reads" {
 }
 
 test "a compute pass that writes a buffer draws nowhere and is allowed" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
-    cull := graph_compute_pass($Nothing, g, "cull", nothing_dispatched, ptr_to(nothing))
+    cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
     graph_writes(g, cull, counts)
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, counts)
     assert(graph_schedule(g))
@@ -1588,8 +1605,8 @@ test "a compute pass that writes a buffer draws nowhere and is allowed" {
 }
 
 test "a chain of three targets costs two textures" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 8, 8)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // The shape a post-process chain has: each step reads the one before and
     // writes the next. The first target is finished with by the time the third
@@ -1598,15 +1615,15 @@ test "a chain of three targets costs two textures" {
     first := graph_transient_color(g, "first", 64, 64, 0)
     middle := graph_transient_color(g, "middle", 64, 64, 0)
     last := graph_transient_color(g, "last", 64, 64, 0)
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, first, clear_black())
-    bright := graph_pass($Nothing, g, "bright", nothing_drawn, ptr_to(nothing))
+    bright := graph_pass($Recorded, g, "bright", nothing_drawn, ptr_to(nothing))
     graph_reads(g, bright, first)
     graph_writes_color(g, bright, middle, clear_black())
-    blur := graph_pass($Nothing, g, "blur", nothing_drawn, ptr_to(nothing))
+    blur := graph_pass($Recorded, g, "blur", nothing_drawn, ptr_to(nothing))
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass($Nothing, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1617,18 +1634,18 @@ test "a chain of three targets costs two textures" {
 }
 
 test "two transients alive at once are two textures" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 8, 8)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // Both are read by the same pass, so neither is finished with before the
     // other starts and they cannot be the same texture.
     left := graph_transient_color(g, "left", 64, 64, 0)
     right := graph_transient_color(g, "right", 64, 64, 0)
-    one := graph_pass($Nothing, g, "one", nothing_drawn, ptr_to(nothing))
+    one := graph_pass($Recorded, g, "one", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, one, left, clear_black())
-    two := graph_pass($Nothing, g, "two", nothing_drawn, ptr_to(nothing))
+    two := graph_pass($Recorded, g, "two", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, two, right, clear_black())
-    compose := graph_pass($Nothing, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, left)
     graph_reads(g, compose, right)
@@ -1639,8 +1656,8 @@ test "two transients alive at once are two textures" {
 }
 
 test "two transients of different shapes never share" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 8, 8)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // The same chain as above, with the third target a different size. The
     // lifetimes leave room to share and the shapes do not, so this is three
@@ -1648,15 +1665,15 @@ test "two transients of different shapes never share" {
     first := graph_transient_color(g, "first", 64, 64, 0)
     middle := graph_transient_color(g, "middle", 64, 64, 0)
     last := graph_transient_color(g, "last", 32, 32, 0)
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, first, clear_black())
-    bright := graph_pass($Nothing, g, "bright", nothing_drawn, ptr_to(nothing))
+    bright := graph_pass($Recorded, g, "bright", nothing_drawn, ptr_to(nothing))
     graph_reads(g, bright, first)
     graph_writes_color(g, bright, middle, clear_black())
-    blur := graph_pass($Nothing, g, "blur", nothing_drawn, ptr_to(nothing))
+    blur := graph_pass($Recorded, g, "blur", nothing_drawn, ptr_to(nothing))
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass($Nothing, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1666,15 +1683,15 @@ test "two transients of different shapes never share" {
 }
 
 test "an order a program says is kept when nothing implies one" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     other := graph_depth(g, "other", 8, 8, 0)
     // Two passes sharing no resource, so the graph reads nothing between them
     // and would keep them as written. The second is told to run first.
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, second, other)
     graph_runs_after(g, first, second)
     assert(graph_schedule(g))
@@ -1684,13 +1701,13 @@ test "an order a program says is kept when nothing implies one" {
 }
 
 test "an order a program says can be a cycle and is refused" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     other := graph_depth(g, "other", 8, 8, 0)
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, second, other)
     graph_runs_after(g, first, second)
     graph_runs_after(g, second, first)
@@ -1699,15 +1716,15 @@ test "an order a program says can be a cycle and is refused" {
 }
 
 test "what was saved is what comes back, not everything" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", 8, 8, 0)
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, second, depth)
-    third := graph_pass($Nothing, g, "third", nothing_drawn, ptr_to(nothing))
+    third := graph_pass($Recorded, g, "third", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, third, screen, clear_black())
 
     // One already off before anything saves, which is the case a restore that
@@ -1725,14 +1742,14 @@ test "what was saved is what comes back, not everything" {
 }
 
 test "a pass that is off is still in the order" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     shadow := graph_depth(g, "shadow", 8, 8, 0)
-    scene := graph_pass($Nothing, g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, shadow)
-    caster := graph_pass($Nothing, g, "caster", nothing_drawn, ptr_to(nothing))
+    caster := graph_pass($Recorded, g, "caster", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, caster, shadow)
     assert(graph_schedule(g))
     // Turning it off after scheduling changes nothing about the order, which
@@ -1744,17 +1761,17 @@ test "a pass that is off is still in the order" {
 }
 
 test "a run of one phase leaves the other phases alone" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", 8, 8, 0)
-    shared := graph_pass($Nothing, g, "shared", nothing_drawn, ptr_to(nothing))
+    shared := graph_pass($Recorded, g, "shared", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, shared, depth)
-    left := graph_pass($Nothing, g, "left", nothing_drawn, ptr_to(nothing))
+    left := graph_pass($Recorded, g, "left", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, left, screen, clear_black())
     graph_reads(g, left, depth)
     graph_set_phase(g, left, 1)
-    right := graph_pass($Nothing, g, "right", nothing_drawn, ptr_to(nothing))
+    right := graph_pass($Recorded, g, "right", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, right, screen, clear_black())
     graph_reads(g, right, depth)
     graph_set_phase(g, right, 2)
@@ -1770,19 +1787,19 @@ test "a run of one phase leaves the other phases alone" {
 }
 
 test "a sub-graph is ordered by what its pass declares" {
-    mut nothing := Nothing { count = 0 }
-    mut child := graph_new(no_device(), 2, 1)
+    mut nothing := Recorded { times = 0 }
+    mut child := graph_new(no_device())
     inner := graph_external_color(child, "target")
-    draw := graph_pass($Nothing, child, "draw", nothing_drawn, ptr_to(nothing))
+    draw := graph_pass($Recorded, child, "draw", nothing_drawn, ptr_to(nothing))
     graph_writes_color(child, draw, inner, clear_black())
     assert(graph_schedule(child))
 
-    mut g := graph_new(no_device(), 4, 4)
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     offscreen := graph_color(g, "offscreen", 64, 64, 0)
     // Declared second and reading what the sub-graph writes, so the nested
     // work is ordered first by the same rule any other pass follows.
-    compose := graph_pass($Nothing, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, offscreen)
     sub := graph_sub(g, child)
@@ -1803,13 +1820,13 @@ test "a size is a share of the window" {
 }
 
 test "a resource that follows the window may not be read blindly" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     sized := graph_depth(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
-    writer := graph_pass($Nothing, g, "writer", nothing_drawn, ptr_to(nothing))
+    writer := graph_pass($Recorded, g, "writer", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, writer, sized)
-    reader := graph_pass($Nothing, g, "reader", nothing_drawn, ptr_to(nothing))
+    reader := graph_pass($Recorded, g, "reader", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, reader, screen, clear_black())
     graph_reads(g, reader, sized)
     assert(graph_schedule(g) == false)
@@ -1817,30 +1834,30 @@ test "a resource that follows the window may not be read blindly" {
 }
 
 test "a pass that says how it rebuilds may read one" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     sized := graph_color(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
-    writer := graph_pass($Nothing, g, "writer", nothing_drawn, ptr_to(nothing))
+    writer := graph_pass($Recorded, g, "writer", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, writer, sized, clear_black())
-    reader := graph_pass($Nothing, g, "reader", nothing_drawn, ptr_to(nothing))
+    reader := graph_pass($Recorded, g, "reader", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, reader, screen, clear_black())
     graph_reads(g, reader, sized)
     // The same graph the case above refuses, and the one line that makes it a
     // graph that can run: the pass says what to call when its input moves.
-    graph_rebuilds($Nothing, g, reader, nothing_rebuilt, ptr_to(nothing))
+    graph_rebuilds($Recorded, g, reader, nothing_rebuilt, ptr_to(nothing))
     assert(graph_schedule(g))
     graph_free(g)
 }
 
 test "the first write of a resource clears it and the second loads it" {
-    mut nothing := Nothing { count = 0 }
-    mut g := graph_new(no_device(), 4, 4)
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
     shared := graph_depth(g, "shared", 8, 8, 0)
     screen := graph_backbuffer(g)
-    first := graph_pass($Nothing, g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass($Recorded, g, "first", nothing_drawn, ptr_to(nothing))
     graph_writes_depth(g, first, shared)
-    second := graph_pass($Nothing, g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass($Recorded, g, "second", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, second, screen, clear_black())
     graph_writes_depth(g, second, shared)
     assert(graph_schedule(g))

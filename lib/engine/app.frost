@@ -83,11 +83,6 @@ AppConfig :: struct {
     materials: i64,
     vertices: i64,
     indices: i64,
-    // How many resources the renderer's graph holds and how many passes name
-    // them. Sized once like the rest, since the graph is made with the device
-    // and a program declares into it afterwards.
-    resources: i64,
-    passes: i64,
 }
 
 // A window of the given size, with room for a scene of a few hundred things. A
@@ -95,8 +90,7 @@ AppConfig :: struct {
 app_config :: fn(title: str, width: i64, height: i64) -> AppConfig {
     AppConfig { title = title, width = width, height = height,
         drawn = 256, meshes = 64, materials = 64,
-        vertices = 65536, indices = 131072,
-        resources = 8, passes = 8 }
+        vertices = 65536, indices = 131072 }
 }
 
 // Why opening did not work, and what the platform said about it. There is no
@@ -147,8 +141,7 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         platform_close(p)
         return AppError { why = AppFault::NoWindow, said = said }
     }
-    mut r := renderer_open(platform_window(p), config.width, config.height,
-        config.resources, config.passes)
+    mut r := renderer_open(platform_window(p), config.width, config.height)
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)

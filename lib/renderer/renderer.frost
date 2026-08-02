@@ -1,7 +1,7 @@
 // The device, the surface, and the frame, under one handle a program opens
 // once and a pass draws into.
 //
-//   mut r := renderer_open(platform_window(p), width(p), height(p), 8, 8)
+//   mut r := renderer_open(platform_window(p), width(p), height(p))
 //   while (platform_poll(p)) {
 //       if (resized(p)) { renderer_resize(r, width(p), height(p)) }
 //       mut f := renderer_begin(r)
@@ -83,15 +83,14 @@ take_device :: fn(status: u32, handle: Device, value message: StringView,
 // Opens the device against a platform window. A renderer that could not be
 // brought up answers false to `renderer_ok`, and a caller checks that before
 // beginning a frame rather than drawing into nothing.
-renderer_open :: fn(window: Window, w: i64, h: i64, resources: i64,
-    passes: i64) -> Renderer {
+renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     mut r := Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
         // Made here so every path out of this call has one to give back. The
         // device it records against arrives below, once there is one.
-        graph = graph_new(no_device(), resources, passes),
+        graph = graph_new(no_device()),
         opened = false,
     }
     r.instance = create_instance(no_pointer())
@@ -295,7 +294,7 @@ test "a renderer that never opened is closed without touching a handle" {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
-        graph = graph_new(no_device(), 1, 1),
+        graph = graph_new(no_device()),
         opened = false,
     }
     assert(renderer_ok(r) == false)

@@ -1018,7 +1018,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     graph_rebuilds($Step, g, compose_pass, rebuild_step, ptr_to(s.compose_step))
 
     // The second view: its own target, its own depth, its own pass.
-    mut inset_graph := graph_new(device, 4, 3)
+    mut inset_graph := graph_new(device)
     inset_target := graph_external_color(inset_graph, "target")
     inset_depth := graph_depth(inset_graph, "depth", INSET_WIDTH, INSET_HEIGHT,
         DEPTH_FORMAT)
@@ -1082,8 +1082,6 @@ main :: fn() -> i64 {
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
-    config.resources = 12
-    config.passes = 12
     match app_open(config) {
         case .Ok { value }: run(value)
         case .Err { error }: app_failed(error)

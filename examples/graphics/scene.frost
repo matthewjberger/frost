@@ -274,8 +274,6 @@ main :: fn() -> i64 {
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = INSTANCES
-    config.resources = 4
-    config.passes = 4
     match app_open(config) {
         case .Ok { value }: run(value)
         case .Err { error }: app_failed(error)
