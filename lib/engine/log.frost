@@ -1,0 +1,110 @@
+// Lines a program writes as it runs, kept in a file.
+//
+//     mut held := log_open("Frost", log_config())
+//     log_line(held, "the device came up")
+//     log_close(held)
+//
+// A program that composes no log plugin writes nothing and pays nothing: the
+// lines go through a `Log` and there is no `Log` to go through.
+//
+// The file is written whole each time a line is added rather than appended to.
+// That is the wrong shape for a program logging thousands of lines a second and
+// the right one for what this is: the handful of lines an engine writes when it
+// brings something up or gives it back, kept where a crash cannot take them
+// with it. What it costs is bounded by what a program logs.
+
+import "fs.frost"
+import "format.frost"
+
+export LogRotation, LogConfig, Log, log_config, log_file_name,
+    log_open, log_line, log_close, log_path
+
+// How a session's lines are kept apart from the last session's.
+LogRotation :: enum {
+    // A file per launch, named for when the launch happened.
+    PerSession,
+    // One file, holding the last launch and nothing before it.
+    Never,
+}
+
+// Where the lines go and how they are named. The directory has to exist: a log
+// is written where a program already keeps things rather than somewhere it has
+// to make first.
+LogConfig :: struct {
+    directory: str,
+    rotation: LogRotation,
+}
+
+log_config :: fn() -> LogConfig {
+    LogConfig { directory = ".", rotation = LogRotation::Never }
+}
+
+// An open log: where it is written and everything written to it so far.
+//
+// `linear` because it owns the text it has gathered. A program that opens one
+// and returns without closing it stops compiling, which is what keeps the last
+// lines from being the ones that are lost.
+Log :: linear struct {
+    path: Builder,
+    text: Builder,
+}
+
+log_path :: fn(mut held: Log) -> str { builder_str(held.path) }
+
+// What a title is called once it is a file name: the letters and digits it
+// holds, and an underscore wherever it held something else. A title is a window
+// caption and may hold anything; a path may not.
+log_file_name :: fn(mut out: Builder, title: str, config: LogConfig) {
+    mut wrote : i64 = 0
+    mut i : i64 = 0
+    while (i < str_len(title)) {
+        byte := title[i]
+        mut kept : u8 = 95
+        if (byte >= 97 && byte <= 122) { kept = byte }
+        if (byte >= 65 && byte <= 90) { kept = byte + 32 }
+        if (byte >= 48 && byte <= 57) { kept = byte }
+        if (byte == 45 || byte == 95) { kept = byte }
+        builder_byte(out, kept)
+        wrote = wrote + 1
+        i = i + 1
+    }
+    if (wrote == 0) {
+        builder_str_value(out, "app")
+    }
+    match config.rotation {
+        case .PerSession: {
+            builder_byte(out, 95)
+            builder_int(out, frost_rt_wall_seconds())
+        }
+        case .Never: { }
+    }
+    builder_str_value(out, ".log")
+}
+
+// The seconds on the wall, which is what tells one session's file from the
+// last one's.
+frost_rt_wall_seconds :: safe extern fn() -> i64
+
+log_open :: fn(title: str, config: LogConfig) -> Log {
+    mut at := builder_new(256)
+    builder_str_value(at, config.directory)
+    builder_byte(at, 47)
+    log_file_name(at, title, config)
+    mut held := Log { path = at, text = builder_new(4096) }
+    log_line(held, "opened")
+    held
+}
+
+// One line, written through to the file as it is added. A write that fails is a
+// program that logs nothing rather than one that stops: what is being recorded
+// is never what the program is for.
+log_line :: fn(mut held: Log, said: str) {
+    builder_str_value(held.text, said)
+    builder_byte(held.text, 10)
+    fs_write(builder_str(held.path), builder_str(held.text))
+}
+
+log_close :: fn(move held: Log) {
+    builder_free(held.path)
+    builder_free(held.text)
+}

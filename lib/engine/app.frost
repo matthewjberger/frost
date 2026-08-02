@@ -41,6 +41,7 @@ import "../renderer/geometry.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
 import "../renderer/render_world.frost"
+import "log.frost"
 import "world.frost"
 import "scene_sync.frost"
 import "camera.frost"
@@ -55,9 +56,14 @@ frost_rt_error :: extern fn(text: ^i8)
 frost_rt_die   :: safe extern fn()
 
 export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
-    app_failed, app_install, app_install_if_absent,
+    app_failed, app_install, app_install_if_absent, app_install_group,
+    PluginGroup, plugin_group_new, plugin_group_free, plugin_group_add,
+    plugin_group_set, plugin_group_disable, default_plugins,
     engine_plugin, exit_on_escape_plugin, camera_controller_plugin,
-    app_configure_graph, app_before_render, app_run,
+    app_configure_graph, app_before_render, app_update_graph, app_run,
+    log_plugin, app_log,
+    app_set_runner, app_set_runner_if_unset,
+    app_add_system, app_add_systems, app_remove_system, app_insert_resource,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -121,9 +127,19 @@ App :: linear struct {
     installed: Vec<Installed>,
     // What says which passes exist, run once before the first frame.
     graph_configs: Vec<GraphConfig>,
+    // What changes the graph each frame: which passes run this time.
+    update_graph: Vec<UpdateGraph>,
     // What runs each frame between the schedule and the graph, where a
     // system cannot reach: writing a uniform, filling the run.
     before_render: Vec<BeforeRender>,
+    // The loop, where a program brings its own. Nothing runs the App's when
+    // one is set.
+    runner: fn(mut App),
+    has_runner: bool,
+    // Where lines go, once something composes the plugin that opens it. A
+    // program without it holds one that was never opened and writes nothing.
+    log: Log,
+    logging: bool,
     // Whether the graph can run at all, answered when it was scheduled.
     drawable: bool,
     // Whether the startup stage has run. A frame runs the stages after it, so
@@ -160,7 +176,12 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         render = render_world_new(device, config.drawn),
         installed = vec_new($Installed, 8),
         graph_configs = vec_new($GraphConfig, 4),
+        update_graph = vec_new($UpdateGraph, 4),
         before_render = vec_new($BeforeRender, 4),
+        runner = runs_nothing,
+        has_runner = false,
+        log = log_open("", log_config()),
+        logging = false,
         drawable = true,
         started = false,
     }
@@ -174,19 +195,20 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
 // a particular one does.
 engine_plugin :: fn(mut app: App) {
     world_prepare(app.world)
-    world_systems(app.schedule)
+    app_add_system(app, Stage::FrameUpdate, turn_things)
+    app_add_system(app, Stage::FramePostUpdate, place_things)
 }
 
 // The camera moved by what was held. A program driving the camera itself
 // installs everything else and leaves this out.
 camera_controller_plugin :: fn(mut app: App) {
-    camera_controller_systems(app.schedule)
+    app_add_system(app, Stage::FrameUpdate, move_camera)
 }
 
 // Escape closes the window. Installed by a demo rather than built into the
 // poll, so a program that wants that key for a menu simply does not install it.
 exit_on_escape_plugin :: fn(mut app: App) {
-    schedule_add(app.schedule, Stage::FrameUpdate, exit_on_escape)
+    app_add_system(app, Stage::FrameUpdate, exit_on_escape)
 }
 
 // One plugin, built into this App.
@@ -236,6 +258,126 @@ already_installed :: fn(app: App, build: fn(mut App)) -> bool {
 // A plugin that is in, so two that pull in the same one pull it in once.
 Installed :: struct { build: fn(mut App) }
 
+// One plugin of a group, and whether it is still on. `named` is what the group
+// was built with and never changes, so a member replaced by
+// `plugin_group_set` is still found under the name the group knows it by; it
+// keeps its place in the order too, since what a program composes above the
+// engine is often written against that order.
+GroupMember :: struct {
+    named: fn(mut App),
+    build: fn(mut App),
+    enabled: bool,
+}
+
+// An ordered set of plugins a program composes as one, each replaceable and
+// each removable before the App takes any of them.
+//
+//     mut standard := default_plugins()
+//     plugin_group_disable(standard, log_plugin)
+//     app_install_group(app, standard)
+//
+// `linear` because it owns its list: a group built and never installed still
+// has to give its storage back.
+PluginGroup :: linear struct { members: Vec<GroupMember> }
+
+plugin_group_new :: fn() -> PluginGroup {
+    PluginGroup { members = vec_new($GroupMember, 8) }
+}
+
+plugin_group_free :: fn(move group: PluginGroup) {
+    vec_free($GroupMember, group.members)
+}
+
+plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
+    vec_push($GroupMember, group.members,
+        GroupMember { named = build, build = build, enabled = true })
+}
+
+// Which member of the group this name is, or -1 where the group has none.
+group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
+    held := vec_slice($GroupMember, group.members)
+    mut i : i64 = 0
+    while (i < vec_len($GroupMember, group.members)) {
+        if (held[i].named == named) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// The group's own `named` built another way, keeping its place. A group that
+// does not hold it is a program naming a member that is not there, which is
+// worth stopping rather than silently composing something else.
+plugin_group_set :: fn(mut group: PluginGroup, named: fn(mut App),
+    build: fn(mut App)) {
+    at := group_index(group, named)
+    if (at < 0) {
+        unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
+        frost_rt_die()
+    }
+    mut held := vec_slice($GroupMember, group.members)
+    held[at].build = build
+}
+
+// The group without it. Refused the same way as `set` when the group has no
+// such member, since disabling what was never there is a program that thinks
+// it turned something off.
+plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
+    at := group_index(group, named)
+    if (at < 0) {
+        unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
+        frost_rt_die()
+    }
+    mut held := vec_slice($GroupMember, group.members)
+    held[at].enabled = false
+}
+
+// The group's members in group order, skipping the ones turned off. They count
+// toward the same once-per-plugin rule everything else does, so a group holding
+// what a program already installed stops rather than installing it twice.
+app_install_group :: fn(mut app: App, move group: PluginGroup) {
+    mut i : i64 = 0
+    while (i < vec_len($GroupMember, group.members)) {
+        held := vec_get($GroupMember, group.members, i)
+        if (held.enabled) {
+            app_install(app, held.build)
+        }
+        i = i + 1
+    }
+    plugin_group_free(group)
+}
+
+// The standard composition. What a program writes when it wants the engine's
+// own and nothing else, and what it starts from when it wants most of them.
+//
+// The window and the device are not in here: `app_open` brings both up before a
+// plugin can run, because the rest of the App is built against a device. The
+// camera controller and escape-to-close stay out for the same reason they do
+// above: a program that drives its own camera or wants that key for a menu
+// installs neither.
+default_plugins :: fn() -> PluginGroup {
+    mut group := plugin_group_new()
+    plugin_group_add(group, log_plugin)
+    group
+}
+
+// Lines to a file beside the program, named for the window. Composing this is
+// what opens the file; a program without it writes nothing at all.
+log_plugin :: fn(mut app: App) {
+    app.logging = true
+    app_log(app, "opened")
+}
+
+// One line, where a log was opened. A program that composed no log plugin calls
+// this and nothing happens, so nothing has to ask first.
+app_log :: fn(mut app: App, said: str) {
+    if (app.logging == false) {
+        return
+    }
+    log_line(app.log, said)
+}
+
 // What says which passes exist. The graph, and the two things every pipeline
 // in it is built against, so a plugin declaring a pass needs nothing else.
 GraphConfig :: struct {
@@ -279,6 +421,33 @@ configure_graph :: fn(mut app: App) -> bool {
     true
 }
 
+// What changes the graph each frame. A pass can be turned off and on with
+// `graph_set_enabled`, and what decides that is the world: a settings resource
+// saying the bloom is off is read here and the pass stops running, without the
+// graph being scheduled again.
+UpdateGraph :: struct {
+    hook: fn(^u8, mut Graph, World),
+    state: ^u8,
+}
+
+app_update_graph :: fn($Ctx: Type, mut app: App,
+    hook: fn(mut Ctx, mut Graph, World), state: ^Ctx) {
+    vec_push($UpdateGraph, app.update_graph, UpdateGraph {
+        hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
+        state = unsafe { ptr_cast($u8, state) } })
+}
+
+// The hooks, in the order they were added, before the frame is filled. What
+// runs this frame is settled first and what goes in it second.
+update_graph :: fn(mut app: App) {
+    mut i : i64 = 0
+    while (i < vec_len($UpdateGraph, app.update_graph)) {
+        held := vec_get($UpdateGraph, app.update_graph, i)
+        held.hook(held.state, app.renderer.graph, app.world)
+        i = i + 1
+    }
+}
+
 // What a frame does between the world and the graph. A system is a
 // `fn(mut World)` and cannot reach a device, so what writes a uniform or
 // fills the run is this instead: the App, and whatever the caller kept its
@@ -293,6 +462,38 @@ app_before_render :: fn($Ctx: Type, mut app: App,
     vec_push($BeforeRender, app.before_render, BeforeRender {
         hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
         state = unsafe { ptr_cast($u8, state) } })
+}
+
+// A system, onto a stage. The one registration door: `Stage::Startup` runs once
+// on the way into the first frame and the rest run every frame, which is what
+// the stage already decides, so this is the App saying it rather than a program
+// reaching past it into the schedule.
+app_add_system :: fn(mut app: App, stage: Stage, run: fn(mut World)) {
+    schedule_add(app.schedule, stage, run)
+}
+
+// Several onto one stage, in the order they are written. The list is a
+// compile-time one, so this is one call per system after the unroll and there
+// is nothing here at run time.
+app_add_systems :: fn(mut app: App, stage: Stage, args: $...) {
+    for run in args {
+        schedule_add(app.schedule, stage, run)
+    }
+}
+
+// One out again, by the same function it went in as. Answers whether anything
+// went, which is what a program dropping one of the engine's own frame systems
+// checks rather than assuming.
+app_remove_system :: fn(mut app: App, run: fn(mut World)) -> bool {
+    schedule_remove(app.schedule, run)
+}
+
+// A resource, readable from any system. Registered here if it was not already,
+// so a program inserts one without first asking the world for a slot; what
+// reads it names the type the same way.
+app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
+    slot := ecs_resource_register($T, app.world)
+    ecs_resource_set($T, app.world, slot, value)
 }
 
 // What a program says and answers when it could not open. Written here because
@@ -320,7 +521,9 @@ app_failed :: fn(held: AppError) -> i64 {
 app_close :: fn(move app: App) -> i64 {
     vec_free($Installed, app.installed)
     vec_free($GraphConfig, app.graph_configs)
+    vec_free($UpdateGraph, app.update_graph)
     vec_free($BeforeRender, app.before_render)
+    log_close(app.log)
     render_world_free(app.render)
     geometry_free(app.store)
     materials_free(app.materials)
@@ -382,11 +585,43 @@ app_next :: fn(mut app: App) -> bool {
 // pointer into a value that has been moved names where it used to be. What
 // closes the App is the caller, after this answers.
 app_run :: fn(mut app: App) {
+    if (app.has_runner) {
+        run := app.runner
+        return run(app)
+    }
     while (app_next(app)) {
+        update_graph(app)
         before_render(app)
         app_draw(app)
     }
 }
+
+// The App's own loop, replaced. A runner is handed the App and drives it
+// however its host wants: an offscreen worker, an editor, a test harness that
+// runs three frames and stops. What it drives with is `app_next` and
+// `app_draw`, which are the two halves of a frame and are exported for exactly
+// this.
+//
+// It borrows rather than takes, for the same reason `app_run` does: a pass
+// reaches its state through a pointer the program took before the first frame,
+// and a pointer into a value that has been moved names where it used to be.
+app_set_runner :: fn(mut app: App, runner: fn(mut App)) {
+    app.runner = runner
+    app.has_runner = true
+}
+
+// The same, where the first one composed wins. A plugin that owns the loop uses
+// this, so a program that sets its own with `app_set_runner` still overrides it
+// whichever order the two were written in.
+app_set_runner_if_unset :: fn(mut app: App, runner: fn(mut App)) {
+    if (app.has_runner) {
+        return
+    }
+    app.runner = runner
+    app.has_runner = true
+}
+
+runs_nothing :: fn(mut app: App) { }
 
 // The hooks, in the order they were added. Each is handed the App and the state
 // it was registered with.
@@ -449,4 +684,60 @@ app_camera_set :: fn(mut app: App, move eye: Camera) {
 app_view :: fn(app: App) -> Mat4 {
     camera_view_projection(world_camera(app.world), width(app.platform),
         height(app.platform))
+}
+
+// Three plugins that register nothing, for the tests below. What a group holds
+// is functions, so which one is which is the only thing these have to be.
+adds_nothing :: fn(mut app: App) { }
+adds_nothing_either :: fn(mut app: App) { }
+stands_in :: fn(mut app: App) { }
+
+test "a group keeps its members in the order they were added" {
+    mut group := plugin_group_new()
+    plugin_group_add(group, adds_nothing)
+    plugin_group_add(group, adds_nothing_either)
+    held := vec_slice($GroupMember, group.members)
+    assert(held[0].build == adds_nothing)
+    assert(held[1].build == adds_nothing_either)
+    plugin_group_free(group)
+}
+
+test "a member set another way keeps its place and its name" {
+    mut group := plugin_group_new()
+    plugin_group_add(group, adds_nothing)
+    plugin_group_add(group, adds_nothing_either)
+    plugin_group_set(group, adds_nothing, stands_in)
+    held := vec_slice($GroupMember, group.members)
+    // First still, and still found under the name the group knows it by.
+    assert(held[0].build == stands_in)
+    assert(held[0].named == adds_nothing)
+    assert(group_index(group, adds_nothing) == 0)
+    assert(held[1].build == adds_nothing_either)
+    plugin_group_free(group)
+}
+
+test "a disabled member stays in the group and is not installed" {
+    mut group := plugin_group_new()
+    plugin_group_add(group, adds_nothing)
+    plugin_group_add(group, adds_nothing_either)
+    plugin_group_disable(group, adds_nothing)
+    held := vec_slice($GroupMember, group.members)
+    // Its place is kept, so disabling one does not renumber the rest.
+    assert(vec_len($GroupMember, group.members) == 2)
+    assert(held[0].enabled == false)
+    assert(held[1].enabled)
+    plugin_group_free(group)
+}
+
+test "a group answers with nothing for a member it does not hold" {
+    mut group := plugin_group_new()
+    plugin_group_add(group, adds_nothing)
+    assert(group_index(group, adds_nothing_either) == (-1))
+    plugin_group_free(group)
+}
+
+test "the standard group holds the log plugin" {
+    mut group := default_plugins()
+    assert(group_index(group, log_plugin) == 0)
+    plugin_group_free(group)
 }

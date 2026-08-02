@@ -77,6 +77,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     hierarchy_next_sibling, hierarchy_child_count, hierarchy_despawn_tree,
     no_entity, is_no_entity,
     System, Schedule, schedule_new, schedule_free, schedule_add,
+    schedule_remove,
     schedule_add_in_state, schedule_run, schedule_start, schedule_count,
     Stage, stage_order, FIRST_FRAME_STAGE, ANY_STATE,
     States, states_new, states_request, states_apply, states_current,
@@ -1409,6 +1410,48 @@ ecs_resource_ref :: fn($T: Type, world: World, slot: i64) -> ref T {
     result
 }
 
+// Two systems, for the tests below. What they do is nothing: the question a
+// schedule answers is which of them is in it and in what order.
+runs_first :: fn(mut w: World) { }
+runs_second :: fn(mut w: World) { }
+
+test "a system is removed by the function it was registered with" {
+    mut held := schedule_new()
+    schedule_add(held, Stage::Update, runs_first)
+    schedule_add(held, Stage::Update, runs_second)
+    assert(schedule_count(held) == 2)
+    assert(schedule_remove(held, runs_first))
+    assert(schedule_count(held) == 1)
+    // The one left is the one that was not asked for, and it kept its stage.
+    kept := vec_get($System, held.systems, 0)
+    assert(kept.run == runs_second)
+    assert(kept.stage == Stage::Update)
+    schedule_free(held)
+}
+
+test "removing a system that was never added changes nothing" {
+    mut held := schedule_new()
+    schedule_add(held, Stage::Update, runs_first)
+    assert(schedule_remove(held, runs_second) == false)
+    assert(schedule_count(held) == 1)
+    schedule_free(held)
+}
+
+test "the systems after the one removed keep their order" {
+    mut held := schedule_new()
+    schedule_add(held, Stage::First, runs_first)
+    schedule_add(held, Stage::Update, runs_second)
+    schedule_add(held, Stage::Last, runs_first)
+    assert(schedule_remove(held, runs_first))
+    assert(schedule_count(held) == 2)
+    // The first match went, so what is left is the second and the third in the
+    // order they were written.
+    mut items := vec_slice($System, held.systems)
+    assert(items[0].stage == Stage::Update)
+    assert(items[1].stage == Stage::Last)
+    schedule_free(held)
+}
+
 test "a resource that holds a resource is read where it lives" {
     mut world := ecs_new()
     slot := ecs_resource_register($Hierarchy, world)
@@ -2208,6 +2251,37 @@ schedule_free :: fn(move s: Schedule) {
 schedule_add :: fn(mut s: Schedule, stage: Stage, run: fn(mut World)) {
     vec_push($System, s.systems,
         System { run = run, stage = stage, state = ANY_STATE })
+}
+
+// Drops a system by handing back the same function it was registered with, and
+// answers whether anything went. A program that drives its own loop takes one
+// of the engine's own frame systems out this way rather than working around it.
+//
+// The order of what is left is the order they were added, so removing one does
+// not reorder the rest: the systems after it move down by one.
+schedule_remove :: fn(mut s: Schedule, run: fn(mut World)) -> bool {
+    held := vec_slice($System, s.systems)
+    mut found : i64 = -1
+    mut i : i64 = 0
+    while (i < vec_len($System, s.systems)) {
+        if (held[i].run == run) {
+            found = i
+            i = vec_len($System, s.systems)
+        } else {
+            i = i + 1
+        }
+    }
+    if (found < 0) {
+        return false
+    }
+    mut moving := found
+    mut items := vec_slice($System, s.systems)
+    while (moving + 1 < vec_len($System, s.systems)) {
+        items[moving] = items[moving + 1]
+        moving = moving + 1
+    }
+    vec_truncate($System, s.systems, vec_len($System, s.systems) - 1)
+    true
 }
 
 // A system that runs only while the world is in one state: the pause menu's

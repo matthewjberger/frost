@@ -305,6 +305,7 @@ main :: fn() -> i64 {
 // scene, the pipeline and the passes are all that is left once the App holds
 // the rest.
 run :: fn(move app: App) -> i64 {
+    app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
     device := app_device(app)

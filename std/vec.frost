@@ -12,7 +12,7 @@
 import "mem.frost"
 
 export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
-    vec_clear
+    vec_clear, vec_truncate
 
 Vec :: linear struct($T: Type) {
     // The whole block, whose length is the capacity. The live prefix is `len`.
@@ -97,6 +97,15 @@ vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T)
 // forgetting a resource is dropping it without consuming it.
 vec_clear :: fn($T: Type, mut v: Vec<T>) where !is_linear(T) {
     v.len = 0
+}
+
+// Drops everything past a length. A shorter one is what is left after an
+// element is taken out of the middle and the rest moved down over it.
+vec_truncate :: fn($T: Type, mut v: Vec<T>, length: i64) where !is_linear(T) {
+    if (length < 0 || length > v.len) {
+        return
+    }
+    v.len = length
 }
 
 VecPoint :: struct { x: i64, y: i64 }

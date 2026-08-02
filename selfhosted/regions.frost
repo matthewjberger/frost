@@ -3451,6 +3451,9 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
     if (id == (-1)) {
         return
     }
+    if (id < 0 || id >= p.arena.count) {
+        return
+    }
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NodeKind::Call) {
@@ -3514,7 +3517,7 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
 
 frame_judge_kept_list :: fn(mut p: Parser, head: i64, pos: i64) {
     mut id := head
-    while (id != (-1)) {
+    while (id >= 0 && id < p.arena.count) {
         node := arena_at(p.arena, id)
         frame_judge_kept(p, node.a, pos)
         id = node.next
@@ -3537,6 +3540,8 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
         if (root == 1 && next_id == (-1)) {
             answers = 1
         }
+        // Every statement that holds an expression holds calls, and a call
+        // that keeps a pointer keeps it wherever it was written.
         // Every statement that holds an expression holds calls, and a call
         // that keeps a pointer keeps it wherever it was written.
         if (kind == NodeKind::Let || kind == NodeKind::Return
@@ -3887,7 +3892,7 @@ kept_slot :: fn(fn_index: i64, param: i64) -> i64 {
 // bytes are: a run held in a parameter is the parameter's, however far from its
 // frame the block itself was allocated.
 kept_container_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
-    if (id == (-1)) {
+    if (id < 0 || id >= p.arena.count) {
         return 0
     }
     node := arena_at(p.arena, id)
@@ -3938,6 +3943,9 @@ kept_record :: fn(mut p: Parser, fn_index: i64, index: i64, into: i64)
 kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
     -> i64 {
     if (id == (-1)) {
+        return 0
+    }
+    if (id < 0 || id >= p.arena.count) {
         return 0
     }
     node := arena_at(p.arena, id)
@@ -4005,7 +4013,7 @@ kept_walk_list :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
     -> i64 {
     mut grew : i64 = 0
     mut id := head
-    while (id != (-1)) {
+    while (id >= 0 && id < p.arena.count) {
         node := arena_at(p.arena, id)
         grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         id = node.next
@@ -4020,7 +4028,7 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
     -> i64 {
     mut grew : i64 = 0
     mut id := head
-    while (id != (-1)) {
+    while (id >= 0 && id < p.arena.count) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next := node.next
@@ -4045,9 +4053,15 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
             || kind == NodeKind::Print) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         }
-        if (kind == NodeKind::While || kind == NodeKind::With) {
+        if (kind == NodeKind::While) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
             grew = grew | kept_walk_block(p, node.b, params, fn_index)
+        }
+        // A `with` block holds its body where a `while` holds its condition, so
+        // the two are not one case: walking the body as an expression follows
+        // statement fields as though they were nodes.
+        if (kind == NodeKind::With) {
+            grew = grew | kept_walk_block(p, node.a, params, fn_index)
         }
         if (kind == NodeKind::If) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
@@ -4083,7 +4097,8 @@ settle_kept :: fn(mut p: Parser) {
         mut i : i64 = 0
         while (i < p.arena.count) {
             node := arena_at(p.arena, i)
-            if (node.kind == NodeKind::Func) {
+            if (node.kind == NodeKind::Func && node.val >= 0
+                && node.val < p.fns.count) {
                 sym := arena_at(p.fns, node.val)
                 params := sym.params
                 p.frame_types.count = 0
