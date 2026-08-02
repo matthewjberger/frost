@@ -16994,8 +16994,8 @@ fn an_imported_call_inside_an_array_literal_resolves() {
 fn the_graphics_examples_compile_against_their_bindings() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let frost = env!("CARGO_BIN_EXE_frost");
-    // wgpu.frost is generated from a schema that is not in the repository, so
-    // a checkout without it can still check the hand-written binding.
+    // The tree carries the generated binding, so this is normally there. A
+    // checkout that has had it removed still checks the hand-written one.
     let generated = graphics_source(&root, "wgpu.frost");
     // Every demo, so one that imports `renderer.frost` is among them. The two
     // that import nothing were the whole list, and a renderer the region check
@@ -17539,10 +17539,9 @@ fn self_hosted_compiles_the_sdl_binding() {
     // where this compiler used to read one at the width of the zero its binding
     // was seeded with.
     //
-    // The last two read `wgpu.frost`, which is generated from a schema that is
-    // not in the repository, so a checkout without it checks the hand-written
-    // binding and stops there. Its sibling above has always said so and this one
-    // did not, which is a checkout that builds here and fails on the runner.
+    // The last two read `wgpu.frost`. The tree carries it now, so this is the
+    // whole list on any checkout; the branch below is what a tree with the
+    // binding deleted still does.
     let generated = graphics_source(&root, "wgpu.frost");
     let examples: &[&str] = if generated.exists() {
         &[
