@@ -77,8 +77,8 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     hierarchy_next_sibling, hierarchy_child_count, hierarchy_despawn_tree,
     no_entity, is_no_entity,
     System, Schedule, schedule_new, schedule_free, schedule_add,
-    schedule_add_in_state, schedule_run, schedule_count,
-    Stage, stage_order, ANY_STATE,
+    schedule_add_in_state, schedule_run, schedule_start, schedule_count,
+    Stage, stage_order, FIRST_FRAME_STAGE, ANY_STATE,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
     column_of, column_position, bits_below, bits_in,
@@ -2145,23 +2145,44 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 // away.
 // ---------------------------------------------------------------------------
 
-// When in a frame a system runs. A schedule walks these in order, so the order
-// they are written in is the order a frame happens in.
-Stage :: enum { First, Update, Last }
+// When a system runs. `Startup` runs once before the first frame; the rest run
+// every frame in this order.
+//
+// The three in the middle are where a frame's own work goes, and the three
+// after them are where what the frame produced is turned into what is drawn: a
+// system that reads the world writes in `FrameUpdate`, and one that hands the
+// result to a device is in `Render`.
+Stage :: enum {
+    Startup,
+    First,
+    Update,
+    LateUpdate,
+    FrameStart,
+    FrameUpdate,
+    FramePostUpdate,
+    Render,
+    Last,
+}
 
-// Where a stage falls in a frame. A stage the match does not name aborts rather
-// than sorting as one of the others: a schedule that silently ran a system in
-// the wrong stage would be a bug nobody could see.
+// Where a stage falls. A stage the match does not name is a compile error here
+// rather than a system that quietly runs in the wrong one.
 stage_order :: fn(s: Stage) -> i64 {
-    // A match over an enum covers every variant or it does not compile, which
-    // is what makes adding a stage a compile error here rather than a system
-    // that quietly runs in the wrong one.
     match s {
-        case .First: 0
-        case .Update: 1
-        case .Last: 2
+        case .Startup: 0
+        case .First: 1
+        case .Update: 2
+        case .LateUpdate: 3
+        case .FrameStart: 4
+        case .FrameUpdate: 5
+        case .FramePostUpdate: 6
+        case .Render: 7
+        case .Last: 8
     }
 }
+
+// The first stage a frame runs, so `Startup` is behind it and runs only when
+// something asks for it by name.
+FIRST_FRAME_STAGE :: 1
 
 // A system with this state runs whatever the state is.
 ANY_STATE :: -1
@@ -2201,14 +2222,24 @@ schedule_count :: fn(s: Schedule) -> i64 {
     vec_len($System, s.systems)
 }
 
-// Run every system whose state matches, stage by stage. The systems are walked
-// once per stage rather than sorted, since a sort would move them out of the
-// order they were added in, which is the order a stage runs them.
+// Every system of a frame, stage by stage. The systems are walked once per
+// stage rather than sorted, since a sort would move them out of the order they
+// were added in, which is the order a stage runs them.
 schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
-    // How many passes to make is read off the systems rather than kept as a
-    // count beside the enum, which would be a third thing to remember when a
-    // stage is added.
-    mut highest : i64 = 0
+    run_stages(s, world, state, FIRST_FRAME_STAGE, highest_stage(s))
+}
+
+// The systems added to `Stage::Startup`, which a frame does not run.
+schedule_start :: fn(mut s: Schedule, mut world: World, state: i64) {
+    startup := stage_order(Stage::Startup)
+    run_stages(s, world, state, startup, startup)
+}
+
+// How many passes a frame makes, read off the systems rather than kept as a
+// count beside the enum, which would be a third thing to remember when a stage
+// is added.
+highest_stage :: fn(s: Schedule) -> i64 {
+    mut highest := FIRST_FRAME_STAGE
     mut i : i64 = 0
     while (i < vec_len($System, s.systems)) {
         held := vec_get($System, s.systems, i)
@@ -2218,8 +2249,13 @@ schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
         }
         i = i + 1
     }
-    mut stage : i64 = 0
-    while (stage <= highest) {
+    highest
+}
+
+run_stages :: fn(mut s: Schedule, mut world: World, state: i64, from: i64,
+    to: i64) {
+    mut stage := from
+    while (stage <= to) {
         mut k : i64 = 0
         while (k < vec_len($System, s.systems)) {
             system := vec_get($System, s.systems, k)
@@ -5364,11 +5400,41 @@ test "a walk reads when a row arrived and when it changed" {
 // Stages run in the order they are written down, and the order is a number so
 // a schedule can sort by it.
 test "the stages are ordered" {
-    assert(stage_order(Stage::First) == 0)
-    assert(stage_order(Stage::Update) == 1)
-    assert(stage_order(Stage::Last) == 2)
+    assert(stage_order(Stage::Startup) < stage_order(Stage::First))
     assert(stage_order(Stage::First) < stage_order(Stage::Update))
-    assert(stage_order(Stage::Update) < stage_order(Stage::Last))
+    assert(stage_order(Stage::Update) < stage_order(Stage::LateUpdate))
+    assert(stage_order(Stage::LateUpdate) < stage_order(Stage::FrameStart))
+    assert(stage_order(Stage::FrameStart) < stage_order(Stage::FrameUpdate))
+    assert(stage_order(Stage::FrameUpdate)
+        < stage_order(Stage::FramePostUpdate))
+    assert(stage_order(Stage::FramePostUpdate) < stage_order(Stage::Render))
+    assert(stage_order(Stage::Render) < stage_order(Stage::Last))
+    // A frame begins after `Startup`, which is what keeps a startup system out
+    // of every frame that follows it.
+    assert(FIRST_FRAME_STAGE == stage_order(Stage::First))
+}
+
+// A startup system runs once and no frame runs it again.
+test "a startup system runs once and a frame does not" {
+    mut world := ecs_new()
+    ecs_resource_register($TestOrder, world)
+    mut frame := schedule_new()
+    schedule_add(frame, Stage::Startup, first_system)
+    schedule_add(frame, Stage::Update, second_system)
+
+    // `first_system` doubles and adds one, `second_system` doubles.
+    schedule_start(frame, world, ANY_STATE)
+    assert(ecs_resource($TestOrder, world,
+        resource_of($TestOrder, world)).steps == 1)
+
+    schedule_run(frame, world, ANY_STATE)
+    schedule_run(frame, world, ANY_STATE)
+    // Two frames of doubling and no second startup.
+    assert(ecs_resource($TestOrder, world,
+        resource_of($TestOrder, world)).steps == 4)
+
+    schedule_free(frame)
+    ecs_free(world)
 }
 
 // A tag named by a type rather than by a handle, kept by the group so several

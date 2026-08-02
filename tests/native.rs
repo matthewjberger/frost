@@ -2848,6 +2848,51 @@ fn a_component_an_entity_lacks_is_refused_rather_than_guessed() {
     );
 }
 
+// Two enums may name the same variant. A bare `.Render` in a match arm is a
+// variant of whichever enum is being matched, and the exhaustiveness check has
+// to weigh the arms against that enum rather than against whichever declared
+// the name first.
+const SHARED_VARIANT_NAME: &str = "Stage :: enum { First, Render, Last }\n\
+     Pass :: enum { Render, Compute }\n\
+     stage_at :: fn(s: Stage) -> i64 {\n\
+     \x20   match s {\n\
+     \x20       case .First: 0\n\
+     \x20       case .Render: 1\n\
+     \x20       case .Last: 2\n\
+     \x20   }\n\
+     }\n\
+     pass_at :: fn(k: Pass) -> i64 {\n\
+     \x20   match k {\n\
+     \x20       case .Compute: 10\n\
+     \x20       case .Render: 11\n\
+     \x20   }\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print stage_at(Stage::Render)\n\
+     \x20   print pass_at(Pass::Render)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn two_enums_may_share_a_variant_name() {
+    let Some(output) =
+        compile_and_run_unaudited("sharedvariant", SHARED_VARIANT_NAME)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n11\n");
+}
+
+#[test]
+fn self_hosted_reads_a_shared_variant_name_by_its_enum() {
+    let Some(output) =
+        selfhosted_unaudited_output("shsharedvariant", SHARED_VARIANT_NAME)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n11\n");
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {
@@ -8109,7 +8154,7 @@ fn a_defer_in_a_test_body_runs() {
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
-    ("ecs.frost", "112 passed"),
+    ("ecs.frost", "113 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
     ("math.frost", "24 passed"),

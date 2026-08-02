@@ -2124,11 +2124,35 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
 // `case .Enemy { damage }:` matches the tag and binds each named field from the
 // variant's own field in the scrutinee. The bindings are ordinary lets at the
 // top of the arm, so the body sees them as it would any local.
-parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
+// The enum a match's subject is, or -1 where its type is not one or is not
+// known here. A bare `.Variant` names a variant of that enum, so two enums
+// sharing a variant name are told apart by what is being matched rather than by
+// whichever was declared first.
+subject_enum_of :: fn(mut p: Parser, scrutinee: i64) -> i64 {
+    mut ty := type_of(p, scrutinee)
+    if (is_pointer(ty)) {
+        ty = pointee(p, ty)
+    }
+    if (is_struct_ty(ty) == false) {
+        return -1
+    }
+    def := arena_at(p.structs, struct_index_of(ty))
+    if (def.is_enum != 1) {
+        return -1
+    }
+    ty
+}
+
+parse_variant_case :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
-    index := find_variant(p, -1, variant_off, variant_len)
+    mut index := find_variant(p, enum_ty, variant_off, variant_len)
+    // A subject whose type is not yet known leaves the name to say which enum,
+    // which is what every match had before a type could be asked for.
+    if (index < 0 && enum_ty != (-1)) {
+        index = find_variant(p, -1, variant_off, variant_len)
+    }
     p.case_variant = index
     mut tag : i64 = 0
     if (index < 0) {
@@ -2519,7 +2543,9 @@ parse_match :: fn(mut p: Parser) -> i64 {
     // switched on is the tag rather than the value itself. The value is bound
     // first, since the arms read fields out of it too.
     mut subject : i64 = -1
+    mut subject_enum : i64 = -1
     if (peek_kind(p, 1) == TokenKind::Dot) {
+        subject_enum = subject_enum_of(p, scrutinee)
         name_off := synth_numbered(p, "__match", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
@@ -2546,7 +2572,14 @@ parse_match :: fn(mut p: Parser) -> i64 {
         mut case_node : i64 = -1
         if (cur(p) == TokenKind::Dot) {
             advance(p)
-            case_node = parse_variant_case(p, subject)
+            // The enum an earlier arm settled on, so arms after the
+            // first are read within it and a name two enums share is
+            // the one this match is over.
+            mut within := subject_enum
+            if (within == (-1)) {
+                within = match_enum
+            }
+            case_node = parse_variant_case(p, subject, within)
             index := p.case_variant
             if (index < 0) {
                 checkable = 0

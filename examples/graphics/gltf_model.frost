@@ -177,10 +177,6 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[24] = 1.0
     values[25] = 0.97
     values[26] = 0.9
-    // Softer than the lit demos next door, because the colours in the file are
-    // an exporter's rather than ones picked to sit under a bright light: at
-    // their strength these wash to white and the model reads as untextured
-    // geometry rather than as three materials.
     values[27] = 1.0
     values[28] = 0.18
     values[29] = 0.2
@@ -258,8 +254,7 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    // Escape closes it. A system rather than a rule inside the poll, so a
-    // program that wants that key for something else leaves this out.
+    app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
     device := app_device(app)
     queue := app_queue(app)

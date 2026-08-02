@@ -341,8 +341,7 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    // Escape closes it. A system rather than a rule inside the poll, so a
-    // program that wants that key for something else leaves this out.
+    app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
     device := app_device(app)
     queue := app_queue(app)
