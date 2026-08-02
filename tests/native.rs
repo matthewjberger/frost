@@ -2810,6 +2810,44 @@ fn self_hosted_takes_an_array_literal_as_consuming_what_it_names() {
     assert_eq!(output, "7\n");
 }
 
+// A column is found by counting the mask bits below it, so a component the
+// table does not hold still answers a number: another column's. Reading through
+// it is one component's bytes read as another and writing through it is one
+// written over another, both silent and both in safe code.
+//
+// `ecs_add` is what gives an entity a component it does not have. `ecs_get` and
+// `ecs_set` are for one it does, and a table that does not hold it stops.
+const COMPONENT_AN_ENTITY_LACKS: &str = "import \"ecs.frost\"\n\
+     Held :: struct { a: i64, b: i64 }\n\
+     Other :: struct { n: i64 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut world := ecs_new()\n\
+     \x20   held := ecs_register($Held, world)\n\
+     \x20   other := ecs_register($Other, world)\n\
+     \x20   entity := ecs_spawn_with(world, mask_with(mask_empty(), held))\n\
+     \x20   ecs_set($Other, world, entity, other, Other { n = 5 })\n\
+     \x20   print 0\n\
+     \x20   ecs_free(world)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn a_component_an_entity_lacks_is_refused_rather_than_guessed() {
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("lackscomponent", COMPONENT_AN_ENTITY_LACKS)
+    else {
+        return;
+    };
+    assert!(
+        !succeeded,
+        "writing a component the entity lacks should stop"
+    );
+    assert!(
+        stderr.contains("a component it does not have"),
+        "expected the missing-component stop, got:\n{stderr}"
+    );
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {
@@ -17127,6 +17165,77 @@ fn a_binary_gltf_file_reads_back_as_geometry() {
 // The upward import is written into a real layer directory rather than a
 // temporary one, since the check is about which layer a file sits in and a file
 // somewhere else is under no layer at all.
+// The same rule where the import is found through a search root written
+// absolutely rather than beside the importing file. A relative path and an
+// absolute one name the same file and share no prefix, so a check comparing
+// them as written answers no and lets the crossing through. Both compilers make
+// the two paths absolute before comparing, and this is what says both do.
+#[test]
+fn both_compilers_refuse_a_layer_reached_through_an_absolute_root() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = root
+        .join("lib")
+        .join("renderer")
+        .join("absolute_probe.frost");
+    std::fs::write(
+        &source,
+        "import \"world.frost\"\n\nmain :: fn() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let engine = root.join("lib").join("engine");
+    // Named the way a command line names it, relative to where the build runs,
+    // while the search root is absolute. That is the pair the check has to make
+    // comparable; two absolute paths compare without any of it.
+    let named = Path::new("lib")
+        .join("renderer")
+        .join("absolute_probe.frost");
+
+    let object = std::env::temp_dir().join("frost_absolute_probe.o");
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-L")
+        .arg(&engine)
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&named)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&bootstrap.stderr).to_string();
+
+    let hosted = build_self_hosted_compiler("absoluteprobe").map(|compiler| {
+        let emitted = std::env::temp_dir().join("frost_absolute_probe.c");
+        let run = Command::new(&compiler)
+            .env("FROST_PATH", &engine)
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&named)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        (
+            run.status.success(),
+            String::from_utf8_lossy(&run.stderr).to_string(),
+        )
+    });
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&object);
+
+    let wanted = "layer: 'lib/renderer' may not reach 'lib/engine'";
+    assert!(
+        !bootstrap.status.success() && said.contains(wanted),
+        "the bootstrap took a layer reached through an absolute root:\n{said}"
+    );
+    let Some((succeeded, hosted_said)) = hosted else {
+        return;
+    };
+    assert!(
+        !succeeded && hosted_said.contains(wanted),
+        "the self-hosted compiler took it:\n{hosted_said}"
+    );
+}
+
 #[test]
 fn both_compilers_refuse_a_layer_reaching_upward() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
