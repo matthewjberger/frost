@@ -63,13 +63,13 @@ import "../platform/sdl.frost"   // a layer below, and it says so
 ```
 
 ```bash
-just window
-just triangle
-just scene
-just spinning
-just textured
-just shadowed
-just gltf
+just app window
+just app triangle
+just app scene
+just app spinning
+just app textured
+just app shadowed
+just app gltf_model
 ```
 
 ## The binding is the perimeter
@@ -119,11 +119,11 @@ examples need, and a call added to it is one line beside its extern.
 ## The wgpu binding is generated, and not in the repository
 
 `lib/renderer/wgpu.frost` is gitignored. It has to be built before
-`just triangle` will compile:
+`just app triangle` will compile:
 
 ```bash
 just bindgen
-just triangle
+just app triangle
 ```
 
 `just bindgen` builds `tools/wgpu_bindgen.frost` and runs it. It reads
@@ -480,7 +480,7 @@ the joints and the groupings the model was built out of.
 `Placement` carries a rotation for this. A glTF node gives a quaternion, and
 `Spin` is a turn applied on top of it about an axis of the thing's own, so a
 loaded model that already faces somewhere can also be made to rotate without
-either being folded into the other. `just gltf` puts a spin on the one entity
+either being folded into the other. `just app gltf_model` puts a spin on the one entity
 the whole file hangs off, which is how a model turns as one thing while its own
 tree stays untouched.
 

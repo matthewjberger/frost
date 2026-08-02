@@ -171,7 +171,7 @@ an argument that is absent rather than overriding one that is present.
 | `FROST_REQUIRE_LINKER` | `tests/native.rs`: set, a missing C toolchain fails the run instead of quietly skipping every test that links |
 | `FROST_BENCH` | `just bench-selfhost`: which file to measure. Defaults to `selfhosted/frost.frost` |
 | `FROST_BIN` | Where `just install` and `just install-self` put the binaries. Defaults to `~/.cargo/bin` |
-| `SDL3_DIR` | `just window` and `just triangle` on Windows: the directory holding `SDL3.dll` |
+| `SDL3_DIR` | `just app window` and `just app triangle` on Windows: the directory holding `SDL3.dll` |
 
 ## The just recipes
 
@@ -204,7 +204,7 @@ ones worth reaching for:
 | `just bench-scaling` | Measures how the pipeline scales, in lines and in specializations |
 | `just bench-incremental` | Measures what `--incremental` saves on a program spread over modules |
 | `just bench-selfhost` | Measures the self-hosted compiler against the bootstrap on one source |
-| `just window`, `just triangle` | Opens an SDL3 window, and draws a wgpu triangle in one |
+| `just app window`, `just app triangle` | Opens an SDL3 window, and draws a wgpu triangle in one |
 
 `just` on its own lists every recipe, including the version and release ones
 left out here.

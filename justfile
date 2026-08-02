@@ -212,23 +212,25 @@ examples-run:
 examples-run:
     Get-ChildItem examples/native/*.frost | ForEach-Object { Write-Host "== $_"; cargo run -r -q -p frost --bin frost -- --link -o "$_.exe" "$_"; & "$($_.FullName).exe"; Remove-Item "$($_.FullName).exe" -Force }
 
-# Opens a window with SDL3. SDL3_DIR overrides where SDL3.dll is found (Windows)
+# Builds and runs a graphics example: `just app spinning`. One of window, input,
+# triangle, scene, spinning, textured, shadowed, gltf_model. SDL3_DIR overrides
+# where SDL3.dll is found (Windows)
 [windows]
-window:
-    $dir = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; if (-not (Test-Path "$dir/SDL3.dll")) { throw "no SDL3.dll in $dir. Set SDL3_DIR to a directory containing it." }; cargo run -r -q -p frost --bin frost -- --link --libs "$dir/SDL3.dll" -o examples/graphics/window.exe examples/graphics/window.frost; Copy-Item "$dir/SDL3.dll" examples/graphics -Force; & ./examples/graphics/window.exe
+app name:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/{{name}}.exe examples/graphics/{{name}}.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/{{name}}.exe
 
-# Opens a window with SDL3, from the system package libsdl3-dev / sdl3 (Unix)
+# Builds and runs a graphics example: `just app spinning` (Unix)
 [unix]
-window:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/window examples/graphics/window.frost
-    ./examples/graphics/window
+app name:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
+    ./examples/graphics/{{name}}
 
 # Fetches the libraries the graphics examples link against, and the schema the
 # wgpu binding is generated from.
 #
 # The tree carries the generated binding, the schema it came from, and the two
 # runtime libraries a Windows build loads, so a Windows checkout runs nothing
-# before `just triangle`. A Unix host links `-lSDL3 -lwgpu_native` against what
+# before `just app triangle`. A Unix host links `-lSDL3 -lwgpu_native` against what
 # it has, so it still runs this once for wgpu-native and installs SDL3 from its
 # package manager; the binding itself it already has.
 #
@@ -248,7 +250,7 @@ window:
 # program that was compiling yesterday.
 # Where a Unix build finds wgpu-native. `just deps` puts it in the tree rather
 # than in a system directory, so the link is told where to look and the built
-# program carries the same path, which is what keeps `just spinning` from
+# program carries the same path, which is what keeps `just app spinning` from
 # needing `LD_LIBRARY_PATH` on Linux or `DYLD_LIBRARY_PATH` on macOS. SDL3 comes
 # from the system on both.
 unix_wgpu := "--libs=-Llib/renderer/wgpu --libs=-Wl,-rpath,$PWD/lib/renderer/wgpu --libs=-lwgpu_native"
@@ -286,7 +288,7 @@ deps:
     Write-Host "webgpu.json at {{webgpu_headers_rev}}"
     $json = "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
     Invoke-WebRequest -Uri $json -OutFile "lib/renderer/wgpu/webgpu.json" -UseBasicParsing
-    Write-Host "ready. run: just bindgen; just triangle"
+    Write-Host "ready. run: just bindgen; just app triangle"
 
 [unix]
 deps:
@@ -316,73 +318,7 @@ deps:
       Darwin) echo "SDL3 comes from Homebrew here: brew install sdl3" ;;
       *)      echo "SDL3 comes from the system here: apt install libsdl3-dev, or pacman -S sdl3" ;;
     esac
-    echo "ready. run: just triangle"
-
-# Two passes over two layers of one world, sorted by depth (Windows)
-[windows]
-scene:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/scene.exe examples/graphics/scene.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/scene.exe
-
-# Two passes over two layers of one world, sorted by depth (Unix)
-[unix]
-scene:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/scene examples/graphics/scene.frost
-    ./examples/graphics/scene
-
-# A field of lit primitives, each turning about its own axis (Windows)
-[windows]
-spinning:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/spinning.exe examples/graphics/spinning.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/spinning.exe
-
-# A field of lit primitives, each turning about its own axis (Unix)
-[unix]
-spinning:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/spinning examples/graphics/spinning.frost
-    ./examples/graphics/spinning
-
-# The same lit field with its surfaces read off an image (Windows)
-[windows]
-textured:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/textured.exe examples/graphics/textured.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/textured.exe
-
-# The same lit field with its surfaces read off an image (Unix)
-[unix]
-textured:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/textured examples/graphics/textured.frost
-    ./examples/graphics/textured
-
-# A model read out of a binary glTF file, drawn (Windows)
-[windows]
-gltf:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/gltf_model.exe examples/graphics/gltf_model.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; Copy-Item "$sdl/SDL3.dll" examples/graphics -Force; & ./examples/graphics/gltf_model.exe
-
-# A model read out of a binary glTF file, drawn (Unix)
-[unix]
-gltf:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/gltf_model examples/graphics/gltf_model.frost
-    ./examples/graphics/gltf_model
-
-# A shadow pass and a scene pass, ordered by the map between them (Windows)
-[windows]
-shadowed:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/shadowed.exe examples/graphics/shadowed.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/shadowed.exe
-
-# A shadow pass and a scene pass, ordered by the map between them (Unix)
-[unix]
-shadowed:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/shadowed examples/graphics/shadowed.frost
-    ./examples/graphics/shadowed
-
-# Opens a window and reports what the platform layer saw (Windows)
-[windows]
-input:
-    $dir = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; if (-not (Test-Path "$dir/SDL3.dll")) { throw "no SDL3.dll in $dir. Run `just deps`, or set SDL3_DIR." }; cargo run -r -q -p frost --bin frost -- --link --libs "$dir/SDL3.dll" -o examples/graphics/input.exe examples/graphics/input.frost; Copy-Item "$dir/SDL3.dll" examples/graphics -Force; & ./examples/graphics/input.exe
-
-# Opens a window and reports what the platform layer saw (Unix)
-[unix]
-input:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/input examples/graphics/input.frost
-    ./examples/graphics/input
+    echo "ready. run: just app triangle"
 
 # Regenerates the wgpu bindings from webgpu.json
 bindgen:
@@ -393,17 +329,6 @@ bindgen:
 tour-image:
     cargo run -r -q -p frost --bin frost -- --link -o tools/highlight.exe tools/highlight.frost
     ./tools/highlight.exe
-
-# Draws a triangle with wgpu in an SDL3 window (Windows)
-[windows]
-triangle:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/triangle.exe examples/graphics/triangle.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/triangle.exe
-
-# Draws a triangle with wgpu in an SDL3 window, needs SDL3 and wgpu-native (Unix)
-[unix]
-triangle:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/triangle examples/graphics/triangle.frost
-    ./examples/graphics/triangle
 
 # Builds the self-hosted compiler (frost written in frost)
 #
