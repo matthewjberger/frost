@@ -46,28 +46,20 @@ DeviceSlot :: struct { handle: Device, ready: i64 }
 // out of the wrong register on System V, where the struct takes two.
 fill_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
     userdata1: ^u8, userdata2: ^u8) {
-    slot := unsafe { ptr_cast($AdapterSlot, userdata1) }
+    slot := userdata_of($AdapterSlot, userdata1)
     if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
-        unsafe { slot^.handle = handle }
+        slot.handle = handle
     }
-    unsafe { slot^.ready = 1 }
+    slot.ready = 1
 }
 
 fill_device :: fn(status: u32, handle: Device, value message: StringView,
     userdata1: ^u8, userdata2: ^u8) {
-    slot := unsafe { ptr_cast($DeviceSlot, userdata1) }
+    slot := userdata_of($DeviceSlot, userdata1)
     if (status == REQUEST_DEVICE_STATUS_SUCCESS) {
-        unsafe { slot^.handle = handle }
+        slot.handle = handle
     }
-    unsafe { slot^.ready = 1 }
-}
-
-// C's NULL. `ptr_cast` reinterprets an integer as an address, so the null
-// pointer is the zero address and nothing in the language needs to know it is
-// special. Reading through it is refused the same as any other raw pointer.
-null :: fn() -> ^u8 {
-    zero := 0
-    unsafe { ptr_cast($u8, zero) }
+    slot.ready = 1
 }
 
 // One vertex, laid out exactly as the shader's VertexInput reads it: a position
@@ -131,7 +123,7 @@ main :: fn() -> i64 {
     properties := window_properties(window)
     hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
 
-    instance := create_instance(null())
+    instance := create_instance(null_handle())
 
     // The surface, chained off the platform window handle.
     mut source := surface_source_windows_HWND_init()
@@ -141,17 +133,17 @@ main :: fn() -> i64 {
     mut surface_descriptor := surface_descriptor_init()
     surface_descriptor.next_in_chain = ptr_to(source)
     surface := instance_create_surface(instance, ptr_to(surface_descriptor))
-    if (hwnd == null()) { return 23 }
+    if (hwnd == null_handle()) { return 23 }
 
     // The adapter.
     mut adapter_slot : AdapterSlot =
         AdapterSlot { handle = no_adapter(), ready = 0 }
     mut adapter_info : RequestAdapterCallbackInfo = RequestAdapterCallbackInfo {
-        next_in_chain = null(),
+        next_in_chain = null_handle(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = fill_adapter,
         userdata1 = ptr_to(adapter_slot),
-        userdata2 = null(),
+        userdata2 = null_handle(),
     }
     // The adapter has to be chosen knowing which surface it will draw to, or
     // it may be one this surface cannot use, and the surface only says so when
@@ -168,20 +160,20 @@ main :: fn() -> i64 {
     }
     if (adapter_slot.ready == 0) { return 11 }
     adapter := adapter_slot.handle
-    if (adapter == null()) { return 24 }
+    if (adapter == null_handle()) { return 24 }
 
     // The device.
     mut device_slot : DeviceSlot =
         DeviceSlot { handle = no_device(), ready = 0 }
     mut device_info : RequestDeviceCallbackInfo = RequestDeviceCallbackInfo {
-        next_in_chain = null(),
+        next_in_chain = null_handle(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = fill_device,
         userdata1 = ptr_to(device_slot),
-        userdata2 = null(),
+        userdata2 = null_handle(),
     }
     adapter_request_device(adapter,
-            null(), ptr_to(device_info))
+            null_handle(), ptr_to(device_info))
     mut device_spins : i64 = 0
     while (device_slot.ready == 0 && device_spins < 2000000) {
         instance_process_events(instance)
@@ -189,7 +181,7 @@ main :: fn() -> i64 {
     }
     if (device_slot.ready == 0) { return 12 }
     device := device_slot.handle
-    if (device == null()) { return 25 }
+    if (device == null_handle()) { return 25 }
     queue := device_get_queue(device)
 
     // The swapchain. The format comes from the surface rather than from a
@@ -199,7 +191,7 @@ main :: fn() -> i64 {
     capability_status := surface_get_capabilities(surface, adapter, ptr_to(capabilities))
     if (capability_status != 1) { return 30 }
     if (capabilities.formats_count == 0) { return 31 }
-    surface_format := unsafe { capabilities.formats^ }
+    surface_format := surface_format_at(capabilities, 0)
 
     mut configuration := surface_configuration_init()
     configuration.device = device
@@ -363,8 +355,8 @@ main :: fn() -> i64 {
             queue_write_buffer(queue, uniform_buffer, 0,
                 ptr_to(mvp.m[0]), UNIFORM_BYTES)
 
-            texture_view := texture_create_view(frame.texture, null())
-            encoder := device_create_command_encoder(device, null())
+            texture_view := texture_create_view(frame.texture, null_handle())
+            encoder := device_create_command_encoder(device, null_handle())
 
             mut attachment := render_pass_color_attachment_init()
             attachment.view = texture_view
@@ -381,13 +373,13 @@ main :: fn() -> i64 {
             pass := command_encoder_begin_render_pass(encoder,
                 ptr_to(pass_descriptor))
             render_pass_encoder_set_pipeline(pass, pipeline)
-            render_pass_encoder_set_bind_group(pass, 0, bind_group, 0, null())
+            render_pass_encoder_set_bind_group(pass, 0, bind_group, 0, null_handle())
             render_pass_encoder_set_vertex_buffer(pass, 0, vertex_buffer, 0,
                 VERTEX_BYTES)
             render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
             render_pass_encoder_end(pass)
 
-            mut command := command_encoder_finish(encoder, null())
+            mut command := command_encoder_finish(encoder, null_handle())
             queue_submit(queue, 1, ptr_to(command))
             surface_present(surface)
         }

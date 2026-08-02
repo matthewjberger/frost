@@ -68,16 +68,16 @@ DeviceSlot :: struct { handle: Device, ready: i64 }
 
 take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
     userdata1: ^u8, userdata2: ^u8) {
-    mut slot := unsafe { ptr_cast($AdapterSlot, userdata1) }
-    unsafe { slot^.handle = handle }
-    unsafe { slot^.ready = 1 }
+    slot := userdata_of($AdapterSlot, userdata1)
+    slot.handle = handle
+    slot.ready = 1
 }
 
 take_device :: fn(status: u32, handle: Device, value message: StringView,
     userdata1: ^u8, userdata2: ^u8) {
-    mut slot := unsafe { ptr_cast($DeviceSlot, userdata1) }
-    unsafe { slot^.handle = handle }
-    unsafe { slot^.ready = 1 }
+    slot := userdata_of($DeviceSlot, userdata1)
+    slot.handle = handle
+    slot.ready = 1
 }
 
 // Opens the device against a platform window. A renderer that could not be
@@ -164,7 +164,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64, resources: i64,
     if (capabilities.formats_count == 0) {
         return r
     }
-    r.format = unsafe { ptr_cast($u32, capabilities.formats)^ }
+    r.format = surface_format_at(capabilities, 0)
 
     r.configuration = surface_configuration_init()
     r.configuration.device = r.device
