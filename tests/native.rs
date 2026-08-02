@@ -17119,64 +17119,75 @@ fn a_binary_gltf_file_reads_back_as_geometry() {
 // the programs under `examples/graphics` use all three. Each may reach the ones
 // below it and none may reach the ones above.
 //
-// Frost has no crates, so nothing in the compiler stops a file reaching the
-// wrong way. This is what stops it instead: the boundary is worth having only
-// if crossing it fails, and a boundary held up by the file comments alone is
-// one that has already been crossed by the time anybody reads them.
-const LAYER_ORDER: &[&str] = &["platform", "renderer", "engine"];
-
+// The order is declared in `frost.json` and both compilers refuse a crossing
+// when they resolve the import. This checks that they both do, on the same
+// program, because a rule one compiler enforces and the other does not is a
+// difference in what they accept.
+//
+// The upward import is written into a real layer directory rather than a
+// temporary one, since the check is about which layer a file sits in and a file
+// somewhere else is under no layer at all.
 #[test]
-fn the_graphics_layers_only_reach_downwards() {
+fn both_compilers_refuse_a_layer_reaching_upward() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut crossings = Vec::new();
-    for (rank, layer) in LAYER_ORDER.iter().enumerate() {
-        let directory = root.join("lib").join(layer);
-        for entry in std::fs::read_dir(&directory).unwrap() {
-            let path = entry.unwrap().path();
-            if !path.extension().is_some_and(|kind| kind == "frost") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).unwrap();
-            for line in source.lines() {
-                let Some(rest) = line.trim().strip_prefix("import ") else {
-                    continue;
-                };
-                let named = rest.trim_matches('"');
-                // A bare name is a neighbour or the standard library, and
-                // either is allowed. Only a path names another layer, which is
-                // what makes a crossing visible where it is written.
-                let Some(other) = named.strip_prefix("../") else {
-                    continue;
-                };
-                let Some(other) = other.split('/').next() else {
-                    continue;
-                };
-                let Some(above) =
-                    LAYER_ORDER.iter().position(|named| named == &other)
-                else {
-                    continue;
-                };
-                if above > rank {
-                    crossings.push(format!(
-                        "lib/{layer}/{} imports {named}",
-                        path.file_name().unwrap().to_string_lossy()
-                    ));
-                }
-            }
-        }
-    }
+    let source = root.join("lib").join("renderer").join("upward_probe.frost");
+    std::fs::write(
+        &source,
+        "import \"../engine/world.frost\"\n\nmain :: fn() -> i64 { 0 }\n",
+    )
+    .unwrap();
+
+    let object = std::env::temp_dir().join("frost_layer_probe.o");
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&source)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&bootstrap.stderr).to_string();
+
+    let hosted = build_self_hosted_compiler("layerprobe").map(|compiler| {
+        let emitted = std::env::temp_dir().join("frost_layer_probe.c");
+        let run = Command::new(&compiler)
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&source)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        (
+            run.status.success(),
+            String::from_utf8_lossy(&run.stderr).to_string(),
+        )
+    });
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&object);
+
     assert!(
-        crossings.is_empty(),
-        "a graphics layer reached upwards:{}{}",
-        LAYER_BREAK,
-        crossings.join(LAYER_BREAK)
+        !bootstrap.status.success(),
+        "the bootstrap compiled a layer reaching upward"
+    );
+    let wanted = "layer: 'lib/renderer' may not reach 'lib/engine'";
+    assert!(
+        said.contains(wanted),
+        "the bootstrap said something else:\n{said}"
+    );
+    let Some((succeeded, hosted_said)) = hosted else {
+        return;
+    };
+    assert!(
+        !succeeded,
+        "the self-hosted compiler took a layer reaching upward"
+    );
+    // The same sentence from both, since one message means one rule.
+    assert!(
+        hosted_said.contains(wanted),
+        "the self-hosted compiler said something else:\n{hosted_said}"
     );
 }
-
-// The indent a crossing is listed under, kept out of the format string so the
-// escape survives every editor this file passes through.
-const LAYER_BREAK: &str = "
-  ";
 
 // Where a graphics module lives. The layers are directories, so a test names a
 // file and this says which one holds it; a module moving between layers is one

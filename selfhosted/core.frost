@@ -27,7 +27,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
     Variant,
-    add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
+    add_root, add_layer, Layer, layer_of, path_under,
+    arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
     emit_to_memory, emit_memory_text,
     report, report_cstr, report_int, report_src, SearchRoot,
@@ -830,6 +831,14 @@ SearchRoot :: struct {
     path: ^i8,
 }
 
+// One layer of a project, as the manifest named it and as the path that names
+// it resolves to. The order they are declared in is the order they may reach:
+// a file under one may import from its own or from any declared before it.
+Layer :: struct {
+    name: ^i8,
+    path: ^i8,
+}
+
 // A fixed array or a slice. `length` is how many elements a `[N]T` holds, and
 // -1 says this is a `[]T`, which carries its length at run time instead.
 ArrayDef :: struct {
@@ -1036,6 +1045,51 @@ cstr_len :: fn(s: ^i8) -> i64 {
 
 add_root :: fn(mut roots: Arena<SearchRoot>, directory: ^i8) {
     arena_push(roots, SearchRoot { path = directory })
+}
+
+add_layer :: fn(mut layers: Arena<Layer>, name: ^i8, directory: ^i8) {
+    arena_push(layers, Layer { name = name, path = directory })
+}
+
+// Whether a path sits under a directory, comparing whole path components so
+// `lib/rendererx` is not read as being under `lib/renderer`.
+path_under :: fn(path: ^i8, directory: ^i8) -> bool {
+    length := cstr_len(directory)
+    if (length == 0 || cstr_len(path) < length) {
+        return false
+    }
+    mut k : i64 = 0
+    while (k < length) {
+        if (byte_at(path, k) != byte_at(directory, k)) {
+            return false
+        }
+        k = k + 1
+    }
+    if (cstr_len(path) == length) {
+        return true
+    }
+    byte_at(path, length) == CH_SLASH
+}
+
+// Which layer a file is in, or -1 where it is in none. The deepest declared
+// layer containing it wins, so a layer declared inside another is the answer
+// for the files under it.
+layer_of :: fn(path: ^i8, mut layers: Arena<Layer>) -> i64 {
+    mut best : i64 = -1
+    mut deepest : i64 = -1
+    mut i : i64 = 0
+    while (i < layers.count) {
+        held := arena_at(layers, i)
+        if (path_under(path, held.path)) {
+            length := cstr_len(held.path)
+            if (length > deepest) {
+                deepest = length
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    best
 }
 
 Parser :: struct {

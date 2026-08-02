@@ -21,6 +21,13 @@ pub struct Manifest {
     // Directories to search for an import, relative to the manifest.
     #[serde(default)]
     pub paths: Vec<String>,
+    // The project's layers, lowest first, relative to the manifest. A file
+    // under one of these may import from its own layer or from any listed
+    // before it, and importing from one listed after is refused. A file under
+    // none of them is unconstrained both as an importer and as a target, which
+    // is what leaves the standard library and a one-file program alone.
+    #[serde(default)]
+    pub layers: Vec<String>,
 }
 
 pub const MANIFEST_NAME: &str = "frost.json";
@@ -34,11 +41,39 @@ impl Manifest {
         if !path.exists() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&path)
+        Ok(Some(Self::read(&path)?))
+    }
+
+    fn read(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let manifest: Manifest = serde_json::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
-        Ok(Some(manifest))
+        serde_json::from_str(&text)
+            .with_context(|| format!("parsing {}", path.display()))
+    }
+
+    // The nearest manifest at or above a directory, and the directory it sits
+    // in. A layer list describes a whole project, and the entry file of a build
+    // is any file in it, so the declaration is found by walking up rather than
+    // by being repeated in every directory a build might start from.
+    pub fn find_upward(start: &Path) -> Result<Option<(Self, PathBuf)>> {
+        let mut directory = start.to_path_buf();
+        loop {
+            let path = directory.join(MANIFEST_NAME);
+            if path.exists() {
+                return Ok(Some((Self::read(&path)?, directory)));
+            }
+            if !directory.pop() {
+                return Ok(None);
+            }
+        }
+    }
+
+    // The layer directories it declares, resolved against the manifest.
+    pub fn layer_paths(&self, project_root: &Path) -> Vec<PathBuf> {
+        self.layers
+            .iter()
+            .map(|entry| project_root.join(entry))
+            .collect()
     }
 
     // The search directories it declares, resolved against the manifest.

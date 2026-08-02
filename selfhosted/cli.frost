@@ -34,6 +34,8 @@ Options :: struct {
     // one string ready to hand the toolchain.
     libs: ^i8,
     roots: Arena<SearchRoot>,
+    // The project's layers, lowest first, as the manifest declared them.
+    layers: Arena<Layer>,
     // Compile each module to its own object and assemble only the ones whose
     // emitted code changed. `build_dir` is where those objects are kept.
     incremental: i64,
@@ -356,6 +358,7 @@ options_from_command_line :: fn() -> Options {
         debug_lines = 0,
         libs = "",
         roots = arena_make($SearchRoot, 64),
+        layers = arena_make($Layer, 16),
         incremental = 0,
         build_dir = ".frost-build",
         help = 0,

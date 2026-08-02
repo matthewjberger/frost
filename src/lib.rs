@@ -18,6 +18,7 @@ mod ir_codegen;
 mod ir_interp;
 mod ir_ownership;
 mod ir_typecheck;
+mod layers;
 mod lexer;
 mod linear_instances;
 mod manifest;
@@ -34,8 +35,9 @@ pub use self::{
     allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
     distinct_types::*, failure_sets::*, import_visibility::*, imports::*,
     interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
-    ir_ownership::*, ir_typecheck::*, lexer::*, manifest::*, multi_returns::*,
-    ownership::*, param_modes::*, parser::*, regions::*, types::*, unsafety::*,
+    ir_ownership::*, ir_typecheck::*, layers::declare as declare_layers,
+    lexer::*, manifest::*, multi_returns::*, ownership::*, param_modes::*,
+    parser::*, regions::*, types::*, unsafety::*,
 };
 
 use std::fmt::Display;
