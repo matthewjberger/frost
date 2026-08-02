@@ -17,13 +17,15 @@
 // than kept in step with the world. The renderer stops knowing how many things
 // there are, and nothing has to be renumbered when that changes.
 //
-// This sits on the world's side of the line. What it fills, and the two
-// components it reads to fill it, are the renderer's and are declared in
-// `render_world.frost`; nothing here is reached from that side.
+// This sits on the world's side of the line and is the only thing that stands
+// on both. It reads where a thing ended up, which is the world's
+// `GlobalTransform`, and writes the renderer's `Transform` and the run; nothing
+// here is reached from the renderer's side.
 
 import "../renderer/render_world.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
+import "world.frost"
 import "ecs.frost"
 
 export ObjectIds, all_drawn, drawn_in_layer, scene_sync
@@ -37,28 +39,38 @@ export ObjectIds, all_drawn, drawn_in_layer, scene_sync
 // what it draws: which things those are is decided here, once a frame, rather
 // than in a pass on every item it records.
 ObjectIds :: struct {
-    model: i64,
+    global_transform: i64,
+    transform: i64,
     drawn: i64,
     layer: i64,
 }
 
 // Everything that is drawn, whatever layer it is in.
-all_drawn :: fn(model: i64, drawn: i64) -> ObjectIds {
-    ObjectIds { model = model, drawn = drawn, layer = -1 }
+all_drawn :: fn(global_transform: i64, transform: i64,
+    drawn: i64) -> ObjectIds {
+    ObjectIds { global_transform = global_transform, transform = transform,
+        drawn = drawn, layer = -1 }
 }
 
 // One layer of what is drawn, for a program whose passes divide the world.
-drawn_in_layer :: fn(model: i64, drawn: i64, layer: i64) -> ObjectIds {
-    ObjectIds { model = model, drawn = drawn, layer = layer }
+drawn_in_layer :: fn(global_transform: i64, transform: i64, drawn: i64,
+    layer: i64) -> ObjectIds {
+    ObjectIds { global_transform = global_transform, transform = transform,
+        drawn = drawn, layer = layer }
 }
 
 // Everything the world says is drawn, pushed into the run. The caller empties
 // it first and uploads after, so a program drawing two layers walks twice into
 // two runs and a program drawing one walks once.
+//
+// Where a thing ended up is the world's answer and it is copied onto the
+// renderer's own `Transform` here. That copy is what the boundary is: a pass
+// reads a component of the renderer's, and anything else that wants a position
+// reads `GlobalTransform` without ever naming a renderer type.
 scene_sync :: fn(mut world: World, mut render: RenderWorld,
     registry: Materials, cache: MeshCache, ids: ObjectIds) {
     mut q := query_begin(world)
-    query_with(q, ids.model)
+    query_with(q, ids.global_transform)
     query_with(q, ids.drawn)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
@@ -67,8 +79,11 @@ scene_sync :: fn(mut world: World, mut render: RenderWorld,
             entity := rows[row]
             shown := ecs_get($Drawn, world, entity, ids.drawn)
             if (ids.layer < 0 || shown.layer == ids.layer) {
-                render_world_push(render,
-                    ecs_get($Model, world, entity, ids.model).matrix,
+                placed := ecs_get($GlobalTransform, world, entity,
+                    ids.global_transform).matrix
+                ecs_set($Transform, world, entity, ids.transform,
+                    Transform { matrix = placed })
+                render_world_push(render, placed,
                     materials_at(registry, shown.material),
                     mesh_cache_at(cache, shown.mesh), shown.material)
             }

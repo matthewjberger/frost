@@ -342,7 +342,7 @@ run :: fn(move app: App) -> i64 {
     while (scheduled && app_next(app, graph)) {
         write_frame(queue, frame_uniform, app_camera(app), app_width(app),
             app_height(app))
-        app_extract(app, all_drawn(ids.model, ids.drawn), app_view(app))
+        app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn), app_view(app))
         app_draw(app, graph)
     }
 

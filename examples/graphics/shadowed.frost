@@ -932,16 +932,16 @@ run :: fn(move app: App) -> i64 {
 
     // Which component is which, asked of the world the App opened.
     ids := app_ids(app)
-    placement := ids.placement
+    local := ids.local_transform
     spin := ids.spin
     drawn := ids.drawn
-    model := ids.model
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
-        spin), drawn), model)
+    global := ids.global_transform
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
+        mask_empty(), local), spin), drawn), global), ids.transform)
     // The root has a place and a turn and nothing drawn, since it is what the
     // grid hangs off rather than a thing on the screen.
-    root_wanted := mask_with(mask_with(mask_with(mask_empty(), placement),
-        spin), model)
+    root_wanted := mask_with(mask_with(mask_with(mask_empty(), local),
+        spin), global)
 
     // One more than the things that are drawn: the last is the root every
     // shape hangs off, placed by the systems and drawn by nothing.
@@ -955,8 +955,8 @@ run :: fn(move app: App) -> i64 {
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
     floor := ecs_spawn_with(app.world, wanted)
-    ecs_set($Placement, app.world, floor, placement, Placement {
-        position = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
+    ecs_set($LocalTransform, app.world, floor, local, LocalTransform {
+        translation = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
         scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
     ecs_set($Spin, app.world, floor, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
@@ -975,8 +975,8 @@ run :: fn(move app: App) -> i64 {
         across : f32 = column
         up : f32 = row
         entity := ecs_spawn_with(app.world, wanted)
-        ecs_set($Placement, app.world, entity, placement, Placement {
-            position = vec3((across - half) * COLUMN_SPACING,
+        ecs_set($LocalTransform, app.world, entity, local,
+            LocalTransform { translation = vec3((across - half) * COLUMN_SPACING,
                 lowest + up * ROW_RISE,
                 (up - half) * ROW_DEPTH),
             rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
@@ -1006,8 +1006,8 @@ run :: fn(move app: App) -> i64 {
     // the root turns too, so what a shape ends up doing is its own spin inside
     // an orbit and neither of them says anything about the other.
     root := ecs_spawn_with(app.world, root_wanted)
-    ecs_set($Placement, app.world, root, placement, Placement {
-        position = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
+    ecs_set($LocalTransform, app.world, root, local, LocalTransform {
+        translation = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
         scale = vec3(1.0, 1.0, 1.0) })
     ecs_set($Spin, app.world, root, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
@@ -1301,18 +1301,18 @@ run :: fn(move app: App) -> i64 {
         // and only the frustum differs, which is what the three uploads are.
         render_world_begin(shadow_render)
         scene_sync(app.world, shadow_render, app.materials, app.meshes,
-            all_drawn(model, drawn))
+            all_drawn(global, ids.transform, drawn))
         // The box the light sees the world through, which is what the shadow
         // pass draws with and therefore what its run is culled by.
         render_world_upload(shadow_render, queue, light_view_projection(light))
 
         render_world_begin(inset_render)
         scene_sync(app.world, inset_render, app.materials, app.meshes,
-            all_drawn(model, drawn))
+            all_drawn(global, ids.transform, drawn))
         render_world_upload(inset_render, queue,
             camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT))
 
-        app_extract(app, all_drawn(model, drawn), app_view(app))
+        app_extract(app, all_drawn(global, ids.transform, drawn), app_view(app))
 
         app_draw(app, graph)
     }

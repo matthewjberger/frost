@@ -274,8 +274,10 @@ run :: fn(move app: App) -> i64 {
         FRAME_BYTES)
 
     ids := app_ids(app)
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(),
-        ids.placement), ids.spin), ids.drawn), ids.model)
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
+        mask_empty(),
+        ids.local_transform), ids.spin), ids.drawn),
+        ids.global_transform), ids.transform)
 
     mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
     mut depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
@@ -287,8 +289,9 @@ run :: fn(move app: App) -> i64 {
         // Straight into the archetype it belongs in, rather than spawning bare
         // and migrating once per component.
         held := ecs_spawn_with(app.world, wanted)
-        ecs_set($Placement, app.world, held, ids.placement, Placement {
-            position = vec3(spread[made], 0.0, depths[made]),
+        ecs_set($LocalTransform, app.world, held,
+            ids.local_transform, LocalTransform {
+            translation = vec3(spread[made], 0.0, depths[made]),
             rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
         ecs_set($Spin, app.world, held, ids.spin,
             spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
@@ -353,10 +356,12 @@ run :: fn(move app: App) -> i64 {
         // holds is what the two passes differ by, and the view they are culled
         // against is the same one.
         view := app_view(app)
-        app_extract(app, drawn_in_layer(ids.model, ids.drawn, NEAR), view)
+        app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
+            ids.drawn, NEAR), view)
         render_world_begin(far_render)
         scene_sync(app.world, far_render, app.materials, app.meshes,
-            drawn_in_layer(ids.model, ids.drawn, FAR))
+            drawn_in_layer(ids.global_transform, ids.transform,
+                ids.drawn, FAR))
         render_world_upload(far_render, queue, view)
 
         app_draw(app, graph)

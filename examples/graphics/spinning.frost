@@ -318,8 +318,10 @@ run :: fn(move app: App) -> i64 {
         FRAME_BYTES)
 
     ids := app_ids(app)
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(),
-        ids.placement), ids.spin), ids.drawn), ids.model)
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
+        mask_empty(),
+        ids.local_transform), ids.spin), ids.drawn),
+        ids.global_transform), ids.transform)
 
     half : f32 = 2.5
     mut made : i64 = 0
@@ -329,8 +331,9 @@ run :: fn(move app: App) -> i64 {
         across : f32 = column
         up : f32 = row
         entity := ecs_spawn_with(app.world, wanted)
-        ecs_set($Placement, app.world, entity, ids.placement, Placement {
-            position = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
+        ecs_set($LocalTransform, app.world, entity,
+            ids.local_transform, LocalTransform {
+            translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
             rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the field does not read
@@ -396,7 +399,7 @@ run :: fn(move app: App) -> i64 {
     while (scheduled && app_next(app, graph)) {
         write_frame(queue, frame_uniform, app_camera(app), app_width(app),
             app_height(app))
-        app_extract(app, all_drawn(ids.model, ids.drawn), app_view(app))
+        app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn), app_view(app))
         app_draw(app, graph)
     }
 
