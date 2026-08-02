@@ -147,6 +147,34 @@ cull_layer :: fn(pass: ComputePassEncoder, state: ^u8) {
         render_world_dispatch(held), 1, 1)
 }
 
+// What a frame does between the world and the graph. Two runs, so the world is
+// walked twice: once into the App's, which is the near layer, and once into this
+// demo's own. Which layer a run holds is what the two passes differ by, and the
+// view they are culled against is the same one.
+before_frame :: fn(mut app: App, state: ^u8) {
+    mut s := unsafe { ptr_cast($FrameState, state) }
+    queue := app_queue(app)
+    write_frame(queue, unsafe { s^.frame_uniform }, app_camera(app),
+        app_width(app), app_height(app))
+    ids := app_ids(app)
+    view := app_view(app)
+    app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
+        ids.drawn, NEAR), view)
+    unsafe {
+        ref far := s^.far^
+        render_world_begin(far)
+        scene_sync(app.world, far, app.materials, app.meshes,
+            drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR))
+        render_world_upload(far, queue, view)
+    }
+}
+
+// What the hook above needs and the passes do not.
+FrameState :: struct {
+    frame_uniform: Buffer,
+    far: ^RenderWorld,
+}
+
 // The camera, as the bytes the shader reads it as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     mut view_projection := camera_view_projection(eye, w, h)
@@ -347,24 +375,15 @@ run :: fn(move app: App) -> i64 {
     }
     graph_resize(graph, WIDTH, HEIGHT)
 
-    while (scheduled && app_next(app, graph)) {
-        write_frame(queue, frame_uniform, app_camera(app), app_width(app),
-            app_height(app))
-        // Two runs, so the world is walked twice: once into the App's, which is
-        // the near layer, and once into this demo's own. Which layer a run
-        // holds is what the two passes differ by, and the view they are culled
-        // against is the same one.
-        view := app_view(app)
-        app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
-            ids.drawn, NEAR), view)
-        render_world_begin(far_render)
-        scene_sync(app.world, far_render, app.materials, app.meshes,
-            drawn_in_layer(ids.global_transform, ids.transform,
-                ids.drawn, FAR))
-        render_world_upload(far_render, queue, view)
-
-        app_draw(app, graph)
+    if (scheduled == false) {
+        graph_free(graph)
+        render_world_free(far_render)
+        return app_close(app)
     }
+    mut frame := FrameState { frame_uniform = frame_uniform,
+        far = ptr_to(far_render) }
+    app_before_render(app, before_frame, ptr_to(frame))
+    app_run(app, graph)
 
     graph_free(graph)
     render_world_free(far_render)
