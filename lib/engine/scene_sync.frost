@@ -71,6 +71,7 @@ scene_sync :: fn(mut world: World, mut render: RenderWorld,
     registry: Materials, cache: MeshCache, ids: ObjectIds) {
     mut q := query_begin(world)
     query_with(q, ids.global_transform)
+    query_with(q, ids.transform)
     query_with(q, ids.drawn)
     while (query_next(world, q)) {
         rows := query_entities(world, q)

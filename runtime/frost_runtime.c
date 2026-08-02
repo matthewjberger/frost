@@ -866,6 +866,29 @@ int64_t frost_rt_file_exists(const char *path) {
     return 1;
 }
 
+/* A path with the working directory in front of it where it had none, so two
+   spellings of one file compare equal. A relative path and an absolute one name
+   the same file and share no prefix, which is what makes this the only way to
+   ask whether one path sits under another. A path that cannot be resolved comes
+   back as it was given, since the caller's next step says so better. */
+char *frost_rt_absolute_path(const char *path) {
+#if defined(_WIN32)
+    char *resolved = _fullpath(0, path, 0);
+#else
+    char *resolved = realpath(path, 0);
+#endif
+    if (resolved != 0) {
+        return resolved;
+    }
+    size_t length = strlen(path);
+    char *copy = (char *)malloc(length + 1);
+    if (copy == 0) {
+        return (char *)path;
+    }
+    memcpy(copy, path, length + 1);
+    return copy;
+}
+
 int64_t frost_rt_remove_file(const char *path) {
     return remove(path) == 0;
 }

@@ -37,7 +37,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     frost_rt_arg_at, frost_rt_arg_count,
     frost_rt_die, frost_rt_emit_char, frost_rt_emit_close, frost_rt_emit_int,
     frost_rt_emit_open, frost_rt_error, frost_rt_error_int, frost_rt_error_src,
-    frost_rt_file_exists, frost_rt_getenv, frost_rt_is_windows,
+    frost_rt_file_exists, frost_rt_absolute_path,
+    frost_rt_getenv, frost_rt_is_windows,
     frost_rt_read_file, frost_rt_remove_file, frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join
 
@@ -182,6 +183,7 @@ frost_rt_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
 frost_rt_thread_join  :: extern fn(handle: i64)
 frost_rt_remove_file :: extern fn(path: ^i8) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
+frost_rt_absolute_path :: extern fn(path: ^i8) -> ^i8
 
 // What a node is. The kinds are an enum rather than a run of integer
 // constants, so a node's kind carries its own type: `NodeKind::SliceLen`

@@ -33,17 +33,6 @@ pub struct Manifest {
 pub const MANIFEST_NAME: &str = "frost.json";
 
 impl Manifest {
-    // Reads the manifest beside the entry file, if there is one. A project
-    // without a manifest is not an error. The common case is one file that
-    // imports its neighbours and needs nothing declared.
-    pub fn find(project_root: &Path) -> Result<Option<Self>> {
-        let path = project_root.join(MANIFEST_NAME);
-        if !path.exists() {
-            return Ok(None);
-        }
-        Ok(Some(Self::read(&path)?))
-    }
-
     fn read(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;

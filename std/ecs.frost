@@ -978,8 +978,9 @@ ecs_remove :: fn(mut world: World, entity: Entity, component: i64) {
 ecs_get :: fn($T: Type, world: World, entity: Entity, component: i64) -> $T {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, component)
-    ref column := vec_slice($Column, table.columns)[position]
+    held_or_stop(table.mask, component)
+    ref column := vec_slice($Column, table.columns)[
+        column_position(table.mask, component)]
     column_of($T, column)[slot.row]
 }
 
@@ -987,12 +988,28 @@ ecs_set :: fn($T: Type, mut world: World, entity: Entity, component: i64,
     value: $T) {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, component)
-    ref column := vec_slice($Column, table.columns)[position]
+    held_or_stop(table.mask, component)
+    ref column := vec_slice($Column, table.columns)[
+        column_position(table.mask, component)]
     mut items := column_of($T, column)
     items[slot.row] = value
     mut changed := column_changed(column)
     changed[slot.row] = world.tick
+}
+
+// A column is found by counting the bits below it, which answers a number for
+// any component whether the table holds it or not. Asked for one the table does
+// not hold, that number is another column's, so the read is another component's
+// bytes read as this one and the write is this one's bytes written over it.
+//
+// `ecs_add` is what gives an entity a component it does not have; these two are
+// for one it does. A table that does not hold it stops here.
+held_or_stop :: fn(table_mask: Mask, component: i64) {
+    if (mask_has(table_mask, component)) {
+        return
+    }
+    unsafe { frost_rt_error("frost: an entity is asked for a component it does not have\n") }
+    frost_rt_die()
 }
 
 // One table's column as a slice, which is what a system writes through.

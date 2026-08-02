@@ -188,7 +188,13 @@ is_parent_step :: fn(out: ^i8, start: i64, at: i64) -> bool {
 find_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     mut roots: Arena<SearchRoot>, mut layers: Arena<Layer>) -> ^i8 {
     found := locate_import(parent, src, off, len, roots)
-    refuse_upward(parent, found, layers)
+    // A path that matched nothing comes back as the beside-it form, which names
+    // no file. What is wrong with that import is that it names nothing, and the
+    // read below says so; weighing its layer first would answer a different
+    // question about a file that is not there.
+    if (unsafe { frost_rt_file_exists(found) } == 1) {
+        refuse_upward(parent, found, layers)
+    }
     found
 }
 
@@ -210,16 +216,25 @@ locate_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     beside
 }
 
+// A path with the working directory in front of it and one separator
+// throughout, which is what makes two spellings of one file compare equal. A
+// relative path and an absolute one name the same file and share no prefix, so
+// whether one sits under another cannot be asked of them as written.
+absolute_path :: fn(path: ^i8) -> ^i8 {
+    normalise_path(unsafe { frost_rt_absolute_path(path) })
+}
+
 // A layer may reach its own and the ones declared before it. The paths compared
-// are the ones resolution settled on, already normalised, so an import spelling
-// its way up and back down names the same file and is weighed the same.
+// are the ones resolution settled on, made absolute, so an import spelling its
+// way up and back down, or reaching a layer through a search root written
+// absolutely, names the same file and is weighed the same.
 //
 // A file under no declared layer is unconstrained, as importer and as target,
 // which is what leaves the standard library and a program outside the project
 // alone.
 refuse_upward :: fn(parent: ^i8, found: ^i8, mut layers: Arena<Layer>) {
-    from := layer_of(parent, layers)
-    into := layer_of(found, layers)
+    from := layer_of(absolute_path(parent), layers)
+    into := layer_of(absolute_path(found), layers)
     if (from < 0 || into < 0 || into <= from) {
         return
     }
@@ -627,7 +642,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
         if (json_kind(document, layer) == JsonKind::String) {
             off := json_text_off(document, layer)
             len := json_text_len(document, layer)
-            add_layer(layers, text_as_cstr(text, off, len), normalise_path(
+            add_layer(layers, text_as_cstr(text, off, len), absolute_path(
                 join_under(prefix_of(entry, directory), text, off, len)))
         }
         layer = json_next(document, layer)
