@@ -764,6 +764,13 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         return node.val
     }
     if (kind == NodeKind::PtrCast) {
+        // A function type is already an address, so naming one asks for that
+        // function type rather than for a pointer to it. This is what lets a
+        // table of callbacks hold one shape while each registration is written
+        // against the state it belongs to.
+        if (is_proc(node.val)) {
+            return node.val
+        }
         return pointer_to(p, node.val)
     }
     // A float literal is the digits until something says how wide they are, the

@@ -1,0 +1,108 @@
+// The frame the surface hands over, and where a pass draws into.
+//
+// Below both the renderer and the graph, because each needs these and the two
+// of them need each other: the renderer holds the graph the way wgpu's renderer
+// does, and the graph records into the frame the renderer acquired. What they
+// share sits under both rather than in either.
+
+import "wgpu.frost"
+
+export Frame, Target,
+    frame_ok, frame_view, frame_encoder, frame_pass_into,
+    target_of, no_view,
+    DEPTH_FORMAT, no_pointer
+
+no_pointer :: fn() -> ^u8 {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+// What depth is kept in. Twenty-four bits with no stencil is what a scene that
+// only sorts needs, and every backend has it. One name, so the texture and
+// every pipeline tested against it agree without either writing the number.
+DEPTH_FORMAT :: TEXTURE_FORMAT_DEPTH24_PLUS
+
+// One frame in flight, and `linear` because of what it holds. Every handle in
+// here is counted by wgpu and has to be given back exactly once: a surface
+// texture still held is a surface that cannot be configured, which is a resize
+// that fails. Rust reaches for `Drop` here. Frost has no destructors, and this
+// is the thing it has instead: the obligation is on the type, `renderer_end`
+// takes the frame by `move`, and a path that acquires one and returns without
+// ending it stops compiling.
+//
+// It is the frame rather than the handles that carries the obligation. A
+// `Device` or a `BindGroup` is refcounted and read out of a struct all over a
+// program, which is shared ownership and a different thing; these four are
+// taken and given back inside one frame, which is what linear describes.
+Frame :: linear struct {
+    texture: SurfaceTexture,
+    view: TextureView,
+    encoder: CommandEncoder,
+    ready: bool,
+}
+
+frame_ok :: fn(f: Frame) -> bool { f.ready }
+// The frame's own command encoder, which is what a pass recording something
+// other than a render pass opens its own encoder over.
+frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
+frame_view :: fn(f: Frame) -> TextureView { f.view }
+
+// Where a pass draws. A colour attachment, a depth attachment, or both: a
+// shadow map is depth with no colour, a post-process step is colour with no
+// depth, and an ordinary scene pass is both.
+Target :: struct {
+    color: TextureView,
+    depth: TextureView,
+    has_color: bool,
+    has_depth: bool,
+}
+
+// A target naming views a caller made, for a pass drawing somewhere other than
+// the window. `no_view()` fills the slot a pass does not use, which is the
+// colour slot for a depth-only pass and the depth slot for one that needs none.
+target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
+    has_depth: bool) -> Target {
+    Target { color = color, depth = depth, has_color = has_color,
+        has_depth = has_depth }
+}
+
+no_view :: fn() -> TextureView { no_texture_view() }
+
+// A pass into whatever it was given. The attachments a pass has are the ones
+// its target says it has, so a depth-only pass writes no colour and a
+// post-process step is not asked for a depth buffer it does not have.
+//
+// `load` says whether what is already in an attachment survives, which is what
+// lets a second pass draw over a first instead of erasing it. Depth follows the
+// same rule and it is the more important one: every pass after the first has to
+// load the depth the passes before it wrote, or each sorts only against itself
+// and the last to draw wins wherever they overlap. The graph decides both, from
+// what each pass declared it writes.
+frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
+    depth_load: u32) -> RenderPassEncoder {
+    mut attachment := render_pass_color_attachment_init()
+    attachment.view = into.color
+    attachment.load_op = load
+    attachment.store_op = STORE_OP_STORE
+    attachment.clear_value = clear
+
+    // Nearer is smaller, so the buffer starts at the far plane and every
+    // fragment that passes is closer than what was already there.
+    mut depth := render_pass_depth_stencil_attachment_init()
+    depth.view = into.depth
+    depth.depth_load_op = depth_load
+    depth.depth_store_op = STORE_OP_STORE
+    depth.depth_clear_value = 1.0
+
+    mut descriptor := render_pass_descriptor_init()
+    descriptor.color_attachments_count = 0
+    if (into.has_color) {
+        descriptor.color_attachments_count = 1
+        descriptor.color_attachments =
+            ptr_to(attachment)
+    }
+    if (into.has_depth) {
+        descriptor.depth_stencil_attachment = ptr_to(depth)
+    }
+    command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
+}

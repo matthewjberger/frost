@@ -22,7 +22,7 @@ import "wgpu.frost"
 import "math.frost"
 
 export Vertex, MeshSpan, Geometry,
-    geometry_new, geometry_add, geometry_bind, geometry_free,
+    geometry_new, geometry_at, geometry_add, geometry_bind, geometry_free,
     geometry_vertices, geometry_indices,
     VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET, INDEX_BYTES
 
@@ -61,6 +61,13 @@ Geometry :: struct {
     index_room: i64,
     vertex_count: i64,
     index_count: i64,
+}
+
+// The buffers a pass was pointed at, read the way a run is.
+geometry_at :: fn(held: ^Geometry) -> ref Geometry {
+    span : []Geometry = unsafe { slice_from($Geometry, held, 1) }
+    ref result := span[0]
+    result
 }
 
 geometry_new :: fn(device: Device, vertex_room: i64,

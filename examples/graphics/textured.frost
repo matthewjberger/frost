@@ -29,6 +29,7 @@
 
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
+import "../../lib/renderer/frame.frost"
 import "../../lib/renderer/graph.frost"
 import "../../lib/renderer/render_world.frost"
 import "../../lib/renderer/uniform.frost"
@@ -159,30 +160,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // image. The texture binding is set when it changes and not per thing, which is
 // what the order was chosen for. The encoder is the graph's, over the targets
 // the pass declared.
-draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
-    mut s := unsafe { ptr_cast($Scene, state) }
-    held := unsafe { s^.render^ }
-    render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
-    render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
+draw_scene :: fn(mut s: Scene, pass: RenderPassEncoder) {
+    held := render_world_at(s.render)
+    render_pass_encoder_set_pipeline(pass, s.pipeline)
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
         no_pointer())
     render_pass_encoder_set_bind_group(pass, 1, render_world_group(held), 0,
         no_pointer())
-    geometry_bind(pass, unsafe { s^.store^ })
+    geometry_bind(pass, geometry_at(s.store))
 
     // Every image at once, bound here and never again. What each thing reads
     // is a layer number it carries, so a draw covers every material and the
     // count of draws is the count of meshes.
-    render_pass_encoder_set_bind_group(pass, 2, unsafe { s^.material_group }, 0,
+    render_pass_encoder_set_bind_group(pass, 2, s.material_group, 0,
         no_pointer())
     render_world_draw(pass, held)
 }
 
 // The pass that decides what is drawn. One thread per thing, and what it leaves
 // behind is the visible list and the instance counts the draw above runs on.
-cull_scene :: fn(pass: ComputePassEncoder, state: ^u8) {
-    mut s := unsafe { ptr_cast($Scene, state) }
-    held := unsafe { s^.render^ }
-    compute_pass_encoder_set_pipeline(pass, unsafe { s^.cull_pipeline })
+cull_scene :: fn(mut s: Scene, pass: ComputePassEncoder) {
+    held := render_world_at(s.render)
+    compute_pass_encoder_set_pipeline(pass, s.cull_pipeline)
     compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
         0, no_pointer())
     compute_pass_encoder_dispatch_workgroups(pass,
@@ -330,11 +329,33 @@ build_image :: fn(which: i64) -> Image {
     held
 }
 
+// One pass, and the two targets it writes. The graph makes the depth buffer,
+// sizes it with the window and decides both load ops, so a pass says what it
+// draws into and nothing about how.
+//
+// The arguments the draw runs on are the renderer's rather than the graph's,
+// since they live with the objects across frames, but the graph orders the two
+// passes around them: the culling pass writes them and the scene pass reads
+// them, and that is the whole reason the compute pass runs first.
+declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+    arguments := graph_external_buffer(g, "draw arguments")
+    graph_set_external_buffer(g, arguments,
+        render_world_indirect(render_world_at(s.render)))
+    cull_pass := graph_compute_pass($Scene, g, "cull", cull_scene, ptr_to(s))
+    graph_writes(g, cull_pass, arguments)
+    scene_pass := graph_pass($Scene, g, "scene", draw_scene, ptr_to(s))
+    graph_writes_color(g, scene_pass, screen,
+        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
+    graph_writes_depth(g, scene_pass, depth)
+    graph_reads(g, scene_pass, arguments)
+}
+
 // What a frame does between the world and the graph. A system cannot reach a
 // device, so writing the frame's uniform and filling the run are this instead.
-before_frame :: fn(mut app: App, state: ^u8) {
-    mut s := unsafe { ptr_cast($Scene, state) }
-    write_frame(app_queue(app), unsafe { s^.frame_uniform }, app_camera(app),
+before_frame :: fn(mut s: Scene, mut app: App) {
+    write_frame(app_queue(app), s.frame_uniform, app_camera(app),
         app_width(app), app_height(app))
     ids := app_ids(app)
     app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
@@ -345,6 +366,8 @@ main :: fn() -> i64 {
     mut config := app_config("Frost textured primitives", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
+    config.resources = 3
+    config.passes = 2
     config.drawn = INSTANCES * 2
     match app_open(config) {
         case .Ok { value }: run(value)
@@ -453,41 +476,14 @@ run :: fn(move app: App) -> i64 {
         store = ptr_to(app.store),
         frame_uniform = frame_uniform,
     }
-    // One pass, and the two targets it writes. The depth buffer is the graph's:
-    // it follows the window and both load ops come from what the pass declared.
-    mut graph := graph_new(device, 3, 2)
-    screen := graph_backbuffer(graph)
-    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
-        DEPTH_FORMAT)
-    arguments := graph_external_buffer(graph, "draw arguments")
-    graph_set_external_buffer(graph, arguments,
-        render_world_indirect(app.render))
-    cull_pass := graph_compute_pass(graph, "cull", cull_scene, ptr_to(scene))
-    graph_writes(graph, cull_pass, arguments)
-    scene_pass := graph_pass(graph, "scene", draw_scene, ptr_to(scene))
-    graph_writes_color(graph, scene_pass, screen,
-        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
-    graph_writes_depth(graph, scene_pass, depth)
-    graph_reads(graph, scene_pass, arguments)
-    scheduled := graph_schedule(graph)
-    if (scheduled == false) {
-        print_str_line("the render graph cannot run")
-    }
-    graph_resize(graph, WIDTH, HEIGHT)
-
     mut eye := camera_default()
     eye.position = vec3(0.0, 0.0, 14.0)
     eye.pitch = 0.0
     app_camera_set(app, eye)
 
-    if (scheduled == false) {
-        graph_free(graph)
-        texture_free(images)
-        return app_close(app)
-    }
-    app_before_render(app, before_frame, ptr_to(scene))
-    app_run(app, graph)
-    graph_free(graph)
+    app_configure_graph($Scene, app, declare_passes, ptr_to(scene))
+    app_before_render($Scene, app, before_frame, ptr_to(scene))
+    app_run(app)
     texture_free(images)
     app_close(app)
 }
