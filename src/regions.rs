@@ -540,6 +540,8 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
         })
         .collect();
     let answer_sources = collect_answer_sources(program, &externs, &fields);
+    let kept =
+        collect_kept_parameters(program, &externs, &fields, &answer_sources);
     let param_modes = collect_param_modes(program);
     let return_types = collect_return_types(program);
     // Which functions answer with a place rather than a value. A `ref T` is the
@@ -607,6 +609,7 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
                 }),
                 answers_direct_view: answered.is_some_and(is_direct_view),
                 registrations: &registrations,
+                kept: &kept,
                 views: &views,
                 externs: &externs,
                 answer_sources: &answer_sources,
@@ -906,6 +909,279 @@ fn collect_answer_sources(
         if !grew {
             return sources;
         }
+    }
+}
+
+/// The expressions a statement holds directly. Its blocks are not among them:
+/// the walk descends into those on its own, and a statement's own expressions
+/// are what it evaluates in this frame.
+fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
+    match statement {
+        Statement::Let { value, .. }
+        | Statement::Constant(_, value)
+        | Statement::LetMultiple(_, value)
+        | Statement::Return(value)
+        | Statement::Assignment(_, value)
+        | Statement::Expression(value)
+        | Statement::Print(value, _) => vec![value],
+        Statement::While(condition, _) => vec![condition],
+        Statement::For(_, _, sequence, _) => vec![sequence],
+        _ => Vec::new(),
+    }
+}
+
+/// Which parameter's storage a place ultimately sits in. Reaching through a
+/// field, an element or a pointer stays with whatever the root named, because
+/// the question here is who holds the thing being written into rather than
+/// where the bytes are: a slice in a parameter is the parameter's, however far
+/// from its frame the block itself lives.
+fn container_sources(
+    place: &Expression,
+    walk: &Answers,
+    environment: &HashMap<String, HashSet<usize>>,
+) -> HashSet<usize> {
+    match place {
+        Expression::FieldAccess(base, _)
+        | Expression::Index(base, _)
+        | Expression::Dereference(base) => {
+            container_sources(base, walk, environment)
+        }
+        Expression::Identifier(name) => {
+            if let Some(index) =
+                walk.parameters.iter().position(|one| one == name)
+            {
+                return HashSet::from([index]);
+            }
+            environment.get(name).cloned().unwrap_or_default()
+        }
+        Expression::Unsafe(block) => block_value(block)
+            .map_or_else(HashSet::new, |value| {
+                container_sources(value, walk, environment)
+            }),
+        _ => HashSet::new(),
+    }
+}
+
+/// How many parameters of one call this records keeping for. The self-hosted
+/// compiler holds the same table as one mask per parameter, so the width is
+/// written here rather than left to differ: a function with more parameters
+/// than this records nothing, in both compilers alike.
+pub const KEPT_PARAMETERS: usize = 16;
+
+/// Which parameters a call keeps a hold of. `kept[name][i]` is the set of
+/// parameter indices whose storage parameter `i` is written into, so a value
+/// handed to `i` is reachable from those for as long as they live.
+///
+/// This is what makes a registration checkable. `graph_pass(g, ..., state)`
+/// puts `state` in `g`, so a caller handing over a pointer into its own frame
+/// is handing the graph something that dies first, and the frame check refuses
+/// it at the call rather than leaving it to be read after the fact.
+///
+/// A fixpoint, because keeping travels: a wrapper that forwards its argument to
+/// something that keeps it keeps it too.
+fn collect_kept_parameters(
+    program: &Program,
+    externs: &HashSet<String>,
+    fields: &FieldTypes,
+    sources: &HashMap<String, Vec<bool>>,
+) -> HashMap<String, Vec<HashSet<usize>>> {
+    let mut functions: Vec<Declared<'_>> = Vec::new();
+    for statement in program {
+        if let Statement::Constant(
+            name,
+            Expression::Function(parameters, signature, body)
+            | Expression::Proc(parameters, signature, body),
+        ) = &statement.node
+        {
+            functions.push(Declared {
+                name: name.clone(),
+                answers_place: matches!(
+                    &signature.kind,
+                    ReturnKind::Single(Type::Ref(_) | Type::RefMut(_))
+                        | ReturnKind::Fallible(
+                            Type::Ref(_) | Type::RefMut(_),
+                            _
+                        )
+                ),
+                parameters: parameters
+                    .iter()
+                    .map(|one| one.name.clone())
+                    .collect(),
+                types: parameters
+                    .iter()
+                    .filter_map(|one| {
+                        one.type_annotation
+                            .clone()
+                            .map(|ty| (one.name.clone(), ty))
+                    })
+                    .collect(),
+                body,
+            });
+        }
+    }
+    let mut kept: HashMap<String, Vec<HashSet<usize>>> = functions
+        .iter()
+        .map(|one| {
+            (one.name.clone(), vec![HashSet::new(); one.parameters.len()])
+        })
+        .collect();
+    loop {
+        let mut grew = false;
+        for one in &functions {
+            let walk = Answers {
+                parameters: &one.parameters,
+                declared: &one.types,
+                fields,
+                sources,
+                externs,
+                answers_place: one.answers_place,
+            };
+            let mut environment: HashMap<String, HashSet<usize>> =
+                HashMap::new();
+            let mut found: Vec<(usize, usize)> = Vec::new();
+            kept_of_block(one.body, &walk, &kept, &mut environment, &mut found);
+            let held =
+                kept.get_mut(&one.name).expect("every function is listed");
+            for (index, into) in found {
+                if index < held.len()
+                    && index < KEPT_PARAMETERS
+                    && into < KEPT_PARAMETERS
+                    && held[index].insert(into)
+                {
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            return kept;
+        }
+    }
+}
+
+/// Every keep a block makes: an assignment that writes a parameter into
+/// something reachable from another, and every call that does the same one
+/// level down.
+fn kept_of_block(
+    block: &Block,
+    walk: &Answers,
+    kept: &HashMap<String, Vec<HashSet<usize>>>,
+    environment: &mut HashMap<String, HashSet<usize>>,
+    found: &mut Vec<(usize, usize)>,
+) {
+    for statement in block {
+        match &statement.node {
+            Statement::Let { name, value, .. } => {
+                let reached = expression_sources(value, walk, environment);
+                environment.insert(name.clone(), reached);
+                kept_of_expression(value, walk, kept, environment, found);
+            }
+            Statement::Assignment(place, value) => {
+                let into = container_sources(place, walk, environment);
+                let held = expression_sources(value, walk, environment);
+                for index in &held {
+                    for target in &into {
+                        if index != target {
+                            found.push((*index, *target));
+                        }
+                    }
+                }
+                kept_of_expression(value, walk, kept, environment, found);
+            }
+            Statement::While(condition, body) => {
+                kept_of_expression(condition, walk, kept, environment, found);
+                kept_of_block(body, walk, kept, environment, found);
+            }
+            Statement::For(_, _, sequence, body) => {
+                kept_of_expression(sequence, walk, kept, environment, found);
+                kept_of_block(body, walk, kept, environment, found);
+            }
+            Statement::With(_, body) => {
+                kept_of_block(body, walk, kept, environment, found);
+            }
+            Statement::Expression(value)
+            | Statement::Print(value, _)
+            | Statement::Return(value) => {
+                kept_of_expression(value, walk, kept, environment, found);
+            }
+            _ => {}
+        }
+    }
+    // A block's last expression is what it answers with, and a registration
+    // written as the whole of a body is exactly that.
+    if let Some(value) = block_value(block) {
+        kept_of_expression(value, walk, kept, environment, found);
+    }
+}
+
+/// The calls inside an expression, and what each of them keeps.
+fn kept_of_expression(
+    value: &Expression,
+    walk: &Answers,
+    kept: &HashMap<String, Vec<HashSet<usize>>>,
+    environment: &HashMap<String, HashSet<usize>>,
+    found: &mut Vec<(usize, usize)>,
+) {
+    if let Expression::Call(callee, arguments) = value
+        && let Expression::Identifier(name) = callee.as_ref()
+        && let Some(shape) = kept.get(name)
+    {
+        for (index, into) in shape.iter().enumerate() {
+            let Some(argument) = arguments.get(index) else {
+                continue;
+            };
+            let held = expression_sources(argument, walk, environment);
+            for target in into {
+                let Some(keeper) = arguments.get(*target) else {
+                    continue;
+                };
+                let receiving = container_sources(keeper, walk, environment);
+                for one in &held {
+                    for other in &receiving {
+                        if one != other {
+                            found.push((*one, *other));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for inner in sub_expressions(value) {
+        kept_of_expression(inner, walk, kept, environment, found);
+    }
+}
+
+/// The expressions one expression holds, for a walk that has to reach every
+/// call rather than only the one at the top.
+fn sub_expressions(value: &Expression) -> Vec<&Expression> {
+    match value {
+        Expression::Call(callee, arguments) => {
+            let mut held = vec![callee.as_ref()];
+            held.extend(arguments.iter());
+            held
+        }
+        Expression::FieldAccess(base, _)
+        | Expression::Dereference(base)
+        | Expression::UnsafeFn(base)
+        | Expression::Try(base)
+        | Expression::ArrayRepeat(base, _)
+        | Expression::Prefix(_, base)
+        | Expression::Borrow(base)
+        | Expression::BorrowMut(base)
+        | Expression::AddressOf(base) => vec![base.as_ref()],
+        Expression::Index(base, index) => vec![base.as_ref(), index.as_ref()],
+        Expression::Infix(left, _, right)
+        | Expression::Range(left, right, _) => {
+            vec![left.as_ref(), right.as_ref()]
+        }
+        Expression::Tuple(values)
+        | Expression::Literal(Literal::Array(values)) => {
+            values.iter().collect()
+        }
+        Expression::StructInit(_, values)
+        | Expression::EnumVariantInit(_, _, values) => {
+            values.iter().map(|(_, one)| one).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -1327,6 +1603,9 @@ struct Frame<'a> {
     // Callback registrations in the program, and which argument of each is the
     // context whose storage it keeps.
     registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
+    // Which parameter of each call keeps which other, so an argument naming
+    // this frame is judged where it is handed over.
+    kept: &'a HashMap<String, Vec<HashSet<usize>>>,
     // Whether each function answers with something holding a view.
     views: &'a HashMap<String, bool>,
     // The C functions this program declares. What one answers with is storage
@@ -1363,6 +1642,13 @@ impl Frame<'_> {
         for (index, statement) in block.iter().enumerate() {
             let last = index + 1 == block.len();
             let at = statement.position;
+            // Every statement that holds an expression holds calls, and a call
+            // that keeps a pointer keeps it wherever it was written. Judged once
+            // here rather than once per statement form, so a form added later
+            // is covered without anyone remembering to.
+            for value in statement_expressions(&statement.node) {
+                self.judge_kept(value, at);
+            }
             match &statement.node {
                 Statement::Let {
                     name,
@@ -1538,6 +1824,49 @@ impl Frame<'_> {
     /// Writing one into this frame's own storage keeps it here, and that place
     /// now holds whatever the value named: without recording it, a pointer
     /// stored in a local and returned afterwards left with nobody having asked.
+    /// Every call in an expression, judged for what it keeps. A pointer into
+    /// this frame handed to a parameter the callee stores in something that
+    /// outlives the call is a pointer that will be read after the storage it
+    /// names is gone, so it is refused here, where the two arguments are
+    /// written next to each other and the mistake is visible.
+    ///
+    /// Handing it to something that also dies with this frame is the ordinary
+    /// case and is allowed: a program that opens an App, spawns its scene, and
+    /// registers the two together is registering a state that lives exactly as
+    /// long as what holds it.
+    fn judge_kept(&mut self, value: &Expression, at: Position) {
+        if let Expression::Call(callee, arguments) = value
+            && let Expression::Identifier(name) = callee.as_ref()
+            && let Some(shape) = self.kept.get(name)
+        {
+            for (index, into) in shape.iter().enumerate() {
+                let Some(argument) = arguments.get(index) else {
+                    continue;
+                };
+                if self.value_provenance(argument) != Provenance::Frame {
+                    continue;
+                }
+                let escapes = into.iter().any(|target| {
+                    arguments.get(*target).is_some_and(|keeper| {
+                        self.place_provenance(keeper) != Provenance::Frame
+                    })
+                });
+                if escapes {
+                    self.escape(
+                        &format!(
+                            "handed to '{name}', which keeps it in something \
+                             that outlives this frame"
+                        ),
+                        at,
+                    );
+                }
+            }
+        }
+        for inner in sub_expressions(value) {
+            self.judge_kept(inner, at);
+        }
+    }
+
     fn assign(&mut self, place: &Expression, value: &Expression, at: Position) {
         let held = self.value_provenance(value);
         if self.place_provenance(place) == Provenance::Frame {

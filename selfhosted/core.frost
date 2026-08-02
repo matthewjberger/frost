@@ -1303,6 +1303,10 @@ Parser :: struct {
     // Which parameters each function's answer can name the storage of, and the
     // masks the locals of the body being walked carry.
     answer_masks: Arena<AnswerMask>,
+    // One mask per parameter of every function: which other parameters
+    // that one is written into, so a pointer handed to a call is judged
+    // against what will still be holding it.
+    kept_masks: Arena<AnswerMask>,
     answer_locals: Arena<LocalVar>,
     // For a local that borrows rather than owning storage, where the place it
     // names lives. `ref x := place` binds one, and so does a binding taken from

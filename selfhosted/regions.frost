@@ -3437,6 +3437,90 @@ frame_note_assign :: fn(mut p: Parser, id: i64) {
 // function hands back, which only the function's own body and a branch of a
 // block in value position can be. Without it, a nested block's last statement
 // reads as the call's answer and ordinary code is refused.
+// Every call in an expression, judged for what it keeps. A pointer into this
+// frame handed to a parameter the callee stores in something that outlives the
+// call is a pointer that will be read after the storage it names is gone, so it
+// is refused here, where the two arguments are written next to each other and
+// the mistake is visible.
+//
+// Handing it to something that also dies with this frame is the ordinary case
+// and is allowed: a program that opens an App, spawns its scene and registers
+// the two together is registering a state that lives exactly as long as what
+// holds it.
+frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
+    if (id == (-1)) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Call) {
+        callee := node.val
+        args := node.a
+        count := count_value_args(p, args)
+        mut index : i64 = 0
+        while (index < count && index < KEPT_SLOTS) {
+            slot := kept_slot(callee, index)
+            if (callee >= 0 && slot >= 0 && slot < p.kept_masks.count) {
+                shape := arena_at(p.kept_masks, slot)
+                if (shape.mask != 0
+                    && frame_value_prov(p, nth_value_arg(p, args, index))
+                        == PROV_FRAME) {
+                    mut escapes : bool = false
+                    mut target : i64 = 0
+                    while (target < count && target < KEPT_SLOTS) {
+                        if (shape.mask & (1 << target) != 0
+                            && frame_place_prov(p,
+                                nth_value_arg(p, args, target))
+                                != PROV_FRAME) {
+                            escapes = true
+                        }
+                        target = target + 1
+                    }
+                    if (escapes) {
+                        // The call's own place rather than the statement's, so
+                        // a registration written inside a longer expression is
+                        // pointed at where it is.
+                        mut at := node.pos
+                        if (at <= 0) {
+                            at = pos
+                        }
+                        frame_escape(p, at,
+                            "handed to a call that keeps it in something that outlives this frame")
+                    }
+                }
+            }
+            index = index + 1
+        }
+    }
+    // Only where the field is a node, for the same reason the walk that built
+    // the table is explicit about it.
+    if (kind == NodeKind::Call || kind == NodeKind::StructLit
+        || kind == NodeKind::ArrayLit) {
+        frame_judge_kept_list(p, node.a, pos)
+    } else if (kind == NodeKind::CallPtr) {
+        frame_judge_kept(p, node.a, pos)
+        frame_judge_kept_list(p, node.b, pos)
+    } else if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
+        frame_judge_kept(p, node.a, pos)
+        frame_judge_kept(p, node.b, pos)
+    } else if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::Cast
+        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
+        frame_judge_kept(p, node.a, pos)
+    }
+}
+
+frame_judge_kept_list :: fn(mut p: Parser, head: i64, pos: i64) {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        frame_judge_kept(p, node.a, pos)
+        id = node.next
+    }
+}
+
 frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
     mut id := head
     while (id != (-1)) {
@@ -3452,6 +3536,17 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
         mut answers : i64 = 0
         if (root == 1 && next_id == (-1)) {
             answers = 1
+        }
+        // Every statement that holds an expression holds calls, and a call
+        // that keeps a pointer keeps it wherever it was written.
+        if (kind == NodeKind::Let || kind == NodeKind::Return
+            || kind == NodeKind::ExprStmt || kind == NodeKind::Print
+            || kind == NodeKind::While || kind == NodeKind::If
+            || kind == NodeKind::Match) {
+            frame_judge_kept(p, first, pos)
+        }
+        if (kind == NodeKind::Assign) {
+            frame_judge_kept(p, second, pos)
         }
         if (kind == NodeKind::Let) {
             frame_note_let(p, id)
@@ -3774,6 +3869,233 @@ answer_walk_block :: fn(mut p: Parser, head: i64, params: i64,
     found | answer_exit_mask(p, block_answer(p, head), params, answers_place)
 }
 
+// How many parameters of one call this records keeping for. One mask per
+// parameter, so the table is this wide per function and a function with more
+// parameters than this records nothing. The bootstrap holds the same width, so
+// the two refuse the same programs rather than one being thorough where the
+// other is not.
+KEPT_SLOTS :: 16
+
+// Where a function's mask for one parameter sits.
+kept_slot :: fn(fn_index: i64, param: i64) -> i64 {
+    fn_index * KEPT_SLOTS + param
+}
+
+// Which parameter's storage a place ultimately sits in. Reaching through a
+// field, an element or a pointer stays with whatever the root named, because
+// the question is who holds the thing being written into rather than where the
+// bytes are: a run held in a parameter is the parameter's, however far from its
+// frame the block itself was allocated.
+kept_container_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
+    if (id == (-1)) {
+        return 0
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Field || kind == NodeKind::Index
+        || kind == NodeKind::Deref) {
+        return kept_container_mask(p, node.a, params)
+    }
+    if (kind == NodeKind::Var) {
+        bit := answer_param_bit(p, params, node.val, node.c)
+        if (bit != 0) {
+            return bit
+        }
+        return type_listed(p.answer_locals, p.src, node.val, node.c)
+    }
+    0
+}
+
+// One keep recorded: parameter `index` of this function is written into storage
+// the caller reaches through every parameter in `into`.
+kept_record :: fn(mut p: Parser, fn_index: i64, index: i64, into: i64)
+    -> i64 {
+    if (index < 0 || index >= KEPT_SLOTS) {
+        return 0
+    }
+    slot := kept_slot(fn_index, index)
+    if (slot < 0 || slot >= p.kept_masks.count) {
+        return 0
+    }
+    mut held := arena_at(p.kept_masks, slot)
+    // A parameter kept by itself says nothing, and the width is the same in
+    // both compilers so neither records past it.
+    mut keep := into & ((1 << KEPT_SLOTS) - 1)
+    if (keep & (1 << index) != 0) {
+        keep = keep - (1 << index)
+    }
+    merged := held.mask | keep
+    if (merged == held.mask) {
+        return 0
+    }
+    held.mask = merged
+    1
+}
+
+// Every keep the calls in an expression make. A call that keeps one of its
+// arguments in another keeps whatever this function handed to it, in whatever
+// this function handed to the other.
+kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
+    -> i64 {
+    if (id == (-1)) {
+        return 0
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    mut grew : i64 = 0
+    if (kind == NodeKind::Call) {
+        callee := node.val
+        args := node.a
+        count := count_value_args(p, args)
+        mut index : i64 = 0
+        while (index < count && index < KEPT_SLOTS) {
+            slot := kept_slot(callee, index)
+            if (callee >= 0 && slot >= 0 && slot < p.kept_masks.count) {
+                shape := arena_at(p.kept_masks, slot)
+                if (shape.mask != 0) {
+                    held := answer_value_mask(p,
+                        nth_value_arg(p, args, index), params)
+                    mut target : i64 = 0
+                    while (target < count && target < KEPT_SLOTS) {
+                        if (shape.mask & (1 << target) != 0) {
+                            receiving := kept_container_mask(p,
+                                nth_value_arg(p, args, target), params)
+                            mut bit : i64 = 0
+                            while (bit < KEPT_SLOTS) {
+                                if (held & (1 << bit) != 0) {
+                                    grew = grew
+                                        | kept_record(p, fn_index, bit,
+                                            receiving)
+                                }
+                                bit = bit + 1
+                            }
+                        }
+                        target = target + 1
+                    }
+                }
+            }
+            index = index + 1
+        }
+    }
+    // Only where the field is a node. `val` carries a number for a literal and
+    // a symbol for a call, so walking it blindly follows whatever integer
+    // happens to sit there.
+    if (kind == NodeKind::Call || kind == NodeKind::StructLit
+        || kind == NodeKind::ArrayLit) {
+        grew = grew | kept_walk_list(p, node.a, params, fn_index)
+    } else if (kind == NodeKind::CallPtr) {
+        grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+        grew = grew | kept_walk_list(p, node.b, params, fn_index)
+    } else if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
+        grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+        grew = grew | kept_walk_expr(p, node.b, params, fn_index)
+    } else if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::Cast
+        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
+        grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+    }
+    grew
+}
+
+// The arguments of a call or the fields of a literal, which are threaded
+// through `next` with the value under each.
+kept_walk_list :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
+    -> i64 {
+    mut grew : i64 = 0
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+        id = node.next
+    }
+    grew
+}
+
+// Every keep a block makes: an assignment that writes a parameter into
+// something reachable from another, and every call that does the same one level
+// down.
+kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
+    -> i64 {
+    mut grew : i64 = 0
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        next := node.next
+        if (kind == NodeKind::Let) {
+            mask := answer_value_mask(p, node.a, params)
+            note_type(p.answer_locals, p.src, node.val, node.c, mask)
+            grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+        }
+        if (kind == NodeKind::Assign) {
+            into := kept_container_mask(p, node.a, params)
+            held := answer_value_mask(p, node.b, params)
+            mut bit : i64 = 0
+            while (bit < KEPT_SLOTS) {
+                if (held & (1 << bit) != 0) {
+                    grew = grew | kept_record(p, fn_index, bit, into)
+                }
+                bit = bit + 1
+            }
+            grew = grew | kept_walk_expr(p, node.b, params, fn_index)
+        }
+        if (kind == NodeKind::Return || kind == NodeKind::ExprStmt
+            || kind == NodeKind::Print) {
+            grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+        }
+        if (kind == NodeKind::While || kind == NodeKind::With) {
+            grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+            grew = grew | kept_walk_block(p, node.b, params, fn_index)
+        }
+        if (kind == NodeKind::If) {
+            grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+            grew = grew | kept_walk_block(p, node.b, params, fn_index)
+            grew = grew | kept_walk_block(p, node.val, params, fn_index)
+        }
+        if (kind == NodeKind::Match) {
+            grew = grew | kept_walk_expr(p, node.a, params, fn_index)
+            mut arm := node.b
+            while (arm != (-1)) {
+                case_node := arena_at(p.arena, arm)
+                grew = grew | kept_walk_block(p, case_node.a, params, fn_index)
+                arm = case_node.next
+            }
+        }
+        id = next
+    }
+    // A block's last expression is what it answers with, and a registration
+    // written as the whole of a body is exactly that.
+    grew | kept_walk_expr(p, block_answer(p, head), params, fn_index)
+}
+
+// Which parameter of each call keeps which other. Grown from nothing to a
+// fixpoint, since keeping travels: a wrapper that forwards its argument to
+// something that keeps it keeps it too.
+settle_kept :: fn(mut p: Parser) {
+    while (p.kept_masks.count < p.fns.count * KEPT_SLOTS) {
+        arena_push(p.kept_masks, AnswerMask { mask = 0 })
+    }
+    mut grew : i64 = 1
+    while (grew == 1) {
+        grew = 0
+        mut i : i64 = 0
+        while (i < p.arena.count) {
+            node := arena_at(p.arena, i)
+            if (node.kind == NodeKind::Func) {
+                sym := arena_at(p.fns, node.val)
+                params := sym.params
+                p.frame_types.count = 0
+                p.answer_locals.count = 0
+                frame_seed_types(p, params)
+                grew = grew | kept_walk_block(p, node.a, params, node.val)
+            }
+            i = i + 1
+        }
+    }
+}
+
 // Which parameters each function's answer can name the storage of. Grown from
 // nothing to a fixpoint, since one function's answer reaches another's and a
 // set that only gains bits settles.
@@ -3833,6 +4155,7 @@ frame_seed_types :: fn(mut p: Parser, params: i64) {
 
 check_frame_escapes :: fn(mut p: Parser) {
     settle_answer_sources(p)
+    settle_kept(p)
     mut i : i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)

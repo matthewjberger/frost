@@ -8075,6 +8075,71 @@ fn both_compilers_refuse_an_address_of_a_loop_variable() {
     }
 }
 
+// A registration hands a callee something to hold, so what it holds has to
+// outlive it. `graph_pass(g, ..., ptr_to(scene))` puts the scene in the graph,
+// and a scene that dies when the registering call returns leaves the graph
+// naming storage that is gone: every frame after reads whatever the machine put
+// there. Neither compiler saw it, because both judged a pointer only where a
+// call answered with one and never where a call was handed one.
+//
+// Handing it to something that dies with this frame is the ordinary case and
+// both still accept it, which is what every one of the graphics examples does.
+#[test]
+fn both_compilers_refuse_a_pointer_kept_by_something_that_outlives_it() {
+    let kept = "Slot :: struct { at: ^i64 }
+         Table :: struct { held: Slot }
+         put :: fn(mut t: Table, value: Slot) {
+    t.held = value
+}
+         register :: fn(mut t: Table) {
+             mut n : i64 = 7
+             put(t, Slot { at = ptr_to(n) })
+         }
+         main :: fn() -> i64 {
+             mut seed : i64 = 0
+             mut t := Table { held = Slot { at = ptr_to(seed) } }
+             register(t)
+             0
+         }
+";
+    let bootstrap = compile_error("keptescape", kept);
+    assert!(
+        bootstrap.contains("keeps it in something that outlives this frame"),
+        "the bootstrap let a kept frame pointer out:
+{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("keptescape", kept) else {
+        return;
+    };
+    assert!(
+        hosted.contains("keeps it in something that outlives this frame"),
+        "the self-hosted compiler let a kept frame pointer out:
+{hosted}"
+    );
+
+    // The same shape where what keeps it dies with the pointer. Both take it,
+    // because the two are gone at the same moment and nothing reads either
+    // after that.
+    let together = "Slot :: struct { at: ^i64 }
+         Table :: struct { held: Slot }
+         put :: fn(mut t: Table, value: Slot) {
+    t.held = value
+}
+         main :: fn() -> i64 {
+             mut n : i64 = 7
+             mut seed : i64 = 0
+             mut t := Table { held = Slot { at = ptr_to(seed) } }
+             put(t, Slot { at = ptr_to(n) })
+             print n
+             0
+         }
+";
+    assert!(
+        bootstrap_output("kepttogether", together).is_some(),
+        "the bootstrap refused a state that lives as long as what holds it"
+    );
+}
+
 // A deferred statement is written out again at every exit and its names are
 // resolved there, so a name it mentions that is bound again below it reads as
 // that later binding. Both compilers took this and both got it wrong, by

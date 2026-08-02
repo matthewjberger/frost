@@ -593,6 +593,9 @@ main :: fn() -> i64 {
         frame_outlives = arena_make($LocalVar, 4096),
         frame_locals = arena_make($LocalVar, 4096),
         answer_masks = arena_make($AnswerMask, 4096),
+        // One mask per parameter of every function, which is what says
+        // who holds a pointer handed to a call for as long as it lives.
+        kept_masks = arena_make($AnswerMask, 131072),
         answer_locals = arena_make($LocalVar, 4096),
         frame_places = arena_make($LocalVar, 4096),
         frame_types = arena_make($LocalVar, 4096),
