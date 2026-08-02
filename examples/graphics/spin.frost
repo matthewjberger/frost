@@ -1,0 +1,65 @@
+// Things that turn, which is a game's idea rather than an engine's.
+//
+//     app_install(app, spin_plugin)
+//     ecs_set($Spin, app.world, held, component_of($Spin, app.world),
+//         spinning(vec3(0.0, 1.0, 0.0), 1.2, quat_identity()))
+//
+// This is above the engine layer on purpose. The engine knows where a thing is
+// and what draws it; whether it turns is what a program decided, and nightshade
+// puts the same thing in the same place: `template/src/components.rs` and
+// `apps/sokoban/src/ecs/components.rs` each declare their own, and the renderer
+// example that draws a turning field declares one in the example.
+//
+// What it writes is a `LocalTransform`, so nothing downstream knows a thing was
+// turning rather than put there.
+
+import "../../lib/platform/platform.frost"
+import "../../lib/engine/app.frost"
+import "../../lib/engine/world.frost"
+import "ecs.frost"
+import "math.frost"
+
+export Spin, spinning, spin_plugin, turn_things
+
+// An axis, how fast about it, how far round so far, and where it started. The
+// rest is kept apart from the angle so a thing loaded facing somewhere turns
+// from there rather than swinging to face the axis.
+Spin :: struct { axis: Vec3, speed: f32, angle: f32, rest: Quat }
+
+spinning :: fn(axis: Vec3, speed: f32, rest: Quat) -> Spin {
+    Spin { axis = axis, speed = speed, angle = 0.0, rest = rest }
+}
+
+// Turning, composed into the App. It registers the component and the one system
+// that advances it, so a program that installs this can put a `Spin` on anything
+// with a transform.
+spin_plugin :: fn(mut app: App) {
+    component_for($Spin, app.world)
+    app_add_system(app, Stage::FrameUpdate, turn_things)
+}
+
+// Every turn advanced by the frame's step, and written where a rotation lives.
+turn_things :: fn(mut world: World) {
+    spin := component_of($Spin, world)
+    local := component_of($LocalTransform, world)
+    step := input_delta_seconds(
+        ecs_resource($Input, world, resource_of($Input, world)))
+    mut q := query_begin(world)
+    query_with(q, spin)
+    query_with(q, local)
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            mut turn := ecs_get($Spin, world, entity, spin)
+            turn.angle = turn.angle + turn.speed * step
+            ecs_set($Spin, world, entity, spin, turn)
+            mut place := ecs_get($LocalTransform, world, entity, local)
+            place.rotation = quat_mul(turn.rest,
+                quat_from_axis_angle(turn.axis, turn.angle))
+            ecs_set($LocalTransform, world, entity, local, place)
+            row = row + 1
+        }
+    }
+}

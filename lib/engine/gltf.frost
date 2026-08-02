@@ -925,33 +925,22 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
 // groupings the model was built out of.
 spawn_node_entity :: fn(mut world: World, ids: WorldIds,
     place: LocalTransform) -> Entity {
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.spin), ids.global_transform),
-        ids.transform)
+    wanted := mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.global_transform), ids.transform)
     entity := ecs_spawn_with(world, wanted)
-    place_and_still(world, ids, entity, place)
+    ecs_set($LocalTransform, world, entity, ids.local_transform, place)
     entity
 }
 
 // One primitive: drawn, and sitting exactly where the node above it sits.
 spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(), ids.local_transform), ids.spin),
+    wanted := mask_with(mask_with(mask_with(mask_with(
+        mask_empty(), ids.local_transform),
         ids.global_transform), ids.transform), ids.drawn)
     entity := ecs_spawn_with(world, wanted)
-    place_and_still(world, ids, entity, local_at(vec3(0.0, 0.0, 0.0)))
+    ecs_set($LocalTransform, world, entity, ids.local_transform,
+        local_at(vec3(0.0, 0.0, 0.0)))
     ecs_set($Drawn, world, entity, ids.drawn, shown)
     entity
 }
 
-// Where it sits, and not turning. Every entity the walk makes has a local
-// transform and a spin, because that is what `place_things` asks for, and a
-// loaded model turns only if something else says so.
-place_and_still :: fn(mut world: World, ids: WorldIds, entity: Entity,
-    place: LocalTransform) {
-    ecs_set($LocalTransform, world, entity, ids.local_transform, place)
-    // Turning from where the file put it, so a rest of anything else would
-    // swing a loaded node to face somewhere the file did not say.
-    ecs_set($Spin, world, entity, ids.spin,
-        spinning(vec3(0.0, 1.0, 0.0), 0.0, place.rotation))
-}

@@ -149,7 +149,7 @@ An import is looked for beside the importing file, then on `-L` and `FROST_PATH`
 
 ### The graphics demos
 
-Seven programs that open a window and draw through wgpu, in the order they were
+Eight programs that open a window and draw through wgpu, in the order they were
 built, each one the smallest step past the last:
 
 ```bash
@@ -160,6 +160,7 @@ just app spinning    # lit surfaces: a mesh cache, a material registry, two bind
 just app textured    # the same field with its surfaces read off an image
 just app shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
 just app gltf_model  # a model read out of a file and spawned into the world
+just app lit         # the same world with no shader in the program at all
 just app input       # what the platform layer saw, for when a key misbehaves
 ```
 
@@ -184,6 +185,12 @@ just app spinning
 `just deps` is also how either platform moves to a newer wgpu: the versions are
 pinned at the top of the [justfile](justfile), and what it writes is committed
 so a regenerated binding shows up as a diff.
+
+`lit` is the one to read first if the question is what the engine does for a
+program rather than what a pass can be. It composes `render_plugin`, spawns
+meshes and lights, and runs: no shader, no pipeline, no bind group, no pass.
+The other seven each write their own, because each of them is about what a
+pass can be.
 
 From `scene` on, what runs and in what order is a render graph
 ([`lib/renderer/graph.frost`](lib/renderer/graph.frost)). A pass

@@ -1,0 +1,132 @@
+// A light in the world, and what the renderer reads instead of it.
+//
+// A light is a component on an entity that also has a transform, the way
+// nightshade has it: where the entity is is where the light is, and the
+// transform's -Z is which way it faces. A program spawns one the way it spawns
+// anything else and the pass finds it.
+//
+//     held := ecs_spawn_with(world, mask_with(mask_with(mask_empty(),
+//         ids.local_transform), ids.light))
+//     ecs_set($Light, world, held, ids.light, sun())
+//
+// This file is the seam between the two halves: `Light` belongs to the world and
+// `GpuLight` belongs to the renderer, and `lights_of` walks one to fill the
+// other. That is the same shape as `scene_sync`, which walks what is drawn.
+
+import "../renderer/lit.frost"
+import "world.frost"
+import "ecs.frost"
+import "math.frost"
+
+export LightType, Light, LightIds, light_ids, sun, lamp, spot, lights_of
+
+// Which of the three a light is. Directional is the sun: everywhere at once and
+// no falloff. Point is a lamp. Spot is a lamp inside a cone.
+//
+// Nightshade has a fourth, an area light shaded with linearly transformed
+// cosines. That is a different technique rather than another case of this one,
+// so it is not here yet and is not pretended to be.
+LightType :: enum { Directional, Point, Spot }
+
+// A light source. Attach it to an entity that has a transform.
+Light :: struct {
+    light_type: LightType,
+    // Linear rgb.
+    color: Vec3,
+    // Lux for a directional light, lumens for the other two.
+    intensity: f32,
+    // How far a point or spot light reaches. Zero is unlimited.
+    range: f32,
+    // Where a spot light is at full strength, and where it has fallen to
+    // nothing. Radians.
+    inner_cone_angle: f32,
+    outer_cone_angle: f32,
+}
+
+// The sun: white, and bright enough to be the light a scene is lit by rather
+// than a fill on top of one. Nothing here maps what the lights add down to what
+// a screen shows, so a sun much brighter than this leaves a pale floor with no
+// shape in it.
+sun :: fn() -> Light {
+    Light { light_type = LightType::Directional,
+        color = vec3(1.0, 0.98, 0.94), intensity = 1.5, range = 0.0,
+        inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
+}
+
+// A lamp, bright enough to read at a couple of units and dark by ten.
+lamp :: fn(color: Vec3, intensity: f32) -> Light {
+    Light { light_type = LightType::Point, color = color,
+        intensity = intensity, range = 0.0,
+        inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
+}
+
+// The same inside a cone, at full strength within the first angle and gone by
+// the second.
+spot :: fn(color: Vec3, intensity: f32, inner: f32, outer: f32) -> Light {
+    Light { light_type = LightType::Spot, color = color,
+        intensity = intensity, range = 0.0,
+        inner_cone_angle = inner, outer_cone_angle = outer }
+}
+
+// Which component is which, asked of the world rather than written down twice.
+LightIds :: struct {
+    light: i64,
+    global_transform: i64,
+}
+
+light_ids :: fn(mut world: World) -> LightIds {
+    LightIds {
+        light = component_for($Light, world),
+        global_transform = component_for($GlobalTransform, world),
+    }
+}
+
+// Every light in the world, as the records the pass reads, and how many were
+// written. Where the entity ended up is where the light is, and the fourth
+// column of its matrix is that, so a light hung off something moving moves with
+// it for the same reason a drawn thing does.
+//
+// Which way it faces is the matrix's -Z, which is glTF's convention and
+// nightshade's.
+lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> i64 {
+    mut q := query_begin(world)
+    query_with(q, ids.light)
+    query_with(q, ids.global_transform)
+    mut count : i64 = 0
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows) && count < slice_len(out)) {
+            entity := rows[row]
+            one := ecs_get($Light, world, entity, ids.light)
+            placed := ecs_get($GlobalTransform, world, entity,
+                ids.global_transform).matrix
+            // The fourth column is where the entity ended up, and the third is
+            // its +Z, so what a light faces is the other way.
+            out[count] = GpuLight {
+                position = vec4(placed.m[12], placed.m[13], placed.m[14], 1.0),
+                direction = facing_of(placed),
+                color = vec4(one.color.x, one.color.y, one.color.z,
+                    one.intensity),
+                params = vec4(kind_of(one.light_type), one.range,
+                    cosf(one.inner_cone_angle), cosf(one.outer_cone_angle)),
+            }
+            count = count + 1
+            row = row + 1
+        }
+    }
+    count
+}
+
+facing_of :: fn(placed: Mat4) -> Vec4 {
+    held := vec3_normalize(vec3(-placed.m[8], -placed.m[9], -placed.m[10]))
+    vec4(held.x, held.y, held.z, 0.0)
+}
+
+kind_of :: fn(held: LightType) -> f32 {
+    match held {
+        case .Directional: LIGHT_DIRECTIONAL
+        case .Point: LIGHT_POINT
+        case .Spot: LIGHT_SPOT
+    }
+}

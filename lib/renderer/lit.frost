@@ -1,0 +1,412 @@
+// The pass that draws a run of things, lit. The one a program gets by composing
+// the renderer rather than by writing a shader.
+//
+// Every demo before this wrote its own WGSL, its own pipeline and its own pass
+// body, which is the right thing when the demo is about what a pass can be. It
+// is the wrong thing when the program just wants its world on the screen, and
+// that is what this is for: declare it into a graph, hand it the run and the
+// lights, and there is nothing else to write.
+//
+// What it draws with is what `render_world.frost` filled: one storage buffer of
+// objects, one visible list a compute pass wrote, and one indirect draw per
+// batch. Nothing here counts anything.
+//
+// Lights arrive as a run of records rather than as a component, because this is
+// the renderer and a component belongs to the world. `lib/engine/light.frost` is
+// what turns one into the other.
+
+import "wgpu.frost"
+import "frame.frost"
+import "graph.frost"
+import "geometry.frost"
+import "render_world.frost"
+import "uniform.frost"
+import "mem.frost"
+import "math.frost"
+
+export GpuLight, Lit, LIGHT_DIRECTIONAL, LIGHT_POINT, LIGHT_SPOT,
+    lit_none,
+    LIGHT_BYTES, MAX_LIGHTS, LIT_FRAME_BYTES,
+    lit_new, lit_free, lit_declare, lit_write_frame, lit_write_lights
+
+// Which of the three a record is. The numbers are the shader's, and a light
+// that is none of them is drawn by nothing rather than drawn wrong.
+LIGHT_DIRECTIONAL :: 0
+LIGHT_POINT :: 1
+LIGHT_SPOT :: 2
+
+// One light, as the shader reads it. The layout is nightshade's: where it is,
+// which way it faces, what colour and how bright, and the four numbers the three
+// kinds need between them.
+GpuLight :: struct {
+    position: Vec4,
+    direction: Vec4,
+    // Colour in rgb and intensity in w.
+    color: Vec4,
+    // `kind`, range, and the cosines of the two cone angles.
+    params: Vec4,
+}
+
+LIGHT_BYTES :: 64
+
+// How many the buffer holds. A scene with more lights than this draws with the
+// first of them rather than growing a buffer mid-frame.
+MAX_LIGHTS :: 64
+
+// The camera, where it is, the ambient term, and how many lights are in the run.
+LIT_FRAME_BYTES :: 112
+
+SHADER :: "
+struct Frame {
+    view_projection: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    ambient: vec4<f32>,
+    counts: vec4<u32>,
+}
+
+struct Light {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color: vec4<f32>,
+    params: vec4<f32>,
+}
+
+struct ObjectData {
+    model: mat4x4<f32>,
+    base_color: vec4<f32>,
+    surface: vec4<f32>,
+    batch: u32,
+    radius: f32,
+    material: u32,
+    pad_three: u32,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
+@group(1) @binding(1) var<storage, read> visible: array<u32>;
+@group(2) @binding(0) var<storage, read> lights: array<Light>;
+
+struct VertexOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) @interpolate(flat) object_index: u32,
+}
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>,
+           @location(1) normal: vec3<f32>,
+           @builtin(instance_index) instance: u32) -> VertexOut {
+    var out: VertexOut;
+    let object_index = visible[instance];
+    let object = objects[object_index];
+    let world = object.model * vec4<f32>(position, 1.0);
+    out.clip = frame.view_projection * world;
+    out.world = world.xyz;
+    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.object_index = object_index;
+    return out;
+}
+
+// How much of one light reaches a point, and from where. A directional light is
+// the same everywhere and never falls off; the other two fall off with the
+// square of the distance, and a spot narrows between its two cone angles.
+struct Reaching {
+    toward: vec3<f32>,
+    strength: f32,
+}
+
+fn reaching(light: Light, at: vec3<f32>) -> Reaching {
+    var out: Reaching;
+    let kind = u32(light.params.x);
+    let intensity = light.color.w;
+    if (kind == 0u) {
+        out.toward = normalize(-light.direction.xyz);
+        out.strength = intensity;
+        return out;
+    }
+    let offset = light.position.xyz - at;
+    let distance = length(offset);
+    out.toward = offset / max(distance, 0.0001);
+    // Inverse square, and a range of zero means it never stops.
+    var fade = intensity / max(distance * distance, 0.0001);
+    let range = light.params.y;
+    if (range > 0.0) {
+        let bounded = clamp(1.0 - distance / range, 0.0, 1.0);
+        fade = fade * bounded * bounded;
+    }
+    if (kind == 2u) {
+        // Between the two cosines the light narrows to nothing. Outside the
+        // outer one there is none of it.
+        let facing = dot(normalize(-light.direction.xyz), out.toward);
+        let inner = light.params.z;
+        let outer = light.params.w;
+        fade = fade * clamp((facing - outer) / max(inner - outer, 0.0001),
+            0.0, 1.0);
+    }
+    out.strength = fade;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let object = objects[in.object_index];
+    let facing = normalize(in.normal);
+    let toward_eye = normalize(frame.camera_position.xyz - in.world);
+    let rough = clamp(object.surface.x, 0.05, 1.0);
+    let tightness = 2.0 / (rough * rough) - 2.0;
+
+    var lit = object.base_color.rgb * frame.ambient.rgb;
+    let count = frame.counts.x;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let light = lights[i];
+        let held = reaching(light, in.world);
+        let lambert = max(dot(facing, held.toward), 0.0);
+        if (lambert <= 0.0 || held.strength <= 0.0) {
+            continue;
+        }
+        let halfway = normalize(held.toward + toward_eye);
+        let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
+            * (1.0 - rough) * lambert * 0.3;
+        lit = lit + object.base_color.rgb * light.color.rgb
+            * held.strength * lambert
+            + light.color.rgb * held.strength * highlight;
+    }
+    return vec4<f32>(lit, object.base_color.a);
+}
+"
+
+// What the pass records with. A plain struct rather than a linear one, because
+// the App holds one before anything has composed the plugin that fills it: a
+// program writing its own passes never makes the buffers at all, and one that
+// does composes over what `lit_none` left.
+Lit :: struct {
+    pipeline: RenderPipeline,
+    frame_uniform: Buffer,
+    frame_group: BindGroup,
+    lights: Buffer,
+    light_group: BindGroup,
+    // The run this draws and the buffers it draws out of, named rather than
+    // held: they are the App's and are filled every frame.
+    render: ^RenderWorld,
+    store: ^Geometry,
+}
+
+lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
+    store: ^Geometry) -> Lit {
+    frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment)
+    frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
+
+    light_layout := lights_layout(device)
+    lights := storage_buffer_of(device, LIGHT_BYTES * MAX_LIGHTS)
+
+    mut layouts : [3]BindGroupLayout = [frame_layout,
+        render_world_layout(render_world_at(held)), light_layout]
+    mut descriptor := pipeline_layout_descriptor_init()
+    descriptor.bind_group_layouts_count = 3
+    descriptor.bind_group_layouts = ptr_to(layouts[0])
+    layout := device_create_pipeline_layout(device, ptr_to(descriptor))
+
+    Lit {
+        pipeline = make_pipeline(device, format, layout),
+        frame_uniform = frame_uniform,
+        frame_group = uniform_group(device, frame_layout, frame_uniform,
+            LIT_FRAME_BYTES),
+        lights = lights,
+        light_group = lights_group(device, light_layout, lights),
+        render = held,
+        store = store,
+    }
+}
+
+// A pass that was never made, which is what the App holds until something
+// composes the plugin. Nothing in it is bound and `lit_free` on one gives back
+// nothing, since a handle of nothing is what every one of these is.
+lit_none :: fn() -> Lit {
+    Lit {
+        pipeline = no_render_pipeline(),
+        frame_uniform = no_buffer(),
+        frame_group = no_bind_group(),
+        lights = no_buffer(),
+        light_group = no_bind_group(),
+        render = no_render_world(),
+        store = no_geometry(),
+    }
+}
+
+lit_free :: fn(mut held: Lit) {
+    if (held.pipeline == no_render_pipeline()) {
+        return
+    }
+    buffer_destroy(held.lights)
+    buffer_release(held.lights)
+    buffer_destroy(held.frame_uniform)
+    buffer_release(held.frame_uniform)
+    bind_group_release(held.light_group)
+    bind_group_release(held.frame_group)
+    render_pipeline_release(held.pipeline)
+}
+
+// The pass, into a graph. It writes the colour and depth it is given and reads
+// the arguments the culling pass wrote, which is the whole of what puts the two
+// in order.
+lit_declare :: fn(mut s: Lit, mut g: Graph, screen: ResourceId,
+    depth: ResourceId, clear: Color, arguments: ResourceId) -> PassId {
+    made := graph_pass($Lit, g, "lit", draw_lit, ptr_to(s))
+    graph_writes_color(g, made, screen, clear)
+    graph_writes_depth(g, made, depth)
+    graph_reads(g, made, arguments)
+    made
+}
+
+draw_lit :: fn(mut s: Lit, pass: RenderPassEncoder) {
+    render_pass_encoder_set_pipeline(pass, s.pipeline)
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(render_world_at(s.render)), 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
+    geometry_bind(pass, geometry_at(s.store))
+    render_world_draw(pass, render_world_at(s.render))
+}
+
+// The camera and the ambient term, as the bytes the shader reads them as.
+lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
+    eye: Vec3, ambient: Vec3, count: i64) {
+    mut values : [28]f32 = [0.0; 28]
+    mut element : i64 = 0
+    while (element < 16) {
+        values[element] = view_projection.m[element]
+        element = element + 1
+    }
+    values[16] = eye.x
+    values[17] = eye.y
+    values[18] = eye.z
+    values[19] = 1.0
+    values[20] = ambient.x
+    values[21] = ambient.y
+    values[22] = ambient.z
+    values[23] = 1.0
+    // The count is four unsigned numbers to the shader and four floats here.
+    // Written through the same bytes, since what the buffer holds is bytes.
+    mut counts : [4]u32 = [cast($u32, count), 0, 0, 0]
+    queue_write_buffer(queue, s.frame_uniform, 0, ptr_to(values[0]), 96)
+    queue_write_buffer(queue, s.frame_uniform, 96, ptr_to(counts[0]), 16)
+}
+
+// The lights, as the run the shader walks. More than the buffer holds is the
+// first of them, since a buffer that grew would move and the binding that names
+// it would be left pointing at where it was.
+lit_write_lights :: fn(mut s: Lit, queue: Queue, held: []GpuLight) -> i64 {
+    mut count := slice_len(held)
+    if (count > MAX_LIGHTS) {
+        count = MAX_LIGHTS
+    }
+    if (count == 0) {
+        return 0
+    }
+    queue_write_buffer(queue, s.lights, 0, ptr_to(held[0]),
+        LIGHT_BYTES * count)
+    count
+}
+
+// A run of lights the fragment stage walks, which is a storage binding rather
+// than a uniform because how many there are is a number rather than a shape.
+lights_layout :: fn(device: Device) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = ShaderStage::Fragment
+    entry.buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+lights_group :: fn(device: Device, layout: BindGroupLayout,
+    held: Buffer) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = LIGHT_BYTES * MAX_LIGHTS
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// A pointer at no run and no store, for a pass that was never made.
+no_render_world :: fn() -> ^RenderWorld {
+    zero := 0
+    unsafe { ptr_cast($RenderWorld, zero) }
+}
+
+no_geometry :: fn() -> ^Geometry {
+    zero := 0
+    unsafe { ptr_cast($Geometry, zero) }
+}
+
+storage_buffer_of :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.size = cast($u64, size)
+    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+// Position and normal, which is what the mesh carries and what this reads. What
+// it does not read is where the surface samples an image, because this pass
+// takes its colour from the material rather than from a texture.
+make_pipeline :: fn(device: Device, format: u32,
+    layout: PipelineLayout) -> RenderPipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[0].offset = POSITION_OFFSET
+    attributes[0].shader_location = 0
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[1].offset = NORMAL_OFFSET
+    attributes[1].shader_location = 1
+
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.array_stride = VERTEX_STRIDE
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.attributes_count = 2
+    buffer_layout.attributes = ptr_to(attributes[0])
+
+    mut target := color_target_state_init()
+    target.format = format
+    target.write_mask = ColorWriteMask::All
+
+    mut fragment := fragment_state_init()
+    fragment.module = shader
+    fragment.entry_point = StringView { data = "fs_main", length = 7 }
+    fragment.targets_count = 1
+    fragment.targets = ptr_to(target)
+
+    mut depth := depth_stencil_state_init()
+    depth.format = DEPTH_FORMAT
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_LESS
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    descriptor.fragment = ptr_to(fragment)
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
