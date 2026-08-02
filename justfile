@@ -224,8 +224,10 @@ window:
     ./examples/graphics/window
 
 # Fetches the libraries the graphics examples link against, and the schema the
-# wgpu binding is generated from. Everything it writes is gitignored, so a fresh
-# checkout runs this once and `just triangle` works.
+# wgpu binding is generated from. A checkout does not need this: the two runtime
+# libraries, the schema and the generated binding are in the tree, so `just
+# triangle` works straight away. Run this to move to a newer version, and commit
+# what it writes.
 #
 # The three versions are pinned rather than tracking whatever is newest, and the
 # last two are not free to move apart. A wgpu release ships the schema it was

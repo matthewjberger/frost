@@ -1,0 +1,3165 @@
+// Generated from webgpu.json by tools/wgpu_bindgen.frost.
+// Do not edit. Run `just bindgen` instead.
+
+export Chained, StringView, null_handle, surface_format_at, Adapter, no_adapter, adapter_release, BindGroup, no_bind_group, bind_group_release, BindGroupLayout, no_bind_group_layout, bind_group_layout_release, Buffer, no_buffer, buffer_release, CommandBuffer, no_command_buffer, command_buffer_release, CommandEncoder, no_command_encoder, command_encoder_release, ComputePassEncoder, no_compute_pass_encoder, compute_pass_encoder_release, ComputePipeline, no_compute_pipeline, compute_pipeline_release, Device, no_device, device_release, ExternalTexture, no_external_texture, external_texture_release, Instance, no_instance, instance_release, PipelineLayout, no_pipeline_layout, pipeline_layout_release, QuerySet, no_query_set, query_set_release, Queue, no_queue, queue_release, RenderBundle, no_render_bundle, render_bundle_release, RenderBundleEncoder, no_render_bundle_encoder, render_bundle_encoder_release, RenderPassEncoder, no_render_pass_encoder, render_pass_encoder_release, RenderPipeline, no_render_pipeline, render_pipeline_release, Sampler, no_sampler, sampler_release, ShaderModule, no_shader_module, shader_module_release, Surface, no_surface, surface_release, Texture, no_texture, texture_release, TextureView, no_texture_view, texture_view_release, ARRAY_LAYER_COUNT_UNDEFINED, COPY_STRIDE_UNDEFINED, DEPTH_CLEAR_VALUE_UNDEFINED, DEPTH_SLICE_UNDEFINED, LIMIT_U32_UNDEFINED, LIMIT_U64_UNDEFINED, MIP_LEVEL_COUNT_UNDEFINED, QUERY_SET_INDEX_UNDEFINED, STRLEN, WHOLE_MAP_SIZE, WHOLE_SIZE, ADAPTER_TYPE_DISCRETE_GPU, ADAPTER_TYPE_INTEGRATED_GPU, ADAPTER_TYPE_CPU, ADAPTER_TYPE_UNKNOWN, ADDRESS_MODE_UNDEFINED, ADDRESS_MODE_CLAMP_TO_EDGE, ADDRESS_MODE_REPEAT, ADDRESS_MODE_MIRROR_REPEAT, BACKEND_TYPE_UNDEFINED, BACKEND_TYPE_NULL, BACKEND_TYPE_WEBGPU, BACKEND_TYPE_D3D11, BACKEND_TYPE_D3D12, BACKEND_TYPE_METAL, BACKEND_TYPE_VULKAN, BACKEND_TYPE_OPENGL, BACKEND_TYPE_OPENGLES, BLEND_FACTOR_UNDEFINED, BLEND_FACTOR_ZERO, BLEND_FACTOR_ONE, BLEND_FACTOR_SRC, BLEND_FACTOR_ONE_MINUS_SRC, BLEND_FACTOR_SRC_ALPHA, BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, BLEND_FACTOR_DST, BLEND_FACTOR_ONE_MINUS_DST, BLEND_FACTOR_DST_ALPHA, BLEND_FACTOR_ONE_MINUS_DST_ALPHA, BLEND_FACTOR_SRC_ALPHA_SATURATED, BLEND_FACTOR_CONSTANT, BLEND_FACTOR_ONE_MINUS_CONSTANT, BLEND_FACTOR_SRC1, BLEND_FACTOR_ONE_MINUS_SRC1, BLEND_FACTOR_SRC1_ALPHA, BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA, BLEND_OPERATION_UNDEFINED, BLEND_OPERATION_ADD, BLEND_OPERATION_SUBTRACT, BLEND_OPERATION_REVERSE_SUBTRACT, BLEND_OPERATION_MIN, BLEND_OPERATION_MAX, BUFFER_BINDING_TYPE_BINDING_NOT_USED, BUFFER_BINDING_TYPE_UNDEFINED, BUFFER_BINDING_TYPE_UNIFORM, BUFFER_BINDING_TYPE_STORAGE, BUFFER_BINDING_TYPE_READ_ONLY_STORAGE, BUFFER_MAP_STATE_UNMAPPED, BUFFER_MAP_STATE_PENDING, BUFFER_MAP_STATE_MAPPED, CALLBACK_MODE_WAIT_ANY_ONLY, CALLBACK_MODE_ALLOW_PROCESS_EVENTS, CALLBACK_MODE_ALLOW_SPONTANEOUS, COMPARE_FUNCTION_UNDEFINED, COMPARE_FUNCTION_NEVER, COMPARE_FUNCTION_LESS, COMPARE_FUNCTION_EQUAL, COMPARE_FUNCTION_LESS_EQUAL, COMPARE_FUNCTION_GREATER, COMPARE_FUNCTION_NOT_EQUAL, COMPARE_FUNCTION_GREATER_EQUAL, COMPARE_FUNCTION_ALWAYS, COMPILATION_INFO_REQUEST_STATUS_SUCCESS, COMPILATION_INFO_REQUEST_STATUS_CALLBACK_CANCELLED, COMPILATION_MESSAGE_TYPE_ERROR, COMPILATION_MESSAGE_TYPE_WARNING, COMPILATION_MESSAGE_TYPE_INFO, COMPONENT_SWIZZLE_UNDEFINED, COMPONENT_SWIZZLE_ZERO, COMPONENT_SWIZZLE_ONE, COMPONENT_SWIZZLE_R, COMPONENT_SWIZZLE_G, COMPONENT_SWIZZLE_B, COMPONENT_SWIZZLE_A, COMPOSITE_ALPHA_MODE_AUTO, COMPOSITE_ALPHA_MODE_OPAQUE, COMPOSITE_ALPHA_MODE_PREMULTIPLIED, COMPOSITE_ALPHA_MODE_UNPREMULTIPLIED, COMPOSITE_ALPHA_MODE_INHERIT, CREATE_PIPELINE_ASYNC_STATUS_SUCCESS, CREATE_PIPELINE_ASYNC_STATUS_CALLBACK_CANCELLED, CREATE_PIPELINE_ASYNC_STATUS_VALIDATION_ERROR, CREATE_PIPELINE_ASYNC_STATUS_INTERNAL_ERROR, CULL_MODE_UNDEFINED, CULL_MODE_NONE, CULL_MODE_FRONT, CULL_MODE_BACK, DEVICE_LOST_REASON_UNKNOWN, DEVICE_LOST_REASON_DESTROYED, DEVICE_LOST_REASON_CALLBACK_CANCELLED, DEVICE_LOST_REASON_FAILED_CREATION, ERROR_FILTER_VALIDATION, ERROR_FILTER_OUT_OF_MEMORY, ERROR_FILTER_INTERNAL, ERROR_TYPE_NO_ERROR, ERROR_TYPE_VALIDATION, ERROR_TYPE_OUT_OF_MEMORY, ERROR_TYPE_INTERNAL, ERROR_TYPE_UNKNOWN, FEATURE_LEVEL_UNDEFINED, FEATURE_LEVEL_COMPATIBILITY, FEATURE_LEVEL_CORE, FEATURE_NAME_CORE_FEATURES_AND_LIMITS, FEATURE_NAME_DEPTH_CLIP_CONTROL, FEATURE_NAME_DEPTH32_FLOAT_STENCIL8, FEATURE_NAME_TEXTURE_COMPRESSION_BC, FEATURE_NAME_TEXTURE_COMPRESSION_BC_SLICED_3D, FEATURE_NAME_TEXTURE_COMPRESSION_ETC2, FEATURE_NAME_TEXTURE_COMPRESSION_ASTC, FEATURE_NAME_TEXTURE_COMPRESSION_ASTC_SLICED_3D, FEATURE_NAME_TIMESTAMP_QUERY, FEATURE_NAME_INDIRECT_FIRST_INSTANCE, FEATURE_NAME_SHADER_F16, FEATURE_NAME_RG11B10_UFLOAT_RENDERABLE, FEATURE_NAME_BGRA8_UNORM_STORAGE, FEATURE_NAME_FLOAT32_FILTERABLE, FEATURE_NAME_FLOAT32_BLENDABLE, FEATURE_NAME_CLIP_DISTANCES, FEATURE_NAME_DUAL_SOURCE_BLENDING, FEATURE_NAME_SUBGROUPS, FEATURE_NAME_TEXTURE_FORMATS_TIER_1, FEATURE_NAME_TEXTURE_FORMATS_TIER_2, FEATURE_NAME_PRIMITIVE_INDEX, FEATURE_NAME_TEXTURE_COMPONENT_SWIZZLE, FILTER_MODE_UNDEFINED, FILTER_MODE_NEAREST, FILTER_MODE_LINEAR, FRONT_FACE_UNDEFINED, FRONT_FACE_CCW, FRONT_FACE_CW, INDEX_FORMAT_UNDEFINED, INDEX_FORMAT_UINT16, INDEX_FORMAT_UINT32, INSTANCE_FEATURE_NAME_TIMED_WAIT_ANY, INSTANCE_FEATURE_NAME_SHADER_SOURCE_SPIRV, INSTANCE_FEATURE_NAME_MULTIPLE_DEVICES_PER_ADAPTER, LOAD_OP_UNDEFINED, LOAD_OP_LOAD, LOAD_OP_CLEAR, MAP_ASYNC_STATUS_SUCCESS, MAP_ASYNC_STATUS_CALLBACK_CANCELLED, MAP_ASYNC_STATUS_ERROR, MAP_ASYNC_STATUS_ABORTED, MIPMAP_FILTER_MODE_UNDEFINED, MIPMAP_FILTER_MODE_NEAREST, MIPMAP_FILTER_MODE_LINEAR, OPTIONAL_BOOL_FALSE, OPTIONAL_BOOL_TRUE, OPTIONAL_BOOL_UNDEFINED, POP_ERROR_SCOPE_STATUS_SUCCESS, POP_ERROR_SCOPE_STATUS_CALLBACK_CANCELLED, POP_ERROR_SCOPE_STATUS_ERROR, POWER_PREFERENCE_UNDEFINED, POWER_PREFERENCE_LOW_POWER, POWER_PREFERENCE_HIGH_PERFORMANCE, PREDEFINED_COLOR_SPACE_SRGB, PREDEFINED_COLOR_SPACE_DISPLAY_P3, PRESENT_MODE_UNDEFINED, PRESENT_MODE_FIFO, PRESENT_MODE_FIFO_RELAXED, PRESENT_MODE_IMMEDIATE, PRESENT_MODE_MAILBOX, PRIMITIVE_TOPOLOGY_UNDEFINED, PRIMITIVE_TOPOLOGY_POINT_LIST, PRIMITIVE_TOPOLOGY_LINE_LIST, PRIMITIVE_TOPOLOGY_LINE_STRIP, PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, QUERY_TYPE_OCCLUSION, QUERY_TYPE_TIMESTAMP, QUEUE_WORK_DONE_STATUS_SUCCESS, QUEUE_WORK_DONE_STATUS_CALLBACK_CANCELLED, QUEUE_WORK_DONE_STATUS_ERROR, REQUEST_ADAPTER_STATUS_SUCCESS, REQUEST_ADAPTER_STATUS_CALLBACK_CANCELLED, REQUEST_ADAPTER_STATUS_UNAVAILABLE, REQUEST_ADAPTER_STATUS_ERROR, REQUEST_DEVICE_STATUS_SUCCESS, REQUEST_DEVICE_STATUS_CALLBACK_CANCELLED, REQUEST_DEVICE_STATUS_ERROR, S_TYPE_SHADER_SOURCE_SPIRV, S_TYPE_SHADER_SOURCE_WGSL, S_TYPE_RENDER_PASS_MAX_DRAW_COUNT, S_TYPE_SURFACE_SOURCE_METAL_LAYER, S_TYPE_SURFACE_SOURCE_WINDOWS_HWND, S_TYPE_SURFACE_SOURCE_XLIB_WINDOW, S_TYPE_SURFACE_SOURCE_WAYLAND_SURFACE, S_TYPE_SURFACE_SOURCE_ANDROID_NATIVE_WINDOW, S_TYPE_SURFACE_SOURCE_XCB_WINDOW, S_TYPE_SURFACE_COLOR_MANAGEMENT, S_TYPE_REQUEST_ADAPTER_WEBXR_OPTIONS, S_TYPE_TEXTURE_COMPONENT_SWIZZLE_DESCRIPTOR, S_TYPE_EXTERNAL_TEXTURE_BINDING_LAYOUT, S_TYPE_EXTERNAL_TEXTURE_BINDING_ENTRY, S_TYPE_COMPATIBILITY_MODE_LIMITS, S_TYPE_TEXTURE_BINDING_VIEW_DIMENSION, SAMPLER_BINDING_TYPE_BINDING_NOT_USED, SAMPLER_BINDING_TYPE_UNDEFINED, SAMPLER_BINDING_TYPE_FILTERING, SAMPLER_BINDING_TYPE_NON_FILTERING, SAMPLER_BINDING_TYPE_COMPARISON, STATUS_SUCCESS, STATUS_ERROR, STENCIL_OPERATION_UNDEFINED, STENCIL_OPERATION_KEEP, STENCIL_OPERATION_ZERO, STENCIL_OPERATION_REPLACE, STENCIL_OPERATION_INVERT, STENCIL_OPERATION_INCREMENT_CLAMP, STENCIL_OPERATION_DECREMENT_CLAMP, STENCIL_OPERATION_INCREMENT_WRAP, STENCIL_OPERATION_DECREMENT_WRAP, STORAGE_TEXTURE_ACCESS_BINDING_NOT_USED, STORAGE_TEXTURE_ACCESS_UNDEFINED, STORAGE_TEXTURE_ACCESS_WRITE_ONLY, STORAGE_TEXTURE_ACCESS_READ_ONLY, STORAGE_TEXTURE_ACCESS_READ_WRITE, STORE_OP_UNDEFINED, STORE_OP_STORE, STORE_OP_DISCARD, SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL, SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL, SURFACE_GET_CURRENT_TEXTURE_STATUS_TIMEOUT, SURFACE_GET_CURRENT_TEXTURE_STATUS_OUTDATED, SURFACE_GET_CURRENT_TEXTURE_STATUS_LOST, SURFACE_GET_CURRENT_TEXTURE_STATUS_ERROR, TEXTURE_ASPECT_UNDEFINED, TEXTURE_ASPECT_ALL, TEXTURE_ASPECT_STENCIL_ONLY, TEXTURE_ASPECT_DEPTH_ONLY, TEXTURE_DIMENSION_UNDEFINED, TEXTURE_DIMENSION_1D, TEXTURE_DIMENSION_2D, TEXTURE_DIMENSION_3D, TEXTURE_FORMAT_UNDEFINED, TEXTURE_FORMAT_R8_UNORM, TEXTURE_FORMAT_R8_SNORM, TEXTURE_FORMAT_R8_UINT, TEXTURE_FORMAT_R8_SINT, TEXTURE_FORMAT_R16_UNORM, TEXTURE_FORMAT_R16_SNORM, TEXTURE_FORMAT_R16_UINT, TEXTURE_FORMAT_R16_SINT, TEXTURE_FORMAT_R16_FLOAT, TEXTURE_FORMAT_RG8_UNORM, TEXTURE_FORMAT_RG8_SNORM, TEXTURE_FORMAT_RG8_UINT, TEXTURE_FORMAT_RG8_SINT, TEXTURE_FORMAT_R32_FLOAT, TEXTURE_FORMAT_R32_UINT, TEXTURE_FORMAT_R32_SINT, TEXTURE_FORMAT_RG16_UNORM, TEXTURE_FORMAT_RG16_SNORM, TEXTURE_FORMAT_RG16_UINT, TEXTURE_FORMAT_RG16_SINT, TEXTURE_FORMAT_RG16_FLOAT, TEXTURE_FORMAT_RGBA8_UNORM, TEXTURE_FORMAT_RGBA8_UNORM_SRGB, TEXTURE_FORMAT_RGBA8_SNORM, TEXTURE_FORMAT_RGBA8_UINT, TEXTURE_FORMAT_RGBA8_SINT, TEXTURE_FORMAT_BGRA8_UNORM, TEXTURE_FORMAT_BGRA8_UNORM_SRGB, TEXTURE_FORMAT_RGB10_A2_UINT, TEXTURE_FORMAT_RGB10_A2_UNORM, TEXTURE_FORMAT_RG11_B10_UFLOAT, TEXTURE_FORMAT_RGB9_E5_UFLOAT, TEXTURE_FORMAT_RG32_FLOAT, TEXTURE_FORMAT_RG32_UINT, TEXTURE_FORMAT_RG32_SINT, TEXTURE_FORMAT_RGBA16_UNORM, TEXTURE_FORMAT_RGBA16_SNORM, TEXTURE_FORMAT_RGBA16_UINT, TEXTURE_FORMAT_RGBA16_SINT, TEXTURE_FORMAT_RGBA16_FLOAT, TEXTURE_FORMAT_RGBA32_FLOAT, TEXTURE_FORMAT_RGBA32_UINT, TEXTURE_FORMAT_RGBA32_SINT, TEXTURE_FORMAT_STENCIL8, TEXTURE_FORMAT_DEPTH16_UNORM, TEXTURE_FORMAT_DEPTH24_PLUS, TEXTURE_FORMAT_DEPTH24_PLUS_STENCIL8, TEXTURE_FORMAT_DEPTH32_FLOAT, TEXTURE_FORMAT_DEPTH32_FLOAT_STENCIL8, TEXTURE_FORMAT_BC1_RGBA_UNORM, TEXTURE_FORMAT_BC1_RGBA_UNORM_SRGB, TEXTURE_FORMAT_BC2_RGBA_UNORM, TEXTURE_FORMAT_BC2_RGBA_UNORM_SRGB, TEXTURE_FORMAT_BC3_RGBA_UNORM, TEXTURE_FORMAT_BC3_RGBA_UNORM_SRGB, TEXTURE_FORMAT_BC4_R_UNORM, TEXTURE_FORMAT_BC4_R_SNORM, TEXTURE_FORMAT_BC5_RG_UNORM, TEXTURE_FORMAT_BC5_RG_SNORM, TEXTURE_FORMAT_BC6H_RGB_UFLOAT, TEXTURE_FORMAT_BC6H_RGB_FLOAT, TEXTURE_FORMAT_BC7_RGBA_UNORM, TEXTURE_FORMAT_BC7_RGBA_UNORM_SRGB, TEXTURE_FORMAT_ETC2_RGB8_UNORM, TEXTURE_FORMAT_ETC2_RGB8_UNORM_SRGB, TEXTURE_FORMAT_ETC2_RGB8A1_UNORM, TEXTURE_FORMAT_ETC2_RGB8A1_UNORM_SRGB, TEXTURE_FORMAT_ETC2_RGBA8_UNORM, TEXTURE_FORMAT_ETC2_RGBA8_UNORM_SRGB, TEXTURE_FORMAT_EAC_R11_UNORM, TEXTURE_FORMAT_EAC_R11_SNORM, TEXTURE_FORMAT_EAC_RG11_UNORM, TEXTURE_FORMAT_EAC_RG11_SNORM, TEXTURE_FORMAT_ASTC_4X4_UNORM, TEXTURE_FORMAT_ASTC_4X4_UNORM_SRGB, TEXTURE_FORMAT_ASTC_5X4_UNORM, TEXTURE_FORMAT_ASTC_5X4_UNORM_SRGB, TEXTURE_FORMAT_ASTC_5X5_UNORM, TEXTURE_FORMAT_ASTC_5X5_UNORM_SRGB, TEXTURE_FORMAT_ASTC_6X5_UNORM, TEXTURE_FORMAT_ASTC_6X5_UNORM_SRGB, TEXTURE_FORMAT_ASTC_6X6_UNORM, TEXTURE_FORMAT_ASTC_6X6_UNORM_SRGB, TEXTURE_FORMAT_ASTC_8X5_UNORM, TEXTURE_FORMAT_ASTC_8X5_UNORM_SRGB, TEXTURE_FORMAT_ASTC_8X6_UNORM, TEXTURE_FORMAT_ASTC_8X6_UNORM_SRGB, TEXTURE_FORMAT_ASTC_8X8_UNORM, TEXTURE_FORMAT_ASTC_8X8_UNORM_SRGB, TEXTURE_FORMAT_ASTC_10X5_UNORM, TEXTURE_FORMAT_ASTC_10X5_UNORM_SRGB, TEXTURE_FORMAT_ASTC_10X6_UNORM, TEXTURE_FORMAT_ASTC_10X6_UNORM_SRGB, TEXTURE_FORMAT_ASTC_10X8_UNORM, TEXTURE_FORMAT_ASTC_10X8_UNORM_SRGB, TEXTURE_FORMAT_ASTC_10X10_UNORM, TEXTURE_FORMAT_ASTC_10X10_UNORM_SRGB, TEXTURE_FORMAT_ASTC_12X10_UNORM, TEXTURE_FORMAT_ASTC_12X10_UNORM_SRGB, TEXTURE_FORMAT_ASTC_12X12_UNORM, TEXTURE_FORMAT_ASTC_12X12_UNORM_SRGB, TEXTURE_SAMPLE_TYPE_BINDING_NOT_USED, TEXTURE_SAMPLE_TYPE_UNDEFINED, TEXTURE_SAMPLE_TYPE_FLOAT, TEXTURE_SAMPLE_TYPE_UNFILTERABLE_FLOAT, TEXTURE_SAMPLE_TYPE_DEPTH, TEXTURE_SAMPLE_TYPE_SINT, TEXTURE_SAMPLE_TYPE_UINT, TEXTURE_VIEW_DIMENSION_UNDEFINED, TEXTURE_VIEW_DIMENSION_1D, TEXTURE_VIEW_DIMENSION_2D, TEXTURE_VIEW_DIMENSION_2D_ARRAY, TEXTURE_VIEW_DIMENSION_CUBE, TEXTURE_VIEW_DIMENSION_CUBE_ARRAY, TEXTURE_VIEW_DIMENSION_3D, TONE_MAPPING_MODE_STANDARD, TONE_MAPPING_MODE_EXTENDED, VERTEX_FORMAT_UINT8, VERTEX_FORMAT_UINT8X2, VERTEX_FORMAT_UINT8X4, VERTEX_FORMAT_SINT8, VERTEX_FORMAT_SINT8X2, VERTEX_FORMAT_SINT8X4, VERTEX_FORMAT_UNORM8, VERTEX_FORMAT_UNORM8X2, VERTEX_FORMAT_UNORM8X4, VERTEX_FORMAT_SNORM8, VERTEX_FORMAT_SNORM8X2, VERTEX_FORMAT_SNORM8X4, VERTEX_FORMAT_UINT16, VERTEX_FORMAT_UINT16X2, VERTEX_FORMAT_UINT16X4, VERTEX_FORMAT_SINT16, VERTEX_FORMAT_SINT16X2, VERTEX_FORMAT_SINT16X4, VERTEX_FORMAT_UNORM16, VERTEX_FORMAT_UNORM16X2, VERTEX_FORMAT_UNORM16X4, VERTEX_FORMAT_SNORM16, VERTEX_FORMAT_SNORM16X2, VERTEX_FORMAT_SNORM16X4, VERTEX_FORMAT_FLOAT16, VERTEX_FORMAT_FLOAT16X2, VERTEX_FORMAT_FLOAT16X4, VERTEX_FORMAT_FLOAT32, VERTEX_FORMAT_FLOAT32X2, VERTEX_FORMAT_FLOAT32X3, VERTEX_FORMAT_FLOAT32X4, VERTEX_FORMAT_UINT32, VERTEX_FORMAT_UINT32X2, VERTEX_FORMAT_UINT32X3, VERTEX_FORMAT_UINT32X4, VERTEX_FORMAT_SINT32, VERTEX_FORMAT_SINT32X2, VERTEX_FORMAT_SINT32X3, VERTEX_FORMAT_SINT32X4, VERTEX_FORMAT_UNORM10__10__10__2, VERTEX_FORMAT_UNORM8X4_B_G_R_A, VERTEX_STEP_MODE_UNDEFINED, VERTEX_STEP_MODE_VERTEX, VERTEX_STEP_MODE_INSTANCE, WAIT_STATUS_SUCCESS, WAIT_STATUS_TIMED_OUT, WAIT_STATUS_ERROR, WGSL_LANGUAGE_FEATURE_NAME_READONLY_AND_READWRITE_STORAGE_TEXTURES, WGSL_LANGUAGE_FEATURE_NAME_PACKED4X8_INTEGER_DOT_PRODUCT, WGSL_LANGUAGE_FEATURE_NAME_UNRESTRICTED_POINTER_PARAMETERS, WGSL_LANGUAGE_FEATURE_NAME_POINTER_COMPOSITE_ACCESS, WGSL_LANGUAGE_FEATURE_NAME_UNIFORM_BUFFER_STANDARD_LAYOUT, WGSL_LANGUAGE_FEATURE_NAME_SUBGROUP_ID, WGSL_LANGUAGE_FEATURE_NAME_TEXTURE_AND_SAMPLER_LET, WGSL_LANGUAGE_FEATURE_NAME_SUBGROUP_UNIFORMITY, WGSL_LANGUAGE_FEATURE_NAME_TEXTURE_FORMATS_TIER1, WGSL_LANGUAGE_FEATURE_NAME_LINEAR_INDEXING, BufferUsage, ColorWriteMask, MapMode, ShaderStage, TextureUsage, AdapterInfo, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BlendComponent, BlendState, BufferBindingLayout, BufferDescriptor, Color, ColorTargetState, CommandBufferDescriptor, CommandEncoderDescriptor, CompatibilityModeLimits, CompilationInfo, CompilationMessage, ComputePassDescriptor, ComputePipelineDescriptor, ComputeState, ConstantEntry, DepthStencilState, DeviceDescriptor, Extent3D, ExternalTextureBindingEntry, ExternalTextureBindingLayout, FragmentState, Future, FutureWaitInfo, InstanceDescriptor, InstanceLimits, Limits, MultisampleState, Origin3D, PassTimestampWrites, PipelineLayoutDescriptor, PrimitiveState, QuerySetDescriptor, QueueDescriptor, RenderBundleDescriptor, RenderBundleEncoderDescriptor, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPassMaxDrawCount, RenderPipelineDescriptor, RequestAdapterOptions, RequestAdapterWebXROptions, SamplerBindingLayout, SamplerDescriptor, ShaderModuleDescriptor, ShaderSourceSPIRV, ShaderSourceWGSL, StencilFaceState, StorageTextureBindingLayout, SupportedFeatures, SupportedInstanceFeatures, SupportedWGSLLanguageFeatures, SurfaceCapabilities, SurfaceColorManagement, SurfaceConfiguration, SurfaceDescriptor, SurfaceSourceAndroidNativeWindow, SurfaceSourceMetalLayer, SurfaceSourceWaylandSurface, SurfaceSourceWindowsHWND, SurfaceSourceXCBWindow, SurfaceSourceXlibWindow, SurfaceTexture, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureBindingLayout, TextureBindingViewDimension, TextureComponentSwizzle, TextureComponentSwizzleDescriptor, TextureDescriptor, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexState, BufferMapCallbackInfo, buffer_map_callback_info_of, CompilationInfoCallbackInfo, compilation_info_callback_info_of, CreateComputePipelineAsyncCallbackInfo, create_compute_pipeline_async_callback_info_of, CreateRenderPipelineAsyncCallbackInfo, create_render_pipeline_async_callback_info_of, DeviceLostCallbackInfo, device_lost_callback_info_of, PopErrorScopeCallbackInfo, pop_error_scope_callback_info_of, QueueWorkDoneCallbackInfo, queue_work_done_callback_info_of, RequestAdapterCallbackInfo, request_adapter_callback_info_of, RequestDeviceCallbackInfo, request_device_callback_info_of, UncapturedErrorCallbackInfo, uncaptured_error_callback_info_of, adapter_get_limits, adapter_has_feature, adapter_get_features, adapter_get_info, adapter_request_device, bind_group_set_label, bind_group_layout_set_label, buffer_map_async, buffer_get_mapped_range, buffer_get_const_mapped_range, buffer_read_mapped_range, buffer_write_mapped_range, buffer_set_label, buffer_get_usage, buffer_get_size, buffer_get_map_state, buffer_unmap, buffer_destroy, command_buffer_set_label, command_encoder_finish, command_encoder_begin_compute_pass, command_encoder_begin_render_pass, command_encoder_copy_buffer_to_buffer, command_encoder_copy_buffer_to_texture, command_encoder_copy_texture_to_buffer, command_encoder_copy_texture_to_texture, command_encoder_clear_buffer, command_encoder_insert_debug_marker, command_encoder_pop_debug_group, command_encoder_push_debug_group, command_encoder_resolve_query_set, command_encoder_write_timestamp, command_encoder_set_label, compute_pass_encoder_insert_debug_marker, compute_pass_encoder_pop_debug_group, compute_pass_encoder_push_debug_group, compute_pass_encoder_set_pipeline, compute_pass_encoder_set_bind_group, compute_pass_encoder_set_immediates, compute_pass_encoder_dispatch_workgroups, compute_pass_encoder_dispatch_workgroups_indirect, compute_pass_encoder_end, compute_pass_encoder_set_label, compute_pipeline_get_bind_group_layout, compute_pipeline_set_label, device_create_bind_group, device_create_bind_group_layout, device_create_buffer, device_create_command_encoder, device_create_compute_pipeline, device_create_compute_pipeline_async, device_create_pipeline_layout, device_create_query_set, device_create_render_pipeline_async, device_create_render_bundle_encoder, device_create_render_pipeline, device_create_sampler, device_create_shader_module, device_create_texture, device_destroy, device_get_lost_future, device_get_limits, device_has_feature, device_get_features, device_get_adapter_info, device_get_queue, device_push_error_scope, device_pop_error_scope, device_set_label, external_texture_set_label, instance_create_surface, instance_get_WGSL_language_features, instance_has_WGSL_language_feature, instance_process_events, instance_request_adapter, instance_wait_any, pipeline_layout_set_label, query_set_set_label, query_set_get_type, query_set_get_count, query_set_destroy, queue_submit, queue_on_submitted_work_done, queue_write_buffer, queue_write_texture, queue_set_label, render_bundle_set_label, render_bundle_encoder_set_pipeline, render_bundle_encoder_set_bind_group, render_bundle_encoder_set_immediates, render_bundle_encoder_draw, render_bundle_encoder_draw_indexed, render_bundle_encoder_draw_indirect, render_bundle_encoder_draw_indexed_indirect, render_bundle_encoder_insert_debug_marker, render_bundle_encoder_pop_debug_group, render_bundle_encoder_push_debug_group, render_bundle_encoder_set_vertex_buffer, render_bundle_encoder_set_index_buffer, render_bundle_encoder_finish, render_bundle_encoder_set_label, render_pass_encoder_set_pipeline, render_pass_encoder_set_bind_group, render_pass_encoder_set_immediates, render_pass_encoder_draw, render_pass_encoder_draw_indexed, render_pass_encoder_draw_indirect, render_pass_encoder_draw_indexed_indirect, render_pass_encoder_execute_bundles, render_pass_encoder_insert_debug_marker, render_pass_encoder_pop_debug_group, render_pass_encoder_push_debug_group, render_pass_encoder_set_stencil_reference, render_pass_encoder_set_blend_constant, render_pass_encoder_set_viewport, render_pass_encoder_set_scissor_rect, render_pass_encoder_set_vertex_buffer, render_pass_encoder_set_index_buffer, render_pass_encoder_begin_occlusion_query, render_pass_encoder_end_occlusion_query, render_pass_encoder_end, render_pass_encoder_set_label, render_pipeline_get_bind_group_layout, render_pipeline_set_label, sampler_set_label, shader_module_get_compilation_info, shader_module_set_label, surface_configure, surface_get_capabilities, surface_get_current_texture, surface_present, surface_unconfigure, surface_set_label, texture_create_view, texture_set_label, texture_get_width, texture_get_height, texture_get_depth_or_array_layers, texture_get_mip_level_count, texture_get_sample_count, texture_get_dimension, texture_get_texture_binding_view_dimension, texture_get_format, texture_get_usage, texture_destroy, texture_view_set_label, create_instance, get_instance_features, get_instance_limits, has_instance_feature, adapter_info_init, bind_group_descriptor_init, bind_group_entry_init, bind_group_layout_descriptor_init, bind_group_layout_entry_init, blend_component_init, blend_state_init, buffer_binding_layout_init, buffer_descriptor_init, color_init, color_target_state_init, command_buffer_descriptor_init, command_encoder_descriptor_init, compatibility_mode_limits_init, compilation_info_init, compilation_message_init, compute_pass_descriptor_init, compute_pipeline_descriptor_init, compute_state_init, constant_entry_init, depth_stencil_state_init, device_descriptor_init, extent_3D_init, external_texture_binding_entry_init, external_texture_binding_layout_init, fragment_state_init, future_init, future_wait_info_init, instance_descriptor_init, instance_limits_init, limits_init, multisample_state_init, origin_3D_init, pass_timestamp_writes_init, pipeline_layout_descriptor_init, primitive_state_init, query_set_descriptor_init, queue_descriptor_init, render_bundle_descriptor_init, render_bundle_encoder_descriptor_init, render_pass_color_attachment_init, render_pass_depth_stencil_attachment_init, render_pass_descriptor_init, render_pass_max_draw_count_init, render_pipeline_descriptor_init, request_adapter_options_init, request_adapter_WebXR_options_init, sampler_binding_layout_init, sampler_descriptor_init, shader_module_descriptor_init, shader_source_SPIRV_init, shader_source_WGSL_init, stencil_face_state_init, storage_texture_binding_layout_init, supported_features_init, supported_instance_features_init, supported_WGSL_language_features_init, surface_capabilities_init, surface_color_management_init, surface_configuration_init, surface_descriptor_init, surface_source_android_native_window_init, surface_source_metal_layer_init, surface_source_wayland_surface_init, surface_source_windows_HWND_init, surface_source_XCB_window_init, surface_source_xlib_window_init, surface_texture_init, texel_copy_buffer_info_init, texel_copy_buffer_layout_init, texel_copy_texture_info_init, texture_binding_layout_init, texture_binding_view_dimension_init, texture_component_swizzle_init, texture_component_swizzle_descriptor_init, texture_descriptor_init, texture_view_descriptor_init, vertex_attribute_init, vertex_buffer_layout_init, vertex_state_init, Chained
+
+Chained :: struct { next: ^u8, stype: u32 }
+StringView :: struct { data: ^i8, length: u64 }
+
+frost_rt_error :: extern fn(text: ^i8)
+frost_rt_die   :: safe extern fn()
+
+null_handle :: fn() -> ^u8 {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+surface_format_at :: fn(held: SurfaceCapabilities,
+    index: i64) -> u32 {
+    span : []u32 = unsafe { slice_from($u32, ptr_cast($u32, held.formats),
+        cast($i64, held.formats_count)) }
+    span[index]
+}
+
+Adapter :: distinct ^u8
+no_adapter :: fn() -> Adapter {
+    null_handle()
+}
+wgpuAdapterRelease :: extern fn(handle: Adapter)
+adapter_release :: fn(handle: Adapter) {
+    if (handle == no_adapter()) {
+        return
+    }
+    unsafe { wgpuAdapterRelease(handle) }
+}
+BindGroup :: distinct ^u8
+no_bind_group :: fn() -> BindGroup {
+    null_handle()
+}
+wgpuBindGroupRelease :: extern fn(handle: BindGroup)
+bind_group_release :: fn(handle: BindGroup) {
+    if (handle == no_bind_group()) {
+        return
+    }
+    unsafe { wgpuBindGroupRelease(handle) }
+}
+BindGroupLayout :: distinct ^u8
+no_bind_group_layout :: fn() -> BindGroupLayout {
+    null_handle()
+}
+wgpuBindGroupLayoutRelease :: extern fn(handle: BindGroupLayout)
+bind_group_layout_release :: fn(handle: BindGroupLayout) {
+    if (handle == no_bind_group_layout()) {
+        return
+    }
+    unsafe { wgpuBindGroupLayoutRelease(handle) }
+}
+Buffer :: distinct ^u8
+no_buffer :: fn() -> Buffer {
+    null_handle()
+}
+wgpuBufferRelease :: extern fn(handle: Buffer)
+buffer_release :: fn(handle: Buffer) {
+    if (handle == no_buffer()) {
+        return
+    }
+    unsafe { wgpuBufferRelease(handle) }
+}
+CommandBuffer :: distinct ^u8
+no_command_buffer :: fn() -> CommandBuffer {
+    null_handle()
+}
+wgpuCommandBufferRelease :: extern fn(handle: CommandBuffer)
+command_buffer_release :: fn(handle: CommandBuffer) {
+    if (handle == no_command_buffer()) {
+        return
+    }
+    unsafe { wgpuCommandBufferRelease(handle) }
+}
+CommandEncoder :: distinct ^u8
+no_command_encoder :: fn() -> CommandEncoder {
+    null_handle()
+}
+wgpuCommandEncoderRelease :: extern fn(handle: CommandEncoder)
+command_encoder_release :: fn(handle: CommandEncoder) {
+    if (handle == no_command_encoder()) {
+        return
+    }
+    unsafe { wgpuCommandEncoderRelease(handle) }
+}
+ComputePassEncoder :: distinct ^u8
+no_compute_pass_encoder :: fn() -> ComputePassEncoder {
+    null_handle()
+}
+wgpuComputePassEncoderRelease :: extern fn(handle: ComputePassEncoder)
+compute_pass_encoder_release :: fn(handle: ComputePassEncoder) {
+    if (handle == no_compute_pass_encoder()) {
+        return
+    }
+    unsafe { wgpuComputePassEncoderRelease(handle) }
+}
+ComputePipeline :: distinct ^u8
+no_compute_pipeline :: fn() -> ComputePipeline {
+    null_handle()
+}
+wgpuComputePipelineRelease :: extern fn(handle: ComputePipeline)
+compute_pipeline_release :: fn(handle: ComputePipeline) {
+    if (handle == no_compute_pipeline()) {
+        return
+    }
+    unsafe { wgpuComputePipelineRelease(handle) }
+}
+Device :: distinct ^u8
+no_device :: fn() -> Device {
+    null_handle()
+}
+wgpuDeviceRelease :: extern fn(handle: Device)
+device_release :: fn(handle: Device) {
+    if (handle == no_device()) {
+        return
+    }
+    unsafe { wgpuDeviceRelease(handle) }
+}
+ExternalTexture :: distinct ^u8
+no_external_texture :: fn() -> ExternalTexture {
+    null_handle()
+}
+wgpuExternalTextureRelease :: extern fn(handle: ExternalTexture)
+external_texture_release :: fn(handle: ExternalTexture) {
+    if (handle == no_external_texture()) {
+        return
+    }
+    unsafe { wgpuExternalTextureRelease(handle) }
+}
+Instance :: distinct ^u8
+no_instance :: fn() -> Instance {
+    null_handle()
+}
+wgpuInstanceRelease :: extern fn(handle: Instance)
+instance_release :: fn(handle: Instance) {
+    if (handle == no_instance()) {
+        return
+    }
+    unsafe { wgpuInstanceRelease(handle) }
+}
+PipelineLayout :: distinct ^u8
+no_pipeline_layout :: fn() -> PipelineLayout {
+    null_handle()
+}
+wgpuPipelineLayoutRelease :: extern fn(handle: PipelineLayout)
+pipeline_layout_release :: fn(handle: PipelineLayout) {
+    if (handle == no_pipeline_layout()) {
+        return
+    }
+    unsafe { wgpuPipelineLayoutRelease(handle) }
+}
+QuerySet :: distinct ^u8
+no_query_set :: fn() -> QuerySet {
+    null_handle()
+}
+wgpuQuerySetRelease :: extern fn(handle: QuerySet)
+query_set_release :: fn(handle: QuerySet) {
+    if (handle == no_query_set()) {
+        return
+    }
+    unsafe { wgpuQuerySetRelease(handle) }
+}
+Queue :: distinct ^u8
+no_queue :: fn() -> Queue {
+    null_handle()
+}
+wgpuQueueRelease :: extern fn(handle: Queue)
+queue_release :: fn(handle: Queue) {
+    if (handle == no_queue()) {
+        return
+    }
+    unsafe { wgpuQueueRelease(handle) }
+}
+RenderBundle :: distinct ^u8
+no_render_bundle :: fn() -> RenderBundle {
+    null_handle()
+}
+wgpuRenderBundleRelease :: extern fn(handle: RenderBundle)
+render_bundle_release :: fn(handle: RenderBundle) {
+    if (handle == no_render_bundle()) {
+        return
+    }
+    unsafe { wgpuRenderBundleRelease(handle) }
+}
+RenderBundleEncoder :: distinct ^u8
+no_render_bundle_encoder :: fn() -> RenderBundleEncoder {
+    null_handle()
+}
+wgpuRenderBundleEncoderRelease :: extern fn(handle: RenderBundleEncoder)
+render_bundle_encoder_release :: fn(handle: RenderBundleEncoder) {
+    if (handle == no_render_bundle_encoder()) {
+        return
+    }
+    unsafe { wgpuRenderBundleEncoderRelease(handle) }
+}
+RenderPassEncoder :: distinct ^u8
+no_render_pass_encoder :: fn() -> RenderPassEncoder {
+    null_handle()
+}
+wgpuRenderPassEncoderRelease :: extern fn(handle: RenderPassEncoder)
+render_pass_encoder_release :: fn(handle: RenderPassEncoder) {
+    if (handle == no_render_pass_encoder()) {
+        return
+    }
+    unsafe { wgpuRenderPassEncoderRelease(handle) }
+}
+RenderPipeline :: distinct ^u8
+no_render_pipeline :: fn() -> RenderPipeline {
+    null_handle()
+}
+wgpuRenderPipelineRelease :: extern fn(handle: RenderPipeline)
+render_pipeline_release :: fn(handle: RenderPipeline) {
+    if (handle == no_render_pipeline()) {
+        return
+    }
+    unsafe { wgpuRenderPipelineRelease(handle) }
+}
+Sampler :: distinct ^u8
+no_sampler :: fn() -> Sampler {
+    null_handle()
+}
+wgpuSamplerRelease :: extern fn(handle: Sampler)
+sampler_release :: fn(handle: Sampler) {
+    if (handle == no_sampler()) {
+        return
+    }
+    unsafe { wgpuSamplerRelease(handle) }
+}
+ShaderModule :: distinct ^u8
+no_shader_module :: fn() -> ShaderModule {
+    null_handle()
+}
+wgpuShaderModuleRelease :: extern fn(handle: ShaderModule)
+shader_module_release :: fn(handle: ShaderModule) {
+    if (handle == no_shader_module()) {
+        return
+    }
+    unsafe { wgpuShaderModuleRelease(handle) }
+}
+Surface :: distinct ^u8
+no_surface :: fn() -> Surface {
+    null_handle()
+}
+wgpuSurfaceRelease :: extern fn(handle: Surface)
+surface_release :: fn(handle: Surface) {
+    if (handle == no_surface()) {
+        return
+    }
+    unsafe { wgpuSurfaceRelease(handle) }
+}
+Texture :: distinct ^u8
+no_texture :: fn() -> Texture {
+    null_handle()
+}
+wgpuTextureRelease :: extern fn(handle: Texture)
+texture_release :: fn(handle: Texture) {
+    if (handle == no_texture()) {
+        return
+    }
+    unsafe { wgpuTextureRelease(handle) }
+}
+TextureView :: distinct ^u8
+no_texture_view :: fn() -> TextureView {
+    null_handle()
+}
+wgpuTextureViewRelease :: extern fn(handle: TextureView)
+texture_view_release :: fn(handle: TextureView) {
+    if (handle == no_texture_view()) {
+        return
+    }
+    unsafe { wgpuTextureViewRelease(handle) }
+}
+ARRAY_LAYER_COUNT_UNDEFINED :: 4294967295
+COPY_STRIDE_UNDEFINED :: 4294967295
+DEPTH_CLEAR_VALUE_UNDEFINED :: 9223372036854775807
+DEPTH_SLICE_UNDEFINED :: 4294967295
+LIMIT_U32_UNDEFINED :: 4294967295
+LIMIT_U64_UNDEFINED :: -1
+MIP_LEVEL_COUNT_UNDEFINED :: 4294967295
+QUERY_SET_INDEX_UNDEFINED :: 4294967295
+STRLEN :: -1
+WHOLE_MAP_SIZE :: -1
+WHOLE_SIZE :: -1
+
+ADAPTER_TYPE_DISCRETE_GPU :: 1
+ADAPTER_TYPE_INTEGRATED_GPU :: 2
+ADAPTER_TYPE_CPU :: 3
+ADAPTER_TYPE_UNKNOWN :: 4
+
+ADDRESS_MODE_UNDEFINED :: 0
+ADDRESS_MODE_CLAMP_TO_EDGE :: 1
+ADDRESS_MODE_REPEAT :: 2
+ADDRESS_MODE_MIRROR_REPEAT :: 3
+
+BACKEND_TYPE_UNDEFINED :: 0
+BACKEND_TYPE_NULL :: 1
+BACKEND_TYPE_WEBGPU :: 2
+BACKEND_TYPE_D3D11 :: 3
+BACKEND_TYPE_D3D12 :: 4
+BACKEND_TYPE_METAL :: 5
+BACKEND_TYPE_VULKAN :: 6
+BACKEND_TYPE_OPENGL :: 7
+BACKEND_TYPE_OPENGLES :: 8
+
+BLEND_FACTOR_UNDEFINED :: 0
+BLEND_FACTOR_ZERO :: 1
+BLEND_FACTOR_ONE :: 2
+BLEND_FACTOR_SRC :: 3
+BLEND_FACTOR_ONE_MINUS_SRC :: 4
+BLEND_FACTOR_SRC_ALPHA :: 5
+BLEND_FACTOR_ONE_MINUS_SRC_ALPHA :: 6
+BLEND_FACTOR_DST :: 7
+BLEND_FACTOR_ONE_MINUS_DST :: 8
+BLEND_FACTOR_DST_ALPHA :: 9
+BLEND_FACTOR_ONE_MINUS_DST_ALPHA :: 10
+BLEND_FACTOR_SRC_ALPHA_SATURATED :: 11
+BLEND_FACTOR_CONSTANT :: 12
+BLEND_FACTOR_ONE_MINUS_CONSTANT :: 13
+BLEND_FACTOR_SRC1 :: 14
+BLEND_FACTOR_ONE_MINUS_SRC1 :: 15
+BLEND_FACTOR_SRC1_ALPHA :: 16
+BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA :: 17
+
+BLEND_OPERATION_UNDEFINED :: 0
+BLEND_OPERATION_ADD :: 1
+BLEND_OPERATION_SUBTRACT :: 2
+BLEND_OPERATION_REVERSE_SUBTRACT :: 3
+BLEND_OPERATION_MIN :: 4
+BLEND_OPERATION_MAX :: 5
+
+BUFFER_BINDING_TYPE_BINDING_NOT_USED :: 0
+BUFFER_BINDING_TYPE_UNDEFINED :: 1
+BUFFER_BINDING_TYPE_UNIFORM :: 2
+BUFFER_BINDING_TYPE_STORAGE :: 3
+BUFFER_BINDING_TYPE_READ_ONLY_STORAGE :: 4
+
+BUFFER_MAP_STATE_UNMAPPED :: 1
+BUFFER_MAP_STATE_PENDING :: 2
+BUFFER_MAP_STATE_MAPPED :: 3
+
+CALLBACK_MODE_WAIT_ANY_ONLY :: 1
+CALLBACK_MODE_ALLOW_PROCESS_EVENTS :: 2
+CALLBACK_MODE_ALLOW_SPONTANEOUS :: 3
+
+COMPARE_FUNCTION_UNDEFINED :: 0
+COMPARE_FUNCTION_NEVER :: 1
+COMPARE_FUNCTION_LESS :: 2
+COMPARE_FUNCTION_EQUAL :: 3
+COMPARE_FUNCTION_LESS_EQUAL :: 4
+COMPARE_FUNCTION_GREATER :: 5
+COMPARE_FUNCTION_NOT_EQUAL :: 6
+COMPARE_FUNCTION_GREATER_EQUAL :: 7
+COMPARE_FUNCTION_ALWAYS :: 8
+
+COMPILATION_INFO_REQUEST_STATUS_SUCCESS :: 1
+COMPILATION_INFO_REQUEST_STATUS_CALLBACK_CANCELLED :: 2
+
+COMPILATION_MESSAGE_TYPE_ERROR :: 1
+COMPILATION_MESSAGE_TYPE_WARNING :: 2
+COMPILATION_MESSAGE_TYPE_INFO :: 3
+
+COMPONENT_SWIZZLE_UNDEFINED :: 0
+COMPONENT_SWIZZLE_ZERO :: 1
+COMPONENT_SWIZZLE_ONE :: 2
+COMPONENT_SWIZZLE_R :: 3
+COMPONENT_SWIZZLE_G :: 4
+COMPONENT_SWIZZLE_B :: 5
+COMPONENT_SWIZZLE_A :: 6
+
+COMPOSITE_ALPHA_MODE_AUTO :: 0
+COMPOSITE_ALPHA_MODE_OPAQUE :: 1
+COMPOSITE_ALPHA_MODE_PREMULTIPLIED :: 2
+COMPOSITE_ALPHA_MODE_UNPREMULTIPLIED :: 3
+COMPOSITE_ALPHA_MODE_INHERIT :: 4
+
+CREATE_PIPELINE_ASYNC_STATUS_SUCCESS :: 1
+CREATE_PIPELINE_ASYNC_STATUS_CALLBACK_CANCELLED :: 2
+CREATE_PIPELINE_ASYNC_STATUS_VALIDATION_ERROR :: 3
+CREATE_PIPELINE_ASYNC_STATUS_INTERNAL_ERROR :: 4
+
+CULL_MODE_UNDEFINED :: 0
+CULL_MODE_NONE :: 1
+CULL_MODE_FRONT :: 2
+CULL_MODE_BACK :: 3
+
+DEVICE_LOST_REASON_UNKNOWN :: 1
+DEVICE_LOST_REASON_DESTROYED :: 2
+DEVICE_LOST_REASON_CALLBACK_CANCELLED :: 3
+DEVICE_LOST_REASON_FAILED_CREATION :: 4
+
+ERROR_FILTER_VALIDATION :: 1
+ERROR_FILTER_OUT_OF_MEMORY :: 2
+ERROR_FILTER_INTERNAL :: 3
+
+ERROR_TYPE_NO_ERROR :: 1
+ERROR_TYPE_VALIDATION :: 2
+ERROR_TYPE_OUT_OF_MEMORY :: 3
+ERROR_TYPE_INTERNAL :: 4
+ERROR_TYPE_UNKNOWN :: 5
+
+FEATURE_LEVEL_UNDEFINED :: 0
+FEATURE_LEVEL_COMPATIBILITY :: 1
+FEATURE_LEVEL_CORE :: 2
+
+FEATURE_NAME_CORE_FEATURES_AND_LIMITS :: 1
+FEATURE_NAME_DEPTH_CLIP_CONTROL :: 2
+FEATURE_NAME_DEPTH32_FLOAT_STENCIL8 :: 3
+FEATURE_NAME_TEXTURE_COMPRESSION_BC :: 4
+FEATURE_NAME_TEXTURE_COMPRESSION_BC_SLICED_3D :: 5
+FEATURE_NAME_TEXTURE_COMPRESSION_ETC2 :: 6
+FEATURE_NAME_TEXTURE_COMPRESSION_ASTC :: 7
+FEATURE_NAME_TEXTURE_COMPRESSION_ASTC_SLICED_3D :: 8
+FEATURE_NAME_TIMESTAMP_QUERY :: 9
+FEATURE_NAME_INDIRECT_FIRST_INSTANCE :: 10
+FEATURE_NAME_SHADER_F16 :: 11
+FEATURE_NAME_RG11B10_UFLOAT_RENDERABLE :: 12
+FEATURE_NAME_BGRA8_UNORM_STORAGE :: 13
+FEATURE_NAME_FLOAT32_FILTERABLE :: 14
+FEATURE_NAME_FLOAT32_BLENDABLE :: 15
+FEATURE_NAME_CLIP_DISTANCES :: 16
+FEATURE_NAME_DUAL_SOURCE_BLENDING :: 17
+FEATURE_NAME_SUBGROUPS :: 18
+FEATURE_NAME_TEXTURE_FORMATS_TIER_1 :: 19
+FEATURE_NAME_TEXTURE_FORMATS_TIER_2 :: 20
+FEATURE_NAME_PRIMITIVE_INDEX :: 21
+FEATURE_NAME_TEXTURE_COMPONENT_SWIZZLE :: 22
+
+FILTER_MODE_UNDEFINED :: 0
+FILTER_MODE_NEAREST :: 1
+FILTER_MODE_LINEAR :: 2
+
+FRONT_FACE_UNDEFINED :: 0
+FRONT_FACE_CCW :: 1
+FRONT_FACE_CW :: 2
+
+INDEX_FORMAT_UNDEFINED :: 0
+INDEX_FORMAT_UINT16 :: 1
+INDEX_FORMAT_UINT32 :: 2
+
+INSTANCE_FEATURE_NAME_TIMED_WAIT_ANY :: 1
+INSTANCE_FEATURE_NAME_SHADER_SOURCE_SPIRV :: 2
+INSTANCE_FEATURE_NAME_MULTIPLE_DEVICES_PER_ADAPTER :: 3
+
+LOAD_OP_UNDEFINED :: 0
+LOAD_OP_LOAD :: 1
+LOAD_OP_CLEAR :: 2
+
+MAP_ASYNC_STATUS_SUCCESS :: 1
+MAP_ASYNC_STATUS_CALLBACK_CANCELLED :: 2
+MAP_ASYNC_STATUS_ERROR :: 3
+MAP_ASYNC_STATUS_ABORTED :: 4
+
+MIPMAP_FILTER_MODE_UNDEFINED :: 0
+MIPMAP_FILTER_MODE_NEAREST :: 1
+MIPMAP_FILTER_MODE_LINEAR :: 2
+
+OPTIONAL_BOOL_FALSE :: 0
+OPTIONAL_BOOL_TRUE :: 1
+OPTIONAL_BOOL_UNDEFINED :: 2
+
+POP_ERROR_SCOPE_STATUS_SUCCESS :: 1
+POP_ERROR_SCOPE_STATUS_CALLBACK_CANCELLED :: 2
+POP_ERROR_SCOPE_STATUS_ERROR :: 3
+
+POWER_PREFERENCE_UNDEFINED :: 0
+POWER_PREFERENCE_LOW_POWER :: 1
+POWER_PREFERENCE_HIGH_PERFORMANCE :: 2
+
+PREDEFINED_COLOR_SPACE_SRGB :: 1
+PREDEFINED_COLOR_SPACE_DISPLAY_P3 :: 2
+
+PRESENT_MODE_UNDEFINED :: 0
+PRESENT_MODE_FIFO :: 1
+PRESENT_MODE_FIFO_RELAXED :: 2
+PRESENT_MODE_IMMEDIATE :: 3
+PRESENT_MODE_MAILBOX :: 4
+
+PRIMITIVE_TOPOLOGY_UNDEFINED :: 0
+PRIMITIVE_TOPOLOGY_POINT_LIST :: 1
+PRIMITIVE_TOPOLOGY_LINE_LIST :: 2
+PRIMITIVE_TOPOLOGY_LINE_STRIP :: 3
+PRIMITIVE_TOPOLOGY_TRIANGLE_LIST :: 4
+PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP :: 5
+
+QUERY_TYPE_OCCLUSION :: 1
+QUERY_TYPE_TIMESTAMP :: 2
+
+QUEUE_WORK_DONE_STATUS_SUCCESS :: 1
+QUEUE_WORK_DONE_STATUS_CALLBACK_CANCELLED :: 2
+QUEUE_WORK_DONE_STATUS_ERROR :: 3
+
+REQUEST_ADAPTER_STATUS_SUCCESS :: 1
+REQUEST_ADAPTER_STATUS_CALLBACK_CANCELLED :: 2
+REQUEST_ADAPTER_STATUS_UNAVAILABLE :: 3
+REQUEST_ADAPTER_STATUS_ERROR :: 4
+
+REQUEST_DEVICE_STATUS_SUCCESS :: 1
+REQUEST_DEVICE_STATUS_CALLBACK_CANCELLED :: 2
+REQUEST_DEVICE_STATUS_ERROR :: 3
+
+S_TYPE_SHADER_SOURCE_SPIRV :: 1
+S_TYPE_SHADER_SOURCE_WGSL :: 2
+S_TYPE_RENDER_PASS_MAX_DRAW_COUNT :: 3
+S_TYPE_SURFACE_SOURCE_METAL_LAYER :: 4
+S_TYPE_SURFACE_SOURCE_WINDOWS_HWND :: 5
+S_TYPE_SURFACE_SOURCE_XLIB_WINDOW :: 6
+S_TYPE_SURFACE_SOURCE_WAYLAND_SURFACE :: 7
+S_TYPE_SURFACE_SOURCE_ANDROID_NATIVE_WINDOW :: 8
+S_TYPE_SURFACE_SOURCE_XCB_WINDOW :: 9
+S_TYPE_SURFACE_COLOR_MANAGEMENT :: 10
+S_TYPE_REQUEST_ADAPTER_WEBXR_OPTIONS :: 11
+S_TYPE_TEXTURE_COMPONENT_SWIZZLE_DESCRIPTOR :: 12
+S_TYPE_EXTERNAL_TEXTURE_BINDING_LAYOUT :: 13
+S_TYPE_EXTERNAL_TEXTURE_BINDING_ENTRY :: 14
+S_TYPE_COMPATIBILITY_MODE_LIMITS :: 15
+S_TYPE_TEXTURE_BINDING_VIEW_DIMENSION :: 16
+
+SAMPLER_BINDING_TYPE_BINDING_NOT_USED :: 0
+SAMPLER_BINDING_TYPE_UNDEFINED :: 1
+SAMPLER_BINDING_TYPE_FILTERING :: 2
+SAMPLER_BINDING_TYPE_NON_FILTERING :: 3
+SAMPLER_BINDING_TYPE_COMPARISON :: 4
+
+STATUS_SUCCESS :: 1
+STATUS_ERROR :: 2
+
+STENCIL_OPERATION_UNDEFINED :: 0
+STENCIL_OPERATION_KEEP :: 1
+STENCIL_OPERATION_ZERO :: 2
+STENCIL_OPERATION_REPLACE :: 3
+STENCIL_OPERATION_INVERT :: 4
+STENCIL_OPERATION_INCREMENT_CLAMP :: 5
+STENCIL_OPERATION_DECREMENT_CLAMP :: 6
+STENCIL_OPERATION_INCREMENT_WRAP :: 7
+STENCIL_OPERATION_DECREMENT_WRAP :: 8
+
+STORAGE_TEXTURE_ACCESS_BINDING_NOT_USED :: 0
+STORAGE_TEXTURE_ACCESS_UNDEFINED :: 1
+STORAGE_TEXTURE_ACCESS_WRITE_ONLY :: 2
+STORAGE_TEXTURE_ACCESS_READ_ONLY :: 3
+STORAGE_TEXTURE_ACCESS_READ_WRITE :: 4
+
+STORE_OP_UNDEFINED :: 0
+STORE_OP_STORE :: 1
+STORE_OP_DISCARD :: 2
+
+SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL :: 1
+SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL :: 2
+SURFACE_GET_CURRENT_TEXTURE_STATUS_TIMEOUT :: 3
+SURFACE_GET_CURRENT_TEXTURE_STATUS_OUTDATED :: 4
+SURFACE_GET_CURRENT_TEXTURE_STATUS_LOST :: 5
+SURFACE_GET_CURRENT_TEXTURE_STATUS_ERROR :: 6
+
+TEXTURE_ASPECT_UNDEFINED :: 0
+TEXTURE_ASPECT_ALL :: 1
+TEXTURE_ASPECT_STENCIL_ONLY :: 2
+TEXTURE_ASPECT_DEPTH_ONLY :: 3
+
+TEXTURE_DIMENSION_UNDEFINED :: 0
+TEXTURE_DIMENSION_1D :: 1
+TEXTURE_DIMENSION_2D :: 2
+TEXTURE_DIMENSION_3D :: 3
+
+TEXTURE_FORMAT_UNDEFINED :: 0
+TEXTURE_FORMAT_R8_UNORM :: 1
+TEXTURE_FORMAT_R8_SNORM :: 2
+TEXTURE_FORMAT_R8_UINT :: 3
+TEXTURE_FORMAT_R8_SINT :: 4
+TEXTURE_FORMAT_R16_UNORM :: 5
+TEXTURE_FORMAT_R16_SNORM :: 6
+TEXTURE_FORMAT_R16_UINT :: 7
+TEXTURE_FORMAT_R16_SINT :: 8
+TEXTURE_FORMAT_R16_FLOAT :: 9
+TEXTURE_FORMAT_RG8_UNORM :: 10
+TEXTURE_FORMAT_RG8_SNORM :: 11
+TEXTURE_FORMAT_RG8_UINT :: 12
+TEXTURE_FORMAT_RG8_SINT :: 13
+TEXTURE_FORMAT_R32_FLOAT :: 14
+TEXTURE_FORMAT_R32_UINT :: 15
+TEXTURE_FORMAT_R32_SINT :: 16
+TEXTURE_FORMAT_RG16_UNORM :: 17
+TEXTURE_FORMAT_RG16_SNORM :: 18
+TEXTURE_FORMAT_RG16_UINT :: 19
+TEXTURE_FORMAT_RG16_SINT :: 20
+TEXTURE_FORMAT_RG16_FLOAT :: 21
+TEXTURE_FORMAT_RGBA8_UNORM :: 22
+TEXTURE_FORMAT_RGBA8_UNORM_SRGB :: 23
+TEXTURE_FORMAT_RGBA8_SNORM :: 24
+TEXTURE_FORMAT_RGBA8_UINT :: 25
+TEXTURE_FORMAT_RGBA8_SINT :: 26
+TEXTURE_FORMAT_BGRA8_UNORM :: 27
+TEXTURE_FORMAT_BGRA8_UNORM_SRGB :: 28
+TEXTURE_FORMAT_RGB10_A2_UINT :: 29
+TEXTURE_FORMAT_RGB10_A2_UNORM :: 30
+TEXTURE_FORMAT_RG11_B10_UFLOAT :: 31
+TEXTURE_FORMAT_RGB9_E5_UFLOAT :: 32
+TEXTURE_FORMAT_RG32_FLOAT :: 33
+TEXTURE_FORMAT_RG32_UINT :: 34
+TEXTURE_FORMAT_RG32_SINT :: 35
+TEXTURE_FORMAT_RGBA16_UNORM :: 36
+TEXTURE_FORMAT_RGBA16_SNORM :: 37
+TEXTURE_FORMAT_RGBA16_UINT :: 38
+TEXTURE_FORMAT_RGBA16_SINT :: 39
+TEXTURE_FORMAT_RGBA16_FLOAT :: 40
+TEXTURE_FORMAT_RGBA32_FLOAT :: 41
+TEXTURE_FORMAT_RGBA32_UINT :: 42
+TEXTURE_FORMAT_RGBA32_SINT :: 43
+TEXTURE_FORMAT_STENCIL8 :: 44
+TEXTURE_FORMAT_DEPTH16_UNORM :: 45
+TEXTURE_FORMAT_DEPTH24_PLUS :: 46
+TEXTURE_FORMAT_DEPTH24_PLUS_STENCIL8 :: 47
+TEXTURE_FORMAT_DEPTH32_FLOAT :: 48
+TEXTURE_FORMAT_DEPTH32_FLOAT_STENCIL8 :: 49
+TEXTURE_FORMAT_BC1_RGBA_UNORM :: 50
+TEXTURE_FORMAT_BC1_RGBA_UNORM_SRGB :: 51
+TEXTURE_FORMAT_BC2_RGBA_UNORM :: 52
+TEXTURE_FORMAT_BC2_RGBA_UNORM_SRGB :: 53
+TEXTURE_FORMAT_BC3_RGBA_UNORM :: 54
+TEXTURE_FORMAT_BC3_RGBA_UNORM_SRGB :: 55
+TEXTURE_FORMAT_BC4_R_UNORM :: 56
+TEXTURE_FORMAT_BC4_R_SNORM :: 57
+TEXTURE_FORMAT_BC5_RG_UNORM :: 58
+TEXTURE_FORMAT_BC5_RG_SNORM :: 59
+TEXTURE_FORMAT_BC6H_RGB_UFLOAT :: 60
+TEXTURE_FORMAT_BC6H_RGB_FLOAT :: 61
+TEXTURE_FORMAT_BC7_RGBA_UNORM :: 62
+TEXTURE_FORMAT_BC7_RGBA_UNORM_SRGB :: 63
+TEXTURE_FORMAT_ETC2_RGB8_UNORM :: 64
+TEXTURE_FORMAT_ETC2_RGB8_UNORM_SRGB :: 65
+TEXTURE_FORMAT_ETC2_RGB8A1_UNORM :: 66
+TEXTURE_FORMAT_ETC2_RGB8A1_UNORM_SRGB :: 67
+TEXTURE_FORMAT_ETC2_RGBA8_UNORM :: 68
+TEXTURE_FORMAT_ETC2_RGBA8_UNORM_SRGB :: 69
+TEXTURE_FORMAT_EAC_R11_UNORM :: 70
+TEXTURE_FORMAT_EAC_R11_SNORM :: 71
+TEXTURE_FORMAT_EAC_RG11_UNORM :: 72
+TEXTURE_FORMAT_EAC_RG11_SNORM :: 73
+TEXTURE_FORMAT_ASTC_4X4_UNORM :: 74
+TEXTURE_FORMAT_ASTC_4X4_UNORM_SRGB :: 75
+TEXTURE_FORMAT_ASTC_5X4_UNORM :: 76
+TEXTURE_FORMAT_ASTC_5X4_UNORM_SRGB :: 77
+TEXTURE_FORMAT_ASTC_5X5_UNORM :: 78
+TEXTURE_FORMAT_ASTC_5X5_UNORM_SRGB :: 79
+TEXTURE_FORMAT_ASTC_6X5_UNORM :: 80
+TEXTURE_FORMAT_ASTC_6X5_UNORM_SRGB :: 81
+TEXTURE_FORMAT_ASTC_6X6_UNORM :: 82
+TEXTURE_FORMAT_ASTC_6X6_UNORM_SRGB :: 83
+TEXTURE_FORMAT_ASTC_8X5_UNORM :: 84
+TEXTURE_FORMAT_ASTC_8X5_UNORM_SRGB :: 85
+TEXTURE_FORMAT_ASTC_8X6_UNORM :: 86
+TEXTURE_FORMAT_ASTC_8X6_UNORM_SRGB :: 87
+TEXTURE_FORMAT_ASTC_8X8_UNORM :: 88
+TEXTURE_FORMAT_ASTC_8X8_UNORM_SRGB :: 89
+TEXTURE_FORMAT_ASTC_10X5_UNORM :: 90
+TEXTURE_FORMAT_ASTC_10X5_UNORM_SRGB :: 91
+TEXTURE_FORMAT_ASTC_10X6_UNORM :: 92
+TEXTURE_FORMAT_ASTC_10X6_UNORM_SRGB :: 93
+TEXTURE_FORMAT_ASTC_10X8_UNORM :: 94
+TEXTURE_FORMAT_ASTC_10X8_UNORM_SRGB :: 95
+TEXTURE_FORMAT_ASTC_10X10_UNORM :: 96
+TEXTURE_FORMAT_ASTC_10X10_UNORM_SRGB :: 97
+TEXTURE_FORMAT_ASTC_12X10_UNORM :: 98
+TEXTURE_FORMAT_ASTC_12X10_UNORM_SRGB :: 99
+TEXTURE_FORMAT_ASTC_12X12_UNORM :: 100
+TEXTURE_FORMAT_ASTC_12X12_UNORM_SRGB :: 101
+
+TEXTURE_SAMPLE_TYPE_BINDING_NOT_USED :: 0
+TEXTURE_SAMPLE_TYPE_UNDEFINED :: 1
+TEXTURE_SAMPLE_TYPE_FLOAT :: 2
+TEXTURE_SAMPLE_TYPE_UNFILTERABLE_FLOAT :: 3
+TEXTURE_SAMPLE_TYPE_DEPTH :: 4
+TEXTURE_SAMPLE_TYPE_SINT :: 5
+TEXTURE_SAMPLE_TYPE_UINT :: 6
+
+TEXTURE_VIEW_DIMENSION_UNDEFINED :: 0
+TEXTURE_VIEW_DIMENSION_1D :: 1
+TEXTURE_VIEW_DIMENSION_2D :: 2
+TEXTURE_VIEW_DIMENSION_2D_ARRAY :: 3
+TEXTURE_VIEW_DIMENSION_CUBE :: 4
+TEXTURE_VIEW_DIMENSION_CUBE_ARRAY :: 5
+TEXTURE_VIEW_DIMENSION_3D :: 6
+
+TONE_MAPPING_MODE_STANDARD :: 1
+TONE_MAPPING_MODE_EXTENDED :: 2
+
+VERTEX_FORMAT_UINT8 :: 1
+VERTEX_FORMAT_UINT8X2 :: 2
+VERTEX_FORMAT_UINT8X4 :: 3
+VERTEX_FORMAT_SINT8 :: 4
+VERTEX_FORMAT_SINT8X2 :: 5
+VERTEX_FORMAT_SINT8X4 :: 6
+VERTEX_FORMAT_UNORM8 :: 7
+VERTEX_FORMAT_UNORM8X2 :: 8
+VERTEX_FORMAT_UNORM8X4 :: 9
+VERTEX_FORMAT_SNORM8 :: 10
+VERTEX_FORMAT_SNORM8X2 :: 11
+VERTEX_FORMAT_SNORM8X4 :: 12
+VERTEX_FORMAT_UINT16 :: 13
+VERTEX_FORMAT_UINT16X2 :: 14
+VERTEX_FORMAT_UINT16X4 :: 15
+VERTEX_FORMAT_SINT16 :: 16
+VERTEX_FORMAT_SINT16X2 :: 17
+VERTEX_FORMAT_SINT16X4 :: 18
+VERTEX_FORMAT_UNORM16 :: 19
+VERTEX_FORMAT_UNORM16X2 :: 20
+VERTEX_FORMAT_UNORM16X4 :: 21
+VERTEX_FORMAT_SNORM16 :: 22
+VERTEX_FORMAT_SNORM16X2 :: 23
+VERTEX_FORMAT_SNORM16X4 :: 24
+VERTEX_FORMAT_FLOAT16 :: 25
+VERTEX_FORMAT_FLOAT16X2 :: 26
+VERTEX_FORMAT_FLOAT16X4 :: 27
+VERTEX_FORMAT_FLOAT32 :: 28
+VERTEX_FORMAT_FLOAT32X2 :: 29
+VERTEX_FORMAT_FLOAT32X3 :: 30
+VERTEX_FORMAT_FLOAT32X4 :: 31
+VERTEX_FORMAT_UINT32 :: 32
+VERTEX_FORMAT_UINT32X2 :: 33
+VERTEX_FORMAT_UINT32X3 :: 34
+VERTEX_FORMAT_UINT32X4 :: 35
+VERTEX_FORMAT_SINT32 :: 36
+VERTEX_FORMAT_SINT32X2 :: 37
+VERTEX_FORMAT_SINT32X3 :: 38
+VERTEX_FORMAT_SINT32X4 :: 39
+VERTEX_FORMAT_UNORM10__10__10__2 :: 40
+VERTEX_FORMAT_UNORM8X4_B_G_R_A :: 41
+
+VERTEX_STEP_MODE_UNDEFINED :: 0
+VERTEX_STEP_MODE_VERTEX :: 1
+VERTEX_STEP_MODE_INSTANCE :: 2
+
+WAIT_STATUS_SUCCESS :: 1
+WAIT_STATUS_TIMED_OUT :: 2
+WAIT_STATUS_ERROR :: 3
+
+WGSL_LANGUAGE_FEATURE_NAME_READONLY_AND_READWRITE_STORAGE_TEXTURES :: 1
+WGSL_LANGUAGE_FEATURE_NAME_PACKED4X8_INTEGER_DOT_PRODUCT :: 2
+WGSL_LANGUAGE_FEATURE_NAME_UNRESTRICTED_POINTER_PARAMETERS :: 3
+WGSL_LANGUAGE_FEATURE_NAME_POINTER_COMPOSITE_ACCESS :: 4
+WGSL_LANGUAGE_FEATURE_NAME_UNIFORM_BUFFER_STANDARD_LAYOUT :: 5
+WGSL_LANGUAGE_FEATURE_NAME_SUBGROUP_ID :: 6
+WGSL_LANGUAGE_FEATURE_NAME_TEXTURE_AND_SAMPLER_LET :: 7
+WGSL_LANGUAGE_FEATURE_NAME_SUBGROUP_UNIFORMITY :: 8
+WGSL_LANGUAGE_FEATURE_NAME_TEXTURE_FORMATS_TIER1 :: 9
+WGSL_LANGUAGE_FEATURE_NAME_LINEAR_INDEXING :: 10
+
+BufferUsage :: flags u64 {
+    None = 0,
+    MapRead = 1,
+    MapWrite = 2,
+    CopySrc = 4,
+    CopyDst = 8,
+    Index = 16,
+    Vertex = 32,
+    Uniform = 64,
+    Storage = 128,
+    Indirect = 256,
+    QueryResolve = 512,
+}
+
+ColorWriteMask :: flags u64 {
+    None = 0,
+    Red = 1,
+    Green = 2,
+    Blue = 4,
+    Alpha = 8,
+    All = 15,
+}
+
+MapMode :: flags u64 {
+    None = 0,
+    Read = 1,
+    Write = 2,
+}
+
+ShaderStage :: flags u64 {
+    None = 0,
+    Vertex = 1,
+    Fragment = 2,
+    Compute = 4,
+}
+
+TextureUsage :: flags u64 {
+    None = 0,
+    CopySrc = 1,
+    CopyDst = 2,
+    TextureBinding = 4,
+    StorageBinding = 8,
+    RenderAttachment = 16,
+    TransientAttachment = 32,
+}
+
+AdapterInfo :: struct {
+    next_in_chain: ^u8,
+    vendor: StringView,
+    architecture: StringView,
+    device: StringView,
+    description: StringView,
+    backend_type: u32,
+    adapter_type: u32,
+    vendor_ID: u32,
+    device_ID: u32,
+    subgroup_min_size: u32,
+    subgroup_max_size: u32,
+}
+
+BindGroupDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    layout: BindGroupLayout,
+    entries_count: u64,
+    entries: ^BindGroupEntry,
+}
+
+BindGroupEntry :: struct {
+    next_in_chain: ^u8,
+    binding: u32,
+    buffer: Buffer,
+    offset: u64,
+    size: u64,
+    sampler: Sampler,
+    texture_view: TextureView,
+}
+
+BindGroupLayoutDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    entries_count: u64,
+    entries: ^BindGroupLayoutEntry,
+}
+
+BindGroupLayoutEntry :: struct {
+    next_in_chain: ^u8,
+    binding: u32,
+    visibility: ShaderStage,
+    binding_array_size: u32,
+    buffer: BufferBindingLayout,
+    sampler: SamplerBindingLayout,
+    texture: TextureBindingLayout,
+    storage_texture: StorageTextureBindingLayout,
+}
+
+BlendComponent :: struct {
+    operation: u32,
+    src_factor: u32,
+    dst_factor: u32,
+}
+
+BlendState :: struct {
+    color: BlendComponent,
+    alpha: BlendComponent,
+}
+
+BufferBindingLayout :: struct {
+    next_in_chain: ^u8,
+    type: u32,
+    has_dynamic_offset: u32,
+    min_binding_size: u64,
+}
+
+BufferDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    usage: BufferUsage,
+    size: u64,
+    mapped_at_creation: u32,
+}
+
+Color :: struct {
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+}
+
+ColorTargetState :: struct {
+    next_in_chain: ^u8,
+    format: u32,
+    blend: ^BlendState,
+    write_mask: ColorWriteMask,
+}
+
+CommandBufferDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+CommandEncoderDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+CompatibilityModeLimits :: struct {
+    chain: Chained,
+    max_storage_buffers_in_vertex_stage: u32,
+    max_storage_textures_in_vertex_stage: u32,
+    max_storage_buffers_in_fragment_stage: u32,
+    max_storage_textures_in_fragment_stage: u32,
+}
+
+CompilationInfo :: struct {
+    messages_count: u64,
+    messages: ^CompilationMessage,
+}
+
+CompilationMessage :: struct {
+    message: StringView,
+    type: u32,
+    line_num: u64,
+    line_pos: u64,
+    offset: u64,
+    length: u64,
+}
+
+ComputePassDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    timestamp_writes: ^PassTimestampWrites,
+}
+
+ComputePipelineDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    layout: PipelineLayout,
+    compute: ComputeState,
+}
+
+ComputeState :: struct {
+    next_in_chain: ^u8,
+    module: ShaderModule,
+    entry_point: StringView,
+    constants_count: u64,
+    constants: ^ConstantEntry,
+}
+
+ConstantEntry :: struct {
+    next_in_chain: ^u8,
+    key: StringView,
+    value: f64,
+}
+
+DepthStencilState :: struct {
+    next_in_chain: ^u8,
+    format: u32,
+    depth_write_enabled: u32,
+    depth_compare: u32,
+    stencil_front: StencilFaceState,
+    stencil_back: StencilFaceState,
+    stencil_read_mask: u32,
+    stencil_write_mask: u32,
+    depth_bias: i32,
+    depth_bias_slope_scale: f32,
+    depth_bias_clamp: f32,
+}
+
+DeviceDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    required_features_count: u64,
+    required_features: ^u32,
+    required_limits: ^Limits,
+    default_queue: QueueDescriptor,
+    device_lost_callback_info: ^u8,
+    uncaptured_error_callback_info: ^u8,
+}
+
+Extent3D :: struct {
+    width: u32,
+    height: u32,
+    depth_or_array_layers: u32,
+}
+
+ExternalTextureBindingEntry :: struct {
+    chain: Chained,
+    external_texture: ExternalTexture,
+}
+
+ExternalTextureBindingLayout :: struct {
+    chain: Chained,
+}
+
+FragmentState :: struct {
+    next_in_chain: ^u8,
+    module: ShaderModule,
+    entry_point: StringView,
+    constants_count: u64,
+    constants: ^ConstantEntry,
+    targets_count: u64,
+    targets: ^ColorTargetState,
+}
+
+Future :: struct {
+    id: u64,
+}
+
+FutureWaitInfo :: struct {
+    future: Future,
+    completed: u32,
+}
+
+InstanceDescriptor :: struct {
+    next_in_chain: ^u8,
+    required_features_count: u64,
+    required_features: ^u32,
+    required_limits: ^InstanceLimits,
+}
+
+InstanceLimits :: struct {
+    next_in_chain: ^u8,
+    timed_wait_any_max_count: u64,
+}
+
+Limits :: struct {
+    next_in_chain: ^u8,
+    max_texture_dimension_1D: u32,
+    max_texture_dimension_2D: u32,
+    max_texture_dimension_3D: u32,
+    max_texture_array_layers: u32,
+    max_bind_groups: u32,
+    max_bind_groups_plus_vertex_buffers: u32,
+    max_bindings_per_bind_group: u32,
+    max_dynamic_uniform_buffers_per_pipeline_layout: u32,
+    max_dynamic_storage_buffers_per_pipeline_layout: u32,
+    max_sampled_textures_per_shader_stage: u32,
+    max_samplers_per_shader_stage: u32,
+    max_storage_buffers_per_shader_stage: u32,
+    max_storage_textures_per_shader_stage: u32,
+    max_uniform_buffers_per_shader_stage: u32,
+    max_uniform_buffer_binding_size: u64,
+    max_storage_buffer_binding_size: u64,
+    min_uniform_buffer_offset_alignment: u32,
+    min_storage_buffer_offset_alignment: u32,
+    max_vertex_buffers: u32,
+    max_buffer_size: u64,
+    max_vertex_attributes: u32,
+    max_vertex_buffer_array_stride: u32,
+    max_inter_stage_shader_variables: u32,
+    max_color_attachments: u32,
+    max_color_attachment_bytes_per_sample: u32,
+    max_compute_workgroup_storage_size: u32,
+    max_compute_invocations_per_workgroup: u32,
+    max_compute_workgroup_size_x: u32,
+    max_compute_workgroup_size_y: u32,
+    max_compute_workgroup_size_z: u32,
+    max_compute_workgroups_per_dimension: u32,
+    max_immediate_size: u32,
+}
+
+MultisampleState :: struct {
+    next_in_chain: ^u8,
+    count: u32,
+    mask: u32,
+    alpha_to_coverage_enabled: u32,
+}
+
+Origin3D :: struct {
+    x: u32,
+    y: u32,
+    z: u32,
+}
+
+PassTimestampWrites :: struct {
+    next_in_chain: ^u8,
+    query_set: QuerySet,
+    beginning_of_pass_write_index: u32,
+    end_of_pass_write_index: u32,
+}
+
+PipelineLayoutDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    bind_group_layouts_count: u64,
+    bind_group_layouts: ^BindGroupLayout,
+    immediate_size: u32,
+}
+
+PrimitiveState :: struct {
+    next_in_chain: ^u8,
+    topology: u32,
+    strip_index_format: u32,
+    front_face: u32,
+    cull_mode: u32,
+    unclipped_depth: u32,
+}
+
+QuerySetDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    type: u32,
+    count: u32,
+}
+
+QueueDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+RenderBundleDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+RenderBundleEncoderDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    color_formats_count: u64,
+    color_formats: ^u32,
+    depth_stencil_format: u32,
+    sample_count: u32,
+    depth_read_only: u32,
+    stencil_read_only: u32,
+}
+
+RenderPassColorAttachment :: struct {
+    next_in_chain: ^u8,
+    view: TextureView,
+    depth_slice: u32,
+    resolve_target: TextureView,
+    load_op: u32,
+    store_op: u32,
+    clear_value: Color,
+}
+
+RenderPassDepthStencilAttachment :: struct {
+    next_in_chain: ^u8,
+    view: TextureView,
+    depth_load_op: u32,
+    depth_store_op: u32,
+    depth_clear_value: f32,
+    depth_read_only: u32,
+    stencil_load_op: u32,
+    stencil_store_op: u32,
+    stencil_clear_value: u32,
+    stencil_read_only: u32,
+}
+
+RenderPassDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    color_attachments_count: u64,
+    color_attachments: ^RenderPassColorAttachment,
+    depth_stencil_attachment: ^RenderPassDepthStencilAttachment,
+    occlusion_query_set: QuerySet,
+    timestamp_writes: ^PassTimestampWrites,
+}
+
+RenderPassMaxDrawCount :: struct {
+    chain: Chained,
+    max_draw_count: u64,
+}
+
+RenderPipelineDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    layout: PipelineLayout,
+    vertex: VertexState,
+    primitive: PrimitiveState,
+    depth_stencil: ^DepthStencilState,
+    multisample: MultisampleState,
+    fragment: ^FragmentState,
+}
+
+RequestAdapterOptions :: struct {
+    next_in_chain: ^u8,
+    feature_level: u32,
+    power_preference: u32,
+    force_fallback_adapter: u32,
+    backend_type: u32,
+    compatible_surface: Surface,
+}
+
+RequestAdapterWebXROptions :: struct {
+    chain: Chained,
+    xr_compatible: u32,
+}
+
+SamplerBindingLayout :: struct {
+    next_in_chain: ^u8,
+    type: u32,
+}
+
+SamplerDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    address_mode_u: u32,
+    address_mode_v: u32,
+    address_mode_w: u32,
+    mag_filter: u32,
+    min_filter: u32,
+    mipmap_filter: u32,
+    lod_min_clamp: f32,
+    lod_max_clamp: f32,
+    compare: u32,
+    max_anisotropy: u16,
+}
+
+ShaderModuleDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+ShaderSourceSPIRV :: struct {
+    chain: Chained,
+    code_size: u32,
+    code: u32,
+}
+
+ShaderSourceWGSL :: struct {
+    chain: Chained,
+    code: StringView,
+}
+
+StencilFaceState :: struct {
+    compare: u32,
+    fail_op: u32,
+    depth_fail_op: u32,
+    pass_op: u32,
+}
+
+StorageTextureBindingLayout :: struct {
+    next_in_chain: ^u8,
+    access: u32,
+    format: u32,
+    view_dimension: u32,
+}
+
+SupportedFeatures :: struct {
+    features_count: u64,
+    features: ^u32,
+}
+
+SupportedInstanceFeatures :: struct {
+    features_count: u64,
+    features: ^u32,
+}
+
+SupportedWGSLLanguageFeatures :: struct {
+    features_count: u64,
+    features: ^u32,
+}
+
+SurfaceCapabilities :: struct {
+    next_in_chain: ^u8,
+    usages: TextureUsage,
+    formats_count: u64,
+    formats: ^u32,
+    present_modes_count: u64,
+    present_modes: ^u32,
+    alpha_modes_count: u64,
+    alpha_modes: ^u32,
+}
+
+SurfaceColorManagement :: struct {
+    chain: Chained,
+    color_space: u32,
+    tone_mapping_mode: u32,
+}
+
+SurfaceConfiguration :: struct {
+    next_in_chain: ^u8,
+    device: Device,
+    format: u32,
+    usage: TextureUsage,
+    width: u32,
+    height: u32,
+    view_formats_count: u64,
+    view_formats: ^u32,
+    alpha_mode: u32,
+    present_mode: u32,
+}
+
+SurfaceDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+SurfaceSourceAndroidNativeWindow :: struct {
+    chain: Chained,
+    window: ^u8,
+}
+
+SurfaceSourceMetalLayer :: struct {
+    chain: Chained,
+    layer: ^u8,
+}
+
+SurfaceSourceWaylandSurface :: struct {
+    chain: Chained,
+    display: ^u8,
+    surface: ^u8,
+}
+
+SurfaceSourceWindowsHWND :: struct {
+    chain: Chained,
+    hinstance: ^u8,
+    hwnd: ^u8,
+}
+
+SurfaceSourceXCBWindow :: struct {
+    chain: Chained,
+    connection: ^u8,
+    window: u32,
+}
+
+SurfaceSourceXlibWindow :: struct {
+    chain: Chained,
+    display: ^u8,
+    window: u64,
+}
+
+SurfaceTexture :: struct {
+    next_in_chain: ^u8,
+    texture: Texture,
+    status: u32,
+}
+
+TexelCopyBufferInfo :: struct {
+    layout: TexelCopyBufferLayout,
+    buffer: Buffer,
+}
+
+TexelCopyBufferLayout :: struct {
+    offset: u64,
+    bytes_per_row: u32,
+    rows_per_image: u32,
+}
+
+TexelCopyTextureInfo :: struct {
+    texture: Texture,
+    mip_level: u32,
+    origin: Origin3D,
+    aspect: u32,
+}
+
+TextureBindingLayout :: struct {
+    next_in_chain: ^u8,
+    sample_type: u32,
+    view_dimension: u32,
+    multisampled: u32,
+}
+
+TextureBindingViewDimension :: struct {
+    chain: Chained,
+    texture_binding_view_dimension: u32,
+}
+
+TextureComponentSwizzle :: struct {
+    r: u32,
+    g: u32,
+    b: u32,
+    a: u32,
+}
+
+TextureComponentSwizzleDescriptor :: struct {
+    chain: Chained,
+    swizzle: TextureComponentSwizzle,
+}
+
+TextureDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    usage: TextureUsage,
+    dimension: u32,
+    size: Extent3D,
+    format: u32,
+    mip_level_count: u32,
+    sample_count: u32,
+    view_formats_count: u64,
+    view_formats: ^u32,
+}
+
+TextureViewDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    format: u32,
+    dimension: u32,
+    base_mip_level: u32,
+    mip_level_count: u32,
+    base_array_layer: u32,
+    array_layer_count: u32,
+    aspect: u32,
+    usage: TextureUsage,
+}
+
+VertexAttribute :: struct {
+    next_in_chain: ^u8,
+    format: u32,
+    offset: u64,
+    shader_location: u32,
+}
+
+VertexBufferLayout :: struct {
+    next_in_chain: ^u8,
+    step_mode: u32,
+    array_stride: u64,
+    attributes_count: u64,
+    attributes: ^VertexAttribute,
+}
+
+VertexState :: struct {
+    next_in_chain: ^u8,
+    module: ShaderModule,
+    entry_point: StringView,
+    constants_count: u64,
+    constants: ^ConstantEntry,
+    buffers_count: u64,
+    buffers: ^VertexBufferLayout,
+}
+
+BufferMapCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+buffer_map_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> BufferMapCallbackInfo {
+    BufferMapCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+CompilationInfoCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, ^CompilationInfo, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+compilation_info_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, ^CompilationInfo, mut Ctx, ^u8), state: ^Ctx) -> CompilationInfoCallbackInfo {
+    CompilationInfoCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, ^CompilationInfo, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+CreateComputePipelineAsyncCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, ComputePipeline, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+create_compute_pipeline_async_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, ComputePipeline, value StringView, mut Ctx, ^u8), state: ^Ctx) -> CreateComputePipelineAsyncCallbackInfo {
+    CreateComputePipelineAsyncCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, ComputePipeline, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+CreateRenderPipelineAsyncCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, RenderPipeline, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+create_render_pipeline_async_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, RenderPipeline, value StringView, mut Ctx, ^u8), state: ^Ctx) -> CreateRenderPipelineAsyncCallbackInfo {
+    CreateRenderPipelineAsyncCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, RenderPipeline, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+DeviceLostCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(Device, u32, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+device_lost_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(Device, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> DeviceLostCallbackInfo {
+    DeviceLostCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(Device, u32, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+PopErrorScopeCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, u32, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+pop_error_scope_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> PopErrorScopeCallbackInfo {
+    PopErrorScopeCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, u32, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+QueueWorkDoneCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+queue_work_done_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> QueueWorkDoneCallbackInfo {
+    QueueWorkDoneCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+RequestAdapterCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, Adapter, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+request_adapter_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, Adapter, value StringView, mut Ctx, ^u8), state: ^Ctx) -> RequestAdapterCallbackInfo {
+    RequestAdapterCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, Adapter, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+RequestDeviceCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, Device, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+request_device_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(u32, Device, value StringView, mut Ctx, ^u8), state: ^Ctx) -> RequestDeviceCallbackInfo {
+    RequestDeviceCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(u32, Device, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+UncapturedErrorCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(Device, u32, value StringView, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+uncaptured_error_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(Device, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> UncapturedErrorCallbackInfo {
+    UncapturedErrorCallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(Device, u32, value StringView, ^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+wgpuAdapterGetLimits :: extern fn(handle: Adapter, limits: ^Limits) -> u32
+adapter_get_limits :: fn(handle: Adapter, limits: ^Limits) -> u32 {
+    unsafe { wgpuAdapterGetLimits(handle, limits) }
+}
+wgpuAdapterHasFeature :: extern fn(handle: Adapter, feature: u32) -> u32
+adapter_has_feature :: fn(handle: Adapter, feature: u32) -> u32 {
+    unsafe { wgpuAdapterHasFeature(handle, feature) }
+}
+wgpuAdapterGetFeatures :: extern fn(handle: Adapter, features: ^SupportedFeatures)
+adapter_get_features :: fn(handle: Adapter, features: ^SupportedFeatures) {
+    unsafe { wgpuAdapterGetFeatures(handle, features) }
+}
+wgpuAdapterGetInfo :: extern fn(handle: Adapter, info: ^AdapterInfo) -> u32
+adapter_get_info :: fn(handle: Adapter, info: ^AdapterInfo) -> u32 {
+    unsafe { wgpuAdapterGetInfo(handle, info) }
+}
+wgpuAdapterRequestDevice :: extern fn(handle: Adapter, descriptor: ^DeviceDescriptor, callback_info: ^u8)
+adapter_request_device :: fn(handle: Adapter, descriptor: ^DeviceDescriptor, callback_info: ^u8) {
+    unsafe { wgpuAdapterRequestDevice(handle, descriptor, callback_info) }
+}
+wgpuBindGroupSetLabel :: extern fn(handle: BindGroup, value label: StringView)
+bind_group_set_label :: fn(handle: BindGroup, value label: StringView) {
+    unsafe { wgpuBindGroupSetLabel(handle, label) }
+}
+wgpuBindGroupLayoutSetLabel :: extern fn(handle: BindGroupLayout, value label: StringView)
+bind_group_layout_set_label :: fn(handle: BindGroupLayout, value label: StringView) {
+    unsafe { wgpuBindGroupLayoutSetLabel(handle, label) }
+}
+wgpuBufferMapAsync :: extern fn(handle: Buffer, mode: MapMode, offset: u64, size: u64, callback_info: ^u8)
+buffer_map_async :: fn(handle: Buffer, mode: MapMode, offset: u64, size: u64, callback_info: ^u8) {
+    unsafe { wgpuBufferMapAsync(handle, mode, offset, size, callback_info) }
+}
+wgpuBufferGetMappedRange :: extern fn(handle: Buffer, offset: u64, size: u64) -> ^u8
+buffer_get_mapped_range :: fn(handle: Buffer, offset: u64, size: u64) -> ^u8 {
+    unsafe { wgpuBufferGetMappedRange(handle, offset, size) }
+}
+wgpuBufferGetConstMappedRange :: extern fn(handle: Buffer, offset: u64, size: u64) -> ^u8
+buffer_get_const_mapped_range :: fn(handle: Buffer, offset: u64, size: u64) -> ^u8 {
+    unsafe { wgpuBufferGetConstMappedRange(handle, offset, size) }
+}
+wgpuBufferReadMappedRange :: extern fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32
+buffer_read_mapped_range :: fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32 {
+    unsafe { wgpuBufferReadMappedRange(handle, offset, data, size) }
+}
+wgpuBufferWriteMappedRange :: extern fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32
+buffer_write_mapped_range :: fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32 {
+    unsafe { wgpuBufferWriteMappedRange(handle, offset, data, size) }
+}
+wgpuBufferSetLabel :: extern fn(handle: Buffer, value label: StringView)
+buffer_set_label :: fn(handle: Buffer, value label: StringView) {
+    unsafe { wgpuBufferSetLabel(handle, label) }
+}
+wgpuBufferGetUsage :: extern fn(handle: Buffer) -> BufferUsage
+buffer_get_usage :: fn(handle: Buffer) -> BufferUsage {
+    unsafe { wgpuBufferGetUsage(handle) }
+}
+wgpuBufferGetSize :: extern fn(handle: Buffer) -> u64
+buffer_get_size :: fn(handle: Buffer) -> u64 {
+    unsafe { wgpuBufferGetSize(handle) }
+}
+wgpuBufferGetMapState :: extern fn(handle: Buffer) -> u32
+buffer_get_map_state :: fn(handle: Buffer) -> u32 {
+    unsafe { wgpuBufferGetMapState(handle) }
+}
+wgpuBufferUnmap :: extern fn(handle: Buffer)
+buffer_unmap :: fn(handle: Buffer) {
+    unsafe { wgpuBufferUnmap(handle) }
+}
+wgpuBufferDestroy :: extern fn(handle: Buffer)
+buffer_destroy :: fn(handle: Buffer) {
+    unsafe { wgpuBufferDestroy(handle) }
+}
+wgpuCommandBufferSetLabel :: extern fn(handle: CommandBuffer, value label: StringView)
+command_buffer_set_label :: fn(handle: CommandBuffer, value label: StringView) {
+    unsafe { wgpuCommandBufferSetLabel(handle, label) }
+}
+wgpuCommandEncoderFinish :: extern fn(handle: CommandEncoder, descriptor: ^CommandBufferDescriptor) -> CommandBuffer
+command_encoder_finish :: fn(handle: CommandEncoder, descriptor: ^CommandBufferDescriptor) -> CommandBuffer {
+    held := unsafe { wgpuCommandEncoderFinish(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: command_encoder_finish answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuCommandEncoderBeginComputePass :: extern fn(handle: CommandEncoder, descriptor: ^ComputePassDescriptor) -> ComputePassEncoder
+command_encoder_begin_compute_pass :: fn(handle: CommandEncoder, descriptor: ^ComputePassDescriptor) -> ComputePassEncoder {
+    held := unsafe { wgpuCommandEncoderBeginComputePass(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: command_encoder_begin_compute_pass answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuCommandEncoderBeginRenderPass :: extern fn(handle: CommandEncoder, descriptor: ^RenderPassDescriptor) -> RenderPassEncoder
+command_encoder_begin_render_pass :: fn(handle: CommandEncoder, descriptor: ^RenderPassDescriptor) -> RenderPassEncoder {
+    held := unsafe { wgpuCommandEncoderBeginRenderPass(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: command_encoder_begin_render_pass answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuCommandEncoderCopyBufferToBuffer :: extern fn(handle: CommandEncoder, source: Buffer, source_offset: u64, destination: Buffer, destination_offset: u64, size: u64)
+command_encoder_copy_buffer_to_buffer :: fn(handle: CommandEncoder, source: Buffer, source_offset: u64, destination: Buffer, destination_offset: u64, size: u64) {
+    unsafe { wgpuCommandEncoderCopyBufferToBuffer(handle, source, source_offset, destination, destination_offset, size) }
+}
+wgpuCommandEncoderCopyBufferToTexture :: extern fn(handle: CommandEncoder, source: ^TexelCopyBufferInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D)
+command_encoder_copy_buffer_to_texture :: fn(handle: CommandEncoder, source: ^TexelCopyBufferInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D) {
+    unsafe { wgpuCommandEncoderCopyBufferToTexture(handle, source, destination, copy_size) }
+}
+wgpuCommandEncoderCopyTextureToBuffer :: extern fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyBufferInfo, copy_size: ^Extent3D)
+command_encoder_copy_texture_to_buffer :: fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyBufferInfo, copy_size: ^Extent3D) {
+    unsafe { wgpuCommandEncoderCopyTextureToBuffer(handle, source, destination, copy_size) }
+}
+wgpuCommandEncoderCopyTextureToTexture :: extern fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D)
+command_encoder_copy_texture_to_texture :: fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D) {
+    unsafe { wgpuCommandEncoderCopyTextureToTexture(handle, source, destination, copy_size) }
+}
+wgpuCommandEncoderClearBuffer :: extern fn(handle: CommandEncoder, buffer: Buffer, offset: u64, size: u64)
+command_encoder_clear_buffer :: fn(handle: CommandEncoder, buffer: Buffer, offset: u64, size: u64) {
+    unsafe { wgpuCommandEncoderClearBuffer(handle, buffer, offset, size) }
+}
+wgpuCommandEncoderInsertDebugMarker :: extern fn(handle: CommandEncoder, value marker_label: StringView)
+command_encoder_insert_debug_marker :: fn(handle: CommandEncoder, value marker_label: StringView) {
+    unsafe { wgpuCommandEncoderInsertDebugMarker(handle, marker_label) }
+}
+wgpuCommandEncoderPopDebugGroup :: extern fn(handle: CommandEncoder)
+command_encoder_pop_debug_group :: fn(handle: CommandEncoder) {
+    unsafe { wgpuCommandEncoderPopDebugGroup(handle) }
+}
+wgpuCommandEncoderPushDebugGroup :: extern fn(handle: CommandEncoder, value group_label: StringView)
+command_encoder_push_debug_group :: fn(handle: CommandEncoder, value group_label: StringView) {
+    unsafe { wgpuCommandEncoderPushDebugGroup(handle, group_label) }
+}
+wgpuCommandEncoderResolveQuerySet :: extern fn(handle: CommandEncoder, query_set: QuerySet, first_query: u32, query_count: u32, destination: Buffer, destination_offset: u64)
+command_encoder_resolve_query_set :: fn(handle: CommandEncoder, query_set: QuerySet, first_query: u32, query_count: u32, destination: Buffer, destination_offset: u64) {
+    unsafe { wgpuCommandEncoderResolveQuerySet(handle, query_set, first_query, query_count, destination, destination_offset) }
+}
+wgpuCommandEncoderWriteTimestamp :: extern fn(handle: CommandEncoder, query_set: QuerySet, query_index: u32)
+command_encoder_write_timestamp :: fn(handle: CommandEncoder, query_set: QuerySet, query_index: u32) {
+    unsafe { wgpuCommandEncoderWriteTimestamp(handle, query_set, query_index) }
+}
+wgpuCommandEncoderSetLabel :: extern fn(handle: CommandEncoder, value label: StringView)
+command_encoder_set_label :: fn(handle: CommandEncoder, value label: StringView) {
+    unsafe { wgpuCommandEncoderSetLabel(handle, label) }
+}
+wgpuComputePassEncoderInsertDebugMarker :: extern fn(handle: ComputePassEncoder, value marker_label: StringView)
+compute_pass_encoder_insert_debug_marker :: fn(handle: ComputePassEncoder, value marker_label: StringView) {
+    unsafe { wgpuComputePassEncoderInsertDebugMarker(handle, marker_label) }
+}
+wgpuComputePassEncoderPopDebugGroup :: extern fn(handle: ComputePassEncoder)
+compute_pass_encoder_pop_debug_group :: fn(handle: ComputePassEncoder) {
+    unsafe { wgpuComputePassEncoderPopDebugGroup(handle) }
+}
+wgpuComputePassEncoderPushDebugGroup :: extern fn(handle: ComputePassEncoder, value group_label: StringView)
+compute_pass_encoder_push_debug_group :: fn(handle: ComputePassEncoder, value group_label: StringView) {
+    unsafe { wgpuComputePassEncoderPushDebugGroup(handle, group_label) }
+}
+wgpuComputePassEncoderSetPipeline :: extern fn(handle: ComputePassEncoder, pipeline: ComputePipeline)
+compute_pass_encoder_set_pipeline :: fn(handle: ComputePassEncoder, pipeline: ComputePipeline) {
+    unsafe { wgpuComputePassEncoderSetPipeline(handle, pipeline) }
+}
+wgpuComputePassEncoderSetBindGroup :: extern fn(handle: ComputePassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
+compute_pass_encoder_set_bind_group :: fn(handle: ComputePassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+    unsafe { wgpuComputePassEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
+}
+wgpuComputePassEncoderSetImmediates :: extern fn(handle: ComputePassEncoder, offset: u32, data: ^u8, size: u64)
+compute_pass_encoder_set_immediates :: fn(handle: ComputePassEncoder, offset: u32, data: ^u8, size: u64) {
+    unsafe { wgpuComputePassEncoderSetImmediates(handle, offset, data, size) }
+}
+wgpuComputePassEncoderDispatchWorkgroups :: extern fn(handle: ComputePassEncoder, workgroupCountX: u32, workgroupCountY: u32, workgroupCountZ: u32)
+compute_pass_encoder_dispatch_workgroups :: fn(handle: ComputePassEncoder, workgroupCountX: u32, workgroupCountY: u32, workgroupCountZ: u32) {
+    unsafe { wgpuComputePassEncoderDispatchWorkgroups(handle, workgroupCountX, workgroupCountY, workgroupCountZ) }
+}
+wgpuComputePassEncoderDispatchWorkgroupsIndirect :: extern fn(handle: ComputePassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
+compute_pass_encoder_dispatch_workgroups_indirect :: fn(handle: ComputePassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+    unsafe { wgpuComputePassEncoderDispatchWorkgroupsIndirect(handle, indirect_buffer, indirect_offset) }
+}
+wgpuComputePassEncoderEnd :: extern fn(handle: ComputePassEncoder)
+compute_pass_encoder_end :: fn(handle: ComputePassEncoder) {
+    unsafe { wgpuComputePassEncoderEnd(handle) }
+}
+wgpuComputePassEncoderSetLabel :: extern fn(handle: ComputePassEncoder, value label: StringView)
+compute_pass_encoder_set_label :: fn(handle: ComputePassEncoder, value label: StringView) {
+    unsafe { wgpuComputePassEncoderSetLabel(handle, label) }
+}
+wgpuComputePipelineGetBindGroupLayout :: extern fn(handle: ComputePipeline, group_index: u32) -> BindGroupLayout
+compute_pipeline_get_bind_group_layout :: fn(handle: ComputePipeline, group_index: u32) -> BindGroupLayout {
+    held := unsafe { wgpuComputePipelineGetBindGroupLayout(handle, group_index) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: compute_pipeline_get_bind_group_layout answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuComputePipelineSetLabel :: extern fn(handle: ComputePipeline, value label: StringView)
+compute_pipeline_set_label :: fn(handle: ComputePipeline, value label: StringView) {
+    unsafe { wgpuComputePipelineSetLabel(handle, label) }
+}
+wgpuDeviceCreateBindGroup :: extern fn(handle: Device, descriptor: ^BindGroupDescriptor) -> BindGroup
+device_create_bind_group :: fn(handle: Device, descriptor: ^BindGroupDescriptor) -> BindGroup {
+    held := unsafe { wgpuDeviceCreateBindGroup(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_bind_group answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateBindGroupLayout :: extern fn(handle: Device, descriptor: ^BindGroupLayoutDescriptor) -> BindGroupLayout
+device_create_bind_group_layout :: fn(handle: Device, descriptor: ^BindGroupLayoutDescriptor) -> BindGroupLayout {
+    held := unsafe { wgpuDeviceCreateBindGroupLayout(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_bind_group_layout answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateBuffer :: extern fn(handle: Device, descriptor: ^BufferDescriptor) -> Buffer
+device_create_buffer :: fn(handle: Device, descriptor: ^BufferDescriptor) -> Buffer {
+    held := unsafe { wgpuDeviceCreateBuffer(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_buffer answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateCommandEncoder :: extern fn(handle: Device, descriptor: ^CommandEncoderDescriptor) -> CommandEncoder
+device_create_command_encoder :: fn(handle: Device, descriptor: ^CommandEncoderDescriptor) -> CommandEncoder {
+    held := unsafe { wgpuDeviceCreateCommandEncoder(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_command_encoder answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateComputePipeline :: extern fn(handle: Device, descriptor: ^ComputePipelineDescriptor) -> ComputePipeline
+device_create_compute_pipeline :: fn(handle: Device, descriptor: ^ComputePipelineDescriptor) -> ComputePipeline {
+    held := unsafe { wgpuDeviceCreateComputePipeline(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_compute_pipeline answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateComputePipelineAsync :: extern fn(handle: Device, descriptor: ^ComputePipelineDescriptor, callback_info: ^u8)
+device_create_compute_pipeline_async :: fn(handle: Device, descriptor: ^ComputePipelineDescriptor, callback_info: ^u8) {
+    unsafe { wgpuDeviceCreateComputePipelineAsync(handle, descriptor, callback_info) }
+}
+wgpuDeviceCreatePipelineLayout :: extern fn(handle: Device, descriptor: ^PipelineLayoutDescriptor) -> PipelineLayout
+device_create_pipeline_layout :: fn(handle: Device, descriptor: ^PipelineLayoutDescriptor) -> PipelineLayout {
+    held := unsafe { wgpuDeviceCreatePipelineLayout(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_pipeline_layout answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateQuerySet :: extern fn(handle: Device, descriptor: ^QuerySetDescriptor) -> QuerySet
+device_create_query_set :: fn(handle: Device, descriptor: ^QuerySetDescriptor) -> QuerySet {
+    held := unsafe { wgpuDeviceCreateQuerySet(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_query_set answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateRenderPipelineAsync :: extern fn(handle: Device, descriptor: ^RenderPipelineDescriptor, callback_info: ^u8)
+device_create_render_pipeline_async :: fn(handle: Device, descriptor: ^RenderPipelineDescriptor, callback_info: ^u8) {
+    unsafe { wgpuDeviceCreateRenderPipelineAsync(handle, descriptor, callback_info) }
+}
+wgpuDeviceCreateRenderBundleEncoder :: extern fn(handle: Device, descriptor: ^RenderBundleEncoderDescriptor) -> RenderBundleEncoder
+device_create_render_bundle_encoder :: fn(handle: Device, descriptor: ^RenderBundleEncoderDescriptor) -> RenderBundleEncoder {
+    held := unsafe { wgpuDeviceCreateRenderBundleEncoder(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_render_bundle_encoder answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateRenderPipeline :: extern fn(handle: Device, descriptor: ^RenderPipelineDescriptor) -> RenderPipeline
+device_create_render_pipeline :: fn(handle: Device, descriptor: ^RenderPipelineDescriptor) -> RenderPipeline {
+    held := unsafe { wgpuDeviceCreateRenderPipeline(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_render_pipeline answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateSampler :: extern fn(handle: Device, descriptor: ^SamplerDescriptor) -> Sampler
+device_create_sampler :: fn(handle: Device, descriptor: ^SamplerDescriptor) -> Sampler {
+    held := unsafe { wgpuDeviceCreateSampler(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_sampler answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateShaderModule :: extern fn(handle: Device, descriptor: ^ShaderModuleDescriptor) -> ShaderModule
+device_create_shader_module :: fn(handle: Device, descriptor: ^ShaderModuleDescriptor) -> ShaderModule {
+    held := unsafe { wgpuDeviceCreateShaderModule(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_shader_module answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceCreateTexture :: extern fn(handle: Device, descriptor: ^TextureDescriptor) -> Texture
+device_create_texture :: fn(handle: Device, descriptor: ^TextureDescriptor) -> Texture {
+    held := unsafe { wgpuDeviceCreateTexture(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_create_texture answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDeviceDestroy :: extern fn(handle: Device)
+device_destroy :: fn(handle: Device) {
+    unsafe { wgpuDeviceDestroy(handle) }
+}
+wgpuDeviceGetLostFuture :: extern fn(handle: Device) -> Future
+device_get_lost_future :: fn(handle: Device) -> Future {
+    unsafe { wgpuDeviceGetLostFuture(handle) }
+}
+wgpuDeviceGetLimits :: extern fn(handle: Device, limits: ^Limits) -> u32
+device_get_limits :: fn(handle: Device, limits: ^Limits) -> u32 {
+    unsafe { wgpuDeviceGetLimits(handle, limits) }
+}
+wgpuDeviceHasFeature :: extern fn(handle: Device, feature: u32) -> u32
+device_has_feature :: fn(handle: Device, feature: u32) -> u32 {
+    unsafe { wgpuDeviceHasFeature(handle, feature) }
+}
+wgpuDeviceGetFeatures :: extern fn(handle: Device, features: ^SupportedFeatures)
+device_get_features :: fn(handle: Device, features: ^SupportedFeatures) {
+    unsafe { wgpuDeviceGetFeatures(handle, features) }
+}
+wgpuDeviceGetAdapterInfo :: extern fn(handle: Device, adapter_info: ^AdapterInfo) -> u32
+device_get_adapter_info :: fn(handle: Device, adapter_info: ^AdapterInfo) -> u32 {
+    unsafe { wgpuDeviceGetAdapterInfo(handle, adapter_info) }
+}
+wgpuDeviceGetQueue :: extern fn(handle: Device) -> Queue
+device_get_queue :: fn(handle: Device) -> Queue {
+    held := unsafe { wgpuDeviceGetQueue(handle) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: device_get_queue answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuDevicePushErrorScope :: extern fn(handle: Device, filter: u32)
+device_push_error_scope :: fn(handle: Device, filter: u32) {
+    unsafe { wgpuDevicePushErrorScope(handle, filter) }
+}
+wgpuDevicePopErrorScope :: extern fn(handle: Device, callback_info: ^u8)
+device_pop_error_scope :: fn(handle: Device, callback_info: ^u8) {
+    unsafe { wgpuDevicePopErrorScope(handle, callback_info) }
+}
+wgpuDeviceSetLabel :: extern fn(handle: Device, value label: StringView)
+device_set_label :: fn(handle: Device, value label: StringView) {
+    unsafe { wgpuDeviceSetLabel(handle, label) }
+}
+wgpuExternalTextureSetLabel :: extern fn(handle: ExternalTexture, value label: StringView)
+external_texture_set_label :: fn(handle: ExternalTexture, value label: StringView) {
+    unsafe { wgpuExternalTextureSetLabel(handle, label) }
+}
+wgpuInstanceCreateSurface :: extern fn(handle: Instance, descriptor: ^SurfaceDescriptor) -> Surface
+instance_create_surface :: fn(handle: Instance, descriptor: ^SurfaceDescriptor) -> Surface {
+    held := unsafe { wgpuInstanceCreateSurface(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: instance_create_surface answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuInstanceGetWGSLLanguageFeatures :: extern fn(handle: Instance, features: ^SupportedWGSLLanguageFeatures)
+instance_get_WGSL_language_features :: fn(handle: Instance, features: ^SupportedWGSLLanguageFeatures) {
+    unsafe { wgpuInstanceGetWGSLLanguageFeatures(handle, features) }
+}
+wgpuInstanceHasWGSLLanguageFeature :: extern fn(handle: Instance, feature: u32) -> u32
+instance_has_WGSL_language_feature :: fn(handle: Instance, feature: u32) -> u32 {
+    unsafe { wgpuInstanceHasWGSLLanguageFeature(handle, feature) }
+}
+wgpuInstanceProcessEvents :: extern fn(handle: Instance)
+instance_process_events :: fn(handle: Instance) {
+    unsafe { wgpuInstanceProcessEvents(handle) }
+}
+wgpuInstanceRequestAdapter :: extern fn(handle: Instance, options: ^RequestAdapterOptions, callback_info: ^u8)
+instance_request_adapter :: fn(handle: Instance, options: ^RequestAdapterOptions, callback_info: ^u8) {
+    unsafe { wgpuInstanceRequestAdapter(handle, options, callback_info) }
+}
+wgpuInstanceWaitAny :: extern fn(handle: Instance, future_count: u64, futures: ^FutureWaitInfo, timeout_NS: u64) -> u32
+instance_wait_any :: fn(handle: Instance, future_count: u64, futures: ^FutureWaitInfo, timeout_NS: u64) -> u32 {
+    unsafe { wgpuInstanceWaitAny(handle, future_count, futures, timeout_NS) }
+}
+wgpuPipelineLayoutSetLabel :: extern fn(handle: PipelineLayout, value label: StringView)
+pipeline_layout_set_label :: fn(handle: PipelineLayout, value label: StringView) {
+    unsafe { wgpuPipelineLayoutSetLabel(handle, label) }
+}
+wgpuQuerySetSetLabel :: extern fn(handle: QuerySet, value label: StringView)
+query_set_set_label :: fn(handle: QuerySet, value label: StringView) {
+    unsafe { wgpuQuerySetSetLabel(handle, label) }
+}
+wgpuQuerySetGetType :: extern fn(handle: QuerySet) -> u32
+query_set_get_type :: fn(handle: QuerySet) -> u32 {
+    unsafe { wgpuQuerySetGetType(handle) }
+}
+wgpuQuerySetGetCount :: extern fn(handle: QuerySet) -> u32
+query_set_get_count :: fn(handle: QuerySet) -> u32 {
+    unsafe { wgpuQuerySetGetCount(handle) }
+}
+wgpuQuerySetDestroy :: extern fn(handle: QuerySet)
+query_set_destroy :: fn(handle: QuerySet) {
+    unsafe { wgpuQuerySetDestroy(handle) }
+}
+wgpuQueueSubmit :: extern fn(handle: Queue, commands_count: u64, commands: ^CommandBuffer)
+queue_submit :: fn(handle: Queue, commands_count: u64, commands: ^CommandBuffer) {
+    unsafe { wgpuQueueSubmit(handle, commands_count, commands) }
+}
+wgpuQueueOnSubmittedWorkDone :: extern fn(handle: Queue, callback_info: ^u8)
+queue_on_submitted_work_done :: fn(handle: Queue, callback_info: ^u8) {
+    unsafe { wgpuQueueOnSubmittedWorkDone(handle, callback_info) }
+}
+wgpuQueueWriteBuffer :: extern fn(handle: Queue, buffer: Buffer, buffer_offset: u64, data: ^u8, size: u64)
+queue_write_buffer :: fn(handle: Queue, buffer: Buffer, buffer_offset: u64, data: ^u8, size: u64) {
+    unsafe { wgpuQueueWriteBuffer(handle, buffer, buffer_offset, data, size) }
+}
+wgpuQueueWriteTexture :: extern fn(handle: Queue, destination: ^TexelCopyTextureInfo, data: ^u8, data_size: u64, data_layout: ^TexelCopyBufferLayout, write_size: ^Extent3D)
+queue_write_texture :: fn(handle: Queue, destination: ^TexelCopyTextureInfo, data: ^u8, data_size: u64, data_layout: ^TexelCopyBufferLayout, write_size: ^Extent3D) {
+    unsafe { wgpuQueueWriteTexture(handle, destination, data, data_size, data_layout, write_size) }
+}
+wgpuQueueSetLabel :: extern fn(handle: Queue, value label: StringView)
+queue_set_label :: fn(handle: Queue, value label: StringView) {
+    unsafe { wgpuQueueSetLabel(handle, label) }
+}
+wgpuRenderBundleSetLabel :: extern fn(handle: RenderBundle, value label: StringView)
+render_bundle_set_label :: fn(handle: RenderBundle, value label: StringView) {
+    unsafe { wgpuRenderBundleSetLabel(handle, label) }
+}
+wgpuRenderBundleEncoderSetPipeline :: extern fn(handle: RenderBundleEncoder, pipeline: RenderPipeline)
+render_bundle_encoder_set_pipeline :: fn(handle: RenderBundleEncoder, pipeline: RenderPipeline) {
+    unsafe { wgpuRenderBundleEncoderSetPipeline(handle, pipeline) }
+}
+wgpuRenderBundleEncoderSetBindGroup :: extern fn(handle: RenderBundleEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
+render_bundle_encoder_set_bind_group :: fn(handle: RenderBundleEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+    unsafe { wgpuRenderBundleEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
+}
+wgpuRenderBundleEncoderSetImmediates :: extern fn(handle: RenderBundleEncoder, offset: u32, data: ^u8, size: u64)
+render_bundle_encoder_set_immediates :: fn(handle: RenderBundleEncoder, offset: u32, data: ^u8, size: u64) {
+    unsafe { wgpuRenderBundleEncoderSetImmediates(handle, offset, data, size) }
+}
+wgpuRenderBundleEncoderDraw :: extern fn(handle: RenderBundleEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
+render_bundle_encoder_draw :: fn(handle: RenderBundleEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+    unsafe { wgpuRenderBundleEncoderDraw(handle, vertex_count, instance_count, first_vertex, first_instance) }
+}
+wgpuRenderBundleEncoderDrawIndexed :: extern fn(handle: RenderBundleEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32)
+render_bundle_encoder_draw_indexed :: fn(handle: RenderBundleEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) {
+    unsafe { wgpuRenderBundleEncoderDrawIndexed(handle, index_count, instance_count, first_index, base_vertex, first_instance) }
+}
+wgpuRenderBundleEncoderDrawIndirect :: extern fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64)
+render_bundle_encoder_draw_indirect :: fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+    unsafe { wgpuRenderBundleEncoderDrawIndirect(handle, indirect_buffer, indirect_offset) }
+}
+wgpuRenderBundleEncoderDrawIndexedIndirect :: extern fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64)
+render_bundle_encoder_draw_indexed_indirect :: fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+    unsafe { wgpuRenderBundleEncoderDrawIndexedIndirect(handle, indirect_buffer, indirect_offset) }
+}
+wgpuRenderBundleEncoderInsertDebugMarker :: extern fn(handle: RenderBundleEncoder, value marker_label: StringView)
+render_bundle_encoder_insert_debug_marker :: fn(handle: RenderBundleEncoder, value marker_label: StringView) {
+    unsafe { wgpuRenderBundleEncoderInsertDebugMarker(handle, marker_label) }
+}
+wgpuRenderBundleEncoderPopDebugGroup :: extern fn(handle: RenderBundleEncoder)
+render_bundle_encoder_pop_debug_group :: fn(handle: RenderBundleEncoder) {
+    unsafe { wgpuRenderBundleEncoderPopDebugGroup(handle) }
+}
+wgpuRenderBundleEncoderPushDebugGroup :: extern fn(handle: RenderBundleEncoder, value group_label: StringView)
+render_bundle_encoder_push_debug_group :: fn(handle: RenderBundleEncoder, value group_label: StringView) {
+    unsafe { wgpuRenderBundleEncoderPushDebugGroup(handle, group_label) }
+}
+wgpuRenderBundleEncoderSetVertexBuffer :: extern fn(handle: RenderBundleEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64)
+render_bundle_encoder_set_vertex_buffer :: fn(handle: RenderBundleEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64) {
+    unsafe { wgpuRenderBundleEncoderSetVertexBuffer(handle, slot, buffer, offset, size) }
+}
+wgpuRenderBundleEncoderSetIndexBuffer :: extern fn(handle: RenderBundleEncoder, buffer: Buffer, format: u32, offset: u64, size: u64)
+render_bundle_encoder_set_index_buffer :: fn(handle: RenderBundleEncoder, buffer: Buffer, format: u32, offset: u64, size: u64) {
+    unsafe { wgpuRenderBundleEncoderSetIndexBuffer(handle, buffer, format, offset, size) }
+}
+wgpuRenderBundleEncoderFinish :: extern fn(handle: RenderBundleEncoder, descriptor: ^RenderBundleDescriptor) -> RenderBundle
+render_bundle_encoder_finish :: fn(handle: RenderBundleEncoder, descriptor: ^RenderBundleDescriptor) -> RenderBundle {
+    held := unsafe { wgpuRenderBundleEncoderFinish(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: render_bundle_encoder_finish answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuRenderBundleEncoderSetLabel :: extern fn(handle: RenderBundleEncoder, value label: StringView)
+render_bundle_encoder_set_label :: fn(handle: RenderBundleEncoder, value label: StringView) {
+    unsafe { wgpuRenderBundleEncoderSetLabel(handle, label) }
+}
+wgpuRenderPassEncoderSetPipeline :: extern fn(handle: RenderPassEncoder, pipeline: RenderPipeline)
+render_pass_encoder_set_pipeline :: fn(handle: RenderPassEncoder, pipeline: RenderPipeline) {
+    unsafe { wgpuRenderPassEncoderSetPipeline(handle, pipeline) }
+}
+wgpuRenderPassEncoderSetBindGroup :: extern fn(handle: RenderPassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
+render_pass_encoder_set_bind_group :: fn(handle: RenderPassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+    unsafe { wgpuRenderPassEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
+}
+wgpuRenderPassEncoderSetImmediates :: extern fn(handle: RenderPassEncoder, offset: u32, data: ^u8, size: u64)
+render_pass_encoder_set_immediates :: fn(handle: RenderPassEncoder, offset: u32, data: ^u8, size: u64) {
+    unsafe { wgpuRenderPassEncoderSetImmediates(handle, offset, data, size) }
+}
+wgpuRenderPassEncoderDraw :: extern fn(handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
+render_pass_encoder_draw :: fn(handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+    unsafe { wgpuRenderPassEncoderDraw(handle, vertex_count, instance_count, first_vertex, first_instance) }
+}
+wgpuRenderPassEncoderDrawIndexed :: extern fn(handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32)
+render_pass_encoder_draw_indexed :: fn(handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) {
+    unsafe { wgpuRenderPassEncoderDrawIndexed(handle, index_count, instance_count, first_index, base_vertex, first_instance) }
+}
+wgpuRenderPassEncoderDrawIndirect :: extern fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
+render_pass_encoder_draw_indirect :: fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+    unsafe { wgpuRenderPassEncoderDrawIndirect(handle, indirect_buffer, indirect_offset) }
+}
+wgpuRenderPassEncoderDrawIndexedIndirect :: extern fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
+render_pass_encoder_draw_indexed_indirect :: fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+    unsafe { wgpuRenderPassEncoderDrawIndexedIndirect(handle, indirect_buffer, indirect_offset) }
+}
+wgpuRenderPassEncoderExecuteBundles :: extern fn(handle: RenderPassEncoder, bundles_count: u64, bundles: ^RenderBundle)
+render_pass_encoder_execute_bundles :: fn(handle: RenderPassEncoder, bundles_count: u64, bundles: ^RenderBundle) {
+    unsafe { wgpuRenderPassEncoderExecuteBundles(handle, bundles_count, bundles) }
+}
+wgpuRenderPassEncoderInsertDebugMarker :: extern fn(handle: RenderPassEncoder, value marker_label: StringView)
+render_pass_encoder_insert_debug_marker :: fn(handle: RenderPassEncoder, value marker_label: StringView) {
+    unsafe { wgpuRenderPassEncoderInsertDebugMarker(handle, marker_label) }
+}
+wgpuRenderPassEncoderPopDebugGroup :: extern fn(handle: RenderPassEncoder)
+render_pass_encoder_pop_debug_group :: fn(handle: RenderPassEncoder) {
+    unsafe { wgpuRenderPassEncoderPopDebugGroup(handle) }
+}
+wgpuRenderPassEncoderPushDebugGroup :: extern fn(handle: RenderPassEncoder, value group_label: StringView)
+render_pass_encoder_push_debug_group :: fn(handle: RenderPassEncoder, value group_label: StringView) {
+    unsafe { wgpuRenderPassEncoderPushDebugGroup(handle, group_label) }
+}
+wgpuRenderPassEncoderSetStencilReference :: extern fn(handle: RenderPassEncoder, reference: u32)
+render_pass_encoder_set_stencil_reference :: fn(handle: RenderPassEncoder, reference: u32) {
+    unsafe { wgpuRenderPassEncoderSetStencilReference(handle, reference) }
+}
+wgpuRenderPassEncoderSetBlendConstant :: extern fn(handle: RenderPassEncoder, color: ^Color)
+render_pass_encoder_set_blend_constant :: fn(handle: RenderPassEncoder, color: ^Color) {
+    unsafe { wgpuRenderPassEncoderSetBlendConstant(handle, color) }
+}
+wgpuRenderPassEncoderSetViewport :: extern fn(handle: RenderPassEncoder, x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32)
+render_pass_encoder_set_viewport :: fn(handle: RenderPassEncoder, x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32) {
+    unsafe { wgpuRenderPassEncoderSetViewport(handle, x, y, width, height, min_depth, max_depth) }
+}
+wgpuRenderPassEncoderSetScissorRect :: extern fn(handle: RenderPassEncoder, x: u32, y: u32, width: u32, height: u32)
+render_pass_encoder_set_scissor_rect :: fn(handle: RenderPassEncoder, x: u32, y: u32, width: u32, height: u32) {
+    unsafe { wgpuRenderPassEncoderSetScissorRect(handle, x, y, width, height) }
+}
+wgpuRenderPassEncoderSetVertexBuffer :: extern fn(handle: RenderPassEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64)
+render_pass_encoder_set_vertex_buffer :: fn(handle: RenderPassEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64) {
+    unsafe { wgpuRenderPassEncoderSetVertexBuffer(handle, slot, buffer, offset, size) }
+}
+wgpuRenderPassEncoderSetIndexBuffer :: extern fn(handle: RenderPassEncoder, buffer: Buffer, format: u32, offset: u64, size: u64)
+render_pass_encoder_set_index_buffer :: fn(handle: RenderPassEncoder, buffer: Buffer, format: u32, offset: u64, size: u64) {
+    unsafe { wgpuRenderPassEncoderSetIndexBuffer(handle, buffer, format, offset, size) }
+}
+wgpuRenderPassEncoderBeginOcclusionQuery :: extern fn(handle: RenderPassEncoder, query_index: u32)
+render_pass_encoder_begin_occlusion_query :: fn(handle: RenderPassEncoder, query_index: u32) {
+    unsafe { wgpuRenderPassEncoderBeginOcclusionQuery(handle, query_index) }
+}
+wgpuRenderPassEncoderEndOcclusionQuery :: extern fn(handle: RenderPassEncoder)
+render_pass_encoder_end_occlusion_query :: fn(handle: RenderPassEncoder) {
+    unsafe { wgpuRenderPassEncoderEndOcclusionQuery(handle) }
+}
+wgpuRenderPassEncoderEnd :: extern fn(handle: RenderPassEncoder)
+render_pass_encoder_end :: fn(handle: RenderPassEncoder) {
+    unsafe { wgpuRenderPassEncoderEnd(handle) }
+}
+wgpuRenderPassEncoderSetLabel :: extern fn(handle: RenderPassEncoder, value label: StringView)
+render_pass_encoder_set_label :: fn(handle: RenderPassEncoder, value label: StringView) {
+    unsafe { wgpuRenderPassEncoderSetLabel(handle, label) }
+}
+wgpuRenderPipelineGetBindGroupLayout :: extern fn(handle: RenderPipeline, group_index: u32) -> BindGroupLayout
+render_pipeline_get_bind_group_layout :: fn(handle: RenderPipeline, group_index: u32) -> BindGroupLayout {
+    held := unsafe { wgpuRenderPipelineGetBindGroupLayout(handle, group_index) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: render_pipeline_get_bind_group_layout answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuRenderPipelineSetLabel :: extern fn(handle: RenderPipeline, value label: StringView)
+render_pipeline_set_label :: fn(handle: RenderPipeline, value label: StringView) {
+    unsafe { wgpuRenderPipelineSetLabel(handle, label) }
+}
+wgpuSamplerSetLabel :: extern fn(handle: Sampler, value label: StringView)
+sampler_set_label :: fn(handle: Sampler, value label: StringView) {
+    unsafe { wgpuSamplerSetLabel(handle, label) }
+}
+wgpuShaderModuleGetCompilationInfo :: extern fn(handle: ShaderModule, callback_info: ^u8)
+shader_module_get_compilation_info :: fn(handle: ShaderModule, callback_info: ^u8) {
+    unsafe { wgpuShaderModuleGetCompilationInfo(handle, callback_info) }
+}
+wgpuShaderModuleSetLabel :: extern fn(handle: ShaderModule, value label: StringView)
+shader_module_set_label :: fn(handle: ShaderModule, value label: StringView) {
+    unsafe { wgpuShaderModuleSetLabel(handle, label) }
+}
+wgpuSurfaceConfigure :: extern fn(handle: Surface, config: ^SurfaceConfiguration)
+surface_configure :: fn(handle: Surface, config: ^SurfaceConfiguration) {
+    unsafe { wgpuSurfaceConfigure(handle, config) }
+}
+wgpuSurfaceGetCapabilities :: extern fn(handle: Surface, adapter: Adapter, capabilities: ^SurfaceCapabilities) -> u32
+surface_get_capabilities :: fn(handle: Surface, adapter: Adapter, capabilities: ^SurfaceCapabilities) -> u32 {
+    unsafe { wgpuSurfaceGetCapabilities(handle, adapter, capabilities) }
+}
+wgpuSurfaceGetCurrentTexture :: extern fn(handle: Surface, surface_texture: ^SurfaceTexture)
+surface_get_current_texture :: fn(handle: Surface, surface_texture: ^SurfaceTexture) {
+    unsafe { wgpuSurfaceGetCurrentTexture(handle, surface_texture) }
+}
+wgpuSurfacePresent :: extern fn(handle: Surface) -> u32
+surface_present :: fn(handle: Surface) -> u32 {
+    unsafe { wgpuSurfacePresent(handle) }
+}
+wgpuSurfaceUnconfigure :: extern fn(handle: Surface)
+surface_unconfigure :: fn(handle: Surface) {
+    unsafe { wgpuSurfaceUnconfigure(handle) }
+}
+wgpuSurfaceSetLabel :: extern fn(handle: Surface, value label: StringView)
+surface_set_label :: fn(handle: Surface, value label: StringView) {
+    unsafe { wgpuSurfaceSetLabel(handle, label) }
+}
+wgpuTextureCreateView :: extern fn(handle: Texture, descriptor: ^TextureViewDescriptor) -> TextureView
+texture_create_view :: fn(handle: Texture, descriptor: ^TextureViewDescriptor) -> TextureView {
+    held := unsafe { wgpuTextureCreateView(handle, descriptor) }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error("wgpu: texture_create_view answered with nothing\n") }
+        frost_rt_die()
+    }
+    held
+}
+wgpuTextureSetLabel :: extern fn(handle: Texture, value label: StringView)
+texture_set_label :: fn(handle: Texture, value label: StringView) {
+    unsafe { wgpuTextureSetLabel(handle, label) }
+}
+wgpuTextureGetWidth :: extern fn(handle: Texture) -> u32
+texture_get_width :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetWidth(handle) }
+}
+wgpuTextureGetHeight :: extern fn(handle: Texture) -> u32
+texture_get_height :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetHeight(handle) }
+}
+wgpuTextureGetDepthOrArrayLayers :: extern fn(handle: Texture) -> u32
+texture_get_depth_or_array_layers :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetDepthOrArrayLayers(handle) }
+}
+wgpuTextureGetMipLevelCount :: extern fn(handle: Texture) -> u32
+texture_get_mip_level_count :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetMipLevelCount(handle) }
+}
+wgpuTextureGetSampleCount :: extern fn(handle: Texture) -> u32
+texture_get_sample_count :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetSampleCount(handle) }
+}
+wgpuTextureGetDimension :: extern fn(handle: Texture) -> u32
+texture_get_dimension :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetDimension(handle) }
+}
+wgpuTextureGetTextureBindingViewDimension :: extern fn(handle: Texture) -> u32
+texture_get_texture_binding_view_dimension :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetTextureBindingViewDimension(handle) }
+}
+wgpuTextureGetFormat :: extern fn(handle: Texture) -> u32
+texture_get_format :: fn(handle: Texture) -> u32 {
+    unsafe { wgpuTextureGetFormat(handle) }
+}
+wgpuTextureGetUsage :: extern fn(handle: Texture) -> TextureUsage
+texture_get_usage :: fn(handle: Texture) -> TextureUsage {
+    unsafe { wgpuTextureGetUsage(handle) }
+}
+wgpuTextureDestroy :: extern fn(handle: Texture)
+texture_destroy :: fn(handle: Texture) {
+    unsafe { wgpuTextureDestroy(handle) }
+}
+wgpuTextureViewSetLabel :: extern fn(handle: TextureView, value label: StringView)
+texture_view_set_label :: fn(handle: TextureView, value label: StringView) {
+    unsafe { wgpuTextureViewSetLabel(handle, label) }
+}
+wgpuCreateInstance :: extern fn(descriptor: ^InstanceDescriptor) -> Instance
+create_instance :: fn(descriptor: ^InstanceDescriptor) -> Instance {
+    unsafe { wgpuCreateInstance(descriptor) }
+}
+wgpuGetInstanceFeatures :: extern fn(features: ^SupportedInstanceFeatures)
+get_instance_features :: fn(features: ^SupportedInstanceFeatures) {
+    unsafe { wgpuGetInstanceFeatures(features) }
+}
+wgpuGetInstanceLimits :: extern fn(limits: ^InstanceLimits) -> u32
+get_instance_limits :: fn(limits: ^InstanceLimits) -> u32 {
+    unsafe { wgpuGetInstanceLimits(limits) }
+}
+wgpuHasInstanceFeature :: extern fn(feature: u32) -> u32
+has_instance_feature :: fn(feature: u32) -> u32 {
+    unsafe { wgpuHasInstanceFeature(feature) }
+}
+adapter_info_init :: fn() -> AdapterInfo {
+    zero := 0
+    AdapterInfo {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        vendor = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        architecture = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        device = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        description = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        backend_type = 0,
+        adapter_type = 0,
+        vendor_ID = 0,
+        device_ID = 0,
+        subgroup_min_size = 0,
+        subgroup_max_size = 0,
+    }
+}
+
+bind_group_descriptor_init :: fn() -> BindGroupDescriptor {
+    zero := 0
+    BindGroupDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        layout = unsafe { ptr_cast($u8, zero) },
+        entries_count = 0,
+        entries = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+bind_group_entry_init :: fn() -> BindGroupEntry {
+    zero := 0
+    BindGroupEntry {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        binding = 0,
+        buffer = unsafe { ptr_cast($u8, zero) },
+        offset = 0,
+        size = WHOLE_SIZE,
+        sampler = unsafe { ptr_cast($u8, zero) },
+        texture_view = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+bind_group_layout_descriptor_init :: fn() -> BindGroupLayoutDescriptor {
+    zero := 0
+    BindGroupLayoutDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        entries_count = 0,
+        entries = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+bind_group_layout_entry_init :: fn() -> BindGroupLayoutEntry {
+    zero := 0
+    BindGroupLayoutEntry {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        binding = 0,
+        visibility = ShaderStage::None,
+        binding_array_size = 0,
+        buffer = buffer_binding_layout_init(),
+        sampler = sampler_binding_layout_init(),
+        texture = texture_binding_layout_init(),
+        storage_texture = storage_texture_binding_layout_init(),
+    }
+}
+
+blend_component_init :: fn() -> BlendComponent {
+    zero := 0
+    BlendComponent {
+        operation = 0,
+        src_factor = 0,
+        dst_factor = 0,
+    }
+}
+
+blend_state_init :: fn() -> BlendState {
+    zero := 0
+    BlendState {
+        color = blend_component_init(),
+        alpha = blend_component_init(),
+    }
+}
+
+buffer_binding_layout_init :: fn() -> BufferBindingLayout {
+    zero := 0
+    BufferBindingLayout {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        type = 0,
+        has_dynamic_offset = 0,
+        min_binding_size = 0,
+    }
+}
+
+buffer_descriptor_init :: fn() -> BufferDescriptor {
+    zero := 0
+    BufferDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        usage = BufferUsage::None,
+        size = 0,
+        mapped_at_creation = 0,
+    }
+}
+
+color_init :: fn() -> Color {
+    zero := 0
+    Color {
+        r = 0.0,
+        g = 0.0,
+        b = 0.0,
+        a = 0.0,
+    }
+}
+
+color_target_state_init :: fn() -> ColorTargetState {
+    zero := 0
+    ColorTargetState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        format = 0,
+        blend = unsafe { ptr_cast($u8, zero) },
+        write_mask = ColorWriteMask::All,
+    }
+}
+
+command_buffer_descriptor_init :: fn() -> CommandBufferDescriptor {
+    zero := 0
+    CommandBufferDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+command_encoder_descriptor_init :: fn() -> CommandEncoderDescriptor {
+    zero := 0
+    CommandEncoderDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+compatibility_mode_limits_init :: fn() -> CompatibilityModeLimits {
+    zero := 0
+    CompatibilityModeLimits {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        max_storage_buffers_in_vertex_stage = LIMIT_U32_UNDEFINED,
+        max_storage_textures_in_vertex_stage = LIMIT_U32_UNDEFINED,
+        max_storage_buffers_in_fragment_stage = LIMIT_U32_UNDEFINED,
+        max_storage_textures_in_fragment_stage = LIMIT_U32_UNDEFINED,
+    }
+}
+
+compilation_info_init :: fn() -> CompilationInfo {
+    zero := 0
+    CompilationInfo {
+        messages_count = 0,
+        messages = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+compilation_message_init :: fn() -> CompilationMessage {
+    zero := 0
+    CompilationMessage {
+        message = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        type = 0,
+        line_num = 0,
+        line_pos = 0,
+        offset = 0,
+        length = 0,
+    }
+}
+
+compute_pass_descriptor_init :: fn() -> ComputePassDescriptor {
+    zero := 0
+    ComputePassDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        timestamp_writes = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+compute_pipeline_descriptor_init :: fn() -> ComputePipelineDescriptor {
+    zero := 0
+    ComputePipelineDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        layout = unsafe { ptr_cast($u8, zero) },
+        compute = compute_state_init(),
+    }
+}
+
+compute_state_init :: fn() -> ComputeState {
+    zero := 0
+    ComputeState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        module = unsafe { ptr_cast($u8, zero) },
+        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        constants_count = 0,
+        constants = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+constant_entry_init :: fn() -> ConstantEntry {
+    zero := 0
+    ConstantEntry {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        key = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        value = 0.0,
+    }
+}
+
+depth_stencil_state_init :: fn() -> DepthStencilState {
+    zero := 0
+    DepthStencilState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        format = 0,
+        depth_write_enabled = 0,
+        depth_compare = 0,
+        stencil_front = stencil_face_state_init(),
+        stencil_back = stencil_face_state_init(),
+        stencil_read_mask = 0,
+        stencil_write_mask = 0,
+        depth_bias = 0,
+        depth_bias_slope_scale = 0,
+        depth_bias_clamp = 0,
+    }
+}
+
+device_descriptor_init :: fn() -> DeviceDescriptor {
+    zero := 0
+    DeviceDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        required_features_count = 0,
+        required_features = unsafe { ptr_cast($u8, zero) },
+        required_limits = unsafe { ptr_cast($u8, zero) },
+        default_queue = queue_descriptor_init(),
+        device_lost_callback_info = unsafe { ptr_cast($u8, zero) },
+        uncaptured_error_callback_info = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+extent_3D_init :: fn() -> Extent3D {
+    zero := 0
+    Extent3D {
+        width = 0,
+        height = 1,
+        depth_or_array_layers = 1,
+    }
+}
+
+external_texture_binding_entry_init :: fn() -> ExternalTextureBindingEntry {
+    zero := 0
+    ExternalTextureBindingEntry {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        external_texture = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+external_texture_binding_layout_init :: fn() -> ExternalTextureBindingLayout {
+    zero := 0
+    ExternalTextureBindingLayout {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+    }
+}
+
+fragment_state_init :: fn() -> FragmentState {
+    zero := 0
+    FragmentState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        module = unsafe { ptr_cast($u8, zero) },
+        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        constants_count = 0,
+        constants = unsafe { ptr_cast($u8, zero) },
+        targets_count = 0,
+        targets = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+future_init :: fn() -> Future {
+    zero := 0
+    Future {
+        id = 0,
+    }
+}
+
+future_wait_info_init :: fn() -> FutureWaitInfo {
+    zero := 0
+    FutureWaitInfo {
+        future = future_init(),
+        completed = 0,
+    }
+}
+
+instance_descriptor_init :: fn() -> InstanceDescriptor {
+    zero := 0
+    InstanceDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        required_features_count = 0,
+        required_features = unsafe { ptr_cast($u8, zero) },
+        required_limits = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+instance_limits_init :: fn() -> InstanceLimits {
+    zero := 0
+    InstanceLimits {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        timed_wait_any_max_count = 0,
+    }
+}
+
+limits_init :: fn() -> Limits {
+    zero := 0
+    Limits {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        max_texture_dimension_1D = LIMIT_U32_UNDEFINED,
+        max_texture_dimension_2D = LIMIT_U32_UNDEFINED,
+        max_texture_dimension_3D = LIMIT_U32_UNDEFINED,
+        max_texture_array_layers = LIMIT_U32_UNDEFINED,
+        max_bind_groups = LIMIT_U32_UNDEFINED,
+        max_bind_groups_plus_vertex_buffers = LIMIT_U32_UNDEFINED,
+        max_bindings_per_bind_group = LIMIT_U32_UNDEFINED,
+        max_dynamic_uniform_buffers_per_pipeline_layout = LIMIT_U32_UNDEFINED,
+        max_dynamic_storage_buffers_per_pipeline_layout = LIMIT_U32_UNDEFINED,
+        max_sampled_textures_per_shader_stage = LIMIT_U32_UNDEFINED,
+        max_samplers_per_shader_stage = LIMIT_U32_UNDEFINED,
+        max_storage_buffers_per_shader_stage = LIMIT_U32_UNDEFINED,
+        max_storage_textures_per_shader_stage = LIMIT_U32_UNDEFINED,
+        max_uniform_buffers_per_shader_stage = LIMIT_U32_UNDEFINED,
+        max_uniform_buffer_binding_size = LIMIT_U64_UNDEFINED,
+        max_storage_buffer_binding_size = LIMIT_U64_UNDEFINED,
+        min_uniform_buffer_offset_alignment = LIMIT_U32_UNDEFINED,
+        min_storage_buffer_offset_alignment = LIMIT_U32_UNDEFINED,
+        max_vertex_buffers = LIMIT_U32_UNDEFINED,
+        max_buffer_size = LIMIT_U64_UNDEFINED,
+        max_vertex_attributes = LIMIT_U32_UNDEFINED,
+        max_vertex_buffer_array_stride = LIMIT_U32_UNDEFINED,
+        max_inter_stage_shader_variables = LIMIT_U32_UNDEFINED,
+        max_color_attachments = LIMIT_U32_UNDEFINED,
+        max_color_attachment_bytes_per_sample = LIMIT_U32_UNDEFINED,
+        max_compute_workgroup_storage_size = LIMIT_U32_UNDEFINED,
+        max_compute_invocations_per_workgroup = LIMIT_U32_UNDEFINED,
+        max_compute_workgroup_size_x = LIMIT_U32_UNDEFINED,
+        max_compute_workgroup_size_y = LIMIT_U32_UNDEFINED,
+        max_compute_workgroup_size_z = LIMIT_U32_UNDEFINED,
+        max_compute_workgroups_per_dimension = LIMIT_U32_UNDEFINED,
+        max_immediate_size = LIMIT_U32_UNDEFINED,
+    }
+}
+
+multisample_state_init :: fn() -> MultisampleState {
+    zero := 0
+    MultisampleState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        count = 1,
+        mask = 0,
+        alpha_to_coverage_enabled = 0,
+    }
+}
+
+origin_3D_init :: fn() -> Origin3D {
+    zero := 0
+    Origin3D {
+        x = 0,
+        y = 0,
+        z = 0,
+    }
+}
+
+pass_timestamp_writes_init :: fn() -> PassTimestampWrites {
+    zero := 0
+    PassTimestampWrites {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        query_set = unsafe { ptr_cast($u8, zero) },
+        beginning_of_pass_write_index = QUERY_SET_INDEX_UNDEFINED,
+        end_of_pass_write_index = QUERY_SET_INDEX_UNDEFINED,
+    }
+}
+
+pipeline_layout_descriptor_init :: fn() -> PipelineLayoutDescriptor {
+    zero := 0
+    PipelineLayoutDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        bind_group_layouts_count = 0,
+        bind_group_layouts = unsafe { ptr_cast($u8, zero) },
+        immediate_size = 0,
+    }
+}
+
+primitive_state_init :: fn() -> PrimitiveState {
+    zero := 0
+    PrimitiveState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        topology = 0,
+        strip_index_format = 0,
+        front_face = 0,
+        cull_mode = 0,
+        unclipped_depth = 0,
+    }
+}
+
+query_set_descriptor_init :: fn() -> QuerySetDescriptor {
+    zero := 0
+    QuerySetDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        type = 0,
+        count = 0,
+    }
+}
+
+queue_descriptor_init :: fn() -> QueueDescriptor {
+    zero := 0
+    QueueDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+render_bundle_descriptor_init :: fn() -> RenderBundleDescriptor {
+    zero := 0
+    RenderBundleDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+render_bundle_encoder_descriptor_init :: fn() -> RenderBundleEncoderDescriptor {
+    zero := 0
+    RenderBundleEncoderDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        color_formats_count = 0,
+        color_formats = unsafe { ptr_cast($u8, zero) },
+        depth_stencil_format = 0,
+        sample_count = 1,
+        depth_read_only = 0,
+        stencil_read_only = 0,
+    }
+}
+
+render_pass_color_attachment_init :: fn() -> RenderPassColorAttachment {
+    zero := 0
+    RenderPassColorAttachment {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        view = unsafe { ptr_cast($u8, zero) },
+        depth_slice = DEPTH_SLICE_UNDEFINED,
+        resolve_target = unsafe { ptr_cast($u8, zero) },
+        load_op = 0,
+        store_op = 0,
+        clear_value = color_init(),
+    }
+}
+
+render_pass_depth_stencil_attachment_init :: fn() -> RenderPassDepthStencilAttachment {
+    zero := 0
+    RenderPassDepthStencilAttachment {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        view = unsafe { ptr_cast($u8, zero) },
+        depth_load_op = 0,
+        depth_store_op = 0,
+        depth_clear_value = DEPTH_CLEAR_VALUE_UNDEFINED,
+        depth_read_only = 0,
+        stencil_load_op = 0,
+        stencil_store_op = 0,
+        stencil_clear_value = 0,
+        stencil_read_only = 0,
+    }
+}
+
+render_pass_descriptor_init :: fn() -> RenderPassDescriptor {
+    zero := 0
+    RenderPassDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        color_attachments_count = 0,
+        color_attachments = unsafe { ptr_cast($u8, zero) },
+        depth_stencil_attachment = unsafe { ptr_cast($u8, zero) },
+        occlusion_query_set = unsafe { ptr_cast($u8, zero) },
+        timestamp_writes = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+render_pass_max_draw_count_init :: fn() -> RenderPassMaxDrawCount {
+    zero := 0
+    RenderPassMaxDrawCount {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        max_draw_count = 50000000,
+    }
+}
+
+render_pipeline_descriptor_init :: fn() -> RenderPipelineDescriptor {
+    zero := 0
+    RenderPipelineDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        layout = unsafe { ptr_cast($u8, zero) },
+        vertex = vertex_state_init(),
+        primitive = primitive_state_init(),
+        depth_stencil = unsafe { ptr_cast($u8, zero) },
+        multisample = multisample_state_init(),
+        fragment = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+request_adapter_options_init :: fn() -> RequestAdapterOptions {
+    zero := 0
+    RequestAdapterOptions {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        feature_level = 0,
+        power_preference = 0,
+        force_fallback_adapter = 0,
+        backend_type = 0,
+        compatible_surface = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+request_adapter_WebXR_options_init :: fn() -> RequestAdapterWebXROptions {
+    zero := 0
+    RequestAdapterWebXROptions {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        xr_compatible = 0,
+    }
+}
+
+sampler_binding_layout_init :: fn() -> SamplerBindingLayout {
+    zero := 0
+    SamplerBindingLayout {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        type = 0,
+    }
+}
+
+sampler_descriptor_init :: fn() -> SamplerDescriptor {
+    zero := 0
+    SamplerDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        address_mode_u = 0,
+        address_mode_v = 0,
+        address_mode_w = 0,
+        mag_filter = 0,
+        min_filter = 0,
+        mipmap_filter = 0,
+        lod_min_clamp = 0,
+        lod_max_clamp = 32,
+        compare = 0,
+        max_anisotropy = 1,
+    }
+}
+
+shader_module_descriptor_init :: fn() -> ShaderModuleDescriptor {
+    zero := 0
+    ShaderModuleDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+shader_source_SPIRV_init :: fn() -> ShaderSourceSPIRV {
+    zero := 0
+    ShaderSourceSPIRV {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        code_size = 0,
+        code = 0,
+    }
+}
+
+shader_source_WGSL_init :: fn() -> ShaderSourceWGSL {
+    zero := 0
+    ShaderSourceWGSL {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        code = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+stencil_face_state_init :: fn() -> StencilFaceState {
+    zero := 0
+    StencilFaceState {
+        compare = 0,
+        fail_op = 0,
+        depth_fail_op = 0,
+        pass_op = 0,
+    }
+}
+
+storage_texture_binding_layout_init :: fn() -> StorageTextureBindingLayout {
+    zero := 0
+    StorageTextureBindingLayout {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        access = 0,
+        format = 0,
+        view_dimension = 0,
+    }
+}
+
+supported_features_init :: fn() -> SupportedFeatures {
+    zero := 0
+    SupportedFeatures {
+        features_count = 0,
+        features = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+supported_instance_features_init :: fn() -> SupportedInstanceFeatures {
+    zero := 0
+    SupportedInstanceFeatures {
+        features_count = 0,
+        features = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+supported_WGSL_language_features_init :: fn() -> SupportedWGSLLanguageFeatures {
+    zero := 0
+    SupportedWGSLLanguageFeatures {
+        features_count = 0,
+        features = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_capabilities_init :: fn() -> SurfaceCapabilities {
+    zero := 0
+    SurfaceCapabilities {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        usages = 0,
+        formats_count = 0,
+        formats = unsafe { ptr_cast($u8, zero) },
+        present_modes_count = 0,
+        present_modes = unsafe { ptr_cast($u8, zero) },
+        alpha_modes_count = 0,
+        alpha_modes = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_color_management_init :: fn() -> SurfaceColorManagement {
+    zero := 0
+    SurfaceColorManagement {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        color_space = 0,
+        tone_mapping_mode = 0,
+    }
+}
+
+surface_configuration_init :: fn() -> SurfaceConfiguration {
+    zero := 0
+    SurfaceConfiguration {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        device = unsafe { ptr_cast($u8, zero) },
+        format = 0,
+        usage = TextureUsage::RenderAttachment,
+        width = 0,
+        height = 0,
+        view_formats_count = 0,
+        view_formats = unsafe { ptr_cast($u8, zero) },
+        alpha_mode = COMPOSITE_ALPHA_MODE_AUTO,
+        present_mode = 0,
+    }
+}
+
+surface_descriptor_init :: fn() -> SurfaceDescriptor {
+    zero := 0
+    SurfaceDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+    }
+}
+
+surface_source_android_native_window_init :: fn() -> SurfaceSourceAndroidNativeWindow {
+    zero := 0
+    SurfaceSourceAndroidNativeWindow {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        window = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_source_metal_layer_init :: fn() -> SurfaceSourceMetalLayer {
+    zero := 0
+    SurfaceSourceMetalLayer {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        layer = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_source_wayland_surface_init :: fn() -> SurfaceSourceWaylandSurface {
+    zero := 0
+    SurfaceSourceWaylandSurface {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        display = unsafe { ptr_cast($u8, zero) },
+        surface = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_source_windows_HWND_init :: fn() -> SurfaceSourceWindowsHWND {
+    zero := 0
+    SurfaceSourceWindowsHWND {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        hinstance = unsafe { ptr_cast($u8, zero) },
+        hwnd = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+surface_source_XCB_window_init :: fn() -> SurfaceSourceXCBWindow {
+    zero := 0
+    SurfaceSourceXCBWindow {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        connection = unsafe { ptr_cast($u8, zero) },
+        window = 0,
+    }
+}
+
+surface_source_xlib_window_init :: fn() -> SurfaceSourceXlibWindow {
+    zero := 0
+    SurfaceSourceXlibWindow {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        display = unsafe { ptr_cast($u8, zero) },
+        window = 0,
+    }
+}
+
+surface_texture_init :: fn() -> SurfaceTexture {
+    zero := 0
+    SurfaceTexture {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        texture = unsafe { ptr_cast($u8, zero) },
+        status = 0,
+    }
+}
+
+texel_copy_buffer_info_init :: fn() -> TexelCopyBufferInfo {
+    zero := 0
+    TexelCopyBufferInfo {
+        layout = texel_copy_buffer_layout_init(),
+        buffer = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+texel_copy_buffer_layout_init :: fn() -> TexelCopyBufferLayout {
+    zero := 0
+    TexelCopyBufferLayout {
+        offset = 0,
+        bytes_per_row = COPY_STRIDE_UNDEFINED,
+        rows_per_image = COPY_STRIDE_UNDEFINED,
+    }
+}
+
+texel_copy_texture_info_init :: fn() -> TexelCopyTextureInfo {
+    zero := 0
+    TexelCopyTextureInfo {
+        texture = unsafe { ptr_cast($u8, zero) },
+        mip_level = 0,
+        origin = origin_3D_init(),
+        aspect = 0,
+    }
+}
+
+texture_binding_layout_init :: fn() -> TextureBindingLayout {
+    zero := 0
+    TextureBindingLayout {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        sample_type = 0,
+        view_dimension = 0,
+        multisampled = 0,
+    }
+}
+
+texture_binding_view_dimension_init :: fn() -> TextureBindingViewDimension {
+    zero := 0
+    TextureBindingViewDimension {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        texture_binding_view_dimension = 0,
+    }
+}
+
+texture_component_swizzle_init :: fn() -> TextureComponentSwizzle {
+    zero := 0
+    TextureComponentSwizzle {
+        r = 0,
+        g = 0,
+        b = 0,
+        a = 0,
+    }
+}
+
+texture_component_swizzle_descriptor_init :: fn() -> TextureComponentSwizzleDescriptor {
+    zero := 0
+    TextureComponentSwizzleDescriptor {
+        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
+        swizzle = texture_component_swizzle_init(),
+    }
+}
+
+texture_descriptor_init :: fn() -> TextureDescriptor {
+    zero := 0
+    TextureDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        usage = TextureUsage::None,
+        dimension = 0,
+        size = extent_3D_init(),
+        format = 0,
+        mip_level_count = 1,
+        sample_count = 1,
+        view_formats_count = 0,
+        view_formats = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+texture_view_descriptor_init :: fn() -> TextureViewDescriptor {
+    zero := 0
+    TextureViewDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        format = 0,
+        dimension = 0,
+        base_mip_level = 0,
+        mip_level_count = MIP_LEVEL_COUNT_UNDEFINED,
+        base_array_layer = 0,
+        array_layer_count = ARRAY_LAYER_COUNT_UNDEFINED,
+        aspect = 0,
+        usage = TextureUsage::None,
+    }
+}
+
+vertex_attribute_init :: fn() -> VertexAttribute {
+    zero := 0
+    VertexAttribute {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        format = 0,
+        offset = 0,
+        shader_location = 0,
+    }
+}
+
+vertex_buffer_layout_init :: fn() -> VertexBufferLayout {
+    zero := 0
+    VertexBufferLayout {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        step_mode = 0,
+        array_stride = 0,
+        attributes_count = 0,
+        attributes = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
+vertex_state_init :: fn() -> VertexState {
+    zero := 0
+    VertexState {
+        next_in_chain = unsafe { ptr_cast($u8, zero) },
+        module = unsafe { ptr_cast($u8, zero) },
+        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        constants_count = 0,
+        constants = unsafe { ptr_cast($u8, zero) },
+        buffers_count = 0,
+        buffers = unsafe { ptr_cast($u8, zero) },
+    }
+}
+
