@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -841,6 +842,13 @@ const char *frost_rt_file_read(const char *path) {
     fclose(file);
     frost_rt_last_read_length = (int64_t)read;
     return buffer;
+}
+
+// The seconds on the wall, which is what names one session's log file apart
+// from the last one's. A count rather than a date: what a name has to do here is
+// differ, and a program that wants it readable formats it itself.
+int64_t frost_rt_wall_seconds(void) {
+    return (int64_t)time(NULL);
 }
 
 int64_t frost_rt_file_size(void) {

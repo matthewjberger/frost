@@ -8219,7 +8219,7 @@ fn a_defer_in_a_test_body_runs() {
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
-    ("ecs.frost", "113 passed"),
+    ("ecs.frost", "116 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
     ("math.frost", "24 passed"),
@@ -17107,6 +17107,52 @@ fn the_render_graph_orders_its_passes() {
     }
 }
 
+// How a program composes what the engine offers: a group whose members are
+// replaceable and removable before any of them is installed. Answered without a
+// device, because which plugins are in a group is arithmetic over a list.
+#[test]
+fn the_app_composes_its_plugins() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(libraries) = graphics_libraries(&root) else {
+        return;
+    };
+    let source = graphics_source(&root, "app.frost");
+    let search = library_search_path(&root);
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            output.contains("5 passed, 0 failed"),
+            "the App's own tests did not pass (emit_c: {emit_c}):
+{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
 // What a frame does to a world, with no device anywhere near it: the camera
 // moved by what the world was told was held, a frame in which nothing was held
 // moving nothing, and a thing three deep in a tree placed against the whole
@@ -18901,6 +18947,32 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A `match` written as a statement, with one side doing nothing. The
+    // self-hosted compiler rewrites each arm's last statement into the binding
+    // the match answers with, and an arm with no last statement was read anyway,
+    // which indexed the node arena at -1 and took the compiler with it. Writing
+    // a log plugin is what reached it: one rotation names the file after the
+    // clock and the other leaves it alone.
+    (
+        "a_match_arm_may_hold_nothing",
+        "Rotation :: enum { PerSession, Never }
+         name :: fn(held: Rotation) {
+             match held {
+                 case .PerSession: { print 1 }
+                 case .Never: { }
+             }
+         }
+         main :: fn() -> i64 {
+             name(Rotation::PerSession)
+             name(Rotation::Never)
+             print 2
+             0
+         }
+",
+        "1
+2
+",
+    ),
     // A function type is already an address, so naming one in a `ptr_cast` asks
     // for that function type rather than for a pointer to it. Both compilers
     // used to wrap it, so a `^proc` came back where a `proc` was wanted and a

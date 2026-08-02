@@ -3,6 +3,8 @@
 //   just shadowed
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+// Hold B and the second view goes: a system writes a resource, a hook reads it
+// and turns two passes off, and nothing is scheduled again.
 //
 // This is the demo the render graph exists for. Eight passes, one of them a
 // graph of its own, and a chain of
@@ -511,6 +513,10 @@ Built :: struct {
     blur_step: Step,
     compose_step: Step,
     inset_step: Step,
+    // The pass that runs the second view's graph and the one that puts what it
+    // drew in the corner, so what turns them off can name them.
+    inset_pass: PassId,
+    corner_pass: PassId,
     // The two runs beside the App's, one per view this demo draws from.
     shadow: ^RenderWorld,
     inset: ^RenderWorld,
@@ -523,6 +529,34 @@ Built :: struct {
     read_glow: BindGroupLayout,
     light: Vec3,
     elapsed: f32,
+}
+
+// Whether the second view is drawn this frame. A resource rather than a flag on
+// the demo, because what decides it is a system and a system reaches the world
+// and nothing else.
+ShowInset :: struct { on: bool }
+
+// SDL's scancode for B, which the platform layer does not name because a
+// program that wants a key past the handful it lists writes the number.
+KEY_B :: 5
+
+// Hold B and the corner goes. Held rather than toggled, so there is no edge to
+// remember and the picture says which way round it is.
+watch_inset :: fn(mut world: World) {
+    held := ecs_resource($Input, world, resource_of($Input, world))
+    on := input_key_pressed(held, KEY_B) == false
+    ecs_resource_set($ShowInset, world, resource_of($ShowInset, world),
+        ShowInset { on = on })
+}
+
+// The graph, changed for this frame. Turning a pass off is not rescheduling it:
+// it keeps its place in the order and records nothing. Both the sub-graph that
+// draws the second view and the step that puts it in the corner go, so nothing
+// is drawn for a picture nothing shows.
+update_inset :: fn(mut s: Built, mut g: Graph, world: World) {
+    held := ecs_resource($ShowInset, world, resource_of($ShowInset, world))
+    graph_set_enabled(g, s.inset_pass, held.on)
+    graph_set_enabled(g, s.corner_pass, held.on)
 }
 
 // Where the light is looking from, as a matrix. A directional light has no
@@ -1041,6 +1075,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
 
     sub := graph_sub(g, inset_graph)
     inset_pass := graph_sub_pass(g, "inset view", sub)
+    s.inset_pass = inset_pass
     graph_writes_color(g, inset_pass, inset,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
     // What the child draws into is what this graph holds for `inset`, given
@@ -1054,6 +1089,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     s.inset_step.second_source = inset
     corner_pass := graph_pass($Step, g, "corner", draw_cover,
         ptr_to(s.inset_step))
+    s.corner_pass = corner_pass
     graph_writes_color(g, corner_pass, screen,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
     graph_reads(g, corner_pass, inset)
@@ -1089,6 +1125,7 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
+    app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
     device := app_device(app)
@@ -1319,6 +1356,8 @@ run :: fn(move app: App) -> i64 {
             source = 0, group = no_bind_group(), second_layout = sampled,
             second_source = 0, second_group = no_bind_group(), reads_two = 0,
             at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0 },
+        inset_pass = cast($PassId, 0),
+        corner_pass = cast($PassId, 0),
         shadow = ptr_to(shadow_render),
         inset = ptr_to(inset_render),
         frame_uniform = frame_uniform,
@@ -1352,7 +1391,10 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.05
     app_camera_set(app, eye)
 
+    app_insert_resource($ShowInset, app, ShowInset { on = true })
+    app_add_system(app, Stage::FrameUpdate, watch_inset)
     app_configure_graph($Built, app, declare_passes, ptr_to(built))
+    app_update_graph($Built, app, update_inset, ptr_to(built))
     app_before_render($Built, app, before_frame, ptr_to(built))
     app_run(app)
 

@@ -2381,6 +2381,14 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
     while (cid != (-1)) {
         case_node := arena_at(p.arena, cid)
         mut last := case_node.a
+        // An arm with nothing in it has no last statement to give a value, so
+        // there is nothing here to rewrite. Reading one anyway is what indexed
+        // the node arena at -1, which a `match` written as a statement with one
+        // side doing nothing is the ordinary way to reach.
+        if (last == (-1)) {
+            cid = case_node.next
+            continue
+        }
         mut following := node_next(p, last)
         while (following != (-1)) {
             last = following

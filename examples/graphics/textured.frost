@@ -374,6 +374,7 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
+    app_install_group(app, default_plugins())
     app_install(app, camera_controller_plugin)
     app_install(app, exit_on_escape_plugin)
     device := app_device(app)
