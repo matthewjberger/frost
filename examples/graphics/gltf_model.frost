@@ -12,12 +12,6 @@
 // file loader produces is entities like any other, and the renderer never finds
 // out where they came from.
 //
-// The file is `lib/engine/assets/shapes.glb`, written by the generator beside
-// it. A cube, a pyramid and a floor, under two roots, one of which gives its
-// transform as a whole matrix. The whole model is hung off one entity that
-// turns, so what you see is the file's own tree carried around by something
-// above it.
-//
 // The rest of this file is `spinning.frost`'s lit pass, unchanged. What is
 // worth reading is `run`: the window, the device, the world, the schedule and
 // the four tables are an `App`, so what is left is the file, the pass and the
@@ -41,16 +35,14 @@ import "io.frost"
 WIDTH :: 1280
 HEIGHT :: 720
 
-// How many things the file may spawn, which is the slot table, the draw list
-// and nothing else. A loaded model is as big as its file says.
 MAX_DRAWN :: 64
 
-// How much geometry the shared buffers hold, which is what a file may bring.
 VERTEX_ROOM :: 65536
 INDEX_ROOM :: 131072
 
-// What is loaded, named from the root of the checkout.
-MODEL :: "lib/engine/assets/shapes.glb"
+// Relative to where the build runs, not to this file. `just gltf` runs it from
+// the root of the checkout.
+MODEL :: "lib/engine/assets/DamagedHelmet.glb"
 
 // The camera and the light, written once a frame: a matrix, then four vectors.
 FRAME_FLOATS :: 32
