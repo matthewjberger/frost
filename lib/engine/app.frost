@@ -349,6 +349,11 @@ app_next :: fn(mut app: App) -> bool {
     if (app.started == false) {
         app.started = true
         app.drawable = configure_graph(app)
+        // Nothing runs for a program that cannot draw, so a graph that refuses
+        // stops here rather than after a startup pass whose work is thrown away.
+        if (app.drawable == false) {
+            return false
+        }
         schedule_start(app.schedule, app.world, ANY_STATE)
     }
     if (app.drawable == false) {

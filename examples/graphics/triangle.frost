@@ -45,8 +45,7 @@ DeviceSlot :: struct { handle: Device, ready: i64 }
 // to a copy, so declaring it `^u8` worked there and would have read `userdata1`
 // out of the wrong register on System V, where the struct takes two.
 fill_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
-    userdata1: ^u8, userdata2: ^u8) {
-    slot := userdata_of($AdapterSlot, userdata1)
+    mut slot: AdapterSlot, userdata2: ^u8) {
     if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
         slot.handle = handle
     }
@@ -54,8 +53,7 @@ fill_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
 }
 
 fill_device :: fn(status: u32, handle: Device, value message: StringView,
-    userdata1: ^u8, userdata2: ^u8) {
-    slot := userdata_of($DeviceSlot, userdata1)
+    mut slot: DeviceSlot, userdata2: ^u8) {
     if (status == REQUEST_DEVICE_STATUS_SUCCESS) {
         slot.handle = handle
     }
@@ -138,13 +136,8 @@ main :: fn() -> i64 {
     // The adapter.
     mut adapter_slot : AdapterSlot =
         AdapterSlot { handle = no_adapter(), ready = 0 }
-    mut adapter_info : RequestAdapterCallbackInfo = RequestAdapterCallbackInfo {
-        next_in_chain = null_handle(),
-        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = fill_adapter,
-        userdata1 = ptr_to(adapter_slot),
-        userdata2 = null_handle(),
-    }
+    mut adapter_info := request_adapter_callback_info_of($AdapterSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_adapter, ptr_to(adapter_slot))
     // The adapter has to be chosen knowing which surface it will draw to, or
     // it may be one this surface cannot use, and the surface only says so when
     // it is asked for its capabilities.
@@ -165,13 +158,8 @@ main :: fn() -> i64 {
     // The device.
     mut device_slot : DeviceSlot =
         DeviceSlot { handle = no_device(), ready = 0 }
-    mut device_info : RequestDeviceCallbackInfo = RequestDeviceCallbackInfo {
-        next_in_chain = null_handle(),
-        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = fill_device,
-        userdata1 = ptr_to(device_slot),
-        userdata2 = null_handle(),
-    }
+    mut device_info := request_device_callback_info_of($DeviceSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_device, ptr_to(device_slot))
     adapter_request_device(adapter,
             null_handle(), ptr_to(device_info))
     mut device_spins : i64 = 0

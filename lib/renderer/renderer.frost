@@ -67,15 +67,13 @@ AdapterSlot :: struct { handle: Adapter, ready: i64 }
 DeviceSlot :: struct { handle: Device, ready: i64 }
 
 take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
-    userdata1: ^u8, userdata2: ^u8) {
-    slot := userdata_of($AdapterSlot, userdata1)
+    mut slot: AdapterSlot, userdata2: ^u8) {
     slot.handle = handle
     slot.ready = 1
 }
 
 take_device :: fn(status: u32, handle: Device, value message: StringView,
-    userdata1: ^u8, userdata2: ^u8) {
-    slot := userdata_of($DeviceSlot, userdata1)
+    mut slot: DeviceSlot, userdata2: ^u8) {
     slot.handle = handle
     slot.ready = 1
 }
@@ -113,13 +111,8 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     // first can hand back one this surface cannot use, and the surface only
     // says so later, when it is asked what formats it takes.
     mut adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
-    mut adapter_info := RequestAdapterCallbackInfo {
-        next_in_chain = no_pointer(),
-        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = take_adapter,
-        userdata1 = ptr_to(adapter_slot),
-        userdata2 = no_pointer(),
-    }
+    mut adapter_info := request_adapter_callback_info_of($AdapterSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_adapter, ptr_to(adapter_slot))
     mut options := request_adapter_options_init()
     options.feature_level = FEATURE_LEVEL_CORE
     options.compatible_surface = r.surface
@@ -130,13 +123,8 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     r.adapter = adapter_slot.handle
 
     mut device_slot := DeviceSlot { handle = no_device(), ready = 0 }
-    mut device_info := RequestDeviceCallbackInfo {
-        next_in_chain = no_pointer(),
-        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = take_device,
-        userdata1 = ptr_to(device_slot),
-        userdata2 = no_pointer(),
-    }
+    mut device_info := request_device_callback_info_of($DeviceSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_device, ptr_to(device_slot))
     // What a draw whose arguments come off the GPU needs. An indirect draw may
     // only name a non-zero first instance where the device says it can, and
     // that number is how a batch finds its own slice of the list a compute pass

@@ -831,6 +831,49 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         builder_str_value(out, "}
 
 ")
+
+        // The same struct, built against the thing the callback is handed back.
+        // C says nothing about what its userdata points at, so the caller says
+        // here, once, and the callback names it rather than casting: a `mut`
+        // parameter is an address in the signature and Frost shares C's
+        // convention, so the two functions are one and the cast emits nothing.
+        append_snake(out, document, name)
+        builder_str_value(out, "_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn(")
+        mut typed : i64 = 0
+        while (typed < count) {
+            held := json_at(document, args, typed)
+            append_value_mode(out, document, held)
+            append_type(out, document, held)
+            builder_str_value(out, ", ")
+            typed = typed + 1
+        }
+        builder_str_value(out, "mut Ctx, ^u8), state: ^Ctx) -> ")
+        append_pascal(out, document, name)
+        builder_str_value(out, "CallbackInfo {
+    ")
+        append_pascal(out, document, name)
+        builder_str_value(out, "CallbackInfo {
+        next_in_chain = null_handle(),
+        mode = mode,
+        callback = unsafe { ptr_cast($fn(")
+        mut erased : i64 = 0
+        while (erased < count) {
+            held := json_at(document, args, erased)
+            append_value_mode(out, document, held)
+            append_type(out, document, held)
+            builder_str_value(out, ", ")
+            erased = erased + 1
+        }
+        builder_str_value(out, "^u8, ^u8), callback) },
+        userdata1 = unsafe { ptr_cast($u8, state) },
+        userdata2 = null_handle(),
+    }
+}
+
+")
+        append_snake(names, document, name)
+        builder_str_value(names, "_callback_info_of, ")
         index = index + 1
     }
     total
@@ -1172,7 +1215,7 @@ main :: fn() -> i64 {
 
     mut body := builder_new(262144)
     mut names := builder_new(65536)
-    builder_str_value(names, "Chained, StringView, null_handle, userdata_of, surface_format_at, ")
+    builder_str_value(names, "Chained, StringView, null_handle, surface_format_at, ")
 
     handles := emit_handles(body, names, document, root)
     constants := emit_constants(body, names, document, root)
@@ -1212,16 +1255,6 @@ main :: fn() -> i64 {
     builder_str_value(out, "null_handle :: fn() -> ^u8 {
     zero := 0
     unsafe { ptr_cast($u8, zero) }
-}
-
-")
-    // What a callback was registered with, back as the thing it is. wgpu hands
-    // a callback the address it was given and says nothing about what is there,
-    // so the caller says, and this is the one place that reads it.
-    builder_str_value(out, "userdata_of :: fn($Ctx: Type, held: ^u8) -> ref Ctx {
-    span : []Ctx = unsafe { slice_from($Ctx, ptr_cast($Ctx, held), 1) }
-    ref result := span[0]
-    result
 }
 
 ")
