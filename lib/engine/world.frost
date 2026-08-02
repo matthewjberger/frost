@@ -25,7 +25,7 @@ import "math.frost"
 
 export LocalTransform, GlobalTransform, Spin, WorldIds, Exit, local_at,
     world_prepare, world_tree, world_tree_take, spinning,
-    world_schedule, world_systems, exit_on_escape,
+    world_schedule, world_systems, camera_controller_systems, exit_on_escape,
     world_exit, world_exit_wanted,
     world_input, world_ids, world_camera, world_camera_set
 
@@ -161,9 +161,14 @@ Exit :: struct { wanted: bool }
 // then where everything ended up. What comes of that is `scene_sync`, which
 // needs a device and is therefore not a system.
 world_systems :: fn(mut held: Schedule) {
-    schedule_add(held, Stage::First, move_camera)
-    schedule_add(held, Stage::First, turn_things)
-    schedule_add(held, Stage::Update, place_things)
+    schedule_add(held, Stage::FrameUpdate, turn_things)
+    schedule_add(held, Stage::FramePostUpdate, place_things)
+}
+
+// The camera moved by what was held. Its own plugin, because a program driving
+// the camera itself installs everything else and leaves this out.
+camera_controller_systems :: fn(mut held: Schedule) {
+    schedule_add(held, Stage::FrameUpdate, move_camera)
 }
 
 // The same three, as a schedule of their own, for a program running the world
@@ -171,6 +176,7 @@ world_systems :: fn(mut held: Schedule) {
 world_schedule :: fn() -> Schedule {
     mut held := schedule_new()
     world_systems(held)
+    camera_controller_systems(held)
     held
 }
 

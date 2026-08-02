@@ -52,6 +52,7 @@ import "io.frost"
 
 export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
     app_failed, app_install, engine_plugin, exit_on_escape_plugin,
+    camera_controller_plugin,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -111,6 +112,10 @@ App :: linear struct {
     meshes: MeshCache,
     materials: Materials,
     render: RenderWorld,
+    // Whether the startup stage has run. A frame runs the stages after it, so
+    // without this a program that never asks would have its startup systems
+    // registered and never run.
+    started: bool,
 }
 
 app_open :: fn(config: AppConfig) -> App ! AppError {
@@ -139,6 +144,7 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         meshes = mesh_cache_new(config.meshes),
         materials = materials_new(config.materials),
         render = render_world_new(device, config.drawn),
+        started = false,
     }
     // The one plugin an App is not an App without: the components a frame
     // reads, the resources its systems need, and the three systems themselves.
@@ -154,10 +160,16 @@ engine_plugin :: fn(mut app: App) {
     world_systems(app.schedule)
 }
 
+// The camera moved by what was held. A program driving the camera itself
+// installs everything else and leaves this out.
+camera_controller_plugin :: fn(mut app: App) {
+    camera_controller_systems(app.schedule)
+}
+
 // Escape closes the window. Installed by a demo rather than built into the
 // poll, so a program that wants that key for a menu simply does not install it.
 exit_on_escape_plugin :: fn(mut app: App) {
-    schedule_add(app.schedule, Stage::First, exit_on_escape)
+    schedule_add(app.schedule, Stage::FrameUpdate, exit_on_escape)
 }
 
 // One plugin, built into this App.
@@ -221,6 +233,12 @@ app_close :: fn(move app: App) -> i64 {
 // The renderer and the graph are resized together, because a surface and every
 // target tested against it are the same size or nothing draws.
 app_next :: fn(mut app: App, mut graph: Graph) -> bool {
+    // The startup stage, on the way into the first frame rather than at the end
+    // of opening, so a plugin installed after `app_open` still gets one.
+    if (app.started == false) {
+        app.started = true
+        schedule_start(app.schedule, app.world, ANY_STATE)
+    }
     if (platform_poll(app.platform) == false) {
         return false
     }
