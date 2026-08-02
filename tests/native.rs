@@ -17035,7 +17035,7 @@ fn the_render_graph_orders_its_passes() {
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
         assert!(
-            output.contains("21 passed, 0 failed"),
+            output.contains("24 passed, 0 failed"),
             "the render graph's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );
@@ -18836,6 +18836,32 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A function type is already an address, so naming one in a `ptr_cast` asks
+    // for that function type rather than for a pointer to it. Both compilers
+    // used to wrap it, so a `^proc` came back where a `proc` was wanted and a
+    // table of callbacks could not hold one registration written against the
+    // state it belongs to. Nothing is generated: a `mut` parameter is an address
+    // in the signature and Frost shares C's convention, so the typed function
+    // and the erased one are the same function.
+    (
+        "a_pointer_cast_to_a_function_type_answers_with_that_type",
+        "Held :: struct { value: i64 }
+         Table :: struct { call: fn(^u8, i64) }
+         add :: fn(mut held: Held, more: i64) {
+             held.value = held.value + more
+         }
+         main :: fn() -> i64 {
+             mut held := Held { value = 1 }
+             mut table := Table {
+                 call = unsafe { ptr_cast($fn(^u8, i64), add) } }
+             table.call(unsafe { ptr_cast($u8, ptr_to(held)) }, 41)
+             print held.value
+             0
+         }
+",
+        "42
+",
+    ),
     // A bare number takes its type from what it is compared against, whichever
     // side it is written on. Neither compiler did: the bootstrap typed the left
     // operand with nothing to go on and the self-hosted one typed a float literal

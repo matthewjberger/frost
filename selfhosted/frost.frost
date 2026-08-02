@@ -524,8 +524,12 @@ main :: fn() -> i64 {
         gparams = arena_make($GParam, 4096),
         cfn_params = arena_make($GParam, 4096),
         gargs = arena_make($GArg, 4096),
-        procs = arena_make($ProcSig, 4096),
-        proc_params = arena_make($GArg, 4096),
+        // A signature per function type in the whole import closure, and a
+        // slot per parameter of one. The wgpu binding alone declares a
+        // callback type and a constructor against it per callback, so these
+        // two count what a program reaches rather than what it writes.
+        procs = arena_make($ProcSig, 16384),
+        proc_params = arena_make($GArg, 16384),
         argbuf = arena_make($GArg, 4096),
         pending_rets = arena_make($PendingRet, 4096),
         summaries = arena_make($Summary, 4096),

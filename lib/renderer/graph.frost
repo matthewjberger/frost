@@ -226,9 +226,10 @@ Graph :: linear struct {
     height: i64,
 }
 
-// How much a graph starts with. Every table doubles from here, so this is what
-// a graph that declares nothing costs rather than a bound on one that declares
-// a lot.
+// How much a graph starts with. Every table doubles when it fills, so this is
+// what a graph that declares nothing costs rather than a bound on one that
+// declares a lot. The edges and the sub-graph inputs start at four times this,
+// since a pass declares several of each.
 FIRST_ROOM :: 8
 
 graph_new :: fn(device: Device) -> Graph {
@@ -411,12 +412,11 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     index := g.resource_count
     // Grown here rather than in a helper, because handing this borrow to
     // another `mut` parameter copies the header and the new storage would be
-    // written to the copy. A pool slot is held per resource, so the two grow
-    // together.
+    // written to the copy. Every table below grows the same way and for the
+    // same reason.
     if (index >= slice_len(g.resources)) {
-        room := slice_len(g.resources) * 2
-        g.resources = heap_grow_slice($Resource, g.resources, room)
-        g.pool = heap_grow_slice($PoolSlot, g.pool, room)
+        g.resources = heap_grow_slice($Resource, g.resources,
+            slice_len(g.resources) * 2)
     }
     mut held := g.resources
     held[index] = Resource {
@@ -1847,6 +1847,108 @@ test "a pass that says how it rebuilds may read one" {
     // graph that can run: the pass says what to call when its input moves.
     graph_rebuilds($Recorded, g, reader, nothing_rebuilt, ptr_to(nothing))
     assert(graph_schedule(g))
+    graph_free(g)
+}
+
+// Every table the graph keeps grows the same way, and a table that never filled
+// in any program here is a table whose growth nothing has run. These declare
+// past the starting room on purpose, one per table, so each doubling is walked.
+
+test "a graph takes more passes and resources than it started with" {
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
+    screen := graph_backbuffer(g)
+    // Twice the starting room, so the passes, the order, the saved flags and
+    // the edges all double more than once. Each pass writes its own target and
+    // the next reads it, which is both what keeps every resource alive and what
+    // fixes the order against the doublings.
+    mut held := graph_color(g, "first", 8, 8, 0)
+    mut writer := graph_pass($Recorded, g, "write", nothing_drawn,
+        ptr_to(nothing))
+    graph_writes_color(g, writer, held, clear_black())
+    mut made : i64 = 1
+    while (made < FIRST_ROOM * 2) {
+        next := graph_color(g, "next", 8, 8, 0)
+        one := graph_pass($Recorded, g, "step", nothing_drawn, ptr_to(nothing))
+        graph_writes_color(g, one, next, clear_black())
+        graph_reads(g, one, held)
+        held = next
+        made = made + 1
+    }
+    last := graph_pass($Recorded, g, "last", nothing_drawn, ptr_to(nothing))
+    graph_writes_color(g, last, screen, clear_black())
+    graph_reads(g, last, held)
+    assert(graph_schedule(g))
+    // Declared in the order they run, so the chain survived every doubling.
+    assert(graph_order_at(g, FIRST_ROOM * 2) == FIRST_ROOM * 2)
+    assert(graph_order_at(g, 0) == 0)
+    graph_free(g)
+}
+
+test "a graph takes more sub-graphs and inputs than it started with" {
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
+    screen := graph_backbuffer(g)
+    // Each nested graph draws into its own target and the pass after it reads
+    // that target, so every one of them is alive and the chain ends at the
+    // window.
+    mut held := graph_color(g, "outer", 8, 8, 0)
+    mut made : i64 = 0
+    while (made < FIRST_ROOM * 2) {
+        mut child := graph_new(no_device())
+        inner := graph_external_color(child, "target")
+        draw := graph_pass($Recorded, child, "draw", nothing_drawn,
+            ptr_to(nothing))
+        graph_writes_color(child, draw, inner, clear_black())
+        assert(graph_schedule(child))
+
+        sub := graph_sub(g, child)
+        one := graph_sub_pass(g, "nested", sub)
+        graph_writes_color(g, one, held, clear_black())
+        graph_takes(g, sub, inner, held)
+
+        next := graph_color(g, "after", 8, 8, 0)
+        reader := graph_pass($Recorded, g, "reads", nothing_drawn,
+            ptr_to(nothing))
+        graph_writes_color(g, reader, next, clear_black())
+        graph_reads(g, reader, held)
+        held = next
+        made = made + 1
+    }
+    last := graph_pass($Recorded, g, "last", nothing_drawn, ptr_to(nothing))
+    graph_writes_color(g, last, screen, clear_black())
+    graph_reads(g, last, held)
+    assert(graph_schedule(g))
+    graph_free(g)
+}
+
+test "a graph takes more pool slots than it started with" {
+    mut nothing := Recorded { times = 0 }
+    mut g := graph_new(no_device())
+    screen := graph_backbuffer(g)
+    // Each is written by its own pass and read by the next, so no two lifetimes
+    // overlap a slot that is free, and every one of them takes a slot of its
+    // own rather than reusing the one before.
+    mut held := graph_transient_color(g, "first", 8, 8, 0)
+    mut writer := graph_pass($Recorded, g, "write", nothing_drawn,
+        ptr_to(nothing))
+    graph_writes_color(g, writer, held, clear_black())
+    mut made : i64 = 1
+    while (made < FIRST_ROOM * 2) {
+        next := graph_transient_color(g, "next", 8 + made, 8, 0)
+        one := graph_pass($Recorded, g, "step", nothing_drawn, ptr_to(nothing))
+        graph_writes_color(g, one, next, clear_black())
+        graph_reads(g, one, held)
+        held = next
+        made = made + 1
+    }
+    last := graph_pass($Recorded, g, "last", nothing_drawn, ptr_to(nothing))
+    graph_writes_color(g, last, screen, clear_black())
+    graph_reads(g, last, held)
+    assert(graph_schedule(g))
+    // The pool is only filled when the graph is given a size, and that wants a
+    // device, so what this pins is that declaring this many is accepted.
+    assert(graph_order_at(g, 0) == 0)
     graph_free(g)
 }
 
