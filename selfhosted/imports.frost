@@ -6,7 +6,8 @@ import "lexer.frost"
 
 export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
     joined_path, module_at, report_where, line_of, column_of, file_of,
-    resolve_imports, search_roots_from, manifest_roots, source_with_room
+    resolve_imports, search_roots_from, manifest_roots, source_with_room,
+    manifest_above
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
     mut i : i64 = 0
@@ -185,6 +186,13 @@ is_parent_step :: fn(out: ^i8, start: i64, at: i64) -> bool {
 // A path that matches nothing is answered with the beside-it form, so the error
 // names where the reader would have looked.
 find_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
+    mut roots: Arena<SearchRoot>, mut layers: Arena<Layer>) -> ^i8 {
+    found := locate_import(parent, src, off, len, roots)
+    refuse_upward(parent, found, layers)
+    found
+}
+
+locate_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     mut roots: Arena<SearchRoot>) -> ^i8 {
     beside := normalise_path(join_path(parent, src, off, len))
     if (unsafe { frost_rt_file_exists(beside) } == 1) {
@@ -200,6 +208,53 @@ find_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
         i = i + 1
     }
     beside
+}
+
+// A layer may reach its own and the ones declared before it. The paths compared
+// are the ones resolution settled on, already normalised, so an import spelling
+// its way up and back down names the same file and is weighed the same.
+//
+// A file under no declared layer is unconstrained, as importer and as target,
+// which is what leaves the standard library and a program outside the project
+// alone.
+refuse_upward :: fn(parent: ^i8, found: ^i8, mut layers: Arena<Layer>) {
+    from := layer_of(parent, layers)
+    into := layer_of(found, layers)
+    if (from < 0 || into < 0 || into <= from) {
+        return
+    }
+    report("frost: layer: '")
+    report_cstr(arena_at(layers, from).name)
+    report("' may not reach '")
+    report_cstr(arena_at(layers, into).name)
+    report("': a file in '")
+    report_cstr(arena_at(layers, from).name)
+    report("' imports '")
+    report_cstr(layer_relative(found, arena_at(layers, into)))
+    report("'")
+    frost_rt_die()
+}
+
+// A file as a reader would write it: the layer's own name, then the rest of the
+// path under it, so a diagnostic says the same thing wherever the build ran.
+layer_relative :: fn(path: ^i8, held: Layer) -> ^i8 {
+    length := cstr_len(held.path)
+    rest := cstr_len(path) - length - 1
+    name_len := cstr_len(held.name)
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(name_len + rest + 2)) }
+    mut k : i64 = 0
+    while (k < name_len) {
+        byte_set(out, k, byte_at(held.name, k))
+        k = k + 1
+    }
+    byte_set(out, name_len, CH_SLASH)
+    k = 0
+    while (k < rest) {
+        byte_set(out, name_len + 1 + k, byte_at(path, length + 1 + k))
+        k = k + 1
+    }
+    byte_set(out, name_len + 1 + rest, 0)
+    out
 }
 
 // Copy a file's text into the buffer at `at`, terminated, and answer where the
@@ -223,7 +278,7 @@ append_text :: fn(buffer: str, at: i64, text: str) -> i64 {
 // skipped, which is what makes a diamond one copy and a cycle terminate.
 place_module :: fn(buffer: str, at: i64, given: ^i8,
     mut modules: Arena<Module>, mut roots: Arena<SearchRoot>,
-    mut scratch: Arena<Token>) -> i64 {
+    mut layers: Arena<Layer>, mut scratch: Arena<Token>) -> i64 {
     // The one the root file was named by comes in as the command line wrote it,
     // which on this machine is as likely to hold backslashes as not. Every
     // other path here has been through this already, and two spellings of one
@@ -258,7 +313,7 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
                 children,
                 Module {
                     path = find_import(path, text, named.off, named.len,
-                        roots),
+                        roots, layers),
                     start = 0, finish = 0,
                     cursor_off = -1, cursor_line = 1,
                     cursor_column = 1 },
@@ -271,7 +326,7 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
     while (c < children.count) {
         child := arena_at(children, c)
         here = place_module(buffer, here, child.path, modules, roots,
-            scratch)
+            layers, scratch)
         c = c + 1
     }
     finish := append_text(buffer, here, text)
@@ -500,13 +555,47 @@ directory_part :: fn(path: ^i8, upto: i64) -> i64 {
 // project saying something it meant.
 MANIFEST_NAME :: "frost.json"
 
-manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>) {
-    length := cstr_len(entry)
-    directory := directory_part(entry, length)
-    path := joined_path(entry, directory, MANIFEST_NAME)
-    if (unsafe { frost_rt_file_exists(path) } == 0) {
+// The nearest manifest at or above the entry file, as the length of the prefix
+// of `entry` that names its directory, or -1 where there is none. A layer list
+// describes a whole project and a build's entry is any file in it, so the
+// declaration is found by walking up rather than repeated in every directory a
+// build might start in.
+manifest_above :: fn(entry: ^i8) -> i64 {
+    mut length := directory_part(entry, cstr_len(entry))
+    mut going : bool = true
+    while (going) {
+        if (unsafe { frost_rt_file_exists(manifest_path(entry, length)) } == 1) {
+            return length
+        }
+        // A length of zero is the directory the build was started in, which is
+        // where a relative entry path is relative to and the last place worth
+        // looking.
+        if (length == 0) {
+            going = false
+        } else {
+            length = directory_part(entry, length)
+        }
+    }
+    -1
+}
+
+// The manifest for a directory given as a prefix of the entry path. An empty
+// prefix names the working directory, where a separator in front would make an
+// absolute path out of a relative one.
+manifest_path :: fn(entry: ^i8, length: i64) -> ^i8 {
+    if (length == 0) {
+        return MANIFEST_NAME
+    }
+    joined_path(entry, length, MANIFEST_NAME)
+}
+
+manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
+    mut layers: Arena<Layer>) {
+    directory := manifest_above(entry)
+    if (directory < 0) {
         return
     }
+    path := manifest_path(entry, directory)
     text := cstr_slice(unsafe { frost_rt_read_file(path) })
     mut document := json_parse(text)
     root := json_root(document)
@@ -530,7 +619,32 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>) {
         }
         named = json_next(document, named)
     }
+    // The layers, in the order they may reach. Each is kept twice: as the
+    // manifest wrote it, which is what a diagnostic says, and as the path it
+    // resolves to, which is what a file is tested against.
+    mut layer := json_at(document, json_member(document, root, "layers"), 0)
+    while (layer >= 0) {
+        if (json_kind(document, layer) == JsonKind::String) {
+            off := json_text_off(document, layer)
+            len := json_text_len(document, layer)
+            add_layer(layers, text_as_cstr(text, off, len), normalise_path(
+                join_under(prefix_of(entry, directory), text, off, len)))
+        }
+        layer = json_next(document, layer)
+    }
     json_free(document)
+}
+
+// A run of the manifest's text as a string of its own.
+text_as_cstr :: fn(src: str, off: i64, len: i64) -> ^i8 {
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(len + 1)) }
+    mut k : i64 = 0
+    while (k < len) {
+        byte_set(out, k, src[off + k])
+        k = k + 1
+    }
+    byte_set(out, len, 0)
+    out
 }
 
 // The leading part of a path, as a string of its own, which is what a declared
@@ -612,9 +726,11 @@ copy_name :: fn(into: str, at: i64, from: str, off: i64, len: i64) -> i64 {
 resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
     mut edges: Arena<ImportEdge>, mut renames: Arena<Rename>,
-    mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
+    mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>,
+    mut layers: Arena<Layer>) -> i64 {
     mut named_at : i64 = 0
-    length := place_module(buffer, 0, root, modules, roots, scratch)
+    length := place_module(buffer, 0, root, modules, roots, layers,
+        scratch)
     // Every imported file's text is in the buffer now, so the imports have
     // nothing left to say, and an export line has said it once it is recorded.
     // Blanking both leaves the parser one plain program with every offset where
@@ -634,8 +750,8 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             mut imported : i64 = -1
             if (importer >= 0) {
                 mine := arena_at(modules, importer)
-                found := find_import(mine.path, buffer, named.off, named.len,
-                    roots)
+                found := find_import(mine.path, buffer, named.off,
+                    named.len, roots, layers)
                 imported = module_index_of(modules, found)
                 if (imported >= 0) {
                     arena_push(edges,

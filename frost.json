@@ -1,0 +1,10 @@
+{
+  "name": "frost",
+  "paths": [],
+  "layers": [
+    "lib/platform",
+    "lib/renderer",
+    "lib/engine",
+    "examples/graphics"
+  ]
+}

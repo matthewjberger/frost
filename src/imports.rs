@@ -88,6 +88,28 @@ fn find_import(
     path: &str,
     roots: &[SearchRoot],
     project_root: &Path,
+) -> Result<Option<Found>> {
+    let Some(found) = locate_import(importing_dir, path, roots, project_root)
+    else {
+        return Ok(None);
+    };
+    // The layer rule is about the file an import names rather than the text of
+    // the import, so it is asked here, where resolution has settled which file
+    // that is. A path spelling its way back up and down again resolves to the
+    // same file and is weighed the same.
+    if let Some(complaint) =
+        crate::layers::reaching_upward(importing_dir, &found.path)
+    {
+        bail!("{complaint}");
+    }
+    Ok(Some(found))
+}
+
+fn locate_import(
+    importing_dir: &Path,
+    path: &str,
+    roots: &[SearchRoot],
+    project_root: &Path,
 ) -> Option<Found> {
     let neighbour = importing_dir.join(path);
     if neighbour.exists() {
@@ -218,7 +240,7 @@ pub fn resolve_imports_cached(
         let mut stack = HashSet::new();
         for statement in &statements {
             if let Statement::Import(path, _) = &statement.node {
-                let Some(found) = find_import(base_dir, path, roots, &root)
+                let Some(found) = find_import(base_dir, path, roots, &root)?
                 else {
                     continue;
                 };
@@ -425,7 +447,7 @@ fn plan_module(
     let directory = full.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut closure: BTreeMap<String, String> = BTreeMap::new();
     for import in &imports {
-        let Some(child_found) = find_import(&directory, import, roots, root)
+        let Some(child_found) = find_import(&directory, import, roots, root)?
         else {
             continue;
         };
@@ -496,12 +518,14 @@ fn import_identities(
     import_paths(statements)
         .iter()
         .filter_map(|path| {
-            find_import(base_dir, path, roots, root).map(|found| {
-                found
-                    .path
-                    .canonicalize()
-                    .unwrap_or_else(|_| found.path.clone())
-            })
+            find_import(base_dir, path, roots, root).ok().flatten().map(
+                |found| {
+                    found
+                        .path
+                        .canonicalize()
+                        .unwrap_or_else(|_| found.path.clone())
+                },
+            )
         })
         .collect()
 }
@@ -596,7 +620,7 @@ impl Walk<'_> {
             let renames = renames.clone();
 
             let Some(found) =
-                find_import(base_dir, path, self.roots, self.root)
+                find_import(base_dir, path, self.roots, self.root)?
             else {
                 bail!(
                     "failed to read imported file: '{path}' is not beside {} and is not on any library path",
@@ -920,6 +944,8 @@ fn collect_generic_types(
 ) {
     let Some(found) =
         find_import(importing_dir, path, scan.roots, scan.project_root)
+            .ok()
+            .flatten()
     else {
         return;
     };

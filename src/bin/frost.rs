@@ -97,10 +97,17 @@ fn search_roots(cli: &Cli, project_root: &Path) -> Result<Vec<SearchRoot>> {
     for directory in frost::path_from_environment() {
         roots.push(SearchRoot::project(directory));
     }
-    if let Some(manifest) = Manifest::find(project_root)? {
-        for directory in manifest.search_paths(project_root) {
-            roots.push(SearchRoot::project(directory));
+    // The nearest manifest at or above the entry file. A build's entry is any
+    // file in the project, so what the project declares is found by walking up
+    // rather than by being repeated in every directory a build might start in.
+    if let Some((manifest, directory)) = Manifest::find_upward(project_root)? {
+        for search in manifest.search_paths(&directory) {
+            roots.push(SearchRoot::project(search));
         }
+        frost::declare_layers(
+            &manifest.layers,
+            &manifest.layer_paths(&directory),
+        );
     }
     if let Some(standard) = frost::bundled_std() {
         roots.push(SearchRoot::named("std", standard));
