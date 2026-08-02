@@ -34,7 +34,7 @@ import "material.frost"
 import "math.frost"
 import "mem.frost"
 
-export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
+export Drawn, Transform, ONE_LAYER, ObjectData, RenderWorld,
     render_world_new, render_world_free, render_world_begin, render_world_push,
     render_world_upload, render_world_count, render_world_batches,
     render_world_layout, render_world_group, render_world_indirect,
@@ -43,10 +43,14 @@ export Drawn, Model, ONE_LAYER, ObjectData, RenderWorld,
     render_world_draw, render_world_draw_batch,
     CULL_SHADER, OBJECT_BYTES, MAX_PER_BATCH
 
-// Where a thing ended up, and what it is drawn as. These are the components the
-// walk reads, so they are declared beside it; whatever else an entity carries
-// is the world's business and this never sees it.
-Model :: struct { matrix: Mat4 }
+// World-space transform of a renderable, and what it is drawn as. These are the
+// renderer's own components; whatever else an entity carries is the world's
+// business and this never sees it.
+//
+// The same matrix as the world's `GlobalTransform` and a separate component
+// from it: this one is the renderer's, written when a thing is extracted, read
+// by whatever draws it.
+Transform :: struct { matrix: Mat4 }
 
 // What a thing is drawn as, and which of a program's layers draws it. A program
 // with one pass over everything gives every thing the same layer and never

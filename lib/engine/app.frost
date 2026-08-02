@@ -13,7 +13,8 @@
 //         ids := app_ids(app)
 //         ...
 //         while (app_next(app, graph)) {
-//             app_extract(app, all_drawn(ids.model, ids.drawn), app_view(app))
+//             app_extract(app, all_drawn(ids.global_transform,
+//                 ids.transform, ids.drawn), app_view(app))
 //             app_draw(app, graph)
 //         }
 //         graph_free(graph)

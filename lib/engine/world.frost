@@ -7,16 +7,15 @@
 //     schedule_run(frame, world, ANY_STATE)
 //
 // A drawing program has two halves and this is the far one. Here a thing has a
-// placement, a turn and somewhere it hangs from, and a frame works out where it
-// ended up; what comes of that is a `Model` and a `Drawn`, which is all the
-// renderer is ever shown. Nothing here holds a device and nothing here records
-// a command.
+// local transform, a turn and somewhere it hangs from, and a frame works out
+// where it ended up; what comes of that is a `GlobalTransform`, which
+// `scene_sync` reads to fill the renderer's side. Nothing here holds a device
+// and nothing here records a command.
 //
 // Every system is a `fn(mut World)` and captures nothing, so what one needs is
-// either a component or a resource: which component is which travels in a
-// `WorldIds`, the tree in a `Hierarchy`, what the machine did this frame in an
-// `Input`, and where the camera is in a `Camera`. The slot each of those sits
-// in is fixed by the order `world_prepare` registers them.
+// either a component or a resource. A component is found by the type it is and
+// a resource likewise, so nothing here writes a number down; `WorldIds` gathers
+// the answers for a walk that would otherwise ask once a row.
 
 import "../renderer/render_world.frost"
 import "../platform/platform.frost"
@@ -24,32 +23,41 @@ import "camera.frost"
 import "ecs.frost"
 import "math.frost"
 
-export Placement, Spin, WorldIds, Exit, placed_at,
+export LocalTransform, GlobalTransform, Spin, WorldIds, Exit, local_at,
     world_prepare, world_tree, world_tree_take, spinning,
     world_schedule, world_systems, exit_on_escape,
     world_exit, world_exit_wanted,
     world_input, world_ids, world_camera, world_camera_set
 
-// Where a thing is, how it is turned and how big. This is the whole of where
-// something ended up before anything above it is applied, and it is the only
-// thing the walk below reads.
+// Where a thing sits relative to whatever it hangs off: an offset from its
+// parent's origin, an orientation, and a scale on each axis.
 //
 // Three parts rather than a matrix, because that is what a thing is authored
 // with and what every file format hands over.
-Placement :: struct { position: Vec3, rotation: Quat, scale: Vec3 }
+LocalTransform :: struct { translation: Vec3, rotation: Quat, scale: Vec3 }
+
+// Where a thing ended up in the world, as one matrix, after everything it hangs
+// off has been applied. Written by the walk below from the chain of
+// `LocalTransform`s above it.
+//
+// This is what anything asking where something is reads. `scene_sync` is one
+// such reader and the renderer's `Transform` is what it writes; a thing that
+// wants a position without wanting to draw reads this and touches nothing of
+// the renderer's.
+GlobalTransform :: struct { matrix: Mat4 }
 
 // A thing that turns on its own: which way, how fast, how far round it is now,
 // and where it faced before any of that.
 //
-// This is gameplay, not transform. It writes into `Placement.rotation` like
-// anything else that moves something, and the walk that works out where things
-// ended up has never heard of it. It used to be a second rotation composed
-// inside that walk, which made an animation something the transform pipeline
-// had to know about, and meant every function in the walk carried a second
-// component id to reach it.
+// This is gameplay, not transform. It writes into `LocalTransform.rotation`
+// like anything else that moves something, and the walk that works out where
+// things ended up has never heard of it. It used to be a second rotation
+// composed inside that walk, which made an animation something the transform
+// pipeline had to know about, and meant every function in the walk carried a
+// second component id to reach it.
 //
 // `rest` is what the rotation is measured from, so a thing that already faces
-// somewhere keeps facing there at angle zero. Anything that sets a placement's
+// somewhere keeps facing there at angle zero. Anything that sets a local
 // rotation and also spins sets both.
 Spin :: struct { axis: Vec3, speed: f32, angle: f32, rest: Quat }
 
@@ -58,34 +66,36 @@ spinning :: fn(axis: Vec3, speed: f32, rest: Quat) -> Spin {
     Spin { axis = axis, speed = speed, angle = 0.0, rest = rest }
 }
 
-// A placement that only says where, for a thing that faces the way it was
+// A local transform that only says where, for a thing that faces the way it was
 // modelled and is the size it was modelled at.
-placed_at :: fn(position: Vec3) -> Placement {
-    Placement { position = position, rotation = quat_identity(),
+local_at :: fn(translation: Vec3) -> LocalTransform {
+    LocalTransform { translation = translation, rotation = quat_identity(),
         scale = vec3(1.0, 1.0, 1.0) }
 }
 
-// Which component is which, gathered so a walk that reads four of them asks
-// once rather than four times a row. It is worked out from the world every time
-// it is asked for, so it cannot say something the world does not.
+// Which component is which, gathered so a walk that reads several of them asks
+// once rather than once a row. It is worked out from the world every time it is
+// asked for, so it cannot say something the world does not.
 WorldIds :: struct {
-    placement: i64,
+    local_transform: i64,
+    global_transform: i64,
+    transform: i64,
     spin: i64,
-    model: i64,
     drawn: i64,
 }
 
 // The components and resources every drawing program needs, declared in one
 // call. Declared rather than registered: a program that installs two things
-// each wanting a `Placement` or an `Input` gets one of each, and neither has to
-// know whether the other asked first.
+// each wanting a `LocalTransform` or an `Input` gets one of each, and neither
+// has to know whether the other asked first.
 //
 // The tree starts empty: a program hangs whatever it wants off whatever it
 // wants, and a thing attached to nothing is a root.
 world_prepare :: fn(mut world: World) -> WorldIds {
-    component_for($Placement, world)
+    component_for($LocalTransform, world)
+    component_for($GlobalTransform, world)
+    component_for($Transform, world)
     component_for($Spin, world)
-    component_for($Model, world)
     component_for($Drawn, world)
     ecs_resource_register($Hierarchy, world)
     ecs_resource_register($Input, world)
@@ -113,9 +123,10 @@ world_input :: fn(mut world: World, held: Input) {
 // asks instead of being told a number.
 world_ids :: fn(world: World) -> WorldIds {
     WorldIds {
-        placement = component_of($Placement, world),
+        local_transform = component_of($LocalTransform, world),
+        global_transform = component_of($GlobalTransform, world),
+        transform = component_of($Transform, world),
         spin = component_of($Spin, world),
-        model = component_of($Model, world),
         drawn = component_of($Drawn, world),
     }
 }
@@ -194,14 +205,14 @@ move_camera :: fn(mut world: World) {
 }
 
 // Every turn advanced by the frame's step, and written where a rotation lives.
-// A system that moves something writes a placement; nothing downstream of this
-// knows a thing was turning rather than put there.
+// A system that moves something writes a local transform; nothing downstream of
+// this knows a thing was turning rather than put there.
 turn_things :: fn(mut world: World) {
     ids := world_ids(world)
     step := input_delta_seconds(ecs_resource($Input, world, resource_of($Input, world)))
     mut q := query_begin(world)
     query_with(q, ids.spin)
-    query_with(q, ids.placement)
+    query_with(q, ids.local_transform)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
         mut row : i64 = 0
@@ -210,10 +221,11 @@ turn_things :: fn(mut world: World) {
             mut turn := ecs_get($Spin, world, entity, ids.spin)
             turn.angle = turn.angle + turn.speed * step
             ecs_set($Spin, world, entity, ids.spin, turn)
-            mut place := ecs_get($Placement, world, entity, ids.placement)
+            mut place := ecs_get($LocalTransform, world, entity,
+                ids.local_transform)
             place.rotation = quat_mul(turn.rest,
                 quat_from_axis_angle(turn.axis, turn.angle))
-            ecs_set($Placement, world, entity, ids.placement, place)
+            ecs_set($LocalTransform, world, entity, ids.local_transform, place)
             row = row + 1
         }
     }
@@ -225,8 +237,8 @@ turn_things :: fn(mut world: World) {
 place_things :: fn(mut world: World) {
     ids := world_ids(world)
     mut q := query_begin(world)
-    query_with(q, ids.model)
-    query_with(q, ids.placement)
+    query_with(q, ids.global_transform)
+    query_with(q, ids.local_transform)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
         mut row : i64 = 0
@@ -234,8 +246,8 @@ place_things :: fn(mut world: World) {
             entity := rows[row]
             tree := world_tree(world)
             if (is_no_entity(hierarchy_parent(tree, entity))) {
-                place_subtree(world, ids.placement, ids.model, entity,
-                    mat4_identity())
+                place_subtree(world, ids.local_transform,
+                    ids.global_transform, entity, mat4_identity())
             }
             row = row + 1
         }
@@ -243,10 +255,10 @@ place_things :: fn(mut world: World) {
 }
 
 // One thing and everything under it, each placed against what it hangs off.
-place_subtree :: fn(mut world: World, placement: i64, model: i64,
+place_subtree :: fn(mut world: World, local: i64, global: i64,
     entity: Entity, above: Mat4) {
-    ecs_set($Model, world, entity, model, Model {
-        matrix = mat4_mul(above, local_of(world, placement, entity)) })
+    ecs_set($GlobalTransform, world, entity, global, GlobalTransform {
+        matrix = mat4_mul(above, local_of(world, local, entity)) })
     tree := world_tree(world)
     mut child := hierarchy_first_child(tree, entity)
     while (is_no_entity(child) == false) {
@@ -256,16 +268,16 @@ place_subtree :: fn(mut world: World, placement: i64, model: i64,
         // Read back rather than carried, because a matrix written into a
         // component has been handed over and the name that held it does not
         // hold it for the next child.
-        here := ecs_get($Model, world, entity, model)
-        place_subtree(world, placement, model, child, here.matrix)
+        here := ecs_get($GlobalTransform, world, entity, global)
+        place_subtree(world, local, global, child, here.matrix)
         child = following
     }
 }
 
-// A thing's own placement, before anything above it is applied.
-local_of :: fn(mut world: World, placement: i64, entity: Entity) -> Mat4 {
-    place := ecs_get($Placement, world, entity, placement)
-    mat4_mul(mat4_translation(place.position),
+// A thing's own transform, before anything above it is applied.
+local_of :: fn(mut world: World, local: i64, entity: Entity) -> Mat4 {
+    place := ecs_get($LocalTransform, world, entity, local)
+    mat4_mul(mat4_translation(place.translation),
         mat4_mul(quat_to_mat4(place.rotation), mat4_scale(place.scale)))
 }
 
@@ -376,17 +388,17 @@ test "a frame in which nothing was held moves nothing" {
 test "a thing is placed against whatever it hangs off, however deep" {
     mut world := ecs_new()
     ids := world_prepare(world)
-    wanted := mask_with(mask_with(mask_with(mask_empty(), ids.placement),
-        ids.spin), ids.model)
+    wanted := mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.spin), ids.global_transform)
     // Held in one place, since spawning three and naming each would hand every
     // one of them over to the array anyway.
     mut chain : [3]Entity = [ecs_spawn_with(world, wanted),
         ecs_spawn_with(world, wanted), ecs_spawn_with(world, wanted)]
     mut made : i64 = 0
     while (made < 3) {
-        ecs_set($Placement, world, chain[made], ids.placement, Placement {
-            position = vec3(1.0, 0.0, 0.0), rotation = quat_identity(),
-            scale = vec3(1.0, 1.0, 1.0) })
+        ecs_set($LocalTransform, world, chain[made], ids.local_transform,
+            LocalTransform { translation = vec3(1.0, 0.0, 0.0),
+                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
         ecs_set($Spin, world, chain[made], ids.spin,
             spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
         made = made + 1
@@ -400,9 +412,10 @@ test "a thing is placed against whatever it hangs off, however deep" {
 
     // One step along x each, applied down the chain, so the leaf lands at
     // three. Two passes over roots and their children would leave it at two.
-    placed := ecs_get($Model, world, chain[2], ids.model)
+    placed := ecs_get($GlobalTransform, world, chain[2], ids.global_transform)
     assert(placed.matrix.m[12] > 2.999 && placed.matrix.m[12] < 3.001)
-    between := ecs_get($Model, world, chain[1], ids.model)
+    between := ecs_get($GlobalTransform, world, chain[1],
+        ids.global_transform)
     assert(between.matrix.m[12] > 1.999 && between.matrix.m[12] < 2.001)
 
     schedule_free(frame)
