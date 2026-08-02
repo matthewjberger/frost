@@ -11,10 +11,13 @@ selfhosted/.run_target*.s
 !bench/generate.py
 bench/generated
 .frost-build
-lib/platform/SDL3.dll
+# The import library and headers `just fetch` writes beside the two runtime
+# libraries. Nothing here links against either: a Windows build names the DLL
+# and a Linux build names what the system already has.
 lib/platform/SDL3.lib
 examples/graphics/window
-lib/renderer/wgpu/
+lib/renderer/wgpu/include/
+lib/renderer/wgpu/libwgpu_native.dll.a
 # The libraries the justfile copies beside a built demo, so the loader
 # finds them. The originals live beside the bindings that name them.
 examples/graphics/wgpu_native.dll
@@ -23,7 +26,6 @@ examples/graphics/triangle
 examples/graphics/*.png
 examples/graphics/*.exe
 tools/*.exe
-lib/renderer/wgpu.frost
 
 # The rendered book. The source is docs/book/src.
 /docs/book/book

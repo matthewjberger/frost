@@ -3,3 +3,11 @@
 # checks out with. `sh` reads a carriage return as part of the command and fails
 # on the first line it meets one.
 *.sh text eol=lf
+
+# The two runtime libraries the graphics examples load, in the tree so a
+# checkout builds without fetching anything. Said outright rather than left to
+# content sniffing, since a line ending rewritten inside one is a library that
+# will not load.
+*.dll binary
+*.lib binary
+*.a binary
