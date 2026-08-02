@@ -279,8 +279,6 @@ main :: fn() -> i64 {
     mut config := app_config("Frost glTF", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
-    config.resources = 3
-    config.passes = 2
     config.drawn = MAX_DRAWN
     match app_open(config) {
         case .Ok { value }: run(value)

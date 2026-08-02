@@ -366,8 +366,6 @@ main :: fn() -> i64 {
     mut config := app_config("Frost textured primitives", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
-    config.resources = 3
-    config.passes = 2
     config.drawn = INSTANCES * 2
     match app_open(config) {
         case .Ok { value }: run(value)
