@@ -9,14 +9,11 @@
 //     }
 //
 //     run :: fn(move app: App) -> i64 {
+//         app_install(app, exit_on_escape_plugin)
 //         mut graph := graph_new(app_device(app), 2, 1)
-//         ids := app_ids(app)
 //         ...
-//         while (app_next(app, graph)) {
-//             app_extract(app, all_drawn(ids.global_transform,
-//                 ids.transform, ids.drawn), app_view(app))
-//             app_draw(app, graph)
-//         }
+//         app_before_render(app, before_frame, ptr_to(scene))
+//         app_run(app, graph)
 //         graph_free(graph)
 //         app_close(app)
 //     }
@@ -47,12 +44,19 @@ import "world.frost"
 import "scene_sync.frost"
 import "camera.frost"
 import "ecs.frost"
+import "vec.frost"
 import "math.frost"
 import "io.frost"
 
+// Stopping, which a module that needs it declares for itself: neither
+// `ecs.frost` nor the wgpu binding hands these out.
+frost_rt_error :: extern fn(text: ^i8)
+frost_rt_die   :: safe extern fn()
+
 export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
-    app_failed, app_install, engine_plugin, exit_on_escape_plugin,
-    camera_controller_plugin,
+    app_failed, app_install, app_install_if_absent,
+    engine_plugin, exit_on_escape_plugin, camera_controller_plugin,
+    app_before_render, app_run,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -112,6 +116,11 @@ App :: linear struct {
     meshes: MeshCache,
     materials: Materials,
     render: RenderWorld,
+    // Which plugins are in, so one composed by two others goes in once.
+    installed: Vec<Installed>,
+    // What runs each frame between the schedule and the graph, where a
+    // system cannot reach: writing a uniform, filling the run.
+    before_render: Vec<BeforeRender>,
     // Whether the startup stage has run. A frame runs the stages after it, so
     // without this a program that never asks would have its startup systems
     // registered and never run.
@@ -144,12 +153,13 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         meshes = mesh_cache_new(config.meshes),
         materials = materials_new(config.materials),
         render = render_world_new(device, config.drawn),
+        installed = vec_new($Installed, 8),
+        before_render = vec_new($BeforeRender, 4),
         started = false,
     }
-    // The one plugin an App is not an App without: the components a frame
-    // reads, the resources its systems need, and the three systems themselves.
-    // Everything else a program installs for itself.
-    engine_plugin(app)
+    // The one plugin an App is not an App without. Everything else a program
+    // installs for itself.
+    app_install(app, engine_plugin)
     app
 }
 
@@ -185,7 +195,52 @@ exit_on_escape_plugin :: fn(mut app: App) {
 // function type in Frost has no alias: `schedule_add` spells `fn(mut World)`
 // the same way.
 app_install :: fn(mut app: App, build: fn(mut App)) {
+    if (already_installed(app, build)) {
+        unsafe { frost_rt_error("frost: a plugin is installed twice\n") }
+        frost_rt_die()
+    }
+    vec_push($Installed, app.installed, Installed { build = build })
     build(app)
+}
+
+// The same, where a plugin that is already in is what was wanted. A plugin
+// composing what it depends on uses this, since more than one may depend on
+// the same thing and none of them can see whether another got there first.
+app_install_if_absent :: fn(mut app: App, build: fn(mut App)) {
+    if (already_installed(app, build)) {
+        return
+    }
+    vec_push($Installed, app.installed, Installed { build = build })
+    build(app)
+}
+
+already_installed :: fn(app: App, build: fn(mut App)) -> bool {
+    held := vec_slice($Installed, app.installed)
+    mut i : i64 = 0
+    while (i < vec_len($Installed, app.installed)) {
+        if (held[i].build == build) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A plugin that is in, so two that pull in the same one pull it in once.
+Installed :: struct { build: fn(mut App) }
+
+// What a frame does between the world and the graph. A system is a
+// `fn(mut World)` and cannot reach a device, so what writes a uniform or
+// fills the run is this instead: the App, and whatever the caller kept its
+// own state in, which is how a pass is given its state too.
+BeforeRender :: struct {
+    hook: fn(mut App, ^u8),
+    state: ^u8,
+}
+
+app_before_render :: fn(mut app: App, hook: fn(mut App, ^u8), state: ^u8) {
+    vec_push($BeforeRender, app.before_render,
+        BeforeRender { hook = hook, state = state })
 }
 
 // What a program says and answers when it could not open. Written here because
@@ -211,6 +266,8 @@ app_failed :: fn(held: AppError) -> i64 {
 // before what made them: the tables are the device's, the world holds the tree,
 // and the window outlives the device it was drawn into.
 app_close :: fn(move app: App) -> i64 {
+    vec_free($Installed, app.installed)
+    vec_free($BeforeRender, app.before_render)
     render_world_free(app.render)
     geometry_free(app.store)
     materials_free(app.materials)
@@ -252,6 +309,33 @@ app_next :: fn(mut app: App, mut graph: Graph) -> bool {
     // A system deciding the program is finished is the last thing a frame does,
     // so the frame it decided in is finished rather than half drawn.
     world_exit_wanted(app.world) == false
+}
+
+// Every frame until the window closes or a system says to stop.
+//
+// The App is borrowed rather than taken, because a pass reaches the run and the
+// geometry through a pointer the program took before the first frame, and a
+// pointer into a value that has been moved names where it used to be. What
+// closes the App is the caller, after this answers.
+//
+// The graph is given rather than held for the same reason `app_next` takes it:
+// which passes exist is what one program has to say and the next does not.
+app_run :: fn(mut app: App, mut graph: Graph) {
+    while (app_next(app, graph)) {
+        before_render(app)
+        app_draw(app, graph)
+    }
+}
+
+// The hooks, in the order they were added. Each is handed the App and the state
+// it was registered with.
+before_render :: fn(mut app: App) {
+    mut i : i64 = 0
+    while (i < vec_len($BeforeRender, app.before_render)) {
+        held := vec_get($BeforeRender, app.before_render, i)
+        held.hook(app, held.state)
+        i = i + 1
+    }
 }
 
 // What the world says is drawn, put in the run the passes read. A program

@@ -74,6 +74,7 @@ Scene :: struct {
     material_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
+    frame_uniform: Buffer,
 }
 
 SHADER :: "
@@ -329,6 +330,17 @@ build_image :: fn(which: i64) -> Image {
     held
 }
 
+// What a frame does between the world and the graph. A system cannot reach a
+// device, so writing the frame's uniform and filling the run are this instead.
+before_frame :: fn(mut app: App, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    write_frame(app_queue(app), unsafe { s^.frame_uniform }, app_camera(app),
+        app_width(app), app_height(app))
+    ids := app_ids(app)
+    app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
+        app_view(app))
+}
+
 main :: fn() -> i64 {
     mut config := app_config("Frost textured primitives", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
@@ -439,6 +451,7 @@ run :: fn(move app: App) -> i64 {
         material_group = material_group,
         render = ptr_to(app.render),
         store = ptr_to(app.store),
+        frame_uniform = frame_uniform,
     }
     // One pass, and the two targets it writes. The depth buffer is the graph's:
     // it follows the window and both load ops come from what the pass declared.
@@ -467,13 +480,13 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = 0.0
     app_camera_set(app, eye)
 
-    while (scheduled && app_next(app, graph)) {
-        write_frame(queue, frame_uniform, app_camera(app), app_width(app),
-            app_height(app))
-        app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn), app_view(app))
-        app_draw(app, graph)
+    if (scheduled == false) {
+        graph_free(graph)
+        texture_free(images)
+        return app_close(app)
     }
-
+    app_before_render(app, before_frame, ptr_to(scene))
+    app_run(app, graph)
     graph_free(graph)
     texture_free(images)
     app_close(app)
