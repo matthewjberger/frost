@@ -1172,7 +1172,7 @@ main :: fn() -> i64 {
 
     mut body := builder_new(262144)
     mut names := builder_new(65536)
-    builder_str_value(names, "Chained, StringView, ")
+    builder_str_value(names, "Chained, StringView, null_handle, userdata_of, surface_format_at, ")
 
     handles := emit_handles(body, names, document, root)
     constants := emit_constants(body, names, document, root)
@@ -1212,6 +1212,25 @@ main :: fn() -> i64 {
     builder_str_value(out, "null_handle :: fn() -> ^u8 {
     zero := 0
     unsafe { ptr_cast($u8, zero) }
+}
+
+")
+    // What a callback was registered with, back as the thing it is. wgpu hands
+    // a callback the address it was given and says nothing about what is there,
+    // so the caller says, and this is the one place that reads it.
+    builder_str_value(out, "userdata_of :: fn($Ctx: Type, held: ^u8) -> ref Ctx {
+    span : []Ctx = unsafe { slice_from($Ctx, ptr_cast($Ctx, held), 1) }
+    ref result := span[0]
+    result
+}
+
+")
+    // What a surface accepts, at a place in the run it answered with.
+    builder_str_value(out, "surface_format_at :: fn(held: SurfaceCapabilities,
+    index: i64) -> u32 {
+    span : []u32 = unsafe { slice_from($u32, ptr_cast($u32, held.formats),
+        cast($i64, held.formats_count)) }
+    span[index]
 }
 
 ")

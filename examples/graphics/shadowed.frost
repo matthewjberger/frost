@@ -521,9 +521,6 @@ Built :: struct {
     map_layout: BindGroupLayout,
     written_glow: BindGroupLayout,
     read_glow: BindGroupLayout,
-    sampled: BindGroupLayout,
-    inset_frame_group: BindGroup,
-    culling_pipeline: ComputePipeline,
     light: Vec3,
     elapsed: f32,
 }
@@ -1331,9 +1328,6 @@ run :: fn(move app: App) -> i64 {
         map_layout = map_layout,
         written_glow = written_glow,
         read_glow = read_glow,
-        sampled = sampled,
-        inset_frame_group = inset_frame_group,
-        culling_pipeline = culling_pipeline,
         light = vec3_normalize(vec3(-0.55, -1.0, -0.4)),
         elapsed = 0.0,
     }
