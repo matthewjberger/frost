@@ -7,7 +7,7 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use frost::{
-    BuildCache, Expression, Lexer, Literal, Manifest, Parameter,
+    BuildCache, Expression, Layer, Lexer, Literal, Manifest, Parameter,
     Parser as FrostParser, Position, Resolution, ReturnKind, ReturnSignature,
     RunOutcome, SearchRoot, Spanned, Statement, TEST_PREFIX, Type,
     build_module, build_module_per_module, check_callback_declarations,
@@ -89,8 +89,12 @@ struct Cli {
 // line, then `FROST_PATH`, then whatever the project's manifest declares, then
 // the standard library. Command line beats environment beats project file, which
 // is the order of how deliberately each was said.
-fn search_roots(cli: &Cli, project_root: &Path) -> Result<Vec<SearchRoot>> {
+fn search_roots(
+    cli: &Cli,
+    project_root: &Path,
+) -> Result<(Vec<SearchRoot>, Vec<Layer>)> {
     let mut roots = Vec::new();
+    let mut layers = Vec::new();
     for directory in &cli.lib_path {
         roots.push(SearchRoot::project(PathBuf::from(directory)));
     }
@@ -104,15 +108,16 @@ fn search_roots(cli: &Cli, project_root: &Path) -> Result<Vec<SearchRoot>> {
         for search in manifest.search_paths(&directory) {
             roots.push(SearchRoot::project(search));
         }
-        frost::declare_layers(
-            &manifest.layers,
-            &manifest.layer_paths(&directory),
-        );
+        for (name, path) in
+            manifest.layers.iter().zip(manifest.layer_paths(&directory))
+        {
+            layers.push(Layer::new(name, &path));
+        }
     }
     if let Some(standard) = frost::bundled_std() {
         roots.push(SearchRoot::named("std", standard));
     }
-    Ok(roots)
+    Ok((roots, layers))
 }
 
 /// Whether the program already declares this runtime entry point itself, which
@@ -377,7 +382,7 @@ fn compile() -> Result<()> {
 
     let project_root =
         base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
-    let roots = search_roots(&cli, &project_root)?;
+    let (roots, layers) = search_roots(&cli, &project_root)?;
 
     let mut parser = FrostParser::with_positions(&tokens, &positions);
     // A generic type this file imports may be named in a literal here, so which
@@ -387,6 +392,7 @@ fn compile() -> Result<()> {
         &source,
         &base_dir,
         &roots,
+        &layers,
         &project_root,
     ));
     let parsed = parser.parse().context("Parser error")?;
@@ -418,6 +424,7 @@ fn compile() -> Result<()> {
         Resolution {
             cache: cache.as_ref(),
             roots: &roots,
+            layers: &layers,
         },
     )
     .context("Import error")?;
