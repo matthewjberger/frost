@@ -47,7 +47,7 @@ frost examples/tour.frost          # compile, link, and run
 That is [`examples/tour.frost`](examples/tour.frost). A test compiles it, checks
 what it prints, and checks it still matches what is written here.
 
-For long-lived data, a value lives in a pool and is named by a `Handle`, a small copy value. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is built on that, and [`just scene`](docs/book/src/std/ecs.md) runs it: entities in an ECS, two passes, depth deciding what is in front.
+For long-lived data, a value lives in a pool and is named by a `Handle`, a small copy value. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is built on that, and [`just app scene`](docs/book/src/std/ecs.md) runs it: entities in an ECS, two passes, depth deciding what is in front.
 
 ## Documentation
 
@@ -81,20 +81,56 @@ The engine is ordinary Frost too. [`lib/`](lib) is a window and input layer over
 
 ## Getting started
 
-Clone it and build. A Rust toolchain and a C compiler (gcc or clang) for linking
-are the whole of what has to be there first.
+A Rust toolchain and a C compiler (gcc or clang) for linking are the whole of
+what has to be there first. [`just`](https://github.com/casey/just) runs
+everything below and is worth having: `cargo install just`.
 
 ```bash
 git clone https://github.com/matthewjberger/frost
 cd frost
-cargo build --release          # build the compiler
-just install                   # put `frost` on PATH, with std/ beside it
+cargo build --release    # the bootstrap compiler, at target/release/frost
+just install             # put it on PATH as `frost`, with std/ beside it
 ```
 
-`just` runs everything below; `cargo build --release` alone leaves the compiler
-at `target/release/frost`. From here `just window` opens a window on Windows,
-and on Linux or macOS one more step is needed, which the
-[graphics demos](#the-graphics-demos) section says.
+That is the whole setup on Windows. On Linux and macOS, two more lines get the
+graphics examples going, which the [graphics demos](#the-graphics-demos) section
+covers. Either way:
+
+```bash
+just app spinning        # build and run one of the examples
+cargo test               # everything, including both self-hosting fixpoints
+```
+
+### Building the compiler with itself
+
+There are two compilers and they accept the same language. `src/` is the
+bootstrap, in Rust; `selfhosted/` is the same compiler written in Frost. Going
+from nothing to a Frost compiler built by Frost is three steps:
+
+```bash
+cargo build --release    # 1. the bootstrap compiler, from Rust
+just selfhost-build      # 2. it compiles selfhosted/frost.frost -> selfhosted/frost.exe
+just install-self        # 3. put that on PATH as `frostc`
+```
+
+Step 2 is stage 0: the Rust compiler reading Frost source and emitting a Frost
+compiler. From there `frostc` compiles anything the bootstrap does, including
+its own source, and what it produces is byte for byte what stage 0 produced:
+
+```bash
+just selfhost-check          # compile itself with itself, twice, and diff (three-stage fixpoint)
+just selfhost-native-check   # the same through its own x86-64 assembly backend, no C compiler
+just selfhost-test           # run the compiler's own test blocks
+```
+
+The second one is the one worth understanding. `--emit-asm` makes the
+self-hosted compiler write x86-64 assembly, which its own in-process assembler
+encodes to an object file. So a build can go from Frost source to a running
+compiler with no C compiler anywhere in the loop, and the binary that comes out
+reproduces itself exactly.
+
+Both fixpoints run in `cargo test`, so a change that makes the compiler stop
+reproducing itself fails the suite rather than being noticed later.
 
 ```bash
 frost program.frost                              # compile, link, and run
@@ -117,14 +153,14 @@ Seven programs that open a window and draw through wgpu, in the order they were
 built, each one the smallest step past the last:
 
 ```bash
-just window      # a window that opens, resizes, and closes
-just triangle    # the first thing drawn: one triangle, one pipeline
-just scene       # entities in an ECS, two passes, depth deciding what is in front
-just spinning    # lit surfaces: a mesh cache, a material registry, two bind groups
-just textured    # the same field with its surfaces read off an image
-just shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
-just gltf        # a model read out of a file and spawned into the world
-just input       # what the platform layer saw, for when a key misbehaves
+just app window      # a window that opens, resizes, and closes
+just app triangle    # the first thing drawn: one triangle, one pipeline
+just app scene       # entities in an ECS, two passes, depth deciding what is in front
+just app spinning    # lit surfaces: a mesh cache, a material registry, two bind groups
+just app textured    # the same field with its surfaces read off an image
+just app shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
+just app gltf_model  # a model read out of a file and spawned into the world
+just app input       # what the platform layer saw, for when a key misbehaves
 ```
 
 **On Windows these run straight from a clone.** The wgpu binding, the schema it
@@ -142,7 +178,7 @@ sudo apt install libsdl3-dev # Debian and Ubuntu
 sudo pacman -S sdl3          # Arch
 
 just deps                    # wgpu-native, into lib/renderer/wgpu
-just spinning
+just app spinning
 ```
 
 `just deps` is also how either platform moves to a newer wgpu: the versions are
