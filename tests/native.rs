@@ -122,6 +122,35 @@ fn compile_error_gated(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
+// A `uses` function indexing the arena it draws from. The capability is threaded
+// in as a parameter by a lowering that runs after the unsafe gate, so the body
+// names something nothing has declared, and the index rule refuses a base whose
+// type it cannot read. That left no way to write a bump allocator over its own
+// arena without an `unsafe` block around an operation that is checked.
+#[test]
+fn a_uses_function_indexes_its_own_arena() {
+    let source = "\
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }\n\
+bump :: fn() -> i64 uses Arena<256> {\n\
+\x20   slot := ptr_to(arena.data[arena.offset])\n\
+\x20   arena.offset = arena.offset + 8\n\
+\x20   arena.offset\n\
+}\n\
+main :: fn() -> i64 {\n\
+\x20   mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
+\x20   mut total : i64 = 0\n\
+\x20   with arena {\n\
+\x20       total = bump()\n\
+\x20   }\n\
+\x20   print total\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("usesindex", source) else {
+        return;
+    };
+    assert_eq!(output, "8\n");
+}
+
 #[test]
 fn ownership_errors_report_a_source_line() {
     let source = r#"

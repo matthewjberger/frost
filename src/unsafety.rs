@@ -698,12 +698,24 @@ impl Checker {
                     self.expression(argument, at);
                 }
             }
-            Expression::Function(parameters, _, body)
-            | Expression::Proc(parameters, _, body) => {
+            Expression::Function(parameters, signature, body)
+            | Expression::Proc(parameters, signature, body) => {
                 self.scope.push(HashMap::new());
                 for parameter in parameters {
                     let annotation = parameter.type_annotation.clone();
                     self.bind(&parameter.name, annotation);
+                }
+                // An allocation capability is threaded in as a parameter by a
+                // lowering that runs after this check, so the body names it
+                // and nothing has declared it yet. Without its type the index
+                // rule cannot tell `arena.data[0]` from a reach through a raw
+                // pointer, and it refuses what it cannot name: no `uses Arena`
+                // function could index its own arena outside an `unsafe` block.
+                for capability in &signature.uses {
+                    self.bind(
+                        &crate::regions::capability_binding(capability),
+                        Some(capability.clone()),
+                    );
                 }
                 self.block(body);
                 self.scope.pop();
