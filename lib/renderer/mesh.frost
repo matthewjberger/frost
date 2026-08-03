@@ -29,6 +29,7 @@
 
 import "wgpu.frost"
 import "geometry.frost"
+import "gpu.frost"
 import "math.frost"
 import "mem.frost"
 import "strings.frost"
@@ -36,7 +37,7 @@ import "strings.frost"
 export Mesh, MeshCache, MeshSlot,
     mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
     mesh_cache_free, mesh_cache_count, mesh_cache_remove, mesh_cache_clear,
-    mesh_cache_add,
+    mesh_cache_add, worth_rebuilding_counts,
     mesh_cache_live, mesh_cache_generation, mesh_slot, mesh_slot_alive,
     mesh_new, mesh_free,
     cube_mesh, sphere_mesh
@@ -204,9 +205,11 @@ mesh_cache_remove :: fn(mut cache: MeshCache, mut store: Geometry,
     true
 }
 
-// Whether what has been left behind is worth the work of reclaiming: the
-// buffers have to be mostly empty and there has to be a real amount to get
-// back. Either test alone rebuilds far too often.
+// Whether what has been left behind is worth the work of reclaiming.
+//
+// The counting is separate from the deciding so the decision can be checked
+// without a device: what it turns on is four numbers, and a rebuild that fires
+// on the wrong ones either thrashes or never reclaims anything.
 worth_rebuilding :: fn(cache: MeshCache, store: Geometry) -> bool {
     mut live_vertices : i64 = 0
     mut live_indices : i64 = 0
@@ -218,14 +221,22 @@ worth_rebuilding :: fn(cache: MeshCache, store: Geometry) -> bool {
         }
         index = index + 1
     }
+    worth_rebuilding_counts(live_vertices, live_indices,
+        geometry_vertex_room(store), geometry_index_room(store))
+}
+
+// The buffers have to be mostly empty and there has to be a real amount to get
+// back. Either test alone is wrong: a buffer one tenth used is not worth
+// touching if it is small, and one with a lot of slack is not worth touching if
+// most of it is live.
+worth_rebuilding_counts :: fn(live_vertices: i64, live_indices: i64,
+    vertex_room: i64, index_room: i64) -> bool {
     if (live_vertices == 0 || live_indices == 0) {
         return false
     }
     used_bytes := live_vertices * VERTEX_STRIDE + live_indices * INDEX_BYTES
-    room_bytes := geometry_vertex_room(store) * VERTEX_STRIDE
-        + geometry_index_room(store) * INDEX_BYTES
-    reclaimable := room_bytes - used_bytes
-    if (reclaimable < MIN_RECLAIM_BYTES) {
+    room_bytes := vertex_room * VERTEX_STRIDE + index_room * INDEX_BYTES
+    if (room_bytes - used_bytes < MIN_RECLAIM_BYTES) {
         return false
     }
     used : f32 = used_bytes
@@ -422,6 +433,161 @@ sphere_mesh :: fn(radius: f32, rings: i64, segments: i64) -> Mesh {
         row = row + 1
     }
     held
+}
+
+// Sixteen megabytes of vertices, as a count, which is the amount the rebuild
+// threshold is written in.
+BIG_VERTICES :: 524288
+
+test "a rebuild waits for the buffers to be mostly empty" {
+    // A fortieth used, with thirty megabytes to get back: worth it.
+    assert(worth_rebuilding_counts(BIG_VERTICES / 20, 16, BIG_VERTICES * 2, 64))
+    // Thirty megabytes to get back again, but two thirds of the buffer is
+    // live, so a rebuild would copy nearly everything to reclaim the rest.
+    // Only the utilisation differs between this and the one above.
+    assert(worth_rebuilding_counts(BIG_VERTICES * 4, 16, BIG_VERTICES * 6, 64)
+        == false)
+}
+
+test "a rebuild waits for there to be something worth reclaiming" {
+    // Almost entirely empty, but the whole buffer is smaller than the floor,
+    // so the copy would cost more than the memory it hands back.
+    assert(worth_rebuilding_counts(1, 1, 1024, 1024) == false)
+}
+
+test "a cache holding nothing is not worth rebuilding" {
+    // No live mesh means nothing to put back, and a rebuild would leave the
+    // buffers exactly as empty as they already are.
+    assert(worth_rebuilding_counts(0, 0, BIG_VERTICES, BIG_VERTICES) == false)
+    assert(worth_rebuilding_counts(BIG_VERTICES / 20, 0, BIG_VERTICES, 64)
+        == false)
+}
+
+// A mesh of a given size holding nothing in particular. What the two tests
+// below are about is how much room it takes and where it lands, so the values
+// are left at zero rather than made to describe a shape.
+filler_mesh :: fn(vertices: i64, indices: i64, mark: f32) -> Mesh {
+    mut held := mesh_new(vertices, indices)
+    mut at : i64 = 0
+    while (at < indices) {
+        held.indices[at] = cast($u32, at % vertices)
+        at = at + 1
+    }
+    mut vertex : i64 = 0
+    while (vertex < vertices) {
+        step : f32 = vertex
+        // The mark and the position tell one mesh's vertices from another's
+        // after a copy has moved both, which is what a readback checks.
+        held.vertices[vertex] = Vertex { position = vec3(mark, step, 0.0),
+            normal = vec3(0.0, 1.0, 0.0), texcoord = vec2(0.0, 0.0) }
+        vertex = vertex + 1
+    }
+    held
+}
+
+// The two tests below want a device and no window. Where there is no adapter at
+// all, which is what a machine with no GPU and no software driver is, they say
+// so and pass: a suite that fails there would be reporting the machine rather
+// than the code.
+test "a buffer that runs out grows, and what is in it comes with it" {
+    mut g := gpu_open()
+    if (gpu_ok(g) == false) {
+        print "mesh: no device, so growth was not exercised"
+        gpu_close(g)
+        return
+    }
+    device := gpu_device(g)
+    queue := gpu_queue(g)
+    // Room for one of the two meshes below and not both, so the second grows
+    // the buffers rather than being refused.
+    mut store := geometry_new(device, 32, 32)
+    mut cache := mesh_cache_new(4)
+    first := mesh_cache_insert(cache, store, device, queue, "first",
+        filler_mesh(24, 30, 7.0))
+    second := mesh_cache_insert(cache, store, device, queue, "second",
+        filler_mesh(40, 60, 9.0))
+    assert(geometry_vertex_room(store) >= 64)
+    assert(geometry_index_room(store) >= 90)
+    // The first mesh was copied into the new buffer at the offset it already
+    // had, so its span still says where it is. The second begins where the
+    // first ended, which is what a base vertex is for.
+    assert(mesh_cache_at(cache, first).base_vertex == 0)
+    assert(mesh_cache_at(cache, first).index_count == 30)
+    assert(mesh_cache_at(cache, second).base_vertex == 24)
+    assert(mesh_cache_at(cache, second).first_index == 30)
+    assert(geometry_vertices(store) == 64)
+
+    // What the buffer holds now, read back. The spans agreeing is not the same
+    // as the vertices having made the trip: growing allocates a second buffer
+    // and copies on the device, and a copy that ran with the wrong offset or
+    // the wrong length would leave exactly these spans over the wrong bytes.
+    mut seen := heap_slice($Vertex, 64)
+    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
+        64 * VERTEX_STRIDE, ptr_to(seen[0])))
+    mut at : i64 = 0
+    while (at < 24) {
+        step : f32 = at
+        assert(seen[at].position.x == 7.0 && seen[at].position.y == step)
+        at = at + 1
+    }
+    while (at < 64) {
+        step : f32 = at - 24
+        assert(seen[at].position.x == 9.0 && seen[at].position.y == step)
+        at = at + 1
+    }
+    heap_release_slice($Vertex, seen)
+    mesh_cache_free(cache)
+    geometry_free(store)
+    gpu_close(g)
+}
+
+test "a cache that loses most of what it held puts the rest back at the start" {
+    mut g := gpu_open()
+    if (gpu_ok(g) == false) {
+        print "mesh: no device, so compaction was not exercised"
+        gpu_close(g)
+        return
+    }
+    device := gpu_device(g)
+    queue := gpu_queue(g)
+    mut store := geometry_new(device, 64, 64)
+    mut cache := mesh_cache_new(4)
+    // Big enough that dropping it leaves more than the floor worth reclaiming,
+    // which is what a rebuild waits for.
+    mut small := mesh_cache_insert(cache, store, device, queue, "small",
+        filler_mesh(24, 30, 1.0))
+    mesh_cache_insert(cache, store, device, queue, "big",
+        filler_mesh(BIG_VERTICES, 64, 2.0))
+    assert(geometry_vertex_room(store) >= BIG_VERTICES)
+    // The small one is behind the big one in the buffer, so a rebuild is the
+    // only thing that can move it back to the start.
+    assert(mesh_cache_at(cache, small).base_vertex == 0)
+    grown_room := geometry_vertex_room(store)
+
+    assert(mesh_cache_remove(cache, store, device, queue, "big"))
+    // Everything still here, put back from the start, and the buffers cut down
+    // to what is in them.
+    assert(geometry_vertices(store) == 24)
+    assert(geometry_vertex_room(store) < grown_room)
+    assert(geometry_vertex_room(store) < 100)
+    small = mesh_cache_find(cache, "small")
+    assert(mesh_cache_at(cache, small).base_vertex == 0)
+    assert(mesh_cache_at(cache, small).index_count == 30)
+    // Put back rather than left where it was: the vertices at the start of the
+    // smaller buffer are the small mesh's, marked as its own.
+    mut seen := heap_slice($Vertex, 24)
+    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
+        24 * VERTEX_STRIDE, ptr_to(seen[0])))
+    mut at : i64 = 0
+    while (at < 24) {
+        step : f32 = at
+        assert(seen[at].position.x == 1.0 && seen[at].position.y == step)
+        at = at + 1
+    }
+    heap_release_slice($Vertex, seen)
+    mesh_cache_free(cache)
+    geometry_free(store)
+    gpu_close(g)
 }
 
 test "a cube is twenty-four vertices and thirty-six indices" {

@@ -49,7 +49,6 @@
 // batch's instances begin, so the one expression covers every batch.
 
 import "wgpu.frost"
-import "graph.frost"
 import "frame.frost"
 import "geometry.frost"
 import "material.frost"
@@ -65,8 +64,8 @@ export Drawn, Transform, ONE_LAYER, OVERLAY_LAYER, ObjectData, RenderWorld,
     render_world_batch_layout, render_world_batch_group,
     BatchPipelines, render_world_batch_pipelines, no_batch_pipelines,
     batch_pipelines_free, render_world_dispatch_objects,
-    Batching, batching_new, batching_free, batching_declare,
-    render_world_dispatch_dense, render_world_indirect,
+    batching_record,
+    render_world_dispatch_dense,
     render_world_draw_class, render_world_draw_all,
     render_world_draw_prepass, LANE_SOLID, LANE_MASKED, NUM_DRAW_LANES,
     BATCH_SHADER, OBJECT_BYTES, MESH_GEO_BYTES, TRANSFORM_BYTES,
@@ -213,9 +212,6 @@ RenderWorld :: struct {
 render_world_count :: fn(held: RenderWorld) -> i64 { held.count }
 render_world_layout :: fn(held: RenderWorld) -> BindGroupLayout { held.layout }
 render_world_group :: fn(held: RenderWorld) -> BindGroup { held.group }
-render_world_indirect :: fn(held: RenderWorld) -> Buffer {
-    held.indirect_buffer
-}
 render_world_batch_layout :: fn(held: RenderWorld) -> BindGroupLayout {
     held.batch_layout
 }
@@ -314,97 +310,39 @@ step_pipeline :: fn(device: Device, shader: ShaderModule,
     device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
-// The six steps and the run they decide about, as one thing a program declares
-// into a graph.
+// The six steps, recorded onto an encoder, in the order they run.
 //
-// A program that draws one view holds one of these. A program that draws three,
-// the way a shadow pass and an inset view do, holds one per run: what the steps
-// work on is a run's own tables, and two views culled against two matrices are
-// two sets of answers.
-Batching :: struct {
-    render: ^RenderWorld,
-    pipelines: BatchPipelines,
-}
-
-batching_new :: fn(device: Device, held: ^RenderWorld) -> Batching {
-    Batching {
-        render = held,
-        pipelines = render_world_batch_pipelines(device,
-            render_world_batch_layout(render_world_at(held))),
-    }
-}
-
-batching_free :: fn(mut held: Batching) {
-    batch_pipelines_free(held.pipelines)
-}
-
-// The six passes, in the order they run, each declaring that it writes the draw
-// arguments so that whatever reads them comes after all of them.
+// Recorded rather than declared into a graph. What decides which draws exist is
+// part of what draws a view, so the pass that draws owns it and the graph sees
+// one node; declaring six passes would put this order in every program that
+// draws a view, and a program with two views would write it twice.
 //
-// Told rather than earned. They all write the same tables, so nothing about
-// what they read and write distinguishes them and the graph could not work out
-// an order that was already decided by what the algorithm is.
-batching_declare :: fn(mut s: Batching, mut g: Graph, name: str,
-    arguments: ResourceId) -> PassId {
-    classify := graph_compute_pass($Batching, g, name, run_classify, ptr_to(s))
-    graph_writes(g, classify, arguments)
-    clearing := graph_compute_pass($Batching, g, name, run_clear, ptr_to(s))
-    graph_writes(g, clearing, arguments)
-    graph_runs_after(g, clearing, classify)
-    counting := graph_compute_pass($Batching, g, name, run_count, ptr_to(s))
-    graph_writes(g, counting, arguments)
-    graph_runs_after(g, counting, clearing)
-    building := graph_compute_pass($Batching, g, name, run_build, ptr_to(s))
-    graph_writes(g, building, arguments)
-    graph_runs_after(g, building, counting)
-    arguing := graph_compute_pass($Batching, g, name, run_indirect, ptr_to(s))
-    graph_writes(g, arguing, arguments)
-    graph_runs_after(g, arguing, building)
-    assigning := graph_compute_pass($Batching, g, name, run_assign, ptr_to(s))
-    graph_writes(g, assigning, arguments)
-    graph_runs_after(g, assigning, arguing)
-    assigning
+// Six passes rather than one, because each reads what the one before it wrote
+// and a pass is the boundary that makes that true.
+batching_record :: fn(steps: BatchPipelines, mut held: RenderWorld,
+    encoder: CommandEncoder) {
+    objects := render_world_dispatch_objects(held)
+    step(held, encoder, steps.classify, objects)
+    step(held, encoder, steps.clear, render_world_dispatch_dense(held))
+    step(held, encoder, steps.count, objects)
+    // One workgroup per lane, each laying out its own region.
+    step(held, encoder, steps.build, NUM_DRAW_LANES)
+    // One workgroup: the scan that decides where each batch's instances begin
+    // is a running total and the threads doing it share it.
+    step(held, encoder, steps.indirect, 1)
+    step(held, encoder, steps.assign, objects)
 }
 
-// One step each. What differs between them is the pipeline and how many threads
-// they want, and the two that are not one thread per object say so.
-run_classify :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.classify,
-        render_world_dispatch_objects(render_world_at(s.render)))
-}
-
-run_clear :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.clear,
-        render_world_dispatch_dense(render_world_at(s.render)))
-}
-
-run_count :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.count,
-        render_world_dispatch_objects(render_world_at(s.render)))
-}
-
-// One workgroup per lane, each laying out its own region.
-run_build :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.build, NUM_DRAW_LANES)
-}
-
-// One workgroup, because the scan that decides where each batch's instances
-// begin is a running total and the threads doing it have to share it.
-run_indirect :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.indirect, 1)
-}
-
-run_assign :: fn(mut s: Batching, pass: ComputePassEncoder) {
-    dispatch_step(s, pass, s.pipelines.assign,
-        render_world_dispatch_objects(render_world_at(s.render)))
-}
-
-dispatch_step :: fn(mut s: Batching, pass: ComputePassEncoder,
+step :: fn(mut held: RenderWorld, encoder: CommandEncoder,
     pipeline: ComputePipeline, groups: u32) {
+    mut descriptor := compute_pass_descriptor_init()
+    pass := command_encoder_begin_compute_pass(encoder, ptr_to(descriptor))
     compute_pass_encoder_set_pipeline(pass, pipeline)
     compute_pass_encoder_set_bind_group(pass, 0,
-        render_world_batch_group(render_world_at(s.render)), 0, no_pointer())
+        render_world_batch_group(held), 0, no_pointer())
     compute_pass_encoder_dispatch_workgroups(pass, groups, 1, 1)
+    compute_pass_encoder_end(pass)
+    compute_pass_encoder_release(pass)
 }
 
 render_world_new :: fn(device: Device, room: i64, meshes: i64,

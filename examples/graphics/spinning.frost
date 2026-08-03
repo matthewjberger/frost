@@ -68,7 +68,7 @@ FRAME_BYTES :: 128
 // and the pass walks the run, so nothing here counts anything.
 Scene :: struct {
     pipeline: RenderPipeline,
-    batching: Batching,
+    steps: BatchPipelines,
     frame_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
@@ -162,18 +162,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "
 
-// One pass over everything, and nothing in it counts anything. Two bind groups
-// and the geometry are set once, and then one indirect draw per mesh: how many
-// instances each covers is a number the compute pass wrote into the buffer the
-// draw reads its arguments from, and this never looks at it.
-draw_scene :: fn(mut s: Scene, pass: RenderPassEncoder) {
+// The whole of what a frame draws, as one node: the steps that decide what is
+// drawn, then the draw itself. Nothing in it counts anything, and how many
+// instances each draw covers is a number the steps above it wrote into the
+// buffer the draw reads its arguments from.
+//
+// One node rather than a compute chain wired to a render pass, because the
+// order is not something a program should have to state. Recording into one
+// encoder is what puts the steps before the draw that reads what they wrote.
+draw_scene :: fn(mut s: Scene, context: NodeContext) {
+    held := render_world_at(s.render)
+    batching_record(s.steps, held, context.encoder)
+    pass := encoder_pass_into(context.encoder, context.into,
+        context.color_load, context.clear, context.depth_load)
     render_pass_encoder_set_pipeline(pass, s.pipeline)
     render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
         no_pointer())
     render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(render_world_at(s.render)), 0, no_pointer())
+        render_world_group(held), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw_all(pass, render_world_at(s.render))
+    render_world_draw_all(pass, held)
+    render_pass_encoder_end(pass)
+    render_pass_encoder_release(pass)
 }
 
 // The camera and the light, as the bytes the shader reads them as.
@@ -266,22 +276,16 @@ make_pipeline :: fn(device: Device, format: u32,
 // sizes it with the window and decides both load ops, so a pass says what it
 // draws into and nothing about how.
 //
-// The arguments the draw runs on are the renderer's rather than the graph's,
-// since they live with the objects across frames, but the graph orders the two
-// passes around them: the culling pass writes them and the scene pass reads
-// them, and that is the whole reason the compute pass runs first.
+// One node, and what runs inside it is the node's business. The steps that
+// decide what is drawn write the buffer the draw reads, and both are recorded
+// into the same encoder, so the graph is not asked to order them.
 declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    arguments := graph_external_buffer(g, "draw arguments")
-    graph_set_external_buffer(g, arguments,
-        render_world_indirect(render_world_at(s.render)))
-    batching_declare(s.batching, g, "batching", arguments)
-    scene_pass := graph_pass($Scene, g, "scene", draw_scene, ptr_to(s))
+    scene_pass := graph_node_pass($Scene, g, "scene", draw_scene, ptr_to(s))
     graph_writes_color(g, scene_pass, screen,
         Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
     graph_writes_depth(g, scene_pass, depth)
-    graph_reads(g, scene_pass, arguments)
 }
 
 // What a frame does between the world and the graph. A system cannot reach a
@@ -389,7 +393,8 @@ run :: fn(move app: App) -> i64 {
 
     mut scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
-        batching = batching_new(device, ptr_to(app.render)),
+        steps = render_world_batch_pipelines(device,
+            render_world_batch_layout(app.render)),
         frame_group = frame_group,
         render = ptr_to(app.render),
         store = ptr_to(app.store),

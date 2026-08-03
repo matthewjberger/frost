@@ -16370,12 +16370,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // answer names that frame either way and the same program is refused with
     // the hole open, which is what made the first attempt at this case pass
     // whether or not the fix was in.
+    //
+    // `tag` is load-bearing and not padding. A `Grip` views a byte, so the byte
+    // is what makes it possible for the answer to point into a `Resource` at
+    // all; without it the answer is three pointers copied out of a struct and
+    // nothing here names the caller's frame. It was added when `view_lands_in`
+    // stopped giving up on every aggregate answer, which turned this case from
+    // a refusal into an honest program.
     (
         "a_view_of_a_parameter_returned_from_a_branch",
         "import \"mem.frost\"\n\
          Grip :: distinct ^u8\n\
          Trio :: struct { one: Grip, two: Grip, three: Grip }\n\
-         Resource :: struct { held: Trio, transient: bool, slot: i64 }\n\
+         Resource :: struct { held: Trio, transient: bool, slot: i64, tag: u8 }\n\
          Slot :: struct { held: Trio, made: bool }\n\
          Box :: struct { pool: []Slot, into: []Resource }\n\
          no_trio :: fn() -> Trio {\n\
@@ -16390,7 +16397,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   pool := b.pool\n\
          \x20   pool[one.slot].held\n}\n\
          put :: fn(mut b: Box, at: i64) {\n\
-         \x20   source := Resource { held = no_trio(), transient = false,\n\
+         \x20   source := Resource { held = no_trio(), transient = false, tag = 0,\n\
          \x20       slot = 0 }\n\
          \x20   given := backing_of(b, source)\n\
          \x20   mut into := b.into\n\
@@ -16760,6 +16767,34 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "is generic",
     ),
+    // A struct answer that really does name the argument. A parameter handed by
+    // address can be pointed at by whatever comes back, and `view_lands_in` is
+    // what decides whether it could be: the answer holds a `^Inner` and the
+    // parameter is an `Inner`, so it could, and this stays refused after that
+    // rule stopped giving up on every aggregate answer.
+    (
+        "a_struct_answer_that_points_at_its_argument",
+        "Inner :: struct { p: ^u8 }
+         Held :: struct { at: ^Inner }
+         Outer :: struct { kept: Held }
+         made :: fn() -> Inner {
+             zero := 0
+             Inner { p = unsafe { ptr_cast($u8, zero) } }
+         }
+         point_at :: fn(a: Inner) -> Held { Held { at = ptr_to(a) } }
+         from_local :: fn(mut o: Outer) {
+             a := made()
+             o.kept = point_at(a)
+         }
+         main :: fn() -> i64 {
+             zero := 0
+             mut o := Outer { kept = Held { at = unsafe { ptr_cast($Inner, zero) } } }
+             from_local(o)
+             0
+         }
+",
+        "stored where the call cannot see",
+    ),
 ];
 
 #[test]
@@ -17057,6 +17092,8 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "app.frost",
             "gltf.frost",
             "gltf_model.frost",
+            "lit.frost",
+            "swarm.frost",
         ]
     } else {
         &["window.frost"]
@@ -17143,6 +17180,57 @@ fn the_render_graph_orders_its_passes() {
         assert!(
             output.contains("24 passed, 0 failed"),
             "the render graph's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+// How the shared buffers grow when a mesh does not fit and shrink when most of
+// what was in them has gone. Unlike the graph, this cannot be answered on
+// tables: what a grow does is allocate a second buffer and copy on the device,
+// so the tests open a device with no window behind it and read the buffer back
+// afterwards.
+//
+// A machine with no adapter at all says so and passes, which is what a
+// container without a GPU is. The alternative reports the machine rather than
+// the code.
+#[test]
+fn the_mesh_cache_grows_and_compacts_its_buffers() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(libraries) = graphics_libraries(&root) else {
+        return;
+    };
+    let source = graphics_source(&root, "mesh.frost");
+    let search = library_search_path(&root);
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("7 passed, 0 failed"),
+            "the mesh cache's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );
     }
@@ -17503,7 +17591,8 @@ fn graphics_source(root: &Path, name: &str) -> PathBuf {
         "sdl.frost" | "platform.frost" => "lib/platform",
         "wgpu.frost" | "renderer.frost" | "graph.frost" | "mesh.frost"
         | "material.frost" | "texture.frost" | "render_world.frost"
-        | "geometry.frost" | "uniform.frost" => "lib/renderer",
+        | "geometry.frost" | "uniform.frost" | "gpu.frost"
+        | "cluster.frost" => "lib/renderer",
         "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost"
         | "app.frost" => "lib/engine",
         _ => "examples/graphics",
@@ -18987,6 +19076,39 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A struct handed to a call by value, where what comes back is a struct that
+    // holds one. Nothing points at the argument: it was copied in. The region
+    // walk gave up on any aggregate answer and read the argument's own storage
+    // instead, which made this a leak in one compiler for a local and in the
+    // other for a temporary. All three shapes are the same question.
+    (
+        "a_struct_copied_into_a_struct_answer",
+        "Inner :: struct { p: ^u8 }
+         Answer :: struct { held: Inner }
+         Outer :: struct { answer: Answer, source: Inner }
+         made :: fn() -> Inner {
+             zero := 0
+             Inner { p = unsafe { ptr_cast($u8, zero) } }
+         }
+         build :: fn(a: Inner) -> Answer { Answer { held = a } }
+         from_field :: fn(mut o: Outer) { o.answer = build(o.source) }
+         from_temporary :: fn(mut o: Outer) { o.answer = build(made()) }
+         from_local :: fn(mut o: Outer) {
+             a := made()
+             o.answer = build(a)
+         }
+         main :: fn() -> i64 {
+             mut o := Outer { answer = Answer { held = made() }, source = made() }
+             from_field(o)
+             from_temporary(o)
+             from_local(o)
+             print 1
+             0
+         }
+",
+        "1
+",
+    ),
     // A `match` written as a statement, with one side doing nothing. The
     // self-hosted compiler rewrites each arm's last statement into the binding
     // the match answers with, and an arm with no last statement was read anyway,

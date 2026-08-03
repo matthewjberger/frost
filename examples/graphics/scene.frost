@@ -74,7 +74,7 @@ FAR :: 1
 // draws.
 Scene :: struct {
     pipeline: RenderPipeline,
-    batching: Batching,
+    steps: BatchPipelines,
     frame_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
@@ -141,21 +141,33 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "
 
-// One pass body over one run. Both passes are this function with different
-// state, and neither knows there is another.
+// One layer, whole: the steps that decide what is drawn, then the draw. Both
+// passes are this function with different state, and neither knows there is
+// another.
+//
+// One node rather than a compute chain and a render pass, because what runs
+// before what here is not something a program should have to say. The steps
+// write the tables the draw reads, and they are recorded into one encoder in
+// that order.
 //
 // What the two of them draw into, and whether each clears what is there or
 // draws over it, is not written here. Both passes declare the same colour and
 // depth targets, the graph puts the first writer first, and the first write of
 // a target clears it while every write after loads it.
-draw_layer :: fn(mut s: Scene, pass: RenderPassEncoder) {
+draw_layer :: fn(mut s: Scene, context: NodeContext) {
+    held := render_world_at(s.render)
+    batching_record(s.steps, held, context.encoder)
+    pass := encoder_pass_into(context.encoder, context.into,
+        context.color_load, context.clear, context.depth_load)
     render_pass_encoder_set_pipeline(pass, s.pipeline)
     render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
         no_pointer())
     render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(render_world_at(s.render)), 0, no_pointer())
+        render_world_group(held), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw_all(pass, render_world_at(s.render))
+    render_world_draw_all(pass, held)
+    render_pass_encoder_end(pass)
+    render_pass_encoder_release(pass)
 }
 
 // What a frame does between the world and the graph. Two runs, so the world is
@@ -196,26 +208,12 @@ declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
     background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
-    near_arguments := graph_external_buffer(g, "near arguments")
-    graph_set_external_buffer(g, near_arguments,
-        render_world_indirect(render_world_at(s.near)))
-    far_arguments := graph_external_buffer(g, "far arguments")
-    graph_set_external_buffer(g, far_arguments,
-        render_world_indirect(render_world_at(s.far)))
-    // One chain per layer, since each layer is its own run and each run is
-    // culled by the view that draws it.
-    batching_declare(scene_at(s.near_scene).batching, g,
-        "near batching", near_arguments)
-    batching_declare(scene_at(s.far_scene).batching, g,
-        "far batching", far_arguments)
-    near_pass := graph_pass($Scene, g, "near", draw_layer, s.near_scene)
+    near_pass := graph_node_pass($Scene, g, "near", draw_layer, s.near_scene)
     graph_writes_color(g, near_pass, screen, background)
     graph_writes_depth(g, near_pass, depth)
-    graph_reads(g, near_pass, near_arguments)
-    far_pass := graph_pass($Scene, g, "far", draw_layer, s.far_scene)
+    far_pass := graph_node_pass($Scene, g, "far", draw_layer, s.far_scene)
     graph_writes_color(g, far_pass, screen, background)
     graph_writes_depth(g, far_pass, depth)
-    graph_reads(g, far_pass, far_arguments)
 }
 
 // The state a pass was pointed at, read the way a run is.
@@ -383,11 +381,13 @@ run :: fn(move app: App) -> i64 {
     // One chain per run. They share a module and differ in the tables they
     // work on, which is what makes the two layers two answers.
     mut near_scene := Scene { pipeline = pipeline,
-        batching = batching_new(device, ptr_to(app.render)),
+        steps = render_world_batch_pipelines(device,
+            render_world_batch_layout(app.render)),
         frame_group = frame_group, render = ptr_to(app.render),
         store = ptr_to(app.store) }
     mut far_scene := Scene { pipeline = pipeline,
-        batching = batching_new(device, ptr_to(far_render)),
+        steps = render_world_batch_pipelines(device,
+            render_world_batch_layout(far_render)),
         frame_group = frame_group, render = ptr_to(far_render),
         store = ptr_to(app.store) }
 
@@ -398,8 +398,8 @@ run :: fn(move app: App) -> i64 {
     app_before_render($FrameState, app, before_frame, ptr_to(frame))
     app_run(app)
 
-    batching_free(scene_at(ptr_to(near_scene)).batching)
-    batching_free(scene_at(ptr_to(far_scene)).batching)
+    batch_pipelines_free(scene_at(ptr_to(near_scene)).steps)
+    batch_pipelines_free(scene_at(ptr_to(far_scene)).steps)
     render_world_free(far_render)
     app_close(app)
 }

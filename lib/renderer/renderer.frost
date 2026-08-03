@@ -27,6 +27,7 @@
 
 import "../platform/sdl.frost"
 import "wgpu.frost"
+import "gpu.frost"
 import "frame.frost"
 import "graph.frost"
 
@@ -49,33 +50,6 @@ Renderer :: struct {
     // surface. Empty until something declares passes into it.
     graph: Graph,
     opened: bool,
-}
-
-// Waits for a callback that answers on the instance's own event pump. wgpu
-// answers a request when it is ready and not before, and there is no thread to
-// wait on, so the pump is the wait.
-spin_until :: fn(instance: Instance, mut ready: i64, limit: i64) -> bool {
-    mut spins : i64 = 0
-    while (ready == 0 && spins < limit) {
-        instance_process_events(instance)
-        spins = spins + 1
-    }
-    ready != 0
-}
-
-AdapterSlot :: struct { handle: Adapter, ready: i64 }
-DeviceSlot :: struct { handle: Device, ready: i64 }
-
-take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
-    mut slot: AdapterSlot, userdata2: ^u8) {
-    slot.handle = handle
-    slot.ready = 1
-}
-
-take_device :: fn(status: u32, handle: Device, value message: StringView,
-    mut slot: DeviceSlot, userdata2: ^u8) {
-    slot.handle = handle
-    slot.ready = 1
 }
 
 // Opens the device against a platform window. A renderer that could not be
@@ -107,47 +81,15 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     descriptor.next_in_chain = ptr_to(source)
     r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
 
-    // The adapter is chosen knowing the surface it will draw to. Choosing it
-    // first can hand back one this surface cannot use, and the surface only
-    // says so later, when it is asked what formats it takes.
-    mut adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
-    mut adapter_info := request_adapter_callback_info_of($AdapterSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_adapter, ptr_to(adapter_slot))
-    mut options := request_adapter_options_init()
-    options.feature_level = FEATURE_LEVEL_CORE
-    options.compatible_surface = r.surface
-    instance_request_adapter(r.instance, ptr_to(options), ptr_to(adapter_info))
-    if (spin_until(r.instance, adapter_slot.ready, 2000000) == false) {
+    // The same adapter and device a program with no window asks for, told
+    // which surface this one has to be able to draw at.
+    made := gpu_request(r.instance, r.surface)
+    if (gpu_ok(made) == false) {
         return r
     }
-    r.adapter = adapter_slot.handle
-
-    mut device_slot := DeviceSlot { handle = no_device(), ready = 0 }
-    mut device_info := request_device_callback_info_of($DeviceSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_device, ptr_to(device_slot))
-    // What a draw whose arguments come off the GPU needs. An indirect draw may
-    // only name a non-zero first instance where the device says it can, and
-    // that number is how a batch finds its own slice of the list a compute pass
-    // wrote. Asked for rather than assumed: a device without it fails here,
-    // where the reason is one line, rather than inside a draw call.
-    mut wanted : [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
-    // The passes that decide what is drawn read and write ten tables between
-    // them, and the guaranteed floor is eight. Everything else is left at
-    // whatever the device offers: a limit asked for is a limit the device has
-    // to honour, and asking for more than is needed turns a machine that could
-    // have run this into one that refuses at startup.
-    mut limits := limits_init()
-    limits.max_storage_buffers_per_shader_stage = 10
-    mut descriptor := device_descriptor_init()
-    descriptor.required_features_count = 1
-    descriptor.required_features = ptr_to(wanted[0])
-    descriptor.required_limits = ptr_to(limits)
-    adapter_request_device(r.adapter, ptr_to(descriptor), ptr_to(device_info))
-    if (spin_until(r.instance, device_slot.ready, 2000000) == false) {
-        return r
-    }
-    r.device = device_slot.handle
-    r.queue = device_get_queue(r.device)
+    r.adapter = made.adapter
+    r.device = made.device
+    r.queue = made.queue
     graph_set_device(r.graph, r.device)
 
     // The format the surface accepts, asked rather than assumed: which ones it

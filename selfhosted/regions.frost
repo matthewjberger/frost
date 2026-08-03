@@ -2773,20 +2773,57 @@ type_holds_inline :: fn(mut p: Parser, element: i64, held: i64, depth: i64)
 // Whether a view of the answer type could name storage held inside a value of
 // the parameter type. A `[]Entity` cannot point inside a `Query` that holds no
 // Entity by value, whatever address the callee was given.
+//
+// An aggregate answer is asked the same question about every view it holds
+// rather than being given up on. Giving up said yes to
+// `answer.field = build(local)` for every callee answering with a struct,
+// however that struct was built, because a local's own storage is this frame: a
+// `Lit` holding a `Cluster` by value took the `Cluster` it was handed as a
+// pointer into the caller. What the answer holds is what decides it, and a
+// struct holding a `^Inner` where the parameter is an `Inner` is still caught by
+// exactly this test.
 view_lands_in :: fn(mut p: Parser, answer: i64, param: i64) -> bool {
+    view_reaches(p, answer, param, FRAME_TYPE_DEPTH)
+}
+
+// The same question, asked through whatever the answer is made of.
+view_reaches :: fn(mut p: Parser, answer: i64, param: i64, depth: i64) -> bool {
+    if (depth <= 0) {
+        return true
+    }
     if (answer < 0) {
         return true
     }
     if (is_pointer(answer)) {
         return type_holds_inline(p, pointee(p, answer), param, FRAME_TYPE_DEPTH)
     }
-    if (is_array_ty(answer) && is_slice_ty(p, answer)) {
-        return type_holds_inline(p, array_element(p, answer), param,
-            FRAME_TYPE_DEPTH)
+    // A function pointer is a callable value rather than a view of storage, and
+    // a compile-time argument is resolved away before it is a type.
+    if (distinct_repr(answer) >= CONST_BASE) {
+        return false
     }
-    // An aggregate holding views could hold any of them, which says nothing
-    // about where they point.
-    true
+    if (is_array_ty(answer)) {
+        if (is_slice_ty(p, answer)) {
+            return type_holds_inline(p, array_element(p, answer), param,
+                FRAME_TYPE_DEPTH)
+        }
+        return view_reaches(p, array_element(p, answer), param, depth - 1)
+    }
+    if (is_struct_ty(answer)) {
+        def := arena_at(p.structs, struct_index_of(answer))
+        mut fid := def.field_head
+        while (fid != (-1)) {
+            field := arena_at(p.fields, fid)
+            held := field.ty
+            fid = field.next
+            if (view_reaches(p, held, param, depth - 1)) {
+                return true
+            }
+        }
+        return false
+    }
+    // A number or a boolean names no storage.
+    false
 }
 
 // The declared type of a place, as far as the annotations and the struct
