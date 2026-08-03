@@ -16932,6 +16932,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "the storage it names dies when the call returns",
     ),
+    // A view of a container, read after the container gave its block back. The
+    // frame check traces the view to `s` and stops there, since `s` is alive,
+    // and what it cannot ask is whether the block is still the one it was.
+    (
+        "a_view_read_after_its_container_was_freed",
+        "Sink :: linear struct { room: []i64, len: i64 }\n\
+         sink_slice :: fn(s: Sink) -> []i64 { s.room }\n\
+         sink_free :: fn(move s: Sink) -> i64 { s.len }\n\
+         main :: fn() -> i64 {\n\
+         \x20   room : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   s : Sink = { room = room, len = 4 }\n\
+         \x20   view := sink_slice(s)\n\
+         \x20   held := sink_free(s)\n\
+         \x20   view[0] + held\n}\n",
+        "views storage held by",
+    ),
+    // The same, where the container is generic. The self-hosted compiler read a
+    // generic's parameter as the type argument whenever the declared type was
+    // an aggregate, so `Sink<T>` became `i64`, nothing about the parameter
+    // looked like something a move takes, and the move went unrecorded: this
+    // program built there while the bootstrap refused it, and so did a plain
+    // use of `s` after the free.
+    (
+        "a_generic_container_is_consumed_by_a_move",
+        "Sink :: linear struct($T: Type) { room: []T, len: i64 }\n\
+         sink_free :: fn($T: Type, move s: Sink<T>) -> i64 { s.len }\n\
+         main :: fn() -> i64 {\n\
+         \x20   room : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   s : Sink<i64> = { room = room, len = 4 }\n\
+         \x20   held := sink_free($i64, s)\n\
+         \x20   s.len + held\n}\n",
+        "moved",
+    ),
     // The same question asked of an arena rather than of a frame. A `[]T`
     // carved out of one names the arena's storage exactly as a `^T` does, and
     // reading only the pointer let the slice beside it leave the block.

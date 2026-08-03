@@ -465,31 +465,38 @@ so nobody has to find out by reading the passes.
   question the frame check answers for borrows and does not yet answer for
   resources.
 
-- **A view outlives the block a container reallocates or frees under it.**
+- **A view outlives the block a container reallocates under it.**
   `view := vec_slice($i64, v)` names storage `v` points at rather than storage
   `v` holds, so the frame check traces it to `v`, and `v` is a parameter or a
-  local that is still alive. Both of those are true and the view is still dead
-  the moment `vec_push` doubles the block or `vec_free` gives it back:
+  local that is still alive. Both of those stay true while `vec_push` doubles
+  the block, and the view then names what the allocator has taken back:
 
   ```frost
   view := vec_slice($i64, v)
-  vec_free($i64, v)
-  print view[0]              // reads the freed block, bounds-checked against it
+  vec_push($i64, v, 1)       // may grow, which frees the old block
+  print view[0]              // reads it anyway, bounds-checked against it
   ```
 
   The same holds for `ref e := vec_slice($T, v)[i]` across a push that grows.
   This is safe code, and the read is checked against a length that describes
-  storage the allocator has taken back. It is the one memory-safety hole in the
-  safe surface that is known and open.
+  storage that has gone. It is the one memory-safety hole in the safe surface
+  that is known and open.
 
-  What closes it is a liveness question rather than a provenance one: not where
-  did this storage come from, but is the thing it came out of still the same
-  storage now. That is the borrow-liveness machinery the second-class rule was
-  chosen to avoid, so it is a decision about the language rather than a fix to
-  the check, and it is written here rather than left for someone to find. The
-  discipline that avoids it in the meantime is the one `std/ecs.frost` follows:
-  take the view again after anything that can move the block, which is why
-  `world_release` and the archetype moves re-take every `ref` after a push
+  Half of this shape is checked. A view whose container is *consumed* is
+  refused, so `vec_free($i64, v)` followed by a read through a view of `v` is a
+  compile error naming both (`check_ownership` records, for each binding that
+  views a container, the place that container sits in, and asks what has become
+  of it at every use). Rebinding replaces what a name views, which is what
+  taking the view again after a push amounts to. What is left is growth rather
+  than release: a reallocation moves the block while the container it belongs to
+  is still perfectly alive, so nothing about the container's own state says the
+  view is stale.
+
+  Closing that needs a summary of which calls can move the block behind which
+  parameter, computed the way `kept` and `answer_sources` already are, and then
+  invalidation at every call carrying one. Until it exists the discipline is the
+  one `std/ecs.frost` follows: take the view again after anything that can move
+  the block, which is why the archetype moves re-take every `ref` after a push
   rather than holding one across it.
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
