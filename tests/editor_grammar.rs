@@ -10,6 +10,11 @@ const CONTEXTUAL: &[&str] =
 
 const BUILTIN_TYPES: &[&str] = &["Handle", "Type", "columns"];
 
+const DECLARATION_MARKERS: &[&str] = &[
+    "distinct", "enum", "extern", "flags", "inline", "linear", "safe",
+    "struct", "type", "unsafe",
+];
+
 fn collect_matches(value: &serde_json::Value, into: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(map) => {
@@ -41,6 +46,27 @@ fn words_of(pattern: &str) -> Vec<String> {
         return Vec::new();
     };
     rest[..close].split('|').map(String::from).collect()
+}
+
+fn lookahead_words(pattern: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut rest = pattern;
+    while let Some(open) = rest.find("(?:") {
+        let body = &rest[open + 3..];
+        let Some(close) = body.find(')') else {
+            break;
+        };
+        for piece in body[..close].split('|') {
+            let word = piece.trim_end_matches("\\s+");
+            if !word.is_empty()
+                && word.chars().all(|character| character.is_ascii_lowercase())
+            {
+                words.push(word.to_string());
+            }
+        }
+        rest = &body[close..];
+    }
+    words
 }
 
 #[test]
@@ -76,5 +102,48 @@ fn the_editor_grammar_lists_exactly_the_words_the_compiler_knows() {
         "the editor grammar has drifted from the compiler\n  \
          the compiler knows these and the grammar does not: {missing:?}\n  \
          the grammar claims these and the compiler does not: {extra:?}"
+    );
+}
+
+#[test]
+fn the_declaration_lookaheads_hold_the_markers_the_parser_accepts() {
+    let text =
+        std::fs::read_to_string(GRAMMAR).expect("the grammar is in the tree");
+    let grammar: serde_json::Value =
+        serde_json::from_str(&text).expect("the grammar is valid JSON");
+
+    let mut patterns = Vec::new();
+    collect_matches(&grammar["repository"]["declarations"], &mut patterns);
+    assert!(
+        !patterns.is_empty(),
+        "the grammar has no 'declarations' rule"
+    );
+
+    let mut found = BTreeSet::new();
+    for pattern in &patterns {
+        found.extend(lookahead_words(pattern));
+    }
+
+    let expected: BTreeSet<String> = DECLARATION_MARKERS
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect();
+    for word in DECLARATION_MARKERS {
+        assert!(
+            frost::KEYWORD_NAMES.contains(word) || CONTEXTUAL.contains(word),
+            "'{word}' is pinned as a declaration marker and the compiler \
+             does not know it"
+        );
+    }
+
+    let missing = expected.difference(&found).collect::<Vec<_>>();
+    let extra = found.difference(&expected).collect::<Vec<_>>();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "the declaration lookaheads have drifted from the markers the parser \
+         accepts\n  \
+         the parser accepts these and the grammar does not: {missing:?}\n  \
+         the grammar claims these and the parser does not: {extra:?}"
     );
 }
