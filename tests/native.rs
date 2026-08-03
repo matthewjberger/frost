@@ -7093,11 +7093,16 @@ fn the_self_hosted_compiler_reads_a_named_text_constant_the_same_way() {
 // way round, `count = 4` followed by `-total` was one statement, `count = 4 -
 // total`, and the assignment silently held a different number than the one
 // written beside it.
+//
+// The parse is unchanged. What changed is that a `-` opening a statement which
+// is not the block's own value is refused, since the only two things it can be
+// are a value nobody reads and the rest of the line above. So this keeps the
+// trailing `-`, which is how a subtraction spanning a line break is written,
+// and `MINUS_THAT_GOES_NOWHERE` holds the shape that is refused.
 const MINUS_OPENS_A_STATEMENT: &str = "main :: fn() -> i64 {\n\
      \x20   mut total : i64 = 10\n\
      \x20   mut count : i64 = 0\n\
      \x20   count = 4\n\
-     \x20   -total\n\
      \x20   print total\n\
      \x20   print count\n\
      \x20   held := count -\n\
@@ -7106,7 +7111,19 @@ const MINUS_OPENS_A_STATEMENT: &str = "main :: fn() -> i64 {\n\
      \x20   0\n\
      }\n";
 
-// 10 and 4, so the negation was its own statement; then -6, so an expression
+// The same break landing before the minus, which is what a long expression
+// split across lines looks like. It parses, the second line negates its own
+// operand, and what it works out goes nowhere.
+const MINUS_THAT_GOES_NOWHERE: &str = "main :: fn() -> i64 {\n\
+     \x20   mut total : i64 = 10\n\
+     \x20   mut count : i64 = 4\n\
+     \x20   held := count\n\
+     \x20       - total\n\
+     \x20   print held\n\
+     \x20   0\n\
+     }\n";
+
+// 10 and 4, so the assignment took only its own line; then -6, so an expression
 // still spans a line break when the `-` is written at the end of the first one,
 // which is where it says a subtraction is meant.
 const MINUS_RESULTS: &str = "10\n4\n-6\n";
@@ -7119,6 +7136,30 @@ fn a_minus_that_opens_a_line_starts_a_statement() {
         return;
     };
     assert_eq!(output, MINUS_RESULTS);
+}
+
+// The hazard the rule above leaves, refused by both compilers. `parse_add`
+// carries an expression across a line break for `+` and not for `-`, so a long
+// expression broken before a minus keeps half its terms: a matrix inverse
+// written that way came out right for the sparse matrices and wrong for the
+// rest, and nothing pointed at the line. A block whose value is `-1` is
+// untouched, which is why the rule asks whether the statement is the last one.
+#[test]
+fn both_compilers_refuse_a_minus_that_opens_a_line_mid_block() {
+    let bootstrap = compile_error("minusdropped", MINUS_THAT_GOES_NOWHERE);
+    assert!(
+        bootstrap.contains("opens with '-'"),
+        "the bootstrap took a minus that opens a line mid-block:\n{bootstrap}"
+    );
+    let Some(hosted) =
+        self_hosted_rejects("minusdropped", MINUS_THAT_GOES_NOWHERE)
+    else {
+        return;
+    };
+    assert!(
+        hosted.contains("opens with '-'"),
+        "the self-hosted compiler took one:\n{hosted}"
+    );
 }
 
 #[test]
@@ -8222,7 +8263,7 @@ const STD_MODULES: &[(&str, &str)] = &[
     ("ecs.frost", "116 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
-    ("math.frost", "24 passed"),
+    ("math.frost", "33 passed"),
     ("math64.frost", "23 passed"),
     ("mem.frost", "13 passed"),
     ("slab.frost", "2 passed"),
@@ -17196,7 +17237,7 @@ fn the_frame_moves_the_world_it_was_given() {
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
         assert!(
-            output.contains("5 passed, 0 failed"),
+            output.contains("7 passed, 0 failed"),
             "the frame's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );

@@ -12,28 +12,100 @@
 // a real surface rather than a flat fill. The shader they feed is not a full
 // physically based one and the names are the same on purpose: what grows here
 // is the shader, not what a program has to say.
+//
+// Three of these fields do not shade anything. How a surface handles its own
+// transparency, and whether both of its sides are drawn, decide which pipeline
+// draws it, and a batch is a run of instances sharing a pipeline. So they are
+// read on the way into the batch tables rather than on the way out, and the
+// flags a material carries are what put two things wearing it in the same draw.
 
 import "math.frost"
 import "mem.frost"
 
 export Material, Materials, MATERIAL_BYTES,
+    ALPHA_OPAQUE, ALPHA_MASK, ALPHA_BLEND,
+    FLAG_TRANSPARENT, FLAG_MASK, FLAG_DOUBLE_SIDED,
     materials_new, materials_add, materials_at, materials_free,
-    material_default, material_color, material_surface
+    materials_count,
+    material_default, material_of,
+    material_color, material_surface, material_flags,
+    material_blended, material_cut_out, material_two_sided
 
-// Sixty-four bytes: the colour, then the two numbers padded out to the vector
-// the uniform is read as. A uniform's members align to sixteen, so the padding
-// is written down rather than left for the driver to disagree about.
+// Thirty-two bytes: the colour, then the four numbers that decide how it shades
+// and how it is drawn. A uniform's members align to sixteen, so the second row
+// is written down as four rather than left for the driver to disagree about.
 MATERIAL_BYTES :: 32
+
+// How a surface handles what is behind it. Opaque hides it, mask keeps or drops
+// each fragment whole by comparing against a cutoff, and blend mixes the two.
+//
+// The numbers are nightshade's, which are glTF's order.
+ALPHA_OPAQUE :: 0
+ALPHA_MASK :: 1
+ALPHA_BLEND :: 2
+
+// What the batch tables read a material as, one bit each. The compute pass that
+// sorts things into draw classes reads nothing else about a material, so this is
+// the whole of what a material says about how it is drawn.
+FLAG_TRANSPARENT :: 1
+FLAG_MASK :: 2
+FLAG_DOUBLE_SIDED :: 4
 
 Material :: struct {
     base_color: Vec4,
     roughness: f32,
     metallic: f32,
+    // Below what alpha a masked fragment is dropped. Read only where the mode
+    // is `ALPHA_MASK`.
+    alpha_cutoff: f32,
+    alpha_mode: i64,
+    // Whether the back of a face is drawn as well as the front. A leaf, a sheet
+    // of cloth or a pane of glass is one surface seen from both sides; anything
+    // closed is cheaper with its back dropped.
+    double_sided: bool,
 }
 
 material_default :: fn() -> Material {
     Material { base_color = vec4(0.8, 0.8, 0.8, 1.0), roughness = 0.5,
-        metallic = 0.0 }
+        metallic = 0.0, alpha_cutoff = 0.5, alpha_mode = ALPHA_OPAQUE,
+        double_sided = false }
+}
+
+// The three a program that just wants a colour has to say, with the rest left
+// where `material_default` puts it. Written as a call rather than a literal so
+// a field that arrives later does not have to be spelled at every call that
+// does not care about it.
+material_of :: fn(base_color: Vec4, roughness: f32, metallic: f32) -> Material {
+    mut out := material_default()
+    out.base_color = base_color
+    out.roughness = roughness
+    out.metallic = metallic
+    out
+}
+
+// The same surface, blended over what is behind it. What this changes is which
+// class it is drawn in, which is which pipeline, which is where in the frame it
+// lands.
+material_blended :: fn(held: Material) -> Material {
+    mut out := held
+    out.alpha_mode = ALPHA_BLEND
+    out
+}
+
+// The same surface, kept or dropped whole per fragment. A fence or a leaf is
+// this rather than blended: it needs no ordering against anything, so it stays
+// in the opaque pass and writes depth like anything else.
+material_cut_out :: fn(held: Material, cutoff: f32) -> Material {
+    mut out := held
+    out.alpha_mode = ALPHA_MASK
+    out.alpha_cutoff = cutoff
+    out
+}
+
+material_two_sided :: fn(held: Material) -> Material {
+    mut out := held
+    out.double_sided = true
+    out
 }
 
 Materials :: struct { items: []Material, count: i64 }
@@ -64,6 +136,9 @@ materials_at :: fn(registry: Materials, index: i64) -> Material {
     registry.items[index]
 }
 
+// How many have been added, which is how much of the table goes to the device.
+materials_count :: fn(registry: Materials) -> i64 { registry.count }
+
 // The two vectors the shader reads a material as. Roughness and metalness are
 // two numbers in a vector of four rather than two numbers, because a uniform's
 // members align to sixteen bytes and the padding is better written down here
@@ -71,5 +146,44 @@ materials_at :: fn(registry: Materials, index: i64) -> Material {
 material_color :: fn(held: Material) -> Vec4 { held.base_color }
 
 material_surface :: fn(held: Material) -> Vec4 {
-    vec4(held.roughness, held.metallic, 0.0, 0.0)
+    vec4(held.roughness, held.metallic, held.alpha_cutoff, 0.0)
+}
+
+// What the batch tables read, as the bits the compute pass tests. Worked out
+// from the two fields above rather than stored beside them, so a material
+// cannot say one thing in its mode and another in its flags.
+material_flags :: fn(held: Material) -> u32 {
+    mut bits : u32 = 0
+    if (held.alpha_mode == ALPHA_BLEND) {
+        bits = bits | FLAG_TRANSPARENT
+    }
+    if (held.alpha_mode == ALPHA_MASK) {
+        bits = bits | FLAG_MASK
+    }
+    if (held.double_sided) {
+        bits = bits | FLAG_DOUBLE_SIDED
+    }
+    bits
+}
+
+test "a plain material asks for nothing of the draw" {
+    assert(material_flags(material_default()) == 0)
+}
+
+test "how a surface handles alpha decides which draw it lands in" {
+    // Blended and cut out are different answers, and only one of them changes
+    // the class: a cut-out surface still writes depth and still draws with the
+    // opaque pipeline, which is the whole reason the two are separate modes.
+    assert(material_flags(material_blended(material_default()))
+        == FLAG_TRANSPARENT)
+    assert(material_flags(material_cut_out(material_default(), 0.5))
+        == FLAG_MASK)
+    both := material_two_sided(material_blended(material_default()))
+    assert(material_flags(both) == FLAG_TRANSPARENT | FLAG_DOUBLE_SIDED)
+}
+
+test "a cutoff travels with the material that reads it" {
+    held := material_cut_out(material_default(), 0.25)
+    assert(held.alpha_cutoff > 0.24 && held.alpha_cutoff < 0.26)
+    assert(material_surface(held).z > 0.24)
 }

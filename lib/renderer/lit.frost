@@ -7,9 +7,34 @@
 // that is what this is for: declare it into a graph, hand it the run and the
 // lights, and there is nothing else to write.
 //
-// What it draws with is what `render_world.frost` filled: one storage buffer of
-// objects, one visible list a compute pass wrote, and one indirect draw per
-// batch. Nothing here counts anything.
+// What it draws with is what `render_world.frost` filled: tables of transforms,
+// materials and objects, and a set of draws the compute passes built. Nothing
+// here counts anything and nothing here decides what is drawn.
+//
+// The frame is two passes. The first writes depth and nothing else, for the
+// things that certainly cover what is behind them; the second shades, comparing
+// depth for equality rather than for nearness, so a fragment that something else
+// ends up in front of is shaded once instead of once per thing that covers it.
+// What may go in the first is what the batch tables call the solid lane: a
+// surface that drops fragments of its own has no fragment stage there to drop
+// them in, so it would write depth over its own holes.
+//
+// Three pipelines for the second pass, because a batch is a run of instances
+// sharing a pipeline and the classes exist to keep them apart:
+//
+//   opaque        back faces dropped, depth written
+//   double sided  neither face dropped, depth written
+//   transparent   blended over what is behind it, depth tested and not written
+//
+// Which one draws a thing is its material's business, decided in the classify
+// pass, and this reads the answer as the order it issues the classes in: what
+// is opaque before what is blended, and the overlay classes after the world.
+//
+// The overlay classes share the world's depth buffer, so an overlay behind
+// something is still hidden by it. Nightshade gives them a depth target of
+// their own, which is what makes an overlay sit on top whatever depth it is at;
+// that target is not here yet, so what the layer buys today is draw order and
+// nothing more.
 //
 // Lights arrive as a run of records rather than as a component, because this is
 // the renderer and a component belongs to the world. `lib/engine/light.frost` is
@@ -20,71 +45,95 @@ import "frame.frost"
 import "graph.frost"
 import "geometry.frost"
 import "render_world.frost"
+import "cluster.frost"
 import "uniform.frost"
 import "mem.frost"
 import "math.frost"
 
-export GpuLight, Lit, LIGHT_DIRECTIONAL, LIGHT_POINT, LIGHT_SPOT,
-    lit_none,
-    LIGHT_BYTES, MAX_LIGHTS, LIT_FRAME_BYTES,
-    lit_new, lit_free, lit_declare, lit_write_frame, lit_write_lights
+export Lit, lit_none, lit_declare_prepass, LIT_FRAME_BYTES,
+    lit_new, lit_free, lit_declare, lit_write_frame
 
-// Which of the three a record is. The numbers are the shader's, and a light
-// that is none of them is drawn by nothing rather than drawn wrong.
-LIGHT_DIRECTIONAL :: 0
-LIGHT_POINT :: 1
-LIGHT_SPOT :: 2
-
-// One light, as the shader reads it. The layout is nightshade's: where it is,
-// which way it faces, what colour and how bright, and the four numbers the three
-// kinds need between them.
-GpuLight :: struct {
-    position: Vec4,
-    direction: Vec4,
-    // Colour in rgb and intensity in w.
-    color: Vec4,
-    // `kind`, range, and the cosines of the two cone angles.
-    params: Vec4,
-}
-
-LIGHT_BYTES :: 64
-
-// How many the buffer holds. A scene with more lights than this draws with the
-// first of them rather than growing a buffer mid-frame.
-MAX_LIGHTS :: 64
-
-// The camera, where it is, the ambient term, and how many lights are in the run.
-LIT_FRAME_BYTES :: 112
+// The two camera matrices, where the camera is, the ambient term, and how many
+// lights are in the run.
+//
+// The view matrix is here as well as the product because a fragment has to know
+// how far away it is to find its own box in the light grid, and that is a view
+// space distance. Deriving it from the product would mean inverting a matrix per
+// fragment.
+LIT_FRAME_BYTES :: 176
 
 SHADER :: "
 struct Frame {
     view_projection: mat4x4<f32>,
+    view: mat4x4<f32>,
     camera_position: vec4<f32>,
     ambient: vec4<f32>,
+    // How many lights there are, and how many of those come first because they
+    // are directional.
     counts: vec4<u32>,
+}
+
+struct ClusterUniforms {
+    inverse_projection: mat4x4<f32>,
+    screen_size: vec2<f32>,
+    z_near: f32,
+    z_far: f32,
+    cluster_count: vec4<u32>,
+    tile_size: vec2<f32>,
+    num_lights: u32,
+    num_directional_lights: u32,
+}
+
+struct LightGrid {
+    offset: u32,
+    count: u32,
 }
 
 struct Light {
     position: vec4<f32>,
     direction: vec4<f32>,
     color: vec4<f32>,
-    params: vec4<f32>,
+    light_type: u32,
+    range: f32,
+    inner_cone: f32,
+    outer_cone: f32,
+    shadow_index: i32,
+    light_size: f32,
+    cookie_layer: u32,
+    pad_zero: f32,
 }
 
 struct ObjectData {
-    model: mat4x4<f32>,
-    base_color: vec4<f32>,
-    surface: vec4<f32>,
-    batch: u32,
-    radius: f32,
-    material: u32,
-    pad_three: u32,
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    is_overlay: u32,
+    pad_zero: u32,
 }
+
+struct MaterialData {
+    base_color: vec4<f32>,
+    roughness: f32,
+    metallic: f32,
+    alpha_cutoff: f32,
+    flags: u32,
+}
+
+const FLAG_MASK: u32 = 2u;
+const PI: f32 = 3.14159265358979323846;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
 @group(1) @binding(1) var<storage, read> visible: array<u32>;
+@group(1) @binding(2) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(1) @binding(3) var<storage, read> materials: array<MaterialData>;
 @group(2) @binding(0) var<storage, read> lights: array<Light>;
+@group(2) @binding(1) var<storage, read> light_grid: array<LightGrid>;
+@group(2) @binding(2) var<storage, read> light_indices: array<u32>;
+@group(2) @binding(3) var<uniform> cluster: ClusterUniforms;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -100,27 +149,61 @@ fn vs_main(@location(0) position: vec3<f32>,
     var out: VertexOut;
     let object_index = visible[instance];
     let object = objects[object_index];
-    let world = object.model * vec4<f32>(position, 1.0);
+    let model = transforms[object.transform_index];
+    let world = model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
-    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.object_index = object_index;
     return out;
 }
 
-// How much of one light reaches a point, and from where. A directional light is
-// the same everywhere and never falls off; the other two fall off with the
-// square of the distance, and a spot narrows between its two cone angles.
+// How much of one light reaches a point, and from where.
+//
+// The two attenuations are nightshade's, and the first is not the obvious one.
+// A light with no range does not fall off at all: it is a light a scene wants
+// everywhere, and dividing it by the square of the distance would make that
+// impossible to ask for. A light with a range falls off with the square of the
+// distance inside a window that reaches zero exactly at the range, so it stops
+// where it says it stops rather than trailing off forever below the point of
+// being visible.
+//
+// The window is the fourth power of the distance over the range, which is
+// glTF's, and it is what keeps the curve close to a true inverse square until
+// near the end instead of bending the whole way along.
 struct Reaching {
     toward: vec3<f32>,
     strength: f32,
 }
 
+fn range_attenuation(range: f32, distance: f32) -> f32 {
+    if (range <= 0.0) {
+        return 1.0;
+    }
+    let bounded = max(distance, 0.01);
+    let window = max(min(1.0 - pow(distance / range, 4.0), 1.0), 0.0);
+    return window / (bounded * bounded);
+}
+
+// Full strength inside the inner cone, nothing outside the outer one, and a
+// smooth step between. Both angles arrive as cosines, so a wider angle is a
+// smaller number.
+fn spot_attenuation(toward_light: vec3<f32>, facing: vec3<f32>,
+                    outer_cone: f32, inner_cone: f32) -> f32 {
+    let along = dot(normalize(facing), normalize(-toward_light));
+    if (along > outer_cone) {
+        if (along < inner_cone) {
+            return smoothstep(outer_cone, inner_cone, along);
+        }
+        return 1.0;
+    }
+    return 0.0;
+}
+
 fn reaching(light: Light, at: vec3<f32>) -> Reaching {
     var out: Reaching;
-    let kind = u32(light.params.x);
     let intensity = light.color.w;
-    if (kind == 0u) {
+    if (light.light_type == 0u) {
         out.toward = normalize(-light.direction.xyz);
         out.strength = intensity;
         return out;
@@ -128,51 +211,148 @@ fn reaching(light: Light, at: vec3<f32>) -> Reaching {
     let offset = light.position.xyz - at;
     let distance = length(offset);
     out.toward = offset / max(distance, 0.0001);
-    // Inverse square, and a range of zero means it never stops.
-    var fade = intensity / max(distance * distance, 0.0001);
-    let range = light.params.y;
-    if (range > 0.0) {
-        let bounded = clamp(1.0 - distance / range, 0.0, 1.0);
-        fade = fade * bounded * bounded;
+
+    var fade = range_attenuation(light.range, distance);
+    if (light.light_type == 2u) {
+        fade = fade * spot_attenuation(offset, light.direction.xyz,
+            light.outer_cone, light.inner_cone);
     }
-    if (kind == 2u) {
-        // Between the two cosines the light narrows to nothing. Outside the
-        // outer one there is none of it.
-        let facing = dot(normalize(-light.direction.xyz), out.toward);
-        let inner = light.params.z;
-        let outer = light.params.w;
-        fade = fade * clamp((facing - outer) / max(inner - outer, 0.0001),
-            0.0, 1.0);
-    }
-    out.strength = fade;
+    out.strength = intensity * fade;
     return out;
+}
+
+// The prepass. No colour target and no shading: what it produces is depth, and
+// where it lands is the whole of what the pass after it reads.
+//
+// The two multiplications are in the order `vs_main` does them, and that is not
+// a matter of taste. Reassociating them is exact in arithmetic and not in
+// floating point, so a depth written one way round and tested the other way
+// round disagrees in the last bits and the surface speckles where the two
+// answers straddle the comparison.
+@vertex
+fn vs_depth(@location(0) position: vec3<f32>,
+            @builtin(instance_index) instance: u32) -> @builtin(position) vec4<f32> {
+    let object = objects[visible[instance]];
+    let model = transforms[object.transform_index];
+    let world = model * vec4<f32>(position, 1.0);
+    return frame.view_projection * world;
+}
+
+// The microfacet terms. A surface is modelled as a field of mirrors too small
+// to see: how many of them face the halfway direction between the light and the
+// eye, how much they shadow one another, and how reflective they are at this
+// angle. Roughness is what spreads the facets out.
+//
+// These three are nightshade's `DistributionGGX`, `V_SmithGGXCorrelated` and
+// `fresnelSchlick`. The second is a visibility term rather than a geometry one:
+// it has the specular denominator already divided out, so the product below is
+// three factors rather than four over one.
+fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+fn visibility_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let toward_eye = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
+    let toward_light = n_dot_v * sqrt(n_dot_l * n_dot_l * (1.0 - a2) + a2);
+    return 0.5 / max(toward_eye + toward_light, 0.00001);
+}
+
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (vec3<f32>(1.0) - f0) * pow(max(1.0 - cos_theta, 0.0), 5.0);
+}
+
+// What one light adds, as the metallic-roughness model has it: a specular lobe
+// off the facets and a diffuse term from what got through them.
+//
+// The split between the two is the Fresnel term rather than a number a program
+// picks. What is reflected cannot also be scattered, so the diffuse weight is
+// what the reflection left; and a metal has no diffuse at all, which is what
+// `metallic` scales away. A dielectric reflects about four percent of the light
+// head-on whatever it is made of, which is where the 0.04 comes from; a metal
+// reflects its own colour, so its base colour is its reflectance.
+fn shade(light: Light, at: vec3<f32>, n: vec3<f32>, v: vec3<f32>,
+         albedo: vec3<f32>, roughness: f32, metallic: f32) -> vec3<f32> {
+    let held = reaching(light, at);
+    let l = held.toward;
+    let n_dot_l = max(dot(n, l), 0.0);
+    if (n_dot_l <= 0.0 || held.strength <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+    let h = normalize(l + v);
+    let n_dot_v = max(dot(n, v), 0.0001);
+    let radiance = light.color.rgb * held.strength;
+
+    let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
+    let fresnel = fresnel_schlick(max(dot(h, v), 0.0), f0);
+    let specular = distribution_ggx(max(dot(n, h), 0.0), roughness)
+        * visibility_smith(n_dot_v, n_dot_l, roughness) * fresnel;
+    let scattered = (vec3<f32>(1.0, 1.0, 1.0) - fresnel) * (1.0 - metallic);
+    let diffuse = scattered * albedo / PI;
+
+    return (diffuse + specular) * radiance * n_dot_l;
+}
+
+// Which box of the grid a fragment fell in. The tile is where it is on the
+// screen; the slice is how far away it is, on the same logarithmic scale the
+// boxes were built with, so the two agree about which box is which.
+fn cluster_index(frag: vec2<f32>, view_depth: f32) -> u32 {
+    let ratio = log(cluster.z_far / cluster.z_near);
+    let bounded = max(view_depth, cluster.z_near);
+    let slice = u32(log(bounded / cluster.z_near) / ratio
+        * f32(cluster.cluster_count.z));
+    let z = clamp(slice, 0u, cluster.cluster_count.z - 1u);
+    let x = clamp(u32(frag.x / cluster.tile_size.x), 0u,
+        cluster.cluster_count.x - 1u);
+    let y = clamp(u32(frag.y / cluster.tile_size.y), 0u,
+        cluster.cluster_count.y - 1u);
+    return x + y * cluster.cluster_count.x
+        + z * cluster.cluster_count.x * cluster.cluster_count.y;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let object = objects[in.object_index];
+    let material = materials[object.material_id];
+    // A masked surface is kept or dropped whole. It is drawn in the opaque
+    // classes and writes depth, so the fragment has to go before anything else
+    // does rather than being blended away.
+    if ((material.flags & FLAG_MASK) != 0u
+        && material.base_color.a < material.alpha_cutoff) {
+        discard;
+    }
     let facing = normalize(in.normal);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
-    let rough = clamp(object.surface.x, 0.05, 1.0);
-    let tightness = 2.0 / (rough * rough) - 2.0;
+    // A roughness of zero is a perfect mirror, and the distribution divides by
+    // its square, so the floor is what keeps a highlight a highlight rather
+    // than a division by nothing.
+    let rough = clamp(material.roughness, 0.045, 1.0);
+    let metal = clamp(material.metallic, 0.0, 1.0);
 
-    var lit = object.base_color.rgb * frame.ambient.rgb;
-    let count = frame.counts.x;
-    for (var i = 0u; i < count; i = i + 1u) {
-        let light = lights[i];
-        let held = reaching(light, in.world);
-        let lambert = max(dot(facing, held.toward), 0.0);
-        if (lambert <= 0.0 || held.strength <= 0.0) {
-            continue;
-        }
-        let halfway = normalize(held.toward + toward_eye);
-        let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
-            * (1.0 - rough) * lambert * 0.3;
-        lit = lit + object.base_color.rgb * light.color.rgb
-            * held.strength * lambert
-            + light.color.rgb * held.strength * highlight;
+    var lit = material.base_color.rgb * frame.ambient.rgb;
+
+    // A directional light reaches the whole world, so the grid has nothing to
+    // say about it and every one of them is walked.
+    let directional = frame.counts.y;
+    for (var i = 0u; i < directional; i = i + 1u) {
+        lit = lit + shade(lights[i], in.world, facing, toward_eye,
+            material.base_color.rgb, rough, metal);
     }
-    return vec4<f32>(lit, object.base_color.a);
+
+    // The rest are found through the box this fragment fell in, which holds the
+    // few that reach it out of however many the scene has.
+    let view_depth = -(frame.view * vec4<f32>(in.world, 1.0)).z;
+    let box = light_grid[cluster_index(in.clip.xy, view_depth)];
+    for (var i = 0u; i < box.count; i = i + 1u) {
+        let which = light_indices[box.offset + i];
+        lit = lit + shade(lights[directional + which], in.world, facing,
+            toward_eye, material.base_color.rgb, rough, metal);
+    }
+    return vec4<f32>(lit, material.base_color.a);
 }
 "
 
@@ -181,10 +361,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // program writing its own passes never makes the buffers at all, and one that
 // does composes over what `lit_none` left.
 Lit :: struct {
-    pipeline: RenderPipeline,
+    // Depth and nothing else, for the solid half of the two opaque classes.
+    depth_pipeline: RenderPipeline,
+    // One per way of drawing, indexed by the class of the batch being drawn.
+    // The overlay classes reuse the three, because what differs between a thing
+    // in the world and the same thing on top of it is when it is drawn and not
+    // how.
+    opaque_pipeline: RenderPipeline,
+    double_sided_pipeline: RenderPipeline,
+    transparent_pipeline: RenderPipeline,
     frame_uniform: Buffer,
     frame_group: BindGroup,
-    lights: Buffer,
     light_group: BindGroup,
     // The run this draws and the buffers it draws out of, named rather than
     // held: they are the App's and are filled every frame.
@@ -193,13 +380,12 @@ Lit :: struct {
 }
 
 lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
-    store: ^Geometry) -> Lit {
+    store: ^Geometry, grid: Cluster) -> Lit {
     frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment)
     frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
 
     light_layout := lights_layout(device)
-    lights := storage_buffer_of(device, LIGHT_BYTES * MAX_LIGHTS)
 
     mut layouts : [3]BindGroupLayout = [frame_layout,
         render_world_layout(render_world_at(held)), light_layout]
@@ -208,13 +394,23 @@ lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
     descriptor.bind_group_layouts = ptr_to(layouts[0])
     layout := device_create_pipeline_layout(device, ptr_to(descriptor))
 
+    shader := lit_module(device)
     Lit {
-        pipeline = make_pipeline(device, format, layout),
+        depth_pipeline = make_depth_pipeline(device, shader, layout),
+        // The two that the prepass wrote depth for compare for equality, since
+        // what they are drawing is exactly what it recorded. The blended one
+        // compares for nearness and writes nothing, because the prepass never
+        // saw it.
+        opaque_pipeline = make_pipeline(device, shader, format, layout,
+            CULL_MODE_BACK, false, COMPARE_FUNCTION_GREATER_EQUAL),
+        double_sided_pipeline = make_pipeline(device, shader, format, layout,
+            CULL_MODE_NONE, false, COMPARE_FUNCTION_GREATER_EQUAL),
+        transparent_pipeline = make_pipeline(device, shader, format, layout,
+            CULL_MODE_NONE, true, COMPARE_FUNCTION_GREATER),
         frame_uniform = frame_uniform,
         frame_group = uniform_group(device, frame_layout, frame_uniform,
             LIT_FRAME_BYTES),
-        lights = lights,
-        light_group = lights_group(device, light_layout, lights),
+        light_group = lights_group(device, light_layout, grid),
         render = held,
         store = store,
     }
@@ -225,10 +421,12 @@ lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
 // nothing, since a handle of nothing is what every one of these is.
 lit_none :: fn() -> Lit {
     Lit {
-        pipeline = no_render_pipeline(),
+        depth_pipeline = no_render_pipeline(),
+        opaque_pipeline = no_render_pipeline(),
+        double_sided_pipeline = no_render_pipeline(),
+        transparent_pipeline = no_render_pipeline(),
         frame_uniform = no_buffer(),
         frame_group = no_bind_group(),
-        lights = no_buffer(),
         light_group = no_bind_group(),
         render = no_render_world(),
         store = no_geometry(),
@@ -236,21 +434,22 @@ lit_none :: fn() -> Lit {
 }
 
 lit_free :: fn(mut held: Lit) {
-    if (held.pipeline == no_render_pipeline()) {
+    if (held.depth_pipeline == no_render_pipeline()) {
         return
     }
-    buffer_destroy(held.lights)
-    buffer_release(held.lights)
     buffer_destroy(held.frame_uniform)
     buffer_release(held.frame_uniform)
     bind_group_release(held.light_group)
     bind_group_release(held.frame_group)
-    render_pipeline_release(held.pipeline)
+    render_pipeline_release(held.depth_pipeline)
+    render_pipeline_release(held.opaque_pipeline)
+    render_pipeline_release(held.double_sided_pipeline)
+    render_pipeline_release(held.transparent_pipeline)
 }
 
 // The pass, into a graph. It writes the colour and depth it is given and reads
-// the arguments the culling pass wrote, which is the whole of what puts the two
-// in order.
+// the arguments the compute passes wrote, which is the whole of what puts the
+// two in order.
 lit_declare :: fn(mut s: Lit, mut g: Graph, screen: ResourceId,
     depth: ResourceId, clear: Color, arguments: ResourceId) -> PassId {
     made := graph_pass($Lit, g, "lit", draw_lit, ptr_to(s))
@@ -261,78 +460,95 @@ lit_declare :: fn(mut s: Lit, mut g: Graph, screen: ResourceId,
 }
 
 draw_lit :: fn(mut s: Lit, pass: RenderPassEncoder) {
-    render_pass_encoder_set_pipeline(pass, s.pipeline)
     render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
     render_pass_encoder_set_bind_group(pass, 1,
         render_world_group(render_world_at(s.render)), 0, no_pointer())
     render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw(pass, render_world_at(s.render))
+    // In class order, which is the order they have to be drawn in: what is
+    // opaque first so what is blended has something behind it to blend with,
+    // and the overlay after the world.
+    draw_class(s, pass, CLASS_OPAQUE, s.opaque_pipeline)
+    draw_class(s, pass, CLASS_DOUBLE_SIDED, s.double_sided_pipeline)
+    draw_class(s, pass, CLASS_TRANSPARENT, s.transparent_pipeline)
+    draw_class(s, pass, CLASS_OVERLAY_OPAQUE, s.opaque_pipeline)
+    draw_class(s, pass, CLASS_OVERLAY_DOUBLE_SIDED, s.double_sided_pipeline)
+    draw_class(s, pass, CLASS_OVERLAY_TRANSPARENT, s.transparent_pipeline)
+}
+
+draw_class :: fn(mut s: Lit, pass: RenderPassEncoder, class: i64,
+    pipeline: RenderPipeline) {
+    render_pass_encoder_set_pipeline(pass, pipeline)
+    render_world_draw_class(pass, render_world_at(s.render), class)
 }
 
 // The camera and the ambient term, as the bytes the shader reads them as.
 lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
-    eye: Vec3, ambient: Vec3, count: i64) {
-    mut values : [28]f32 = [0.0; 28]
+    view: Mat4, eye: Vec3, ambient: Vec3, total: i64, directional: i64) {
+    mut values : [44]f32 = [0.0; 44]
     mut element : i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
+        values[element + 16] = view.m[element]
         element = element + 1
     }
-    values[16] = eye.x
-    values[17] = eye.y
-    values[18] = eye.z
-    values[19] = 1.0
-    values[20] = ambient.x
-    values[21] = ambient.y
-    values[22] = ambient.z
-    values[23] = 1.0
-    // The count is four unsigned numbers to the shader and four floats here.
-    // Written through the same bytes, since what the buffer holds is bytes.
-    mut counts : [4]u32 = [cast($u32, count), 0, 0, 0]
-    queue_write_buffer(queue, s.frame_uniform, 0, ptr_to(values[0]), 96)
-    queue_write_buffer(queue, s.frame_uniform, 96, ptr_to(counts[0]), 16)
+    values[32] = eye.x
+    values[33] = eye.y
+    values[34] = eye.z
+    values[35] = 1.0
+    values[36] = ambient.x
+    values[37] = ambient.y
+    values[38] = ambient.z
+    values[39] = 1.0
+    // How many lights there are and how many of those come first because they
+    // are directional. Four unsigned numbers to the shader and four floats
+    // here, written through the same bytes since what the buffer holds is
+    // bytes.
+    mut counts : [4]u32 = [cast($u32, total), cast($u32, directional), 0, 0]
+    queue_write_buffer(queue, s.frame_uniform, 0, ptr_to(values[0]), 160)
+    queue_write_buffer(queue, s.frame_uniform, 160, ptr_to(counts[0]), 16)
 }
 
-// The lights, as the run the shader walks. More than the buffer holds is the
-// first of them, since a buffer that grew would move and the binding that names
-// it would be left pointing at where it was.
-lit_write_lights :: fn(mut s: Lit, queue: Queue, held: []GpuLight) -> i64 {
-    mut count := slice_len(held)
-    if (count > MAX_LIGHTS) {
-        count = MAX_LIGHTS
-    }
-    if (count == 0) {
-        return 0
-    }
-    queue_write_buffer(queue, s.lights, 0, ptr_to(held[0]),
-        LIGHT_BYTES * count)
-    count
-}
-
-// A run of lights the fragment stage walks, which is a storage binding rather
-// than a uniform because how many there are is a number rather than a shape.
+// What the fragment stage reads about lights: the run of them, the grid saying
+// which reach where, the indices the grid points into, and the numbers the grid
+// was built with. The three runs are storage bindings because how many there
+// are is a number rather than a shape.
 lights_layout :: fn(device: Device) -> BindGroupLayout {
-    mut entry := bind_group_layout_entry_init()
-    entry.binding = 0
-    entry.visibility = ShaderStage::Fragment
-    entry.buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    mut entries : [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    mut slot : i64 = 0
+    while (slot < 4) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].visibility = ShaderStage::Fragment
+        entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+        slot = slot + 1
+    }
+    entries[3].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entries[3].buffer.min_binding_size = CLUSTER_UNIFORM_BYTES
     mut descriptor := bind_group_layout_descriptor_init()
-    descriptor.entries_count = 1
-    descriptor.entries = ptr_to(entry)
+    descriptor.entries_count = 4
+    descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
 lights_group :: fn(device: Device, layout: BindGroupLayout,
-    held: Buffer) -> BindGroup {
-    mut entry := bind_group_entry_init()
-    entry.binding = 0
-    entry.buffer = held
-    entry.size = LIGHT_BYTES * MAX_LIGHTS
+    grid: Cluster) -> BindGroup {
+    mut entries : [4]BindGroupEntry = [bind_group_entry_init(); 4]
+    mut held : [4]Buffer = [cluster_lights_buffer(grid),
+        cluster_grid_buffer(grid), cluster_indices_buffer(grid),
+        cluster_uniform_buffer(grid)]
+    mut sizes : [4]i64 = [LIGHT_BYTES * MAX_LIGHTS, TOTAL_CLUSTERS * 8,
+        TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4, CLUSTER_UNIFORM_BYTES]
+    mut slot : i64 = 0
+    while (slot < 4) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].buffer = held[slot]
+        entries[slot].size = sizes[slot]
+        slot = slot + 1
+    }
     mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
-    descriptor.entries_count = 1
-    descriptor.entries = ptr_to(entry)
+    descriptor.entries_count = 4
+    descriptor.entries = ptr_to(entries[0])
     device_create_bind_group(device, ptr_to(descriptor))
 }
 
@@ -347,25 +563,27 @@ no_geometry :: fn() -> ^Geometry {
     unsafe { ptr_cast($Geometry, zero) }
 }
 
-storage_buffer_of :: fn(device: Device, size: i64) -> Buffer {
-    mut descriptor := buffer_descriptor_init()
-    descriptor.size = cast($u64, size)
-    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
-    device_create_buffer(device, ptr_to(descriptor))
-}
-
-// Position and normal, which is what the mesh carries and what this reads. What
-// it does not read is where the surface samples an image, because this pass
-// takes its colour from the material rather than from a texture.
-make_pipeline :: fn(device: Device, format: u32,
-    layout: PipelineLayout) -> RenderPipeline {
+lit_module :: fn(device: Device) -> ShaderModule {
     mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
     mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
-    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+    device_create_shader_module(device, ptr_to(module_descriptor))
+}
 
+// Position and normal, which is what the mesh carries and what this reads. What
+// it does not read is where the surface samples an image, because this pass
+// takes its colour from the material rather than from a texture.
+//
+// The three pipelines differ in two things and share the rest. Which faces are
+// dropped is one; whether the fragment is blended over what is behind it and
+// whether it writes depth is the other, and those two go together: a blended
+// thing that wrote depth would hide whatever is behind it from every blended
+// thing drawn after.
+make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
+    layout: PipelineLayout, cull_mode: u32, blended: bool,
+    compare: u32) -> RenderPipeline {
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
@@ -380,9 +598,23 @@ make_pipeline :: fn(device: Device, format: u32,
     buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
 
+    // Source alpha over what is there, which is what a colour with an alpha
+    // means. The alpha channel takes the newer of the two so a target that is
+    // read afterwards says something sensible about coverage.
+    mut blend := blend_state_init()
+    blend.color.operation = BLEND_OPERATION_ADD
+    blend.color.src_factor = BLEND_FACTOR_SRC_ALPHA
+    blend.color.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+    blend.alpha.operation = BLEND_OPERATION_ADD
+    blend.alpha.src_factor = BLEND_FACTOR_ONE
+    blend.alpha.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+
     mut target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
+    if (blended) {
+        target.blend = ptr_to(blend)
+    }
 
     mut fragment := fragment_state_init()
     fragment.module = shader
@@ -393,7 +625,10 @@ make_pipeline :: fn(device: Device, format: u32,
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
-    depth.depth_compare = COMPARE_FUNCTION_LESS
+    if (blended) {
+        depth.depth_write_enabled = OPTIONAL_BOOL_FALSE
+    }
+    depth.depth_compare = compare
 
     mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
@@ -403,10 +638,75 @@ make_pipeline :: fn(device: Device, format: u32,
     descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
-    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.primitive.cull_mode = cull_mode
     descriptor.multisample.count = 1
     descriptor.multisample.mask = 4294967295
     descriptor.depth_stencil = ptr_to(depth)
     descriptor.fragment = ptr_to(fragment)
     device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+// Depth and nothing else. No fragment stage at all: a pass with no colour
+// target has nothing for one to write, and the vertex stage settling where the
+// surface is is the whole of what this produces.
+//
+// Reverse-Z, so the nearer fragment is the greater one and this keeps it.
+make_depth_pipeline :: fn(device: Device, shader: ShaderModule,
+    layout: PipelineLayout) -> RenderPipeline {
+    mut attributes : [1]VertexAttribute = [vertex_attribute_init(); 1]
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[0].offset = POSITION_OFFSET
+    attributes[0].shader_location = 0
+
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.array_stride = VERTEX_STRIDE
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.attributes_count = 1
+    buffer_layout.attributes = ptr_to(attributes[0])
+
+    mut depth := depth_stencil_state_init()
+    depth.format = DEPTH_FORMAT
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_GREATER
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_depth", length = 8 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+// The prepass, into a graph. It writes the depth the pass after it tests
+// against, which is the whole of what puts the two in order: nothing had to be
+// told which runs first.
+//
+// The two opaque classes and only their solid halves. What blends is not in it
+// because it does not cover what is behind it, and what drops its own fragments
+// is not in it because this has no stage to drop them in.
+lit_declare_prepass :: fn(mut s: Lit, mut g: Graph, depth: ResourceId,
+    arguments: ResourceId) -> PassId {
+    made := graph_pass($Lit, g, "depth prepass", draw_depth, ptr_to(s))
+    graph_writes_depth(g, made, depth)
+    graph_reads(g, made, arguments)
+    made
+}
+
+draw_depth :: fn(mut s: Lit, pass: RenderPassEncoder) {
+    render_pass_encoder_set_pipeline(pass, s.depth_pipeline)
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(render_world_at(s.render)), 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
+    geometry_bind(pass, geometry_at(s.store))
+    render_world_draw_prepass(pass, render_world_at(s.render), CLASS_OPAQUE)
+    render_world_draw_prepass(pass, render_world_at(s.render),
+        CLASS_DOUBLE_SIDED)
 }

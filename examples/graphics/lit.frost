@@ -68,27 +68,21 @@ run :: fn(move app: App) -> i64 {
     // world here rather than read off the engine's list.
     spin := component_of($Spin, app.world)
 
+    device := app_device(app)
     queue := app_queue(app)
-    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
-    mesh_cache_insert(app.meshes, "sphere",
-        sphere_mesh(app.store, queue, 0.7, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
+        cube_mesh())
+    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+        sphere_mesh(0.7, 16, 24))
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     mut looks : [4]i64 = [0; 4]
-    looks[0] = materials_add(app.materials, Material {
-        base_color = vec4(0.85, 0.32, 0.30, 1.0), roughness = 0.35,
-        metallic = 0.0 })
-    looks[1] = materials_add(app.materials, Material {
-        base_color = vec4(0.32, 0.76, 0.46, 1.0), roughness = 0.6,
-        metallic = 0.0 })
-    looks[2] = materials_add(app.materials, Material {
-        base_color = vec4(0.36, 0.52, 0.92, 1.0), roughness = 0.2,
-        metallic = 0.0 })
+    looks[0] = materials_add(app.materials, material_of(vec4(0.85, 0.32, 0.30, 1.0), 0.35, 0.0))
+    looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.46, 1.0), 0.6, 0.0))
+    looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.2, 0.0))
     // The floor, matte, so what the lights do to it reads as what the lights do.
-    looks[3] = materials_add(app.materials, Material {
-        base_color = vec4(0.72, 0.70, 0.66, 1.0), roughness = 0.9,
-        metallic = 0.0 })
+    looks[3] = materials_add(app.materials, material_of(vec4(0.72, 0.70, 0.66, 1.0), 0.9, 0.0))
 
     ids := app_ids(app)
     lights := light_ids(app.world)

@@ -6,19 +6,39 @@
 // a program can leave alone. How a thing got where it is belongs to whatever
 // put it there.
 //
-// What a frame turns those into is four buffers and no per-object binding:
+// What a frame hands the GPU is a table per kind of thing and one entry per
+// object naming its row in each:
 //
-//   objects    one entry per drawn thing: its matrix, its surface, its batch
-//   visible    which of those survived culling, written by a compute pass
-//   indirect   one draw's arguments per mesh, written by the same pass
-//   counts     how many landed in each batch, which is how a slot is taken
+//   transforms  where each thing ended up, one matrix
+//   materials   what each surface is made of
+//   mesh_geo    where each mesh sits in the shared buffers, and how big it is
+//   objects     four numbers: which transform, which mesh, which material,
+//               which batch
 //
-// A pass binds all of that once and then issues one indirect draw per mesh. How
-// many instances a draw covers, and which objects those are, are numbers the
-// CPU never reads: the compute pass writes them into the buffer the draw takes
-// its arguments from. That is what GPU-driven means here, and it is why the
-// geometry is one pair of buffers rather than a pair per mesh. A draw whose
-// arguments come off the GPU cannot ask the CPU to bind something first.
+// An object is indices rather than the things themselves, which is what lets a
+// thing move without its material being written again and a material change
+// without walking the things wearing it.
+//
+// Nothing about which draws exist is decided here. Six compute passes do that,
+// and the CPU never reads any of it back:
+//
+//   classify   which of the six draw classes each object belongs in
+//   clear      the counting table and last frame's draws back to nothing
+//   count      how many objects want each (lane, mesh, material) combination,
+//              where a lane is a class and whether the surface drops its own
+//              fragments
+//   build      one workgroup per lane, laying those combinations out as
+//              batches in the lane's own region of the tables
+//   indirect   a prefix sum over batch sizes, which is where each batch's
+//              instances begin, written into the draw arguments
+//   assign     the frustum test, and each surviving object into the next free
+//              slot of its own batch
+//
+// The prefix sum is the whole reason there is no ceiling on how many of one
+// mesh may be drawn. An earlier version of this file gave every batch a fixed
+// slice of the visible list and refused the two hundred and fifty-seventh
+// instance of anything; counting first and laying out second costs one more
+// pass and gives every batch exactly the room it turned out to need.
 //
 // A vertex shader finds its own object the way nightshade's does:
 //
@@ -26,22 +46,32 @@
 //     let object = objects[object_index];
 //
 // `instance_index` starts at the draw's `first_instance`, which is where that
-// mesh's slice of `visible` begins, so the one expression covers every batch.
+// batch's instances begin, so the one expression covers every batch.
 
 import "wgpu.frost"
+import "graph.frost"
+import "frame.frost"
 import "geometry.frost"
 import "material.frost"
+import "mesh.frost"
 import "math.frost"
 import "mem.frost"
 
-export Drawn, Transform, ONE_LAYER, ObjectData, RenderWorld,
-    render_world_new, render_world_at, render_world_free, render_world_begin, render_world_push,
-    render_world_upload, render_world_count, render_world_batches,
-    render_world_layout, render_world_group, render_world_indirect,
-    render_world_cull_layout, render_world_cull_group, render_world_dispatch,
-    render_world_cull_pipeline,
-    render_world_draw, render_world_draw_batch,
-    CULL_SHADER, OBJECT_BYTES, MAX_PER_BATCH
+export Drawn, Transform, ONE_LAYER, OVERLAY_LAYER, ObjectData, RenderWorld,
+    render_world_new, render_world_at, render_world_free, render_world_begin,
+    render_world_push,
+    render_world_upload, render_world_count,
+    render_world_layout, render_world_group,
+    render_world_batch_layout, render_world_batch_group,
+    BatchPipelines, render_world_batch_pipelines, no_batch_pipelines,
+    batch_pipelines_free, render_world_dispatch_objects,
+    Batching, batching_new, batching_free, batching_declare,
+    render_world_dispatch_dense, render_world_indirect,
+    render_world_draw_class, render_world_draw_all,
+    render_world_draw_prepass, LANE_SOLID, LANE_MASKED, NUM_DRAW_LANES,
+    BATCH_SHADER, OBJECT_BYTES, MESH_GEO_BYTES, TRANSFORM_BYTES,
+    NUM_DRAW_CLASSES, CLASS_OPAQUE, CLASS_DOUBLE_SIDED, CLASS_TRANSPARENT,
+    CLASS_OVERLAY_OPAQUE, CLASS_OVERLAY_DOUBLE_SIDED, CLASS_OVERLAY_TRANSPARENT
 
 // World-space transform of a renderable, and what it is drawn as. These are the
 // renderer's own components; whatever else an entity carries is the world's
@@ -57,114 +87,140 @@ Transform :: struct { matrix: Mat4 }
 // looks at it again.
 Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 
-// What that one layer is called. A program dividing its world between passes
-// numbers its own.
+// The world, and what is drawn on top of it. A layer is what divides the two
+// halves of the draw classes below: an overlay is drawn after everything in the
+// world. It shares the world's depth buffer, so it is later rather than in
+// front; a depth target of its own is what would make it in front, and there is
+// not one yet.
 ONE_LAYER :: 0
+OVERLAY_LAYER :: 1
 
-// One thing to draw, as the shader reads it: the matrix, the colour, the two
-// numbers that say how the surface behaves, and which batch it belongs to.
+// Which pipeline a thing is drawn with, which is what a batch may not mix. The
+// first three are the world and the second three are the overlay, in the order
+// they are drawn, so a class number is also its place in the frame.
 //
-// The three after the matrix are what the shading wants and the last is what
-// the culling pass wants. Both read the same bytes, which is why they are one
-// struct rather than the two tables they would be if either could change
-// without the other.
+// Nightshade has nine, the last three being the instanced variants of these.
+// Nothing here is instanced yet, so those numbers are left unused rather than
+// taken by something else: adding instancing later adds classes six through
+// eight and renumbers nothing.
+CLASS_OPAQUE :: 0
+CLASS_DOUBLE_SIDED :: 1
+CLASS_TRANSPARENT :: 2
+CLASS_OVERLAY_OPAQUE :: 3
+CLASS_OVERLAY_DOUBLE_SIDED :: 4
+CLASS_OVERLAY_TRANSPARENT :: 5
+NUM_DRAW_CLASSES :: 6
+
+// A class is split in two by whether the surface drops fragments of its own.
+// That is not a different pipeline, so it is not a different class; it is a
+// different answer to one question, which is whether the depth prepass may draw
+// it.
+//
+// The prepass writes depth and nothing else, for the things that certainly
+// cover what is behind them. The pass after it then compares for equality
+// rather than for nearness, so a fragment that is going to be overdrawn is
+// shaded once instead of once per thing in front of it. A surface that drops
+// its own fragments cannot go in it: the prepass has no fragment stage to drop
+// them with, so it would write depth across the holes and the holes would come
+// out solid.
+//
+// Nightshade packs both halves into one region and records where the boundary
+// fell, then submits the prepass with a draw count read off the device. That
+// count is not reachable from this binding, so each half has a region of its
+// own instead and the boundary is arithmetic. Same split, same order, one
+// number the CPU can know without asking.
+LANE_SOLID :: 0
+LANE_MASKED :: 1
+NUM_DRAW_LANES :: 12
+
+// One thing to draw, as the shader reads it: four rows and the two numbers the
+// compute passes fill in.
+//
+// Every field is a number naming a row in another table. What that buys is that
+// two hundred things sharing a material share one entry, a thing that moves
+// rewrites sixty-four bytes rather than its whole entry, and the batch key is
+// two small integers rather than a comparison of matrices.
 ObjectData :: struct {
-    matrix: Mat4,
-    base_color: Vec4,
-    surface: Vec4,
-    batch: u32,
-    // How big the thing is about its own origin, before the matrix. What the
-    // culling pass tests is a sphere, and it works out where that ended up
-    // from the matrix rather than being told twice.
-    radius: f32,
-    // Which material this wears, for a pass that reads an image per material.
-    // A number rather than a binding, so the pass binds one array once and
-    // every instance of every draw picks its own layer out of it. This is what
-    // keeps a batch a mesh rather than a mesh and a material.
-    material: u32,
-    pad_three: u32,
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    // Which batch this landed in, or `NO_BATCH` for an object that named a mesh
+    // or a material that is not there. The classify pass writes it and every
+    // pass after it skips whatever holds `NO_BATCH`.
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    // Which half of the frame draws it. A layer is a property of the thing and
+    // a class is a property of the draw; this is what the first is carried as
+    // until the classify pass turns it into the second.
+    is_overlay: u32,
+    pad_zero: u32,
 }
 
-OBJECT_BYTES :: 112
-
-// As many of one mesh as may be drawn at once. Each mesh owns a slice of the
-// visible list this long, so where a batch's instances begin is arithmetic
-// rather than a running total the compute pass would have to agree about.
-MAX_PER_BATCH :: 256
+OBJECT_BYTES :: 32
+TRANSFORM_BYTES :: 64
+MESH_GEO_BYTES :: 32
 
 // The five numbers an indexed indirect draw takes, in the order the API reads
 // them off the buffer.
-INDIRECT_WORDS :: 5
 INDIRECT_BYTES :: 20
 
-// What the culling pass is given: the six planes of what the camera can see,
-// then how many objects there are and how long a batch's slice is. The two
-// counts share a vector with two spare numbers, since a uniform's members align
-// to sixteen either way.
+// Where one mesh sits and how big it is, as one row so the culling half and the
+// drawing half read one table. Nightshade keeps the bounds in a table of their
+// own; one table here costs a binding fewer and says the same thing.
+MESH_GEO_WORDS :: 8
+
+// What every pass is given: the six planes of what the camera can see, then the
+// four counts the tables are walked with and the two the batch regions are
+// bounded by.
+PARAMS_BYTES :: 128
 CULL_PLANES :: 6
-CULL_BYTES :: 112
 
 // Everything a frame hands the GPU, and the bindings that reach it.
 RenderWorld :: struct {
     // What the walk filled, on this side of the copy.
     objects: []ObjectData,
+    transforms: []Mat4,
     count: i64,
-    // What each batch draws, which is a mesh. An indexed draw names one range
-    // of indices, so without multi-draw that is one call each; what material a
-    // thing wears is its own and travels in the object rather than splitting
-    // the batch.
-    batches: []MeshSpan,
-    batch_count: i64,
+    // How many meshes and materials the tables were made for, which is what the
+    // dense counting table is measured in.
+    mesh_room: i64,
+    material_room: i64,
+    // How many batches one class may hold. There cannot be more distinct
+    // combinations in a class than there are objects, and there cannot be more
+    // than every mesh against every material, so the smaller of those two is
+    // room enough for any frame.
+    batches_per_class: i64,
     object_buffer: Buffer,
-    visible_buffer: Buffer,
+    transform_buffer: Buffer,
+    material_buffer: Buffer,
+    mesh_geo_buffer: Buffer,
+    dense_buffer: Buffer,
+    desc_buffer: Buffer,
+    key_buffer: Buffer,
+    meta_buffer: Buffer,
     indirect_buffer: Buffer,
-    counts_buffer: Buffer,
-    totals_buffer: Buffer,
+    visible_buffer: Buffer,
+    params_buffer: Buffer,
     room: i64,
-    // What a drawing pass binds, and what the culling pass binds.
+    // What a drawing pass binds, and what the five compute passes bind.
     layout: BindGroupLayout,
     group: BindGroup,
-    cull_layout: BindGroupLayout,
-    cull_group: BindGroup,
+    batch_layout: BindGroupLayout,
+    batch_group: BindGroup,
 }
 
 render_world_count :: fn(held: RenderWorld) -> i64 { held.count }
-render_world_batches :: fn(held: RenderWorld) -> i64 { held.batch_count }
 render_world_layout :: fn(held: RenderWorld) -> BindGroupLayout { held.layout }
 render_world_group :: fn(held: RenderWorld) -> BindGroup { held.group }
 render_world_indirect :: fn(held: RenderWorld) -> Buffer {
     held.indirect_buffer
 }
-render_world_cull_layout :: fn(held: RenderWorld) -> BindGroupLayout {
-    held.cull_layout
+render_world_batch_layout :: fn(held: RenderWorld) -> BindGroupLayout {
+    held.batch_layout
 }
-// The pipeline that decides what is drawn. Its shader is `CULL_SHADER` and what
-// it writes is this file's own three buffers, so their shapes have to agree and
-// the pipeline is made here rather than by whoever happens to run the pass.
-render_world_cull_pipeline :: fn(device: Device,
-    layout: BindGroupLayout) -> ComputePipeline {
-    mut wgsl := shader_source_WGSL_init()
-    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
-    wgsl.code = StringView { data = CULL_SHADER, length = str_len(CULL_SHADER) }
-    mut module_descriptor := shader_module_descriptor_init()
-    module_descriptor.next_in_chain = ptr_to(wgsl)
-    shader := device_create_shader_module(device, ptr_to(module_descriptor))
-
-    mut groups : [1]BindGroupLayout = [layout]
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
-    pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
-
-    mut descriptor := compute_pipeline_descriptor_init()
-    descriptor.layout = device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
-    descriptor.compute.module = shader
-    descriptor.compute.entry_point = StringView { data = "cs_main", length = 7 }
-    device_create_compute_pipeline(device, ptr_to(descriptor))
-}
-
-render_world_cull_group :: fn(held: RenderWorld) -> BindGroup {
-    held.cull_group
+render_world_batch_group :: fn(held: RenderWorld) -> BindGroup {
+    held.batch_group
 }
 
 // The run a pass was pointed at. A pass declares what it draws before the first
@@ -176,60 +232,274 @@ render_world_at :: fn(held: ^RenderWorld) -> ref RenderWorld {
     result
 }
 
-render_world_new :: fn(device: Device, room: i64) -> RenderWorld {
-    // Room enough for every batch to be full at once, which is what stops the
-    // slices overlapping however the visible things fall between meshes.
-    visible_room := room * MAX_PER_BATCH
+// The six steps, as the pipelines that run them. One call rather than six,
+// because they are one algorithm: a program holding four of them holds
+// something that cannot decide what to draw, and there is no use for that.
+//
+// They share a module and a bind group. What differs between them is the entry
+// point, which is why each is a handle rather than a copy of everything.
+BatchPipelines :: struct {
+    classify: ComputePipeline,
+    clear: ComputePipeline,
+    count: ComputePipeline,
+    build: ComputePipeline,
+    indirect: ComputePipeline,
+    assign: ComputePipeline,
+}
+
+render_world_batch_pipelines :: fn(device: Device,
+    layout: BindGroupLayout) -> BatchPipelines {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = BATCH_SHADER,
+        length = str_len(BATCH_SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+    made := device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+
+    BatchPipelines {
+        classify = step_pipeline(device, shader, made,
+            StringView { data = "classify", length = 8 }),
+        clear = step_pipeline(device, shader, made,
+            StringView { data = "clear_tables", length = 12 }),
+        count = step_pipeline(device, shader, made,
+            StringView { data = "count", length = 5 }),
+        build = step_pipeline(device, shader, made,
+            StringView { data = "build", length = 5 }),
+        indirect = step_pipeline(device, shader, made,
+            StringView { data = "indirect", length = 8 }),
+        assign = step_pipeline(device, shader, made,
+            StringView { data = "assign", length = 6 }),
+    }
+}
+
+// Six pipelines that were never made, for an App that has not composed the
+// renderer.
+no_batch_pipelines :: fn() -> BatchPipelines {
+    BatchPipelines {
+        classify = no_compute_pipeline(),
+        clear = no_compute_pipeline(),
+        count = no_compute_pipeline(),
+        build = no_compute_pipeline(),
+        indirect = no_compute_pipeline(),
+        assign = no_compute_pipeline(),
+    }
+}
+
+batch_pipelines_free :: fn(mut held: BatchPipelines) {
+    if (held.classify == no_compute_pipeline()) {
+        return
+    }
+    compute_pipeline_release(held.classify)
+    compute_pipeline_release(held.clear)
+    compute_pipeline_release(held.count)
+    compute_pipeline_release(held.build)
+    compute_pipeline_release(held.indirect)
+    compute_pipeline_release(held.assign)
+}
+
+step_pipeline :: fn(device: Device, shader: ShaderModule,
+    layout: PipelineLayout, entry_point: StringView) -> ComputePipeline {
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = entry_point
+    device_create_compute_pipeline(device, ptr_to(descriptor))
+}
+
+// The six steps and the run they decide about, as one thing a program declares
+// into a graph.
+//
+// A program that draws one view holds one of these. A program that draws three,
+// the way a shadow pass and an inset view do, holds one per run: what the steps
+// work on is a run's own tables, and two views culled against two matrices are
+// two sets of answers.
+Batching :: struct {
+    render: ^RenderWorld,
+    pipelines: BatchPipelines,
+}
+
+batching_new :: fn(device: Device, held: ^RenderWorld) -> Batching {
+    Batching {
+        render = held,
+        pipelines = render_world_batch_pipelines(device,
+            render_world_batch_layout(render_world_at(held))),
+    }
+}
+
+batching_free :: fn(mut held: Batching) {
+    batch_pipelines_free(held.pipelines)
+}
+
+// The six passes, in the order they run, each declaring that it writes the draw
+// arguments so that whatever reads them comes after all of them.
+//
+// Told rather than earned. They all write the same tables, so nothing about
+// what they read and write distinguishes them and the graph could not work out
+// an order that was already decided by what the algorithm is.
+batching_declare :: fn(mut s: Batching, mut g: Graph, name: str,
+    arguments: ResourceId) -> PassId {
+    classify := graph_compute_pass($Batching, g, name, run_classify, ptr_to(s))
+    graph_writes(g, classify, arguments)
+    clearing := graph_compute_pass($Batching, g, name, run_clear, ptr_to(s))
+    graph_writes(g, clearing, arguments)
+    graph_runs_after(g, clearing, classify)
+    counting := graph_compute_pass($Batching, g, name, run_count, ptr_to(s))
+    graph_writes(g, counting, arguments)
+    graph_runs_after(g, counting, clearing)
+    building := graph_compute_pass($Batching, g, name, run_build, ptr_to(s))
+    graph_writes(g, building, arguments)
+    graph_runs_after(g, building, counting)
+    arguing := graph_compute_pass($Batching, g, name, run_indirect, ptr_to(s))
+    graph_writes(g, arguing, arguments)
+    graph_runs_after(g, arguing, building)
+    assigning := graph_compute_pass($Batching, g, name, run_assign, ptr_to(s))
+    graph_writes(g, assigning, arguments)
+    graph_runs_after(g, assigning, arguing)
+    assigning
+}
+
+// One step each. What differs between them is the pipeline and how many threads
+// they want, and the two that are not one thread per object say so.
+run_classify :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.classify,
+        render_world_dispatch_objects(render_world_at(s.render)))
+}
+
+run_clear :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.clear,
+        render_world_dispatch_dense(render_world_at(s.render)))
+}
+
+run_count :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.count,
+        render_world_dispatch_objects(render_world_at(s.render)))
+}
+
+// One workgroup per lane, each laying out its own region.
+run_build :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.build, NUM_DRAW_LANES)
+}
+
+// One workgroup, because the scan that decides where each batch's instances
+// begin is a running total and the threads doing it have to share it.
+run_indirect :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.indirect, 1)
+}
+
+run_assign :: fn(mut s: Batching, pass: ComputePassEncoder) {
+    dispatch_step(s, pass, s.pipelines.assign,
+        render_world_dispatch_objects(render_world_at(s.render)))
+}
+
+dispatch_step :: fn(mut s: Batching, pass: ComputePassEncoder,
+    pipeline: ComputePipeline, groups: u32) {
+    compute_pass_encoder_set_pipeline(pass, pipeline)
+    compute_pass_encoder_set_bind_group(pass, 0,
+        render_world_batch_group(render_world_at(s.render)), 0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass, groups, 1, 1)
+}
+
+render_world_new :: fn(device: Device, room: i64, meshes: i64,
+    materials: i64) -> RenderWorld {
+    // A class cannot hold more batches than there are objects, and cannot hold
+    // more than one per combination of mesh and material. Whichever is smaller
+    // is room enough, and one of the two is always small.
+    mut per_class := meshes * materials
+    if (room < per_class) {
+        per_class = room
+    }
+    if (per_class < 1) {
+        per_class = 1
+    }
+    total_slots := per_class * NUM_DRAW_LANES
+
     object_buffer := storage_buffer(device, room * OBJECT_BYTES)
-    visible_buffer := storage_buffer(device, visible_room * 4)
-    counts_buffer := storage_buffer(device, room * 4)
-    totals_buffer := small_uniform(device, CULL_BYTES)
-    // Both indirect and storage: the compute pass writes it and the draw reads
-    // its arguments from it.
+    transform_buffer := storage_buffer(device, room * TRANSFORM_BYTES)
+    material_buffer := storage_buffer(device, materials * MATERIAL_BYTES)
+    mesh_geo_buffer := storage_buffer(device, meshes * MESH_GEO_BYTES)
+    // One counter per class per mesh per material. The build pass walks this in
+    // order, which is what makes the batches within a class come out sorted and
+    // lets the assign pass find its own by halving rather than by scanning.
+    dense_buffer := storage_buffer(device,
+        NUM_DRAW_LANES * meshes * materials * 4)
+    desc_buffer := storage_buffer(device, total_slots * 8)
+    key_buffer := storage_buffer(device, total_slots * 16)
+    meta_buffer := storage_buffer(device, NUM_DRAW_LANES * 4)
+    // As long as there are objects, because every object may be visible and
+    // each takes one slot. This is the table the fixed slice per batch used to
+    // be, and it is the same size as the objects now rather than that many
+    // times the number of meshes.
+    visible_buffer := storage_buffer(device, room * 4)
+    params_buffer := small_uniform(device, PARAMS_BYTES)
+    // Both indirect and storage: the compute passes write it and the draws read
+    // their arguments from it.
     mut descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Indirect | BufferUsage::Storage
         | BufferUsage::CopyDst
-    descriptor.size = room * INDIRECT_BYTES
+    descriptor.size = total_slots * INDIRECT_BYTES
     indirect_buffer := device_create_buffer(device, ptr_to(descriptor))
 
     layout := scene_layout(device)
-    cull_layout := culling_layout(device)
+    batch_layout := batch_layout_of(device)
     RenderWorld {
         objects = heap_slice($ObjectData, room),
+        transforms = heap_slice($Mat4, room),
         count = 0,
-        batches = heap_slice($MeshSpan, room),
-        batch_count = 0,
+        mesh_room = meshes,
+        material_room = materials,
+        batches_per_class = per_class,
         object_buffer = object_buffer,
-        visible_buffer = visible_buffer,
+        transform_buffer = transform_buffer,
+        material_buffer = material_buffer,
+        mesh_geo_buffer = mesh_geo_buffer,
+        dense_buffer = dense_buffer,
+        desc_buffer = desc_buffer,
+        key_buffer = key_buffer,
+        meta_buffer = meta_buffer,
         indirect_buffer = indirect_buffer,
-        counts_buffer = counts_buffer,
-        totals_buffer = totals_buffer,
+        visible_buffer = visible_buffer,
+        params_buffer = params_buffer,
         room = room,
         layout = layout,
         group = scene_group(device, layout, object_buffer, visible_buffer,
-            room * OBJECT_BYTES, visible_room * 4),
-        cull_layout = cull_layout,
-        cull_group = culling_group(device, cull_layout, object_buffer,
-            visible_buffer, indirect_buffer, counts_buffer, totals_buffer,
-            room * OBJECT_BYTES, visible_room * 4, room * INDIRECT_BYTES,
-            room * 4),
+            transform_buffer, material_buffer, room * OBJECT_BYTES, room * 4,
+            room * TRANSFORM_BYTES, materials * MATERIAL_BYTES),
+        batch_layout = batch_layout,
+        batch_group = batch_group_of(device, batch_layout, object_buffer,
+            transform_buffer, material_buffer, mesh_geo_buffer, dense_buffer,
+            desc_buffer, key_buffer, meta_buffer, indirect_buffer,
+            visible_buffer, params_buffer, room, meshes, materials,
+            total_slots),
     }
 }
 
 render_world_free :: fn(mut held: RenderWorld) {
     bind_group_release(held.group)
-    bind_group_release(held.cull_group)
+    bind_group_release(held.batch_group)
     bind_group_layout_release(held.layout)
-    bind_group_layout_release(held.cull_layout)
+    bind_group_layout_release(held.batch_layout)
     release_buffer(held.object_buffer)
-    release_buffer(held.visible_buffer)
+    release_buffer(held.transform_buffer)
+    release_buffer(held.material_buffer)
+    release_buffer(held.mesh_geo_buffer)
+    release_buffer(held.dense_buffer)
+    release_buffer(held.desc_buffer)
+    release_buffer(held.key_buffer)
+    release_buffer(held.meta_buffer)
     release_buffer(held.indirect_buffer)
-    release_buffer(held.counts_buffer)
-    release_buffer(held.totals_buffer)
+    release_buffer(held.visible_buffer)
+    release_buffer(held.params_buffer)
     heap_release_slice($ObjectData, held.objects)
-    heap_release_slice($MeshSpan, held.batches)
+    heap_release_slice($Mat4, held.transforms)
     held.count = 0
-    held.batch_count = 0
 }
 
 release_buffer :: fn(held: Buffer) {
@@ -241,70 +511,47 @@ release_buffer :: fn(held: Buffer) {
 // frame's run is not.
 render_world_begin :: fn(mut held: RenderWorld) {
     held.count = 0
-    held.batch_count = 0
 }
 
-// One thing to draw. The mesh it names becomes a batch if nothing earlier named
-// it, and the object records which batch that is, since that is what the
-// culling pass counts against.
-render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, surface: Material,
-    span: MeshSpan, material: i64) {
+// One thing to draw: where it is, which mesh, which material, and which half of
+// the frame draws it. Which batch it lands in is not decided here and is not
+// decided on this side at all.
+render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, mesh: i64,
+    material: i64, layer: i64) {
     if (held.count >= held.room) {
         print "render: more things to draw than the world was made room for"
         return
     }
-    batch := batch_of(held, span)
-    if (batch < 0) {
-        return
+    mut places := held.transforms
+    places[held.count] = matrix
+    mut overlay : u32 = 0
+    if (layer == OVERLAY_LAYER) {
+        overlay = 1
     }
     mut items := held.objects
     items[held.count] = ObjectData {
-        matrix = matrix,
-        base_color = material_color(surface),
-        surface = material_surface(surface),
-        batch = cast($u32, batch),
-        radius = span.radius,
-        material = cast($u32, material),
-        pad_three = 0,
+        transform_index = cast($u32, held.count),
+        mesh_id = cast($u32, mesh),
+        material_id = cast($u32, material),
+        batch_id = 0,
+        pipeline_class = 0,
+        visible = 0,
+        is_overlay = overlay,
+        pad_zero = 0,
     }
     held.count = held.count + 1
 }
 
-// Which batch a mesh is, adding one where it is new. A scene has a handful of
-// meshes, so this is a walk rather than a table.
-batch_of :: fn(mut held: RenderWorld, span: MeshSpan) -> i64 {
-    mut known := held.batches
-    mut index : i64 = 0
-    while (index < held.batch_count) {
-        one := known[index]
-        if (one.first_index == span.first_index
-            && one.index_count == span.index_count
-            && one.base_vertex == span.base_vertex) {
-            return index
-        }
-        index = index + 1
-    }
-    if (held.batch_count >= held.room) {
-        print "render: more meshes drawn at once than there was room for"
-        return -1
-    }
-    known[held.batch_count] = span
-    held.batch_count = held.batch_count + 1
-    held.batch_count - 1
-}
-
-// The frame's objects to the device, and the arguments each batch starts from.
+// The frame's tables to the device: where everything is, what everything is
+// made of, where every mesh sits, and the numbers the passes are bounded by.
 //
-// The instance count starts at zero and the culling pass raises it, so a frame
-// whose compute pass did not run draws nothing rather than drawing whatever the
-// last one left behind. The other four are the mesh's own and the CPU knows
-// them.
+// Nothing about draws is written here. The indirect buffer is not touched at
+// all: the passes build it from nothing every frame, so a frame whose compute
+// did not run draws nothing rather than drawing whatever the last one left.
 render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
-    view_projection: Mat4) {
+    view_projection: Mat4, registry: Materials, cache: MeshCache) {
     planes := mat4_frustum_planes(view_projection)
-    // The planes first, then the two counts. They are one binding and the
-    // shader reads them as one struct.
-    mut given : [28]f32 = [0.0; 28]
+    mut given : [32]f32 = [0.0; 32]
     mut plane : i64 = 0
     while (plane < CULL_PLANES) {
         given[plane * 4] = planes[plane].x
@@ -313,81 +560,217 @@ render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
         given[plane * 4 + 3] = planes[plane].w
         plane = plane + 1
     }
-    mut totals : [4]u32 = [cast($u32, held.count),
-        cast($u32, MAX_PER_BATCH), 0, 0]
-    queue_write_buffer(queue, held.totals_buffer, 0, ptr_to(given[0]),
+    mut counts : [8]u32 = [cast($u32, held.count), cast($u32, held.mesh_room),
+        cast($u32, held.material_room), cast($u32, held.batches_per_class),
+        cast($u32, held.batches_per_class * NUM_DRAW_LANES), 0, 0, 0]
+    queue_write_buffer(queue, held.params_buffer, 0, ptr_to(given[0]),
         CULL_PLANES * 16)
-    queue_write_buffer(queue, held.totals_buffer, CULL_PLANES * 16,
-        ptr_to(totals[0]), 16)
-    if (held.count > 0) {
-        mut items := held.objects
-        queue_write_buffer(queue, held.object_buffer, 0, ptr_to(items[0]),
-            held.count * OBJECT_BYTES)
-    }
-    if (held.batch_count == 0) {
+    queue_write_buffer(queue, held.params_buffer, CULL_PLANES * 16,
+        ptr_to(counts[0]), 32)
+
+    upload_meshes(held, queue, cache)
+    upload_materials(held, queue, registry)
+    if (held.count == 0) {
         return
     }
-    mut arguments := heap_slice($u32, held.batch_count * INDIRECT_WORDS)
-    mut counts := heap_slice($u32, held.batch_count)
-    known := held.batches
+    mut items := held.objects
+    queue_write_buffer(queue, held.object_buffer, 0, ptr_to(items[0]),
+        held.count * OBJECT_BYTES)
+    mut places := held.transforms
+    queue_write_buffer(queue, held.transform_buffer, 0, ptr_to(places[0]),
+        held.count * TRANSFORM_BYTES)
+}
+
+// Where every mesh sits in the shared buffers and how big it is, which is what
+// the drawing half turns a batch into arguments with and what the culling half
+// measures a sphere with.
+// A row here mixes counts with distances, so the table is built once and
+// written through two views of the same bytes: whole numbers through one and
+// floats through the other. What the buffer holds is bytes either way, and a
+// row written half through each is the row the shader declares.
+upload_meshes :: fn(mut held: RenderWorld, queue: Queue, cache: MeshCache) {
+    written := mesh_cache_count(cache)
+    if (written == 0) {
+        return
+    }
+    mut table := heap_slice($u32, written * MESH_GEO_WORDS)
+    mut reals := float_view(table)
     mut index : i64 = 0
-    while (index < held.batch_count) {
-        at := index * INDIRECT_WORDS
-        arguments[at] = known[index].index_count
-        arguments[at + 1] = 0
-        arguments[at + 2] = known[index].first_index
-        arguments[at + 3] = cast($u32, known[index].base_vertex)
-        arguments[at + 4] = cast($u32, index * MAX_PER_BATCH)
-        counts[index] = 0
+    while (index < written) {
+        span := mesh_cache_at(cache, index)
+        at := index * MESH_GEO_WORDS
+        table[at] = span.index_count
+        table[at + 1] = span.first_index
+        table[at + 2] = cast($u32, span.base_vertex)
+        table[at + 3] = 0
+        // The centre is the mesh's own origin. A mesh whose shape sits off its
+        // origin is held by a sphere bigger than it needs, which costs a draw
+        // and never drops one it should have kept.
+        reals[at + 4] = 0.0
+        reals[at + 5] = 0.0
+        reals[at + 6] = 0.0
+        reals[at + 7] = span.radius
         index = index + 1
     }
-    queue_write_buffer(queue, held.indirect_buffer, 0, ptr_to(arguments[0]),
-        held.batch_count * INDIRECT_BYTES)
-    queue_write_buffer(queue, held.counts_buffer, 0, ptr_to(counts[0]),
-        held.batch_count * 4)
-    heap_release_slice($u32, arguments)
-    heap_release_slice($u32, counts)
+    queue_write_buffer(queue, held.mesh_geo_buffer, 0, ptr_to(table[0]),
+        written * MESH_GEO_BYTES)
+    heap_release_slice($u32, table)
 }
 
-// One thread per object. What a thread does is decide whether its object is
-// drawn and, where it is, take the next slot in its batch's slice of the
-// visible list and raise that batch's instance count by one.
-//
-// The slot is taken with an atomic add, so two threads landing on one batch
-// cannot be handed the same one. Which is the whole of what a culling pass has
-// to get right: what it decides is a matter of taste, and that two threads
-// never write the same place is not.
-CULL_SHADER :: "
-struct ObjectData {
-    matrix: mat4x4<f32>,
-    base_color: vec4<f32>,
-    surface: vec4<f32>,
-    batch: u32,
-    radius: f32,
-    material: u32,
-    pad_three: u32,
-}
-
-struct Culling {
-    planes: array<vec4<f32>, 6>,
-    totals: vec4<u32>,
-}
-
-// Whether a sphere is on the inward side of all six planes. A plane is a unit
-// normal and a distance, so what it answers is how far the centre is from it
-// in world units, and a sphere is out only where the whole of it is.
-fn sphere_in_frustum(planes: array<vec4<f32>, 6>, centre: vec3<f32>,
-                     radius: f32) -> bool {
-    for (var i = 0u; i < 6u; i = i + 1u) {
-        let plane = planes[i];
-        if (dot(plane.xyz, centre) + plane.w < -radius) {
-            return false;
-        }
+upload_materials :: fn(mut held: RenderWorld, queue: Queue,
+    registry: Materials) {
+    written := materials_count(registry)
+    if (written == 0) {
+        return
     }
-    return true;
+    mut table := heap_slice($u32, written * 8)
+    mut reals := float_view(table)
+    mut index : i64 = 0
+    while (index < written) {
+        one := materials_at(registry, index)
+        at := index * 8
+        colour := material_color(one)
+        reals[at] = colour.x
+        reals[at + 1] = colour.y
+        reals[at + 2] = colour.z
+        reals[at + 3] = colour.w
+        reals[at + 4] = one.roughness
+        reals[at + 5] = one.metallic
+        reals[at + 6] = one.alpha_cutoff
+        table[at + 7] = material_flags(one)
+        index = index + 1
+    }
+    queue_write_buffer(queue, held.material_buffer, 0, ptr_to(table[0]),
+        written * MATERIAL_BYTES)
+    heap_release_slice($u32, table)
 }
 
-struct DrawArguments {
+// The same run of bytes, seen as floats. Both are the same width, so the two
+// views hold the same number of elements and an index means the same place in
+// either.
+float_view :: fn(table: []u32) -> []f32 {
+    unsafe {
+        slice_from($f32, ptr_cast($f32, ptr_to(table[0])), slice_len(table))
+    }
+}
+
+// How many threads a pass over the objects wants, in groups of the size the
+// shader declares.
+render_world_dispatch_objects :: fn(held: RenderWorld) -> u32 {
+    cast($u32, (held.count + 63) / 64)
+}
+
+// The same for a pass over the counting table, which is bigger than the objects
+// and is walked once to clear it.
+render_world_dispatch_dense :: fn(held: RenderWorld) -> u32 {
+    total := NUM_DRAW_LANES * held.mesh_room * held.material_room
+    cast($u32, (total + 63) / 64)
+}
+
+// One class's draws. Every slot in the class's region is issued whether or not
+// the build pass filled it, because how many it filled is a number on the
+// device and reading it back is the one thing this design does not do. An
+// unfilled slot draws no instances, which costs a command and no work.
+//
+// wgpu-native has a multi-draw that takes the count off the device, which is
+// what nightshade submits with and what would make this one call. It is an
+// extension and the binding here is generated from the standard schema, so it
+// is not reachable yet; when it is, this loop becomes that call and nothing
+// else about the design changes.
+// Every class, with whatever pipeline is bound. For a program that has one and
+// draws its whole world with it: the classes still exist and things still land
+// in them, and issuing all of them is what keeps a thing drawn when the material
+// it wears is later made two-sided or blended. A program with a pipeline per
+// class calls the one below instead, once each.
+render_world_draw_all :: fn(pass: RenderPassEncoder, held: RenderWorld) {
+    mut class : i64 = 0
+    while (class < NUM_DRAW_CLASSES) {
+        render_world_draw_class(pass, held, class)
+        class = class + 1
+    }
+}
+
+// One class's draws, both halves of it: what drops no fragments of its own and
+// what does.
+render_world_draw_class :: fn(pass: RenderPassEncoder, held: RenderWorld,
+    class: i64) {
+    draw_lane(pass, held, class * 2 + LANE_SOLID)
+    draw_lane(pass, held, class * 2 + LANE_MASKED)
+}
+
+// What the depth prepass draws: the solid half of one class and not the masked
+// half. A surface that drops its own fragments has no business writing depth in
+// a pass with no fragment stage to drop them in.
+render_world_draw_prepass :: fn(pass: RenderPassEncoder, held: RenderWorld,
+    class: i64) {
+    draw_lane(pass, held, class * 2 + LANE_SOLID)
+}
+
+// One lane's region. Every slot in it is issued whether or not the build pass
+// filled it, because how many it filled is a number on the device and reading it
+// back is the one thing this design does not do. An unfilled slot draws no
+// instances, which costs a command and no work.
+//
+// wgpu-native has a multi-draw that takes the count off the device, which is
+// what nightshade submits with and what would make this one call. It is an
+// extension and the binding here is generated from the standard schema, so it
+// is not reachable yet; when it is, this loop becomes that call and nothing
+// else about the design changes.
+draw_lane :: fn(pass: RenderPassEncoder, held: RenderWorld, lane: i64) {
+    base := lane * held.batches_per_class
+    mut slot : i64 = 0
+    while (slot < held.batches_per_class) {
+        render_pass_encoder_draw_indexed_indirect(pass, held.indirect_buffer,
+            (base + slot) * INDIRECT_BYTES)
+        slot = slot + 1
+    }
+}
+
+// The six steps, as one module. Which one runs is which entry point a pipeline
+// was made with, and they share every binding because they are six passes over
+// one set of tables.
+BATCH_SHADER :: "
+struct ObjectData {
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    is_overlay: u32,
+    pad_zero: u32,
+}
+
+struct MeshGeo {
+    index_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    pad: u32,
+    center: vec3<f32>,
+    radius: f32,
+}
+
+struct MaterialData {
+    base_color: vec4<f32>,
+    roughness: f32,
+    metallic: f32,
+    alpha_cutoff: f32,
+    flags: u32,
+}
+
+struct BatchDesc {
+    mesh_geo_id: u32,
+    capacity: u32,
+}
+
+struct BatchKey {
+    lane: u32,
+    mesh_id: u32,
+    material_id: u32,
+    base_slot: u32,
+}
+
+struct DrawIndexedIndirect {
     index_count: u32,
     instance_count: atomic<u32>,
     first_index: u32,
@@ -395,64 +778,302 @@ struct DrawArguments {
     first_instance: u32,
 }
 
-@group(0) @binding(0) var<storage, read> objects: array<ObjectData>;
-@group(0) @binding(1) var<storage, read_write> visible: array<u32>;
-@group(0) @binding(2) var<storage, read_write> draws: array<DrawArguments>;
-@group(0) @binding(3) var<storage, read_write> counts: array<atomic<u32>>;
-@group(0) @binding(4) var<uniform> cull: Culling;
+struct Params {
+    planes: array<vec4<f32>, 6>,
+    // object count, mesh count, material count, batches per lane
+    counts: vec4<u32>,
+    // total slots, and three spare
+    limits: vec4<u32>,
+}
+
+const FLAG_TRANSPARENT: u32 = 1u;
+const FLAG_MASK: u32 = 2u;
+const FLAG_DOUBLE_SIDED: u32 = 4u;
+const NUM_CLASSES: u32 = 6u;
+const NUM_LANES: u32 = 12u;
+const NO_BATCH: u32 = 4294967295u;
+
+@group(0) @binding(0) var<storage, read_write> objects: array<ObjectData>;
+@group(0) @binding(1) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(0) @binding(2) var<storage, read> materials: array<MaterialData>;
+@group(0) @binding(3) var<storage, read> mesh_geo: array<MeshGeo>;
+@group(0) @binding(4) var<storage, read_write> dense: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> descs: array<BatchDesc>;
+@group(0) @binding(6) var<storage, read_write> keys: array<BatchKey>;
+@group(0) @binding(7) var<storage, read_write> batch_meta: array<u32>;
+@group(0) @binding(8) var<storage, read_write> draws: array<DrawIndexedIndirect>;
+@group(0) @binding(9) var<storage, read_write> visible: array<u32>;
+@group(0) @binding(10) var<uniform> params: Params;
+
+fn flags_for(material_id: u32) -> u32 {
+    if (material_id >= params.counts.z) {
+        return 0u;
+    }
+    return materials[material_id].flags;
+}
+
+// Which of the six a thing belongs in. A batch is a run of instances of one
+// mesh drawn with one pipeline, so anything that changes the pipeline has to
+// change the class: whether it blends, whether both sides of it are drawn, and
+// whether it is world or overlay.
+fn class_for(object: ObjectData, overlay: bool) -> u32 {
+    let flags = flags_for(object.material_id);
+    let transparent = (flags & FLAG_TRANSPARENT) != 0u;
+    let double_sided = (flags & FLAG_DOUBLE_SIDED) != 0u;
+    if (overlay) {
+        if (transparent) { return 5u; }
+        if (double_sided) { return 4u; }
+        return 3u;
+    }
+    if (transparent) { return 2u; }
+    if (double_sided) { return 1u; }
+    return 0u;
+}
+
+// Which counter a thing falls in. The lane is the class and whether the surface
+// drops its own fragments, which is what decides whether the depth prepass may
+// draw it.
+fn lane_of(class_value: u32, material_id: u32) -> u32 {
+    if ((flags_for(material_id) & FLAG_MASK) != 0u) {
+        return class_value * 2u + 1u;
+    }
+    return class_value * 2u;
+}
+
+fn dense_index(lane: u32, mesh: u32, material: u32) -> u32 {
+    return (lane * params.counts.y + mesh) * params.counts.z + material;
+}
+
+// Which class each object is in, and whether it names anything real. An object
+// naming a mesh or a material that is not there is marked once here and skipped
+// by every pass after, rather than being tested for in each of them.
+@compute @workgroup_size(64)
+fn classify(@builtin(global_invocation_id) id: vec3<u32>) {
+    let object_index = id.x;
+    if (object_index >= params.counts.x) {
+        return;
+    }
+    var object = objects[object_index];
+    if (object.mesh_id >= params.counts.y
+        || object.material_id >= params.counts.z) {
+        objects[object_index].batch_id = NO_BATCH;
+        return;
+    }
+    objects[object_index].pipeline_class = class_for(object,
+        object.is_overlay != 0u);
+    objects[object_index].batch_id = 0u;
+    objects[object_index].visible = 0u;
+}
 
 @compute @workgroup_size(64)
-fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn clear_tables(@builtin(global_invocation_id) id: vec3<u32>) {
+    let index = id.x;
+    let total = NUM_LANES * params.counts.y * params.counts.z;
+    if (index < total) {
+        atomicStore(&dense[index], 0u);
+    }
+    if (index < NUM_LANES) {
+        batch_meta[index] = 0u;
+    }
+    // Every slot starts as a draw of nothing, so a lane the build pass did not
+    // fill this far issues commands that draw no instances rather than the ones
+    // it issued last frame.
+    if (index < params.limits.x) {
+        draws[index].index_count = 0u;
+        atomicStore(&draws[index].instance_count, 0u);
+        draws[index].first_index = 0u;
+        draws[index].base_vertex = 0;
+        draws[index].first_instance = 0u;
+    }
+}
+
+// How many objects want each combination. This counts every object rather than
+// every visible one, because what it is measuring is how much room a batch
+// needs and a thing culled this frame is a thing drawn the next.
+@compute @workgroup_size(64)
+fn count(@builtin(global_invocation_id) id: vec3<u32>) {
     let object_index = id.x;
-    if (object_index >= cull.totals.x) {
+    if (object_index >= params.counts.x) {
         return;
     }
     let object = objects[object_index];
+    if (object.batch_id == NO_BATCH) {
+        return;
+    }
+    let index = dense_index(lane_of(object.pipeline_class, object.material_id),
+        object.mesh_id, object.material_id);
+    atomicAdd(&dense[index], 1u);
+}
+
+// One workgroup per lane, single threaded, laying that lane combinations out as
+// batches in its own region. Walking mesh then material in order is what leaves
+// the keys sorted, which is what lets an object find its own batch by halving
+// the range rather than reading all of it.
+@compute @workgroup_size(1)
+fn build(@builtin(workgroup_id) workgroup: vec3<u32>) {
+    let lane = workgroup.x;
+    if (lane >= NUM_LANES) {
+        return;
+    }
+    let cap = params.counts.w;
+    let region_base = lane * cap;
+
+    var slot = 0u;
+    for (var mesh = 0u; mesh < params.counts.y; mesh = mesh + 1u) {
+        for (var material = 0u; material < params.counts.z;
+             material = material + 1u) {
+            let capacity = atomicLoad(&dense[dense_index(lane, mesh,
+                material)]);
+            if (capacity == 0u) {
+                continue;
+            }
+            if (slot >= cap) {
+                continue;
+            }
+            let base_slot = region_base + slot;
+            keys[region_base + slot] = BatchKey(lane, mesh, material,
+                base_slot);
+            descs[base_slot] = BatchDesc(mesh, capacity);
+            slot = slot + 1u;
+        }
+    }
+    batch_meta[lane] = slot;
+}
+
+const WORKGROUP_SIZE: u32 = 256u;
+var<workgroup> thread_sums: array<u32, 256>;
+
+// Where each batch instances begin, which is the running total of everything
+// before it. One workgroup scans the whole table: each thread sums its own
+// chunk, the chunk sums are scanned between them, and each thread then walks
+// its chunk again writing the arguments out.
+//
+// This is what replaces a fixed slice per batch. A batch is given exactly the
+// room its capacity asked for and the next one starts where it ended, so the
+// visible list is as long as there are objects however they fall between
+// meshes.
+@compute @workgroup_size(256)
+fn indirect(@builtin(local_invocation_id) local: vec3<u32>) {
+    let thread = local.x;
+    let total = params.limits.x;
+    let per_thread = (total + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
+    let chunk_start = thread * per_thread;
+    let chunk_end = min(chunk_start + per_thread, total);
+
+    var chunk_sum = 0u;
+    for (var index = chunk_start; index < chunk_end; index = index + 1u) {
+        chunk_sum = chunk_sum + descs[index].capacity;
+    }
+    thread_sums[thread] = chunk_sum;
+    workgroupBarrier();
+
+    for (var offset = 1u; offset < WORKGROUP_SIZE; offset = offset << 1u) {
+        var addend = 0u;
+        if (thread >= offset) {
+            addend = thread_sums[thread - offset];
+        }
+        workgroupBarrier();
+        thread_sums[thread] = thread_sums[thread] + addend;
+        workgroupBarrier();
+    }
+
+    var first_instance = thread_sums[thread] - chunk_sum;
+    for (var index = chunk_start; index < chunk_end; index = index + 1u) {
+        let desc = descs[index];
+        if (desc.capacity == 0u) {
+            continue;
+        }
+        let geo = mesh_geo[desc.mesh_geo_id];
+        draws[index].index_count = geo.index_count;
+        draws[index].first_index = geo.first_index;
+        draws[index].base_vertex = geo.base_vertex;
+        draws[index].first_instance = first_instance;
+        first_instance = first_instance + desc.capacity;
+    }
+}
+
+// Whether a sphere is on the inward side of all six planes. A plane is a unit
+// normal and a distance, so what it answers is how far the centre is from it in
+// world units, and a sphere is out only where the whole of it is.
+fn sphere_in_frustum(centre: vec3<f32>, radius: f32) -> bool {
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let plane = params.planes[i];
+        if (dot(plane.xyz, centre) + plane.w < -radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Which batch a lane, mesh and material name, found by halving the lane keys.
+// They are sorted because the build pass emitted them in order.
+fn batch_slot_of(lane: u32, mesh: u32, material: u32) -> u32 {
+    let cap = params.counts.w;
+    let region_base = lane * cap;
+    var low = 0u;
+    var high = batch_meta[lane];
+    while (low < high) {
+        let middle = (low + high) / 2u;
+        let key = keys[region_base + middle];
+        if (key.mesh_id < mesh
+            || (key.mesh_id == mesh && key.material_id < material)) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    if (low >= batch_meta[lane]) {
+        return NO_BATCH;
+    }
+    let found = keys[region_base + low];
+    if (found.mesh_id != mesh || found.material_id != material) {
+        return NO_BATCH;
+    }
+    return found.base_slot;
+}
+
+// The frustum test, and every survivor into the next free slot of its own
+// batch. The slot is taken with an atomic add, so two threads landing on one
+// batch cannot be handed the same one. Which is the whole of what this has to
+// get right: what it decides to keep is a matter of taste, and that two threads
+// never write the same place is not.
+@compute @workgroup_size(64)
+fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
+    let object_index = id.x;
+    if (object_index >= params.counts.x) {
+        return;
+    }
+    let object = objects[object_index];
+    if (object.batch_id == NO_BATCH) {
+        return;
+    }
 
     // Where the thing ended up and how big it got. The matrix carries both, so
-    // neither has to be sent a second time: the centre is where its own origin
-    // landed, and the radius is its own scaled by the longest of the three
-    // axes, which is the smallest sphere that still holds it.
-    let centre = (object.matrix * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
-    let scaling = max(length(object.matrix[0].xyz),
-        max(length(object.matrix[1].xyz), length(object.matrix[2].xyz)));
-    if (!sphere_in_frustum(cull.planes, centre, object.radius * scaling)) {
+    // neither has to be sent a second time: the centre is where the mesh own
+    // centre landed, and the radius is the mesh own radius scaled by the
+    // longest of the three axes, which is the smallest sphere that holds it.
+    let model = transforms[object.transform_index];
+    let geo = mesh_geo[object.mesh_id];
+    let centre = (model * vec4<f32>(geo.center, 1.0)).xyz;
+    let scaling = max(length(model[0].xyz),
+        max(length(model[1].xyz), length(model[2].xyz)));
+    if (!sphere_in_frustum(centre, geo.radius * scaling)) {
         return;
     }
 
-    let batch = object.batch;
-    let slot = atomicAdd(&counts[batch], 1u);
-    if (slot >= cull.totals.y) {
+    let base_slot = batch_slot_of(lane_of(object.pipeline_class,
+        object.material_id), object.mesh_id, object.material_id);
+    if (base_slot == NO_BATCH) {
         return;
     }
-    visible[batch * cull.totals.y + slot] = object_index;
-    atomicAdd(&draws[batch].instance_count, 1u);
+    let taken = atomicAdd(&draws[base_slot].instance_count, 1u);
+    if (taken >= descs[base_slot].capacity) {
+        return;
+    }
+    objects[object_index].visible = 1u;
+    visible[draws[base_slot].first_instance + taken] = object_index;
 }
 "
-
-// How many threads the culling pass wants, in groups of the size the shader
-// declares.
-render_world_dispatch :: fn(held: RenderWorld) -> u32 {
-    cast($u32, (held.count + 63) / 64)
-}
-
-// One indirect draw per batch. The loop is over meshes, which a scene has a
-// handful of; how many things each draws is the number the compute pass wrote,
-// and nothing here reads it.
-render_world_draw :: fn(pass: RenderPassEncoder, held: RenderWorld) {
-    mut index : i64 = 0
-    while (index < held.batch_count) {
-        render_world_draw_batch(pass, held, index)
-        index = index + 1
-    }
-}
-
-// One batch, for a pass with something of its own to do between them.
-render_world_draw_batch :: fn(pass: RenderPassEncoder, held: RenderWorld,
-    index: i64) {
-    render_pass_encoder_draw_indexed_indirect(pass, held.indirect_buffer,
-        index * INDIRECT_BYTES)
-}
 
 storage_buffer :: fn(device: Device, size: i64) -> Buffer {
     mut descriptor := buffer_descriptor_init()
@@ -468,66 +1089,28 @@ small_uniform :: fn(device: Device, size: i64) -> Buffer {
     device_create_buffer(device, ptr_to(descriptor))
 }
 
-// What a drawing pass reads: the objects, and which of them survived.
+// What a drawing pass reads: the objects, which of them survived, where they
+// are, and what they are made of.
 scene_layout :: fn(device: Device) -> BindGroupLayout {
-    mut entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
-    entries[0].binding = 0
-    entries[0].visibility = ShaderStage::Vertex | ShaderStage::Fragment
-    entries[0].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
-    entries[1].binding = 1
-    entries[1].visibility = ShaderStage::Vertex | ShaderStage::Fragment
-    entries[1].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    mut entries : [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    mut slot : i64 = 0
+    while (slot < 4) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].visibility = ShaderStage::Vertex | ShaderStage::Fragment
+        entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+        slot = slot + 1
+    }
     mut descriptor := bind_group_layout_descriptor_init()
-    descriptor.entries_count = 2
+    descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
 scene_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
-    visible: Buffer, object_bytes: i64, visible_bytes: i64) -> BindGroup {
-    mut entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
-    entries[0].binding = 0
-    entries[0].buffer = objects
-    entries[0].size = object_bytes
-    entries[1].binding = 1
-    entries[1].buffer = visible
-    entries[1].size = visible_bytes
-    mut descriptor := bind_group_descriptor_init()
-    descriptor.layout = layout
-    descriptor.entries_count = 2
-    descriptor.entries = ptr_to(entries[0])
-    device_create_bind_group(device, ptr_to(descriptor))
-}
-
-// What the culling pass reads and writes: the objects it decides about, the
-// three it writes, and the two numbers it bounds itself with.
-culling_layout :: fn(device: Device) -> BindGroupLayout {
-    mut entries : [5]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 5]
-    entries[0].binding = 0
-    entries[0].visibility = ShaderStage::Compute
-    entries[0].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
-    mut slot : i64 = 1
-    while (slot < 4) {
-        entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage::Compute
-        entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
-        slot = slot + 1
-    }
-    entries[4].binding = 4
-    entries[4].visibility = ShaderStage::Compute
-    entries[4].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
-    entries[4].buffer.min_binding_size = CULL_BYTES
-    mut descriptor := bind_group_layout_descriptor_init()
-    descriptor.entries_count = 5
-    descriptor.entries = ptr_to(entries[0])
-    device_create_bind_group_layout(device, ptr_to(descriptor))
-}
-
-culling_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
-    visible: Buffer, draws: Buffer, counts: Buffer, totals: Buffer,
-    object_bytes: i64, visible_bytes: i64, draw_bytes: i64,
-    count_bytes: i64) -> BindGroup {
-    mut entries : [5]BindGroupEntry = [bind_group_entry_init(); 5]
+    visible: Buffer, transforms: Buffer, materials: Buffer, object_bytes: i64,
+    visible_bytes: i64, transform_bytes: i64,
+    material_bytes: i64) -> BindGroup {
+    mut entries : [4]BindGroupEntry = [bind_group_entry_init(); 4]
     entries[0].binding = 0
     entries[0].buffer = objects
     entries[0].size = object_bytes
@@ -535,17 +1118,65 @@ culling_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
     entries[1].buffer = visible
     entries[1].size = visible_bytes
     entries[2].binding = 2
-    entries[2].buffer = draws
-    entries[2].size = draw_bytes
+    entries[2].buffer = transforms
+    entries[2].size = transform_bytes
     entries[3].binding = 3
-    entries[3].buffer = counts
-    entries[3].size = count_bytes
-    entries[4].binding = 4
-    entries[4].buffer = totals
-    entries[4].size = CULL_BYTES
+    entries[3].buffer = materials
+    entries[3].size = material_bytes
     mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
-    descriptor.entries_count = 5
+    descriptor.entries_count = 4
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// What the five compute passes read and write. One layout for all of them: they
+// are steps over one set of tables, and a step binding a subset would be a
+// second place the shapes are written down.
+batch_layout_of :: fn(device: Device) -> BindGroupLayout {
+    mut entries : [11]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 11]
+    mut slot : i64 = 0
+    while (slot < 11) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].visibility = ShaderStage::Compute
+        entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
+        slot = slot + 1
+    }
+    // The three the passes only read.
+    entries[1].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    entries[2].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    entries[3].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    entries[10].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entries[10].buffer.min_binding_size = PARAMS_BYTES
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 11
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+batch_group_of :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
+    transforms: Buffer, materials: Buffer, mesh_geo: Buffer, dense: Buffer,
+    descs: Buffer, keys: Buffer, meta: Buffer, draws: Buffer, visible: Buffer,
+    params: Buffer, room: i64, meshes: i64, material_count: i64,
+    total_slots: i64) -> BindGroup {
+    mut entries : [11]BindGroupEntry = [bind_group_entry_init(); 11]
+    mut sizes : [11]i64 = [room * OBJECT_BYTES, room * TRANSFORM_BYTES,
+        material_count * MATERIAL_BYTES, meshes * MESH_GEO_BYTES,
+        NUM_DRAW_LANES * meshes * material_count * 4, total_slots * 8,
+        total_slots * 16, NUM_DRAW_LANES * 4,
+        total_slots * INDIRECT_BYTES, room * 4, PARAMS_BYTES]
+    mut held : [11]Buffer = [objects, transforms, materials, mesh_geo, dense,
+        descs, keys, meta, draws, visible, params]
+    mut slot : i64 = 0
+    while (slot < 11) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].buffer = held[slot]
+        entries[slot].size = sizes[slot]
+        slot = slot + 1
+    }
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 11
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group(device, ptr_to(descriptor))
 }

@@ -131,9 +131,17 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     // wrote. Asked for rather than assumed: a device without it fails here,
     // where the reason is one line, rather than inside a draw call.
     mut wanted : [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
+    // The passes that decide what is drawn read and write ten tables between
+    // them, and the guaranteed floor is eight. Everything else is left at
+    // whatever the device offers: a limit asked for is a limit the device has
+    // to honour, and asking for more than is needed turns a machine that could
+    // have run this into one that refuses at startup.
+    mut limits := limits_init()
+    limits.max_storage_buffers_per_shader_stage = 10
     mut descriptor := device_descriptor_init()
     descriptor.required_features_count = 1
     descriptor.required_features = ptr_to(wanted[0])
+    descriptor.required_limits = ptr_to(limits)
     adapter_request_device(r.adapter, ptr_to(descriptor), ptr_to(device_info))
     if (spin_until(r.instance, device_slot.ready, 2000000) == false) {
         return r

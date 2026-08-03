@@ -21,7 +21,9 @@ export Vec2, Vec3, Vec4, Mat4, Quat,
     mat4_translation, mat4_scale, mat4_rotation_x, mat4_rotation_y,
     mat4_rotation_z, mat4_perspective, mat4_perspective_zo, mat4_ortho,
     mat4_ortho_zo,
-    mat4_look_at,
+    mat4_perspective_reverse_z, mat4_perspective_infinite_reverse_z,
+    mat4_ortho_reverse_z,
+    mat4_look_at, mat4_inverse,
     mat4_transform_point, mat4_transform_dir,
     mat4_frustum_planes,
     quat_identity, quat_from_axis_angle, quat_mul, quat_length,
@@ -266,6 +268,49 @@ mat4_perspective_zo :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     out
 }
 
+// The same range, with the near plane at one and the far plane at zero.
+//
+// Depth is stored as a float and a float's precision is dense near zero, while
+// a perspective divide already crowds distant depths together. Putting the far
+// plane where the precision is is what makes a scene a kilometre deep hold its
+// depths apart; the ordinary arrangement spends its precision at the near plane
+// where the divide has already provided plenty.
+//
+// A pass drawing with this compares depth the other way round, and the buffer it
+// draws into is cleared to zero rather than to one. All three go together: two
+// of the three is a picture with nothing in it or a picture inside out.
+mat4_perspective_reverse_z :: fn(fovy: f32, aspect: f32, near: f32,
+    far: f32) -> Mat4 {
+    f := 1.0 / tanf(fovy * 0.5)
+    mut out := mat4_zero()
+    out.m[0] = cast($f32, f / aspect)
+    out.m[5] = cast($f32, f)
+    out.m[10] = near / (far - near)
+    out.m[11] = -1.0
+    out.m[14] = (near * far) / (far - near)
+    out
+}
+
+// The same with nothing behind it: the far plane goes to infinity and depth
+// approaches zero without reaching it.
+//
+// This is what a camera takes unless it was given a distance, because reverse-Z
+// makes the far plane nearly free. It is the limit of the matrix above as `far`
+// grows, so the two agree everywhere the finite one is defined, and a scene
+// stops needing a number chosen large enough to hold it and small enough to
+// keep its precision.
+mat4_perspective_infinite_reverse_z :: fn(fovy: f32, aspect: f32,
+    near: f32) -> Mat4 {
+    f := 1.0 / tanf(fovy * 0.5)
+    mut out := mat4_zero()
+    out.m[0] = cast($f32, f / aspect)
+    out.m[5] = cast($f32, f)
+    out.m[10] = 0.0
+    out.m[11] = -1.0
+    out.m[14] = near
+    out
+}
+
 mat4_ortho :: fn(left: f32, right: f32, bottom: f32, top: f32,
     near: f32, far: f32) -> Mat4 {
     mut out := mat4_identity()
@@ -292,6 +337,71 @@ mat4_ortho_zo :: fn(left: f32, right: f32, bottom: f32, top: f32,
     out.m[13] = -(top + bottom) / (top - bottom)
     out.m[14] = -near / (far - near)
     out
+}
+
+// The same box with the near plane at one and the far plane at zero, which is
+// what a shadow caster draws with when everything else in the program is
+// reverse-Z. A light's depth map compared against a scene drawn the other way
+// round lights exactly the surfaces that should be in shadow.
+mat4_ortho_reverse_z :: fn(left: f32, right: f32, bottom: f32, top: f32,
+    near: f32, far: f32) -> Mat4 {
+    mut out := mat4_identity()
+    out.m[0] = 2.0 / (right - left)
+    out.m[5] = 2.0 / (top - bottom)
+    out.m[10] = 1.0 / (far - near)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[14] = far / (far - near)
+    out
+}
+
+// The matrix that undoes this one, and whether there was one.
+//
+// A matrix with no inverse is one that flattens space, and the answer for that
+// is the identity and `false` rather than a run of infinities: a caller that
+// ignores the flag gets a picture that is wrong in a way it can see, instead of
+// arithmetic that poisons everything it touches.
+//
+// Cofactors rather than elimination. Sixteen of them share most of their two by
+// two products, so this is about a hundred and eighty multiplications with no
+// branching and no pivoting, which is the shape a matrix this small wants.
+//
+// Each of the sixteen is one line, long as they are. A line beginning with `-`
+// is read as a fresh statement negating what follows, not as the rest of the
+// line above, so a term moved down to keep the width is dropped. A line
+// beginning with `+` does continue, which is what makes the mistake so quiet:
+// half the terms survive and the answer is right for the sparse matrices and
+// wrong for the rest. `check_discarded` refuses it now.
+mat4_inverse :: fn(m: Mat4) -> (inverse: Mat4, ok: bool) {
+    mut out := mat4_zero()
+    out.m[0] = (m.m[5] * m.m[10] * m.m[15] - m.m[5] * m.m[11] * m.m[14] - m.m[9] * m.m[6] * m.m[15] + m.m[9] * m.m[7] * m.m[14] + m.m[13] * m.m[6] * m.m[11] - m.m[13] * m.m[7] * m.m[10])
+    out.m[4] = (-m.m[4] * m.m[10] * m.m[15] + m.m[4] * m.m[11] * m.m[14] + m.m[8] * m.m[6] * m.m[15] - m.m[8] * m.m[7] * m.m[14] - m.m[12] * m.m[6] * m.m[11] + m.m[12] * m.m[7] * m.m[10])
+    out.m[8] = (m.m[4] * m.m[9] * m.m[15] - m.m[4] * m.m[11] * m.m[13] - m.m[8] * m.m[5] * m.m[15] + m.m[8] * m.m[7] * m.m[13] + m.m[12] * m.m[5] * m.m[11] - m.m[12] * m.m[7] * m.m[9])
+    out.m[12] = (-m.m[4] * m.m[9] * m.m[14] + m.m[4] * m.m[10] * m.m[13] + m.m[8] * m.m[5] * m.m[14] - m.m[8] * m.m[6] * m.m[13] - m.m[12] * m.m[5] * m.m[10] + m.m[12] * m.m[6] * m.m[9])
+    out.m[1] = (-m.m[1] * m.m[10] * m.m[15] + m.m[1] * m.m[11] * m.m[14] + m.m[9] * m.m[2] * m.m[15] - m.m[9] * m.m[3] * m.m[14] - m.m[13] * m.m[2] * m.m[11] + m.m[13] * m.m[3] * m.m[10])
+    out.m[5] = (m.m[0] * m.m[10] * m.m[15] - m.m[0] * m.m[11] * m.m[14] - m.m[8] * m.m[2] * m.m[15] + m.m[8] * m.m[3] * m.m[14] + m.m[12] * m.m[2] * m.m[11] - m.m[12] * m.m[3] * m.m[10])
+    out.m[9] = (-m.m[0] * m.m[9] * m.m[15] + m.m[0] * m.m[11] * m.m[13] + m.m[8] * m.m[1] * m.m[15] - m.m[8] * m.m[3] * m.m[13] - m.m[12] * m.m[1] * m.m[11] + m.m[12] * m.m[3] * m.m[9])
+    out.m[13] = (m.m[0] * m.m[9] * m.m[14] - m.m[0] * m.m[10] * m.m[13] - m.m[8] * m.m[1] * m.m[14] + m.m[8] * m.m[2] * m.m[13] + m.m[12] * m.m[1] * m.m[10] - m.m[12] * m.m[2] * m.m[9])
+    out.m[2] = (m.m[1] * m.m[6] * m.m[15] - m.m[1] * m.m[7] * m.m[14] - m.m[5] * m.m[2] * m.m[15] + m.m[5] * m.m[3] * m.m[14] + m.m[13] * m.m[2] * m.m[7] - m.m[13] * m.m[3] * m.m[6])
+    out.m[6] = (-m.m[0] * m.m[6] * m.m[15] + m.m[0] * m.m[7] * m.m[14] + m.m[4] * m.m[2] * m.m[15] - m.m[4] * m.m[3] * m.m[14] - m.m[12] * m.m[2] * m.m[7] + m.m[12] * m.m[3] * m.m[6])
+    out.m[10] = (m.m[0] * m.m[5] * m.m[15] - m.m[0] * m.m[7] * m.m[13] - m.m[4] * m.m[1] * m.m[15] + m.m[4] * m.m[3] * m.m[13] + m.m[12] * m.m[1] * m.m[7] - m.m[12] * m.m[3] * m.m[5])
+    out.m[14] = (-m.m[0] * m.m[5] * m.m[14] + m.m[0] * m.m[6] * m.m[13] + m.m[4] * m.m[1] * m.m[14] - m.m[4] * m.m[2] * m.m[13] - m.m[12] * m.m[1] * m.m[6] + m.m[12] * m.m[2] * m.m[5])
+    out.m[3] = (-m.m[1] * m.m[6] * m.m[11] + m.m[1] * m.m[7] * m.m[10] + m.m[5] * m.m[2] * m.m[11] - m.m[5] * m.m[3] * m.m[10] - m.m[9] * m.m[2] * m.m[7] + m.m[9] * m.m[3] * m.m[6])
+    out.m[7] = (m.m[0] * m.m[6] * m.m[11] - m.m[0] * m.m[7] * m.m[10] - m.m[4] * m.m[2] * m.m[11] + m.m[4] * m.m[3] * m.m[10] + m.m[8] * m.m[2] * m.m[7] - m.m[8] * m.m[3] * m.m[6])
+    out.m[11] = (-m.m[0] * m.m[5] * m.m[11] + m.m[0] * m.m[7] * m.m[9] + m.m[4] * m.m[1] * m.m[11] - m.m[4] * m.m[3] * m.m[9] - m.m[8] * m.m[1] * m.m[7] + m.m[8] * m.m[3] * m.m[5])
+    out.m[15] = (m.m[0] * m.m[5] * m.m[10] - m.m[0] * m.m[6] * m.m[9] - m.m[4] * m.m[1] * m.m[10] + m.m[4] * m.m[2] * m.m[9] + m.m[8] * m.m[1] * m.m[6] - m.m[8] * m.m[2] * m.m[5])
+
+    determinant := (m.m[0] * out.m[0] + m.m[1] * out.m[4] + m.m[2] * out.m[8] + m.m[3] * out.m[12])
+    if (determinant == 0.0) {
+        return { inverse = mat4_identity(), ok = false }
+    }
+    scale : f32 = 1.0 / determinant
+    mut element : i64 = 0
+    while (element < 16) {
+        out.m[element] = out.m[element] * scale
+        element = element + 1
+    }
+    return { inverse = out, ok = true }
 }
 
 // A right-handed view matrix looking from `eye` toward `center`.
@@ -327,7 +437,14 @@ mat4_look_at :: fn(eye: Vec3, center: Vec3, up: Vec3) -> Mat4 {
 // row of the matrix combined with the last. The planes are normalised so the
 // distance is in world units and a radius can be compared against it.
 //
-// The order is left, right, bottom, top, near, far.
+// The order is left, right, bottom, top, and then the two that bound depth.
+//
+// Which of those last two is the near one depends on the projection and nothing
+// here has to know: both inequalities hold whichever way depth runs, and a test
+// against all six asks the same question either way. Under reverse-Z they
+// simply trade places, and under an infinite far plane the row-2 one has no
+// direction at all, which `plane_of` answers with zeroes; a zero plane holds
+// every point, which is what a frustum with nothing behind it means.
 mat4_frustum_planes :: fn(m: Mat4) -> [6]Vec4 {
     mut planes : [6]Vec4 = [vec4(0.0, 0.0, 0.0, 0.0); 6]
     planes[0] = plane_of(m.m[3] + m.m[0], m.m[7] + m.m[4], m.m[11] + m.m[8],
@@ -338,8 +455,8 @@ mat4_frustum_planes :: fn(m: Mat4) -> [6]Vec4 {
         m.m[15] + m.m[13])
     planes[3] = plane_of(m.m[3] - m.m[1], m.m[7] - m.m[5], m.m[11] - m.m[9],
         m.m[15] - m.m[13])
-    // Depth runs from zero at the near plane rather than from minus one, so
-    // the near plane is the third row on its own and not a sum with the last.
+    // Depth runs from zero to w rather than from minus w, so this one is the
+    // third row on its own and not a sum with the last.
     planes[4] = plane_of(m.m[2], m.m[6], m.m[10], m.m[14])
     planes[5] = plane_of(m.m[3] - m.m[2], m.m[7] - m.m[6], m.m[11] - m.m[10],
         m.m[15] - m.m[14])
@@ -630,6 +747,120 @@ test "the zero to one perspective maps the near plane to zero" {
     assert(near(squeezed.x / squeezed.w, 0.5))
 }
 
+test "the reverse perspective puts the near plane at one and the far at zero" {
+    projection := mat4_perspective_reverse_z(radians(90.0), 1.0, 1.0, 101.0)
+    at_near := mat4_mul_vec4(projection, vec4(0.0, 0.0, -1.0, 1.0))
+    assert(near(at_near.z / at_near.w, 1.0))
+    at_far := mat4_mul_vec4(projection, vec4(0.0, 0.0, -101.0, 1.0))
+    assert(near(at_far.z / at_far.w, 0.0))
+    // Across the view it is the same projection as the other two. Only the
+    // depth range differs, so a scene does not move when the convention does.
+    edge := mat4_mul_vec4(projection, vec4(2.0, 0.0, -2.0, 1.0))
+    assert(near(edge.x / edge.w, 1.0))
+}
+
+test "depth falls the whole way between the planes, and never rises" {
+    projection := mat4_perspective_reverse_z(radians(90.0), 1.0, 1.0, 101.0)
+    // Halfway out is nowhere near halfway in depth, which is the point of the
+    // arrangement: what a float can tell apart is spent on the far half.
+    mut last : f32 = 2.0
+    mut step : i64 = 0
+    while (step <= 10) {
+        walked : f32 = step
+        distance : f32 = 1.0 + walked * 10.0
+        at := mat4_mul_vec4(projection, vec4(0.0, 0.0, -distance, 1.0))
+        depth := at.z / at.w
+        assert(depth < last)
+        assert(depth >= -0.0001 && depth <= 1.0001)
+        last = depth
+        step = step + 1
+    }
+}
+
+test "the infinite perspective agrees with a far plane far enough away" {
+    endless := mat4_perspective_infinite_reverse_z(radians(90.0), 1.0, 0.1)
+    at_near := mat4_mul_vec4(endless, vec4(0.0, 0.0, -0.1, 1.0))
+    assert(near(at_near.z / at_near.w, 1.0))
+    // Nothing reaches zero, and what is far enough out is indistinguishable
+    // from it.
+    far_out := mat4_mul_vec4(endless, vec4(0.0, 0.0, -100000.0, 1.0))
+    depth := far_out.z / far_out.w
+    assert(depth > 0.0 && depth < 0.0001)
+    // And it is the limit of the finite one, so a program that names a distance
+    // and one that does not agree about everything in front of it.
+    bounded := mat4_perspective_reverse_z(radians(90.0), 1.0, 0.1, 1000000.0)
+    at_ten := mat4_mul_vec4(endless, vec4(0.0, 0.0, -10.0, 1.0))
+    bounded_at_ten := mat4_mul_vec4(bounded, vec4(0.0, 0.0, -10.0, 1.0))
+    assert(near(at_ten.z / at_ten.w,
+        bounded_at_ten.z / bounded_at_ten.w))
+}
+
+test "the reverse box puts its near plane at one" {
+    box := mat4_ortho_reverse_z(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
+    // Across the view it is the ordinary box.
+    left := mat4_transform_point(box, vec3(-2.0, 0.0, 0.0))
+    assert(near(left.x, -1.0))
+    top := mat4_transform_point(box, vec3(0.0, 1.0, 0.0))
+    assert(near(top.y, 1.0))
+    at_near := mat4_transform_point(box, vec3(0.0, 0.0, -1.0))
+    assert(near(at_near.z, 1.0))
+    at_far := mat4_transform_point(box, vec3(0.0, 0.0, -11.0))
+    assert(near(at_far.z, 0.0))
+}
+
+test "the inverse undoes what a matrix did" {
+    // A matrix with a bit of everything in it, so no term of the cofactor
+    // expansion is quietly zero.
+    made := mat4_mul(mat4_translation(vec3(3.0, -2.0, 7.0)),
+        mat4_mul(mat4_rotation_y(radians(35.0)),
+            mat4_mul(mat4_rotation_x(radians(-20.0)),
+                mat4_scale(vec3(2.0, 0.5, 1.5)))))
+    undone, ok := mat4_inverse(made)
+    assert(ok)
+    // A point taken there and back is where it started. Measured as a distance
+    // and against a looser bound than `near` uses, because the trip runs
+    // through a translation of seven and single precision carries about seven
+    // digits: what survives is the size of the point, not a fixed number of
+    // decimal places.
+    both := mat4_mul(made, undone)
+    mut element : i64 = 0
+    while (element < 16) {
+        wanted := mat4_identity().m[element]
+        assert(both.m[element] > wanted - 0.0001
+            && both.m[element] < wanted + 0.0001)
+        element = element + 1
+    }
+    at := vec3(1.0, -4.0, 2.0)
+    round_trip := mat4_transform_point(undone, mat4_transform_point(made, at))
+    assert(vec3_distance(round_trip, at) < 0.001)
+}
+
+test "a projection undoes itself, which is what a froxel grid needs" {
+    // The clustered grid works in view space and is handed clip coordinates,
+    // so it walks back through the projection. Reverse-Z or not, that is the
+    // same question.
+    projection := mat4_perspective_reverse_z(radians(60.0), 16.0 / 9.0, 0.1,
+        1000.0)
+    undone, ok := mat4_inverse(projection)
+    assert(ok)
+    at := vec4(0.0, 0.0, -25.0, 1.0)
+    clip := mat4_mul_vec4(projection, at)
+    back := mat4_mul_vec4(undone, clip)
+    assert(near(back.x / back.w, 0.0))
+    assert(near(back.z / back.w, -25.0))
+}
+
+test "a matrix that flattens space has no inverse and says so" {
+    flat := mat4_scale(vec3(1.0, 0.0, 1.0))
+    undone, ok := mat4_inverse(flat)
+    assert(ok == false)
+    // The identity rather than a run of infinities, so a caller that ignored
+    // the answer gets a picture it can see is wrong.
+    held : Mat4 = undone
+    assert(near(held.m[0], 1.0))
+    assert(near(held.m[5], 1.0))
+}
+
 test "ortho maps its box onto clip space" {
     box := mat4_ortho(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
     left := mat4_transform_point(box, vec3(-2.0, 0.0, 0.0))
@@ -776,6 +1007,38 @@ test "the frustum planes face inwards and hold what the camera sees" {
     // A radius is what makes a thing just outside still count, which is the
     // whole reason the planes are normalised.
     assert(inside(planes, vec3(100.0, 0.0, -10.0), 200.0))
+}
+
+test "the planes hold the same things when depth runs the other way" {
+    view := mat4_look_at(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0),
+        vec3(0.0, 1.0, 0.0))
+    projection := mat4_perspective_reverse_z(radians(60.0), 1.0, 1.0, 100.0)
+    planes := mat4_frustum_planes(mat4_mul(projection, view))
+
+    // The same four answers as the ordinary projection above. Reversing depth
+    // trades the two depth planes for each other and moves no boundary, so a
+    // culling pass reads the same frustum.
+    assert(inside(planes, vec3(0.0, 0.0, -10.0), 0.0))
+    assert(inside(planes, vec3(0.0, 0.0, 10.0), 0.0) == false)
+    assert(inside(planes, vec3(0.0, 0.0, -200.0), 0.0) == false)
+    assert(inside(planes, vec3(100.0, 0.0, -10.0), 0.0) == false)
+    assert(inside(planes, vec3(100.0, 0.0, -10.0), 200.0))
+}
+
+test "a frustum with no far plane holds whatever is in front of it" {
+    view := mat4_look_at(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0),
+        vec3(0.0, 1.0, 0.0))
+    endless := mat4_perspective_infinite_reverse_z(radians(60.0), 1.0, 1.0)
+    planes := mat4_frustum_planes(mat4_mul(endless, view))
+
+    // Nothing ahead is ever beyond it, however far out. The plane that would
+    // have said so has no direction, and a plane of zeroes refuses nothing.
+    assert(inside(planes, vec3(0.0, 0.0, -10.0), 0.0))
+    assert(inside(planes, vec3(0.0, 0.0, -200000.0), 0.0))
+    // Behind and beside are still outside, so it is a frustum and not the
+    // whole world.
+    assert(inside(planes, vec3(0.0, 0.0, 10.0), 0.0) == false)
+    assert(inside(planes, vec3(100.0, 0.0, -10.0), 0.0) == false)
 }
 
 // Whether a sphere is on the inward side of all six, which is what a culling

@@ -1,0 +1,570 @@
+// The lights of a frame, and the grid that says which of them reach where.
+//
+// A fragment is lit by the lights near it and by nothing else, but a shader has
+// no way to ask what is near without being told. So the view is cut into a grid
+// of boxes before anything shades, each box is asked which lights touch it, and
+// a fragment reads the list for the box it fell in. That is what a scene with
+// two hundred lamps costs a handful of lights per fragment rather than two
+// hundred.
+//
+// Sixteen across, nine down and twenty-four deep, which is nightshade's grid.
+// The depth slices are logarithmic rather than even, because a box a hundred
+// metres out covering the same screen area as one a metre out holds vastly more
+// world; spacing them by ratio rather than by distance gives each roughly the
+// same amount of it.
+//
+// The slices start at half a metre rather than at the camera's near plane. A
+// near plane sits around a tenth of a metre so depth keeps its precision, and
+// distributing twenty-four slices from there spends half of them on the empty
+// space in front of the camera and crushes the scene into the last few, which
+// then hold every light in it.
+//
+// Directional lights are in none of this. One reaches the whole world, so the
+// question the grid answers does not apply to it: what shades a fragment walks
+// the directional prefix of the run whole, then the local lights its own box
+// names. That is why `lights_of` writes the directionals first.
+
+import "wgpu.frost"
+import "graph.frost"
+import "frame.frost"
+import "math.frost"
+import "mem.frost"
+
+export Cluster, GpuLight, LIGHT_DIRECTIONAL, LIGHT_POINT, LIGHT_SPOT,
+    LIGHT_BYTES, MAX_LIGHTS,
+    CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, TOTAL_CLUSTERS,
+    MAX_LIGHTS_PER_CLUSTER, CLUSTER_SLICE_NEAR, CLUSTER_FAR_FALLBACK,
+    CLUSTER_UNIFORM_BYTES,
+    cluster_new, cluster_none, cluster_free, cluster_declare, cluster_layout,
+    cluster_group, cluster_write, cluster_lights_buffer, cluster_grid_buffer,
+    cluster_indices_buffer, cluster_uniform_buffer
+
+// Which of the three a record is. The numbers are the shader's, and a light
+// that is none of them is drawn by nothing rather than drawn wrong.
+LIGHT_DIRECTIONAL :: 0
+LIGHT_POINT :: 1
+LIGHT_SPOT :: 2
+
+// One light, as the shader reads it. The layout is nightshade's, field for
+// field, including the four this renderer does not read yet.
+//
+// Carrying the unimplemented ones inert is what keeps adding them a shader
+// branch rather than a layout change. A buffer is a shape both sides agree
+// about, so widening it later invalidates every write and every read of it at
+// once; the three that are shaded today sit in the same places they will sit
+// when there are six.
+GpuLight :: struct {
+    position: Vec4,
+    direction: Vec4,
+    // Colour in rgb and intensity in w.
+    color: Vec4,
+    // Which of the kinds this is, how far it reaches, and the cosines of the
+    // two cone angles a spot narrows between.
+    light_type: u32,
+    range: f32,
+    inner_cone: f32,
+    outer_cone: f32,
+    // Which shadow map in the atlas is this light's, or -1 for one that casts
+    // none. Nothing writes an atlas yet, so every light carries -1.
+    shadow_index: i32,
+    // How wide the source is, which is what makes a shadow edge soften with
+    // distance from what cast it. Read by no shader here.
+    light_size: f32,
+    // Which layer of the projected-texture array this light shines through.
+    // Read by no shader here.
+    cookie_layer: u32,
+    pad_zero: f32,
+}
+
+LIGHT_BYTES :: 80
+
+// How many the buffer holds. A scene with more lights than this draws with the
+// first of them rather than growing a buffer mid-frame.
+MAX_LIGHTS :: 256
+
+CLUSTER_GRID_X :: 16
+CLUSTER_GRID_Y :: 9
+CLUSTER_GRID_Z :: 24
+TOTAL_CLUSTERS :: 3456
+MAX_LIGHTS_PER_CLUSTER :: 256
+
+// Where the depth slices begin, whatever the camera's near plane is. See the
+// header: a near plane is chosen for depth precision and is far too close to
+// distribute a grid from.
+CLUSTER_SLICE_NEAR :: 0.5
+
+// How far the grid reaches when the camera names no far plane. Reverse-Z makes
+// an infinite far plane nearly free for drawing, and the grid still has to end
+// somewhere, so it ends here and lights past it fall in the last slice.
+CLUSTER_FAR_FALLBACK :: 1000.0
+
+CLUSTER_UNIFORM_BYTES :: 112
+BOUNDS_BYTES :: 32
+GRID_BYTES :: 8
+
+// Everything the grid is built from and everything it leaves behind.
+//
+// A plain struct rather than a linear one, for the same reason `Lit` is: the App
+// holds one before anything has composed the plugin that fills it, and
+// `cluster_none` is what it holds until then.
+Cluster :: struct {
+    lights: Buffer,
+    uniforms: Buffer,
+    // The camera's view matrix on its own. The two passes work in view space,
+    // since a box in front of the camera is an axis-aligned one there and an
+    // arbitrary one anywhere else.
+    view: Buffer,
+    bounds: Buffer,
+    grid: Buffer,
+    indices: Buffer,
+    layout: BindGroupLayout,
+    group: BindGroup,
+    bounds_pipeline: ComputePipeline,
+    assign_pipeline: ComputePipeline,
+}
+
+cluster_lights_buffer :: fn(held: Cluster) -> Buffer { held.lights }
+cluster_grid_buffer :: fn(held: Cluster) -> Buffer { held.grid }
+cluster_indices_buffer :: fn(held: Cluster) -> Buffer { held.indices }
+cluster_uniform_buffer :: fn(held: Cluster) -> Buffer { held.uniforms }
+cluster_layout :: fn(held: Cluster) -> BindGroupLayout { held.layout }
+cluster_group :: fn(held: Cluster) -> BindGroup { held.group }
+
+cluster_new :: fn(device: Device) -> Cluster {
+    lights := storage_of(device, LIGHT_BYTES * MAX_LIGHTS)
+    uniforms := uniform_of(device, CLUSTER_UNIFORM_BYTES)
+    view := uniform_of(device, 64)
+    bounds := storage_of(device, TOTAL_CLUSTERS * BOUNDS_BYTES)
+    grid := storage_of(device, TOTAL_CLUSTERS * GRID_BYTES)
+    indices := storage_of(device, TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4)
+    layout := build_layout(device)
+    shader := cluster_module(device)
+    mut groups : [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
+    made := device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+    Cluster {
+        lights = lights,
+        uniforms = uniforms,
+        view = view,
+        bounds = bounds,
+        grid = grid,
+        indices = indices,
+        layout = layout,
+        group = build_group(device, layout, lights, uniforms, view, bounds,
+            grid, indices),
+        bounds_pipeline = step_of(device, shader, made,
+            StringView { data = "bounds", length = 6 }),
+        assign_pipeline = step_of(device, shader, made,
+            StringView { data = "assign", length = 6 }),
+    }
+}
+
+// A grid that was never made, which is what the App holds until something
+// composes the plugin.
+cluster_none :: fn() -> Cluster {
+    Cluster {
+        lights = no_buffer(),
+        uniforms = no_buffer(),
+        view = no_buffer(),
+        bounds = no_buffer(),
+        grid = no_buffer(),
+        indices = no_buffer(),
+        layout = no_bind_group_layout(),
+        group = no_bind_group(),
+        bounds_pipeline = no_compute_pipeline(),
+        assign_pipeline = no_compute_pipeline(),
+    }
+}
+
+cluster_free :: fn(mut held: Cluster) {
+    if (held.bounds_pipeline == no_compute_pipeline()) {
+        return
+    }
+    compute_pipeline_release(held.bounds_pipeline)
+    compute_pipeline_release(held.assign_pipeline)
+    bind_group_release(held.group)
+    bind_group_layout_release(held.layout)
+    give_back(held.lights)
+    give_back(held.uniforms)
+    give_back(held.view)
+    give_back(held.bounds)
+    give_back(held.grid)
+    give_back(held.indices)
+}
+
+give_back :: fn(held: Buffer) {
+    buffer_destroy(held)
+    buffer_release(held)
+}
+
+// The lights, and the numbers the grid is built from. Everything the two passes
+// need, written once a frame before either runs.
+//
+// The projection is inverted here rather than on the device, because every one
+// of the three thousand four hundred and fifty-six threads would otherwise
+// invert the same matrix.
+cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
+    total: i64, directional: i64, projection: Mat4, view: Mat4,
+    width: i64, height: i64, z_near: f32, z_far: f32) {
+    mut count := total
+    if (count > MAX_LIGHTS) {
+        count = MAX_LIGHTS
+    }
+    // Never more directional lights than there are lights. The shader takes the
+    // difference of the two to find how many local ones there are, in unsigned
+    // arithmetic, so a directional count past the total would wrap to four
+    // billion and walk the whole buffer.
+    mut leading := directional
+    if (leading > count) {
+        leading = count
+    }
+    if (count > 0) {
+        queue_write_buffer(queue, held.lights, 0, ptr_to(lights[0]),
+            LIGHT_BYTES * count)
+    }
+
+    inverse, ok := mat4_inverse(projection)
+    mut undone : Mat4 = inverse
+    if (ok == false) {
+        undone = mat4_identity()
+    }
+    queue_write_buffer(queue, held.uniforms, 0, ptr_to(undone.m[0]), 64)
+
+    mut sizes : [4]f32 = [0.0; 4]
+    wide : f32 = width
+    tall : f32 = height
+    sizes[0] = wide
+    sizes[1] = tall
+    // Where the slices start and end. The near one is the camera's own or half
+    // a metre, whichever is further out.
+    mut near := z_near
+    if (near < CLUSTER_SLICE_NEAR) {
+        near = CLUSTER_SLICE_NEAR
+    }
+    mut far := z_far
+    if (far <= 0.0) {
+        far = CLUSTER_FAR_FALLBACK
+    }
+    sizes[2] = near
+    sizes[3] = far
+    queue_write_buffer(queue, held.uniforms, 64, ptr_to(sizes[0]), 16)
+
+    mut counts : [4]u32 = [CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, 0]
+    queue_write_buffer(queue, held.uniforms, 80, ptr_to(counts[0]), 16)
+
+    mut tail : [4]f32 = [0.0; 4]
+    tail[0] = wide / CLUSTER_GRID_X
+    tail[1] = tall / CLUSTER_GRID_Y
+    queue_write_buffer(queue, held.uniforms, 96, ptr_to(tail[0]), 8)
+    mut totals : [2]u32 = [cast($u32, count), cast($u32, leading)]
+    queue_write_buffer(queue, held.uniforms, 104, ptr_to(totals[0]), 8)
+
+    mut held_view := view
+    queue_write_buffer(queue, held.view, 0, ptr_to(held_view.m[0]), 64)
+}
+
+// The two passes, into a graph. They write the grid, and whatever shades reads
+// it, which is the whole of what puts them in order.
+cluster_declare :: fn(mut s: Cluster, mut g: Graph, name: str,
+    grid: ResourceId) -> PassId {
+    boxes := graph_compute_pass($Cluster, g, name, run_bounds, ptr_to(s))
+    graph_writes(g, boxes, grid)
+    filling := graph_compute_pass($Cluster, g, name, run_assign, ptr_to(s))
+    graph_writes(g, filling, grid)
+    graph_runs_after(g, filling, boxes)
+    filling
+}
+
+// One thread per box, in groups of eight by eight, which is what the shader
+// declares. The grid is sixteen by nine by twenty-four, so the y dimension
+// rounds up to two groups and the threads past the end return.
+run_bounds :: fn(mut s: Cluster, pass: ComputePassEncoder) {
+    dispatch(s, pass, s.bounds_pipeline)
+}
+
+run_assign :: fn(mut s: Cluster, pass: ComputePassEncoder) {
+    dispatch(s, pass, s.assign_pipeline)
+}
+
+dispatch :: fn(mut s: Cluster, pass: ComputePassEncoder,
+    pipeline: ComputePipeline) {
+    compute_pass_encoder_set_pipeline(pass, pipeline)
+    compute_pass_encoder_set_bind_group(pass, 0, s.group, 0, no_pointer())
+    compute_pass_encoder_dispatch_workgroups(pass, (CLUSTER_GRID_X + 7) / 8,
+        (CLUSTER_GRID_Y + 7) / 8, CLUSTER_GRID_Z)
+}
+
+SHADER :: "
+struct ClusterUniforms {
+    inverse_projection: mat4x4<f32>,
+    screen_size: vec2<f32>,
+    z_near: f32,
+    z_far: f32,
+    cluster_count: vec4<u32>,
+    tile_size: vec2<f32>,
+    num_lights: u32,
+    num_directional_lights: u32,
+}
+
+struct ClusterBounds {
+    min_point: vec4<f32>,
+    max_point: vec4<f32>,
+}
+
+struct LightGrid {
+    offset: u32,
+    count: u32,
+}
+
+struct Light {
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color: vec4<f32>,
+    light_type: u32,
+    range: f32,
+    inner_cone: f32,
+    outer_cone: f32,
+    shadow_index: i32,
+    light_size: f32,
+    cookie_layer: u32,
+    pad_zero: f32,
+}
+
+const LIGHT_TYPE_POINT: u32 = 1u;
+const LIGHT_TYPE_SPOT: u32 = 2u;
+const MAX_LIGHTS_PER_CLUSTER: u32 = 256u;
+
+@group(0) @binding(0) var<uniform> uniforms: ClusterUniforms;
+@group(0) @binding(1) var<storage, read_write> cluster_bounds: array<ClusterBounds>;
+@group(0) @binding(2) var<storage, read_write> light_grid: array<LightGrid>;
+@group(0) @binding(3) var<storage, read_write> light_indices: array<u32>;
+@group(0) @binding(4) var<storage, read> lights: array<Light>;
+@group(0) @binding(5) var<uniform> view_matrix: mat4x4<f32>;
+
+// A point on the screen, at a depth, as a point in view space. The projection
+// undone, and then the perspective divide undone with it.
+fn screen_to_view(screen_coord: vec2<f32>, depth: f32) -> vec3<f32> {
+    let ndc = vec4<f32>(
+        (screen_coord.x / uniforms.screen_size.x) * 2.0 - 1.0,
+        (1.0 - screen_coord.y / uniforms.screen_size.y) * 2.0 - 1.0,
+        depth,
+        1.0
+    );
+    let view_pos = uniforms.inverse_projection * ndc;
+    return view_pos.xyz / view_pos.w;
+}
+
+// Where a line from the eye through a corner of the tile crosses one of the
+// slice planes. The box is bounded by four of these at each end.
+fn line_at_z(start: vec3<f32>, end: vec3<f32>, z: f32) -> vec3<f32> {
+    let direction = end - start;
+    let t = (z - start.z) / direction.z;
+    return start + t * direction;
+}
+
+// Where a slice begins, in view space. Logarithmic, so each slice covers the
+// same ratio of distance rather than the same distance.
+fn slice_to_view_z(slice: u32) -> f32 {
+    let near = uniforms.z_near;
+    let far = uniforms.z_far;
+    let slices = f32(uniforms.cluster_count.z);
+    let t = f32(slice) / slices;
+    return -near * pow(far / near, t);
+}
+
+fn cluster_of(x: u32, y: u32, z: u32) -> u32 {
+    return x + y * uniforms.cluster_count.x
+        + z * uniforms.cluster_count.x * uniforms.cluster_count.y;
+}
+
+// One box per thread, as the corners of the screen tile pushed out to the two
+// slice planes and then bounded.
+@compute @workgroup_size(8, 8, 1)
+fn bounds(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= uniforms.cluster_count.x || id.y >= uniforms.cluster_count.y
+        || id.z >= uniforms.cluster_count.z) {
+        return;
+    }
+
+    let tile = uniforms.tile_size;
+    let low_screen = vec2<f32>(f32(id.x) * tile.x, f32(id.y) * tile.y);
+    let high_screen = vec2<f32>(f32(id.x + 1u) * tile.x, f32(id.y + 1u) * tile.y);
+    let eye = vec3<f32>(0.0, 0.0, 0.0);
+
+    let low_view = screen_to_view(low_screen, 1.0);
+    let high_view = screen_to_view(high_screen, 1.0);
+
+    let near_z = slice_to_view_z(id.z);
+    let far_z = slice_to_view_z(id.z + 1u);
+
+    let low_near = line_at_z(eye, low_view, near_z);
+    let low_far = line_at_z(eye, low_view, far_z);
+    let high_near = line_at_z(eye, high_view, near_z);
+    let high_far = line_at_z(eye, high_view, far_z);
+
+    let smallest = min(min(low_near, low_far), min(high_near, high_far));
+    let largest = max(max(low_near, low_far), max(high_near, high_far));
+
+    let index = cluster_of(id.x, id.y, id.z);
+    cluster_bounds[index].min_point = vec4<f32>(smallest, 0.0);
+    cluster_bounds[index].max_point = vec4<f32>(largest, 0.0);
+}
+
+// Whether a ball touches a box: the point of the box nearest the centre, and
+// whether that is within the radius.
+fn sphere_touches_box(centre: vec3<f32>, radius: f32, low: vec3<f32>,
+                      high: vec3<f32>) -> bool {
+    let nearest = clamp(centre, low, high);
+    let offset = nearest - centre;
+    return dot(offset, offset) <= radius * radius;
+}
+
+// Whether a cone touches a box. The ball around the cone is tested first, since
+// it is cheap and rejects most of them; what follows compares the box against
+// the cone's own width at the distance the box sits at.
+fn cone_touches_box(tip: vec3<f32>, direction: vec3<f32>, range: f32,
+                    angle_cos: f32, low: vec3<f32>, high: vec3<f32>) -> bool {
+    if (sphere_touches_box(tip, range, low, high) == false) {
+        return false;
+    }
+    let centre = (low + high) * 0.5;
+    let extent = (high - low) * 0.5;
+    let reach = length(extent);
+
+    let toward = centre - tip;
+    let along = dot(toward, direction);
+    if (along < 0.0) {
+        return length(toward) <= reach;
+    }
+    if (along > range + reach) {
+        return false;
+    }
+    let on_axis = tip + direction * along;
+    let sideways = length(centre - on_axis);
+    let width = along * sqrt(1.0 - angle_cos * angle_cos) / angle_cos;
+    return sideways <= width + reach;
+}
+
+// One box per thread again, this time asking every local light whether it
+// touches. The directional ones are skipped by starting past them.
+@compute @workgroup_size(8, 8, 1)
+fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= uniforms.cluster_count.x || id.y >= uniforms.cluster_count.y
+        || id.z >= uniforms.cluster_count.z) {
+        return;
+    }
+    let index = cluster_of(id.x, id.y, id.z);
+    let box = cluster_bounds[index];
+    let low = box.min_point.xyz;
+    let high = box.max_point.xyz;
+
+    let local_count = uniforms.num_lights - uniforms.num_directional_lights;
+    let base = index * MAX_LIGHTS_PER_CLUSTER;
+    var found = 0u;
+
+    for (var i = 0u; i < local_count; i = i + 1u) {
+        let light = lights[uniforms.num_directional_lights + i];
+        let at = (view_matrix * vec4<f32>(light.position.xyz, 1.0)).xyz;
+        let facing = normalize((view_matrix
+            * vec4<f32>(normalize(light.direction.xyz), 0.0)).xyz);
+        let range = light.range;
+
+        var touches = false;
+        // A range of zero is a light that never stops, which is every box.
+        if (range <= 0.0) {
+            touches = true;
+        } else if (light.light_type == LIGHT_TYPE_POINT) {
+            touches = sphere_touches_box(at, range, low, high);
+        } else if (light.light_type == LIGHT_TYPE_SPOT) {
+            touches = cone_touches_box(at, facing, range, light.outer_cone,
+                low, high);
+        }
+
+        if (touches && found < MAX_LIGHTS_PER_CLUSTER) {
+            light_indices[base + found] = i;
+            found = found + 1u;
+        }
+    }
+
+    light_grid[index].offset = base;
+    light_grid[index].count = found;
+}
+"
+
+storage_of :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+uniform_of :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+cluster_module :: fn(device: Device) -> ShaderModule {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    device_create_shader_module(device, ptr_to(module_descriptor))
+}
+
+step_of :: fn(device: Device, shader: ShaderModule, layout: PipelineLayout,
+    entry_point: StringView) -> ComputePipeline {
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = entry_point
+    device_create_compute_pipeline(device, ptr_to(descriptor))
+}
+
+build_layout :: fn(device: Device) -> BindGroupLayout {
+    mut entries : [6]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 6]
+    mut slot : i64 = 0
+    while (slot < 6) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].visibility = ShaderStage::Compute
+        entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
+        slot = slot + 1
+    }
+    entries[0].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entries[0].buffer.min_binding_size = CLUSTER_UNIFORM_BYTES
+    entries[4].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    entries[5].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entries[5].buffer.min_binding_size = 64
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 6
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+build_group :: fn(device: Device, layout: BindGroupLayout, lights: Buffer,
+    uniforms: Buffer, view: Buffer, bounds: Buffer, grid: Buffer,
+    indices: Buffer) -> BindGroup {
+    mut entries : [6]BindGroupEntry = [bind_group_entry_init(); 6]
+    mut held : [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
+    mut sizes : [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
+        TOTAL_CLUSTERS * GRID_BYTES,
+        TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
+        LIGHT_BYTES * MAX_LIGHTS, 64]
+    mut slot : i64 = 0
+    while (slot < 6) {
+        entries[slot].binding = cast($u32, slot)
+        entries[slot].buffer = held[slot]
+        entries[slot].size = sizes[slot]
+        slot = slot + 1
+    }
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 6
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group(device, ptr_to(descriptor))
+}

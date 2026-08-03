@@ -44,6 +44,7 @@ import "../renderer/render_world.frost"
 import "light.frost"
 import "log.frost"
 import "../renderer/lit.frost"
+import "../renderer/cluster.frost"
 import "world.frost"
 import "scene_sync.frost"
 import "camera.frost"
@@ -67,6 +68,7 @@ export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
     log_plugin, app_log, render_plugin,
     app_set_runner, app_set_runner_if_unset,
     app_add_system, app_add_systems, app_remove_system, app_insert_resource,
+    app_add_system_in_state, app_insert_state, app_on_enter, app_on_exit,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -147,8 +149,12 @@ App :: linear struct {
     // the plugin that makes them. A program writing its own passes leaves both
     // alone and nothing here is bound.
     lit: Lit,
-    // What decides which of the run is drawn, made with the pass that draws it.
-    culling: ComputePipeline,
+    // The lights of the frame and the grid that says which of them reach where.
+    cluster: Cluster,
+    // The steps that decide what is drawn, over the run above. One thing rather
+    // than six, because an App holding some of them holds something that cannot
+    // answer.
+    batching: Batching,
     drawing: bool,
     lights: []GpuLight,
     // Whether the graph can run at all, answered when it was scheduled.
@@ -157,6 +163,11 @@ App :: linear struct {
     // without this a program that never asks would have its startup systems
     // registered and never run.
     started: bool,
+    // What runs when the program arrives at a screen and when it leaves one,
+    // and whether the screen it starts on has been entered yet.
+    on_enter: Vec<StateHook>,
+    on_exit: Vec<StateHook>,
+    state_started: bool,
 }
 
 app_open :: fn(config: AppConfig) -> App ! AppError {
@@ -184,7 +195,8 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         store = geometry_new(device, config.vertices, config.indices),
         meshes = mesh_cache_new(config.meshes),
         materials = materials_new(config.materials),
-        render = render_world_new(device, config.drawn),
+        render = render_world_new(device, config.drawn, config.meshes,
+            config.materials),
         installed = vec_new($Installed, 8),
         graph_configs = vec_new($GraphConfig, 4),
         update_graph = vec_new($UpdateGraph, 4),
@@ -194,11 +206,16 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         log = log_open("", log_config()),
         logging = false,
         lit = lit_none(),
-        culling = no_compute_pipeline(),
+        cluster = cluster_none(),
+        batching = Batching { render = no_run(),
+            pipelines = no_batch_pipelines() },
         drawing = false,
         lights = heap_slice($GpuLight, MAX_LIGHTS),
         drawable = true,
         started = false,
+        on_enter = vec_new($StateHook, 4),
+        on_exit = vec_new($StateHook, 4),
+        state_started = false,
     }
     // The one plugin an App is not an App without. Everything else a program
     // installs for itself.
@@ -488,34 +505,18 @@ app_before_render :: fn($Ctx: Type, mut app: App,
 // chain writes its own passes instead and does not compose this.
 render_plugin :: fn(mut app: App) {
     app.drawing = true
+    app.cluster = cluster_new(app_device(app))
     app.lit = lit_new(app_device(app), app_format(app), ptr_to(app.render),
-        ptr_to(app.store))
-    app.culling = render_world_cull_pipeline(app_device(app),
-        render_world_cull_layout(app.render))
+        ptr_to(app.store), app.cluster)
+    app.batching = batching_new(app_device(app), ptr_to(app.render))
     app_configure_graph($App, app, declare_lit, ptr_to(app))
     app_before_render($App, app, fill_lit, ptr_to(app))
 }
 
-// What the standard pass draws into: the window, cleared to the ambient colour,
-// and a depth buffer that follows it.
-declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
-    screen := graph_backbuffer(g)
-    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    arguments := graph_external_buffer(g, "draw arguments")
-    graph_set_external_buffer(g, arguments,
-        render_world_indirect(app.render))
-    culling := graph_compute_pass($App, g, "cull", cull_lit, ptr_to(app))
-    graph_writes(g, culling, arguments)
-    lit_declare(app.lit, g, screen, depth,
-        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }, arguments)
-}
-
-cull_lit :: fn(mut app: App, pass: ComputePassEncoder) {
-    compute_pass_encoder_set_pipeline(pass, app.culling)
-    compute_pass_encoder_set_bind_group(pass, 0,
-        render_world_cull_group(app.render), 0, no_pointer())
-    compute_pass_encoder_dispatch_workgroups(pass,
-        render_world_dispatch(app.render), 1, 1)
+// A pointer at no run, for an App that has not composed the renderer.
+no_run :: fn() -> ^RenderWorld {
+    zero := 0
+    unsafe { ptr_cast($RenderWorld, zero) }
 }
 
 // The world into the run, and the world's lights into the buffer beside it.
@@ -524,10 +525,44 @@ fill_lit :: fn(mut app: App, mut held: App) {
     ids := app_ids(app)
     app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
         app_view(app))
-    count := lights_of(app.world, light_ids(app.world), app.lights)
-    lit_write_lights(app.lit, queue, app.lights)
-    lit_write_frame(app.lit, queue, app_view(app),
-        camera_position(app_camera(app)), vec3(0.05, 0.05, 0.07), count)
+    counts := lights_of(app.world, light_ids(app.world), app.lights)
+    eye := app_camera(app)
+    width := app_width(app)
+    height := app_height(app)
+    cluster_write(app.cluster, queue, app.lights, counts.total,
+        counts.directional, camera_projection(eye, width, height),
+        camera_view(eye), width, height, eye.z_near, eye.z_far)
+    lit_write_frame(app.lit, queue, app_view(app), camera_view(eye),
+        camera_position(eye), vec3(0.05, 0.05, 0.07),
+        counts.total, counts.directional)
+}
+
+// What the standard pass draws into: the window, cleared to the ambient colour,
+// and a depth buffer that follows it.
+//
+// The steps that decide what is drawn go in first and the pass that draws reads
+// what they wrote, which is the whole of what puts the two in order.
+declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+    arguments := graph_external_buffer(g, "draw arguments")
+    graph_set_external_buffer(g, arguments,
+        render_world_indirect(app.render))
+
+    batching_declare(app.batching, g, "batching", arguments)
+
+    // The light grid, built before anything shades against it.
+    grid := graph_external_buffer(g, "light grid")
+    graph_set_external_buffer(g, grid, cluster_grid_buffer(app.cluster))
+    cluster_declare(app.cluster, g, "clustering", grid)
+
+    // Depth first, then shading against it. The graph puts them in that order
+    // because the second reads the target the first writes, so nothing here
+    // says which runs when.
+    lit_declare_prepass(app.lit, g, depth, arguments)
+    made := lit_declare(app.lit, g, screen, depth,
+        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }, arguments)
+    graph_reads(g, made, grid)
 }
 
 // A system, onto a stage. The one registration door: `Stage::Startup` runs once
@@ -536,6 +571,67 @@ fill_lit :: fn(mut app: App, mut held: App) {
 // reaching past it into the schedule.
 app_add_system :: fn(mut app: App, stage: Stage, run: fn(mut World)) {
     schedule_add(app.schedule, stage, run)
+}
+
+// A system that runs only while the program is on one screen. Which screen a
+// system belongs to travels with it in the schedule, so this is what a language
+// with closures would write as a wrapper around the system: there is nothing to
+// capture and nothing to wrap.
+app_add_system_in_state :: fn(mut app: App, stage: Stage, state: i64,
+    run: fn(mut World)) {
+    schedule_add_in_state(app.schedule, stage, state, run)
+}
+
+// Where the program starts. A state is a number a program names its own
+// constants for, and every screen after this one is asked for from a system
+// with `world_state_request`.
+app_insert_state :: fn(mut app: App, initial: i64) {
+    ecs_resource_set($States, app.world, resource_of($States, app.world),
+        states_new(initial))
+    app.state_started = false
+}
+
+// One system each time the program arrives at a screen, and each time it
+// leaves one. Both run between the transition and the frame that follows it, so
+// what an enter hook spawns is there for the first frame of its own screen.
+app_on_enter :: fn(mut app: App, state: i64, run: fn(mut World)) {
+    vec_push($StateHook, app.on_enter, StateHook { state = state, run = run })
+}
+
+app_on_exit :: fn(mut app: App, state: i64, run: fn(mut World)) {
+    vec_push($StateHook, app.on_exit, StateHook { state = state, run = run })
+}
+
+// What runs when the program arrives at a screen or leaves one.
+StateHook :: struct { state: i64, run: fn(mut World) }
+
+// The requested screen taken, and the hooks either side of the change run. The
+// first frame is a change too: a program that never asks for another state
+// still enters the one it started in, so what its enter hooks spawn is there
+// before anything reads the world.
+settle_state :: fn(mut app: App) {
+    was := world_state(app.world)
+    changed := world_state_apply(app.world)
+    if (app.state_started && changed == false) {
+        return
+    }
+    if (app.state_started) {
+        run_hooks(app.on_exit, app.world, was)
+    }
+    app.state_started = true
+    run_hooks(app.on_enter, app.world, world_state(app.world))
+}
+
+run_hooks :: fn(held: Vec<StateHook>, mut world: World, state: i64) {
+    mut index : i64 = 0
+    while (index < vec_len($StateHook, held)) {
+        one := vec_get($StateHook, held, index)
+        if (one.state == state) {
+            run := one.run
+            run(world)
+        }
+        index = index + 1
+    }
 }
 
 // Several onto one stage, in the order they are written. The list is a
@@ -589,7 +685,11 @@ app_close :: fn(move app: App) -> i64 {
     vec_free($GraphConfig, app.graph_configs)
     vec_free($UpdateGraph, app.update_graph)
     vec_free($BeforeRender, app.before_render)
+    vec_free($StateHook, app.on_enter)
+    vec_free($StateHook, app.on_exit)
     lit_free(app.lit)
+    cluster_free(app.cluster)
+    batching_free(app.batching)
     heap_release_slice($GpuLight, app.lights)
     log_close(app.log)
     render_world_free(app.render)
@@ -625,7 +725,8 @@ app_next :: fn(mut app: App) -> bool {
         if (app.drawable == false) {
             return false
         }
-        schedule_start(app.schedule, app.world, ANY_STATE)
+        settle_state(app)
+        schedule_start(app.schedule, app.world, world_state(app.world))
     }
     if (app.drawable == false) {
         return false
@@ -640,7 +741,10 @@ app_next :: fn(mut app: App) -> bool {
             height(app.platform))
     }
     world_input(app.world, platform_input(app.platform))
-    schedule_run(app.schedule, app.world, ANY_STATE)
+    // The screen settles before anything runs, so no frame has some of its
+    // systems under one screen and the rest under another.
+    settle_state(app)
+    schedule_run(app.schedule, app.world, world_state(app.world))
     // A system deciding the program is finished is the last thing a frame does,
     // so the frame it decided in is finished rather than half drawn.
     world_exit_wanted(app.world) == false
@@ -711,7 +815,7 @@ app_extract :: fn(mut app: App, ids: ObjectIds, view_projection: Mat4) {
     render_world_begin(app.render)
     scene_sync(app.world, app.render, app.materials, app.meshes, ids)
     render_world_upload(app.render, renderer_queue(app.renderer),
-        view_projection)
+        view_projection, app.materials, app.meshes)
 }
 
 // The near half of a frame: the graph, recorded into whatever the surface

@@ -3281,6 +3281,35 @@ parse_arm :: fn(mut p: Parser) -> i64 {
     flush_pending(p, mark, statement)
 }
 
+// A statement that opens with `-` where another statement came before it.
+//
+// `parse_add` carries an expression across a line break for `+` and refuses to
+// for `-`, since a `-` that opens a line negates what follows rather than
+// subtracting it from the line above. That rule is deliberate and closes a real
+// hazard, but it leaves another: a long expression broken across lines keeps
+// its terms when the break lands before a plus and drops them when it lands
+// before a minus. Half a sum survives and the answer is wrong with nothing
+// pointing at the line.
+//
+// So a statement opening with a minus is refused where it follows another one
+// and is not the block's own value. What it would have done is negate something
+// and drop it, which no program means; what it usually is, is the rest of the
+// line above. A block ending in `-1` is untouched: that one is the value.
+//
+// Asked of the token rather than of what was parsed. A statement may flush
+// synthesized ones around itself and those carry positions belonging to
+// whatever they were desugared from, so the tokens are the only thing here that
+// is certainly what the source says.
+refuse_minus_continuation :: fn(mut p: Parser, at: i64) {
+    report_where(p.modules, p.src, at)
+    report("this line opens with '-', so it negates what follows rather than")
+    report(" continuing the line above, and nothing reads what it works out. A")
+    report(" statement ends at the end of a line: write the whole expression on")
+    report(" one line, or leave the '-' at the end of the line above where it")
+    report(" says a subtraction is meant")
+    frost_rt_die()
+}
+
 parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
     mut head : i64 = -1
     mut tail : i64 = -1
@@ -3291,6 +3320,10 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         advance(p)
     }
     while (cur(p) != terminator && cur(p) != TokenKind::Eof) {
+        // Where this statement began, and whether it opened with a minus after
+        // something else. Read before parsing, since parsing moves the cursor.
+        opened_with_minus := head != (-1) && cur(p) == TokenKind::Minus
+        minus_at := cur_off(p)
         mark := p.pending.count
         parsed := parse_stmt(p)
         statement := flush_pending(p, mark, parsed)
@@ -3308,6 +3341,12 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         tail = last
         while (cur(p) == TokenKind::Semi) {
             advance(p)
+        }
+        // The terminator here means that statement was the block's value, and a
+        // block whose value is `-1` is ordinary. Anything else after it means
+        // the minus opened a statement whose answer nothing reads.
+        if (opened_with_minus && cur(p) != terminator) {
+            refuse_minus_continuation(p, minus_at)
         }
     }
     head

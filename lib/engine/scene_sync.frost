@@ -84,9 +84,11 @@ scene_sync :: fn(mut world: World, mut render: RenderWorld,
                     ids.global_transform).matrix
                 ecs_set($Transform, world, entity, ids.transform,
                     Transform { matrix = placed })
-                render_world_push(render, placed,
-                    materials_at(registry, shown.material),
-                    mesh_cache_at(cache, shown.mesh), shown.material)
+                // What it is made of and what shape it is are two numbers, not
+                // two things. Which draw they land in is worked out on the
+                // device from the material, so nothing here reads one.
+                render_world_push(render, placed, shown.mesh, shown.material,
+                    shown.layer)
             }
             row = row + 1
         }

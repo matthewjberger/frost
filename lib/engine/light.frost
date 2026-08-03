@@ -14,11 +14,13 @@
 // other. That is the same shape as `scene_sync`, which walks what is drawn.
 
 import "../renderer/lit.frost"
+import "../renderer/cluster.frost"
 import "world.frost"
 import "ecs.frost"
 import "math.frost"
 
-export LightType, Light, LightIds, light_ids, sun, lamp, spot, lights_of
+export LightType, Light, LightIds, LightCounts, light_ids, sun, lamp, spot,
+    lights_of, LAMP_RANGE, SPOT_RANGE
 
 // Which of the three a light is. Directional is the sun: everywhere at once and
 // no falloff. Point is a lamp. Spot is a lamp inside a cone.
@@ -35,7 +37,9 @@ Light :: struct {
     color: Vec3,
     // Lux for a directional light, lumens for the other two.
     intensity: f32,
-    // How far a point or spot light reaches. Zero is unlimited.
+    // How far a point or spot light reaches, past which it contributes
+    // nothing. Zero means it never falls off at all, which is a light a scene
+    // wants everywhere rather than one sitting somewhere in it.
     range: f32,
     // Where a spot light is at full strength, and where it has fallen to
     // nothing. Radians.
@@ -53,18 +57,26 @@ sun :: fn() -> Light {
         inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
 }
 
-// A lamp, bright enough to read at a couple of units and dark by ten.
+// A lamp, bright enough to read at a couple of units and dark by ten. That
+// last part is the range: without one it would be as bright across the room as
+// it is beside the bulb, since a light that names no range does not fall off.
+// A program that wants one writes the field.
+LAMP_RANGE :: 10.0
+
 lamp :: fn(color: Vec3, intensity: f32) -> Light {
     Light { light_type = LightType::Point, color = color,
-        intensity = intensity, range = 0.0,
+        intensity = intensity, range = LAMP_RANGE,
         inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
 }
 
 // The same inside a cone, at full strength within the first angle and gone by
-// the second.
+// the second. Further-reaching than a lamp, since one is usually mounted well
+// away from what it lights.
+SPOT_RANGE :: 25.0
+
 spot :: fn(color: Vec3, intensity: f32, inner: f32, outer: f32) -> Light {
     Light { light_type = LightType::Spot, color = color,
-        intensity = intensity, range = 0.0,
+        intensity = intensity, range = SPOT_RANGE,
         inner_cone_angle = inner, outer_cone_angle = outer }
 }
 
@@ -81,37 +93,70 @@ light_ids :: fn(mut world: World) -> LightIds {
     }
 }
 
-// Every light in the world, as the records the pass reads, and how many were
-// written. Where the entity ended up is where the light is, and the fourth
-// column of its matrix is that, so a light hung off something moving moves with
-// it for the same reason a drawn thing does.
+// How many lights were written and how many of those are directional. The
+// directional ones come first in the run, so one number is both a count and
+// where the rest begin.
+LightCounts :: struct { total: i64, directional: i64 }
+
+// Every light in the world, as the records the pass reads. Where the entity
+// ended up is where the light is, and the fourth column of its matrix is that,
+// so a light hung off something moving moves with it for the same reason a
+// drawn thing does.
 //
 // Which way it faces is the matrix's -Z, which is glTF's convention and
 // nightshade's.
-lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> i64 {
+//
+// Directional lights are written first and the rest after. A directional light
+// reaches everywhere, so it belongs to no part of the world in particular and
+// grouping lights by where they are has nothing to say about it; what shades a
+// fragment walks the directional prefix whole and then only the lights near it.
+// Two walks of the world rather than one sort, since the answer is being built
+// from nothing either way.
+lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> LightCounts {
+    directional := gather_lights(world, ids, out, 0, true)
+    total := gather_lights(world, ids, out, directional, false)
+    LightCounts { total = total, directional = directional }
+}
+
+// The lights of one kind, appended from `written`, answering with where the
+// next one would go.
+gather_lights :: fn(mut world: World, ids: LightIds, mut out: []GpuLight,
+    written: i64, wanted_directional: bool) -> i64 {
     mut q := query_begin(world)
     query_with(q, ids.light)
     query_with(q, ids.global_transform)
-    mut count : i64 = 0
+    mut count := written
     while (query_next(world, q)) {
         rows := query_entities(world, q)
         mut row : i64 = 0
         while (row < slice_len(rows) && count < slice_len(out)) {
             entity := rows[row]
             one := ecs_get($Light, world, entity, ids.light)
-            placed := ecs_get($GlobalTransform, world, entity,
-                ids.global_transform).matrix
-            // The fourth column is where the entity ended up, and the third is
-            // its +Z, so what a light faces is the other way.
-            out[count] = GpuLight {
-                position = vec4(placed.m[12], placed.m[13], placed.m[14], 1.0),
-                direction = facing_of(placed),
-                color = vec4(one.color.x, one.color.y, one.color.z,
-                    one.intensity),
-                params = vec4(kind_of(one.light_type), one.range,
-                    cosf(one.inner_cone_angle), cosf(one.outer_cone_angle)),
+            is_directional := one.light_type == LightType::Directional
+            if (is_directional == wanted_directional) {
+                placed := ecs_get($GlobalTransform, world, entity,
+                    ids.global_transform).matrix
+                // The fourth column is where the entity ended up, and the third
+                // is its +Z, so what a light faces is the other way.
+                out[count] = GpuLight {
+                    position = vec4(placed.m[12], placed.m[13], placed.m[14],
+                        1.0),
+                    direction = facing_of(placed),
+                    color = vec4(one.color.x, one.color.y, one.color.z,
+                        one.intensity),
+                    light_type = kind_of(one.light_type),
+                    range = one.range,
+                    inner_cone = cosf(one.inner_cone_angle),
+                    outer_cone = cosf(one.outer_cone_angle),
+                    // Nothing writes a shadow atlas, so no light has a map in
+                    // one.
+                    shadow_index = -1,
+                    light_size = 0.0,
+                    cookie_layer = 0,
+                    pad_zero = 0.0,
+                }
+                count = count + 1
             }
-            count = count + 1
             row = row + 1
         }
     }
@@ -123,7 +168,7 @@ facing_of :: fn(placed: Mat4) -> Vec4 {
     vec4(held.x, held.y, held.z, 0.0)
 }
 
-kind_of :: fn(held: LightType) -> f32 {
+kind_of :: fn(held: LightType) -> u32 {
     match held {
         case .Directional: LIGHT_DIRECTIONAL
         case .Point: LIGHT_POINT

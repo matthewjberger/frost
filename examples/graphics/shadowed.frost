@@ -55,10 +55,13 @@
 // The shadow map is 1024 by 1024 and does not follow the window, because what
 // it covers is a piece of the world rather than a piece of the screen.
 //
-// Depth in WebGPU runs from zero at the near plane to one at the far plane, not
-// from minus one, which is why the light's projection is `mat4_ortho_zo`. The
-// other one puts half the scene behind the near plane, and every fragment there
-// reads as lit.
+// Depth here is reverse-Z: one at the near plane and zero at the far plane, and
+// a float's precision is dense where the far plane now is. Everything that
+// touches depth agrees with that. The light's projection is
+// `mat4_ortho_reverse_z`, both pipelines keep the greater fragment, the buffers
+// are cleared to zero, and the shadow lookup asks whether the receiver is at
+// least as deep as the map. Any one of those left the other way round lights
+// exactly the surfaces that should be dark.
 //
 // The window, the device, the world, the schedule and the four tables are an
 // `App`, and one of those tables is the run the camera's view draws from. The
@@ -131,6 +134,13 @@ INSET_MARGIN :: 24
 // at the slot a thing was given: three numbers that have to agree, so they are
 // one number.
 MAX_DRAWN :: 40
+
+// How many distinct meshes and looks the run may be asked about. They measure
+// the table the batch build walks, which is one counter per class per mesh per
+// look, so they are the shapes of the scene rather than how many things are in
+// it.
+MAX_MESHES :: 8
+MAX_LOOKS :: 8
 GLOW_BYTES :: 160
 
 // How much geometry the shared buffers hold, which is a cube and a sphere with
@@ -165,13 +175,6 @@ Scene :: struct {
     glow: ResourceId,
 }
 
-// What decides which of them are drawn. Its own state, since the three drawing
-// passes share one run and the culling that fills it happens once.
-Culling :: struct {
-    pipeline: ComputePipeline,
-    render: ^RenderWorld,
-}
-
 SHADER :: "
 struct Frame {
     view_projection: mat4x4<f32>,
@@ -183,18 +186,31 @@ struct Frame {
 }
 
 struct ObjectData {
-    model: mat4x4<f32>,
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    is_overlay: u32,
+    pad_zero: u32,
+}
+
+struct MaterialData {
     base_color: vec4<f32>,
-    surface: vec4<f32>,
-    batch: u32,
-    radius: f32,
-    material: u32,
-    pad_three: u32,
+    roughness: f32,
+    metallic: f32,
+    alpha_cutoff: f32,
+    flags: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
 @group(1) @binding(1) var<storage, read> visible: array<u32>;
+// Where each thing ended up and what it is made of, as tables an object names a
+// row of. Two hundred things sharing a look share one row of the second.
+@group(1) @binding(2) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(1) @binding(3) var<storage, read> materials: array<MaterialData>;
 @group(2) @binding(0) var shadow_map: texture_depth_2d;
 @group(2) @binding(1) var shadow_reader: sampler_comparison;
 // What the compute pass left, one value per thing drawn, read at the object's
@@ -209,7 +225,8 @@ fn vs_shadow(@location(0) position: vec3<f32>,
              @builtin(instance_index) instance: u32)
     -> @builtin(position) vec4<f32> {
     let object = objects[visible[instance]];
-    return frame.light_view_projection * object.model * vec4<f32>(position, 1.0);
+    let model = transforms[object.transform_index];
+    return frame.light_view_projection * model * vec4<f32>(position, 1.0);
 }
 
 struct VertexOut {
@@ -227,10 +244,11 @@ fn vs_main(@location(0) position: vec3<f32>,
     var out: VertexOut;
     let object_index = visible[instance];
     let object = objects[object_index];
-    let world = object.model * vec4<f32>(position, 1.0);
+    let model = transforms[object.transform_index];
+    let world = model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
-    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.light_clip = frame.light_view_projection * world;
     out.object_index = object_index;
     return out;
@@ -271,13 +289,14 @@ fn light_reaching(light_clip: vec4<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let object = objects[in.object_index];
+    let material = materials[object.material_id];
     let facing = normalize(in.normal);
     let toward_light = normalize(-frame.light_direction.xyz);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
     let halfway = normalize(toward_light + toward_eye);
 
     let lambert = max(dot(facing, toward_light), 0.0);
-    let rough = clamp(object.surface.x, 0.05, 1.0);
+    let rough = clamp(material.roughness, 0.05, 1.0);
     let tightness = 2.0 / (rough * rough) - 2.0;
     let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
         * (1.0 - rough) * lambert * 0.3;
@@ -286,7 +305,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // the two are multiplied rather than one of them deciding.
     let reaching = light_reaching(in.light_clip);
     let strength = frame.light_color.w * reaching;
-    let lit = object.base_color.rgb
+    let lit = material.base_color.rgb
         * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
         + frame.light_color.rgb * strength * highlight;
     // A glow of its own, from the run the compute pass wrote. It is added
@@ -300,8 +319,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (which < arrayLength(&glow)) {
         pulse = glow[which];
     }
-    return vec4<f32>(lit + object.base_color.rgb * pulse * 0.9,
-        object.base_color.a);
+    return vec4<f32>(lit + material.base_color.rgb * pulse * 0.9,
+        material.base_color.a);
 }
 "
 
@@ -444,17 +463,7 @@ draw_things :: fn(mut s: Scene, pass: RenderPassEncoder) {
     render_pass_encoder_set_bind_group(pass, 1,
         render_world_group(render_world_at(s.render)), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw(pass, render_world_at(s.render))
-}
-
-// The pass that decides what is drawn, once for all three that draw it.
-cull_things :: fn(mut s: Culling, pass: ComputePassEncoder) {
-    held := render_world_at(s.render)
-    compute_pass_encoder_set_pipeline(pass, s.pipeline)
-    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
-        0, no_pointer())
-    compute_pass_encoder_dispatch_workgroups(pass,
-        render_world_dispatch(held), 1, 1)
+    render_world_draw_all(pass, render_world_at(s.render))
 }
 
 // What a frame does between the world and the graph. The same world three
@@ -488,13 +497,15 @@ before_frame :: fn(mut s: Built, mut app: App) {
     scene_sync(app.world, shadow, app.materials, app.meshes, everything)
     // The box the light sees the world through, which is what the shadow pass
     // draws with and therefore what its run is culled by.
-    render_world_upload(shadow, queue, light_view_projection(light))
+    render_world_upload(shadow, queue, light_view_projection(light),
+        app.materials, app.meshes)
 
     inset := render_world_at(s.inset)
     render_world_begin(inset)
     scene_sync(app.world, inset, app.materials, app.meshes, everything)
     render_world_upload(inset, queue,
-        camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT))
+        camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT),
+        app.materials, app.meshes)
     app_extract(app, everything, app_view(app))
 }
 
@@ -506,9 +517,9 @@ Built :: struct {
     shadow_scene: Scene,
     lit_scene: Scene,
     inset_scene: Scene,
-    culling: Culling,
-    shadow_culling: Culling,
-    inset_culling: Culling,
+    culling: Batching,
+    shadow_culling: Batching,
+    inset_culling: Batching,
     pulse: Pulse,
     bright_step: Step,
     blur_step: Step,
@@ -567,7 +578,7 @@ update_inset :: fn(mut s: Built, mut g: Graph, world: World) {
 light_view_projection :: fn(direction: Vec3) -> Mat4 {
     away := vec3_scale(vec3_normalize(direction), -22.0)
     view := mat4_look_at(away, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
-    projection := mat4_ortho_zo(-13.0, 13.0, -13.0, 13.0, 1.0, 44.0)
+    projection := mat4_ortho_reverse_z(-13.0, 13.0, -13.0, 13.0, 1.0, 44.0)
     mat4_mul(projection, view)
 }
 
@@ -682,6 +693,11 @@ make_shader :: fn(device: Device) -> ShaderModule {
 // a patch of surface and holds one number for it, so a sloped surface is nearer
 // than its own recorded depth over half of every texel and stripes itself. The
 // slope-scaled term is the one that matters; the constant handles what is flat.
+//
+// Both are negative because depth is reverse-Z. What a bias has to do is push
+// the recorded depth away from the light, and away is downward now. The same
+// numbers with the sign they had pull it toward the light instead, which widens
+// the stripes rather than removing them.
 make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     layout: PipelineLayout) -> RenderPipeline {
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
@@ -690,9 +706,9 @@ make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
-    depth.depth_compare = COMPARE_FUNCTION_LESS
-    depth.depth_bias = 2
-    depth.depth_bias_slope_scale = 2.0
+    depth.depth_compare = COMPARE_FUNCTION_GREATER
+    depth.depth_bias = -2
+    depth.depth_bias_slope_scale = -2.0
 
     mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
@@ -728,7 +744,7 @@ make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
-    depth.depth_compare = COMPARE_FUNCTION_LESS
+    depth.depth_compare = COMPARE_FUNCTION_GREATER
 
     mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
@@ -1001,9 +1017,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     arguments := graph_external_buffer(g, "draw arguments")
     graph_set_external_buffer(g, arguments,
         render_world_indirect(render_world_at(s.culling.render)))
-    cull_pass := graph_compute_pass($Culling, g, "cull", cull_things,
-        ptr_to(s.culling))
-    graph_writes(g, cull_pass, arguments)
+    batching_declare(s.culling, g, "batching", arguments)
     graph_reads(g, lit_pass, arguments)
 
     // The light's own, from the box it sees the world through. An orthographic
@@ -1011,9 +1025,8 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     shadow_arguments := graph_external_buffer(g, "shadow arguments")
     graph_set_external_buffer(g, shadow_arguments,
         render_world_indirect(render_world_at(s.shadow)))
-    shadow_cull := graph_compute_pass($Culling, g, "shadow cull", cull_things,
-        ptr_to(s.shadow_culling))
-    graph_writes(g, shadow_cull, shadow_arguments)
+    batching_declare(s.shadow_culling, g, "shadow batching",
+        shadow_arguments)
     graph_reads(g, shadow_pass, shadow_arguments)
 
     // Declared after the pass that reads it, and it runs first: the buffer
@@ -1060,9 +1073,8 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     inset_arguments := graph_external_buffer(inset_graph, "inset arguments")
     graph_set_external_buffer(inset_graph, inset_arguments,
         render_world_indirect(render_world_at(s.inset)))
-    inset_cull := graph_compute_pass($Culling, inset_graph, "inset cull",
-        cull_things, ptr_to(s.inset_culling))
-    graph_writes(inset_graph, inset_cull, inset_arguments)
+    batching_declare(s.inset_culling, inset_graph, "inset batching",
+        inset_arguments)
 
     inset_scene_pass := graph_pass($Scene, inset_graph, "inset scene",
         draw_things, ptr_to(s.inset_scene))
@@ -1133,27 +1145,20 @@ run :: fn(move app: App) -> i64 {
     device := app_device(app)
     queue := app_queue(app)
 
-    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
-    mesh_cache_insert(app.meshes, "sphere",
-        sphere_mesh(app.store, queue, 0.7, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
+        cube_mesh())
+    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+        sphere_mesh(0.7, 16, 24))
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     mut looks : [4]i64 = [0; 4]
-    looks[0] = materials_add(app.materials, Material {
-        base_color = vec4(0.86, 0.33, 0.3, 1.0), roughness = 0.4,
-        metallic = 0.0 })
-    looks[1] = materials_add(app.materials, Material {
-        base_color = vec4(0.32, 0.76, 0.48, 1.0), roughness = 0.55,
-        metallic = 0.0 })
-    looks[2] = materials_add(app.materials, Material {
-        base_color = vec4(0.36, 0.52, 0.92, 1.0), roughness = 0.25,
-        metallic = 0.0 })
+    looks[0] = materials_add(app.materials, material_of(vec4(0.86, 0.33, 0.3, 1.0), 0.4, 0.0))
+    looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.48, 1.0), 0.55, 0.0))
+    looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.25, 0.0))
     // The floor, which is matte so the shadow on it reads as a shadow rather
     // than as a change in the highlight.
-    looks[3] = materials_add(app.materials, Material {
-        base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
-        metallic = 0.0 })
+    looks[3] = materials_add(app.materials, material_of(vec4(0.68, 0.66, 0.62, 1.0), 0.9, 0.0))
 
     // One run per view, because culling is a question about a view and this
     // demo draws the same world from three: the camera, the light, and the
@@ -1161,8 +1166,8 @@ run :: fn(move app: App) -> i64 {
     // the other two, and the shadow pass is where that shows worst: a thing
     // behind the camera can still throw a shadow into it. The App holds the
     // camera's; the other two are this demo's own.
-    mut shadow_render := render_world_new(device, MAX_DRAWN)
-    mut inset_render := render_world_new(device, MAX_DRAWN)
+    mut shadow_render := render_world_new(device, MAX_DRAWN, MAX_MESHES, MAX_LOOKS)
+    mut inset_render := render_world_new(device, MAX_DRAWN, MAX_MESHES, MAX_LOOKS)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
@@ -1301,8 +1306,6 @@ run :: fn(move app: App) -> i64 {
     inset_frame_group := uniform_group(device, frame_layout, inset_uniform,
         FRAME_BYTES)
 
-    culling_pipeline := render_world_cull_pipeline(device,
-        render_world_cull_layout(app.render))
     scene_pipeline := make_scene_pipeline(device, shader, app_format(app),
         scene_pipeline_layout)
 
@@ -1329,12 +1332,9 @@ run :: fn(move app: App) -> i64 {
             shadow_group = no_bind_group(), glow_group = no_bind_group(),
             samples_shadow = 1, shadow_map = 0, glow = 0,
         },
-        culling = Culling { pipeline = culling_pipeline,
-            render = ptr_to(app.render) },
-        shadow_culling = Culling { pipeline = culling_pipeline,
-            render = ptr_to(shadow_render) },
-        inset_culling = Culling { pipeline = culling_pipeline,
-            render = ptr_to(inset_render) },
+        culling = batching_new(device, ptr_to(app.render)),
+        shadow_culling = batching_new(device, ptr_to(shadow_render)),
+        inset_culling = batching_new(device, ptr_to(inset_render)),
         pulse = Pulse {
             pipeline = make_pulse_pipeline(device,
                 make_post_shader(device,
@@ -1400,6 +1400,9 @@ run :: fn(move app: App) -> i64 {
     app_before_render($Built, app, before_frame, ptr_to(built))
     app_run(app)
 
+    batching_free(built.culling)
+    batching_free(built.shadow_culling)
+    batching_free(built.inset_culling)
     render_world_free(shadow_render)
     render_world_free(inset_render)
     heap_release_slice($Entity, entities)

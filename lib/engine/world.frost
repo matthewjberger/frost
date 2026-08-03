@@ -28,7 +28,8 @@ export LocalTransform, GlobalTransform, WorldIds, Exit, local_at,
     world_schedule, place_things, move_camera,
     exit_on_escape,
     world_exit, world_exit_wanted,
-    world_input, world_ids, world_camera, world_camera_set
+    world_input, world_ids, world_camera, world_camera_set,
+    world_state, world_state_request, world_state_apply
 
 // Where a thing sits relative to whatever it hangs off: an offset from its
 // parent's origin, an orientation, and a scale on each axis.
@@ -80,6 +81,7 @@ world_prepare :: fn(mut world: World) -> WorldIds {
     ecs_resource_register($Input, world)
     ecs_resource_register($Camera, world)
     ecs_resource_register($Exit, world)
+    ecs_resource_register($States, world)
     ecs_resource_set($Hierarchy, world, resource_of($Hierarchy, world),
         hierarchy_new())
     // A resource starts zeroed, and a zeroed `Input` is a frame in which
@@ -144,6 +146,36 @@ world_schedule :: fn() -> Schedule {
     schedule_add(held, Stage::FramePostUpdate, place_things)
     schedule_add(held, Stage::FrameUpdate, move_camera)
     held
+}
+
+// Which screen the program is on. A number rather than a type of the program's
+// own, because a system is a `fn(mut World)` and the schedule holds the state a
+// system runs in beside it; what a program does is name its own constants.
+//
+//     TITLE :: 0
+//     PLAYING :: 1
+//     app_add_system_in_state(app, Stage::FrameUpdate, PLAYING, step)
+world_state :: fn(world: World) -> i64 {
+    states_current(ecs_resource($States, world, resource_of($States, world)))
+}
+
+// Asked for, and taken at the start of the next frame rather than here. A frame
+// that changed state halfway through would run some of its systems under one
+// screen and the rest under another, which is the one thing a state machine is
+// for stopping.
+world_state_request :: fn(mut world: World, value: i64) {
+    mut held := ecs_resource($States, world, resource_of($States, world))
+    states_request(held, value)
+    ecs_resource_set($States, world, resource_of($States, world), held)
+}
+
+// The requested state taken, answering whether it was a change. Called by
+// whatever owns the frame, before the schedule runs.
+world_state_apply :: fn(mut world: World) -> bool {
+    mut held := ecs_resource($States, world, resource_of($States, world))
+    changed := states_apply(held)
+    ecs_resource_set($States, world, resource_of($States, world), held)
+    changed
 }
 
 // Asked to stop, which is what a loop over the world runs until.
@@ -233,6 +265,66 @@ local_of :: fn(mut world: World, local: i64, entity: Entity) -> Mat4 {
 // A resource of the test's own, so the engine's land somewhere other than where
 // they would if nothing else were in the world.
 Bystander :: struct { count: i64 }
+
+// Two screens and a counter, for the tests below.
+TITLE :: 0
+PLAYING :: 1
+
+Score :: struct { points: i64 }
+
+count_a_point :: fn(mut world: World) {
+    mut held := ecs_resource($Score, world, resource_of($Score, world))
+    held.points = held.points + 1
+    ecs_resource_set($Score, world, resource_of($Score, world), held)
+}
+
+test "a system bound to a screen runs on that screen and no other" {
+    mut world := ecs_new()
+    world_prepare(world)
+    ecs_resource_register($Score, world)
+    mut frame := schedule_new()
+    schedule_add_in_state(frame, Stage::FrameUpdate, PLAYING, count_a_point)
+
+    // The world starts on the title screen, where this system is not.
+    schedule_run(frame, world, world_state(world))
+    assert(ecs_resource($Score, world, resource_of($Score, world)).points == 0)
+
+    world_state_request(world, PLAYING)
+    // Asking is not arriving. Nothing changes until the state is taken, which
+    // is what stops a frame running half its systems under each screen.
+    schedule_run(frame, world, world_state(world))
+    assert(ecs_resource($Score, world, resource_of($Score, world)).points == 0)
+
+    assert(world_state_apply(world))
+    assert(world_state(world) == PLAYING)
+    schedule_run(frame, world, world_state(world))
+    assert(ecs_resource($Score, world, resource_of($Score, world)).points == 1)
+
+    // And back, which stops it again.
+    world_state_request(world, TITLE)
+    assert(world_state_apply(world))
+    schedule_run(frame, world, world_state(world))
+    assert(ecs_resource($Score, world, resource_of($Score, world)).points == 1)
+
+    schedule_free(frame)
+    giving := world_tree_take(world)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
+
+test "taking a state that was not asked for is not a change" {
+    mut world := ecs_new()
+    world_prepare(world)
+    // Nothing requested, so there is nothing to take and the hooks either side
+    // of a change have no reason to run.
+    assert(world_state_apply(world) == false)
+    world_state_request(world, PLAYING)
+    assert(world_state_apply(world))
+    assert(world_state_apply(world) == false)
+    giving := world_tree_take(world)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
 
 // Nothing here reads a resource by its position, so nothing here breaks when
 // the positions move. This registers a resource before the engine does, which

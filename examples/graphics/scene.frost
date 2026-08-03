@@ -49,6 +49,13 @@ WIDTH :: 960
 HEIGHT :: 540
 INSTANCES :: 4
 
+// How many distinct meshes and looks the run may be asked about. They measure
+// the table the batch build walks, which is one counter per class per mesh per
+// look, so they are the shapes of the scene rather than how many things are in
+// it.
+MAX_MESHES :: 4
+MAX_LOOKS :: 8
+
 // How much geometry the shared buffers hold, which is a cube and a sphere with
 // room to spare.
 VERTEX_ROOM :: 4096
@@ -67,7 +74,7 @@ FAR :: 1
 // draws.
 Scene :: struct {
     pipeline: RenderPipeline,
-    cull_pipeline: ComputePipeline,
+    batching: Batching,
     frame_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
@@ -76,18 +83,31 @@ Scene :: struct {
 SHADER :: "
 struct Frame { view_projection: mat4x4<f32> }
 struct ObjectData {
-    model: mat4x4<f32>,
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    is_overlay: u32,
+    pad_zero: u32,
+}
+
+struct MaterialData {
     base_color: vec4<f32>,
-    surface: vec4<f32>,
-    batch: u32,
-    radius: f32,
-    material: u32,
-    pad_three: u32,
+    roughness: f32,
+    metallic: f32,
+    alpha_cutoff: f32,
+    flags: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
 @group(1) @binding(1) var<storage, read> visible: array<u32>;
+// Where each thing ended up and what it is made of, as tables an object names a
+// row of. Two hundred things sharing a look share one row of the second.
+@group(1) @binding(2) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(1) @binding(3) var<storage, read> materials: array<MaterialData>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -102,9 +122,10 @@ fn vs_main(@location(0) position: vec3<f32>,
     var out: VertexOut;
     let object_index = visible[instance];
     let object = objects[object_index];
-    let placed = object.model * vec4<f32>(position, 1.0);
+    let model = transforms[object.transform_index];
+    let placed = model * vec4<f32>(position, 1.0);
     out.position = frame.view_projection * placed;
-    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.object_index = object_index;
     return out;
 }
@@ -112,10 +133,11 @@ fn vs_main(@location(0) position: vec3<f32>,
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let object = objects[in.object_index];
+    let material = materials[object.material_id];
     let towards = normalize(vec3<f32>(-0.4, 0.9, 0.5));
     let lambert = max(dot(normalize(in.normal), towards), 0.0);
-    return vec4<f32>(object.base_color.rgb * (0.25 + 0.75 * lambert),
-        object.base_color.a);
+    return vec4<f32>(material.base_color.rgb * (0.25 + 0.75 * lambert),
+        material.base_color.a);
 }
 "
 
@@ -133,18 +155,7 @@ draw_layer :: fn(mut s: Scene, pass: RenderPassEncoder) {
     render_pass_encoder_set_bind_group(pass, 1,
         render_world_group(render_world_at(s.render)), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw(pass, render_world_at(s.render))
-}
-
-// One culling pass per layer, since each layer is its own run. Both are the
-// same function over different state, the way the two drawing passes are.
-cull_layer :: fn(mut s: Scene, pass: ComputePassEncoder) {
-    held := render_world_at(s.render)
-    compute_pass_encoder_set_pipeline(pass, s.cull_pipeline)
-    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
-        0, no_pointer())
-    compute_pass_encoder_dispatch_workgroups(pass,
-        render_world_dispatch(held), 1, 1)
+    render_world_draw_all(pass, render_world_at(s.render))
 }
 
 // What a frame does between the world and the graph. Two runs, so the world is
@@ -163,7 +174,7 @@ before_frame :: fn(mut s: FrameState, mut app: App) {
     render_world_begin(far)
     scene_sync(app.world, far, app.materials, app.meshes,
         drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR))
-    render_world_upload(far, queue, view)
+    render_world_upload(far, queue, view, app.materials, app.meshes)
 }
 
 // What the two hooks need and the passes do not: the uniform a frame is written
@@ -191,10 +202,12 @@ declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
     far_arguments := graph_external_buffer(g, "far arguments")
     graph_set_external_buffer(g, far_arguments,
         render_world_indirect(render_world_at(s.far)))
-    near_cull := graph_compute_pass($Scene, g, "near cull", cull_layer, s.near_scene)
-    graph_writes(g, near_cull, near_arguments)
-    far_cull := graph_compute_pass($Scene, g, "far cull", cull_layer, s.far_scene)
-    graph_writes(g, far_cull, far_arguments)
+    // One chain per layer, since each layer is its own run and each run is
+    // culled by the view that draws it.
+    batching_declare(scene_at(s.near_scene).batching, g,
+        "near batching", near_arguments)
+    batching_declare(scene_at(s.far_scene).batching, g,
+        "far batching", far_arguments)
     near_pass := graph_pass($Scene, g, "near", draw_layer, s.near_scene)
     graph_writes_color(g, near_pass, screen, background)
     graph_writes_depth(g, near_pass, depth)
@@ -203,6 +216,13 @@ declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
     graph_writes_color(g, far_pass, screen, background)
     graph_writes_depth(g, far_pass, depth)
     graph_reads(g, far_pass, far_arguments)
+}
+
+// The state a pass was pointed at, read the way a run is.
+scene_at :: fn(held: ^Scene) -> ref Scene {
+    span : []Scene = unsafe { slice_from($Scene, held, 1) }
+    ref result := span[0]
+    result
 }
 
 // The camera, as the bytes the shader reads it as.
@@ -252,7 +272,7 @@ make_pipeline :: fn(device: Device, format: u32,
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
-    depth.depth_compare = COMPARE_FUNCTION_LESS
+    depth.depth_compare = COMPARE_FUNCTION_GREATER
 
     mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
@@ -294,32 +314,25 @@ run :: fn(move app: App) -> i64 {
 
     // A cube for the near layer and a sphere for the far one, so which pass
     // drew a thing is readable off the screen.
-    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
-    mesh_cache_insert(app.meshes, "sphere",
-        sphere_mesh(app.store, queue, 0.6, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
+        cube_mesh())
+    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+        sphere_mesh(0.6, 16, 24))
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     mut looks : [INSTANCES]i64 = [0; INSTANCES]
-    looks[0] = materials_add(app.materials, Material {
-        base_color = vec4(1.0, 0.35, 0.35, 1.0), roughness = 0.5,
-        metallic = 0.0 })
-    looks[1] = materials_add(app.materials, Material {
-        base_color = vec4(0.35, 1.0, 0.45, 1.0), roughness = 0.5,
-        metallic = 0.0 })
-    looks[2] = materials_add(app.materials, Material {
-        base_color = vec4(0.45, 0.55, 1.0, 1.0), roughness = 0.5,
-        metallic = 0.0 })
-    looks[3] = materials_add(app.materials, Material {
-        base_color = vec4(1.0, 0.85, 0.4, 1.0), roughness = 0.5,
-        metallic = 0.0 })
+    looks[0] = materials_add(app.materials, material_of(vec4(1.0, 0.35, 0.35, 1.0), 0.5, 0.0))
+    looks[1] = materials_add(app.materials, material_of(vec4(0.35, 1.0, 0.45, 1.0), 0.5, 0.0))
+    looks[2] = materials_add(app.materials, material_of(vec4(0.45, 0.55, 1.0, 1.0), 0.5, 0.0))
+    looks[3] = materials_add(app.materials, material_of(vec4(1.0, 0.85, 0.4, 1.0), 0.5, 0.0))
 
     // One run per layer, and each is its own set of buffers: what a pass draws
     // is decided before it records, and two passes over two halves of a world
     // are two runs. The App holds one of them, which is what a program drawing
     // its world once uses; the second is this demo's own, because dividing the
     // world is what this demo is about.
-    mut far_render := render_world_new(device, INSTANCES)
+    mut far_render := render_world_new(device, INSTANCES, MAX_MESHES, MAX_LOOKS)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment)
@@ -367,12 +380,14 @@ run :: fn(move app: App) -> i64 {
     }
 
     pipeline := make_pipeline(device, app_format(app), pipeline_layout)
-    culling := render_world_cull_pipeline(device,
-        render_world_cull_layout(app.render))
-    mut near_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
+    // One chain per run. They share a module and differ in the tables they
+    // work on, which is what makes the two layers two answers.
+    mut near_scene := Scene { pipeline = pipeline,
+        batching = batching_new(device, ptr_to(app.render)),
         frame_group = frame_group, render = ptr_to(app.render),
         store = ptr_to(app.store) }
-    mut far_scene := Scene { pipeline = pipeline, cull_pipeline = culling,
+    mut far_scene := Scene { pipeline = pipeline,
+        batching = batching_new(device, ptr_to(far_render)),
         frame_group = frame_group, render = ptr_to(far_render),
         store = ptr_to(app.store) }
 
@@ -383,6 +398,8 @@ run :: fn(move app: App) -> i64 {
     app_before_render($FrameState, app, before_frame, ptr_to(frame))
     app_run(app)
 
+    batching_free(scene_at(ptr_to(near_scene)).batching)
+    batching_free(scene_at(ptr_to(far_scene)).batching)
     render_world_free(far_render)
     app_close(app)
 }
