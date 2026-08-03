@@ -16932,6 +16932,73 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "the storage it names dies when the call returns",
     ),
+    // One per guarantee, so the list of programs the language refuses is
+    // readable in one place rather than inferred from which check happens to
+    // own each. Every one is a complete program that is wrong in exactly one
+    // way, and both compilers have to refuse it saying the same thing.
+    (
+        "a_value_used_after_it_moved",
+        "Point :: struct { x: i64, y: i64 }\n\
+         eat :: fn(move p: Point) -> i64 { p.x }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p : Point = { x = 1, y = 2 }\n\
+         \x20   a := eat(p)\n\
+         \x20   b := eat(p)\n\
+         \x20   a + b\n}\n",
+        "moved",
+    ),
+    (
+        "a_resource_left_unconsumed",
+        "Session :: linear struct { id: i64 }\n\
+         open :: fn() -> Session { Session { id = 7 } }\n\
+         close :: fn(move s: Session) -> i64 { s.id }\n\
+         main :: fn() -> i64 {\n\
+         \x20   s := open()\n\
+         \x20   0\n}\n",
+        "consumed",
+    ),
+    (
+        "one_value_passed_to_two_mut_parameters",
+        "Point :: struct { x: i64, y: i64 }\n\
+         both :: fn(mut a: Point, mut b: Point) { a.x = 1  b.x = 2 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut p : Point = { x = 0, y = 0 }\n\
+         \x20   both(p, p)\n\
+         \x20   p.x\n}\n",
+        "borrow",
+    ),
+    (
+        "a_raw_pointer_read_outside_an_unsafe_block",
+        "main :: fn() -> i64 {\n\
+         \x20   mut n : i64 = 5\n\
+         \x20   p := ptr_to(n)\n\
+         \x20   p^\n}\n",
+        "unsafe",
+    ),
+    (
+        "a_pointer_cast_outside_an_unsafe_block",
+        "main :: fn() -> i64 {\n\
+         \x20   mut n : i64 = 5\n\
+         \x20   p := ptr_to(n)\n\
+         \x20   q := ptr_cast($i64, p)\n\
+         \x20   0\n}\n",
+        "unsafe",
+    ),
+    (
+        "a_c_function_called_outside_an_unsafe_block",
+        "frost_rt_thread_join :: extern fn(handle: i64)\n\
+         main :: fn() -> i64 {\n\
+         \x20   frost_rt_thread_join(0)\n\
+         \x20   0\n}\n",
+        "unsafe",
+    ),
+    (
+        "a_borrow_stored_in_a_struct_field",
+        "Holder :: struct { held: ref i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   0\n}\n",
+        "ref",
+    ),
     // A view of a container, read after the container gave its block back. The
     // frame check traces the view to `s` and stops there, since `s` is alive,
     // and what it cannot ask is whether the block is still the one it was.
