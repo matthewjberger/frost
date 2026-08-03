@@ -490,7 +490,20 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         place_ty := place_type(p, place)
         want_single(p, value, place_ty)
         value_ty := type_of(p, value)
-        if (value_fits(p, value, value_ty, place_ty) == false) {
+        mut fits := value_fits(p, value, value_ty, place_ty)
+        // A `mut` parameter is a borrow the caller already holds, so an array
+        // one coerced to a slice arrives here as a pointer to the slice rather
+        // than as the slice. `sink.view = source` was refused for that alone
+        // while the bootstrap took it, and a call taking the same argument was
+        // always taken, since check_call_arguments looks through the borrow the
+        // same way. Held to a slice place, so reading a `^i64` into an `i64` is
+        // still the mistake it was.
+        if (fits == false && is_pointer(value_ty) && is_array_ty(place_ty)
+            && is_slice_ty(p, place_ty)
+            && value_fits(p, value, pointee(p, value_ty), place_ty)) {
+            fits = true
+        }
+        if (fits == false) {
             report_where(p.modules, p.src, node.pos)
             report("assigning a value of the wrong type: the place is a '")
             report_type_name(p, place_ty)
