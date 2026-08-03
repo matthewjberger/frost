@@ -52,7 +52,15 @@ pub fn check_regions_recovering(program: &Program) -> Vec<Diagnostic> {
             Expression::Function(_, sig, _) | Expression::Proc(_, sig, _),
         ) = &statement.node
         {
-            if matches!(sig.kind, ReturnKind::Single(Type::Ptr(_))) {
+            // Every view, not only a raw pointer. A `[]T` or a `str` carved out
+            // of an arena names the arena's storage exactly as a `^T` does, and
+            // reading only the pointer let a slice of one leave its `with`
+            // block while the pointer beside it was refused.
+            if matches!(
+                &sig.kind,
+                ReturnKind::Single(ty) | ReturnKind::Fallible(ty, _)
+                    if is_direct_view(ty)
+            ) {
                 signatures.returns_pointer.insert(name.clone(), true);
             }
             if !sig.uses.is_empty() {
@@ -607,7 +615,7 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
                 answers_place: answered.is_some_and(|ty| {
                     matches!(ty, Type::Ref(_) | Type::RefMut(_))
                 }),
-                answers_direct_view: answered.is_some_and(is_direct_view),
+                answers: answered.cloned(),
                 registrations: &registrations,
                 kept: &kept,
                 views: &views,
@@ -1534,6 +1542,45 @@ fn holds_view(
     }
 }
 
+/// A type with this call's compile-time type arguments put in.
+///
+/// A generic parameter is written `$T` and says nothing on its own about
+/// whether handing it an array forms a view. The call says: `vec_push($[]i64,
+/// sink, data)` binds `T` to `[]i64` right there, and reading the parameter
+/// unresolved let a view of a local go into a container that outlives it.
+fn substituted(ty: &Type, bound: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::TypeParam(name) => {
+            bound.get(name).cloned().unwrap_or_else(|| ty.clone())
+        }
+        Type::Slice(inner) => Type::Slice(Box::new(substituted(inner, bound))),
+        Type::Ptr(inner) => Type::Ptr(Box::new(substituted(inner, bound))),
+        Type::Ref(inner) => Type::Ref(Box::new(substituted(inner, bound))),
+        Type::RefMut(inner) => {
+            Type::RefMut(Box::new(substituted(inner, bound)))
+        }
+        Type::Array(inner, count) => {
+            Type::Array(Box::new(substituted(inner, bound)), *count)
+        }
+        Type::ArrayGeneric(inner, count) => Type::ArrayGeneric(
+            Box::new(substituted(inner, bound)),
+            count.clone(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+/// What one element of a run is, so an array or tuple literal weighs each of its
+/// values against what the run is expected to hold.
+fn element_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Array(inner, _)
+        | Type::ArrayGeneric(inner, _)
+        | Type::Slice(inner) => Some((**inner).clone()),
+        _ => None,
+    }
+}
+
 /// Whether a type is itself a view rather than a value that holds one.
 ///
 /// The difference decides whether handing a place over takes its address.
@@ -1596,10 +1643,10 @@ struct Frame<'a> {
     // Whether it answers with a `ref T`, which is the one return that hands back
     // a place rather than a value.
     answers_place: bool,
-    // Whether it answers with a view itself rather than with a value holding
-    // one, which is what decides whether handing back a place takes its
-    // address.
-    answers_direct_view: bool,
+    // What it answers with, so the value handed back is weighed against the type
+    // the answer expects. A view is *formed* where an array lands somewhere one
+    // is wanted, and the type is the only thing that says so.
+    answers: Option<Type>,
     // Callback registrations in the program, and which argument of each is the
     // context whose storage it keeps.
     registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
@@ -1656,15 +1703,12 @@ impl Frame<'_> {
                     type_annotation,
                     ..
                 } => {
-                    let mut held = self.value_provenance(value);
                     // A binding declared as a view and given a place takes the
                     // address of that place, so `view : []i64 = arr` holds a
-                    // view of the array rather than a copy of it.
-                    if let Some(declared) = type_annotation
-                        && is_direct_view(declared)
-                    {
-                        held = held.max(self.coercion_provenance(value));
-                    }
+                    // view of the array rather than a copy of it, and the same
+                    // is true one field down in `h : Holder = { view = arr }`.
+                    let held = self
+                        .expected_provenance(value, type_annotation.as_ref());
                     self.storage.insert(name.clone());
                     self.locals.insert(name.clone(), held);
                     if let Some(borrowed) = self.borrowed_place(value) {
@@ -1843,7 +1887,20 @@ impl Frame<'_> {
                 let Some(argument) = arguments.get(index) else {
                     continue;
                 };
-                if self.value_provenance(argument) != Provenance::Frame {
+                // Against the parameter's declared type, since handing an array
+                // to a `[]T` parameter forms a view of it and handing it to a
+                // `[N]T` one copies it. With this call's type arguments put in,
+                // since a container takes its element as a `$T`.
+                let bound = self.type_arguments(name, arguments);
+                let declared = self
+                    .params
+                    .get(name)
+                    .and_then(|params| params.get(index))
+                    .and_then(|(_, declared)| declared.as_ref())
+                    .map(|ty| substituted(ty, &bound));
+                if self.expected_provenance(argument, declared.as_ref())
+                    != Provenance::Frame
+                {
                     continue;
                 }
                 let escapes = into.iter().any(|target| {
@@ -1868,7 +1925,8 @@ impl Frame<'_> {
     }
 
     fn assign(&mut self, place: &Expression, value: &Expression, at: Position) {
-        let held = self.value_provenance(value);
+        let expected = self.place_type(place);
+        let held = self.expected_provenance(value, expected.as_ref());
         if self.place_provenance(place) == Provenance::Frame {
             if let Some(root) = root_identifier(place) {
                 let root = root.to_string();
@@ -1900,12 +1958,10 @@ impl Frame<'_> {
     /// so a local holding a heap pointer hands back the pointer rather than the
     /// local.
     fn judge(&mut self, value: &Expression, how: &str, at: Position) {
-        let mut held = self.value_provenance(value);
+        let answers = self.answers.clone();
+        let mut held = self.expected_provenance(value, answers.as_ref());
         if self.answers_place {
             held = held.max(self.place_provenance(value));
-        }
-        if self.answers_direct_view {
-            held = held.max(self.coercion_provenance(value));
         }
         match held {
             Provenance::Frame => self.escape(how, at),
@@ -2132,6 +2188,114 @@ impl Frame<'_> {
         }
     }
 
+    /// What a value is worth where the context expects a particular type.
+    ///
+    /// A view is *formed* rather than copied wherever an array lands somewhere
+    /// a view is wanted, and the storage it then names is the array's. Nothing
+    /// about the expression says so: `data` reads the same in
+    /// `Holder { view = data }`, `sink.view = data`, `keep(h, data)` and
+    /// `-> []i64 { data }`, and only the type on the other side says a view is
+    /// being taken. Asking `value_provenance` alone answers with what the array
+    /// *holds*, which for a run of numbers is nothing, so every one of those
+    /// positions handed a view of a dead frame out while the last of them was
+    /// refused.
+    ///
+    /// So the question is asked against the expected type wherever there is
+    /// one, and an aggregate is walked into rather than given up on, since a
+    /// struct's field carries its own expectation and that is the road the
+    /// escape actually took.
+    fn expected_provenance(
+        &self,
+        value: &Expression,
+        expected: Option<&Type>,
+    ) -> Provenance {
+        if let Some(ty) = expected
+            && is_direct_view(ty)
+        {
+            return self
+                .value_provenance(value)
+                .max(self.coercion_provenance(value));
+        }
+        match value {
+            Expression::StructInit(name, values)
+            | Expression::EnumVariantInit(name, _, values) => {
+                self.literal_provenance(name, values, expected)
+            }
+            Expression::Tuple(items)
+            | Expression::Literal(Literal::Array(items)) => {
+                let element = expected.and_then(element_type);
+                items.iter().fold(Provenance::Outlives, |held, item| {
+                    held.max(self.expected_provenance(item, element.as_ref()))
+                })
+            }
+            Expression::ArrayRepeat(inner, _) => {
+                let element = expected.and_then(element_type);
+                self.expected_provenance(inner, element.as_ref())
+            }
+            Expression::Unsafe(body) => self.block_expected(body, expected),
+            Expression::If(_, consequence, alternative) => {
+                let held = self.block_expected(consequence, expected);
+                match alternative {
+                    Some(block) => {
+                        held.max(self.block_expected(block, expected))
+                    }
+                    None => held,
+                }
+            }
+            Expression::Switch(_, cases) => {
+                cases.iter().fold(Provenance::Outlives, |held, case| {
+                    held.max(self.block_expected(&case.body, expected))
+                })
+            }
+            _ => self.value_provenance(value),
+        }
+    }
+
+    /// A block's trailing value, weighed against what the block is expected to
+    /// answer with.
+    fn block_expected(
+        &self,
+        block: &Block,
+        expected: Option<&Type>,
+    ) -> Provenance {
+        block_value(block).map_or(Provenance::Outlives, |value| {
+            self.expected_provenance(value, expected)
+        })
+    }
+
+    /// A struct or enum literal, field by field against the declared types.
+    ///
+    /// The literal names its own type where the source wrote one, and takes it
+    /// from the context where the source left it out, which is what an inferred
+    /// literal and the struct behind a multi-return both are.
+    fn literal_provenance(
+        &self,
+        name: &str,
+        values: &[(String, Expression)],
+        expected: Option<&Type>,
+    ) -> Provenance {
+        let declared =
+            self.fields.get(Type::template_of(name)).or_else(
+                || match expected {
+                    Some(Type::Struct(held) | Type::Enum(held)) => {
+                        self.fields.get(Type::template_of(held))
+                    }
+                    _ => None,
+                },
+            );
+        values
+            .iter()
+            .fold(Provenance::Outlives, |held, (field, value)| {
+                let expected = declared.and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|(declared, _)| declared == field)
+                        .map(|(_, ty)| ty)
+                });
+                held.max(self.expected_provenance(value, expected))
+            })
+    }
+
     /// The storage a view takes the address of when it is built by coercion.
     ///
     /// `view : []i64 = arr` and `fn() -> []i64 { arr }` both hand back a view of
@@ -2264,17 +2428,43 @@ impl Frame<'_> {
     /// Getting this wrong in the safe direction reads every local passed to
     /// anything as a leak, which is what `heap_slice($T, room)` looked like when
     /// the place was taken unconditionally.
+    /// What this call binds each of its compile-time type parameters to, so a
+    /// `$T` parameter is weighed as the type the call gives it.
+    fn type_arguments(
+        &self,
+        callee: &str,
+        arguments: &[Expression],
+    ) -> HashMap<String, Type> {
+        let mut bound = HashMap::new();
+        let Some(params) = self.params.get(callee) else {
+            return bound;
+        };
+        for (index, (_, declared)) in params.iter().enumerate() {
+            let Some(Type::TypeParam(name)) = declared else {
+                continue;
+            };
+            if let Some(Expression::TypeValue(ty)) = arguments.get(index) {
+                bound.insert(name.clone(), ty.clone());
+            }
+        }
+        bound
+    }
+
     fn argument_provenance(
         &self,
         callee: &str,
         index: usize,
         argument: &Expression,
+        arguments: &[Expression],
     ) -> Provenance {
+        let bound = self.type_arguments(callee, arguments);
         let held = self
             .params
             .get(callee)
             .and_then(|params| params.get(index))
-            .cloned();
+            .map(|(mode, declared)| {
+                (*mode, declared.as_ref().map(|ty| substituted(ty, &bound)))
+            });
         let answer = self.returns.get(callee).cloned();
         match (held, answer) {
             (Some((mode, declared)), Some(answer)) => {
@@ -2319,8 +2509,14 @@ impl Frame<'_> {
         // across. A parameter that holds no view carries nothing at all: an
         // `i64` count says nothing about how long anything lives, and joining it
         // in is what made `slice_span($T, held, total, 0)` read as a leak.
+        //
+        // Weighed against the declared type, because the copy the callee gets
+        // is a view *of the argument* where the argument was an array: passing
+        // a local to `slice_range($T, held, from, count)` hands over the local's
+        // own storage, and reading the array as the run of numbers it holds let
+        // a slice of it come back out as the call's answer.
         if holds_view(declared, self.fields, &mut HashSet::new()) {
-            return self.value_provenance(argument);
+            return self.expected_provenance(argument, Some(declared));
         }
         Provenance::Outlives
     }
@@ -2531,11 +2727,9 @@ impl Frame<'_> {
                                 {
                                     return held;
                                 }
-                                held.max(
-                                    self.argument_provenance(
-                                        name, index, argument,
-                                    ),
-                                )
+                                held.max(self.argument_provenance(
+                                    name, index, argument, arguments,
+                                ))
                             },
                         )
                     }
