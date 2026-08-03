@@ -1937,17 +1937,59 @@ impl Frame<'_> {
     /// only where that value holds one of those by value. Anything a parameter
     /// reaches through a pointer, a slice or a `str` is not the parameter's own
     /// storage, so the walk stops at every indirection.
+    ///
+    /// An aggregate answer is asked the same question about every view it holds
+    /// rather than being given up on. Giving up said yes to
+    /// `answer.field = build(local)` for every callee answering with a struct,
+    /// however that struct was built, because a local's own storage is this
+    /// frame: a `Lit` holding a `Cluster` by value took the `Cluster` it was
+    /// handed as a pointer into the caller. What the answer holds is what
+    /// decides it, and a struct holding a `^Inner` where the parameter is an
+    /// `Inner` is still caught by exactly this test.
     fn view_lands_in(&self, answer: &Type, parameter: &Type) -> bool {
-        let element = match answer {
+        self.view_reaches(answer, parameter, &mut HashSet::new())
+    }
+
+    /// The same question, asked through whatever the answer is made of.
+    fn view_reaches(
+        &self,
+        answer: &Type,
+        parameter: &Type,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        match answer {
             Type::Ptr(inner)
             | Type::Slice(inner)
             | Type::Ref(inner)
-            | Type::RefMut(inner) => inner.as_ref(),
-            // A `str` views bytes, and an aggregate holding views could hold any
-            // of them. Neither says enough to rule the parameter out.
-            _ => return true,
-        };
-        self.holds_inline(element, parameter, &mut HashSet::new())
+            | Type::RefMut(inner) => {
+                self.holds_inline(inner, parameter, &mut HashSet::new())
+            }
+            // A `str` views bytes and says nothing about where they are, and a
+            // type the walk cannot read could be anything.
+            Type::Str | Type::Unknown | Type::TypeParam(_) => true,
+            Type::Array(inner, _) | Type::ArrayGeneric(inner, _) => {
+                self.view_reaches(inner, parameter, seen)
+            }
+            Type::Distinct(_, inner) => {
+                self.view_reaches(inner, parameter, seen)
+            }
+            Type::Struct(name) | Type::Enum(name) => {
+                if !seen.insert(name.clone()) {
+                    return false;
+                }
+                let Some(declared) = self.fields.get(Type::template_of(name))
+                else {
+                    // A struct whose fields this walk never saw could hold
+                    // anything, so it holds the parameter in.
+                    return true;
+                };
+                declared
+                    .iter()
+                    .any(|(_, field)| self.view_reaches(field, parameter, seen))
+            }
+            // A number, a boolean or a function pointer names no storage.
+            _ => false,
+        }
     }
 
     fn holds_inline(

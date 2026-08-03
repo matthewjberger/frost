@@ -25,7 +25,6 @@
 // names. That is why `lights_of` writes the directionals first.
 
 import "wgpu.frost"
-import "graph.frost"
 import "frame.frost"
 import "math.frost"
 import "mem.frost"
@@ -35,7 +34,7 @@ export Cluster, GpuLight, LIGHT_DIRECTIONAL, LIGHT_POINT, LIGHT_SPOT,
     CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, TOTAL_CLUSTERS,
     MAX_LIGHTS_PER_CLUSTER, CLUSTER_SLICE_NEAR, CLUSTER_FAR_FALLBACK,
     CLUSTER_UNIFORM_BYTES,
-    cluster_new, cluster_none, cluster_free, cluster_declare, cluster_layout,
+    cluster_new, cluster_none, cluster_free, cluster_record, cluster_layout,
     cluster_group, cluster_write, cluster_lights_buffer, cluster_grid_buffer,
     cluster_indices_buffer, cluster_uniform_buffer
 
@@ -266,35 +265,32 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     queue_write_buffer(queue, held.view, 0, ptr_to(held_view.m[0]), 64)
 }
 
-// The two passes, into a graph. They write the grid, and whatever shades reads
-// it, which is the whole of what puts them in order.
-cluster_declare :: fn(mut s: Cluster, mut g: Graph, name: str,
-    grid: ResourceId) -> PassId {
-    boxes := graph_compute_pass($Cluster, g, name, run_bounds, ptr_to(s))
-    graph_writes(g, boxes, grid)
-    filling := graph_compute_pass($Cluster, g, name, run_assign, ptr_to(s))
-    graph_writes(g, filling, grid)
-    graph_runs_after(g, filling, boxes)
-    filling
+// The two steps, recorded onto an encoder. Boxes first, then which lights touch
+// each, because the second reads what the first wrote and a pass is the
+// boundary that makes that true.
+//
+// Recorded rather than declared. What builds the grid is part of what draws a
+// view, so the pass that draws owns it and the graph never sees these; a
+// program with two views gets two grids by holding two passes, not by wiring
+// the steps twice.
+cluster_record :: fn(mut s: Cluster, encoder: CommandEncoder) {
+    step(s, encoder, s.bounds_pipeline)
+    step(s, encoder, s.assign_pipeline)
 }
 
 // One thread per box, in groups of eight by eight, which is what the shader
 // declares. The grid is sixteen by nine by twenty-four, so the y dimension
 // rounds up to two groups and the threads past the end return.
-run_bounds :: fn(mut s: Cluster, pass: ComputePassEncoder) {
-    dispatch(s, pass, s.bounds_pipeline)
-}
-
-run_assign :: fn(mut s: Cluster, pass: ComputePassEncoder) {
-    dispatch(s, pass, s.assign_pipeline)
-}
-
-dispatch :: fn(mut s: Cluster, pass: ComputePassEncoder,
+step :: fn(mut s: Cluster, encoder: CommandEncoder,
     pipeline: ComputePipeline) {
+    mut descriptor := compute_pass_descriptor_init()
+    pass := command_encoder_begin_compute_pass(encoder, ptr_to(descriptor))
     compute_pass_encoder_set_pipeline(pass, pipeline)
     compute_pass_encoder_set_bind_group(pass, 0, s.group, 0, no_pointer())
     compute_pass_encoder_dispatch_workgroups(pass, (CLUSTER_GRID_X + 7) / 8,
         (CLUSTER_GRID_Y + 7) / 8, CLUSTER_GRID_Z)
+    compute_pass_encoder_end(pass)
+    compute_pass_encoder_release(pass)
 }
 
 SHADER :: "

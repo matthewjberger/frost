@@ -12,7 +12,8 @@ import "wgpu.frost"
 import "frame.frost"
 import "texture.frost"
 
-export ResourceId, PassId, Resource, GraphPass, Graph,
+export ResourceId, PassId, Resource, GraphPass, Graph, NodeContext,
+    graph_node_pass,
     graph_new, graph_free, graph_backbuffer, graph_color, graph_depth,
     graph_pass, graph_writes_color, graph_writes_depth, graph_reads,
     graph_schedule, graph_resize, graph_run, graph_view, graph_sampler,
@@ -23,7 +24,6 @@ export ResourceId, PassId, Resource, GraphPass, Graph,
     graph_save_enabled, graph_restore_enabled,
     graph_run_phase, graph_set_phase, graph_phase_of, ANY_PHASE,
     graph_external_color, graph_set_external,
-    graph_external_buffer, graph_set_external_buffer,
     graph_sub, graph_sub_pass, graph_takes, graph_rebuilds, graph_device,
     graph_set_device,
     WINDOW_SIZED, MAX_READS, MAX_WRITES, no_resource
@@ -157,13 +157,32 @@ PoolSlot :: struct {
 // targets it declared, and a pass that computes is handed a compute pass; the
 // two take different encoders, so which one a pass is decides which of them it
 // is called through.
-PassKind :: enum { Render, Compute, SubGraph }
+//
+// A node is handed the command encoder itself and opens whatever passes it
+// wants. That is what something like a mesh pass is: clustering, batching, a
+// depth prepass and the draws are one thing that happens in an order of its
+// own, and splitting them into separate graph passes would put the wiring in
+// every program that draws a view. Nightshade's mesh node does exactly this,
+// and the graph there sees one node.
+PassKind :: enum { Render, Compute, Node, SubGraph }
+
+// What a node is given: the encoder to record into, the targets it declared,
+// and what the graph decided about loading them. A node opens its own render
+// passes, so the load ops are its to honour rather than the graph's to apply.
+NodeContext :: struct {
+    encoder: CommandEncoder,
+    into: Target,
+    color_load: u32,
+    depth_load: u32,
+    clear: Color,
+}
 
 GraphPass :: struct {
     name: str,
     kind: PassKind,
     draw: fn(^u8, RenderPassEncoder),
     dispatch: fn(^u8, ComputePassEncoder),
+    record: fn(^u8, NodeContext),
     state: ^u8,
     color: ResourceId,
     depth: ResourceId,
@@ -359,32 +378,6 @@ graph_set_external :: fn(mut g: Graph, r: ResourceId, held: Texture2D) {
     kept[index].made = true
 }
 
-// A buffer the graph orders passes around without owning. What a program keeps
-// across frames it makes itself, and a graph resource is how a pass says it
-// reads or writes one: the indirect arguments a culling pass fills in and a
-// draw takes its counts from are the reason this exists, since those live with
-// whatever holds the objects rather than with the graph.
-graph_external_buffer :: fn(mut g: Graph, name: str) -> ResourceId {
-    made := add_resource(g, name, ResourceKind::Buffer, 0, 0, 0)
-    if (resource_is_none(made) == false) {
-        mut held := g.resources
-        held[resource_index(made)].external = true
-    }
-    made
-}
-
-graph_set_external_buffer :: fn(mut g: Graph, r: ResourceId, held: Buffer) {
-    mut kept := g.resources
-    index := resource_index(r)
-    if (kept[index].external == false) {
-        print "graph: this resource is the graph's own, so it takes no buffer from outside:"
-        print kept[index].name
-        return
-    }
-    kept[index].buffer = held
-    kept[index].made = true
-}
-
 mark_transient :: fn(mut g: Graph, r: ResourceId) -> ResourceId {
     if (resource_is_none(r) == false) {
         mut held := g.resources
@@ -443,9 +436,25 @@ graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     draw: fn(mut Ctx, RenderPassEncoder), state: ^Ctx) -> PassId {
     add_pass(g, name, PassKind::Render,
         unsafe { ptr_cast($fn(^u8, RenderPassEncoder), draw) },
-        dispatches_nothing, unsafe { ptr_cast($u8, state) })
+        dispatches_nothing, records_nothing,
+        unsafe { ptr_cast($u8, state) })
 }
 
+
+// A pass that records for itself. It is handed the encoder and its targets and
+// opens whatever passes it needs, in whatever order it needs them, which is what
+// something made of several steps is: one thing to the graph and a sequence
+// inside.
+//
+// It declares the targets it writes exactly as a drawing pass does, so the graph
+// orders it the same way and decides its load ops the same way; what differs is
+// only that the node applies them itself.
+graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
+    record: fn(mut Ctx, NodeContext), state: ^Ctx) -> PassId {
+    add_pass(g, name, PassKind::Node, draws_nothing, dispatches_nothing,
+        unsafe { ptr_cast($fn(^u8, NodeContext), record) },
+        unsafe { ptr_cast($u8, state) })
+}
 
 // A pass that runs a compute shader. It declares what it reads and writes the
 // same way a drawing one does, and the order follows from the same edges: the
@@ -454,12 +463,12 @@ graph_compute_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     dispatch: fn(mut Ctx, ComputePassEncoder), state: ^Ctx) -> PassId {
     add_pass(g, name, PassKind::Compute, draws_nothing,
         unsafe { ptr_cast($fn(^u8, ComputePassEncoder), dispatch) },
-        unsafe { ptr_cast($u8, state) })
+        records_nothing, unsafe { ptr_cast($u8, state) })
 }
 
 add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
     draw: fn(^u8, RenderPassEncoder), dispatch: fn(^u8, ComputePassEncoder),
-    state: ^u8) -> PassId {
+    record: fn(^u8, NodeContext), state: ^u8) -> PassId {
     index := g.pass_count
     // The order and the saved flags are read at a pass's own index, so they
     // grow with the passes.
@@ -472,7 +481,7 @@ add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
     mut held := g.passes
     held[index] = GraphPass {
         name = name, kind = kind, draw = draw, dispatch = dispatch,
-        state = state,
+        record = record, state = state,
         color = no_resource(), depth = no_resource(),
         clear = clear_black(), reads = [no_resource(); MAX_READS],
         read_count = 0,
@@ -503,7 +512,7 @@ graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
 // order.
 graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
     made := add_pass(g, name, PassKind::SubGraph, draws_nothing,
-        dispatches_nothing, no_pointer())
+        dispatches_nothing, records_nothing, no_pointer())
     if (pass_index(made) >= 0) {
         mut held := g.passes
         held[pass_index(made)].sub = sub
@@ -531,6 +540,7 @@ is_sub :: fn(one: GraphPass) -> bool {
         case .SubGraph: true
         case .Render: false
         case .Compute: false
+        case .Node: false
     }
 }
 
@@ -550,6 +560,7 @@ rebuilds_nothing :: fn(state: ^u8, g: Graph) { }
 // kind decides which one is, and a pass is made through one of the two entry
 // points above rather than by filling the struct in.
 draws_nothing :: fn(state: ^u8, pass: RenderPassEncoder) { }
+records_nothing :: fn(state: ^u8, context: NodeContext) { }
 dispatches_nothing :: fn(state: ^u8, pass: ComputePassEncoder) { }
 
 clear_black :: fn() -> Color {
@@ -1328,6 +1339,11 @@ graph_run_phase :: fn(mut g: Graph, mut f: Frame, wanted: i64) {
             step = step + 1
             continue
         }
+        if (is_node(one)) {
+            run_node(g, f, one)
+            step = step + 1
+            continue
+        }
         color_load := load_for(g, one.color)
         depth_load := load_for(g, one.depth)
         mark_written(g, one.color)
@@ -1360,8 +1376,36 @@ is_compute :: fn(one: GraphPass) -> bool {
     match one.kind {
         case .Compute: true
         case .Render: false
+        case .Node: false
         case .SubGraph: false
     }
+}
+
+is_node :: fn(one: GraphPass) -> bool {
+    match one.kind {
+        case .Node: true
+        case .Compute: false
+        case .Render: false
+        case .SubGraph: false
+    }
+}
+
+// A pass that records for itself. It is given the encoder, the targets it
+// declared and what the graph decided about loading them, and it opens whatever
+// passes it wants. The graph marks the targets written here rather than after,
+// since what the node did with them is not something the graph watched.
+run_node :: fn(mut g: Graph, mut f: Frame, one: GraphPass) {
+    color_load := load_for(g, one.color)
+    depth_load := load_for(g, one.depth)
+    mark_written(g, one.color)
+    mark_written(g, one.depth)
+    one.record(one.state, NodeContext {
+        encoder = frame_encoder(f),
+        into = target_for(g, f, one),
+        color_load = color_load,
+        depth_load = depth_load,
+        clear = one.clear,
+    })
 }
 
 // A compute pass over the frame's encoder. It writes buffers, so it has no

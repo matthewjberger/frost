@@ -9,6 +9,7 @@ import "wgpu.frost"
 
 export Frame, Target,
     frame_ok, frame_view, frame_encoder, frame_pass_into,
+    encoder_pass_into, depth_only,
     target_of, no_view,
     DEPTH_FORMAT, no_pointer
 
@@ -80,6 +81,14 @@ no_view :: fn() -> TextureView { no_texture_view() }
 // what each pass declared it writes.
 frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     depth_load: u32) -> RenderPassEncoder {
+    encoder_pass_into(f.encoder, into, load, clear, depth_load)
+}
+
+// The same, from an encoder rather than a frame. A node records several passes
+// into the encoder it was handed and decides for itself what each of them
+// attaches, so it needs this without a `Frame` in reach.
+encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
+    clear: Color, depth_load: u32) -> RenderPassEncoder {
     mut attachment := render_pass_color_attachment_init()
     attachment.view = into.color
     attachment.load_op = load
@@ -104,5 +113,13 @@ frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     if (into.has_depth) {
         descriptor.depth_stencil_attachment = ptr_to(depth)
     }
-    command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
+    command_encoder_begin_render_pass(encoder, ptr_to(descriptor))
+}
+
+// Depth and nothing else, which is what a prepass writes into. The same target
+// with its colour dropped, so a node opens one over the attachments it already
+// has rather than being given a second target.
+depth_only :: fn(into: Target) -> Target {
+    Target { color = no_view(), depth = into.depth, has_color = false,
+        has_depth = into.has_depth }
 }

@@ -24,7 +24,7 @@ import "math.frost"
 
 export Vertex, MeshSpan, Geometry,
     geometry_new, geometry_at, geometry_add, geometry_bind, geometry_free,
-    geometry_vertices, geometry_indices, geometry_reset,
+    geometry_vertices, geometry_indices, geometry_reset, geometry_vertex_buffer,
     geometry_vertex_room, geometry_index_room, geometry_shrink,
     GROWTH_FACTOR, SHRINK_THRESHOLD, MIN_RECLAIM_BYTES,
     VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET, INDEX_BYTES
@@ -188,6 +188,10 @@ geometry_bind :: fn(pass: RenderPassEncoder, store: Geometry) {
 }
 
 geometry_vertices :: fn(store: Geometry) -> i64 { store.vertex_count }
+// The buffer itself, for something reading back what is in it. Nothing that
+// draws needs this: `geometry_bind` is what a pass binds with, and a rebuild
+// replaces the handle, so nothing keeps what this answers with.
+geometry_vertex_buffer :: fn(store: Geometry) -> Buffer { store.vertices }
 geometry_indices :: fn(store: Geometry) -> i64 { store.index_count }
 geometry_vertex_room :: fn(store: Geometry) -> i64 { store.vertex_room }
 geometry_index_room :: fn(store: Geometry) -> i64 { store.index_room }
@@ -271,11 +275,11 @@ replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
 
 // The buffer this one replaced, let go of.
 //
-// Let go of rather than destroyed. The copy above was submitted and has not
-// necessarily run, and destroying a buffer frees what it holds rather than
-// waiting: the copy would read storage that had already gone. Releasing hands
-// the last reference back and the device frees it once the work reading it has
-// retired, which is what nightshade relies on by simply dropping its handle.
+// Let go of rather than destroyed. Handing the last reference back is the whole
+// of what is wanted here, and the device frees the storage once the copy above
+// has retired. Destroying it as well would be an early free of something
+// nothing else names, which is work to say what dropping the handle already
+// says; nightshade drops its handle and nothing more.
 retire :: fn(held: Buffer) {
     buffer_release(held)
 }

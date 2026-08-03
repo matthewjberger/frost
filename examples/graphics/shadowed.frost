@@ -160,6 +160,9 @@ FRAME_BYTES :: 192
 // two are the same walk over the same slots with a different pipeline.
 Scene :: struct {
     pipeline: RenderPipeline,
+    // The steps that decide what this view draws. One set per view: culling is
+    // a question about a view, and each of the three here has its own run.
+    steps: BatchPipelines,
     frame_group: BindGroup,
     // What to draw, filled from the world once a frame. All three passes that
     // draw the scene point at the one run rather than each holding a copy: it
@@ -443,10 +446,19 @@ fn fs_compose(in: Coverage) -> @location(0) vec4<f32> {
 }
 "
 
-// One walk over the slots. Which pipeline it sets and whether it binds the
-// shadow map is the state's, so the two passes are this function twice with
-// different state, and neither of them says what it draws into.
-draw_things :: fn(mut s: Scene, pass: RenderPassEncoder) {
+// One view, whole: the steps that decide what it draws, then the walk over what
+// survived. Which pipeline it sets and whether it binds the shadow map is the
+// state's, so the three passes are this function three times with different
+// state, and none of them says what it draws into.
+//
+// One node rather than a compute chain wired to a render pass. The steps write
+// the arguments the draw reads, and recording both into one encoder is what
+// puts them in that order without the graph being told.
+draw_things :: fn(mut s: Scene, context: NodeContext) {
+    held := render_world_at(s.render)
+    batching_record(s.steps, held, context.encoder)
+    pass := encoder_pass_into(context.encoder, context.into,
+        context.color_load, context.clear, context.depth_load)
     render_pass_encoder_set_pipeline(pass, s.pipeline)
     render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
         no_pointer())
@@ -461,9 +473,11 @@ draw_things :: fn(mut s: Scene, pass: RenderPassEncoder) {
     // came off the GPU. The pass binds the run once and issues one indirect
     // draw per batch, counting nothing.
     render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(render_world_at(s.render)), 0, no_pointer())
+        render_world_group(held), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw_all(pass, render_world_at(s.render))
+    render_world_draw_all(pass, held)
+    render_pass_encoder_end(pass)
+    render_pass_encoder_release(pass)
 }
 
 // What a frame does between the world and the graph. The same world three
@@ -517,9 +531,6 @@ Built :: struct {
     shadow_scene: Scene,
     lit_scene: Scene,
     inset_scene: Scene,
-    culling: Batching,
-    shadow_culling: Batching,
-    inset_culling: Batching,
     pulse: Pulse,
     bright_step: Step,
     blur_step: Step,
@@ -992,13 +1003,14 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     inset := graph_transient_color(g, "inset", INSET_WIDTH, INSET_HEIGHT,
         format)
 
-    shadow_pass := graph_pass($Scene, g, "shadow", draw_things,
+    shadow_pass := graph_node_pass($Scene, g, "shadow", draw_things,
         ptr_to(s.shadow_scene))
     graph_writes_depth(g, shadow_pass, shadow_map)
 
     // Declared second and reading what the first writes, which is the edge the
     // order follows. Declaring them the other way round changes nothing.
-    lit_pass := graph_pass($Scene, g, "scene", draw_things, ptr_to(s.lit_scene))
+    lit_pass := graph_node_pass($Scene, g, "scene", draw_things,
+        ptr_to(s.lit_scene))
     graph_writes_color(g, lit_pass, lit,
         Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
     graph_writes_depth(g, lit_pass, depth)
@@ -1011,23 +1023,10 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     s.lit_scene.glow = glow
     graph_rebuilds($Built, g, lit_pass, rebuild_bindings, ptr_to(s))
 
-    // What is drawn at all, decided once per view. The shadow pass, the scene
-    // pass and the inset each run off their own run, so each has its own
-    // culling pass and reads what that one wrote.
-    arguments := graph_external_buffer(g, "draw arguments")
-    graph_set_external_buffer(g, arguments,
-        render_world_indirect(render_world_at(s.culling.render)))
-    batching_declare(s.culling, g, "batching", arguments)
-    graph_reads(g, lit_pass, arguments)
-
-    // The light's own, from the box it sees the world through. An orthographic
-    // projection has six planes like any other, so the same test answers it.
-    shadow_arguments := graph_external_buffer(g, "shadow arguments")
-    graph_set_external_buffer(g, shadow_arguments,
-        render_world_indirect(render_world_at(s.shadow)))
-    batching_declare(s.shadow_culling, g, "shadow batching",
-        shadow_arguments)
-    graph_reads(g, shadow_pass, shadow_arguments)
+    // What is drawn at all is decided once per view, and each of the three
+    // views does it inside its own node: the light's is culled by the box it
+    // sees the world through, and an orthographic projection has six planes
+    // like any other, so the same test answers all three.
 
     // Declared after the pass that reads it, and it runs first: the buffer
     // between them is the whole of what says so.
@@ -1070,18 +1069,11 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     inset_target := graph_external_color(inset_graph, "target")
     inset_depth := graph_depth(inset_graph, "depth", INSET_WIDTH, INSET_HEIGHT,
         DEPTH_FORMAT)
-    inset_arguments := graph_external_buffer(inset_graph, "inset arguments")
-    graph_set_external_buffer(inset_graph, inset_arguments,
-        render_world_indirect(render_world_at(s.inset)))
-    batching_declare(s.inset_culling, inset_graph, "inset batching",
-        inset_arguments)
-
-    inset_scene_pass := graph_pass($Scene, inset_graph, "inset scene",
+    inset_scene_pass := graph_node_pass($Scene, inset_graph, "inset scene",
         draw_things, ptr_to(s.inset_scene))
     graph_writes_color(inset_graph, inset_scene_pass, inset_target,
         Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 })
     graph_writes_depth(inset_graph, inset_scene_pass, inset_depth)
-    graph_reads(inset_graph, inset_scene_pass, inset_arguments)
     if (graph_schedule(inset_graph) == false) {
         print_str_line("the inset graph cannot run")
     }
@@ -1315,26 +1307,31 @@ run :: fn(move app: App) -> i64 {
         shadow_scene = Scene {
             pipeline = make_shadow_pipeline(device, shader,
                 shadow_pipeline_layout),
+            steps = render_world_batch_pipelines(device,
+                render_world_batch_layout(shadow_render)),
             frame_group = frame_group, render = ptr_to(shadow_render),
             store = ptr_to(app.store), shadow_group = no_bind_group(),
             glow_group = no_bind_group(), samples_shadow = 0,
             shadow_map = 0, glow = 0,
         },
         lit_scene = Scene {
-            pipeline = scene_pipeline, frame_group = frame_group,
+            pipeline = scene_pipeline,
+            steps = render_world_batch_pipelines(device,
+                render_world_batch_layout(app.render)),
+            frame_group = frame_group,
             render = ptr_to(app.render), store = ptr_to(app.store),
             shadow_group = no_bind_group(), glow_group = no_bind_group(),
             samples_shadow = 1, shadow_map = 0, glow = 0,
         },
         inset_scene = Scene {
-            pipeline = scene_pipeline, frame_group = inset_frame_group,
+            pipeline = scene_pipeline,
+            steps = render_world_batch_pipelines(device,
+                render_world_batch_layout(inset_render)),
+            frame_group = inset_frame_group,
             render = ptr_to(inset_render), store = ptr_to(app.store),
             shadow_group = no_bind_group(), glow_group = no_bind_group(),
             samples_shadow = 1, shadow_map = 0, glow = 0,
         },
-        culling = batching_new(device, ptr_to(app.render)),
-        shadow_culling = batching_new(device, ptr_to(shadow_render)),
-        inset_culling = batching_new(device, ptr_to(inset_render)),
         pulse = Pulse {
             pipeline = make_pulse_pipeline(device,
                 make_post_shader(device,
@@ -1400,9 +1397,9 @@ run :: fn(move app: App) -> i64 {
     app_before_render($Built, app, before_frame, ptr_to(built))
     app_run(app)
 
-    batching_free(built.culling)
-    batching_free(built.shadow_culling)
-    batching_free(built.inset_culling)
+    batch_pipelines_free(built.shadow_scene.steps)
+    batch_pipelines_free(built.lit_scene.steps)
+    batch_pipelines_free(built.inset_scene.steps)
     render_world_free(shadow_render)
     render_world_free(inset_render)
     heap_release_slice($Entity, entities)

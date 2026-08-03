@@ -149,12 +149,6 @@ App :: linear struct {
     // the plugin that makes them. A program writing its own passes leaves both
     // alone and nothing here is bound.
     lit: Lit,
-    // The lights of the frame and the grid that says which of them reach where.
-    cluster: Cluster,
-    // The steps that decide what is drawn, over the run above. One thing rather
-    // than six, because an App holding some of them holds something that cannot
-    // answer.
-    batching: Batching,
     drawing: bool,
     lights: []GpuLight,
     // Whether the graph can run at all, answered when it was scheduled.
@@ -206,9 +200,6 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         log = log_open("", log_config()),
         logging = false,
         lit = lit_none(),
-        cluster = cluster_none(),
-        batching = Batching { render = no_run(),
-            pipelines = no_batch_pipelines() },
         drawing = false,
         lights = heap_slice($GpuLight, MAX_LIGHTS),
         drawable = true,
@@ -505,18 +496,15 @@ app_before_render :: fn($Ctx: Type, mut app: App,
 // chain writes its own passes instead and does not compose this.
 render_plugin :: fn(mut app: App) {
     app.drawing = true
-    app.cluster = cluster_new(app_device(app))
-    app.lit = lit_new(app_device(app), app_format(app), ptr_to(app.render),
-        ptr_to(app.store), app.cluster)
-    app.batching = batching_new(app_device(app), ptr_to(app.render))
+    // The two layouts the pass binds against, and nothing else. What it records
+    // with beyond that is its own: the grid over the lights and the steps that
+    // decide what is drawn are made inside it, so an App holds one pass rather
+    // than a pass and the three things it happens to record.
+    app.lit = lit_new(app_device(app), app_format(app),
+        render_world_layout(app.render),
+        render_world_batch_layout(app.render))
     app_configure_graph($App, app, declare_lit, ptr_to(app))
     app_before_render($App, app, fill_lit, ptr_to(app))
-}
-
-// A pointer at no run, for an App that has not composed the renderer.
-no_run :: fn() -> ^RenderWorld {
-    zero := 0
-    unsafe { ptr_cast($RenderWorld, zero) }
 }
 
 // The world into the run, and the world's lights into the buffer beside it.
@@ -529,7 +517,7 @@ fill_lit :: fn(mut app: App, mut held: App) {
     eye := app_camera(app)
     width := app_width(app)
     height := app_height(app)
-    cluster_write(app.cluster, queue, app.lights, counts.total,
+    lit_write_lights(app.lit, queue, app.lights, counts.total,
         counts.directional, camera_projection(eye, width, height),
         camera_view(eye), width, height, eye.z_near, eye.z_far)
     lit_write_frame(app.lit, queue, app_view(app), camera_view(eye),
@@ -545,24 +533,23 @@ fill_lit :: fn(mut app: App, mut held: App) {
 declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    arguments := graph_external_buffer(g, "draw arguments")
-    graph_set_external_buffer(g, arguments,
-        render_world_indirect(app.render))
+    lit_declare($App, g, record_view, ptr_to(app), screen, depth,
+        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 })
+}
 
-    batching_declare(app.batching, g, "batching", arguments)
-
-    // The light grid, built before anything shades against it.
-    grid := graph_external_buffer(g, "light grid")
-    graph_set_external_buffer(g, grid, cluster_grid_buffer(app.cluster))
-    cluster_declare(app.cluster, g, "clustering", grid)
-
-    // Depth first, then shading against it. The graph puts them in that order
-    // because the second reads the target the first writes, so nothing here
-    // says which runs when.
-    lit_declare_prepass(app.lit, g, depth, arguments)
-    made := lit_declare(app.lit, g, screen, depth,
-        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }, arguments)
-    graph_reads(g, made, grid)
+// Everything a frame does to draw the world, in the order it has to happen:
+//
+//   the light grid, so shading knows which lights reach where
+//   the batch tables, so the draws exist at all
+//   depth, for what certainly covers what is behind it
+//   the classes, shaded against the depth already written
+//
+// One node to the graph. Declaring these as separate passes would put this
+// order in every program that draws a view, and a program with two views would
+// write it twice; nightshade's mesh node records the same sequence for the same
+// reason.
+record_view :: fn(mut app: App, context: NodeContext) {
+    lit_record(app.lit, app.render, app.store, context)
 }
 
 // A system, onto a stage. The one registration door: `Stage::Startup` runs once
@@ -688,8 +675,6 @@ app_close :: fn(move app: App) -> i64 {
     vec_free($StateHook, app.on_enter)
     vec_free($StateHook, app.on_exit)
     lit_free(app.lit)
-    cluster_free(app.cluster)
-    batching_free(app.batching)
     heap_release_slice($GpuLight, app.lights)
     log_close(app.log)
     render_world_free(app.render)

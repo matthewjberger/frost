@@ -1,0 +1,195 @@
+// Bringing a device up, with or without a window to draw at.
+//
+//   mut g := gpu_open()
+//   if (gpu_ok(g)) { ... gpu_device(g), gpu_queue(g) ... }
+//   gpu_close(g)
+//
+// An adapter and a device are asked for the same way whether or not anything is
+// going to be presented, and the answers arrive on a callback that runs on the
+// instance's own event pump. That is what this owns, so `renderer_open` is the
+// window half and nothing else, and so something that only wants buffers, a
+// test over what a compute pass wrote or over how a buffer grows, can have a
+// device without opening a window for it.
+//
+// A device asked for without a surface is not a lesser one: the features and
+// limits below are the same, since what a test is checking is what a program
+// will run against.
+
+import "wgpu.frost"
+import "frame.frost"
+import "mem.frost"
+
+export Gpu, gpu_open, gpu_close, gpu_ok, gpu_device, gpu_queue, gpu_instance,
+    gpu_request, gpu_wait, gpu_read_buffer
+
+// What comes up together and goes away together. Held by the renderer beside
+// its surface, or on its own by something that has no window.
+Gpu :: struct {
+    instance: Instance,
+    adapter: Adapter,
+    device: Device,
+    queue: Queue,
+    ok: bool,
+}
+
+gpu_ok :: fn(held: Gpu) -> bool { held.ok }
+gpu_device :: fn(held: Gpu) -> Device { held.device }
+gpu_queue :: fn(held: Gpu) -> Queue { held.queue }
+gpu_instance :: fn(held: Gpu) -> Instance { held.instance }
+
+// Waits for a callback that answers on the instance's own event pump. wgpu
+// answers a request when it is ready and not before, and there is no thread to
+// wait on, so the pump is the wait.
+gpu_wait :: fn(instance: Instance, mut ready: i64, limit: i64) -> bool {
+    mut spins : i64 = 0
+    while (ready == 0 && spins < limit) {
+        instance_process_events(instance)
+        spins = spins + 1
+    }
+    ready != 0
+}
+
+AdapterSlot :: struct { handle: Adapter, ready: i64 }
+DeviceSlot :: struct { handle: Device, ready: i64 }
+
+take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
+    mut slot: AdapterSlot, userdata2: ^u8) {
+    slot.handle = handle
+    slot.ready = 1
+}
+
+take_device :: fn(status: u32, handle: Device, value message: StringView,
+    mut slot: DeviceSlot, userdata2: ^u8) {
+    slot.handle = handle
+    slot.ready = 1
+}
+
+// An adapter and a device off an instance that is already up, told which
+// surface they have to be able to draw at. A caller with no window passes
+// `no_surface()` and the choice is made on the device's own merits.
+//
+// The adapter is chosen knowing the surface it will draw to, where there is
+// one. Choosing it first can hand back one the surface cannot use, and the
+// surface only says so later, when it is asked what formats it takes.
+gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
+    mut held := Gpu { instance = instance, adapter = no_adapter(),
+        device = no_device(), queue = no_queue(), ok = false }
+
+    mut adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
+    mut adapter_info := request_adapter_callback_info_of($AdapterSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_adapter, ptr_to(adapter_slot))
+    mut options := request_adapter_options_init()
+    options.feature_level = FEATURE_LEVEL_CORE
+    options.compatible_surface = surface
+    instance_request_adapter(instance, ptr_to(options), ptr_to(adapter_info))
+    if (gpu_wait(instance, adapter_slot.ready, 2000000) == false) {
+        return held
+    }
+    held.adapter = adapter_slot.handle
+
+    mut device_slot := DeviceSlot { handle = no_device(), ready = 0 }
+    mut device_info := request_device_callback_info_of($DeviceSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_device, ptr_to(device_slot))
+    // What a draw whose arguments come off the GPU needs. An indirect draw may
+    // only name a non-zero first instance where the device says it can, and
+    // that number is how a batch finds its own slice of the list a compute pass
+    // wrote. Asked for rather than assumed: a device without it fails here,
+    // where the reason is one line, rather than inside a draw call.
+    mut wanted : [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
+    // The passes that decide what is drawn read and write ten tables between
+    // them, and the guaranteed floor is eight. Everything else is left at
+    // whatever the device offers: a limit asked for is a limit the device has
+    // to honour, and asking for more than is needed turns a machine that could
+    // have run this into one that refuses at startup.
+    mut limits := limits_init()
+    limits.max_storage_buffers_per_shader_stage = 10
+    mut descriptor := device_descriptor_init()
+    descriptor.required_features_count = 1
+    descriptor.required_features = ptr_to(wanted[0])
+    descriptor.required_limits = ptr_to(limits)
+    adapter_request_device(held.adapter, ptr_to(descriptor),
+        ptr_to(device_info))
+    if (gpu_wait(instance, device_slot.ready, 2000000) == false) {
+        return held
+    }
+    held.device = device_slot.handle
+    held.queue = device_get_queue(held.device)
+    held.ok = true
+    held
+}
+
+// A device with no window behind it, instance and all. What a test asks for,
+// and what anything that computes rather than draws would.
+gpu_open :: fn() -> Gpu {
+    instance := create_instance(no_pointer())
+    gpu_request(instance, no_surface())
+}
+
+MapSlot :: struct { status: u32, ready: i64 }
+
+took_map :: fn(status: u32, value message: StringView, mut slot: MapSlot,
+    userdata2: ^u8) {
+    slot.status = status
+    slot.ready = 1
+}
+
+// What is in a buffer, on this side of the device.
+//
+// A device buffer cannot be read directly, so this is the usual three steps: a
+// staging buffer that may be mapped, a copy into it, and the map. Slow by
+// construction, since the map waits for everything already submitted to run,
+// which is why nothing in a frame does this and a test is what it is for.
+gpu_read_buffer :: fn(held: Gpu, from: Buffer, offset: i64, bytes: i64,
+    into: ^u8) -> bool {
+    if (bytes <= 0) {
+        return false
+    }
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::MapRead | BufferUsage::CopyDst
+    descriptor.size = bytes
+    staging := device_create_buffer(held.device, ptr_to(descriptor))
+
+    encoder := device_create_command_encoder(held.device, no_pointer())
+    command_encoder_copy_buffer_to_buffer(encoder, from, cast($u64, offset),
+        staging, 0, cast($u64, bytes))
+    mut command := command_encoder_finish(encoder, no_pointer())
+    queue_submit(held.queue, 1, ptr_to(command))
+    command_buffer_release(command)
+    command_encoder_release(encoder)
+
+    mut slot := MapSlot { status = 0, ready = 0 }
+    mut info := buffer_map_callback_info_of($MapSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, took_map, ptr_to(slot))
+    buffer_map_async(staging, MapMode::Read, 0, cast($u64, bytes),
+        unsafe { ptr_cast($u8, ptr_to(info)) })
+    mut answered := gpu_wait(held.instance, slot.ready, 2000000)
+    if (answered && slot.status == MAP_ASYNC_STATUS_SUCCESS) {
+        mapped := buffer_get_mapped_range(staging, 0, cast($u64, bytes))
+        heap_copy(into, mapped, bytes)
+        buffer_unmap(staging)
+    } else {
+        answered = false
+    }
+    buffer_destroy(staging)
+    buffer_release(staging)
+    answered
+}
+
+// Everything given back, in the order it was taken. Safe on a `Gpu` that never
+// came up: an instance is made before anything can fail, and the rest are the
+// null handles `gpu_request` starts with.
+gpu_close :: fn(mut held: Gpu) {
+    if (held.queue != no_queue()) {
+        queue_release(held.queue)
+    }
+    if (held.device != no_device()) {
+        device_release(held.device)
+    }
+    if (held.adapter != no_adapter()) {
+        adapter_release(held.adapter)
+    }
+    if (held.instance != no_instance()) {
+        instance_release(held.instance)
+    }
+    held.ok = false
+}

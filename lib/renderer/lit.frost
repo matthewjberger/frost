@@ -50,8 +50,9 @@ import "uniform.frost"
 import "mem.frost"
 import "math.frost"
 
-export Lit, lit_none, lit_declare_prepass, LIT_FRAME_BYTES,
-    lit_new, lit_free, lit_declare, lit_write_frame
+export Lit, lit_none, LIT_FRAME_BYTES,
+    lit_new, lit_free, lit_declare, lit_write_frame,
+    lit_record, lit_write_lights
 
 // The two camera matrices, where the camera is, the ambient term, and how many
 // lights are in the run.
@@ -361,6 +362,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // program writing its own passes never makes the buffers at all, and one that
 // does composes over what `lit_none` left.
 Lit :: struct {
+    cluster: Cluster,
+    steps: BatchPipelines,
     // Depth and nothing else, for the solid half of the two opaque classes.
     depth_pipeline: RenderPipeline,
     // One per way of drawing, indexed by the class of the batch being drawn.
@@ -373,29 +376,37 @@ Lit :: struct {
     frame_uniform: Buffer,
     frame_group: BindGroup,
     light_group: BindGroup,
-    // The run this draws and the buffers it draws out of, named rather than
-    // held: they are the App's and are filled every frame.
-    render: ^RenderWorld,
-    store: ^Geometry,
 }
 
-lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
-    store: ^Geometry, grid: Cluster) -> Lit {
+lit_new :: fn(device: Device, format: u32, scene_layout: BindGroupLayout,
+    batch_layout: BindGroupLayout) -> Lit {
     frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment)
     frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
 
     light_layout := lights_layout(device)
 
-    mut layouts : [3]BindGroupLayout = [frame_layout,
-        render_world_layout(render_world_at(held)), light_layout]
+    mut layouts : [3]BindGroupLayout = [frame_layout, scene_layout,
+        light_layout]
     mut descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = 3
     descriptor.bind_group_layouts = ptr_to(layouts[0])
     layout := device_create_pipeline_layout(device, ptr_to(descriptor))
 
     shader := lit_module(device)
+    // Made here rather than handed in. What this pass records is the grid, the
+    // steps and the draws, in that order, and a caller that had to build two of
+    // the three would be holding pieces of a pass it does not otherwise touch.
+    grid := cluster_new(device)
+    steps := render_world_batch_pipelines(device, batch_layout)
+    // The group naming the grid's buffers, built before the grid is handed to
+    // the struct that owns it.
+    lights := lights_group(device, light_layout, grid)
     Lit {
+        // What this pass records with, owned by it: the grid over the lights
+        // and the steps that decide what is drawn are what it is made of.
+        cluster = grid,
+        steps = steps,
         depth_pipeline = make_depth_pipeline(device, shader, layout),
         // The two that the prepass wrote depth for compare for equality, since
         // what they are drawing is exactly what it recorded. The blended one
@@ -410,9 +421,7 @@ lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
         frame_uniform = frame_uniform,
         frame_group = uniform_group(device, frame_layout, frame_uniform,
             LIT_FRAME_BYTES),
-        light_group = lights_group(device, light_layout, grid),
-        render = held,
-        store = store,
+        light_group = lights,
     }
 }
 
@@ -421,6 +430,8 @@ lit_new :: fn(device: Device, format: u32, held: ^RenderWorld,
 // nothing, since a handle of nothing is what every one of these is.
 lit_none :: fn() -> Lit {
     Lit {
+        cluster = cluster_none(),
+        steps = no_batch_pipelines(),
         depth_pipeline = no_render_pipeline(),
         opaque_pipeline = no_render_pipeline(),
         double_sided_pipeline = no_render_pipeline(),
@@ -428,8 +439,6 @@ lit_none :: fn() -> Lit {
         frame_uniform = no_buffer(),
         frame_group = no_bind_group(),
         light_group = no_bind_group(),
-        render = no_render_world(),
-        store = no_geometry(),
     }
 }
 
@@ -441,45 +450,107 @@ lit_free :: fn(mut held: Lit) {
     buffer_release(held.frame_uniform)
     bind_group_release(held.light_group)
     bind_group_release(held.frame_group)
+    cluster_free(held.cluster)
+    batch_pipelines_free(held.steps)
     render_pipeline_release(held.depth_pipeline)
     render_pipeline_release(held.opaque_pipeline)
     render_pipeline_release(held.double_sided_pipeline)
     render_pipeline_release(held.transparent_pipeline)
 }
 
-// The pass, into a graph. It writes the colour and depth it is given and reads
-// the arguments the compute passes wrote, which is the whole of what puts the
-// two in order.
-lit_declare :: fn(mut s: Lit, mut g: Graph, screen: ResourceId,
-    depth: ResourceId, clear: Color, arguments: ResourceId) -> PassId {
-    made := graph_pass($Lit, g, "lit", draw_lit, ptr_to(s))
+// The pass, into a graph. One node: what it writes is the colour and depth it
+// was given, and what it reads is nothing the graph has to know about, because
+// everything it needs it builds itself.
+//
+// That is the shape nightshade has. Clustering the lights, laying the batches
+// out, writing the depth and drawing the classes are one thing that happens in
+// an order of its own; declaring them as separate graph passes would put that
+// order in every program that draws a view, and a program with two views would
+// assemble it twice.
+lit_declare :: fn($Ctx: Type, mut g: Graph, record: fn(mut Ctx, NodeContext),
+    state: ^Ctx, screen: ResourceId, depth: ResourceId,
+    clear: Color) -> PassId {
+    made := graph_node_pass($Ctx, g, "lit", record, state)
     graph_writes_color(g, made, screen, clear)
     graph_writes_depth(g, made, depth)
-    graph_reads(g, made, arguments)
     made
 }
 
-draw_lit :: fn(mut s: Lit, pass: RenderPassEncoder) {
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(render_world_at(s.render)), 0, no_pointer())
-    render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
-    geometry_bind(pass, geometry_at(s.store))
-    // In class order, which is the order they have to be drawn in: what is
-    // opaque first so what is blended has something behind it to blend with,
-    // and the overlay after the world.
-    draw_class(s, pass, CLASS_OPAQUE, s.opaque_pipeline)
-    draw_class(s, pass, CLASS_DOUBLE_SIDED, s.double_sided_pipeline)
-    draw_class(s, pass, CLASS_TRANSPARENT, s.transparent_pipeline)
-    draw_class(s, pass, CLASS_OVERLAY_OPAQUE, s.opaque_pipeline)
-    draw_class(s, pass, CLASS_OVERLAY_DOUBLE_SIDED, s.double_sided_pipeline)
-    draw_class(s, pass, CLASS_OVERLAY_TRANSPARENT, s.transparent_pipeline)
+// Everything a frame does to draw a view, in the order it has to happen:
+//
+//   the light grid, so shading knows which lights reach where
+//   the batch tables, so the draws exist at all
+//   depth, for what certainly covers what is behind it
+//   the classes, shaded against the depth already written
+//
+// Each is its own pass on the encoder, which is what lets one wait on the last.
+lit_record :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
+    context: NodeContext) {
+    cluster_record(s.cluster, context.encoder)
+    batching_record(s.steps, held, context.encoder)
+    record_depth(s, held, store, context)
+    record_classes(s, held, store, context)
 }
 
-draw_class :: fn(mut s: Lit, pass: RenderPassEncoder, class: i64,
+// Depth and nothing else, for the two opaque classes and only their solid
+// halves. What blends does not cover what is behind it, and what drops its own
+// fragments has no stage here to drop them in.
+record_depth :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
+    context: NodeContext) {
+    pass := encoder_pass_into(context.encoder, depth_only(context.into),
+        LOAD_OP_LOAD, context.clear, context.depth_load)
+    render_pass_encoder_set_pipeline(pass, s.depth_pipeline)
+    bind_scene(s, held, pass)
+    geometry_bind(pass, store)
+    render_world_draw_prepass(pass, held, CLASS_OPAQUE)
+    render_world_draw_prepass(pass, held, CLASS_DOUBLE_SIDED)
+    render_pass_encoder_end(pass)
+    render_pass_encoder_release(pass)
+}
+
+// The classes, in the order they have to be drawn: what is opaque first so what
+// is blended has something behind it, and the overlay after the world.
+//
+// Depth loads rather than clears, since the prepass just wrote it.
+record_classes :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
+    context: NodeContext) {
+    pass := encoder_pass_into(context.encoder, context.into,
+        context.color_load, context.clear, LOAD_OP_LOAD)
+    bind_scene(s, held, pass)
+    geometry_bind(pass, store)
+    draw_class(held, pass, CLASS_OPAQUE, s.opaque_pipeline)
+    draw_class(held, pass, CLASS_DOUBLE_SIDED, s.double_sided_pipeline)
+    draw_class(held, pass, CLASS_TRANSPARENT, s.transparent_pipeline)
+    draw_class(held, pass, CLASS_OVERLAY_OPAQUE, s.opaque_pipeline)
+    draw_class(held, pass, CLASS_OVERLAY_DOUBLE_SIDED, s.double_sided_pipeline)
+    draw_class(held, pass, CLASS_OVERLAY_TRANSPARENT, s.transparent_pipeline)
+    render_pass_encoder_end(pass)
+    render_pass_encoder_release(pass)
+}
+
+// The three groups every pipeline here reads: the frame, the run, and the
+// lights with the grid over them.
+bind_scene :: fn(mut s: Lit, held: RenderWorld, pass: RenderPassEncoder) {
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 1,
+        render_world_group(held), 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
+}
+
+draw_class :: fn(held: RenderWorld, pass: RenderPassEncoder, class: i64,
     pipeline: RenderPipeline) {
     render_pass_encoder_set_pipeline(pass, pipeline)
-    render_world_draw_class(pass, render_world_at(s.render), class)
+    render_world_draw_class(pass, held, class)
+}
+
+// The lights of the frame and the numbers the grid is built from. The pass owns
+// the grid, so a program hands it the world's lights and the camera and says
+// nothing about froxels.
+lit_write_lights :: fn(mut s: Lit, queue: Queue, held: []GpuLight, total: i64,
+    directional: i64, projection: Mat4, view: Mat4, width: i64, height: i64,
+    z_near: f32, z_far: f32) {
+    cluster_write(s.cluster, queue, held, total, directional, projection, view,
+        width, height, z_near, z_far)
 }
 
 // The camera and the ambient term, as the bytes the shader reads them as.
@@ -550,17 +621,6 @@ lights_group :: fn(device: Device, layout: BindGroupLayout,
     descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group(device, ptr_to(descriptor))
-}
-
-// A pointer at no run and no store, for a pass that was never made.
-no_render_world :: fn() -> ^RenderWorld {
-    zero := 0
-    unsafe { ptr_cast($RenderWorld, zero) }
-}
-
-no_geometry :: fn() -> ^Geometry {
-    zero := 0
-    unsafe { ptr_cast($Geometry, zero) }
 }
 
 lit_module :: fn(device: Device) -> ShaderModule {
@@ -684,29 +744,3 @@ make_depth_pipeline :: fn(device: Device, shader: ShaderModule,
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
-// The prepass, into a graph. It writes the depth the pass after it tests
-// against, which is the whole of what puts the two in order: nothing had to be
-// told which runs first.
-//
-// The two opaque classes and only their solid halves. What blends is not in it
-// because it does not cover what is behind it, and what drops its own fragments
-// is not in it because this has no stage to drop them in.
-lit_declare_prepass :: fn(mut s: Lit, mut g: Graph, depth: ResourceId,
-    arguments: ResourceId) -> PassId {
-    made := graph_pass($Lit, g, "depth prepass", draw_depth, ptr_to(s))
-    graph_writes_depth(g, made, depth)
-    graph_reads(g, made, arguments)
-    made
-}
-
-draw_depth :: fn(mut s: Lit, pass: RenderPassEncoder) {
-    render_pass_encoder_set_pipeline(pass, s.depth_pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(render_world_at(s.render)), 0, no_pointer())
-    render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
-    geometry_bind(pass, geometry_at(s.store))
-    render_world_draw_prepass(pass, render_world_at(s.render), CLASS_OPAQUE)
-    render_world_draw_prepass(pass, render_world_at(s.render),
-        CLASS_DOUBLE_SIDED)
-}

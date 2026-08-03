@@ -55,8 +55,12 @@ DRAWN :: 640
 MESHES :: 4
 LOOKS :: 8
 
-VERTEX_ROOM :: 8192
-INDEX_ROOM :: 16384
+// Smaller than the two meshes this loads, on purpose. What a program asks for
+// is where the buffers start, not what it is allowed, so the sphere arriving
+// after the cube does not fit and the store grows to take it. Asking for room
+// nothing needs would leave that path unrun.
+VERTEX_ROOM :: 32
+INDEX_ROOM :: 64
 
 FLOOR_Y :: -3.0
 LAMPS :: 4
