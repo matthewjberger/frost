@@ -26,9 +26,12 @@ variable, or a borrow region, and there is nothing to write in a signature about
 how long one lives.
 
 A raw pointer can escape, which is what it is for, so the two ways one could
-outlive its storage are checked rather than forbidden. A function may not answer
-with a pointer or a slice that names its own frame, and an arena pointer may not
-outlive the `with` block that owns the arena. A `uses` function may hand one back
+outlive its storage are checked rather than forbidden. A function may not hand
+out a pointer or a slice that names its own frame, by answering with it or by
+writing it anywhere the call cannot see, and an arena view may not outlive the
+`with` block that owns the arena. What decides whether a value is a view of the
+storage beside it is the type the position expects, since an array becoming a
+`[]T` is a view being formed and only the other side says so. A `uses` function may hand one back
 to its caller, whose region checks it, but may not store one into a parameter.
 Chapter 8a is that check in full, along with the `uses` and `with` forms it runs
 over.

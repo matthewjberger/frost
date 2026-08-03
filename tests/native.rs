@@ -16816,6 +16816,142 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "include_str takes one string literal",
     ),
+    // A view of a local leaving the call by every road it can take. An array
+    // becoming a `[]T` is a view being *formed*, and nothing about the
+    // expression says so: `data` reads the same in all of these, and only the
+    // type on the other side says an address is being taken. So the check
+    // asked what the array *held*, which for a run of numbers is nothing, and
+    // every one of these compiled and handed back storage that had died while
+    // the same view written as the return expression was refused.
+    //
+    // One entry per position rather than one for the family, because each is a
+    // separate place the question has to be asked and a check that asks it in
+    // eight places out of nine is the check that was here before.
+    (
+        "a_slice_of_a_local_in_a_returned_struct",
+        "Holder :: struct { view: []i64 }\n\
+         escape :: fn() -> Holder {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   Holder { view = data }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   h := escape()\n\
+         \x20   h.view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    (
+        "a_slice_of_a_local_in_a_nested_struct",
+        "Inner :: struct { view: []i64 }\n\
+         Outer :: struct { inner: Inner }\n\
+         escape :: fn() -> Outer {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   Outer { inner = Inner { view = data } }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   o := escape()\n\
+         \x20   o.inner.view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    (
+        "a_slice_of_a_local_written_into_a_parameter",
+        "Holder :: struct { view: []i64 }\n\
+         stash :: fn(mut h: Holder) {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   h.view = data\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   outer : [1]i64 = [0]\n\
+         \x20   mut h : Holder = { view = outer }\n\
+         \x20   stash(h)\n\
+         \x20   h.view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    (
+        "a_slice_of_a_local_handed_to_a_call_that_keeps_it",
+        "Holder :: struct { view: []i64 }\n\
+         keep :: fn(mut h: Holder, view: []i64) {\n\
+         \x20   h.view = view\n}\n\
+         escape :: fn(mut h: Holder) {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   keep(h, data)\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   outer : [1]i64 = [0]\n\
+         \x20   mut h : Holder = { view = outer }\n\
+         \x20   escape(h)\n\
+         \x20   h.view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    // The one that says the rule is about forming a view rather than about
+    // struct fields. `slice_range` answers with a view of its own parameter,
+    // which outlives it; what this call handed that parameter was a local.
+    (
+        "a_slice_built_by_a_call_over_a_local",
+        "import \"mem.frost\"\n\
+         escape :: fn() -> []i64 {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   slice_range($i64, data, 0, 2)\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   view := escape()\n\
+         \x20   view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    (
+        "a_slice_of_a_local_stored_in_a_struct_then_returned",
+        "Holder :: struct { view: []i64 }\n\
+         escape :: fn(seed: []i64) -> Holder {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   mut h : Holder = { view = seed }\n\
+         \x20   h.view = data\n\
+         \x20   h\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   outer : [1]i64 = [0]\n\
+         \x20   h := escape(outer)\n\
+         \x20   h.view[0]\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    (
+        "a_slice_of_a_local_in_a_multi_return",
+        "escape :: fn() -> (view: []i64, count: i64) {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   return { view = data, count = 4 }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   view, count := escape()\n\
+         \x20   held : []i64 = view\n\
+         \x20   held[0] + count\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    // A container takes its element as a `$T`, so what the call binds that to
+    // is what says whether handing it an array forms a view. The self-hosted
+    // compiler cannot read the parameter's type off the declaration at all
+    // here: what the node records is whatever instantiation was made last, so
+    // an imported `vec_push` carries the element type of vec.frost's own tests.
+    (
+        "a_slice_of_a_local_pushed_into_a_container",
+        "import \"vec.frost\"\n\
+         fill :: fn(mut sink: Vec<[]i64>) {\n\
+         \x20   data : [4]i64 = [11, 22, 33, 44]\n\
+         \x20   vec_push($[]i64, sink, data)\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   0\n}\n",
+        "the storage it names dies when the call returns",
+    ),
+    // The same question asked of an arena rather than of a frame. A `[]T`
+    // carved out of one names the arena's storage exactly as a `^T` does, and
+    // reading only the pointer let the slice beside it leave the block.
+    (
+        "a_slice_of_an_arena_leaving_its_with_block",
+        "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }\n\
+         carve_from :: fn(mut a: Arena<256>) -> []u8 {\n\
+         \x20   a.data\n}\n\
+         carve :: fn() -> []u8 uses Arena<256> {\n\
+         \x20   carve_from(arena)\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
+         \x20   other : [1]u8 = [0]\n\
+         \x20   mut escaped : []u8 = other\n\
+         \x20   with arena {\n\
+         \x20       escaped = carve()\n\
+         \x20   }\n\
+         \x20   0\n}\n",
+        "may not outlive the arena",
+    ),
 ];
 
 #[test]

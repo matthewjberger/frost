@@ -39,6 +39,19 @@ one decision plus a small number of local rules.
    rather than impossible, and the check is the same one the paragraph above
    describes.
 
+   What makes that check work is asking against the type the context expects. A
+   view is *formed* rather than copied wherever an array lands somewhere a view
+   is wanted, and nothing about the expression says so: `data` reads the same in
+   `Holder { view = data }`, `sink.view = data`, `keep(h, data)`,
+   `vec_push($[]i64, sink, data)` and `-> []i64 { data }`. Asking what the array
+   *holds* answers "a run of numbers", which names no storage, so for a while
+   every one of those handed a view of a dead frame to the caller while the last
+   of them, where the return type was right there, was refused. The question is
+   the same one in all of them and it is now asked in all of them, walking into a
+   struct literal field by field, through a call to what the call binds a `$T`
+   to, and through the arguments a callee's answer can name. A rule asked in
+   eight positions out of nine is the shape of the thing it was before.
+
    Refusing what it cannot trace is the point rather than an implementation
    detail. The check answered "this does not name my frame" for every expression
    form nobody had taught it, which made each road a view could travel a hole
@@ -48,10 +61,13 @@ one decision plus a small number of local rules.
    view of a dead frame. A check whose soundness rests on having enumerated
    every shape is a list, not a proof.
 
-   The region check asks the same question about an arena. A pointer into one
-   may not outlive the `with` block that owns it, and a `uses` function may hand
-   one back to its caller, where that caller's own region check catches it, but
-   may not store one into a parameter.
+   The region check asks the same question about an arena. A view into one may
+   not outlive the `with` block that owns it, and a `uses` function may hand one
+   back to its caller, where that caller's own region check catches it, but may
+   not store one into a parameter. Every view and not only a raw pointer: a
+   `[]T` carved out of an arena names the arena's storage exactly as a `^T`
+   does, and reading only the pointer let a slice of one leave the block that
+   owned it while the pointer beside it was refused.
 2. No use-after-move. A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
 3. No mutable aliasing. Within a call, a value cannot be passed to two
@@ -449,6 +465,32 @@ so nobody has to find out by reading the passes.
   question the frame check answers for borrows and does not yet answer for
   resources.
 
+- **A view outlives the block a container reallocates or frees under it.**
+  `view := vec_slice($i64, v)` names storage `v` points at rather than storage
+  `v` holds, so the frame check traces it to `v`, and `v` is a parameter or a
+  local that is still alive. Both of those are true and the view is still dead
+  the moment `vec_push` doubles the block or `vec_free` gives it back:
+
+  ```frost
+  view := vec_slice($i64, v)
+  vec_free($i64, v)
+  print view[0]              // reads the freed block, bounds-checked against it
+  ```
+
+  The same holds for `ref e := vec_slice($T, v)[i]` across a push that grows.
+  This is safe code, and the read is checked against a length that describes
+  storage the allocator has taken back. It is the one memory-safety hole in the
+  safe surface that is known and open.
+
+  What closes it is a liveness question rather than a provenance one: not where
+  did this storage come from, but is the thing it came out of still the same
+  storage now. That is the borrow-liveness machinery the second-class rule was
+  chosen to avoid, so it is a decision about the language rather than a fix to
+  the check, and it is written here rather than left for someone to find. The
+  discipline that avoids it in the meantime is the one `std/ecs.frost` follows:
+  take the view again after anything that can move the block, which is why
+  `world_release` and the archetype moves re-take every `ref` after a push
+  rather than holding one across it.
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe

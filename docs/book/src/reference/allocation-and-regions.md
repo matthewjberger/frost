@@ -140,8 +140,9 @@ live, and that is what makes it a region.
 
 ## 8a.5 What the region check refuses
 
-A raw pointer carved out of an arena is region-bound, and the check
-(`src/regions.rs`) is a flow question rather than a lifetime system. Frost has
+A view carved out of an arena is region-bound, a `[]T` and a `str` as much as a
+`^T`, and the check (`src/regions.rs`) is a flow question rather than a lifetime
+system. Frost has
 no global arenas and no closures, so a `^T` can only point into an arena the
 function was handed directly, which makes provenance something a walk over the
 body can follow.
@@ -153,9 +154,10 @@ Two regions exist:
 
 A value is a pointer into the region when it is `ptr_to(...)` or
 `slice_from(...)` over the arena, or over something already bound to it; a
-binding already holding one; a call to a pointer-returning function that either
-draws this arena or is passed it; whichever of those an `if`, a `match` or an
-`unsafe` block ends with; or a read back through a pointer to one.
+binding already holding one; a call to a *view*-returning function that either
+draws this arena or is passed it, whether that view is a `^T`, a `[]T` or a
+`str`; whichever of those an `if`, a `match` or an `unsafe` block ends with; or a
+read back through a pointer to one.
 
 Inside a `with` block, such a value escapes three ways, and each is an error:
 being returned; being assigned to a place rooted outside the region; and being

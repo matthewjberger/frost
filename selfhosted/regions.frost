@@ -3100,8 +3100,13 @@ frame_held_arg :: fn(mut p: Parser, answer: i64, declared: i64,
     // across. A parameter holding no view carries nothing at all: an `i64` count
     // says nothing about how long anything lives, and joining it in is what made
     // `slice_span($T, held, total, 0)` read as a leak.
+    // Weighed against the declared type, because the copy the callee gets is a
+    // view of the argument where the argument was an array: passing a local to
+    // `slice_range($T, held, from, count)` hands over the local's own storage,
+    // and reading the array as the run of numbers it holds let a slice of it
+    // come back out as the call's answer.
     if (type_holds_view(p, declared, FRAME_TYPE_DEPTH)) {
-        return frame_value_prov(p, arg)
+        return frame_expected_prov(p, arg, declared)
     }
     PROV_OUTLIVES
 }
@@ -3167,6 +3172,15 @@ frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
             if (pnode.a == 1) {
                 addressed = true
                 declared = pointee(p, declared)
+            }
+            // What the call binds a bare `$T` to, for the same reason the keep
+            // walk asks: whether handing over an array forms a view of it is a
+            // question about the type this call gives the parameter.
+            if (declared == TY_PARAM) {
+                owner := generic_fn_of(p, callee)
+                if (owner >= 0) {
+                    declared = call_type_args(p, args, owner)
+                }
             }
         }
         held = prov_max(held,
@@ -3303,6 +3317,107 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     PROV_UNKNOWN
 }
 
+// What one element of a run is, so a literal weighs each of its values against
+// what the run is expected to hold.
+frame_element_type :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (ty < 0) {
+        return -1
+    }
+    if (is_array_ty(ty)) {
+        return array_element(p, ty)
+    }
+    -1
+}
+
+// What a value is worth where the context expects a particular type.
+//
+// A view is formed rather than copied wherever an array lands somewhere a view
+// is wanted, and the storage it then names is the array's. Nothing about the
+// expression says so: `data` reads the same in `Holder { view = data }`,
+// `sink.view = data`, `keep(h, data)` and `-> []i64 { data }`, and only the type
+// on the other side says a view is being taken. Asking for the value alone
+// answers with what the array holds, which for a run of numbers is nothing, so
+// every one of those positions handed a view of a dead frame out while the last
+// of them was refused.
+//
+// So the question is asked against the expected type wherever there is one, and
+// an aggregate is walked into rather than given up on, since a struct's field
+// carries its own expectation and that is the road the escape actually took.
+frame_expected_prov :: fn(mut p: Parser, id: i64, expected: i64) -> i64 {
+    if (id == (-1)) {
+        return PROV_OUTLIVES
+    }
+    if (expected >= 0 && type_is_direct_view(p, expected)) {
+        return prov_max(frame_value_prov(p, id), frame_coercion_prov(p, id))
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    // A literal names its own type where the source wrote one, and takes it from
+    // the context where the source left it out, which is what an inferred
+    // literal and the struct behind a multi-return both are.
+    if (kind == NodeKind::StructLit) {
+        mut held := node.val
+        if (held < 0) {
+            held = expected
+        }
+        return frame_literal_prov(p, held, node.a)
+    }
+    if (kind == NodeKind::ArrayLit) {
+        element := frame_element_type(p, expected)
+        mut worst : i64 = PROV_OUTLIVES
+        mut item := node.a
+        while (item != (-1)) {
+            inode := arena_at(p.arena, item)
+            value := inode.a
+            item = inode.next
+            worst = prov_max(worst, frame_expected_prov(p, value, element))
+        }
+        return worst
+    }
+    if (kind == NodeKind::If) {
+        return prov_max(frame_block_expected(p, node.b, expected),
+            frame_block_expected(p, node.val, expected))
+    }
+    if (kind == NodeKind::Match) {
+        mut worst : i64 = PROV_OUTLIVES
+        mut arm := node.b
+        while (arm != (-1)) {
+            case_node := arena_at(p.arena, arm)
+            body := case_node.a
+            arm = case_node.next
+            worst = prov_max(worst, frame_block_expected(p, body, expected))
+        }
+        return worst
+    }
+    frame_value_prov(p, id)
+}
+
+// A block's trailing value, weighed against what the block is expected to answer
+// with.
+frame_block_expected :: fn(mut p: Parser, head: i64, expected: i64) -> i64 {
+    frame_expected_prov(p, block_answer(p, head), expected)
+}
+
+// A struct or enum literal, field by field against the declared types. An item
+// holds its value in `.a` and the field's name beside it.
+frame_literal_prov :: fn(mut p: Parser, ty: i64, head: i64) -> i64 {
+    mut held : i64 = PROV_OUTLIVES
+    mut item := head
+    while (item != (-1)) {
+        inode := arena_at(p.arena, item)
+        value := inode.a
+        off := inode.val
+        len := inode.c
+        item = inode.next
+        mut declared : i64 = -1
+        if (ty >= 0) {
+            declared = field_type_by_range(p, ty, off, len)
+        }
+        held = prov_max(held, frame_expected_prov(p, value, declared))
+    }
+    held
+}
+
 // The storage a view takes the address of when it is built by coercion.
 //
 // `view : []i64 = arr` and `fn() -> []i64 { arr }` both hand back a view of the
@@ -3376,12 +3491,9 @@ frame_unhandled :: fn(mut p: Parser, what: ^i8, pos: i64) {
 // `-> ^T` it is a value that happens to be an address, so a local holding a heap
 // pointer hands back the pointer rather than the local.
 frame_judge :: fn(mut p: Parser, id: i64, how: ^i8, pos: i64) {
-    mut held := frame_value_prov(p, id)
+    mut held := frame_expected_prov(p, id, p.frame_ret)
     if (p.frame_answers_place == 1) {
         held = prov_max(held, frame_place_prov(p, id))
-    }
-    if (p.frame_answers_direct == 1) {
-        held = prov_max(held, frame_coercion_prov(p, id))
     }
     if (held == PROV_FRAME) {
         frame_escape(p, pos, how)
@@ -3417,13 +3529,11 @@ frame_note_let :: fn(mut p: Parser, id: i64) {
     annotation := node.b
     off := node.val
     len := node.c
-    mut held := frame_value_prov(p, value)
     // A binding declared as a view and given a place takes the address of that
     // place, so `view : []i64 = arr` holds a view of the array rather than a
-    // copy of it.
-    if (annotation >= 0 && type_is_direct_view(p, annotation)) {
-        held = prov_max(held, frame_coercion_prov(p, value))
-    }
+    // copy of it, and the same is true one field down in
+    // `h : Holder = { view = arr }`.
+    held := frame_expected_prov(p, value, annotation)
     borrowed := frame_borrowed_place(p, value)
     mut ty := annotation
     if (ty < 0) {
@@ -3450,7 +3560,10 @@ frame_note_assign :: fn(mut p: Parser, id: i64) {
     place := node.a
     value := node.b
     pos := node.pos
-    held := frame_value_prov(p, value)
+    // Against the type of the place written into, since writing an array where
+    // a `[]T` is wanted stores a view of it rather than a copy.
+    expected := frame_place_type(p, place)
+    held := frame_expected_prov(p, value, expected)
     if (frame_place_prov(p, place) == PROV_FRAME) {
         target := root_name(p, place)
         if (target != (-1)) {
@@ -3502,8 +3615,49 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
             slot := kept_slot(callee, index)
             if (callee >= 0 && slot >= 0 && slot < p.kept_masks.count) {
                 shape := arena_at(p.kept_masks, slot)
+                // Against the parameter's declared type, since handing an array
+                // to a `[]T` parameter forms a view of it and handing it to a
+                // `[N]T` one copies it.
+                sym := arena_at(p.fns, callee)
+                param := nth_param_node(p, sym.params, index)
+                held_arg := nth_value_arg(p, args, index)
+                mut declared : i64 = -1
+                if (param != (-1)) {
+                    pnode := arena_at(p.arena, param)
+                    declared = pnode.b
+                    if (pnode.a == 1) {
+                        declared = pointee(p, declared)
+                    }
+                    // A generic's parameter type cannot be read off the
+                    // declaration. What the node records is whatever
+                    // instantiation was made last, so an imported container
+                    // carries the element type of somebody else's call:
+                    // `vec_push` walked here holds the `i64` of vec.frost's own
+                    // tests while this call binds the element to `[]i64`. What
+                    // the call binds the template to is the type argument
+                    // written at the call, and where that is a view and the
+                    // argument is an array, handing it over forms a view of the
+                    // caller's own storage.
+                    //
+                    // Asked of an array argument alone, since that is the only
+                    // thing a binding can turn into a view. A struct handed to a
+                    // `Vec<T>` parameter is copied whatever `T` is, and weighing
+                    // it against the element's type would refuse a local
+                    // container passed to its own operations.
+                    owner := generic_fn_of(p, callee)
+                    if (owner >= 0) {
+                        bound := call_type_args(p, args, owner)
+                        if (bound >= 0 && type_is_direct_view(p, bound)) {
+                            arg_ty := frame_value_type(p, held_arg)
+                            if (arg_ty >= 0 && is_array_ty(arg_ty)
+                                && is_slice_ty(p, arg_ty) == false) {
+                                declared = bound
+                            }
+                        }
+                    }
+                }
                 if (shape.mask != 0
-                    && frame_value_prov(p, nth_value_arg(p, args, index))
+                    && frame_expected_prov(p, held_arg, declared)
                         == PROV_FRAME) {
                     mut escapes : bool = false
                     mut target : i64 = 0
@@ -4224,15 +4378,11 @@ check_frame_escapes :: fn(mut p: Parser) {
             p.frame_ret = answer
             p.frame_answers_view = 0
             p.frame_answers_place = 0
-            p.frame_answers_direct = 0
             if (type_holds_view(p, answer, FRAME_TYPE_DEPTH)) {
                 p.frame_answers_view = 1
             }
             if (is_borrow(answer)) {
                 p.frame_answers_place = 1
-            }
-            if (type_is_direct_view(p, answer)) {
-                p.frame_answers_direct = 1
             }
             frame_seed_params(p, params)
             frame_check_block(p, body, 1)
@@ -4369,7 +4519,11 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     }
     if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, node.val)
-        if (is_pointer(sym.ret_type) == false) {
+        // Every view, not only a raw pointer. A `[]T` or a `str` carved out of
+        // an arena names the arena's storage exactly as a `^T` does, and reading
+        // only the pointer let a slice of one leave its `with` block while the
+        // pointer beside it was refused.
+        if (type_is_direct_view(p, sym.ret_type) == false) {
             return false
         }
         if (sym.cap_count > 0) {

@@ -1325,7 +1325,6 @@ Parser :: struct {
     frame_ret: i64,
     frame_answers_view: i64,
     frame_answers_place: i64,
-    frame_answers_direct: i64,
     // Which scratch slot the next checked operation reads its left operand
     // into, counted per function.
     arith_site: i64,
