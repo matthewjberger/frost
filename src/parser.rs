@@ -3892,6 +3892,14 @@ impl<'a> Parser<'a> {
             && self.peek_nth(0) != &Token::EndOfFile
         {
             let position = self.current_position().unwrap_or_default();
+            // Whether this statement opens with a minus after another one. A
+            // `-` that opens a line negates what follows rather than
+            // subtracting it from the line above, so a long expression broken
+            // before a minus quietly loses its remaining terms while the same
+            // break before a plus keeps them. Read before parsing, since
+            // parsing moves the cursor.
+            let opened_with_minus =
+                !statements.is_empty() && self.peek_nth(0) == &Token::Minus;
             match self.parse_statement() {
                 Ok(Some(statement)) => {
                     statements.push(Spanned::new(statement, position));
@@ -3901,6 +3909,25 @@ impl<'a> Parser<'a> {
                     self.record_error(position, &error);
                     self.synchronize_in_block();
                 }
+            }
+            // A right brace here means that statement was the block's value,
+            // and a block whose value is `-1` is ordinary. Anything else means
+            // the minus opened a statement whose answer nothing reads.
+            if opened_with_minus
+                && self.peek_nth(0) != &Token::RightBrace
+                && self.peek_nth(0) != &Token::EndOfFile
+            {
+                self.record_error(
+                    position,
+                    &anyhow::anyhow!(
+                        "this line opens with '-', so it negates what \
+                         follows rather than continuing the line above, and \
+                         nothing reads what it works out. A statement ends at \
+                         the end of a line: write the whole expression on one \
+                         line, or leave the '-' at the end of the line above \
+                         where it says a subtraction is meant"
+                    ),
+                );
             }
         }
 

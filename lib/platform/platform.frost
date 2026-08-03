@@ -31,7 +31,7 @@ export Platform, platform_open, platform_close, platform_poll, platform_window,
     platform_ok, platform_error, platform_input,
     Input,
     KEY_COUNT, BUTTON_COUNT,
-    KEY_A, KEY_D, KEY_S, KEY_W, KEY_Q, KEY_E,
+    KEY_A, KEY_C, KEY_D, KEY_S, KEY_W, KEY_Q, KEY_E, KEY_R, KEY_X,
     KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
     KEY_SPACE, KEY_ESCAPE, KEY_LSHIFT,
     BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT,
@@ -56,11 +56,14 @@ BUTTON_COUNT :: 8
 // The few scancodes a program is likely to name. The rest are SDL's numbers and
 // a program that wants one writes it.
 KEY_A :: 4
+KEY_C :: 6
 KEY_D :: 7
 KEY_E :: 8
 KEY_Q :: 20
+KEY_R :: 21
 KEY_S :: 22
 KEY_W :: 26
+KEY_X :: 27
 KEY_RIGHT :: 79
 KEY_LEFT :: 80
 KEY_DOWN :: 81

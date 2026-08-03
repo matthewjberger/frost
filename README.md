@@ -9,6 +9,10 @@
 
 A Frost program is plain data and free functions that transform it. There are no classes and nothing is allocated behind your back. It compiles to native code through Cranelift or to portable C, and the compiler is written in Frost.
 
+Frost is under construction. It compiles itself and everything shown below runs,
+but the surface still changes between commits and there is no tagged release, so
+anything written against it today may need editing tomorrow.
+
 ## Borrows are parameter modes
 
 A borrow is what a parameter mode means, so there is no reference type to write and no lifetime to describe.
@@ -149,8 +153,8 @@ An import is looked for beside the importing file, then on `-L` and `FROST_PATH`
 
 ### The graphics demos
 
-Eight programs that open a window and draw through wgpu, in the order they were
-built, each one the smallest step past the last:
+Ten programs, in the order they were built, each one the smallest step past the
+last. All but the first and the last draw through wgpu:
 
 ```bash
 just app window      # a window that opens, resizes, and closes
@@ -161,6 +165,7 @@ just app textured    # the same field with its surfaces read off an image
 just app shadowed    # an ECS schedule, compute, shadows, bloom, and a second view
 just app gltf_model  # a model read out of a file and spawned into the world
 just app lit         # the same world with no shader in the program at all
+just app swarm       # five hundred things in one batch, ranged lights, a world that changes while it runs
 just app input       # what the platform layer saw, for when a key misbehaves
 ```
 
@@ -186,17 +191,22 @@ just app spinning
 pinned at the top of the [justfile](justfile), and what it writes is committed
 so a regenerated binding shows up as a diff.
 
+`swarm` is the one that puts the renderer under load: five hundred and twelve
+things sharing one mesh and one material, so they are one batch; four lamps with
+a range, so the light grid has boxes to reject them from; and three keys that
+spawn, despawn, and take a mesh out of the cache while it runs.
+
 `lit` is the one to read first if the question is what the engine does for a
 program rather than what a pass can be. It composes `render_plugin`, spawns
 meshes and lights, and runs: no shader, no pipeline, no bind group, no pass.
-The other seven each write their own, because each of them is about what a
+The others that draw each write their own, because each of them is about what a
 pass can be.
 
 From `scene` on, what runs and in what order is a render graph
 ([`lib/renderer/graph.frost`](lib/renderer/graph.frost)). A pass
 declares the targets it reads and writes; the graph works out the order from
 those declarations, makes every target the window does not own, and decides each
-load op. `shadowed` is what that buys: five passes written in whatever order reads
+load op. `shadowed` is what that buys: eight passes written in whatever order reads
 well, ordered by the resources between them, with the three targets in the
 middle sharing textures because the graph knows when each is last read.
 

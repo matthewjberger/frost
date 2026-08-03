@@ -301,11 +301,15 @@ main :: fn() -> i64 {
     pipeline := device_create_render_pipeline(device, ptr_to(pipeline_descriptor))
 
     // The camera does not move, so the two matrices in front of the model are
-    // built once. WebGPU's clip space runs z from 0 to 1, not from -1 to 1, so
-    // this is the zero-to-one projection.
+    // built once. Depth here is what it is everywhere else in the tree:
+    // reverse-Z, with the near plane at one and nothing at all behind. One
+    // triangle needs no depth buffer to sort it, so nothing in this file reads
+    // the result; it is the same projection so that a program starting from
+    // this one starts from the convention the rest of it keeps.
     width : f32 = WIDTH
     height : f32 = HEIGHT
-    projection := mat4_perspective_zo(radians(60.0), width / height, 0.1, 100.0)
+    projection := mat4_perspective_infinite_reverse_z(radians(60.0),
+        width / height, 0.1)
     view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
         vec3(0.0, 1.0, 0.0))
     view_projection := mat4_mul(projection, view)

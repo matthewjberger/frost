@@ -1,22 +1,31 @@
-// The shapes a program builds, and the cache it names them through.
+// The shapes a program builds, the data they are made of, and where each of
+// them sits on the device.
 //
-//   mut store := geometry_new(device, 4096, 8192)
 //   mut cache := mesh_cache_new(8)
-//   mesh_cache_insert(cache, "cube", cube_mesh(store, queue))
-//   held := mesh_cache_at(cache, mesh_cache_find(cache, "cube"))
+//   cube := mesh_cache_insert(cache, store, device, queue, "cube", cube_mesh())
+//   ...
+//   mesh_cache_remove(cache, store, device, queue, "cube")
 //
-// A mesh is where it sits in the shared buffers rather than buffers of its own,
-// which is `geometry.frost`. Indexed, because a cube drawn as bare triangles is
-// thirty-six vertices with eight distinct positions among them, and the normal
-// is what makes the duplication real: a corner belongs to three faces pointing
-// three ways, so twenty-four vertices is the honest count and the indices are
-// what stop it being thirty-six.
+// A mesh is where it sits in the shared buffers, which is `geometry.frost`.
+// Indexed, because a cube drawn as bare triangles is thirty-six vertices with
+// eight distinct positions among them, and the normal is what makes the
+// duplication real: a corner belongs to three faces pointing three ways, so
+// twenty-four vertices is the honest count and the indices are what stop it
+// being thirty-six.
 //
-// The cache is by name rather than by handle so a thing that is drawn says what
-// it is rather than which slot it landed in, which is what lets the geometry be
-// built in one place and named in another. Names are compared rather than
-// hashed: a scene has a handful of meshes and the lookup happens once when an
-// entity is made, not once a frame.
+// The cache keeps the vertices and indices as well as the span. That is the
+// difference between a program that can load a level and one that can load two:
+// the buffers are one run of memory that meshes are appended to, so taking one
+// out leaves a hole, and the only way to close the holes is to put everything
+// that is left back in from the start. Something has to still have the meshes
+// for that, and this is what has them.
+//
+// A slot is a name, a generation and whether anything is in it. Removing one
+// frees its data, empties its span and puts the slot on a list to be used again;
+// the generation goes up so a number kept from before does not name whatever
+// landed there next. What is drawn carries the slot number, and an empty slot
+// has no indices, so a thing still pointing at a removed mesh draws nothing
+// rather than drawing whatever replaced it.
 
 import "wgpu.frost"
 import "geometry.frost"
@@ -24,31 +33,239 @@ import "math.frost"
 import "mem.frost"
 import "strings.frost"
 
-export MeshCache,
+export Mesh, MeshCache, MeshSlot,
     mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
-    mesh_cache_free,
+    mesh_cache_free, mesh_cache_count, mesh_cache_remove, mesh_cache_clear,
+    mesh_cache_add,
+    mesh_cache_live, mesh_cache_generation, mesh_slot, mesh_slot_alive,
+    mesh_new, mesh_free,
     cube_mesh, sphere_mesh
 
-MeshCache :: struct { names: []str, meshes: []MeshSpan, count: i64 }
+// What a mesh is made of, on this side of the device. Held rather than uploaded
+// and dropped, because a rebuild has to be able to put it back.
+Mesh :: struct { vertices: []Vertex, indices: []u32 }
+
+// A slot and the generation it was in when it was handed out. What a program
+// keeps to name a mesh: the slot alone would still name a slot after the mesh in
+// it was removed and another put in its place.
+MeshSlot :: struct { index: i64, generation: u32 }
+
+MeshCache :: struct {
+    names: []str,
+    meshes: []Mesh,
+    spans: []MeshSpan,
+    generations: []u32,
+    live: []bool,
+    // Slots that held something and do not now, newest first. A name arriving
+    // takes one of these before it takes a slot past the end.
+    free: []i64,
+    free_count: i64,
+    // How far the slots have ever been used, which is what a walk over them
+    // ends at. A hole inside it is a slot on the list above.
+    count: i64,
+}
 
 mesh_cache_new :: fn(capacity: i64) -> MeshCache {
-    MeshCache { names = heap_slice($str, capacity),
-        meshes = heap_slice($MeshSpan, capacity), count = 0 }
+    MeshCache {
+        names = heap_slice($str, capacity),
+        meshes = heap_slice($Mesh, capacity),
+        spans = heap_slice($MeshSpan, capacity),
+        generations = heap_slice($u32, capacity),
+        live = heap_slice($bool, capacity),
+        free = heap_slice($i64, capacity),
+        free_count = 0,
+        count = 0,
+    }
 }
 
 mesh_cache_free :: fn(mut cache: MeshCache) {
+    mut index : i64 = 0
+    while (index < cache.count) {
+        if (cache.live[index]) {
+            mesh_free(cache.meshes[index])
+        }
+        index = index + 1
+    }
     heap_release_slice($str, cache.names)
-    heap_release_slice($MeshSpan, cache.meshes)
+    heap_release_slice($Mesh, cache.meshes)
+    heap_release_slice($MeshSpan, cache.spans)
+    heap_release_slice($u32, cache.generations)
+    heap_release_slice($bool, cache.live)
+    heap_release_slice($i64, cache.free)
     cache.count = 0
+    cache.free_count = 0
 }
 
-mesh_cache_insert :: fn(mut cache: MeshCache, name: str, held: MeshSpan) {
-    if (cache.count >= slice_len(cache.meshes)) {
-        return
+// Room for a mesh of this shape, for something filling one in.
+mesh_new :: fn(vertex_count: i64, index_count: i64) -> Mesh {
+    Mesh { vertices = heap_slice($Vertex, vertex_count),
+        indices = heap_slice($u32, index_count) }
+}
+
+mesh_free :: fn(mut held: Mesh) {
+    heap_release_slice($Vertex, held.vertices)
+    heap_release_slice($u32, held.indices)
+}
+
+// A mesh under a name, uploaded, answering with the slot it went in.
+//
+// A name that is already there is replaced in place and keeps its slot and its
+// generation, so everything drawn as it is drawn as the new one. What it had is
+// freed and what it sat on in the buffers is left behind, which the rebuild
+// below is what reclaims.
+mesh_cache_insert :: fn(mut cache: MeshCache, mut store: Geometry,
+    device: Device, queue: Queue, name: str, move held: Mesh) -> i64 {
+    span := geometry_add(store, device, queue, held.vertices, held.indices)
+    existing := mesh_cache_find(cache, name)
+    if (existing >= 0) {
+        mut gone := cache.meshes[existing]
+        mesh_free(gone)
+        cache.meshes[existing] = held
+        cache.spans[existing] = span
+        return existing
     }
-    cache.names[cache.count] = name
-    cache.meshes[cache.count] = held
-    cache.count = cache.count + 1
+    at := take_slot(cache)
+    if (at < 0) {
+        print "mesh: more meshes at once than the cache was made room for"
+        mut unused := held
+        mesh_free(unused)
+        return -1
+    }
+    cache.names[at] = name
+    cache.meshes[at] = held
+    cache.spans[at] = span
+    cache.live[at] = true
+    at
+}
+
+// A mesh with no name, answering with the slot it went in. What a file loads is
+// this: a model's primitives are found by the number the load handed back and
+// never by name, and naming them would mean inventing names that collide the
+// moment the same file is loaded twice.
+//
+// It is held and freed exactly like a named one, so a rebuild puts it back.
+mesh_cache_add :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
+    queue: Queue, move held: Mesh) -> i64 {
+    span := geometry_add(store, device, queue, held.vertices, held.indices)
+    at := take_slot(cache)
+    if (at < 0) {
+        print "mesh: more meshes at once than the cache was made room for"
+        mut unused := held
+        mesh_free(unused)
+        return -1
+    }
+    cache.names[at] = ""
+    cache.meshes[at] = held
+    cache.spans[at] = span
+    cache.live[at] = true
+    at
+}
+
+// A slot to put something in: one that was given back if there is one, and the
+// next one past the end otherwise.
+take_slot :: fn(mut cache: MeshCache) -> i64 {
+    if (cache.free_count > 0) {
+        cache.free_count = cache.free_count - 1
+        return cache.free[cache.free_count]
+    }
+    if (cache.count >= slice_len(cache.spans)) {
+        return -1
+    }
+    at := cache.count
+    cache.generations[at] = 0
+    cache.count = at + 1
+    at
+}
+
+// One mesh out again. Its data is freed, its span is emptied so anything still
+// drawn as it draws nothing, its generation goes up, and the slot goes on the
+// list.
+//
+// What it held in the buffers is not given back here. Reclaiming it means
+// putting everything else back from the start, which is what `mesh_cache_clear`
+// does and what this asks for when enough has gone to be worth it.
+mesh_cache_remove :: fn(mut cache: MeshCache, mut store: Geometry,
+    device: Device, queue: Queue, name: str) -> bool {
+    at := mesh_cache_find(cache, name)
+    if (at < 0) {
+        return false
+    }
+    mut gone := cache.meshes[at]
+    mesh_free(gone)
+    cache.live[at] = false
+    cache.spans[at] = MeshSpan { first_index = 0, index_count = 0,
+        base_vertex = 0, radius = 0.0 }
+    cache.generations[at] = cache.generations[at] + 1
+    cache.free[cache.free_count] = at
+    cache.free_count = cache.free_count + 1
+    if (worth_rebuilding(cache, store)) {
+        rebuild(cache, store, device, queue)
+    }
+    true
+}
+
+// Whether what has been left behind is worth the work of reclaiming: the
+// buffers have to be mostly empty and there has to be a real amount to get
+// back. Either test alone rebuilds far too often.
+worth_rebuilding :: fn(cache: MeshCache, store: Geometry) -> bool {
+    mut live_vertices : i64 = 0
+    mut live_indices : i64 = 0
+    mut index : i64 = 0
+    while (index < cache.count) {
+        if (cache.live[index]) {
+            live_vertices = live_vertices + slice_len(cache.meshes[index].vertices)
+            live_indices = live_indices + slice_len(cache.meshes[index].indices)
+        }
+        index = index + 1
+    }
+    if (live_vertices == 0 || live_indices == 0) {
+        return false
+    }
+    used_bytes := live_vertices * VERTEX_STRIDE + live_indices * INDEX_BYTES
+    room_bytes := geometry_vertex_room(store) * VERTEX_STRIDE
+        + geometry_index_room(store) * INDEX_BYTES
+    reclaimable := room_bytes - used_bytes
+    if (reclaimable < MIN_RECLAIM_BYTES) {
+        return false
+    }
+    used : f32 = used_bytes
+    room : f32 = room_bytes
+    used / room < SHRINK_THRESHOLD
+}
+
+// Everything still here, put back from the start. Every live mesh gets a new
+// span wherever it now falls, which is why the cache had to keep the meshes:
+// there is nowhere else the vertices could come from.
+rebuild :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
+    queue: Queue) {
+    geometry_reset(store)
+    mut index : i64 = 0
+    while (index < cache.count) {
+        if (cache.live[index]) {
+            cache.spans[index] = geometry_add(store, device, queue,
+                cache.meshes[index].vertices, cache.meshes[index].indices)
+        }
+        index = index + 1
+    }
+    geometry_shrink(store, device, queue)
+}
+
+// Everything out at once, which is what changing level is. The buffers keep
+// their size, since what follows is a scene that will want them.
+mesh_cache_clear :: fn(mut cache: MeshCache, mut store: Geometry) {
+    mut index : i64 = 0
+    while (index < cache.count) {
+        if (cache.live[index]) {
+            mut gone := cache.meshes[index]
+            mesh_free(gone)
+            cache.live[index] = false
+            cache.generations[index] = cache.generations[index] + 1
+        }
+        index = index + 1
+    }
+    geometry_reset(store)
+    cache.count = 0
+    cache.free_count = 0
 }
 
 // Which slot a name is in, or -1. A caller resolves once and keeps the number,
@@ -56,7 +273,8 @@ mesh_cache_insert :: fn(mut cache: MeshCache, name: str, held: MeshSpan) {
 mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
     mut index : i64 = 0
     while (index < cache.count) {
-        if (str_eq(cache.names[index], name)) {
+        if (cache.live[index] && str_is_empty(cache.names[index]) == false
+            && str_eq(cache.names[index], name)) {
             return index
         }
         index = index + 1
@@ -65,10 +283,32 @@ mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
 }
 
 mesh_cache_at :: fn(cache: MeshCache, index: i64) -> MeshSpan {
-    cache.meshes[index]
+    cache.spans[index]
 }
 
+// How far the slots go, which is how much of the mesh table goes to the device.
+// A slot nothing is in has no indices, and a draw of no indices draws nothing.
+mesh_cache_count :: fn(cache: MeshCache) -> i64 { cache.count }
 
+mesh_cache_live :: fn(cache: MeshCache, index: i64) -> bool {
+    index >= 0 && index < cache.count && cache.live[index]
+}
+
+mesh_cache_generation :: fn(cache: MeshCache, index: i64) -> u32 {
+    cache.generations[index]
+}
+
+// The slot as something that stays right. A program keeping one of these can
+// ask whether what it names is still there; a program keeping the number alone
+// cannot tell a removed mesh from whatever took its place.
+mesh_slot :: fn(cache: MeshCache, index: i64) -> MeshSlot {
+    MeshSlot { index = index, generation = cache.generations[index] }
+}
+
+mesh_slot_alive :: fn(cache: MeshCache, held: MeshSlot) -> bool {
+    mesh_cache_live(cache, held.index)
+        && cache.generations[held.index] == held.generation
+}
 
 // Two triangles over four corners, wound counter-clockwise seen from outside,
 // which is the winding the pipeline calls front. The four corners take the four
@@ -96,9 +336,13 @@ quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
 
 // A unit cube about the origin. Four vertices per face rather than eight in
 // total, because a corner has three normals and a vertex has one.
-cube_mesh :: fn(mut store: Geometry, queue: Queue) -> MeshSpan {
-    mut vertices := heap_slice($Vertex, 24)
-    mut indices := heap_slice($u32, 36)
+//
+// What comes back is the mesh rather than a place in a buffer: what makes it is
+// arithmetic and needs no device, and what puts it somewhere is the cache.
+cube_mesh :: fn() -> Mesh {
+    mut held := mesh_new(24, 36)
+    mut vertices := held.vertices
+    mut indices := held.indices
     half : f32 = 0.5
     low := -half
 
@@ -120,10 +364,6 @@ cube_mesh :: fn(mut store: Geometry, queue: Queue) -> MeshSpan {
     quad(vertices, indices, 5, vec3(0.0, 0.0, -1.0),
         vec3(half, low, low), vec3(low, low, low),
         vec3(low, half, low), vec3(half, half, low))
-
-    held := geometry_add(store, queue, vertices, indices)
-    heap_release_slice($Vertex, vertices)
-    heap_release_slice($u32, indices)
     held
 }
 
@@ -134,12 +374,12 @@ cube_mesh :: fn(mut store: Geometry, queue: Queue) -> MeshSpan {
 // Both ends of a ring are separate vertices at the same place, which looks
 // wasteful and is not: the seam is where the texture coordinate would wrap, and
 // a shared vertex there cannot hold two of them.
-sphere_mesh :: fn(mut store: Geometry, queue: Queue, radius: f32,
-    rings: i64, segments: i64) -> MeshSpan {
+sphere_mesh :: fn(radius: f32, rings: i64, segments: i64) -> Mesh {
     vertex_count := (rings + 1) * (segments + 1)
     index_count := rings * segments * 6
-    mut vertices := heap_slice($Vertex, vertex_count)
-    mut indices := heap_slice($u32, index_count)
+    mut held := mesh_new(vertex_count, index_count)
+    mut vertices := held.vertices
+    mut indices := held.indices
 
     mut ring : i64 = 0
     while (ring <= rings) {
@@ -181,9 +421,25 @@ sphere_mesh :: fn(mut store: Geometry, queue: Queue, radius: f32,
         }
         row = row + 1
     }
-
-    held := geometry_add(store, queue, vertices, indices)
-    heap_release_slice($Vertex, vertices)
-    heap_release_slice($u32, indices)
     held
+}
+
+test "a cube is twenty-four vertices and thirty-six indices" {
+    mut held := cube_mesh()
+    assert(slice_len(held.vertices) == 24)
+    assert(slice_len(held.indices) == 36)
+    mesh_free(held)
+}
+
+test "a sphere's normals are unit and its seam is doubled" {
+    mut held := sphere_mesh(2.0, 4, 6)
+    // Both ends of every ring, so a ring of six segments is seven vertices.
+    assert(slice_len(held.vertices) == 5 * 7)
+    mut index : i64 = 0
+    while (index < slice_len(held.vertices)) {
+        length := vec3_length(held.vertices[index].normal)
+        assert(length > 0.999 && length < 1.001)
+        index = index + 1
+    }
+    mesh_free(held)
 }

@@ -86,13 +86,13 @@ frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     attachment.store_op = STORE_OP_STORE
     attachment.clear_value = clear
 
-    // Nearer is smaller, so the buffer starts at the far plane and every
-    // fragment that passes is closer than what was already there.
+    // Nearer is greater, so the buffer starts at the far plane, which is zero,
+    // and every fragment that passes is closer than what was already there.
     mut depth := render_pass_depth_stencil_attachment_init()
     depth.view = into.depth
     depth.depth_load_op = depth_load
     depth.depth_store_op = STORE_OP_STORE
-    depth.depth_clear_value = 1.0
+    depth.depth_clear_value = 0.0
 
     mut descriptor := render_pass_descriptor_init()
     descriptor.color_attachments_count = 0

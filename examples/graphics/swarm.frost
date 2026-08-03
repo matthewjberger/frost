@@ -1,0 +1,368 @@
+// A field of five hundred and twelve things, lit by lamps that stop.
+//
+//   just app swarm
+//
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+// Space pauses and resumes. X takes half the swarm away and C puts it back. R
+// takes the sphere mesh out of the cache, which makes everything drawn as one
+// vanish; pressing it again puts the mesh back and they return.
+//
+// Every other demo here draws a dozen things with lights that never stop, which
+// leaves three things the renderer does untested from the outside:
+//
+//   how many of one mesh may be drawn at once, which used to be capped at two
+//   hundred and fifty-six and is now whatever the batch counted
+//
+//   whether the light grid rejects anything, which needs a light with a range,
+//   since one without reaches every box in the grid and the geometry is never
+//   asked a real question
+//
+//   whether a thing spawned or despawned while the program runs appears and
+//   disappears, and whether a mesh taken out of the cache stops being drawn
+//
+// So this one is five hundred and twelve cubes of one mesh with one material,
+// which is one batch twice the old ceiling; four lamps with a range of six, so
+// most of the grid holds none of them; and two keys that change the world while
+// it runs.
+//
+// There is no shader in this file. What draws it is `render_plugin`.
+
+import "../../lib/engine/app.frost"
+import "../../lib/engine/camera.frost"
+import "../../lib/engine/light.frost"
+import "../../lib/engine/world.frost"
+import "../../lib/platform/platform.frost"
+import "../../lib/renderer/geometry.frost"
+import "../../lib/renderer/mesh.frost"
+import "../../lib/renderer/material.frost"
+import "../../lib/renderer/render_world.frost"
+import "ecs.frost"
+import "vec.frost"
+import "math.frost"
+
+WIDTH :: 1280
+HEIGHT :: 720
+
+// One batch this size is the whole point: the run used to give every mesh a
+// slice of two hundred and fifty-six and refuse the rest.
+SWARM :: 512
+// The swarm, the floor, the ring of spheres and the lamps.
+DRAWN :: 640
+
+// Small on purpose. The batch build walks every mesh against every material
+// once per lane, so a program that says what it actually holds walks a table of
+// thirty-two rather than one of four thousand.
+MESHES :: 4
+LOOKS :: 8
+
+VERTEX_ROOM :: 8192
+INDEX_ROOM :: 16384
+
+FLOOR_Y :: -3.0
+LAMPS :: 4
+RING :: 8
+// Shorter than the reach `lamp` gives by default, so a box of the grid more
+// than this far from all four lamps holds none of them and a fragment in it
+// walks no local lights at all. That is the question the grid exists to answer
+// and the thing a scene of unlimited lights never asks it.
+LAMP_REACH :: 6.0
+
+// Whether the swarm is moving. A state is a number a program names, and systems
+// are registered against one.
+RUNNING :: 0
+PAUSED :: 1
+
+// A thing that circles: how far out, how fast, where it started, and how high.
+// Plain data on the entity, so what moves it is a system that captures nothing.
+Orbit :: struct { radius: f32, speed: f32, phase: f32, height: f32 }
+
+// What spawning one of the swarm takes, kept where a system can reach it. A
+// system is handed a world and nothing else, so the numbers a spawn needs live
+// in the world too.
+Swarm :: struct {
+    mesh: i64,
+    material: i64,
+    orbit: i64,
+    drawn_mask: Mask,
+    // How many are supposed to be there, which is what the two keys change.
+    wanted: i64,
+    // Whether the sphere mesh should be in the cache, and whether it is. A
+    // system can ask for it to go, but it cannot make it go: taking a mesh out
+    // means talking to the device, and a system is handed a world and nothing
+    // else. So the key writes the wish here and the hook below acts on it.
+    sphere_wanted: bool,
+    sphere_loaded: bool,
+}
+
+main :: fn() -> i64 {
+    mut config := app_config("Frost swarm", WIDTH, HEIGHT)
+    config.vertices = VERTEX_ROOM
+    config.indices = INDEX_ROOM
+    config.drawn = DRAWN
+    config.meshes = MESHES
+    config.materials = LOOKS
+    match app_open(config) {
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
+    }
+}
+
+run :: fn(move app: App) -> i64 {
+    app_install_group(app, default_plugins())
+    app_install(app, render_plugin)
+    app_install(app, camera_controller_plugin)
+    app_install(app, exit_on_escape_plugin)
+    app_install(app, swarm_plugin)
+    // What the R key asks for, acted on where there is a device.
+    app_before_render($App, app, settle_the_mesh, ptr_to(app))
+
+    device := app_device(app)
+    queue := app_queue(app)
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube", cube_mesh())
+    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+        sphere_mesh(0.6, 12, 18))
+    cube := mesh_cache_find(app.meshes, "cube")
+    sphere := mesh_cache_find(app.meshes, "sphere")
+
+    swarm_look := materials_add(app.materials,
+        material_of(vec4(0.72, 0.78, 0.9, 1.0), 0.4, 0.0))
+    floor_look := materials_add(app.materials,
+        material_of(vec4(0.5, 0.5, 0.52, 1.0), 0.9, 0.0))
+    ring_look := materials_add(app.materials,
+        material_of(vec4(0.9, 0.5, 0.35, 1.0), 0.3, 0.0))
+
+    ids := app_ids(app)
+    lights := light_ids(app.world)
+    orbit := component_for($Orbit, app.world)
+    still := mask_with(mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.drawn), ids.global_transform), ids.transform)
+    moving := mask_with(still, orbit)
+    lighting := mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.global_transform), lights.light)
+
+    app_insert_resource($Swarm, app, Swarm { mesh = cube,
+        material = swarm_look, orbit = orbit, drawn_mask = moving,
+        wanted = SWARM, sphere_wanted = true, sphere_loaded = true })
+
+    floor := ecs_spawn_with(app.world, still)
+    place(app, floor, ids, vec3(0.0, FLOOR_Y, 0.0), vec3(26.0, 0.4, 26.0))
+    ecs_set($Drawn, app.world, floor, ids.drawn,
+        Drawn { mesh = cube, material = floor_look, layer = ONE_LAYER })
+
+    // The ring, drawn as the sphere, so removing that mesh is visible as these
+    // going and nothing else going.
+    mut made : i64 = 0
+    while (made < RING) {
+        turn : f32 = made
+        angle := turn * 6.283185307179586 / RING
+        held := ecs_spawn_with(app.world, still)
+        place(app, held, ids,
+            vec3(cosf(angle) * 11.0, FLOOR_Y + 1.2, sinf(angle) * 11.0),
+            vec3(1.2, 1.2, 1.2))
+        ecs_set($Drawn, app.world, held, ids.drawn,
+            Drawn { mesh = sphere, material = ring_look, layer = ONE_LAYER })
+        made = made + 1
+    }
+
+    spawn_swarm(app.world, ids, SWARM)
+
+    // Four lamps that stop. Where they stop is what the grid is for: a box of
+    // the grid more than six units from all four holds none of them, and a
+    // fragment in it walks no local lights at all.
+    mut lamp_index : i64 = 0
+    while (lamp_index < LAMPS) {
+        which : f32 = lamp_index
+        angle := which * 6.283185307179586 / LAMPS
+        held := ecs_spawn_with(app.world, lighting)
+        aim(app, held, ids,
+            vec3(cosf(angle) * 7.0, FLOOR_Y + 2.5, sinf(angle) * 7.0))
+        mut one := lamp(lamp_colour(lamp_index), 30.0)
+        one.range = LAMP_REACH
+        ecs_set($Light, app.world, held, lights.light, one)
+        lamp_index = lamp_index + 1
+    }
+
+    // One sun, so what the lamps do reads against something rather than against
+    // black.
+    sunlight := ecs_spawn_with(app.world, lighting)
+    aim(app, sunlight, ids, vec3(0.0, 12.0, 0.0))
+    mut overhead := sun()
+    overhead.intensity = 0.5
+    ecs_set($Light, app.world, sunlight, lights.light, overhead)
+
+    mut eye := camera_default()
+    eye.position = vec3(0.0, 6.0, 26.0)
+    eye.pitch = -0.25
+    app_camera_set(app, eye)
+
+    app_run(app)
+    app_close(app)
+}
+
+lamp_colour :: fn(index: i64) -> Vec3 {
+    if (index == 0) { return vec3(1.0, 0.4, 0.25) }
+    if (index == 1) { return vec3(0.3, 1.0, 0.45) }
+    if (index == 2) { return vec3(0.35, 0.55, 1.0) }
+    vec3(1.0, 0.9, 0.35)
+}
+
+// The systems this program brings, and the screen it starts on. Turning is only
+// registered for `RUNNING`, so pausing is the schedule skipping it rather than
+// a flag every system has to read.
+swarm_plugin :: fn(mut app: App) {
+    component_for($Orbit, app.world)
+    app_insert_state(app, RUNNING)
+    app_add_system_in_state(app, Stage::FrameUpdate, RUNNING, turn_the_swarm)
+    app_add_system(app, Stage::FrameUpdate, watch_the_keys)
+}
+
+// Every circling thing, moved along its circle. One system over the whole swarm,
+// which is what five hundred and twelve entities cost: one query.
+turn_the_swarm :: fn(mut world: World) {
+    held := ecs_resource($Input, world, resource_of($Input, world))
+    elapsed := input_elapsed_seconds(held)
+    orbit := component_of($Orbit, world)
+    local := component_of($LocalTransform, world)
+    mut q := query_begin(world)
+    query_with(q, orbit)
+    query_with(q, local)
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            one := ecs_get($Orbit, world, entity, orbit)
+            angle := one.phase + elapsed * one.speed
+            ecs_set($LocalTransform, world, entity, local, LocalTransform {
+                translation = vec3(cosf(angle) * one.radius, one.height,
+                    sinf(angle) * one.radius),
+                rotation = quat_from_axis_angle(vec3(0.0, 1.0, 0.0), angle),
+                scale = vec3(0.45, 0.45, 0.45) })
+            row = row + 1
+        }
+    }
+}
+
+// The three keys that change the world while it runs.
+watch_the_keys :: fn(mut world: World) {
+    held := ecs_resource($Input, world, resource_of($Input, world))
+    if (input_key_pressed(held, KEY_SPACE)) {
+        if (world_state(world) == RUNNING) {
+            world_state_request(world, PAUSED)
+        } else {
+            world_state_request(world, RUNNING)
+        }
+    }
+    if (input_key_pressed(held, KEY_X)) {
+        thin_the_swarm(world)
+    }
+    if (input_key_pressed(held, KEY_C)) {
+        grow_the_swarm(world)
+    }
+    if (input_key_pressed(held, KEY_R)) {
+        mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+        kit.sphere_wanted = kit.sphere_wanted == false
+        ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
+    }
+}
+
+// The mesh taken out of the cache or put back, which is where a system cannot
+// reach. Removing it frees what it held and empties its span, so the ring of
+// spheres still names a slot and that slot now draws no indices: they go, and
+// nothing else does.
+//
+// Registered against the App itself, since what it needs is the world and the
+// device and both are in there. A hook carries a state of the caller's
+// choosing; this one has nothing of its own to carry.
+//
+// The slot is reused when the mesh comes back, because a name that is already
+// there keeps its place. So the ring returns without anything it carries being
+// rewritten.
+settle_the_mesh :: fn(mut app: App, mut held: App) {
+    mut kit := ecs_resource($Swarm, app.world, resource_of($Swarm, app.world))
+    if (kit.sphere_wanted == kit.sphere_loaded) {
+        return
+    }
+    device := app_device(app)
+    queue := app_queue(app)
+    if (kit.sphere_wanted) {
+        mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+            sphere_mesh(0.6, 12, 18))
+    } else {
+        mesh_cache_remove(app.meshes, app.store, device, queue, "sphere")
+    }
+    kit.sphere_loaded = kit.sphere_wanted
+    ecs_resource_set($Swarm, app.world, resource_of($Swarm, app.world), kit)
+}
+
+// Half of them despawned. What draws is built from the world every frame, so
+// nothing has to be told: the walk finds fewer things and the batch counts
+// fewer instances.
+//
+// Gathered first and despawned after, because despawning moves the last row of
+// a table into the hole it left. A walk that removed as it went would be
+// reading a table that moves under it.
+thin_the_swarm :: fn(mut world: World) {
+    mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+    if (kit.wanted <= 0) {
+        return
+    }
+    mut circling := ecs_gather(world, no_filters(), $Orbit)
+    going := vec_len($Entity, circling) / 2
+    mut index : i64 = 0
+    while (index < going) {
+        ecs_despawn(world, vec_get($Entity, circling, index))
+        index = index + 1
+    }
+    kit.wanted = kit.wanted - going
+    ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
+    vec_free($Entity, circling)
+}
+
+// Back to the full count, spawned where the walk will find them next frame.
+grow_the_swarm :: fn(mut world: World) {
+    mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+    if (kit.wanted >= SWARM) {
+        return
+    }
+    ids := world_ids(world)
+    spawn_swarm(world, ids, SWARM - kit.wanted)
+    kit.wanted = SWARM
+    ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
+}
+
+// A number of them, on circles of varying size and speed. Every one names the
+// same mesh and the same material, so all of them land in one batch.
+spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
+    kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+    mut made : i64 = 0
+    while (made < count) {
+        which : f32 = made
+        held := ecs_spawn_with(world, kit.drawn_mask)
+        ring := made - (made / 16) * 16
+        band : f32 = ring
+        ecs_set($Orbit, world, held, kit.orbit, Orbit {
+            radius = 3.0 + band * 0.55,
+            speed = 0.35 + band * 0.03,
+            phase = which * 0.19,
+            height = FLOOR_Y + 1.0 + band * 0.35 })
+        ecs_set($LocalTransform, world, held, ids.local_transform,
+            local_at(vec3(0.0, 0.0, 0.0)))
+        ecs_set($Drawn, world, held, ids.drawn, Drawn { mesh = kit.mesh,
+            material = kit.material, layer = ONE_LAYER })
+        made = made + 1
+    }
+}
+
+place :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3, size: Vec3) {
+    ecs_set($LocalTransform, app.world, held, ids.local_transform,
+        LocalTransform { translation = at, rotation = quat_identity(),
+            scale = size })
+}
+
+aim :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3) {
+    ecs_set($LocalTransform, app.world, held, ids.local_transform,
+        LocalTransform { translation = at,
+            rotation = quat_from_axis_angle(vec3(1.0, 0.0, 0.0), -1.4),
+            scale = vec3(1.0, 1.0, 1.0) })
+}

@@ -1,7 +1,7 @@
 // Every mesh in one pair of buffers, and a mesh as a span of them.
 //
 //   mut store := geometry_new(device, MAX_VERTICES, MAX_INDICES)
-//   cube := geometry_add(store, queue, vertices, indices)
+//   cube := geometry_add(store, device, queue, vertices, indices)
 //   geometry_bind(pass, store)
 //   ... draw with span.first_index, span.base_vertex
 //   geometry_free(store)
@@ -19,12 +19,30 @@
 // mesh is copied in as it was made and nothing walks its indices.
 
 import "wgpu.frost"
+import "frame.frost"
 import "math.frost"
 
 export Vertex, MeshSpan, Geometry,
     geometry_new, geometry_at, geometry_add, geometry_bind, geometry_free,
-    geometry_vertices, geometry_indices,
+    geometry_vertices, geometry_indices, geometry_reset,
+    geometry_vertex_room, geometry_index_room, geometry_shrink,
+    GROWTH_FACTOR, SHRINK_THRESHOLD, MIN_RECLAIM_BYTES,
     VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET, INDEX_BYTES
+
+// How much bigger a buffer gets when what is being put in it does not fit:
+// twice what is needed rather than exactly it, so a scene adding meshes one at a
+// time reallocates a handful of times rather than once per mesh.
+GROWTH_FACTOR :: 2.0
+
+// How empty a buffer has to get before it is worth rebuilding, and how much has
+// to come back for the rebuild to pay for itself. Both are needed: a buffer that
+// is one tenth used is not worth touching if it is small, and a buffer with a
+// lot of slack in it is not worth touching if most of it is live.
+//
+// The numbers are nightshade's. A rebuild copies every live mesh, so doing it
+// often would cost more than the memory it gives back.
+SHRINK_THRESHOLD :: 0.1
+MIN_RECLAIM_BYTES :: 16777216
 
 // Where the surface is, which way it faces, and where on an image it reads
 // from. A program that samples nothing pays the eight bytes and ignores the
@@ -51,9 +69,14 @@ MeshSpan :: struct {
     radius: f32,
 }
 
-// The two buffers and how much of each is used. Sized up front: a scene says
-// how much geometry it will hold, and a buffer that grew would move, which
-// every span already handed out would be measured against.
+// The two buffers, how much of each is used, and how much there is. What a
+// program says at the start is where the buffers begin: they grow when what is
+// being put in them does not fit, and shrink when enough of what was in them has
+// gone.
+//
+// Both of those move things, and a span is where a mesh sits in the buffers as
+// they are now. Nothing keeps one across a call that could move it; the mesh
+// cache holds the spans and is what rewrites them.
 Geometry :: struct {
     vertices: Buffer,
     indices: Buffer,
@@ -73,11 +96,16 @@ geometry_at :: fn(held: ^Geometry) -> ref Geometry {
 geometry_new :: fn(device: Device, vertex_room: i64,
     index_room: i64) -> Geometry {
     mut vertex_descriptor := buffer_descriptor_init()
+    // Copied from as well as into: growing one is a copy on the device from the
+    // old buffer to the new, and a buffer that cannot be read from would have to
+    // make the trip through the CPU instead.
     vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     vertex_descriptor.size = vertex_room * VERTEX_STRIDE
 
     mut index_descriptor := buffer_descriptor_init()
     index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     index_descriptor.size = index_room * INDEX_BYTES
 
     Geometry {
@@ -97,20 +125,30 @@ geometry_free :: fn(mut store: Geometry) {
     store.index_count = 0
 }
 
-// One mesh copied in, answering with where it landed. A mesh that does not fit
-// comes back empty rather than writing past the end, and an empty span draws
-// nothing, so a scene that asked for too little room is a scene missing a shape
-// rather than one reading somebody else's vertices.
-geometry_add :: fn(mut store: Geometry, queue: Queue, vertices: []Vertex,
-    indices: []u32) -> MeshSpan {
+// One mesh copied in, answering with where it landed.
+//
+// A mesh that does not fit grows the buffer rather than being refused: a new one
+// twice the size it needs, the used prefix copied across, and the old one given
+// back. What a program declares up front is where it starts, not what it is
+// allowed; a game that loads a second level asks for room the first one did not
+// need and gets it.
+//
+// A span is where a mesh sits in the buffers as they are now, and a rebuild
+// moves things, so nothing holds one across a call that could move it. The mesh
+// cache is what remembers where a mesh is, and it is what rewrites the spans.
+geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
+    vertices: []Vertex, indices: []u32) -> MeshSpan {
     added := slice_len(vertices)
     ordered := slice_len(indices)
-    if (added == 0 || ordered == 0
-        || store.vertex_count + added > store.vertex_room
-        || store.index_count + ordered > store.index_room) {
-        print "geometry: more vertices or indices than the store was made room for"
+    if (added == 0 || ordered == 0) {
         return MeshSpan { first_index = 0, index_count = 0, base_vertex = 0,
             radius = 0.0 }
+    }
+    if (store.vertex_count + added > store.vertex_room) {
+        grow_vertices(store, device, queue, store.vertex_count + added)
+    }
+    if (store.index_count + ordered > store.index_room) {
+        grow_indices(store, device, queue, store.index_count + ordered)
     }
     // Measured here rather than asked of the caller, since the vertices are in
     // hand and nothing else knows the shape.
@@ -151,3 +189,110 @@ geometry_bind :: fn(pass: RenderPassEncoder, store: Geometry) {
 
 geometry_vertices :: fn(store: Geometry) -> i64 { store.vertex_count }
 geometry_indices :: fn(store: Geometry) -> i64 { store.index_count }
+geometry_vertex_room :: fn(store: Geometry) -> i64 { store.vertex_room }
+geometry_index_room :: fn(store: Geometry) -> i64 { store.index_room }
+
+// Emptied without giving the buffers back, which is the first half of a
+// rebuild: the caller puts every mesh it still has back in, each landing where
+// it now falls rather than where it was.
+geometry_reset :: fn(mut store: Geometry) {
+    store.vertex_count = 0
+    store.index_count = 0
+}
+
+// The buffers cut down to what is in them, which is the second half of a
+// rebuild. Called after everything live has been put back, so what it measures
+// is the live total and not the total before the rebuild.
+//
+// Nothing shrinks unless the smaller buffer really is smaller: a rebuild that
+// reclaimed little would otherwise pay for two allocations and a copy to end up
+// where it started.
+geometry_shrink :: fn(mut store: Geometry, device: Device, queue: Queue) {
+    wanted_vertices := grown(store.vertex_count)
+    if (wanted_vertices < store.vertex_room && store.vertex_count > 0) {
+        replace_vertices(store, device, queue, wanted_vertices)
+    }
+    wanted_indices := grown(store.index_count)
+    if (wanted_indices < store.index_room && store.index_count > 0) {
+        replace_indices(store, device, queue, wanted_indices)
+    }
+}
+
+// Room for this many, with the growth factor applied.
+grown :: fn(needed: i64) -> i64 {
+    held : f32 = needed
+    scaled := cast($i64, held * GROWTH_FACTOR)
+    if (scaled < needed) {
+        return needed
+    }
+    scaled
+}
+
+grow_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
+    needed: i64) {
+    replace_vertices(store, device, queue, grown(needed))
+}
+
+grow_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
+    needed: i64) {
+    replace_indices(store, device, queue, grown(needed))
+}
+
+// A buffer of the given size holding what the old one held, and the old one
+// given back. The copy is on the device: what is in the buffer came from the
+// CPU once and there is no reason for it to make the trip again.
+replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
+    room: i64) {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
+    descriptor.size = room * VERTEX_STRIDE
+    made := device_create_buffer(device, ptr_to(descriptor))
+    carry_over(store.vertices, made, device, queue,
+        store.vertex_count * VERTEX_STRIDE)
+    retire(store.vertices)
+    store.vertices = made
+    store.vertex_room = room
+}
+
+replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
+    room: i64) {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
+    descriptor.size = room * INDEX_BYTES
+    made := device_create_buffer(device, ptr_to(descriptor))
+    carry_over(store.indices, made, device, queue,
+        store.index_count * INDEX_BYTES)
+    retire(store.indices)
+    store.indices = made
+    store.index_room = room
+}
+
+// The buffer this one replaced, let go of.
+//
+// Let go of rather than destroyed. The copy above was submitted and has not
+// necessarily run, and destroying a buffer frees what it holds rather than
+// waiting: the copy would read storage that had already gone. Releasing hands
+// the last reference back and the device frees it once the work reading it has
+// retired, which is what nightshade relies on by simply dropping its handle.
+retire :: fn(held: Buffer) {
+    buffer_release(held)
+}
+
+// What the old buffer held, into the new one, as one recorded copy submitted on
+// its own. Nothing else is in flight against these: a mesh is added between
+// frames, so nothing is drawing from either while this runs.
+carry_over :: fn(from: Buffer, into: Buffer, device: Device, queue: Queue,
+    bytes: i64) {
+    if (bytes <= 0) {
+        return
+    }
+    encoder := device_create_command_encoder(device, no_pointer())
+    command_encoder_copy_buffer_to_buffer(encoder, from, 0, into, 0,
+        cast($u64, bytes))
+    mut command := command_encoder_finish(encoder, no_pointer())
+    queue_submit(queue, 1, ptr_to(command))
+    command_buffer_release(command)
+    command_encoder_release(encoder)
+}

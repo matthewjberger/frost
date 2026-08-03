@@ -68,7 +68,7 @@ FRAME_BYTES :: 128
 // and the pass walks the run, so nothing here counts anything.
 Scene :: struct {
     pipeline: RenderPipeline,
-    cull_pipeline: ComputePipeline,
+    batching: Batching,
     frame_group: BindGroup,
     render: ^RenderWorld,
     store: ^Geometry,
@@ -85,13 +85,22 @@ struct Frame {
 }
 
 struct ObjectData {
-    model: mat4x4<f32>,
+    transform_index: u32,
+    mesh_id: u32,
+    material_id: u32,
+    batch_id: u32,
+    pipeline_class: u32,
+    visible: u32,
+    is_overlay: u32,
+    pad_zero: u32,
+}
+
+struct MaterialData {
     base_color: vec4<f32>,
-    surface: vec4<f32>,
-    batch: u32,
-    radius: f32,
-    material: u32,
-    pad_three: u32,
+    roughness: f32,
+    metallic: f32,
+    alpha_cutoff: f32,
+    flags: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -99,6 +108,10 @@ struct ObjectData {
 // object: the draw says how many instances it covers and each one finds itself.
 @group(1) @binding(0) var<storage, read> objects: array<ObjectData>;
 @group(1) @binding(1) var<storage, read> visible: array<u32>;
+// Where each thing ended up and what it is made of, as tables an object names a
+// row of. Two hundred things sharing a look share one row of the second.
+@group(1) @binding(2) var<storage, read> transforms: array<mat4x4<f32>>;
+@group(1) @binding(3) var<storage, read> materials: array<MaterialData>;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -117,10 +130,11 @@ fn vs_main(@location(0) position: vec3<f32>,
     // covers every batch.
     let object_index = visible[instance];
     let object = objects[object_index];
-    let world = object.model * vec4<f32>(position, 1.0);
+    let model = transforms[object.transform_index];
+    let world = model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
-    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.object_index = object_index;
     return out;
 }
@@ -128,22 +142,23 @@ fn vs_main(@location(0) position: vec3<f32>,
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let object = objects[in.object_index];
+    let material = materials[object.material_id];
     let facing = normalize(in.normal);
     let toward_light = normalize(-frame.light_direction.xyz);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
     let halfway = normalize(toward_light + toward_eye);
 
     let lambert = max(dot(facing, toward_light), 0.0);
-    let rough = clamp(object.surface.x, 0.05, 1.0);
+    let rough = clamp(material.roughness, 0.05, 1.0);
     let tightness = 2.0 / (rough * rough) - 2.0;
     let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
         * (1.0 - rough) * lambert * 0.3;
 
     let strength = frame.light_color.w;
-    let lit = object.base_color.rgb
+    let lit = material.base_color.rgb
         * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
         + frame.light_color.rgb * strength * highlight;
-    return vec4<f32>(lit, object.base_color.a);
+    return vec4<f32>(lit, material.base_color.a);
 }
 "
 
@@ -158,18 +173,7 @@ draw_scene :: fn(mut s: Scene, pass: RenderPassEncoder) {
     render_pass_encoder_set_bind_group(pass, 1,
         render_world_group(render_world_at(s.render)), 0, no_pointer())
     geometry_bind(pass, geometry_at(s.store))
-    render_world_draw(pass, render_world_at(s.render))
-}
-
-// The pass that decides what is drawn. One thread per thing, and what it leaves
-// behind is the visible list and the instance counts the draw above runs on.
-cull_scene :: fn(mut s: Scene, pass: ComputePassEncoder) {
-    held := render_world_at(s.render)
-    compute_pass_encoder_set_pipeline(pass, s.cull_pipeline)
-    compute_pass_encoder_set_bind_group(pass, 0, render_world_cull_group(held),
-        0, no_pointer())
-    compute_pass_encoder_dispatch_workgroups(pass,
-        render_world_dispatch(held), 1, 1)
+    render_world_draw_all(pass, render_world_at(s.render))
 }
 
 // The camera and the light, as the bytes the shader reads them as.
@@ -238,7 +242,7 @@ make_pipeline :: fn(device: Device, format: u32,
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
-    depth.depth_compare = COMPARE_FUNCTION_LESS
+    depth.depth_compare = COMPARE_FUNCTION_GREATER
 
     mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
@@ -272,8 +276,7 @@ declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     arguments := graph_external_buffer(g, "draw arguments")
     graph_set_external_buffer(g, arguments,
         render_world_indirect(render_world_at(s.render)))
-    cull_pass := graph_compute_pass($Scene, g, "cull", cull_scene, ptr_to(s))
-    graph_writes(g, cull_pass, arguments)
+    batching_declare(s.batching, g, "batching", arguments)
     scene_pass := graph_pass($Scene, g, "scene", draw_scene, ptr_to(s))
     graph_writes_color(g, scene_pass, screen,
         Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
@@ -318,25 +321,18 @@ run :: fn(move app: App) -> i64 {
 
     // Every shape in one pair of buffers, because a draw whose arguments come
     // off the GPU cannot ask the CPU to bind the next mesh first.
-    mesh_cache_insert(app.meshes, "cube", cube_mesh(app.store, queue))
-    mesh_cache_insert(app.meshes, "sphere",
-        sphere_mesh(app.store, queue, 0.6, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
+        cube_mesh())
+    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
+        sphere_mesh(0.6, 16, 24))
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     mut looks : [4]i64 = [0; 4]
-    looks[0] = materials_add(app.materials, Material {
-        base_color = vec4(0.85, 0.3, 0.28, 1.0), roughness = 0.35,
-        metallic = 0.0 })
-    looks[1] = materials_add(app.materials, Material {
-        base_color = vec4(0.3, 0.75, 0.45, 1.0), roughness = 0.6,
-        metallic = 0.0 })
-    looks[2] = materials_add(app.materials, Material {
-        base_color = vec4(0.35, 0.5, 0.9, 1.0), roughness = 0.2,
-        metallic = 0.0 })
-    looks[3] = materials_add(app.materials, Material {
-        base_color = vec4(0.9, 0.75, 0.3, 1.0), roughness = 0.45,
-        metallic = 0.0 })
+    looks[0] = materials_add(app.materials, material_of(vec4(0.85, 0.3, 0.28, 1.0), 0.35, 0.0))
+    looks[1] = materials_add(app.materials, material_of(vec4(0.3, 0.75, 0.45, 1.0), 0.6, 0.0))
+    looks[2] = materials_add(app.materials, material_of(vec4(0.35, 0.5, 0.9, 1.0), 0.2, 0.0))
+    looks[3] = materials_add(app.materials, material_of(vec4(0.9, 0.75, 0.3, 1.0), 0.45, 0.0))
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment)
@@ -393,8 +389,7 @@ run :: fn(move app: App) -> i64 {
 
     mut scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
-        cull_pipeline = render_world_cull_pipeline(device,
-            render_world_cull_layout(app.render)),
+        batching = batching_new(device, ptr_to(app.render)),
         frame_group = frame_group,
         render = ptr_to(app.render),
         store = ptr_to(app.store),

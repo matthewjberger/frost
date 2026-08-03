@@ -327,19 +327,37 @@ read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
     while (node >= 0) {
         pbr := json_member(document, node, "pbrMetallicRoughness")
         colour := json_member(document, pbr, "baseColorFactor")
-        vec_push($Material, model.materials, Material {
-            base_color = vec4(element_or(document, colour, 0, 1.0),
+        mut held := material_of(
+            vec4(element_or(document, colour, 0, 1.0),
                 element_or(document, colour, 1, 1.0),
                 element_or(document, colour, 2, 1.0),
                 element_or(document, colour, 3, 1.0)),
-            roughness = real_or(document,
+            real_or(document,
                 json_member(document, pbr, "roughnessFactor"), 1.0),
-            metallic = real_or(document,
-                json_member(document, pbr, "metallicFactor"), 1.0),
-        })
+            real_or(document,
+                json_member(document, pbr, "metallicFactor"), 1.0))
+        // How a surface handles its own alpha and whether both its sides are
+        // drawn are the file's to say, and they decide which draw the thing
+        // lands in rather than how it shades. A file that says nothing gets
+        // the opaque, one-sided answer glTF names as the default.
+        held.alpha_cutoff = real_or(document,
+            json_member(document, node, "alphaCutoff"), 0.5)
+        held.alpha_mode = alpha_mode_of(document,
+            json_member(document, node, "alphaMode"))
+        held.double_sided = json_kind(document,
+            json_member(document, node, "doubleSided")) == JsonKind::True
+        vec_push($Material, model.materials, held)
         index = index + 1
         node = json_next(document, node)
     }
+}
+
+// Which of the three the file named, by the three spellings glTF allows.
+// Anything else, including a file that said nothing, is opaque.
+alpha_mode_of :: fn(mut document: Json, node: i64) -> i64 {
+    if (json_text_eq(document, node, "BLEND")) { return ALPHA_BLEND }
+    if (json_text_eq(document, node, "MASK")) { return ALPHA_MASK }
+    ALPHA_OPAQUE
 }
 
 read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
@@ -830,7 +848,7 @@ test "a file that is not one is refused rather than read" {
 // its job and `gltf_free` takes it away: nothing spawned points into it.
 
 gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
-    queue: Queue, mut registry: Materials, mut cache: MeshCache,
+    device: Device, queue: Queue, mut registry: Materials, mut cache: MeshCache,
     ids: WorldIds) -> Entity {
     if (gltf_ok(model) == false) {
         return no_entity()
@@ -849,12 +867,12 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     index = 0
     while (index < gltf_primitive_count(model)) {
         held := gltf_primitive_at(model, index)
-        // Where it lands, read before the insert puts it there. Every
-        // primitive goes under the one name, since what a thing carries is the
-        // number and nothing looks a loaded mesh up by name.
-        meshes[index] = cache.count
-        mesh_cache_insert(cache, "gltf", geometry_add(store, queue,
-            held.vertices, held.indices))
+        // Nameless, since what a thing carries is the number the cache hands
+        // back and nothing looks a loaded mesh up by name. The cache keeps the
+        // vertices either way, so a model loaded and dropped gives its room
+        // back like anything else.
+        meshes[index] = mesh_cache_add(cache, store, device, queue,
+            Mesh { vertices = held.vertices, indices = held.indices })
         index = index + 1
     }
 

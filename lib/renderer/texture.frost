@@ -337,6 +337,12 @@ texture_depth_target :: fn(device: Device, width: i64, height: i64,
 // A sampler that compares rather than reads. A depth texture sampled this way
 // answers how much of the neighbourhood passed the test rather than what the
 // nearest depth was, which is what makes a shadow edge soft in one read.
+//
+// Depth is reverse-Z, so a receiver is lit where its own depth is at least what
+// the map holds. The comparison is the one the pipelines use and not its
+// opposite: a map written one way round and read the other lights exactly the
+// surfaces that should be dark, which reads as a scene with its shadows
+// inverted rather than as a broken one.
 comparison_sampler :: fn(device: Device) -> Sampler {
     mut descriptor := sampler_descriptor_init()
     descriptor.address_mode_u = ADDRESS_MODE_CLAMP_TO_EDGE
@@ -347,7 +353,7 @@ comparison_sampler :: fn(device: Device) -> Sampler {
     descriptor.mipmap_filter = MIPMAP_FILTER_MODE_NEAREST
     descriptor.lod_min_clamp = 0.0
     descriptor.lod_max_clamp = 1.0
-    descriptor.compare = COMPARE_FUNCTION_LESS
+    descriptor.compare = COMPARE_FUNCTION_GREATER_EQUAL
     descriptor.max_anisotropy = 1
     device_create_sampler(device, ptr_to(descriptor))
 }
