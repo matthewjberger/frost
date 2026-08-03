@@ -122,6 +122,29 @@ fn compile_error_gated(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
+// A binding taken from a call answering with several values, then indexed. The
+// multiple-return lowering runs after the unsafe gate, so the gate sees the
+// destructure and bound each name to no type at all; the index rule then met a
+// base it could not name and refused, which is the answer it owes a raw pointer
+// rather than one it owes ordinary code.
+#[test]
+fn a_destructured_multi_return_can_be_indexed() {
+    let source = "\
+split :: fn(mut source: [4]i64) -> (view: []i64, count: i64) {\n\
+\x20   return { view = source, count = 4 }\n\
+}\n\
+main :: fn() -> i64 {\n\
+\x20   mut data : [4]i64 = [11, 22, 33, 44]\n\
+\x20   view, count := split(data)\n\
+\x20   print view[0] + count\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("multiindex", source) else {
+        return;
+    };
+    assert_eq!(output, "15\n");
+}
+
 // A `uses` function indexing the arena it draws from. The capability is threaded
 // in as a parameter by a lowering that runs after the unsafe gate, so the body
 // names something nothing has declared, and the index rule refuses a base whose
