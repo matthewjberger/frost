@@ -10,10 +10,10 @@ const CONTEXTUAL: &[&str] =
 
 const BUILTIN_TYPES: &[&str] = &["Handle", "Type", "columns"];
 
-const DECLARATION_MARKERS: &[&str] = &[
-    "distinct", "enum", "extern", "flags", "inline", "linear", "safe",
-    "struct", "type", "unsafe",
-];
+const FUNCTION_MARKERS: &[&str] = &["extern", "inline", "safe", "unsafe"];
+
+const TYPE_HEAD_WORDS: &[&str] =
+    &["distinct", "enum", "flags", "linear", "struct", "type"];
 
 fn collect_matches(value: &serde_json::Value, into: &mut Vec<String>) {
     match value {
@@ -119,31 +119,34 @@ fn the_declaration_lookaheads_hold_the_markers_the_parser_accepts() {
         "the grammar has no 'declarations' rule"
     );
 
-    let mut found = BTreeSet::new();
-    for pattern in &patterns {
-        found.extend(lookahead_words(pattern));
-    }
-
-    let expected: BTreeSet<String> = DECLARATION_MARKERS
-        .iter()
-        .copied()
-        .map(String::from)
-        .collect();
-    for word in DECLARATION_MARKERS {
+    for (label, needle, pinned) in [
+        ("function head", "fn\\b", FUNCTION_MARKERS),
+        ("type head", "struct", TYPE_HEAD_WORDS),
+    ] {
+        let Some(rule) =
+            patterns.iter().find(|pattern| pattern.contains(needle))
+        else {
+            panic!("no declaration rule mentions '{needle}'");
+        };
+        let found: BTreeSet<String> =
+            lookahead_words(rule).into_iter().collect();
+        let expected: BTreeSet<String> =
+            pinned.iter().copied().map(String::from).collect();
+        for word in pinned {
+            assert!(
+                frost::KEYWORD_NAMES.contains(word)
+                    || CONTEXTUAL.contains(word),
+                "'{word}' is pinned as a {label} word and the compiler does \
+                 not know it"
+            );
+        }
+        let missing = expected.difference(&found).collect::<Vec<_>>();
+        let extra = found.difference(&expected).collect::<Vec<_>>();
         assert!(
-            frost::KEYWORD_NAMES.contains(word) || CONTEXTUAL.contains(word),
-            "'{word}' is pinned as a declaration marker and the compiler \
-             does not know it"
+            missing.is_empty() && extra.is_empty(),
+            "the {label} rule has drifted from the parser\n  \
+             the parser accepts these and the grammar does not: {missing:?}\n  \
+             the grammar claims these and the parser does not: {extra:?}"
         );
     }
-
-    let missing = expected.difference(&found).collect::<Vec<_>>();
-    let extra = found.difference(&expected).collect::<Vec<_>>();
-    assert!(
-        missing.is_empty() && extra.is_empty(),
-        "the declaration lookaheads have drifted from the markers the parser \
-         accepts\n  \
-         the parser accepts these and the grammar does not: {missing:?}\n  \
-         the grammar claims these and the parser does not: {extra:?}"
-    );
 }
