@@ -367,6 +367,165 @@ fn run_self_hosted(
     selfhosted_default_output(compiler, name, source, backend, suffix)
 }
 
+// The other half of what a generator is for. The run above asks what a program
+// prints, so it only ever sees programs that compile; a rule that lets a view
+// of a dead frame through is invisible to it, because the program it wrongly
+// accepted runs fine on the machine and prints whatever was left in memory.
+//
+// This one generates the shapes that must not compile, and the shapes that must,
+// and asks both compilers. What it is really watching for is disagreement: the
+// bugs this session found were all one compiler refusing what the other built,
+// and a divergence is a bug in whichever is behind rather than a difference to
+// document.
+const VIEW_KINDS: usize = 3;
+const ESCAPE_POSITIONS: usize = 6;
+
+/// One program from the grid. `honest` swaps the storage the view names from a
+/// local, which dies at the return, to a `mut` parameter, which is the caller's
+/// and outlives the call. Everything else about the program is the same, so a
+/// compiler that refuses the honest one is refusing the position rather than
+/// the escape.
+fn safety_case(
+    rng: &mut Rng,
+    kind: usize,
+    position: usize,
+    honest: bool,
+) -> String {
+    let (held_type, storage, view) = match kind {
+        0 => ("[]i64", "data : [4]i64 = [11, 22, 33, 44]", "data"),
+        1 => ("^i64", "mut cell : i64 = 5", "ptr_to(cell)"),
+        _ => (
+            "[]i64",
+            "data : [4]i64 = [11, 22, 33, 44]",
+            "slice_range($i64, data, 0, 2)",
+        ),
+    };
+    // The honest form names the parameter instead, so nothing the call answers
+    // with points into the frame that is about to go.
+    let (declare, source) = if honest {
+        (
+            String::new(),
+            match kind {
+                1 => "ptr_to(source)".to_string(),
+                2 => "slice_range($i64, source, 0, 2)".to_string(),
+                _ => "source".to_string(),
+            },
+        )
+    } else {
+        (format!("    {storage}\n"), view.to_string())
+    };
+    let parameter = match kind {
+        1 => "mut source: i64",
+        _ => "mut source: [4]i64",
+    };
+    // Noise around the escape, so the walk meets it at a depth it did not pick.
+    let noise = match rng.below(3) {
+        0 => String::new(),
+        1 => format!(
+            "    mut spare : i64 = {}\n    spare = spare + 1\n",
+            rng.below(9)
+        ),
+        _ => format!(
+            "    mut spare : i64 = 0\n    while (spare < {}) {{ spare = spare + 1 }}\n",
+            rng.below(4) + 1
+        ),
+    };
+    let head = "import \"mem.frost\"\n\
+        Holder :: struct { view: HELD }\n\
+        Outer :: struct { inner: Holder }\n\
+        keep :: fn(mut h: Holder, held: HELD) { h.view = held }\n"
+        .replace("HELD", held_type);
+    let body = match position {
+        0 => format!(
+            "escape :: fn({parameter}) -> {held_type} {{\n{declare}{noise}    {source}\n}}\n"
+        ),
+        1 => format!(
+            "escape :: fn({parameter}) -> Holder {{\n{declare}{noise}    Holder {{ view = {source} }}\n}}\n"
+        ),
+        2 => format!(
+            "escape :: fn({parameter}) -> Outer {{\n{declare}{noise}    Outer {{ inner = Holder {{ view = {source} }} }}\n}}\n"
+        ),
+        3 => format!(
+            "escape :: fn({parameter}, mut sink: Holder) {{\n{declare}{noise}    sink.view = {source}\n}}\n"
+        ),
+        4 => format!(
+            "escape :: fn({parameter}, mut sink: Holder) {{\n{declare}{noise}    keep(sink, {source})\n}}\n"
+        ),
+        _ => format!(
+            "escape :: fn({parameter}) -> (held: {held_type}, count: i64) {{\n{declare}{noise}    return {{ held = {source}, count = 1 }}\n}}\n"
+        ),
+    };
+    format!("{head}{body}main :: fn() -> i64 {{\n    0\n}}\n")
+}
+
+/// Whether a compiler built it, ignoring what it said.
+fn builds(compiler: &Path, name: &str, source: &str, hosted: bool) -> bool {
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_safety_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let object = directory.join(format!("frost_safety_{name}.o"));
+    let mut command = Command::new(compiler);
+    if hosted {
+        command.env("FROST_INPUT", &input);
+    }
+    let output = command
+        .arg("-L")
+        .arg("std")
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&object);
+    output.status.success()
+}
+
+#[test]
+fn both_compilers_agree_about_what_escapes() {
+    let Some(hosted) = build_self_hosted_compiler("safety") else {
+        return;
+    };
+    let seeds: u64 = std::env::var("FROST_FUZZ_SEEDS")
+        .ok()
+        .and_then(|held| held.parse().ok())
+        .unwrap_or(4);
+    for seed in 0..seeds {
+        for kind in 0..VIEW_KINDS {
+            for position in 0..ESCAPE_POSITIONS {
+                for honest in [false, true] {
+                    let mut rng =
+                        Rng::new(seed * 1_000 + (kind * 10 + position) as u64);
+                    let source = safety_case(&mut rng, kind, position, honest);
+                    let name = format!("{seed}_{kind}_{position}_{honest}");
+                    let boot = builds(
+                        Path::new(env!("CARGO_BIN_EXE_frost")),
+                        &format!("b{name}"),
+                        &source,
+                        false,
+                    );
+                    let self_hosted =
+                        builds(&hosted, &format!("h{name}"), &source, true);
+                    assert_eq!(
+                        boot, self_hosted,
+                        "the two compilers disagree about this program \
+                         (bootstrap built it: {boot}):\n{source}"
+                    );
+                    assert_eq!(
+                        boot,
+                        honest,
+                        "a view of {} was {} (expected the opposite):\n{source}",
+                        if honest { "a parameter" } else { "a local" },
+                        if boot { "built" } else { "refused" }
+                    );
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&hosted);
+}
+
 // The generator is where coverage is claimed, and a claim about a generator is
 // worth nothing until something reads what it wrote. The last widening was
 // wasted for exactly this reason: it emitted negative literals from the day it
