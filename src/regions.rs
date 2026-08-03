@@ -128,7 +128,7 @@ fn find_regions(
 // The capability binding name for an arena type: its base name with the first
 // letter lowercased, so `Arena<256>` binds `arena` (matching the allocation
 // sources lowering).
-fn capability_binding(capability: &Type) -> String {
+pub(crate) fn capability_binding(capability: &Type) -> String {
     let name = match capability {
         Type::Struct(name) | Type::Enum(name) => name.clone(),
         other => other.to_string(),
