@@ -63,6 +63,7 @@ fn walk_unsafety(
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
         returns: HashMap::new(),
+        multi_returns: HashMap::new(),
         generics: HashMap::new(),
         depth: 0,
         audit,
@@ -78,6 +79,9 @@ fn walk_unsafety(
         // the refusal on ordinary code rather than on a raw pointer.
         match &statement.node {
             Statement::Constant(name, value) => {
+                if let Some(held) = declared_returns(value) {
+                    checker.multi_returns.insert(name.clone(), held);
+                }
                 if let Some(ty) = declared_return(value) {
                     checker.returns.insert(name.clone(), ty);
                 }
@@ -255,6 +259,24 @@ fn strip_expression(expression: &mut Expression) {
 
 /// What a named constant answers with, where the constant is a function. An
 /// `unsafe fn` wraps the function it marks, so the signature is one level in.
+/// The types a function answering with several values hands back, in order.
+///
+/// The multiple-return lowering runs after this pass, so the struct those
+/// values become does not exist yet and the list is read off the signature.
+fn declared_returns(value: &Expression) -> Option<Vec<Type>> {
+    match value {
+        Expression::Function(_, return_sig, _)
+        | Expression::Proc(_, return_sig, _) => match &return_sig.kind {
+            crate::parser::ReturnKind::Multiple(values) => {
+                Some(values.iter().map(|one| one.value_type.clone()).collect())
+            }
+            _ => None,
+        },
+        Expression::UnsafeFn(inner) => declared_returns(inner),
+        _ => None,
+    }
+}
+
 fn declared_return(value: &Expression) -> Option<Type> {
     match value {
         Expression::Function(_, return_sig, _)
@@ -302,6 +324,9 @@ struct Checker {
     // What each named function answers with, so a binding takes its type from
     // the call that produced it.
     returns: HashMap<String, Type>,
+    // What each function answering with several values hands back, in order, so
+    // a binding taken from one has the type of the value it was given.
+    multi_returns: HashMap<String, Vec<Type>>,
     // The type parameters of each named function, by argument position.
     generics: HashMap<String, Vec<(usize, String)>>,
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
@@ -519,8 +544,24 @@ impl Checker {
             // past it left an unchecked call with no block around it.
             Statement::LetMultiple(bindings, value) => {
                 self.expression(value, at);
-                for binding in bindings {
-                    self.bind(&binding.name, None);
+                // Each binding takes the type of the value it was given. Left
+                // untyped, the index rule met a base it could not name and
+                // refused `view[0]` after `view, count := split()`, which is
+                // ordinary code and holds nothing unchecked.
+                let held = match value {
+                    Expression::Call(callee, _) => match callee.as_ref() {
+                        Expression::Identifier(name) => {
+                            self.multi_returns.get(name).cloned()
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                for (index, binding) in bindings.iter().enumerate() {
+                    let ty = held
+                        .as_ref()
+                        .and_then(|types| types.get(index).cloned());
+                    self.bind(&binding.name, ty);
                 }
             }
             Statement::Constant(_, value) | Statement::Return(value) => {
