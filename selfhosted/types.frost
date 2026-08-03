@@ -9,7 +9,7 @@ import "names.frost"
 import "layout.frost"
 
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
-    settle_pack_args,
+    settle_pack_args, tparam_position,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
     parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local,

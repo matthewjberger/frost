@@ -606,6 +606,7 @@ fn run_function<'a>(
             })
             .map(|parameter| parameter.name.clone())
             .collect(),
+        views: HashMap::new(),
         in_defer: false,
         reports: Vec::new(),
         reported: HashSet::new(),
@@ -658,6 +659,14 @@ struct MoveChecker<'a> {
     // names a function only once the generic is specialized, so nothing is
     // known about what it does with its arguments until then.
     compile_time: HashSet<String>,
+    // For a binding that views a container's storage rather than its own, the
+    // place that container sits in. `view := vec_slice($i64, v)` names the block
+    // `v` points at, and the frame check traces that to `v` and stops there,
+    // since `v` is alive. What it cannot ask is whether the block is still the
+    // one it was: giving it back leaves the view naming storage the allocator
+    // has taken, and every read through it is bounds-checked against a length
+    // that describes what used to be there.
+    views: HashMap<String, (Vec<Step>, String)>,
     in_defer: bool,
     reports: Vec<String>,
     // The raw text of what has already been said. Past a move the state stays
@@ -724,6 +733,86 @@ impl MoveChecker<'_> {
 
     /// The key a place is filed under, recording the path behind it so a later
     /// place can be weighed against this one.
+    /// The container a value views, where it views one.
+    ///
+    /// A call answering with a view can only name storage it was handed, so the
+    /// container is among its arguments: the one that is a place and holds the
+    /// run rather than being it. A `[]T` argument passed straight through is not
+    /// one, since the block it names was allocated somewhere else and giving
+    /// that argument away does not free it. `ref e := vec_slice($T, v)[i]` views
+    /// the same container as the slice it indexes, so the walk reaches through a
+    /// borrow and an element to the call underneath.
+    fn viewed_container(
+        &mut self,
+        value: &Expression,
+    ) -> Option<(Vec<Step>, String)> {
+        match value {
+            Expression::Borrow(inner)
+            | Expression::BorrowMut(inner)
+            | Expression::Index(inner, _)
+            | Expression::FieldAccess(inner, _) => self.viewed_container(inner),
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(name) = callee.as_ref() else {
+                    return None;
+                };
+                if !self
+                    .signatures
+                    .get(name)
+                    .is_some_and(|held| is_view_type(&held.result))
+                {
+                    return None;
+                }
+                // Which argument the container is comes from the callee's own
+                // declaration rather than from the argument's type: a
+                // parameter holding a run is what a view can be taken of, and
+                // the declaration says so without the walk having to know what
+                // every local here is. The self-hosted compiler has no local
+                // types at all at this point, so asking the declaration is also
+                // what lets both compilers ask the same question.
+                let declared = self.param_types.get(name)?;
+                let held = arguments.iter().enumerate().find_map(
+                    |(index, argument)| {
+                        let ty = declared.get(index)?.as_ref()?;
+                        // Through the borrow the mode lowering put there. A
+                        // parameter that reads an aggregate is a reference by
+                        // the time this runs, and the question is about what it
+                        // refers to.
+                        let ty = match ty {
+                            Type::Ref(inner)
+                            | Type::RefMut(inner)
+                            | Type::Ptr(inner) => inner.as_ref(),
+                            other => other,
+                        };
+                        // A struct counts whether or not its declared fields
+                        // still show the run. The self-hosted compiler reads a
+                        // generic's parameter as whatever instantiation was
+                        // made last, and taking a view of something and then
+                        // giving that thing away is the same mistake whichever
+                        // instantiation the node happens to name.
+                        let container =
+                            matches!(ty, Type::Struct(_) | Type::Enum(_))
+                                || holds_run(ty, self.field_types);
+                        container.then_some(argument)
+                    },
+                )?;
+                let path = self.borrow_place(held)?;
+                let key = self.place_key(&path);
+                Some((path, key))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a binding that views a container is naming storage the container
+    /// has since given away.
+    fn views_gone_storage(&self, name: &str) -> Option<String> {
+        let (path, key) = self.views.get(name)?;
+        match self.state_of_place(path, key).0 {
+            MoveState::Live => None,
+            _ => Some(key.clone()),
+        }
+    }
+
     fn place_key(&mut self, path: &[Step]) -> String {
         let key = describe_place(path);
         self.paths
@@ -795,6 +884,17 @@ impl MoveChecker<'_> {
         path: &[Step],
         moving: bool,
     ) -> Result<()> {
+        // Reaching into a view is reading through it, so the same question is
+        // asked of the name at the root: an element of a view of a container
+        // that has given its block back is the freed block.
+        if let Some(Step::Named(root)) = path.first()
+            && let Some(container) = self.views_gone_storage(root)
+        {
+            let root = root.clone();
+            bail!(
+                "ownership: '{root}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+            );
+        }
         let key = self.place_key(path);
         // Only a resource. A plain struct read out of a field is a copy the
         // language has always taken, and counting one as a consumption would
@@ -958,6 +1058,16 @@ impl MoveChecker<'_> {
                 // one: `run := systems[i].run` then `run(world)`.
                 .or_else(|| self.value_type(value));
                 self.note_binding(name, inferred);
+                match self.viewed_container(value) {
+                    Some(held) => {
+                        self.views.insert(name.clone(), held);
+                    }
+                    // Rebinding replaces whatever the name viewed before, which
+                    // is what taking the view again after a push amounts to.
+                    None => {
+                        self.views.remove(name);
+                    }
+                }
                 Ok(false)
             }
             Statement::Constant(
@@ -1208,6 +1318,11 @@ impl MoveChecker<'_> {
     fn visit(&mut self, expression: &Expression, moving: bool) -> Result<()> {
         match expression {
             Expression::Identifier(name) => {
+                if let Some(container) = self.views_gone_storage(name) {
+                    bail!(
+                        "ownership: '{name}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+                    );
+                }
                 match self.state_of(name) {
                     MoveState::Live => {
                         if moving && self.is_move_variable(name) {
@@ -1611,6 +1726,34 @@ fn place_maybe_within(inner: &[Step], outer: &[Step]) -> bool {
 }
 
 // How a place reads back in a diagnostic.
+/// Whether a type is a view of storage rather than storage of its own.
+fn is_view_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Slice(_)
+            | Type::Str
+            | Type::Ptr(_)
+            | Type::Ref(_)
+            | Type::RefMut(_)
+    )
+}
+
+/// Whether a value of this type owns a run that something else can view: a
+/// struct holding a slice is one, and a slice is not, since the block a slice
+/// names was allocated elsewhere and handing the slice on does not free it.
+fn holds_run(ty: &Type, fields: &FieldTypes) -> bool {
+    match ty {
+        Type::Struct(name) | Type::Enum(name) => {
+            let template = Type::template_of(name);
+            fields.iter().any(|((held, _), field)| {
+                Type::template_of(held) == template && is_view_type(field)
+            })
+        }
+        Type::Distinct(_, inner) => holds_run(inner, fields),
+        _ => false,
+    }
+}
+
 fn describe_place(path: &[Step]) -> String {
     path.iter()
         .map(|step| match step {

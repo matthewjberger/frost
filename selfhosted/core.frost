@@ -1248,6 +1248,9 @@ Parser :: struct {
     // the position it answers with.
     tparam_through: i64,
     moved: Arena<LocalVar>,
+    // For a binding that views a container's storage rather than its own, the
+    // node of the place that container sits in. `slot` holds it.
+    move_views: Arena<LocalVar>,
     // What each function does to the resources it is lent, and the field names
     // that say which place. Worked out to a fixpoint before anything is
     // reported, since what one function gives away depends on what the

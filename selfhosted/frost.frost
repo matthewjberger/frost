@@ -571,6 +571,7 @@ main :: fn() -> i64 {
         defer_depth = -1,
         tparam_through = 0,
         moved = arena_make($LocalVar, 4096),
+        move_views = arena_make($LocalVar, 1024),
         label_id = 0,
         abi_windows = 0,
         args_unbound_map = 0,
