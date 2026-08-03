@@ -225,6 +225,18 @@ app name:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
     ./examples/graphics/{{name}}
 
+# Builds and runs the engine-app starting point: `just template`. Copy
+# examples/template.frost, rename it, and grow it.
+[windows]
+template:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/template.exe examples/template.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples -Force; & ./examples/template.exe
+
+# Builds and runs the engine-app starting point: `just template` (Unix)
+[unix]
+template:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/template examples/template.frost
+    ./examples/template
+
 # Fetches the libraries the graphics examples link against, and the schema the
 # wgpu binding is generated from.
 #

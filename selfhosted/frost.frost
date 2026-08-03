@@ -663,6 +663,9 @@ main :: fn() -> i64 {
         parser.abi_windows = 1
     }
     tokenize(source, source_end(source), parser.tokens)
+    // What `include_str` names arrives as a string literal before anything
+    // reads the tokens, so no pass after this one knows the feature exists.
+    expand_includes(parser)
     // Whether two modules here export the same name, which decides how careful
     // a name lookup has to be. Known from the export lines alone, so it is
     // answered before anything is parsed.

@@ -5,7 +5,7 @@ import "json.frost"
 import "lexer.frost"
 
 export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
-    joined_path, module_at, report_where, line_of, column_of, file_of,
+    joined_path, join_path, module_at, report_where, line_of, column_of, file_of,
     resolve_imports, search_roots_from, manifest_roots, source_with_room,
     manifest_above
 
@@ -865,11 +865,13 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     length
 }
 
-// Room past the source's terminator for names the compiler makes up. A name is
-// an offset and a length into the source everywhere in this compiler, so a
-// synthesized one has to live in the source too rather than in a table of its
-// own. The lexer stops at the terminator, so nothing here is ever read as code.
-SYNTH_ROOM :: 65536
+// Room past the source's terminator for names the compiler makes up and for
+// the files `include_str` splices in. A name is an offset and a length into the
+// source everywhere in this compiler, so a synthesized one has to live in the
+// source too rather than in a table of its own, and an included file's bytes
+// live there for the same reason. The lexer stops at the terminator, so nothing
+// here is ever read as code. Sized for shaders, not just names.
+SYNTH_ROOM :: 4194304
 
 // Room for the root file and everything it imports, laid end to end.
 SOURCE_ROOM :: 8388608

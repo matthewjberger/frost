@@ -379,6 +379,9 @@ fn compile() -> Result<()> {
             ..*position
         })
         .collect();
+    let (tokens, positions) =
+        frost::expand_includes(tokens, positions, &base_dir)
+            .with_context(|| format!("in {}", cli.file))?;
 
     let project_root =
         base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
