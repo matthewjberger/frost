@@ -60,11 +60,12 @@
         "fileLocation": ["relative", "${fileDirname}"],
         "severity": "error",
         "pattern": {
-          "regexp": "^\\s*(?:\\d+:\\s*)?at (.+?):(\\d+):(\\d+): (.*)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "message": 4
+          "regexp": "^\\s*(?:(warning|error):\\s*)?(?:\\d+:\\s*)?at (.+?):(\\d+):(\\d+): (.*)$",
+          "severity": 1,
+          "file": 2,
+          "line": 3,
+          "column": 4,
+          "message": 5
         }
       }
     ]
