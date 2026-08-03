@@ -1,8 +1,8 @@
 {
   "name": "frost",
   "displayName": "Frost",
-  "description": "Syntax highlighting for the Frost language",
-  "version": "0.1.0",
+  "description": "Syntax highlighting and navigation for the Frost language",
+  "version": "0.2.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -10,6 +10,10 @@
   },
   "categories": [
     "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:frost"
   ],
   "contributes": {
     "languages": [
