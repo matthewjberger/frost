@@ -1,0 +1,185 @@
+// The starting point for a program on the engine.
+//
+//   just template
+//
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+// One cube turns over a floor, lit by a sun and a lamp.
+//
+// Copy this file, rename it, and grow it. What it holds is one of everything a
+// game is made of, each in the place a bigger program would keep it:
+//
+//   a component     `Spin`, on the cube, read by nothing but this program
+//   a system        `tick`, advancing every `Spin` once a frame
+//   a resource      `TemplateState`, counters the whole program shares
+//   a plugin        `template_plugin`, registering the three above
+//
+// The plugin is the shape to grow by. Everything a piece of a game needs is
+// registered in one `fn(mut App)`, so composing the piece into a program is one
+// `app_install` line, and two programs can share it by importing the file that
+// holds it. The engine's own drawing arrives the same way: `render_plugin` is
+// what puts the world on the screen, and a program that draws for itself
+// composes its own passes instead of installing it.
+//
+// What is not in a plugin is what needs the device: meshes and materials go
+// into the App's registries before the loop starts, and the entities that wear
+// them are spawned beside them, so `run` reads top to bottom as what the world
+// holds when the first frame runs.
+
+import "../lib/platform/platform.frost"
+import "../lib/engine/app.frost"
+import "../lib/engine/camera.frost"
+import "../lib/engine/light.frost"
+import "../lib/engine/world.frost"
+import "../lib/renderer/mesh.frost"
+import "../lib/renderer/material.frost"
+import "../lib/renderer/render_world.frost"
+import "ecs.frost"
+import "math.frost"
+
+WIDTH :: 1280
+HEIGHT :: 720
+
+// The cube and the floor. Sized exactly, because the tables measured against a
+// draw are sized once: a program that spawns more says so here.
+DRAWN :: 2
+
+// This program's own component: an axis, and how fast the thing wearing it
+// turns about that axis. The engine knows where a thing is and what draws it;
+// that it turns is this program's idea, so the type lives here.
+Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+
+// This program's own state: counters every system can reach. A resource is
+// what would be a global, held by the world instead so a system finds it the
+// way it finds anything else.
+TemplateState :: struct { frames: i64, elapsed: f32 }
+
+// Everything this program adds to the engine, in one place. Registering the
+// component is what lets an entity be spawned wearing it; inserting the
+// resource is what gives the systems their shared state; the system is what
+// runs once a frame from then on.
+template_plugin :: fn(mut app: App) {
+    component_for($Spin, app.world)
+    app_insert_resource($TemplateState, app,
+        TemplateState { frames = 0, elapsed = 0.0 })
+    app_add_system(app, Stage::FrameUpdate, tick)
+}
+
+// Once a frame: the counters advance, and everything wearing a `Spin` turns.
+// The frame's step comes from the `Input` resource the engine keeps, so a slow
+// frame turns things further rather than slower.
+tick :: fn(mut world: World) {
+    step := input_delta_seconds(
+        ecs_resource($Input, world, resource_of($Input, world)))
+    mut state := ecs_resource($TemplateState, world,
+        resource_of($TemplateState, world))
+    state.frames = state.frames + 1
+    state.elapsed = state.elapsed + step
+    ecs_resource_set($TemplateState, world,
+        resource_of($TemplateState, world), state)
+
+    spin := component_of($Spin, world)
+    local := component_of($LocalTransform, world)
+    mut q := query_begin(world)
+    query_with(q, spin)
+    query_with(q, local)
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            mut turn := ecs_get($Spin, world, entity, spin)
+            turn.angle = turn.angle + turn.speed * step
+            ecs_set($Spin, world, entity, spin, turn)
+            mut place := ecs_get($LocalTransform, world, entity, local)
+            place.rotation = quat_from_axis_angle(turn.axis, turn.angle)
+            ecs_set($LocalTransform, world, entity, local, place)
+            row = row + 1
+        }
+    }
+}
+
+main :: fn() -> i64 {
+    mut config := app_config("Frost template", WIDTH, HEIGHT)
+    config.drawn = DRAWN
+    match app_open(config) {
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
+    }
+}
+
+run :: fn(move app: App) -> i64 {
+    // The engine's pieces, then this program's. `render_plugin` draws the
+    // world; the two controller plugins are the keys above; the template
+    // plugin is everything declared in this file.
+    app_install_group(app, default_plugins())
+    app_install(app, render_plugin)
+    app_install(app, camera_controller_plugin)
+    app_install(app, exit_on_escape_plugin)
+    app_install(app, template_plugin)
+
+    // What things are made of. A mesh goes into the shared buffers once and is
+    // named by the slot that came back; a material is a row in a table the
+    // shader indexes.
+    device := app_device(app)
+    queue := app_queue(app)
+    cube := mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
+        cube_mesh())
+    orange := materials_add(app.materials,
+        material_of(vec4(0.9, 0.45, 0.2, 1.0), 0.4, 0.0))
+    slate := materials_add(app.materials,
+        material_of(vec4(0.55, 0.57, 0.62, 1.0), 0.9, 0.0))
+
+    // What the world holds when the first frame runs: a floor, the cube that
+    // turns, a sun, and a lamp beside the cube.
+    ids := app_ids(app)
+    spin := component_of($Spin, app.world)
+    lights := light_ids(app.world)
+    drawn := mask_with(mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.drawn),
+        ids.global_transform), ids.transform)
+    spinning := mask_with(drawn, spin)
+    lighting := mask_with(mask_with(mask_with(mask_empty(),
+        ids.local_transform), ids.global_transform), lights.light)
+
+    floor := ecs_spawn_with(app.world, drawn)
+    ecs_set($LocalTransform, app.world, floor, ids.local_transform,
+        LocalTransform { translation = vec3(0.0, -1.0, 0.0),
+            rotation = quat_identity(), scale = vec3(6.0, 0.2, 6.0) })
+    ecs_set($Drawn, app.world, floor, ids.drawn,
+        Drawn { mesh = cube, material = slate, layer = ONE_LAYER })
+
+    turning := ecs_spawn_with(app.world, spinning)
+    ecs_set($LocalTransform, app.world, turning, ids.local_transform,
+        LocalTransform { translation = vec3(0.0, 0.2, 0.0),
+            rotation = quat_identity(), scale = vec3(0.8, 0.8, 0.8) })
+    ecs_set($Drawn, app.world, turning, ids.drawn,
+        Drawn { mesh = cube, material = orange, layer = ONE_LAYER })
+    ecs_set($Spin, app.world, turning, spin,
+        Spin { axis = vec3(0.0, 1.0, 0.0), speed = 1.0, angle = 0.0 })
+
+    // A directional light is aimed rather than placed: what aims it is the
+    // entity's rotation, so the transform is the whole of where it comes from.
+    sunlight := ecs_spawn_with(app.world, lighting)
+    ecs_set($LocalTransform, app.world, sunlight, ids.local_transform,
+        LocalTransform { translation = vec3(0.0, 5.0, 0.0),
+            rotation = quat_mul(
+                quat_from_axis_angle(vec3(0.0, 1.0, 0.0), 0.5),
+                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), -0.8)),
+            scale = vec3(1.0, 1.0, 1.0) })
+    ecs_set($Light, app.world, sunlight, lights.light, sun())
+
+    lamp_holder := ecs_spawn_with(app.world, lighting)
+    ecs_set($LocalTransform, app.world, lamp_holder, ids.local_transform,
+        LocalTransform { translation = vec3(-1.8, 0.6, 1.8),
+            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+    ecs_set($Light, app.world, lamp_holder, lights.light,
+        lamp(vec3(1.0, 0.7, 0.4), 10.0))
+
+    mut eye := camera_default()
+    eye.position = vec3(0.0, 1.2, 5.0)
+    eye.pitch = -0.15
+    app_camera_set(app, eye)
+
+    app_run(app)
+    app_close(app)
+}

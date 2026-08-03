@@ -27,6 +27,8 @@ lib/renderer/wgpu/*
 # finds them. The originals live beside the bindings that name them.
 examples/graphics/wgpu_native.dll
 examples/graphics/SDL3.dll
+examples/wgpu_native.dll
+examples/SDL3.dll
 examples/graphics/triangle
 examples/graphics/*.png
 examples/graphics/*.exe

@@ -16795,6 +16795,27 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "stored where the call cannot see",
     ),
+    // `include_str` opens the file while the program is compiled, so a path
+    // that is not a string literal has nothing to open, and a file that is
+    // not there is found out here rather than at run time. The wording is
+    // shared by both compilers on purpose: the refusal is part of the
+    // language.
+    (
+        "an_include_of_a_file_that_is_not_there",
+        "MISSING :: include_str(\"frost_no_such_file_anywhere.wgsl\")\n\
+         main :: fn() -> i64 {\n\
+         \x20   print str_len(MISSING)\n\
+         \x20   0\n}\n",
+        "include_str: cannot read",
+    ),
+    (
+        "an_include_whose_path_is_not_a_literal",
+        "main :: fn() -> i64 {\n\
+         \x20   held := \"lit.wgsl\"\n\
+         \x20   print str_len(include_str(held))\n\
+         \x20   0\n}\n",
+        "include_str takes one string literal",
+    ),
 ];
 
 #[test]
@@ -17094,6 +17115,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "gltf_model.frost",
             "lit.frost",
             "swarm.frost",
+            "template.frost",
         ]
     } else {
         &["window.frost"]
@@ -17593,6 +17615,7 @@ fn graphics_source(root: &Path, name: &str) -> PathBuf {
         | "material.frost" | "texture.frost" | "render_world.frost"
         | "geometry.frost" | "uniform.frost" | "gpu.frost"
         | "cluster.frost" => "lib/renderer",
+        "template.frost" => "examples",
         "world.frost" | "camera.frost" | "scene_sync.frost" | "gltf.frost"
         | "app.frost" => "lib/engine",
         _ => "examples/graphics",
@@ -19038,6 +19061,51 @@ fn the_assembler_encodes_what_the_system_assembler_does() {
         let _ = std::fs::remove_file(&ours);
         let _ = std::fs::remove_file(&straight);
     }
+}
+
+// A file's bytes through `include_str`, spliced by both compilers and read
+// back through every backend. The data file carries a quote, a backslash and
+// CRLF line endings, which are the three things the two compilers store
+// differently: the bootstrap holds a literal resolved and the self-hosted
+// holds it in source form, so a byte mishandled on either side shows up as
+// the two disagreeing.
+#[test]
+fn include_str_reads_the_same_bytes_through_both_compilers() {
+    let directory = std::env::temp_dir();
+    let data = directory.join("frost_include_data.txt");
+    std::fs::write(
+        &data,
+        "line one\r\nsays \"quoted\" and back\\slash\r\nend\r\n",
+    )
+    .unwrap();
+    let source = "DATA :: include_str(\"frost_include_data.txt\")\n\
+         main :: fn() -> i64 {\n\
+         \x20   print DATA\n\
+         \x20   print str_len(DATA)\n\
+         \x20   0\n}\n";
+    let want = "line one\nsays \"quoted\" and back\\slash\nend\n\n42\n";
+    let Some(bootstrap) = bootstrap_output("includestr", source) else {
+        return;
+    };
+    assert_eq!(bootstrap, want, "the bootstrap read the bytes differently");
+    let Some(compiler) = build_self_hosted_compiler("includestr") else {
+        return;
+    };
+    for (backend, suffix) in [("--emit-asm", "s"), ("--emit-c", "c")] {
+        let hosted = selfhosted_default_output(
+            &compiler,
+            "includestr",
+            source,
+            backend,
+            suffix,
+        );
+        assert_eq!(
+            hosted, want,
+            "the self-hosted compiler's {backend} read the bytes differently"
+        );
+    }
+    let _ = std::fs::remove_file(&data);
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // Build and run `source` with the bootstrap, and return what it printed.

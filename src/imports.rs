@@ -149,6 +149,108 @@ fn locate_import(
     None
 }
 
+// A file's bytes, spliced in where `include_str("path")` was written. The
+// four tokens become one string literal before the parser runs, so nothing
+// downstream of the lexer knows the feature exists: the type checker sees a
+// `str`, the region walk sees a literal, and both backends emit it the way
+// they emit any other one.
+//
+// The path is relative to the file the call is written in and nowhere else,
+// which is Rust's rule and the one that keeps a library's shader beside the
+// module that uses it wherever the library is installed. Carriage returns are
+// dropped, so a file checked out with CRLF line endings reads the same bytes
+// as the same file checked out with LF.
+pub fn expand_includes(
+    tokens: Vec<Token>,
+    positions: Vec<crate::lexer::Position>,
+    directory: &Path,
+) -> Result<(Vec<Token>, Vec<crate::lexer::Position>)> {
+    if !tokens.iter().any(is_include_name) {
+        return Ok((tokens, positions));
+    }
+    let mut spliced_tokens = Vec::with_capacity(tokens.len());
+    let mut spliced_positions = Vec::with_capacity(positions.len());
+    let mut index = 0;
+    while index < tokens.len() {
+        if !is_include_name(&tokens[index]) {
+            spliced_tokens.push(tokens[index].clone());
+            spliced_positions.push(positions[index]);
+            index += 1;
+            continue;
+        }
+        let path = match (
+            tokens.get(index + 1),
+            tokens.get(index + 2),
+            tokens.get(index + 3),
+        ) {
+            (
+                Some(Token::LeftParentheses),
+                Some(Token::StringLiteral(path)),
+                Some(Token::RightParentheses),
+            ) => path.clone(),
+            _ => bail!(
+                "include_str takes one string literal naming a file, so the path is known while the program is being compiled"
+            ),
+        };
+        let full = directory.join(&path);
+        let content = fs::read_to_string(&full).map_err(|_| {
+            anyhow::anyhow!("include_str: cannot read {}", full.display())
+        })?;
+        spliced_tokens.push(Token::StringLiteral(content.replace('\r', "")));
+        spliced_positions.push(positions[index]);
+        index += 4;
+    }
+    Ok((spliced_tokens, spliced_positions))
+}
+
+fn is_include_name(token: &Token) -> bool {
+    matches!(token, Token::Identifier(name) if name == "include_str")
+}
+
+// The files a module includes, read off its tokens the way its imports are,
+// because whether a cached module is stale is answered before it is parsed.
+fn include_paths_in_source(source: &str) -> Vec<String> {
+    let mut lexer = Lexer::new(source);
+    let Ok(tokens) = lexer.tokenize() else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for index in 0..tokens.len() {
+        if !is_include_name(&tokens[index]) {
+            continue;
+        }
+        if let (
+            Some(Token::LeftParentheses),
+            Some(Token::StringLiteral(path)),
+        ) = (tokens.get(index + 1), tokens.get(index + 2))
+        {
+            paths.push(path.clone());
+        }
+    }
+    paths
+}
+
+// A module's hash covers the files it includes, because their bytes are in the
+// object the way its own source is: an edit to a shader has to rebuild the
+// module that spliced it in. A module including nothing hashes exactly as it
+// always has, so nothing rebuilds for this existing.
+fn digest_with_includes(source: &str, directory: &Path) -> String {
+    let included = include_paths_in_source(source);
+    if included.is_empty() {
+        return digest(source);
+    }
+    let mut text = String::from(source);
+    for path in included {
+        text.push('\n');
+        text.push_str(&path);
+        text.push('\n');
+        if let Ok(content) = fs::read_to_string(directory.join(&path)) {
+            text.push_str(&content);
+        }
+    }
+    digest(&text)
+}
+
 pub struct Resolved {
     pub statements: Vec<Spanned<Statement>>,
     pub linear_types: HashSet<String>,
@@ -376,6 +478,9 @@ fn parse_module(
         .iter()
         .map(|position| crate::lexer::Position { file, ..*position })
         .collect();
+    let (tokens, positions) =
+        expand_includes(tokens, positions, &directory_of(path))
+            .with_context(|| format!("in {}", path.display()))?;
     let mut parser = Parser::with_positions(&tokens, &positions);
     parser.also_generic(generics);
     let statements = parser
@@ -422,7 +527,7 @@ fn plan_module(
     let module = found.module.clone();
     let file = crate::source_map::register_at(&module, &full.to_string_lossy());
     let tag = module_tag_of(&module);
-    let source_hash = digest(&source);
+    let source_hash = digest_with_includes(&source, &directory_of(full));
     let record = cache.load(&tag, &source_hash);
 
     let mut parsed: Option<Box<ParsedModule>> = None;
@@ -1534,6 +1639,27 @@ mod tests {
             ),
             "a calls b twice"
         );
+    }
+
+    // The build cache answers for a module by its source hash, and a module
+    // that includes a file carries that file's bytes in its object. An edit to
+    // the included file has to change the hash or `--incremental` links the
+    // old bytes; a module including nothing has to hash exactly as it always
+    // did or every cached module rebuilds once for this feature existing.
+    #[test]
+    fn an_included_file_is_part_of_the_module_hash() {
+        let directory = std::env::temp_dir().join("frost_include_hash_test");
+        std::fs::create_dir_all(&directory).unwrap();
+        let shader = directory.join("shape.wgsl");
+        let source = "SHADER :: include_str(\"shape.wgsl\")\n";
+        std::fs::write(&shader, "one").unwrap();
+        let first = digest_with_includes(source, &directory);
+        std::fs::write(&shader, "two").unwrap();
+        let second = digest_with_includes(source, &directory);
+        assert_ne!(first, second);
+        let plain = "ANSWER :: 42\n";
+        assert_eq!(digest_with_includes(plain, &directory), digest(plain));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
