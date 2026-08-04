@@ -357,12 +357,7 @@ pub fn display_pattern(ast: &Ast, pattern: PatternId) -> String {
             let pat_strs: Vec<String> = ast
                 .patterns_in(*patterns)
                 .iter()
-                .map(|p| match ast.pattern(*p) {
-                    Pattern::Wildcard => "_".to_string(),
-                    Pattern::Literal(lit) => display_literal(ast, lit),
-                    Pattern::Identifier(id) => ast.name(*id).to_string(),
-                    other => format!("{:?}", other),
-                })
+                .map(|p| display_pattern(ast, *p))
                 .collect();
             format!("({})", pat_strs.join(", "))
         }
