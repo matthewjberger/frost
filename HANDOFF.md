@@ -51,6 +51,15 @@ The shape to build, which needs no report site to change:
 5. Pin it beside `the_json_reports_round_trip_through_frost_fix` in
    `tests/native.rs`: both compilers write the same records for one program.
 
+One thing to settle while doing it: the bootstrap groups one root cause into a
+single report carrying every place it shows, and the self-hosted compiler prints
+one report per place because it writes each as it finds it. The caret output is
+the same either way, which is why no test sees a difference today, and the JSON
+would show it: one record with two related places against two records. Either
+buffer the self-hosted reports so grouping can happen, or say in the schema that
+grouping is the bootstrap's and hold the two to the same set of places rather
+than the same records.
+
 Then: `cargo test -r` green, and the fixpoint checked by
 `cargo test -r --test native -- self_hosting_is_a_fixpoint
 native_self_hosting_is_a_fixpoint`.
