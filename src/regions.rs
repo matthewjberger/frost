@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+﻿use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
@@ -175,6 +175,7 @@ fn record_once(
         diagnostics.push(Diagnostic {
             position: at,
             message,
+            related: Vec::new(),
         });
     }
 }

@@ -42,7 +42,9 @@ pub fn check_module(module: &IrModule) -> Result<()> {
     if reports.is_empty() {
         return Ok(());
     }
-    Err(anyhow::anyhow!(reports.join("\n")))
+    let rendered: Vec<String> =
+        reports.iter().map(|held| held.rendered()).collect();
+    Err(anyhow::anyhow!(rendered.join("\n")))
 }
 
 /// Check each function, reporting one failure per function rather than stopping
@@ -53,10 +55,13 @@ pub fn check_module(module: &IrModule) -> Result<()> {
 /// sound to check the rest of the body against, and continuing would report
 /// consequences rather than causes. Functions share no such state.
 ///
-/// The messages are already located by `locate_instantiation`, which rewrites a
-/// specialization's mangled name into what the reader wrote, so these are the
-/// finished strings rather than `Diagnostic`s.
-pub fn check_module_recovering(module: &IrModule) -> Vec<String> {
+/// Each diagnostic's message is already located by `locate_instantiation`,
+/// which rewrites a specialization's mangled name into what the reader wrote;
+/// the position field anchors the function for a caller that wants structure,
+/// at the call that instantiated it or at its first local.
+pub fn check_module_recovering(
+    module: &IrModule,
+) -> Vec<crate::diagnostic::Diagnostic> {
     let mut signatures: HashMap<&str, Signature> = HashMap::new();
     // A function another object defines is callable here and has a signature to
     // check the call against. It has no body to check.
@@ -89,7 +94,16 @@ pub fn check_module_recovering(module: &IrModule) -> Vec<String> {
             check_function(function, &signatures),
             function,
         ) {
-            reports.push(error.to_string());
+            let anchor = function
+                .instantiated
+                .as_ref()
+                .map(|held| held.at)
+                .or_else(|| function.locals.first().map(|local| local.position))
+                .unwrap_or_default();
+            reports.push(crate::diagnostic::Diagnostic::new(
+                anchor,
+                error.to_string(),
+            ));
         }
     }
     reports
@@ -784,7 +798,11 @@ mod tests {
         );
         let reports = check_module_recovering(&module);
         assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].contains("is a i64 and is assigned a str"));
+        assert!(
+            reports[0]
+                .message
+                .contains("is a i64 and is assigned a str")
+        );
     }
 
     #[test]
@@ -797,7 +815,7 @@ mod tests {
         );
         let reports = check_module_recovering(&module);
         assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].contains("answers with a bool"));
+        assert!(reports[0].message.contains("answers with a bool"));
     }
 
     #[test]
@@ -817,7 +835,7 @@ mod tests {
         );
         let reports = check_module_recovering(&module);
         assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].contains("writes a str"));
+        assert!(reports[0].message.contains("writes a str"));
     }
 
     #[test]
@@ -851,7 +869,7 @@ mod tests {
         });
         let reports = check_module_recovering(&module);
         assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].contains("is a str, and it takes a bool"));
+        assert!(reports[0].message.contains("is a str, and it takes a bool"));
     }
 
     // Two integer widths do fit each other, because whether they should is a

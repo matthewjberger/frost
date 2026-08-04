@@ -150,6 +150,9 @@ impl Specializations {
                 runs: &self.runs,
             },
         )
+        .into_iter()
+        .map(|held| held.rendered())
+        .collect()
     }
 }
 
@@ -203,7 +206,9 @@ pub fn check_ownership(
     if reports.is_empty() {
         return Ok(());
     }
-    Err(anyhow::anyhow!(reports.join("\n")))
+    let rendered: Vec<String> =
+        reports.iter().map(|held| held.rendered()).collect();
+    Err(anyhow::anyhow!(rendered.join("\n")))
 }
 
 /// Check each top-level item, reporting one failure per item rather than
@@ -215,14 +220,15 @@ pub fn check_ownership(
 /// would report every later use of that name as well. Items do not share that
 /// state, so stopping at the item boundary accumulates without cascading.
 ///
-/// The messages are already located by `locate`, some of them by an inner
-/// position rather than the item's, which is why these are the finished strings
-/// rather than `Diagnostic`s.
+/// Each diagnostic's message is already located by `locate`, some by an inner
+/// position rather than the item's; the position field anchors the item for a
+/// caller that wants structure, and a use of a moved value carries the move
+/// as a related place.
 pub fn check_ownership_recovering(
     ast: &Ast,
     roots: &[StmtId],
     linear: &HashSet<String>,
-) -> Vec<String> {
+) -> Vec<crate::diagnostic::Diagnostic> {
     let signatures = collect_signatures(ast, roots);
     let param_types = collect_param_types(ast, roots);
     let field_types = collect_field_types(ast, roots);
@@ -248,16 +254,25 @@ pub fn check_ownership_recovering(
         summaries: &summaries,
         runs: &runs,
     };
-    let mut reports = crate::linear_instances::check_pooled_resources(
-        ast,
-        roots,
-        &crate::linear_instances::locate_instances(ast, roots),
-        &held,
-    );
+    let mut reports: Vec<crate::diagnostic::Diagnostic> =
+        crate::linear_instances::check_pooled_resources(
+            ast,
+            roots,
+            &crate::linear_instances::locate_instances(ast, roots),
+            &held,
+        )
+        .into_iter()
+        .map(|held| {
+            crate::diagnostic::Diagnostic::new(Position::default(), held)
+        })
+        .collect();
     for statement in roots {
         let outcome = check_statement(ast, *statement, &program, &mut reports);
         if let Err(error) = locate(outcome, ast.stmt_position(*statement)) {
-            reports.push(error.to_string());
+            reports.push(crate::diagnostic::Diagnostic::new(
+                ast.stmt_position(*statement),
+                error.to_string(),
+            ));
         }
     }
     reports
@@ -371,7 +386,7 @@ fn check_statement(
     ast: &Ast,
     statement: StmtId,
     program: &Program,
-    reports: &mut Vec<String>,
+    reports: &mut Vec<crate::diagnostic::Diagnostic>,
 ) -> Result<()> {
     match ast.stmt(statement) {
         Statement::Struct(name, _, fields) => {
@@ -1206,11 +1221,13 @@ fn check_function_moves(
     params: Range32,
     body: Range32,
     program: &Program,
-) -> Vec<String> {
+) -> Vec<crate::diagnostic::Diagnostic> {
     let checker = run_function(ast, params, body, program);
     let unnameable = handed_out_unnameable(ast, params, &checker);
     let mut reports = checker.reports;
-    reports.extend(unnameable);
+    reports.extend(unnameable.into_iter().map(|held| {
+        crate::diagnostic::Diagnostic::new(Position::default(), held)
+    }));
     reports
 }
 
@@ -1251,6 +1268,8 @@ fn run_function<'a>(
         in_defer: false,
         reports: Vec::new(),
         reported: HashSet::new(),
+        moved_at: HashMap::new(),
+        at: Position::default(),
     };
     for parameter in ast.params_in(params) {
         if let Some(ty) = &parameter.type_annotation {
@@ -1329,11 +1348,16 @@ struct MoveChecker<'a> {
     /// what the top of the loop reads on the turn after.
     replacements: usize,
     in_defer: bool,
-    reports: Vec<String>,
+    reports: Vec<crate::diagnostic::Diagnostic>,
     // The raw text of what has already been said. Past a move the state stays
     // moved, so every later mention of that name fails the same way, and the
     // second telling is an echo of the first rather than a second mistake.
     reported: HashSet<String>,
+    // Where each place was moved, keyed the way `states` is. A use after a
+    // move points back here, so the report shows the move as well as the use.
+    moved_at: HashMap<String, Position>,
+    // The statement being walked, which is what a move records as its place.
+    at: Position,
 }
 
 impl MoveChecker<'_> {
@@ -1788,6 +1812,7 @@ impl MoveChecker<'_> {
             let consumed = if self.in_defer {
                 MoveState::Deferred
             } else {
+                self.moved_at.insert(key.clone(), self.at);
                 MoveState::Moved
             };
             self.states.insert(key, consumed);
@@ -1835,6 +1860,9 @@ impl MoveChecker<'_> {
             let consumed = if self.in_defer {
                 MoveState::Deferred
             } else {
+                if matches!(state, MoveState::Moved | MoveState::MaybeMoved) {
+                    self.moved_at.insert(key.clone(), self.at);
+                }
                 state
             };
             self.states.insert(key, consumed);
@@ -1851,7 +1879,26 @@ impl MoveChecker<'_> {
                 if self.reported.insert(error.to_string()) {
                     let located = locate::<bool>(Err(error), position)
                         .expect_err("an error stays an error");
-                    self.reports.push(located.to_string());
+                    let message = located.to_string();
+                    // A use of a moved value points back at the move. The
+                    // name is quoted in the message it was just given, and
+                    // the move recorded where it happened under the same key.
+                    let related = message
+                        .split_once("use of moved value '")
+                        .and_then(|(_, rest)| rest.split_once('\''))
+                        .and_then(|(name, _)| {
+                            let moved = self.moved_at.get(name)?;
+                            Some(vec![(
+                                *moved,
+                                format!("'{name}' was moved here"),
+                            )])
+                        })
+                        .unwrap_or_default();
+                    self.reports.push(crate::diagnostic::Diagnostic {
+                        position,
+                        message,
+                        related,
+                    });
                 }
                 false
             }
@@ -1862,6 +1909,7 @@ impl MoveChecker<'_> {
         let ast = self.ast;
         let mut diverges = false;
         for statement in ast.stmts_in(block) {
+            self.at = ast.stmt_position(*statement);
             let outcome = self.check_statement(*statement);
             diverges = self.record(outcome, ast.stmt_position(*statement));
             if diverges {
@@ -1878,6 +1926,7 @@ impl MoveChecker<'_> {
         for (index, statement) in statements.iter().enumerate() {
             let is_last = index + 1 == statements.len();
             let position = ast.stmt_position(*statement);
+            self.at = position;
             if is_last
                 && let Statement::Expression(expression) = ast.stmt(*statement)
             {
@@ -2300,6 +2349,7 @@ impl MoveChecker<'_> {
                             let consumed = if self.in_defer {
                                 MoveState::Deferred
                             } else {
+                                self.moved_at.insert(name.to_string(), self.at);
                                 MoveState::Moved
                             };
                             self.states.insert(name.to_string(), consumed);
@@ -2429,6 +2479,7 @@ impl MoveChecker<'_> {
                         let consumed = if self.in_defer {
                             MoveState::Deferred
                         } else {
+                            self.moved_at.insert(key.clone(), self.at);
                             MoveState::Moved
                         };
                         self.states.insert(key, consumed);
@@ -2937,6 +2988,41 @@ mod tests {
         let linear = parser.linear_types().clone();
         crate::param_modes::lower_param_modes(&mut module.ast, &module.roots);
         check_ownership(&module.ast, &module.roots, &linear)
+    }
+
+    // A use of a moved value carries the move as a related place: the
+    // diagnostic answers where the use is, and points back at the line the
+    // value left on.
+    #[test]
+    fn a_use_after_move_points_back_at_the_move() {
+        let source = "\
+            Pack :: struct { weight: i64 }\n\
+            take :: fn(move p: Pack) -> i64 { p.weight }\n\
+            run :: fn() -> i64 {\n\
+                held := Pack { weight = 1 }\n\
+                first := take(held)\n\
+                take(held)\n\
+            }\n";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let mut module = parser.parse().unwrap();
+        let linear = parser.linear_types().clone();
+        crate::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        let reports =
+            check_ownership_recovering(&module.ast, &module.roots, &linear);
+        let moved = reports
+            .iter()
+            .find(|held| held.message.contains("use of moved value"))
+            .expect("the second take reports a use after move");
+        assert_eq!(moved.related.len(), 1, "{moved:?}");
+        assert_eq!(moved.related[0].0.line, 5, "{moved:?}");
+        assert!(moved.related[0].1.contains("was moved here"));
+        let error = check_ownership(&module.ast, &module.roots, &linear)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("was moved here"), "{error}");
     }
 
     #[test]

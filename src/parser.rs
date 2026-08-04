@@ -1,4 +1,4 @@
-use crate::ast::{
+﻿use crate::ast::{
     Ast, EnumVariant, ExprId, Expression, FlagBit, ImportRename, Literal,
     Module, MultiBinding, NamedExpr, Parameter, Pattern, PatternBinding,
     PatternId, Range32, ReturnKind, ReturnSignature, ReturnValue, Statement,
@@ -741,6 +741,7 @@ impl<'a> Parser<'a> {
             self.diagnostics.push(Diagnostic {
                 position: located.position,
                 message: located.message.clone(),
+                related: Vec::new(),
             });
             return;
         }
@@ -748,6 +749,7 @@ impl<'a> Parser<'a> {
         self.diagnostics.push(Diagnostic {
             position,
             message: error.to_string(),
+            related: Vec::new(),
         });
     }
 
