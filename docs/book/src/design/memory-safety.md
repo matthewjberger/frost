@@ -221,6 +221,9 @@ of the places rather than of the types, so `b.room = fresh` replaces the run,
 below it and leaves it alone. No type table is needed, which is what had kept
 this open.
 
+What this covers is a view held by a *binding*. A view put into a struct field is
+not one, and that is open: see "what is not yet guarded".
+
 A place reached through a raw dereference is not one any of this answers for.
 Where it lands is what nothing here knows, so weighing it against a view reads it
 as possibly anything and one `unsafe { p^ = 42 }` would leave every view in the
@@ -534,6 +537,32 @@ so nobody has to find out by reading the passes.
   field. Closing it needs the provenance of a returned view, which is the
   question the frame check answers for borrows and does not yet answer for
   resources.
+
+- **A view of a growable container, once it is stored.** The growth rule tracks
+  what each *binding* views, which is a per-frame table. A view put into a struct
+  field is not a binding, and a struct holding one can leave the frame entirely:
+
+  ```frost
+  Holder :: struct { view: []i64 }
+  hold :: fn(mut v: Vec<i64>) -> Holder { Holder { view = vec_slice($i64, v) } }
+
+  h := hold(v)
+  vec_push($i64, v, 1)       // may grow, which frees the old block
+  print h.view[0]            // reads it anyway, not refused
+  ```
+
+  Both shapes are open: the view stored in a local struct and read after a growth
+  in the same frame, and the view carried out of a call inside a returned struct.
+  The first needs the view table keyed by place rather than by name. The second
+  cannot be answered per frame at all: it needs to know that `.storage` of a
+  `Vec` is a field some function replaces, while `.storage` of a `Slab` is not,
+  and that is a question about a type rather than about a place.
+
+  What makes the rest of the language safe here is that nothing else reallocates.
+  An arena is a single fixed allocation that aborts rather than growing, a `Slab`
+  and a `columns` are `[N]T`, and a `ref` into any of them can never go stale.
+  `Vec` is the one container that moves its block, and it is the only place this
+  question arises.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
