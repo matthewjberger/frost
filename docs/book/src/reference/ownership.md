@@ -43,8 +43,8 @@ taken before that names storage the allocator has taken.
 
 ```frost
 view := vec_slice($i64, v)
-vec_push($i64, v, 1)       // fills, so the block is replaced
-print view[0]              // refused
+vec_push($i64, v, 1)         // fills, so the block is replaced
+print_int_line(view[0])      // refused
 ```
 
 What makes it visible from the call is two summaries, worked out for every

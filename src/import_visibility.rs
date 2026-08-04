@@ -209,8 +209,7 @@ pub(crate) fn bound_in_statement(
         }
         Statement::Constant(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => bound_in_expression(ast, *value, out),
+        | Statement::Expression(value) => bound_in_expression(ast, *value, out),
         Statement::Assignment(place, value) => {
             bound_in_expression(ast, *place, out);
             bound_in_expression(ast, *value, out);

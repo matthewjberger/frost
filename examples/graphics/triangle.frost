@@ -27,6 +27,7 @@ import "../../lib/renderer/wgpu.frost"
 // Vectors and matrices. Found on the standard library search path, so this is
 // the same `math.frost` every other example imports.
 import "math.frost"
+import "io.frost"
 
 // ---------------------------------------------------------------------------
 // Handing the adapter and the device back out of their callbacks
@@ -111,7 +112,7 @@ HEIGHT :: 540
 
 main :: fn() -> i64 {
     if (sdl_init(InitFlags::Video) == false) {
-        print 0
+        print_int_line(0)
         return 1
     }
     window := window_create("Frost triangle", WIDTH, HEIGHT,

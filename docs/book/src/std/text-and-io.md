@@ -14,7 +14,8 @@ caller.
 ## `std/io.frost`, writing to standard output
 
 ```frost
-export print_int, print_char, print_str, print_int_line, print_str_line
+export print_int, print_char, print_str, print_bool, print_f64,
+    print_int_line, print_str_line, print_bool_line, print_f64_line
 ```
 
 | Call | What it writes |
@@ -22,20 +23,29 @@ export print_int, print_char, print_str, print_int_line, print_str_line
 | `print_int(value)` | A signed integer in base ten |
 | `print_char(byte)` | One byte |
 | `print_str(text)` | A `str`, in a single call |
+| `print_f64(value)` | A float, the way C writes `%g` |
+| `print_bool(value)` | `1` or `0`, the number a mask or a flag would print |
 | `print_int_line(value)` | An integer and a newline |
 | `print_str_line(text)` | A `str` and a newline |
+| `print_f64_line(value)` | A float and a newline |
+| `print_bool_line(value)` | `1` or `0` and a newline |
 
-Without this a program declares the C function it wants itself, which is why so
-many older examples open with
+This module is the whole of how a program writes output: there is no print
+statement in the language. Without it a program declares the C function it
+wants itself, which is why so many older examples open with
 `printf :: extern fn(fmt: ^i8, value: i64) -> i32`. That is honest about the
 FFI, but it is a strange first line for a first program, and it drags in
 `printf`'s format string, which is one more thing to get wrong when what was
 wanted was to print a number.
 
-These go through the runtime's emit helpers instead. There is no format string
-and nothing is variadic. The three externs behind them are `safe extern`,
-because each takes a number, or a pointer with its length beside it, so there is
-nothing a caller can hand them that misbehaves.
+These go through the runtime's write helpers, which are pinned to standard
+output rather than following the compiler's emit target, so a program that
+redirects emitted text still prints where a reader looks. There is no format
+string and nothing is variadic. Three of the four externs behind them are
+`safe extern`, because each takes a number and there is nothing a caller can
+hand one that misbehaves. The byte writer takes a pointer and a length, so its
+one call sits in an `unsafe` block inside `print_str`, where the length comes
+from the same `str` as the pointer and the two cannot disagree.
 
 ```frost
 import "io.frost"
@@ -47,8 +57,15 @@ main :: fn() -> i64 {
 }
 ```
 
-The bare name `print` is a statement keyword in the language, so the writers are
-named for what they write.
+A line built from several values is several calls, with the newline written by
+the one `_line` call at the end:
+
+```frost
+print_str("hp ")
+print_int(entity.hp)
+print_str(" of ")
+print_int_line(entity.max)
+```
 
 ## `std/strings.frost`, questions about text
 

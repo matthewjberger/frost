@@ -1096,8 +1096,7 @@ impl RunWalk<'_> {
             }
             Statement::Constant(_, value)
             | Statement::LetMultiple(_, value)
-            | Statement::Expression(value)
-            | Statement::Print(value, _) => self.walk_expression(*value),
+            | Statement::Expression(value) => self.walk_expression(*value),
             Statement::While(condition, body) => {
                 self.walk_expression(*condition);
                 self.walk_block(*body);
@@ -2102,17 +2101,6 @@ impl MoveChecker<'_> {
                 Ok(false)
             }
             Statement::Break | Statement::Continue => Ok(true),
-            // `print` takes what it is given the way any other call does, and
-            // this pass used to walk straight past it: a value moved into a
-            // `print` stayed live and could be used again, which is the one
-            // place a use-after-move went unnoticed.
-            Statement::Print(expression, arguments) => {
-                self.visit(*expression, false)?;
-                for argument in ast.exprs_in(*arguments) {
-                    self.visit(*argument, false)?;
-                }
-                Ok(false)
-            }
             // The allocation-sources lowering runs before this check and leaves
             // no `with` behind, and the multiple-return lowering leaves no
             // `LetMultiple`. Both are walked anyway, so neither becomes a hole

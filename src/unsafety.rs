@@ -37,7 +37,8 @@ use crate::types::Type;
 //
 // The walks below list every statement and expression form rather than ending in
 // a wildcard. A form nobody handled is a compile error here instead of a hole
-// nobody sees until a program reaches through it. `print` was that hole.
+// nobody sees until a program reaches through it. The old `print` statement
+// was that hole.
 /// One walk, both answers: the operations that must sit inside an `unsafe`
 /// block, and the blocks holding none. Marking a block as vouched-for costs a
 /// bool per block and changes no refusal, so a build gets the second answer for
@@ -623,15 +624,6 @@ impl Checker<'_> {
                 self.expression(*value, at);
             }
             Statement::Expression(value) => self.expression(*value, at),
-            // `print` holds expressions the way any other statement does, and
-            // the gated operations are expression forms. A walk that stopped
-            // here let a raw-pointer read out of the block it belongs in.
-            Statement::Print(value, arguments) => {
-                self.expression(*value, at);
-                for argument in ast.exprs_in(*arguments) {
-                    self.expression(*argument, at);
-                }
-            }
             Statement::Assignment(place, value) => {
                 self.expression(*place, at);
                 self.expression(*value, at);

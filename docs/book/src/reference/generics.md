@@ -122,7 +122,13 @@ element.
 ```frost
 printall :: fn(args: $...) {
     for value in args {
-        print value
+        if (is_float(value)) {
+            print_f64_line(value)
+        } else if (is_slice(value)) {
+            print_str_line(value)
+        } else {
+            print_int_line(value)
+        }
     }
 }
 
@@ -149,7 +155,7 @@ before anything checks it:
 ```frost
 show :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) { print_float(value) } else { print_int(value) }
+        if (is_float(value)) { print_f64_line(value) } else { print_int_line(value) }
     }
 }
 ```

@@ -110,6 +110,16 @@ fn gen_float(rng: &mut Rng, depth: u32) -> String {
 // a number read back through a name it was given, a pointer to a type whose
 // code the compiler has to look up rather than compute.
 const PRELUDE: &str = "\
+frost_rt_write_i64 :: safe extern fn(value: i64)\n\
+frost_rt_write_char :: safe extern fn(byte: i64)\n\
+print_int_line :: fn(value: i64) {\n\
+\x20   frost_rt_write_i64(value)\n\
+\x20   frost_rt_write_char(10)\n\
+}\n\
+print_bool_line :: fn(value: bool) {\n\
+\x20   if (value) { frost_rt_write_i64(1) } else { frost_rt_write_i64(0) }\n\
+\x20   frost_rt_write_char(10)\n\
+}\n\
 Meters :: distinct i64\n\
 Grip :: distinct ^u8\n\
 Pair :: struct { first: i64, second: f32 }\n\
@@ -149,14 +159,15 @@ fn gen_typed_float(rng: &mut Rng, index: usize, width: &str) -> String {
     };
     format!(
         "    w{index} : {width} = {value}\n\
-         \x20   print cast($i64, w{index} * 100.0)\n"
+         \x20   print_int_line(cast($i64, w{index} * 100.0))\n"
     )
 }
 
 fn gen_program(rng: &mut Rng, lines: usize) -> String {
-    // `print` rather than an extern `printf`. It is the language's own, so it
-    // needs no `unsafe` and no declaration that a C header might already have
-    // its own idea about, and every backend has to agree about what it writes.
+    // The writers are declared in the prelude over the runtime's own stdout
+    // helpers rather than an extern `printf`, so they need no `unsafe` and no
+    // declaration a C header might already have its own idea about, and every
+    // backend has to agree about what they write.
     let mut source = String::from(PRELUDE);
     source.push_str("main :: fn() -> i64 {\n");
     for index in 0..lines {
@@ -166,14 +177,14 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 let then = gen_expr(rng, 3);
                 let els = gen_expr(rng, 3);
                 source.push_str(&format!(
-                    "    print if {cond} {{ {then} }} else {{ {els} }}\n"
+                    "    print_int_line(if {cond} {{ {then} }} else {{ {els} }})\n"
                 ));
             }
             1 => {
                 // A comparison is a truth value and prints as one, which is how
                 // a bool reaches the output without printf having to take one.
                 let cond = gen_cond(rng, 2);
-                source.push_str(&format!("    print {cond}\n"));
+                source.push_str(&format!("    print_bool_line({cond})\n"));
             }
             2 => {
                 // A narrower integer, so a value that has been through one is
@@ -194,7 +205,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 source.push_str(&format!(
                     "    narrow{index} : {width} = {written}\n\
                      \x20   wide{index} : i64 = narrow{index}\n\
-                     \x20   print wide{index}\n"
+                     \x20   print_int_line(wide{index})\n"
                 ));
             }
             3 => {
@@ -203,13 +214,15 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 // float prints with.
                 let left = gen_float(rng, 2);
                 let right = gen_float(rng, 2);
-                source.push_str(&format!("    print ({left} < {right})\n"));
+                source.push_str(&format!(
+                    "    print_bool_line({left} < {right})\n"
+                ));
             }
             4 => {
                 let value = gen_float(rng, 2);
                 source.push_str(&format!(
                     "    f{index} := {value}\n\
-                     \x20   print (f{index} == f{index})\n"
+                     \x20   print_bool_line(f{index} == f{index})\n"
                 ));
             }
             5 => {
@@ -236,7 +249,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 source.push_str(&format!(
                     "    m{index} : Meters = {expr}\n\
                      \x20   back{index} : i64 = m{index}\n\
-                     \x20   print back{index}\n"
+                     \x20   print_int_line(back{index})\n"
                 ));
             }
             7 => {
@@ -247,7 +260,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 let expr = gen_expr(rng, 2);
                 source.push_str(&format!(
                     "    mut p{index} : Meters = {expr}\n\
-                     \x20   print through(ptr_to(p{index}))\n"
+                     \x20   print_int_line(through(ptr_to(p{index})))\n"
                 ));
             }
             8 => {
@@ -257,7 +270,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 // inside the first.
                 source.push_str(&format!(
                     "    mut g{index} := no_grip()\n\
-                     \x20   print grips(ptr_to(g{index}))\n"
+                     \x20   print_int_line(grips(ptr_to(g{index})))\n"
                 ));
             }
             9 => {
@@ -273,7 +286,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                      \x20       case 1: {b}\n\
                      \x20       case _: {c}\n\
                      \x20   }}\n\
-                     \x20   print v{index}\n"
+                     \x20   print_int_line(v{index})\n"
                 ));
             }
             10 => {
@@ -287,13 +300,13 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                      \x20       case 0: Pair {{ first = {a}, second = {x} }}\n\
                      \x20       case _: Pair {{ first = {b}, second = {y} }}\n\
                      \x20   }}\n\
-                     \x20   print s{index}.first\n\
-                     \x20   print cast($i64, s{index}.second * 100.0)\n"
+                     \x20   print_int_line(s{index}.first)\n\
+                     \x20   print_int_line(cast($i64, s{index}.second * 100.0))\n"
                 ));
             }
             _ => {
                 let expr = gen_expr(rng, 4);
-                source.push_str(&format!("    print {expr}\n"));
+                source.push_str(&format!("    print_int_line({expr})\n"));
             }
         }
     }
@@ -655,6 +668,7 @@ fn growth_case(
     let element = if kind == 3 { "u8" } else { "i64" };
     let head = format!(
         "import \"vec.frost\"\n\
+         import \"io.frost\"\n\
          wrap :: fn(w: Vec<{element}>) -> []{element} {{ vec_slice(${element}, w) }}\n\
          grow :: fn(mut w: Vec<{element}>, value: {element}) {{ vec_push(${element}, w, value) }}\n"
     );
@@ -662,12 +676,15 @@ fn growth_case(
     // How the view is taken, and what reads it afterwards. The `ref` writes
     // through the borrow, which lands in the freed block rather than reading it.
     let (take, read) = match kind {
-        0 => ("view := vec_slice($i64, v)".to_string(), "print view[0]"),
+        0 => (
+            "view := vec_slice($i64, v)".to_string(),
+            "print_int_line(view[0])",
+        ),
         1 => ("ref held := vec_slice($i64, v)[0]".to_string(), "held = 99"),
-        2 => ("view := wrap(v)".to_string(), "print view[0]"),
+        2 => ("view := wrap(v)".to_string(), "print_int_line(view[0])"),
         _ => (
             "held : str = vec_slice($u8, v)".to_string(),
-            "print str_len(held)",
+            "print_int_line(str_len(held))",
         ),
     };
     let push = match position {

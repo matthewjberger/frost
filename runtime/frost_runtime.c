@@ -512,22 +512,12 @@ void frost_rt_emit_char(int64_t byte) {
     fputc((int)byte, frost_rt_emit_where());
 }
 
-/* The `print` statement. An integer prints as %lld and a float as %g, each
-   followed by a newline, and both go to standard output rather than the emit
-   target, since `print` is a program writing its own output, not the compiler
-   writing its. This matches the self-hosted compiler's `print`, which emits the
-   same two printf forms inline. */
-void frost_rt_print_i64(int64_t value) {
-    printf("%lld\n", (long long)value);
-}
-
-void frost_rt_print_f64(double value) {
-    printf("%g\n", value);
-}
-
-/* The pieces a formatted `print` expands into. Each writes one piece with no
-   newline of its own, and the newline is written once at the end, so
-   `print "x {} y {}", a, b` is one line however many pieces it took. */
+/* What std/io.frost writes through. Each writes one piece to standard output
+   with no newline of its own, so a line built from several values is several
+   calls and one trailing `frost_rt_write_char(10)`. Pinned to stdout rather
+   than the emit target, so a program that redirects the compiler's emitted
+   text still prints its own output where a reader looks for it. An integer
+   writes as %lld and a float as %g. */
 void frost_rt_write_bytes(const char *data, int64_t length) {
     fwrite(data, 1, (size_t)length, stdout);
 }
@@ -540,15 +530,8 @@ void frost_rt_write_f64(double value) {
     printf("%g", value);
 }
 
-void frost_rt_write_newline(void) {
-    printf("\n");
-}
-
-/* A C string, whose length is where its NUL is. A string literal reaches C as
-   one of these, so this is what writing one comes to when it has no length
-   beside it. */
-void frost_rt_write_cstr(const char *text) {
-    fputs(text, stdout);
+void frost_rt_write_char(int64_t byte) {
+    fputc((int)byte, stdout);
 }
 
 const char *frost_rt_getenv(const char *name) {

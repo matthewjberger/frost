@@ -26,7 +26,7 @@ Specified language, matching the keyword table of `src/lexer.rs` (2.4):
 
 ```
 break case continue defer distinct else enum extern false fn for if import
-in inline linear match move mut print ref return safe struct true
+in inline linear match move mut ref return safe struct true
 type unsafe uses where while with
 ```
 

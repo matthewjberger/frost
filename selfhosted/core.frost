@@ -205,7 +205,7 @@ frost_rt_absolute_path :: extern fn(path: ^i8) -> ^i8
 // address. The claim that the bytes are that is unchecked, so the call is
 // gated. Reads through the slice it returns are bounds-checked and are not.
 NodeKind :: enum {
-    Num, Var, Bin, Let, Assign, Print, If, While, Return, Call, Func, Param,
+    Num, Var, Bin, Let, Assign, If, While, Return, Call, Func, Param,
     Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Cast,
     Sizeof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
@@ -350,7 +350,6 @@ TokenKind :: enum {
     KwBreak,
     KwContinue,
     KwReturn,
-    KwPrint,
     KwStruct,
     KwMatch,
     KwCase,

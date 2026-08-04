@@ -841,7 +841,6 @@ impl<'a> Parser<'a> {
             && matches!(
                 self.peek_nth(0),
                 Token::Return
-                    | Token::Print
                     | Token::Defer
                     | Token::For
                     | Token::While
@@ -869,7 +868,6 @@ impl<'a> Parser<'a> {
                 Some(self.parse_test_statement()?)
             }
             Token::Return => Some(self.parse_return_statement()?),
-            Token::Print => Some(self.parse_print_statement()?),
             Token::Defer => Some(self.parse_defer_statement()?),
             Token::For => Some(self.parse_for_statement()?),
             Token::While => Some(self.parse_while_statement()?),
@@ -1618,31 +1616,6 @@ impl<'a> Parser<'a> {
                 self.span_from(start),
             ))
         }
-    }
-
-    fn parse_print_statement(&mut self) -> Result<StmtId> {
-        let start = self.mark();
-        if !matches!(self.read_token(), Token::Print) {
-            bail!("Expected 'print' token!");
-        }
-        let expression = self.parse_expression(Precedence::Lowest)?;
-        if matches!(self.peek_nth(0), Token::Semicolon) {
-            self.read_token();
-        }
-        // `print "x is {}", x` fills the holes of a format literal. The
-        // arguments are ordinary expressions. What makes this compile-time is
-        // that the literal is read by the compiler and never exists at run
-        // time.
-        let mut arguments = Vec::new();
-        while matches!(self.peek_nth(0), Token::Comma) {
-            self.read_token();
-            arguments.push(self.parse_expression(Precedence::Lowest)?);
-        }
-        let arguments = self.ast.add_expr_list(&arguments);
-        Ok(self.ast.push_stmt(
-            Statement::Print(expression, arguments),
-            self.span_from(start),
-        ))
     }
 
     fn parse_return_statement(&mut self) -> Result<StmtId> {

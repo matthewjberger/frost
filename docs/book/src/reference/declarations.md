@@ -219,8 +219,8 @@ variant (6.7):
 
 ```frost
 match number(text) {
-    case .Ok { value }: { print value }
-    case .Err { error }: { print error.at }
+    case .Ok { value }: { print_int_line(value) }
+    case .Err { error }: { print_int_line(error.at) }
 }
 ```
 

@@ -88,10 +88,6 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             "void frost_rt_mem_set(void *destination, int64_t value, int64_t size);",
         ),
         (
-            "frost_rt_print_i64",
-            "void frost_rt_print_i64(int64_t value);",
-        ),
-        (
             "frost_rt_write_bytes",
             "void frost_rt_write_bytes(const char* data, int64_t length);",
         ),
@@ -104,16 +100,8 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             "void frost_rt_write_f64(double value);",
         ),
         (
-            "frost_rt_write_newline",
-            "void frost_rt_write_newline(void);",
-        ),
-        (
-            "frost_rt_write_cstr",
-            "void frost_rt_write_cstr(const char* text);",
-        ),
-        (
-            "frost_rt_print_f64",
-            "void frost_rt_print_f64(double value);",
+            "frost_rt_write_char",
+            "void frost_rt_write_char(int64_t byte);",
         ),
     ];
 

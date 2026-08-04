@@ -411,6 +411,13 @@ main :: fn() -> i64 {
     if (str_len(source) <= 1) {
         source = "
         strlen :: extern fn(s: ^i8) -> i64
+        frost_rt_write_i64 :: safe extern fn(value: i64)
+        frost_rt_write_char :: safe extern fn(byte: i64)
+
+        print_int_line :: fn(value: i64) {
+            frost_rt_write_i64(value)
+            frost_rt_write_char(10)
+        }
 
         ANSWER :: 42
 
@@ -457,33 +464,33 @@ main :: fn() -> i64 {
         }
 
         main :: fn() -> i64 {
-            print fib(10)
-            print fact(5)
+            print_int_line(fib(10))
+            print_int_line(fact(5))
             mut sum : i64 = 0
             mut index : i64 = 1
             while (index <= 10) { sum = sum + index  index = index + 1 }
-            print sum
+            print_int_line(sum)
             p := Point { x = 3, y = 4 }
-            print p.x
+            print_int_line(p.x)
             p.x = 10
-            print sum_point(p)
+            print_int_line(sum_point(p))
             ptr := ptr_to(p)
             bump(ptr)
-            print p.x
+            print_int_line(p.x)
             unsafe {
-                print ptr^.y
-                print ptr[0].x
+                print_int_line(ptr^.y)
+                print_int_line(ptr[0].x)
                 q := ptr_cast($Point, ptr)
-                print q^.x
+                print_int_line(q^.x)
             }
-            print sizeof(Point)
-            print classify(0)
-            print classify(1)
-            print classify(7)
-            unsafe { print strlen(\"hello\") }
-            print ANSWER
+            print_int_line(sizeof(Point))
+            print_int_line(classify(0))
+            print_int_line(classify(1))
+            print_int_line(classify(7))
+            unsafe { print_int_line(strlen(\"hello\")) }
+            print_int_line(ANSWER)
             h := Holder { item = box_make($i64, 77) }
-            print box_get(h.item)
+            print_int_line(box_get(h.item))
         }
     "
     }

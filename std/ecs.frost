@@ -1403,7 +1403,7 @@ ecs_resource :: fn($T: Type, world: World, slot: i64) -> $T {
 // that holds a resource.
 //
 //     ref held := ecs_resource_ref($Tree, world, slot)
-//     print hierarchy_child_count(held.tree, parent)
+//     print_int_line(hierarchy_child_count(held.tree, parent))
 ecs_resource_ref :: fn($T: Type, world: World, slot: i64) -> ref T {
     held := ecs_resource_slice($T, world, slot)
     ref result := held[0]

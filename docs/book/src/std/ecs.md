@@ -209,7 +209,7 @@ tree := ecs_resource_register($Hierarchy, world)
 ecs_resource_set($Hierarchy, world, tree, hierarchy_new())
 
 held := ecs_resource_ref($Hierarchy, world, tree)   // look at it
-print hierarchy_child_count(held, parent)
+print_int_line(hierarchy_child_count(held, parent))
 
 giving := ecs_resource($Hierarchy, world, tree)     // take it back
 hierarchy_free(giving)

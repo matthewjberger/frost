@@ -33,6 +33,7 @@ import "gpu.frost"
 import "math.frost"
 import "mem.frost"
 import "strings.frost"
+import "io.frost"
 
 export Mesh, MeshCache, MeshSlot,
     mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
@@ -127,7 +128,7 @@ mesh_cache_insert :: fn(mut cache: MeshCache, mut store: Geometry,
     }
     at := take_slot(cache)
     if (at < 0) {
-        print "mesh: more meshes at once than the cache was made room for"
+        print_str_line("mesh: more meshes at once than the cache was made room for")
         mut unused := held
         mesh_free(unused)
         return -1
@@ -150,7 +151,7 @@ mesh_cache_add :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
     span := geometry_add(store, device, queue, held.vertices, held.indices)
     at := take_slot(cache)
     if (at < 0) {
-        print "mesh: more meshes at once than the cache was made room for"
+        print_str_line("mesh: more meshes at once than the cache was made room for")
         mut unused := held
         mesh_free(unused)
         return -1
@@ -492,7 +493,7 @@ filler_mesh :: fn(vertices: i64, indices: i64, mark: f32) -> Mesh {
 test "a buffer that runs out grows, and what is in it comes with it" {
     mut g := gpu_open()
     if (gpu_ok(g) == false) {
-        print "mesh: no device, so growth was not exercised"
+        print_str_line("mesh: no device, so growth was not exercised")
         gpu_close(g)
         return
     }
@@ -544,7 +545,7 @@ test "a buffer that runs out grows, and what is in it comes with it" {
 test "a cache that loses most of what it held puts the rest back at the start" {
     mut g := gpu_open()
     if (gpu_ok(g) == false) {
-        print "mesh: no device, so compaction was not exercised"
+        print_str_line("mesh: no device, so compaction was not exercised")
         gpu_close(g)
         return
     }

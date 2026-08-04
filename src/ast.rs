@@ -431,7 +431,6 @@ pub enum Statement {
     Constant(Symbol, ExprId),
     Return(ExprId),
     Expression(ExprId),
-    Print(ExprId, Range32),
     Struct(Symbol, Range32, Range32),
     Enum(Symbol, Range32, Range32),
     Flags(Symbol, crate::types::Type, Range32),
@@ -988,11 +987,6 @@ impl<'a> Splicer<'a> {
             }
             Statement::Expression(value) => {
                 Statement::Expression(self.expression(dest, value, rename))
-            }
-            Statement::Print(value, arguments) => {
-                let value = self.expression(dest, value, rename);
-                let arguments = self.expressions(dest, arguments, rename);
-                Statement::Print(value, arguments)
             }
             Statement::Struct(name, type_params, fields) => Statement::Struct(
                 self.symbol(dest, name, rename),

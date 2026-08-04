@@ -54,7 +54,7 @@ surprises.
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `for x in &xs { }` | `for x in xs { }` |
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
-| `println!("{}", x)` | `print x`, and `print "hp {}", x` for a format |
+| `println!("{}", x)` | `import "io.frost"` and `print_int_line(x)` |
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | no equivalent | `-> (quotient: i64, remainder: i64)`, named like Odin's |
@@ -104,12 +104,12 @@ code, which is why the examples end in a bare `0`.
 There are no attributes, no `#[derive(..)]`, and no macros. What you write is
 what runs.
 
-`println!` has no equivalent either, because printing is a statement rather than
-a macro. `print x` writes one value and a newline, and `print "hp {} of {}", a,
-b` fills each hole from the values after the literal. The compiler splits the
-literal where the statement is written, so no format string exists at run time
-and the printable set is closed: the integer widths, the floats, `bool`,
-`Handle`, `str` and `^i8` ([statements.md](reference/statements.md)).
+`println!` has no equivalent either, because printing is a library call rather
+than a macro. `import "io.frost"` brings in one writer per type, so
+`print_int_line(x)` writes an integer and a newline, and a line built from
+several values is several calls. There is no format string anywhere: what would
+be a hole in one is a call in the order the pieces are written
+([text-and-io.md](std/text-and-io.md)).
 
 ## Functions, and the absence of methods
 
@@ -185,8 +185,8 @@ The representation is the inner type, so arithmetic, layout and the C ABI are
 newtype buys: a `Meters` cannot be built from a bare number or from a `Feet`.
 
 The check is one-directional, which is where it differs from the newtype. Going
-out is free, so `print m` and `n : i64 = m` both work, because a `Meters` is an
-`i64` in memory and nothing is at stake that way. Going in is checked, so a
+out is free, so `print_int_line(m)` and `n : i64 = m` both work, because a
+`Meters` is an `i64` in memory and nothing is at stake that way. Going in is checked, so a
 value that means something else cannot become a `Meters` by accident. There is
 no cast in either direction and none is needed.
 
@@ -288,7 +288,7 @@ fizz :: fn(i: i64) -> i64 {
 
 Matching a value of a `linear` type consumes it (see below). There is no
 `#[derive(Debug)]`, `PartialEq`, or the rest. Equality is written, and printing
-is the `print` statement rather than a trait a type opts into.
+is a call to a writer named for the type rather than a trait a type opts into.
 
 ## The borrow system without lifetimes
 
@@ -402,7 +402,7 @@ close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print close(f)     // consumes f exactly once
+    print_int_line(close(f))   // consumes f exactly once
     // close(f)         // error: use of moved value
 }                       // f still live here: linear value never consumed
 ```
@@ -429,7 +429,7 @@ which runs a statement when the scope exits, in last-in-first-out order:
 
 ```frost
 work :: fn() {
-    defer print "cleanup"   // runs on the way out
+    defer print_str_line("cleanup")   // runs on the way out
     // ... body ...
 }
 ```
@@ -453,8 +453,8 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse { .. }
 d := digit(text, index)?
 
 match number(text) {
-    case .Ok { value }: { print value }
-    case .Err { error }: { print error.at }
+    case .Ok { value }: { print_int_line(value) }
+    case .Err { error }: { print_int_line(error.at) }
 }
 ```
 
@@ -516,9 +516,9 @@ main :: fn() -> i64 {
 
     hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
 
-    print world[hero].hp                  // 100
+    print_int_line(world[hero].hp)        // 100
     world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print world[hero].hp                  // 75
+    print_int_line(world[hero].hp)        // 75
     0
 }
 ```
@@ -732,10 +732,18 @@ predicate keeps the branch that survives for that element:
 
 ```frost
 printall :: fn(args: $...) {
-    for value in args { print value }
+    for value in args {
+        if (is_float(value)) {
+            print_f64_line(value)
+        } else if (is_slice(value)) {
+            print_str_line(value)
+        } else {
+            print_int_line(value)
+        }
+    }
 }
 
-printall(1, 2.5, 9)
+printall(1, 2.5, "three")
 ```
 
 What is deliberately missing is everything that would make this a language of
@@ -798,9 +806,9 @@ and `(old as new)` renames one of them for the importing file only. See
 | `Box`, `Rc`, `Arc`, `RefCell` | Slabs and `Handle<T>` (generational indices) |
 | `Vec`, `HashMap`, `String` | `std/vec.frost`, `std/map.frost`, `str` and `std/strings.frost` |
 | `#[derive(..)]`, macros, attributes | None; write what you need explicitly |
-| `println!` | `print` is a statement, with a compile-time format form |
+| `println!` | `import "io.frost"`, one writer per type |
 | `?`, `Result`, `#[must_use]` | `-> T ! E` failure sets and `?`; a result carrying a `linear` value must be consumed |
-| Overflow checks in debug | None; arithmetic always wraps at width |
+| Overflow checks in debug | Overflow aborts in every build; `wrap_add` and friends wrap on purpose |
 | `unsafe` blocks and raw pointers | `unsafe` blocks around `^T` and `extern` calls |
 | `pub`, `pub(crate)`, field privacy | An `export` line per file; every struct field is public |
 | Async, generics over const, GATs | Out of scope |
@@ -871,10 +879,11 @@ main :: fn() -> i64 {
 
     // The player takes the goblin's damage, written straight into the slot.
     world[player].hp = world[player].hp + delta(world[goblin])
-    print "hp {}", world[player].hp                  // 85
+    print_str("hp ")
+    print_int_line(world[player].hp)                 // 85
 
     slab_release($Entity, $16, world, goblin)
-    print slab_alive($Entity, $16, world, goblin)    // 0, the handle is stale
+    print_int_line(slab_alive($Entity, $16, world, goblin))   // 0, the handle is stale
     0
 }
 ```

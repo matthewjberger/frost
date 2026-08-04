@@ -9,6 +9,8 @@
 // the compiler keys on is the shape, a `storage` run beside a `generations`
 // run, not a named type.
 
+import "io.frost"
+
 Entity :: struct { hp: i64, mana: i64 }
 
 Slab :: struct {
@@ -53,9 +55,9 @@ main :: fn() -> i64 {
     hero := insert(world, Entity { hp = 100, mana = 30 })
     goblin := insert(world, Entity { hp = 40, mana = 10 })
 
-    print world[hero].hp
+    print_int_line(world[hero].hp)
     world[hero].hp = world[hero].hp - 25
-    print world[hero].hp
-    print world[goblin].mana
+    print_int_line(world[hero].hp)
+    print_int_line(world[goblin].mana)
     0
 }

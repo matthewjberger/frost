@@ -119,7 +119,7 @@ main :: fn() -> i64 {
     with arena {
         result = forward()
     }
-    print result
+    print_int_line(result)
     0
 }
 ```

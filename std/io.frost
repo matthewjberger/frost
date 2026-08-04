@@ -6,31 +6,46 @@
 // program and it carries `printf`'s format string, which is one more thing to
 // get wrong when what was wanted was to print a number.
 //
-// These go through the runtime's emit helpers rather than through `printf`, so
-// there is no format string to get wrong and nothing is variadic. Nothing here
-// names a raw pointer: a writer taking a `^i8` promises the bytes end in a NUL,
-// and that is a promise the caller makes silently and the compiler cannot
-// check. A `str` carries its length, so there is nothing to promise.
+// These go through the runtime's write helpers, which are pinned to standard
+// output. The emit helpers are not: they follow the compiler's `-o` target, so
+// a program that opens one would find its own output inside the file it was
+// writing. Nothing here names a raw pointer except the one writer below: a
+// writer taking a `^i8` promises the bytes end in a NUL, and that is a promise
+// the caller makes silently and the compiler cannot check. A `str` carries its
+// length, so there is nothing to promise.
 
-export print_int, print_char, print_str, print_int_line, print_str_line
+export print_int, print_char, print_str, print_bool, print_f64,
+    print_int_line, print_str_line, print_bool_line, print_f64_line
 
 // The ones that take a number are `safe` and need no block at their call sites,
-// because there is nothing a caller can hand them that misbehaves. (The bare
-// name `print` is a statement keyword in the language, so the writers are named
-// for what they write.)
+// because there is nothing a caller can hand them that misbehaves.
 //
 // The one that takes a pointer and a length is not. It asserts that `length`
 // bytes live at `data`, which is the claim `slice_from` is gated for, and a
 // length that does not match the pointer reads past the end inside C where
-// nothing checks it. The self-hosted compiler declares the same function plain
-// and blocks its one call; this now agrees with it.
-frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)
-frost_rt_emit_int :: safe extern fn(value: i64)
-frost_rt_emit_char :: safe extern fn(byte: i64)
+// nothing checks it.
+frost_rt_write_bytes :: extern fn(data: ^u8, length: i64)
+frost_rt_write_i64 :: safe extern fn(value: i64)
+frost_rt_write_f64 :: safe extern fn(value: f64)
+frost_rt_write_char :: safe extern fn(byte: i64)
 
-print_int :: fn(value: i64) { frost_rt_emit_int(value) }
+print_int :: fn(value: i64) { frost_rt_write_i64(value) }
 
-print_char :: fn(byte: i64) { frost_rt_emit_char(byte) }
+print_char :: fn(byte: i64) { frost_rt_write_char(byte) }
+
+// Written the way C writes `%g`, which is the shortest spelling that reads
+// back as the same number for the values a program prints to look at.
+print_f64 :: fn(value: f64) { frost_rt_write_f64(value) }
+
+// `1` and `0` rather than words, so a printed comparison reads as the number
+// a mask or a flag would print.
+print_bool :: fn(value: bool) {
+    if (value) {
+        frost_rt_write_i64(1)
+    } else {
+        frost_rt_write_i64(0)
+    }
+}
 
 // The whole run in one call rather than a byte at a time. A string literal is a
 // `str`, so `print_str("hello")` is what a first program writes.
@@ -40,12 +55,13 @@ print_str :: fn(text: str) {
     }
     // The length comes from the same `str` the pointer is taken from, so the
     // two cannot disagree. That is the whole of what the block vouches for.
-    unsafe { frost_rt_emit_bytes(ptr_to(text[0]), str_len(text)) }
+    unsafe { frost_rt_write_bytes(ptr_to(text[0]), str_len(text)) }
 }
 
-print_int_line :: fn(value: i64) {
-    frost_rt_emit_int(value)
-    frost_rt_emit_char(10)
-}
+print_int_line :: fn(value: i64) { print_int(value)  print_char(10) }
 
 print_str_line :: fn(text: str) { print_str(text)  print_char(10) }
+
+print_f64_line :: fn(value: f64) { print_f64(value)  print_char(10) }
+
+print_bool_line :: fn(value: bool) { print_bool(value)  print_char(10) }
