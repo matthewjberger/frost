@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 
-use crate::ast::{Ast, Module, Splicer, StmtId, TokenSpan};
+use crate::ast::{Ast, Module, Splicer, StmtId};
 
 // What a caller needs to know about a module without seeing the rest of it.
 //
@@ -18,9 +18,10 @@ use crate::ast::{Ast, Module, Splicer, StmtId, TokenSpan};
 //
 // The declarations are a fresh arena built by copying the kept statements in
 // order, symbols interned in first-use order, so the serialized form is
-// deterministic and a fingerprint can hash it directly. Its position table
-// holds one entry per declaration, the statement's own position, which is the
-// granularity the old spanned statements carried.
+// deterministic and a fingerprint can hash it directly. The module's token
+// position table comes with it whole, because a diagnostic raised inside a
+// carried generic body while a caller instantiates it has to land on the
+// statement that is wrong, not on the declaration that holds it.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleInterface {
     // The module's identity, its path relative to the project root. Also what
@@ -88,33 +89,14 @@ impl ModuleInterface {
             })
             .collect();
         let mut declarations = Module::default();
-        let splicer = Splicer::new(ast, 0);
-        for (index, statement) in kept.iter().enumerate() {
-            declarations
-                .ast
-                .token_positions
-                .push(ast.stmt_position(*statement));
-            let expr_watermark = declarations.ast.expressions.len();
-            let stmt_watermark = declarations.ast.statements.len();
+        let offset = crate::ast::splice_positions(&mut declarations.ast, ast);
+        let splicer = Splicer::new(ast, offset);
+        for statement in &kept {
             let copied = splicer.statement(
                 &mut declarations.ast,
                 *statement,
                 &mut |name| name.to_string(),
             );
-            // The copy carries spans into the source's token table, which the
-            // interface does not keep. Every node of this declaration points
-            // at the one position the declaration has, the way a spanned
-            // statement carried one position for everything under it.
-            let span = TokenSpan {
-                first: index as u32,
-                last: index as u32,
-            };
-            for held in &mut declarations.ast.expr_spans[expr_watermark..] {
-                *held = span;
-            }
-            for held in &mut declarations.ast.stmt_spans[stmt_watermark..] {
-                *held = span;
-            }
             declarations.roots.push(copied);
         }
         let mut linear: Vec<String> = linear_types.iter().cloned().collect();
@@ -313,7 +295,8 @@ mod tests {
     fn interface_of(source: &str) -> ModuleInterface {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(&tokens);
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
         let module = parser.parse().unwrap();
         ModuleInterface::of(
             "lib/test.frost",
@@ -322,6 +305,34 @@ mod tests {
             parser.exports(),
             &parser.linear_types().iter().cloned().collect(),
         )
+    }
+
+    // A diagnostic raised while a caller instantiates a carried generic has
+    // to land on the body statement that is wrong. The interface carried one
+    // position per nested statement before the arena and it still does: this
+    // is the regression the stage-one review caught, where every node under a
+    // declaration answered the declaration's first line.
+    #[test]
+    fn an_interface_keeps_the_positions_of_carried_bodies() {
+        let source = "export sum\n\
+                      sum :: fn($T: Type, a: $T, b: $T) -> $T {\n\
+                      \x20   total := a + b\n\
+                      \x20   total\n\
+                      }\n";
+        let interface = interface_of(source);
+        let held = &interface.declarations;
+        let crate::ast::Statement::Constant(_, value) =
+            held.ast.stmt(held.roots[0])
+        else {
+            panic!("the carried declaration is the constant");
+        };
+        let (crate::ast::Expression::Function(_, _, body)
+        | crate::ast::Expression::Proc(_, _, body)) = held.ast.expr(*value)
+        else {
+            panic!("the constant holds the generic function");
+        };
+        let first = held.ast.stmts_in(*body)[0];
+        assert_eq!(held.ast.stmt_position(first).line, 3);
     }
 
     #[test]
