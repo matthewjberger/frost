@@ -464,9 +464,6 @@ pub fn display_expr(ast: &Ast, expression: ExprId) -> String {
                 .collect();
             format!("{} {{ {} }}", ast.name(*name), field_strs.join(", "))
         }
-        Expression::TypeId(typ) => format!("type_id({typ})"),
-        Expression::TypeName(typ) => format!("typename({typ})"),
-        Expression::Sizeof(typ) => format!("sizeof({})", typ),
         Expression::Range(start, end, inclusive) => {
             if *inclusive {
                 format!(

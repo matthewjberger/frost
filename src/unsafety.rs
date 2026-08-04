@@ -469,6 +469,14 @@ impl Checker<'_> {
                 let Expression::Identifier(name) = ast.expr(*callee) else {
                     return None;
                 };
+                // The type builtins parse as calls to these names and answer
+                // constants, so their types are known here without a
+                // declaration to read.
+                match ast.name(*name) {
+                    "sizeof" | "type_id" => return Some(Type::I64),
+                    "typename" => return Some(Type::Str),
+                    _ => {}
+                }
                 let declared = self.returns.get(ast.name(*name))?;
                 let Some(parameters) = self.generics.get(ast.name(*name))
                 else {
@@ -552,8 +560,6 @@ impl Checker<'_> {
             Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
             Expression::Literal(Literal::Boolean(_))
             | Expression::Boolean(_) => Some(Type::Bool),
-            Expression::Sizeof(_) | Expression::TypeId(_) => Some(Type::I64),
-            Expression::TypeName(_) => Some(Type::Str),
             _ => None,
         }
     }
@@ -860,9 +866,6 @@ impl Checker<'_> {
             Expression::Identifier(_)
             | Expression::Literal(_)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeName(_)
-            | Expression::TypeId(_)
             | Expression::TypeValue(_) => {}
         }
     }

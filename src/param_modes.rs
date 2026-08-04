@@ -311,9 +311,6 @@ fn read_through_expression(
         Expression::Identifier(_)
         | Expression::Literal(_)
         | Expression::Boolean(_)
-        | Expression::Sizeof(_)
-        | Expression::TypeName(_)
-        | Expression::TypeId(_)
         | Expression::TypeValue(_)
         | Expression::UnsafeFn(_) => {}
     }
@@ -416,9 +413,6 @@ fn rewrite_expression(
         Expression::Identifier(_)
         | Expression::Literal(_)
         | Expression::Boolean(_)
-        | Expression::Sizeof(_)
-        | Expression::TypeName(_)
-        | Expression::TypeId(_)
         | Expression::TypeValue(_)
         | Expression::UnsafeFn(_) => {}
     }

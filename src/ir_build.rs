@@ -23,9 +23,12 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "flags_has",
     "ptr_cast",
     "ptr_to",
+    "sizeof",
     "slice_from",
     "slice_len",
     "str_len",
+    "type_id",
+    "typename",
     "wrap_add",
     "wrap_mul",
     "wrap_sub",
@@ -2476,28 +2479,34 @@ impl Expansion<'_> {
             ));
         }
         let node = ast.expr(expression).clone();
-        // `sizeof(field)` is the width of what that field holds. A field reads
-        // as a named type to the parser, which is what makes this the place
-        // that tells the two apart.
-        if let Expression::Sizeof(Type::Struct(named)) = &node
-            && let Some((_, ty)) = self.fields.get(named)
+        // `sizeof(field)` is the width of what that field holds, and
+        // `type_id(field)` its number. A field reads as a named type to the
+        // parser, which is what makes this the place that tells the two apart.
+        // A name a `for` over a list of types bound is a type here and nowhere
+        // else, and resolves the same way.
+        if let Expression::Call(callee, arguments) = &node
+            && let Expression::Identifier(named) = ast.expr(*callee)
+            && matches!(ast.name(*named), "sizeof" | "type_id")
+            && arguments.len() == 1
         {
-            return Ok(ast.push_expr(Expression::Sizeof(ty.clone()), span));
-        }
-        // The same for `type_id`, and for a name a `for` over a list of types
-        // bound, which is a type here and nowhere else.
-        if let Expression::TypeId(Type::Struct(named)) = &node {
-            if let Some((_, ty)) = self.fields.get(named) {
-                return Ok(ast.push_expr(Expression::TypeId(ty.clone()), span));
+            let callee = *callee;
+            let argument = ast.exprs_in(*arguments)[0];
+            let resolved = match ast.expr(argument) {
+                Expression::TypeValue(Type::Struct(written)) => {
+                    match self.fields.get(written) {
+                        Some((_, ty)) => Some(ty.clone()),
+                        None => self.types.get(written).cloned(),
+                    }
+                }
+                _ => None,
+            };
+            if let Some(ty) = resolved {
+                let argument = ast.push_expr(Expression::TypeValue(ty), span);
+                let arguments = ast.add_expr_list(&[argument]);
+                return Ok(
+                    ast.push_expr(Expression::Call(callee, arguments), span)
+                );
             }
-            if let Some(ty) = self.types.get(named) {
-                return Ok(ast.push_expr(Expression::TypeId(ty.clone()), span));
-            }
-        }
-        if let Expression::Sizeof(Type::Struct(named)) = &node
-            && let Some(ty) = self.types.get(named)
-        {
-            return Ok(ast.push_expr(Expression::Sizeof(ty.clone()), span));
         }
         // A type predicate is a question this answers wherever it is asked, not
         // only in the condition of an `if`, so a table may carry the answer as
@@ -3079,9 +3088,7 @@ fn collect_instances_in_expression(
     out: &mut Vec<String>,
 ) {
     match ast.expr(expression) {
-        Expression::Sizeof(ty)
-        | Expression::TypeId(ty)
-        | Expression::TypeName(ty) => collect_instances_in_type(ty, out),
+        Expression::TypeValue(ty) => collect_instances_in_type(ty, out),
         Expression::Prefix(_, operand)
         | Expression::AddressOf(operand)
         | Expression::Borrow(operand)
@@ -4068,15 +4075,6 @@ fn substitute_expression(
                 variant,
                 ast.add_named_exprs(&substituted),
             )
-        }
-        Expression::Sizeof(ty) => {
-            Expression::Sizeof(substitute_type(&ty, subst))
-        }
-        Expression::TypeName(ty) => {
-            Expression::TypeName(substitute_type(&ty, subst))
-        }
-        Expression::TypeId(ty) => {
-            Expression::TypeId(substitute_type(&ty, subst))
         }
         // `[value; N]` becomes the array it always meant, now that N is a
         // number. A count still unbound is one the enclosing generic passes on
@@ -5378,34 +5376,12 @@ impl<'a> FunctionLowering<'a> {
                 {
                     return self.lower_columns_new(expected);
                 }
-                self.lower_call(callee, arguments)
-            }
-            Expression::Sizeof(ty) => {
-                let size = self.builder.byte_size(&ty) as i64;
-                Ok((
-                    IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
-                    Type::I64,
-                ))
-            }
-            Expression::TypeId(ty) => {
-                let id = self.builder.type_id(&ty);
-                Ok((
-                    IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
-                    Type::I64,
-                ))
-            }
-            Expression::TypeName(ty) => {
-                let name =
-                    crate::imports::demangle_private_names(&ty.to_string());
-                if matches!(expected, Some(Type::Ptr(_))) {
-                    return Ok((
-                        IrOperand::Constant(IrConstant::CString(name)),
-                        Type::Ptr(Box::new(Type::I8)),
-                    ));
+                if let Some(answered) =
+                    self.lower_type_builtin(callee, arguments, expected)?
+                {
+                    return Ok(answered);
                 }
-                let local = self.fresh_local(Type::Str, None);
-                self.build_str_value(local, &name);
-                Ok((IrOperand::Local(local), Type::Str))
+                self.lower_call(callee, arguments)
             }
             Expression::Borrow(inner) => {
                 self.lower_address_of(inner, RefKind::Ref)
@@ -6222,6 +6198,64 @@ impl<'a> FunctionLowering<'a> {
             .ast
             .push_expr(Expression::Call(callee, call_arguments), context_span);
         self.lower_direct_call(name, &rewritten)
+    }
+
+    // `sizeof(T)`, `typename(T)` and `type_id(T)` are calls the parser
+    // committed to these names, carrying the type as their one argument. Each
+    // is a constant the compiler already knows, answered here so nothing
+    // downstream sees a call.
+    fn lower_type_builtin(
+        &mut self,
+        callee: ExprId,
+        arguments: Range32,
+        expected: Option<&Type>,
+    ) -> Result<Option<(IrOperand, Type)>> {
+        let Expression::Identifier(name) = self.ast.expr(callee) else {
+            return Ok(None);
+        };
+        let name = self.ast.name(*name);
+        if !matches!(name, "sizeof" | "typename" | "type_id") {
+            return Ok(None);
+        }
+        let name = name.to_string();
+        let arguments = self.ast.exprs_in(arguments);
+        if arguments.len() != 1 {
+            return Ok(None);
+        }
+        let Expression::TypeValue(ty) = self.ast.expr(arguments[0]) else {
+            return Ok(None);
+        };
+        let ty = ty.clone();
+        Ok(Some(match name.as_str() {
+            "sizeof" => {
+                let size = self.builder.byte_size(&ty) as i64;
+                (
+                    IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
+                    Type::I64,
+                )
+            }
+            "type_id" => {
+                let id = self.builder.type_id(&ty);
+                (
+                    IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
+                    Type::I64,
+                )
+            }
+            _ => {
+                let written =
+                    crate::imports::demangle_private_names(&ty.to_string());
+                if matches!(expected, Some(Type::Ptr(_))) {
+                    (
+                        IrOperand::Constant(IrConstant::CString(written)),
+                        Type::Ptr(Box::new(Type::I8)),
+                    )
+                } else {
+                    let local = self.fresh_local(Type::Str, None);
+                    self.build_str_value(local, &written);
+                    (IrOperand::Local(local), Type::Str)
+                }
+            }
+        }))
     }
 
     fn lower_call(

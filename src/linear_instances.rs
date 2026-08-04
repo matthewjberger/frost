@@ -588,10 +588,7 @@ fn walk_expression(
             }
             walk_block(ast, *body, found);
         }
-        Expression::Sizeof(ty)
-        | Expression::TypeId(ty)
-        | Expression::TypeName(ty)
-        | Expression::TypeValue(ty) => note_type(ty, found, at),
+        Expression::TypeValue(ty) => note_type(ty, found, at),
         Expression::PackMap(inner, _, _)
         | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)

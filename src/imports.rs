@@ -1724,14 +1724,8 @@ impl Renamer {
                     self.expression(ast, value, scope);
                 }
             }
-            Expression::Sizeof(..)
-            | Expression::TypeId(..)
-            | Expression::TypeName(..)
-            | Expression::TypeValue(..) => {
-                let (Expression::Sizeof(ty)
-                | Expression::TypeId(ty)
-                | Expression::TypeName(ty)
-                | Expression::TypeValue(ty)) =
+            Expression::TypeValue(..) => {
+                let Expression::TypeValue(ty) =
                     &mut ast.expressions[id.0 as usize]
                 else {
                     return;

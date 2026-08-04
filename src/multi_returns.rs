@@ -538,9 +538,6 @@ impl Lowering {
             Expression::Identifier(_)
             | Expression::Literal(_)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeId(_)
-            | Expression::TypeName(_)
             | Expression::TypeValue(_) => Ok(()),
         }
     }

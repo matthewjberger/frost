@@ -264,9 +264,6 @@ impl<'a> Region<'a> {
             | Expression::Literal(_)
             | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeId(_)
-            | Expression::TypeName(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
             | Expression::Prefix(..)
@@ -473,9 +470,6 @@ impl<'a> Region<'a> {
             Expression::Literal(_)
             | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeId(_)
-            | Expression::TypeName(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
             | Expression::Prefix(..)
@@ -523,9 +517,6 @@ impl<'a> Region<'a> {
             Expression::Literal(_)
             | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeId(_)
-            | Expression::TypeName(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
             | Expression::Prefix(..)
@@ -1493,9 +1484,8 @@ fn expression_sources(
                 "ptr_cast" | "slice_from" => {
                     union(&mut arguments.iter().copied())
                 }
-                "sizeof" | "offset_of" | "slice_len" | "type_name" => {
-                    HashSet::new()
-                }
+                "sizeof" | "type_id" | "offset_of" | "slice_len"
+                | "typename" => HashSet::new(),
                 // C has global storage, so what an extern answers with is not
                 // built from what it was handed.
                 _ if walk.externs.contains(name) => HashSet::new(),
@@ -1944,9 +1934,6 @@ impl Frame<'_> {
             | Expression::BorrowMut(_)
             | Expression::Dereference(_)
             | Expression::StructInit(..)
-            | Expression::Sizeof(_)
-            | Expression::TypeName(_)
-            | Expression::TypeId(_)
             | Expression::PackMap(..)
             | Expression::Range(..)
             | Expression::Tuple(_)
@@ -2540,9 +2527,6 @@ impl Frame<'_> {
             | Expression::Call(..)
             | Expression::AddressOf(_)
             | Expression::StructInit(..)
-            | Expression::Sizeof(_)
-            | Expression::TypeName(_)
-            | Expression::TypeId(_)
             | Expression::PackMap(..)
             | Expression::Range(..)
             | Expression::Switch(..)
@@ -2749,9 +2733,6 @@ impl Frame<'_> {
             | Expression::Boolean(_)
             | Expression::Prefix(..)
             | Expression::Infix(..)
-            | Expression::Sizeof(_)
-            | Expression::TypeName(_)
-            | Expression::TypeId(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
             | Expression::Range(..)
@@ -2828,7 +2809,7 @@ impl Frame<'_> {
             }
             // A count, an offset and a width are numbers, and a type's name is
             // bytes the compiler wrote. None of them names a caller's storage.
-            "sizeof" | "offset_of" | "slice_len" | "type_name" => {
+            "sizeof" | "type_id" | "offset_of" | "slice_len" | "typename" => {
                 Provenance::Outlives
             }
             // A conversion answers with the type it was given. Where that type
