@@ -263,6 +263,12 @@ pub struct Lexer<'a> {
     column: usize,
     token_start: Position,
     positions: Vec<Position>,
+    // Where each token stops, which is where the cursor stands the moment the
+    // token has been read. With the starts beside them this gives every token's
+    // extent, and the gaps between those extents are exactly the whitespace and
+    // the comments: what a formatter has to keep and what the token stream drops.
+    // The lexer still says nothing about comments; it says where it was.
+    ends: Vec<Position>,
     // What was wrong with the source, one entry per fault, each carrying the
     // token it was found in. A fault yields a placeholder token and lexing
     // continues, because a half-typed string is the normal state of a file
@@ -287,12 +293,18 @@ impl<'a> Lexer<'a> {
                 file: 0,
             },
             positions: Vec::new(),
+            ends: Vec::new(),
             diagnostics: Vec::new(),
         }
     }
 
     pub fn positions(&self) -> &[Position] {
         &self.positions
+    }
+
+    /// Where each token stops, one for one with `positions`.
+    pub fn ends(&self) -> &[Position] {
+        &self.ends
     }
 
     pub fn diagnostics(&self) -> &[crate::diagnostic::Diagnostic] {
@@ -335,6 +347,11 @@ impl<'a> Lexer<'a> {
                 break;
             }
             self.positions.push(self.token_start);
+            self.ends.push(Position {
+                line: self.line,
+                column: self.column,
+                file: 0,
+            });
             tokens.push(next_token);
         }
         Ok(tokens)

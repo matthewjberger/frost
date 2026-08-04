@@ -12,6 +12,8 @@ pub use diagnostic::{
 };
 mod fixes;
 pub use fixes::{Edit, byte_offset, edit_for};
+mod format;
+pub use format::{format as format_source, formatted, tokens_and_gaps};
 mod distinct_types;
 mod failure_sets;
 mod import_visibility;
