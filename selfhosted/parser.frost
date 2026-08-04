@@ -665,6 +665,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     }
     if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
+        refuse_unknown_lit_type(p, struct_ty, offset, length)
         advance(p)
         // A literal whose instance is read off its own field values has to have
         // them parsed before the type exists, so the fields are read against no
@@ -938,6 +939,59 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         return TY_INFER
     }
     type_code_for(p, offset, length)
+}
+
+// A struct literal of a name nothing declares.
+//
+// `type_code_for` answers `i64` for a name it cannot find, which is the answer
+// for a type name and the wrong one for the type of a literal: `i64` is not a
+// struct, so every pass after this read a struct index out of it and indexed the
+// struct table at 0 - STRUCT_BASE, which ended the compile with an arena
+// complaining about -16. Refused here instead, in the words the bootstrap uses.
+// A generic type's name is never an unknown one. Inside a template's own parse
+// the literal stands in with a placeholder that is not a struct, and nothing of
+// that parse is emitted: the body is read again per instance with the arguments
+// bound, and there the name answers with the instance.
+refuse_unknown_lit_type :: fn(mut p: Parser, ty: i64, offset: i64,
+    length: i64) {
+    if (ty == TY_INFER || is_struct_ty(ty)) {
+        return
+    }
+    if (generic_index_for(p, offset, length) >= 0) {
+        return
+    }
+    report_where(p.modules, p.src, offset)
+    report("unknown struct '")
+    report_src(p.src, offset, length)
+    report("'")
+    // Past the literal's own braces before the escape, because recovery reads
+    // forward to the brace that ends the statement list and the next brace here
+    // is the literal's. Left where it is, one undeclared name ended the function
+    // it was written in and every statement after it read as a declaration.
+    skip_brace_group(p)
+    frost_rt_recover_escape()
+}
+
+// A balanced `{ ... }` from the brace the cursor is on, or nothing when it is
+// not on one.
+skip_brace_group :: fn(mut p: Parser) {
+    if (cur(p) != TokenKind::Lbrace) {
+        return
+    }
+    var depth : i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lbrace) {
+            depth = depth + 1
+        }
+        if (cur(p) == TokenKind::Rbrace) {
+            depth = depth - 1
+            if (depth == 0) {
+                advance(p)
+                return
+            }
+        }
+        advance(p)
+    }
 }
 
 // Apply any trailing `.field`, `^` deref, and `[index]` operators to a node.
