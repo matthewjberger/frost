@@ -622,6 +622,62 @@ int64_t frost_rt_test_summary(void) {
     return frost_rt_tests_failed;
 }
 
+/* Parser recovery for the self-hosted compiler. A parse fault has to end
+   the declaration it is in without ending the compile, or one bad
+   declaration hides every diagnostic after it. The escape is the same
+   longjmp the test runner uses, with the same Win64 rule: the setjmp has to
+   own the call, so the runner takes the loop body as a function pointer and
+   its context the way frost_rt_test_run takes a test body. Marks nest,
+   since a block's statement loop recovers inside a declaration's, so the
+   environments live on a small stack. */
+#define FROST_RT_RECOVER_DEPTH 32
+static jmp_buf frost_rt_recover_stack[FROST_RT_RECOVER_DEPTH];
+static int frost_rt_recover_depth = 0;
+
+void frost_rt_die(void);
+
+/* Runs the body with a mark armed. Answers 0 when the body returned and 1
+   when it escaped. */
+int64_t frost_rt_recover_run(void (*body)(char *), char *context) {
+    if (frost_rt_recover_depth >= FROST_RT_RECOVER_DEPTH) {
+        /* Deeper than any real nesting; running unprotected would turn a
+           fault into an abort, so say what happened first. */
+        fprintf(stderr, "frost: recovery marks nested past %d\n",
+                FROST_RT_RECOVER_DEPTH);
+        fflush(stderr);
+        frost_rt_stop();
+    }
+    if (frost_rt_setjmp(frost_rt_recover_stack[frost_rt_recover_depth]) ==
+        0) {
+        frost_rt_recover_depth++;
+        body(context);
+        frost_rt_recover_depth--;
+        return 0;
+    }
+    return 1;
+}
+
+static int64_t frost_rt_recover_count = 0;
+
+/* Ends the enclosing frost_rt_recover_run. With no mark armed a fault has
+   nowhere to escape to, so it ends the process the way it always did. The
+   count is what lets a compile that recovered still refuse at the end:
+   recovery reports more, it never accepts more. */
+void frost_rt_recover_escape(void) {
+    if (frost_rt_recover_depth == 0) {
+        frost_rt_die();
+    }
+    /* The newline frost_rt_die would have written, so a report composed
+       piece by piece ends its line when the parse goes on instead. */
+    fputc('\n', stderr);
+    fflush(stderr);
+    frost_rt_recover_count++;
+    frost_rt_recover_depth--;
+    longjmp(frost_rt_recover_stack[frost_rt_recover_depth], 1);
+}
+
+int64_t frost_rt_recover_failures(void) { return frost_rt_recover_count; }
+
 /* An assertion outside a test has nowhere to escape to, so it still aborts.
    Inside one it fails that test and the run carries on. */
 static void frost_rt_assert_failed(const char *where) {
