@@ -739,6 +739,17 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
         inner := node.a
+        // `ptr_to` of a name that is already an address, a `mut` aggregate
+        // parameter or a `ref` binding, answers the address it carries: the
+        // caller's storage, not the cell the address sits in.
+        inner_node := arena_at(p.arena, inner)
+        if (kind == NodeKind::AddrOf && inner_node.kind == NodeKind::Var
+            && is_borrow(type_of(p, inner))) {
+            emit_text("(")
+            emit_expr(p, inner)
+            emit_text(")")
+            return
+        }
         emit_text("(&(")
         emit_expr(p, inner)
         emit_text("))")
