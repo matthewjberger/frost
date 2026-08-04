@@ -14,16 +14,49 @@ use std::fmt::Write as _;
 
 // A located failure, the unit every recovering pass answers with. The
 // position names where, the message says what, and rendering happens at the
-// boundary rather than in the pass that found it.
+// boundary rather than in the pass that found it. A related entry is a
+// second place the failure is about, "moved here" beside a use-after-move,
+// and it renders as another located line in the one format both compilers
+// print, so nothing downstream learns a new shape.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub position: crate::lexer::Position,
     pub message: String,
+    pub related: Vec<(crate::lexer::Position, String)>,
+}
+
+impl Diagnostic {
+    pub fn new(position: crate::lexer::Position, message: String) -> Self {
+        Self {
+            position,
+            message,
+            related: Vec::new(),
+        }
+    }
+
+    /// The whole report as located lines: the message, then each related
+    /// place on a line of its own. A message that already says where it is,
+    /// or one with nowhere to point, prints as it stands, which is the rule
+    /// `locate` has always applied.
+    pub fn rendered(&self) -> String {
+        let mut out = if self.message.starts_with("at ")
+            || self.position == crate::lexer::Position::default()
+        {
+            self.message.clone()
+        } else {
+            format!("at {}: {}", self.position.describe(), self.message)
+        };
+        for (position, note) in &self.related {
+            out.push('\n');
+            out.push_str(&format!("at {}: {note}", position.describe()));
+        }
+        out
+    }
 }
 
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "at {}: {}", self.position.describe(), self.message)
+        write!(f, "{}", self.rendered())
     }
 }
 

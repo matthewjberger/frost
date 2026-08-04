@@ -168,7 +168,7 @@ fn report(
     } else {
         format!("at {}: {text}", position.describe())
     };
-    diagnostics.push(crate::diagnostic::Diagnostic { position, message });
+    diagnostics.push(crate::diagnostic::Diagnostic::new(position, message));
 }
 
 fn build_module_inner(
@@ -349,6 +349,7 @@ fn build_module_inner(
                     diagnostics.push(crate::diagnostic::Diagnostic {
                         position,
                         message,
+                        related: Vec::new(),
                     });
                     continue;
                 }
@@ -616,6 +617,7 @@ fn build_module_inner(
                 diagnostics.push(crate::diagnostic::Diagnostic {
                     position: specialization.requested_at,
                     message,
+                    related: Vec::new(),
                 });
                 continue;
             }

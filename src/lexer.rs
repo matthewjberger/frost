@@ -1,4 +1,4 @@
-use self::Token::*;
+﻿use self::Token::*;
 use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -364,12 +364,14 @@ impl<'a> Lexer<'a> {
     ) -> Vec<crate::diagnostic::Diagnostic> {
         self.diagnostics
             .iter()
-            .map(|held| crate::diagnostic::Diagnostic {
-                position: Position {
-                    file,
-                    ..held.position
-                },
-                message: held.message.clone(),
+            .map(|held| {
+                crate::diagnostic::Diagnostic::new(
+                    Position {
+                        file,
+                        ..held.position
+                    },
+                    held.message.clone(),
+                )
             })
             .collect()
     }
@@ -378,6 +380,7 @@ impl<'a> Lexer<'a> {
         self.diagnostics.push(crate::diagnostic::Diagnostic {
             position: self.token_start,
             message,
+            related: Vec::new(),
         });
     }
 

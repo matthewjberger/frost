@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+﻿use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     Ast, ExprId, Expression, Literal, Range32, ReturnKind, Statement, StmtId,
@@ -378,6 +378,7 @@ impl Checker<'_> {
             message: format!(
                 "{what} is unchecked, so it belongs in an `unsafe` block"
             ),
+            related: Vec::new(),
         });
     }
 
@@ -720,6 +721,7 @@ impl Checker<'_> {
                         self.diagnostics.push(Diagnostic {
                             position: at,
                             message: "this `unsafe` block is inside another one, which already vouches for what is in it".to_string(),
+                            related: Vec::new(),
                         });
                     }
                     self.vouched.push(false);
@@ -734,6 +736,7 @@ impl Checker<'_> {
                     self.diagnostics.push(Diagnostic {
                         position: at,
                         message: "this `unsafe` block holds no unchecked operation, so it vouches for nothing".to_string(),
+                        related: Vec::new(),
                     });
                 }
             }
