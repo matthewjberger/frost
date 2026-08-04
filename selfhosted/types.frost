@@ -758,7 +758,15 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     }
     if (kind == NodeKind::AddrOf) {
         inner := node.a
-        return pointer_to(p, type_of(p, inner))
+        // A name that is already an address, a `mut` aggregate parameter or a
+        // `ref` binding, stands for the caller's storage: its address is the
+        // one it carries, not the address of the cell carrying it.
+        inner_node := arena_at(p.arena, inner)
+        inner_ty := type_of(p, inner)
+        if (inner_node.kind == NodeKind::Var && is_borrow(inner_ty)) {
+            return pointer_to(p, pointee(p, inner_ty))
+        }
+        return pointer_to(p, inner_ty)
     }
     if (kind == NodeKind::Cast) {
         return node.val

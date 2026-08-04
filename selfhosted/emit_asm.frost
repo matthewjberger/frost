@@ -1571,6 +1571,15 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
+        // `ptr_to` of a name that is already an address, a `mut` aggregate
+        // parameter or a `ref` binding, answers the address it carries, which
+        // is a load of the slot rather than the slot's own address.
+        inner_node := arena_at(p.arena, node.a)
+        if (kind == NodeKind::AddrOf && inner_node.kind == NodeKind::Var
+            && is_borrow(type_of(p, node.a))) {
+            emit_asm_expr(p, node.a)
+            return
+        }
         emit_asm_addr(p, node.a)
         return
     }
