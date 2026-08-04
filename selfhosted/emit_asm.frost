@@ -176,8 +176,51 @@ asm_name_at :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         i = i + 1
     }
     arena_push(p.asm_names, AsmName { name_off = off, name_len = len,
-        reads = 0, pinned = 0 })
+        reads = 0, pinned = 0, writes = 0, binds = 0, ty = TY_VOID,
+        weight = 0, reg = 0 })
     p.asm_names.count - 1
+}
+
+// What one access is worth where the scan is standing. A loop runs its body
+// more than once and a loop inside a loop more again, so an access under one
+// counts for more than an access beside it. Ten a level, and no further after
+// three, since past that the number only says which of two hot names is hotter
+// and a wider one buys nothing.
+asm_weight_here :: fn(mut p: Parser) -> i64 {
+    if (p.asm_loop_depth <= 0) {
+        return 1
+    }
+    if (p.asm_loop_depth == 1) {
+        return 10
+    }
+    if (p.asm_loop_depth == 2) {
+        return 100
+    }
+    1000
+}
+
+// The name is bound here, with this type. A second binding of the same spelling
+// is a second local, and nothing downstream tells the two apart, so both go to
+// memory.
+asm_bind :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
+    at := asm_name_at(p, off, len)
+    held := arena_at(p.asm_names, at)
+    weight := asm_weight_here(p)
+    held.ty = ty
+    held.binds = held.binds + 1
+    held.writes = held.writes + 1
+    held.weight = held.weight + weight
+    if (held.binds > 1) {
+        held.pinned = 1
+    }
+}
+
+asm_write :: fn(mut p: Parser, off: i64, len: i64) {
+    weight := asm_weight_here(p)
+    at := asm_name_at(p, off, len)
+    held := arena_at(p.asm_names, at)
+    held.writes = held.writes + 1
+    held.weight = held.weight + weight
 }
 
 asm_pin :: fn(mut p: Parser, off: i64, len: i64) {
@@ -187,9 +230,11 @@ asm_pin :: fn(mut p: Parser, off: i64, len: i64) {
 }
 
 asm_read :: fn(mut p: Parser, off: i64, len: i64) {
+    weight := asm_weight_here(p)
     at := asm_name_at(p, off, len)
     held := arena_at(p.asm_names, at)
     held.reads = held.reads + 1
+    held.weight = held.weight + weight
 }
 
 // Whether the name is one the emitter has to read from its slot every time.
@@ -371,27 +416,32 @@ asm_scan_stmt :: fn(mut p: Parser, id: i64) {
         // scan asks the type of is one it has already seen bound. The table is
         // put back before anything is emitted.
         record_local(p, node.val, node.c, ty)
+        asm_bind(p, node.val, node.c, ty)
         if (is_aggregate(ty) || is_borrow(ty)) {
             asm_pin(p, node.val, node.c)
-        } else {
-            asm_name_at(p, node.val, node.c)
         }
         return
     }
     if (kind == NodeKind::Assign) {
         asm_scan_expr(p, node.b, false)
         // The left side of an assignment is a place. A bare name assigned to is
-        // still a name a register could hold, so it is asked for rather than
-        // pinned; anything else reaches storage and pins what it reaches.
+        // still a name a register could hold, so it is counted as written
+        // rather than pinned; anything else reaches storage and pins what it
+        // reaches.
         place := arena_at(p.arena, node.a)
         if (place.kind == NodeKind::Var) {
-            asm_name_at(p, place.val, place.c)
+            asm_write(p, place.val, place.c)
         } else {
             asm_scan_expr(p, node.a, true)
         }
         return
     }
-    if (kind == NodeKind::Return || kind == NodeKind::ExprStmt) {
+    if (kind == NodeKind::Return) {
+        p.asm_returns = p.asm_returns + 1
+        asm_scan_expr(p, node.a, false)
+        return
+    }
+    if (kind == NodeKind::ExprStmt) {
         asm_scan_expr(p, node.a, false)
         return
     }
@@ -402,9 +452,13 @@ asm_scan_stmt :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::While) {
+        // The step, the condition and the body all run once a turn, so all
+        // three count as being inside the loop.
+        p.asm_loop_depth = p.asm_loop_depth + 1
         asm_scan_block(p, node.c)
         asm_scan_expr(p, node.a, false)
         asm_scan_block(p, node.b)
+        p.asm_loop_depth = p.asm_loop_depth - 1
         return
     }
     if (kind == NodeKind::Match) {
@@ -452,21 +506,162 @@ asm_scan_function :: fn(mut p: Parser, body: i64, params: i64) {
     p.asm_names.count = 0
     p.locals.count = 0
     p.frame_used = 0
+    // One exit for the body running off its end, which every function has
+    // whether or not it also returns from inside.
+    p.asm_returns = 1
     var pid := params
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         ptype := pnode.b
         record_local(p, pnode.val, pnode.c, ptype)
+        asm_bind(p, pnode.val, pnode.c, ptype)
         if (is_aggregate(ptype) || is_borrow(ptype)) {
             asm_pin(p, pnode.val, pnode.c)
-        } else {
-            asm_name_at(p, pnode.val, pnode.c)
         }
         pid = pnode.next
     }
     asm_scan_block(p, body)
     p.locals.count = 0
     p.frame_used = 0
+    asm_allocate(p)
+}
+
+// ---------------------------------------------------------------------------
+// The five registers
+//
+// %rbx, %r12, %r13, %r14 and %r15 are the ones this backend emits nothing else
+// into, and the convention says a call leaves them as it found them, so a name
+// living in one crosses a call without being written anywhere. They have to be
+// put back before the function returns, which is what they cost: one store on
+// the way in and one load at every exit.
+//
+// A name earns one when the accesses it saves outnumber that. Everything the
+// scan pinned is out, and so is anything narrower than a register, since the
+// register would then hold something the slot does not.
+// ---------------------------------------------------------------------------
+
+ASM_REGS_AVAILABLE :: 5
+
+emit_asm_saved_reg :: fn(index: i64) {
+    if (index == 0) { emit_text("%rbx")  return }
+    if (index == 1) { emit_text("%r12")  return }
+    if (index == 2) { emit_text("%r13")  return }
+    if (index == 3) { emit_text("%r14")  return }
+    emit_text("%r15")
+}
+
+// Whether a name of this type can live in one. A borrow holds an address the
+// body reads through, an aggregate is reached by its address, a float travels
+// in an SSE register for its arithmetic, and a proc is loaded from its slot by
+// the call that goes through it. What is left is a whole-register integer or
+// pointer, where the register holds exactly what the slot would.
+asm_type_fits_register :: fn(mut p: Parser, ty: i64) -> bool {
+    if (ty == TY_VOID || is_aggregate(ty) || is_borrow(ty) || is_float(ty)
+        || is_proc(ty)) {
+        return false
+    }
+    scalar_size(ty) == 8
+}
+
+// Which names take the registers. The ones with most to gain go first, and the
+// gain has to clear what the register costs: one store entering the function
+// and one load at each exit.
+asm_allocate :: fn(mut p: Parser) {
+    p.asm_save_base = -1
+    p.asm_saved = 0
+    if (p.asm_regs != 1) {
+        return
+    }
+    // What a register costs, counted the way the gain is: one store entering
+    // the function and one load at each exit, none of them inside a loop.
+    cost := 1 + p.asm_returns
+    var taken : i64 = 0
+    while (taken < ASM_REGS_AVAILABLE) {
+        var best : i64 = -1
+        var best_gain : i64 = 0
+        var i : i64 = 0
+        while (i < p.asm_names.count) {
+            entry := arena_at(p.asm_names, i)
+            if (entry.pinned == 0 && entry.reg == 0 && entry.weight > cost
+                && entry.weight > best_gain
+                && asm_type_fits_register(p, entry.ty)) {
+                best = i
+                best_gain = entry.weight
+            }
+            i = i + 1
+        }
+        if (best < 0) {
+            return
+        }
+        held := arena_at(p.asm_names, best)
+        held.reg = taken + 1
+        taken = taken + 1
+        p.asm_saved = taken
+    }
+}
+
+// Which register holds the name, or 0 for one that lives in its slot. Asked at
+// every mention of a name, so it answers 0 without a search when the function
+// took no registers at all.
+asm_reg_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    if (p.asm_saved == 0) {
+        return 0
+    }
+    var i : i64 = 0
+    while (i < p.asm_names.count) {
+        entry := arena_at(p.asm_names, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.reg
+        }
+        i = i + 1
+    }
+    0
+}
+
+// The registers this function took, put where it keeps them, and read back. The
+// slots are one run, so the prologue and every exit walk the same ground.
+emit_asm_save_registers :: fn(mut p: Parser) {
+    var i : i64 = 0
+    while (i < p.asm_saved) {
+        emit_text("    movq ")
+        emit_asm_saved_reg(i)
+        emit_text(", ")
+        frost_rt_emit_int(p.asm_save_base + 8 * i)
+        emit_text("(%rbp)\n")
+        i = i + 1
+    }
+}
+
+emit_asm_restore_registers :: fn(mut p: Parser) {
+    var i : i64 = 0
+    while (i < p.asm_saved) {
+        emit_text("    movq ")
+        frost_rt_emit_int(p.asm_save_base + 8 * i)
+        emit_text("(%rbp), ")
+        emit_asm_saved_reg(i)
+        emit_text("\n")
+        i = i + 1
+    }
+}
+
+// Where an incoming parameter lands: the register the function is holding it
+// in, or its slot. A parameter arrives in a register already, so one that is
+// held never reaches memory at all.
+emit_asm_home :: fn(mut p: Parser, home: i64, slot: i64) {
+    if (home > 0) {
+        emit_asm_saved_reg(home - 1)
+        return
+    }
+    frost_rt_emit_int(slot)
+    emit_text("(%rbp)")
+}
+
+// Leaving the function: whatever it borrowed goes back first.
+emit_asm_leave :: fn(mut p: Parser) {
+    emit_asm_restore_registers(p)
+    asm("leave")
+    asm("ret")
 }
 
 // What the scan found, written into the assembly as comments, so the sets can
@@ -487,6 +682,12 @@ emit_asm_names :: fn(mut p: Parser) {
         }
         emit_text(", reads ")
         frost_rt_emit_int(entry.reads)
+        emit_text(", writes ")
+        frost_rt_emit_int(entry.writes)
+        if (entry.reg > 0) {
+            emit_text(", in ")
+            emit_asm_saved_reg(entry.reg - 1)
+        }
         emit_text("\n")
         i = i + 1
     }
@@ -778,6 +979,14 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
                 emit_asm_addr(p, value_node)
                 return
             }
+        }
+        // A name held in a register has no address worth handing out, and the
+        // scan is what says its address is never wanted. Reaching here means
+        // the two disagree, which is a fault in this backend rather than in the
+        // program, and it is said rather than emitted.
+        if (asm_reg_of(p, node.val, node.c) > 0) {
+            report_where(p.modules, p.src, node.pos)
+            asm_unsupported("the address of a name held in a register")
         }
         asm_i("leaq ", local_slot(p, node.val, node.c), "(%rbp), %rax")
         return
@@ -1722,6 +1931,13 @@ emit_asm_simple_into_r11 :: fn(mut p: Parser, id: i64, kind: i64) {
         asm_i("movq $", const_value(p, off, len), ", %r11")
         return
     }
+    held_in := asm_reg_of(p, off, len)
+    if (held_in > 0) {
+        emit_text("    movq ")
+        emit_asm_saved_reg(held_in - 1)
+        emit_text(", %r11\n")
+        return
+    }
     emit_asm_load_into(p, lookup_local(p, off, len), local_slot(p, off, len),
         "(%rbp), ", "%r11", "%r11d")
 }
@@ -1865,6 +2081,16 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         local_ty := lookup_local(p, off, len)
         if (is_aggregate(local_ty)) {
             asm_i("leaq ", local_slot(p, off, len), "(%rbp), %rax")
+            return
+        }
+        // A name the function is holding in a register is read from there. Its
+        // slot is never written while it is held, so the slot is not where the
+        // value is.
+        held_in := asm_reg_of(p, off, len)
+        if (held_in > 0) {
+            emit_text("    movq ")
+            emit_asm_saved_reg(held_in - 1)
+            emit_text(", %rax\n")
             return
         }
         emit_asm_load_from(p, local_ty, local_slot(p, off, len), "(%rbp), ")
@@ -2291,8 +2517,13 @@ emit_asm_simple_into_arg :: fn(mut p: Parser, id: i64, kind: i64, index: i64) {
     node := arena_at(p.arena, id)
     emit_text("    movq ")
     if (kind == SIMPLE_LOCAL) {
-        frost_rt_emit_int(local_slot(p, node.val, node.c))
-        emit_text("(%rbp)")
+        held_in := asm_reg_of(p, node.val, node.c)
+        if (held_in > 0) {
+            emit_asm_saved_reg(held_in - 1)
+        } else {
+            frost_rt_emit_int(local_slot(p, node.val, node.c))
+            emit_text("(%rbp)")
+        }
     } else {
         emit_text("$")
         if (kind == SIMPLE_NUMBER) {
@@ -2691,6 +2922,15 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             emit_asm_copy(type_size(p, ty))
             return
         }
+        // A name the function holds in a register is written there, and its
+        // slot is left alone for as long as it is held.
+        held_in := asm_reg_of(p, off, len)
+        if (held_in > 0) {
+            emit_text("    movq %rax, ")
+            emit_asm_saved_reg(held_in - 1)
+            emit_text("\n")
+            return
+        }
         emit_asm_store_value(p, ty, slot, "(%rbp)")
         return
     }
@@ -2713,6 +2953,21 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
                 && is_columns_ty(p, cthrough)) {
                 emit_asm_columns_scatter(p, cbase, cbase_ty, cthrough, cindex,
                     value)
+                return
+            }
+        }
+        // Assigning to a name the function holds in a register is a move into
+        // that register. There is no address to work out and nothing to keep
+        // across working the value out, so the spill either side goes too.
+        if (place_node.kind == NodeKind::Var) {
+            into := asm_reg_of(p, place_node.val, place_node.c)
+            if (into > 0) {
+                emit_asm_expr(p, value)
+                emit_asm_coerce(p, value, lookup_local(p, place_node.val,
+                    place_node.c))
+                emit_text("    movq %rax, ")
+                emit_asm_saved_reg(into - 1)
+                emit_text("\n")
                 return
             }
         }
@@ -2875,8 +3130,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
 emit_asm_return :: fn(mut p: Parser, value: i64) {
     if (value == (-1)) {
         asm("movq $0, %rax")
-        asm("leave")
-        asm("ret")
+        emit_asm_leave(p)
         return
     }
     emit_asm_expr(p, value)
@@ -2892,16 +3146,14 @@ emit_asm_return :: fn(mut p: Parser, value: i64) {
     if (is_float(p.asm_ret)) {
         emit_asm_to_sse(p.asm_ret, "%rax", "%eax", "%xmm0")
     }
-    asm("leave")
-    asm("ret")
+    emit_asm_leave(p)
 }
 
 // A body's last statement, when it is an expression, is its result.
 emit_asm_function_body :: fn(mut p: Parser, body: i64) {
     if (body == (-1)) {
         asm("movq $0, %rax")
-        asm("leave")
-        asm("ret")
+        emit_asm_leave(p)
         return
     }
     var id := body
@@ -2916,8 +3168,7 @@ emit_asm_function_body :: fn(mut p: Parser, body: i64) {
                 emit_asm_stmt(p, id)
                 if (kind != NodeKind::Return) {
                     asm("movq $0, %rax")
-                    asm("leave")
-                    asm("ret")
+                    emit_asm_leave(p)
                 }
             }
         } else {
@@ -2987,6 +3238,14 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     emit_text(".Lprobed")
     frost_rt_emit_int(mine)
     emit_text(":\n")
+
+    // Whatever callee-saved registers this function is about to use, put where
+    // it can find them again. One run of slots, so every exit reads them back
+    // from the same places.
+    if (p.asm_saved > 0) {
+        p.asm_save_base = alloc_temp(p, 8 * p.asm_saved)
+        emit_asm_save_registers(p)
+    }
 
     // A struct result arrives as a hidden pointer ahead of the real arguments.
     regs := abi_arg_regs(p)
@@ -3129,12 +3388,14 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
             emit_text("    movq ")
             emit_asm_arg_reg(p, int_reg)
             emit_text(", ")
-            frost_rt_emit_int(slot)
-            emit_text("(%rbp)\n")
+            emit_asm_home(p, asm_reg_of(p, off, len), slot)
+            emit_text("\n")
             int_next = int_next + 1
         } else {
             asm_i("movq ", 16 + shadow + 8 * spilled, "(%rbp), %r10")
-            asm_i("movq %r10, ", slot, "(%rbp)")
+            emit_text("    movq %r10, ")
+            emit_asm_home(p, asm_reg_of(p, off, len), slot)
+            emit_text("\n")
             spilled = spilled + 1
             if (wants_sse) {
                 sse_next = sse_next + 1
@@ -3148,8 +3409,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
 
     emit_asm_function_body(p, body)
     asm("movq $0, %rax")
-    asm("leave")
-    asm("ret")
+    emit_asm_leave(p)
     // Now that every local and temporary has been reached, say how wide the
     // frame the prologue asked for is. The pad is the outgoing shadow area a
     // call writes into, below everything this function named.

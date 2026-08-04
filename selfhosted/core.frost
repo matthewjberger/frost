@@ -918,6 +918,23 @@ AsmName :: struct {
     name_len: i64,
     reads: i64,
     pinned: i64,
+    // How many places assign to it, the binding included, and how many times it
+    // is bound at all. A name bound twice is two locals sharing one spelling,
+    // and telling them apart here would mean telling scopes apart, so it is
+    // pinned instead.
+    writes: i64,
+    binds: i64,
+    // The type it was bound with, since what may live in a register is decided
+    // by width and by kind.
+    ty: i64,
+    // The same accesses counted again with the ones inside a loop worth more,
+    // since what a register saves is what runs rather than what is written.
+    // This orders the candidates; `reads` and `writes` say whether any of them
+    // is worth a register at all.
+    weight: i64,
+    // Which callee-saved register holds it for the whole function: 0 for none,
+    // otherwise an index into the five the backend is free to use.
+    reg: i64,
 }
 
 LocalVar :: struct {
@@ -1145,6 +1162,19 @@ Parser :: struct {
     // What the assembly backend's scan found about the function being emitted:
     // one entry per name it binds, rebuilt per function.
     asm_names: Arena<AsmName>,
+    // How many places the function being emitted leaves from, so what a
+    // register costs to save and put back can be weighed against what holding
+    // a name in it saves.
+    asm_returns: i64,
+    // How many loops the scan is inside, so an access can be weighed by how
+    // often it is likely to run rather than by how often it is written.
+    asm_loop_depth: i64,
+    // Where the five callee-saved registers are kept while this function has
+    // them, as one run of eight-byte slots. -1 when the function took none.
+    asm_save_base: i64,
+    // How many of them it took, so the prologue and every exit move the same
+    // ones.
+    asm_saved: i64,
     // How many of them are in use where emission has reached.
     spill_depth: i64,
     // Which module is being emitted, or -1 for the whole program in one unit.
