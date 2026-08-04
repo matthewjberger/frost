@@ -339,13 +339,21 @@ bindgen:
 
 # Builds the self-hosted compiler (frost written in frost)
 #
-# Through the C backend rather than the native one. That takes about six seconds
-# against six hundred milliseconds, and it is deliberate: the compiler it
-# produces is two and a half times faster on everything it goes on to do,
-# because a C compiler inlines and allocates registers where Cranelift does not.
+# Through the C backend rather than the native one. That takes about nine
+# seconds against one, and it is deliberate: the compiler it produces is
+# measurably faster at everything it goes on to do, because a C compiler inlines
+# where neither Cranelift nor Frost's own backend does. `just bench-asm` is
+# where the numbers are and what keeps this honest; the last reading was 189 ms
+# against 711 for the compiler on its own source.
+#
+# Frost's own backend allocates registers now, which was the standing reason to
+# expect this line to change, and it did not: the gap is inlining rather than
+# register use. See the note above bench-asm.
+#
 # The two routes are held to emitting the same bytes by
-# both_routes_build_the_same_compiler, which is the only thing in the suite that
-# builds a compiler the way this one ships.
+# both_routes_build_the_same_compiler, which compares what a Cranelift-built and
+# a C-built compiler each emit for this source. It pins that the two bootstrap
+# routes agree, not which of them ships.
 selfhost-build:
     cargo run -r -q -p frost --bin frost -- --link --emit-c -o selfhosted/frost.exe selfhosted/frost.frost
 
