@@ -1160,7 +1160,7 @@ fn kept_of_expression(
 
 /// The expressions one expression holds, for a walk that has to reach every
 /// call rather than only the one at the top.
-fn sub_expressions(value: &Expression) -> Vec<&Expression> {
+pub(crate) fn sub_expressions(value: &Expression) -> Vec<&Expression> {
     match value {
         Expression::Call(callee, arguments) => {
             let mut held = vec![callee.as_ref()];

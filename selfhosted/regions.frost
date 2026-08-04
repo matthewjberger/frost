@@ -1605,6 +1605,11 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
         report("caller's to read")
         frost_rt_die()
     }
+    // A container that fills asks the allocator for a wider block and gives the
+    // old one back, so a view taken before the growth names storage the
+    // allocator has taken. Every read through it is bounds-checked against a
+    // length describing what used to be there.
+    report_if_stale(p, name_off, name_len, "read")
     if (place_is_moved(p, id) < 0) {
         return
     }
@@ -1825,6 +1830,934 @@ apply_summaries :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Runs: what a call's answer views, and what a call replaces
+// ---------------------------------------------------------------------------
+
+// How many names deep a run summary reaches under a parameter.
+//
+// A bound rather than a preference. A function that walks a recursive structure
+// reaches `.next`, then `.next.next`, and a fixpoint over those never settles:
+// each round the entry it learnt last round lets it learn a longer one. Cutting
+// at a fixed depth makes the set of entries finite.
+//
+// The bootstrap holds the same bound, and the two must keep the same number or
+// they refuse different programs.
+RUN_STEPS :: 4
+
+// The run of field names from a place down to the name it is rooted in, pushed
+// root first, stopping at the first step that is not a field and at the depth it
+// stops reaching.
+//
+// Cut rather than refused. Which element of a run a place names is a number
+// worked out while the program runs, so `v.parts[0].storage` is a place no
+// caller can be told about, and the run above it, `v.parts`, is one both sides
+// can write down. Cutting widens what the entry means, which is the direction
+// that refuses rather than the one that lets something through.
+push_run_chain :: fn(mut p: Parser, place: i64) -> bool {
+    node := arena_at(p.arena, place)
+    kind := node.kind
+    base := node.a
+    name_off := node.val
+    name_len := node.c
+    if (kind == NodeKind::Var) {
+        return true
+    }
+    if (kind == NodeKind::Index || kind == NodeKind::Deref) {
+        if (push_run_chain(p, base) == false) {
+            return false
+        }
+        p.run_chain_open = 0
+        return true
+    }
+    if (kind != NodeKind::Field) {
+        return false
+    }
+    if (push_run_chain(p, base) == false) {
+        return false
+    }
+    if (p.run_chain_open == 1) {
+        if (p.run_steps.count - p.run_chain_start >= RUN_STEPS) {
+            p.run_chain_open = 0
+            return true
+        }
+        arena_push(p.run_steps,
+            SummaryStep { name_off = name_off, name_len = name_len })
+    }
+    true
+}
+
+// Whether this run of field names is already recorded for this parameter, so a
+// round that learns nothing new leaves the table alone and the fixpoint closes.
+// `which` picks the table: 0 for what an answer views, 1 for what a call
+// replaces. One function reads both, since the two tables hold the same shape
+// and Frost has no way to be handed a field of the parser to work on.
+run_entry_known :: fn(mut p: Parser, which: i64, fn_index: i64, param: i64,
+    start: i64, count: i64) -> bool {
+    mut total := p.run_views.count
+    if (which == 1) {
+        total = p.run_replaces.count
+    }
+    mut i : i64 = 0
+    while (i < total) {
+        mut held_fn : i64 = -1
+        mut held_param : i64 = -1
+        mut held_start : i64 = 0
+        mut held_count : i64 = -1
+        if (which == 1) {
+            entry := arena_at(p.run_replaces, i)
+            held_fn = entry.fn_index
+            held_param = entry.param
+            held_start = entry.step_start
+            held_count = entry.step_count
+        } else {
+            entry := arena_at(p.run_views, i)
+            held_fn = entry.fn_index
+            held_param = entry.param
+            held_start = entry.step_start
+            held_count = entry.step_count
+        }
+        if (held_fn == fn_index && held_param == param
+            && held_count == count) {
+            mut k : i64 = 0
+            mut same := true
+            while (k < count) {
+                mine := arena_at(p.run_steps, start + k)
+                mine_off := mine.name_off
+                mine_len := mine.name_len
+                theirs := arena_at(p.run_steps, held_start + k)
+                if (theirs.name_len != mine_len
+                    || bytes_equal(p.src, theirs.name_off, mine_off,
+                        mine_len) == false) {
+                    same = false
+                }
+                k = k + 1
+            }
+            if (same) {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    false
+}
+
+// File a place under the parameter it is rooted in, answering whether the entry
+// was new. A place rooted anywhere else is nobody's but this frame's, and a
+// summary has to name something the caller can name too.
+note_run :: fn(mut p: Parser, which: i64, place: i64) -> bool {
+    if (place < 0 || is_place_expr(p, place) == false) {
+        return false
+    }
+    root := strip_place(p, place, place_depth(p, place))
+    rnode := arena_at(p.arena, root)
+    if (rnode.kind != NodeKind::Var) {
+        return false
+    }
+    root_off := rnode.val
+    root_len := rnode.c
+    mut index : i64 = 0
+    mut param := p.runs_params
+    while (param != (-1)) {
+        pnode := arena_at(p.arena, param)
+        pname_off := pnode.val
+        pname_len := pnode.c
+        next_param := pnode.next
+        if (pname_len == root_len
+            && bytes_equal(p.src, pname_off, root_off, root_len)) {
+            start := p.run_steps.count
+            p.run_chain_open = 1
+            p.run_chain_start = start
+            if (push_run_chain(p, place) == false) {
+                p.run_steps.count = start
+                return false
+            }
+            count := p.run_steps.count - start
+            // A run named by nothing under the parameter is the parameter
+            // itself. A function answering with a view of one is ordinary, and
+            // that is what `slice_prefix` does; replacing one is the caller's
+            // own write into what it handed over, which it can see for itself.
+            if (which == 1 && count == 0) {
+                p.run_steps.count = start
+                return false
+            }
+            if (run_entry_known(p, which, p.runs_fn, index, start, count)) {
+                p.run_steps.count = start
+                return false
+            }
+            if (which == 1) {
+                arena_push(p.run_replaces,
+                    Summary { fn_index = p.runs_fn, param = index,
+                        step_start = start, step_count = count })
+            } else {
+                arena_push(p.run_views,
+                    Summary { fn_index = p.runs_fn, param = index,
+                        step_start = start, step_count = count })
+            }
+            return true
+        }
+        index = index + 1
+        param = next_param
+    }
+    false
+}
+
+// The type of a place rooted in a parameter of the function being read.
+//
+// The generic guard `param_place_type` carries is deliberately absent. What is
+// asked here is whether a place holds a run, and a field written `[]T` is a
+// slice whichever element the last instantiation left in it, so the answer is
+// the same for the template and for every instance of it.
+run_place_type :: fn(mut p: Parser, place: i64) -> i64 {
+    if (place == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, place)
+    kind := node.kind
+    base := node.a
+    name_off := node.val
+    name_len := node.c
+    if (kind == NodeKind::Var) {
+        mut id := p.runs_params
+        while (id != (-1)) {
+            pnode := arena_at(p.arena, id)
+            pname_off := pnode.val
+            pname_len := pnode.c
+            pty := pnode.b
+            next_param := pnode.next
+            if (pname_len == name_len
+                && bytes_equal(p.src, pname_off, name_off, name_len)) {
+                // Through the borrow a `mut` parameter carries, and no further:
+                // the question is what the parameter refers to, and a raw
+                // pointer parameter refers to nothing this walk can name.
+                if (is_borrow(pty)) {
+                    return pointee(p, pty)
+                }
+                return pty
+            }
+            id = next_param
+        }
+        return -1
+    }
+    if (kind == NodeKind::Field) {
+        held := run_place_type(p, base)
+        if (held < 0 || is_struct_ty(held) == false) {
+            return -1
+        }
+        return field_type(p, held, name_off, name_len)
+    }
+    if (kind == NodeKind::Index) {
+        held := run_place_type(p, base)
+        if (held < 0 || is_array_ty(held) == false) {
+            return -1
+        }
+        return array_element(p, held)
+    }
+    if (kind == NodeKind::Deref) {
+        held := run_place_type(p, base)
+        if (held < 0 || is_pointer(held) == false) {
+            return -1
+        }
+        return pointee(p, held)
+    }
+    -1
+}
+
+// The run a local views, or -1, and how one is recorded. A binding taken from a
+// call and handed on to the answer carries what that call named.
+run_local_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.run_locals.count) {
+        entry := arena_at(p.run_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.slot
+        }
+        i = i + 1
+    }
+    -1
+}
+
+note_run_local :: fn(mut p: Parser, off: i64, len: i64, place: i64) {
+    mut i : i64 = 0
+    while (i < p.run_locals.count) {
+        mut entry := arena_at(p.run_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            entry.slot = place
+            return
+        }
+        i = i + 1
+    }
+    arena_push(p.run_locals,
+        LocalVar { name_off = off, name_len = len, ty = 0, slot = place })
+}
+
+// Whether a name is one of this function's parameters.
+names_a_param :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut id := p.runs_params
+    while (id != (-1)) {
+        pnode := arena_at(p.arena, id)
+        pname_off := pnode.val
+        pname_len := pnode.c
+        next_param := pnode.next
+        if (pname_len == len
+            && bytes_equal(p.src, pname_off, off, len)) {
+            return true
+        }
+        id = next_param
+    }
+    false
+}
+
+// Where the nth run a value names sits, as a place rooted in a parameter, or -1
+// once they run out. Asked with `n` climbing from zero, so a value naming
+// several runs answers for each of them in turn.
+//
+// A field holding a view is one, an element of a run belongs to that run, and a
+// call answers with whichever runs its own entries say it does.
+run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
+    if (id == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Var) {
+        if (n != 0) {
+            return -1
+        }
+        if (names_a_param(p, node.val, node.c)) {
+            if (type_is_direct_view(p, run_place_type(p, id))) {
+                return id
+            }
+            return -1
+        }
+        return run_local_of(p, node.val, node.c)
+    }
+    if (kind == NodeKind::Field) {
+        if (n != 0) {
+            return -1
+        }
+        if (type_is_direct_view(p, run_place_type(p, id))) {
+            return id
+        }
+        return -1
+    }
+    if (kind == NodeKind::Index || kind == NodeKind::Ref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Deref) {
+        return run_place_nth(p, node.a, n)
+    }
+    if (kind == NodeKind::SliceFrom || kind == NodeKind::PtrCast) {
+        // The builtins that form a view have no body to read an entry off, and
+        // the standard library reaches every run through one of them. What they
+        // were given is what they can be naming.
+        held := run_place_nth(p, node.a, n)
+        if (held >= 0) {
+            return held
+        }
+        return run_place_nth(p, node.b, n)
+    }
+    if (kind != NodeKind::Call) {
+        return -1
+    }
+    run_call_place(p, node.a, node.val, n)
+}
+
+run_place_of :: fn(mut p: Parser, id: i64) -> i64 {
+    run_place_nth(p, id, 0)
+}
+
+// The place the nth entry of a callee's view table names here, or -1 once the
+// entries run out. The caller's own argument with the entry's names under it,
+// which is the reading `apply_summaries` makes of what a call consumes.
+run_call_place :: fn(mut p: Parser, args: i64, fn_index: i64, skip: i64)
+    -> i64 {
+    mut seen : i64 = 0
+    mut i : i64 = 0
+    while (i < p.run_views.count) {
+        entry := arena_at(p.run_views, i)
+        held_fn := entry.fn_index
+        param := entry.param
+        start := entry.step_start
+        count := entry.step_count
+        if (held_fn == fn_index) {
+            arg := nth_value_arg(p, args, param)
+            // An entry whose argument is not a place names nothing here, so it
+            // is passed over rather than counted: an entry after it still has
+            // an answer to give.
+            if (arg != (-1) && is_place_expr(p, arg)) {
+                if (seen == skip) {
+                    mut place := arg
+                    mut k : i64 = 0
+                    while (k < count) {
+                        step := arena_at(p.run_steps, start + k)
+                        step_off := step.name_off
+                        step_len := step.name_len
+                        place = new_field_node(p, place, step_off, step_len)
+                        k = k + 1
+                    }
+                    return place
+                }
+                seen = seen + 1
+            }
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// What a body hands back, where it hands back a view. A branch in answer
+// position hands back whatever its arms do, so each arm's own last value is an
+// answer of its own.
+note_run_answer :: fn(mut p: Parser, id: i64) {
+    if (p.runs_answers_view == 0 || id == (-1)) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::If) {
+        then_head := node.b
+        else_head := node.val
+        note_run_answer(p, block_answer(p, then_head))
+        note_run_answer(p, block_answer(p, else_head))
+        return
+    }
+    if (kind == NodeKind::Match) {
+        mut cid := node.b
+        while (cid != (-1)) {
+            cnode := arena_at(p.arena, cid)
+            case_head := cnode.a
+            next_case := cnode.next
+            note_run_answer(p, block_answer(p, case_head))
+            cid = next_case
+        }
+        return
+    }
+    mut n : i64 = 0
+    mut place := run_place_nth(p, id, n)
+    while (place >= 0) {
+        note_run(p, 0, place)
+        n = n + 1
+        place = run_place_nth(p, id, n)
+    }
+}
+
+// What a call replaces, read against the places this body wrote, and filed
+// against the parameter it is rooted in. This is how growth travels: a wrapper
+// that calls `vec_push` on a container it borrows replaces that container's run
+// as far as its own callers are concerned.
+note_run_replacements :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    total := p.run_replaces.count
+    mut i : i64 = 0
+    while (i < total) {
+        entry := arena_at(p.run_replaces, i)
+        held_fn := entry.fn_index
+        param := entry.param
+        start := entry.step_start
+        count := entry.step_count
+        if (held_fn == fn_index) {
+            arg := nth_value_arg(p, args, param)
+            if (arg != (-1) && is_place_expr(p, arg)) {
+                mut place := arg
+                mut k : i64 = 0
+                while (k < count) {
+                    step := arena_at(p.run_steps, start + k)
+                    step_off := step.name_off
+                    step_len := step.name_len
+                    place = new_field_node(p, place, step_off, step_len)
+                    k = k + 1
+                }
+                note_run(p, 1, place)
+            }
+        }
+        i = i + 1
+    }
+}
+
+walk_runs_expr :: fn(mut p: Parser, id: i64) {
+    if (id == (-1)) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Call) {
+        note_run_replacements(p, node.a, node.val)
+        mut aid := node.a
+        while (aid != (-1)) {
+            anode := arena_at(p.arena, aid)
+            walk_runs_expr(p, anode.a)
+            aid = anode.next
+        }
+        return
+    }
+    if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
+        walk_runs_expr(p, node.a)
+        walk_runs_expr(p, node.b)
+        return
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Cast || kind == NodeKind::Assert) {
+        walk_runs_expr(p, node.a)
+        return
+    }
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        mut child := node.a
+        while (child != (-1)) {
+            cnode := arena_at(p.arena, child)
+            walk_runs_expr(p, cnode.a)
+            child = cnode.next
+        }
+    }
+}
+
+// One function's body, read for the runs it views and the runs it replaces.
+//
+// A container grows inside `if (v.len >= v.cap)`, so the branches are walked
+// like anything else: a walk that read only the top level of a body would miss
+// the one assignment this whole table is for.
+walk_runs_block :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        if (kind == NodeKind::Let) {
+            walk_runs_expr(p, node.a)
+            note_run_local(p, node.val, node.c, run_place_of(p, node.a))
+        }
+        if (kind == NodeKind::Print || kind == NodeKind::ExprStmt) {
+            walk_runs_expr(p, node.a)
+        }
+        if (kind == NodeKind::Return) {
+            walk_runs_expr(p, node.a)
+            note_run_answer(p, node.a)
+        }
+        if (kind == NodeKind::Assign) {
+            walk_runs_expr(p, node.b)
+            walk_runs_expr(p, node.a)
+            // A write that puts a different run in a place is the growth this
+            // whole table is about. Only a run: writing an element, or a length
+            // beside the run, leaves the storage where it was, and reading
+            // those as growth refuses every container that writes into what a
+            // caller is holding a borrow into.
+            if (type_is_direct_view(p, run_place_type(p, node.a))) {
+                note_run(p, 1, node.a)
+            }
+        }
+        if (kind == NodeKind::If) {
+            walk_runs_expr(p, node.a)
+            walk_runs_block(p, node.b)
+            walk_runs_block(p, node.val)
+        }
+        if (kind == NodeKind::While) {
+            walk_runs_expr(p, node.a)
+            walk_runs_block(p, node.b)
+        }
+        if (kind == NodeKind::With) {
+            walk_runs_block(p, node.a)
+        }
+        if (kind == NodeKind::Match) {
+            walk_runs_expr(p, node.a)
+            mut cid := node.b
+            while (cid != (-1)) {
+                cnode := arena_at(p.arena, cid)
+                walk_runs_block(p, cnode.a)
+                cid = cnode.next
+            }
+        }
+        id = node.next
+    }
+}
+
+walk_runs_body :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
+    answers_view: bool) {
+    p.runs_fn = fn_index
+    p.runs_params = params
+    p.runs_answers_view = 0
+    if (answers_view) {
+        p.runs_answers_view = 1
+    }
+    p.run_locals.count = 0
+    walk_runs_block(p, body)
+    note_run_answer(p, block_answer(p, body))
+}
+
+// Whether the program builds anything that holds a run at all. Everything these
+// tables do is about a view of a container outliving the block behind it, so a
+// program with no container pays nothing for them.
+program_holds_runs :: fn(mut p: Parser) -> bool {
+    mut i : i64 = 0
+    while (i < p.fields.count) {
+        field := arena_at(p.fields, i)
+        if (type_is_direct_view(p, field.ty)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Work out, for every function, which run its answer views and which run it
+// replaces, until a round learns nothing new.
+//
+// A round rather than a pass, for the reason the move summaries need one: what a
+// wrapper views is what the thing it forwards to views, and what a wrapper
+// replaces is what the thing it calls replaces. `vec_slice` answers with
+// `slice_prefix($T, v.storage, v.len)`, so it is only once `slice_prefix` is
+// known to answer with a view of its own parameter that `v.storage` is the run
+// behind it. The tables only gain entries, so this settles.
+settle_runs :: fn(mut p: Parser) {
+    if (program_holds_runs(p) == false) {
+        return
+    }
+    mut known : i64 = -1
+    while (known != p.run_views.count + p.run_replaces.count) {
+        known = p.run_views.count + p.run_replaces.count
+        mut i : i64 = 0
+        while (i < p.arena.count) {
+            node := arena_at(p.arena, i)
+            kind := node.kind
+            body := node.a
+            params := node.b
+            fn_index := node.val
+            if (kind == NodeKind::Func) {
+                mut answers_view : bool = false
+                if (fn_index >= 0 && fn_index < p.fns.count) {
+                    sym := arena_at(p.fns, fn_index)
+                    answers_view = type_is_direct_view(p, sym.ret_type)
+                }
+                walk_runs_body(p, body, params, fn_index, answers_view)
+            }
+            i = i + 1
+        }
+    }
+    p.runs_fn = -1
+    p.runs_params = -1
+    p.runs_answers_view = 0
+    p.run_locals.count = 0
+}
+
+// ---------------------------------------------------------------------------
+// Runs: what the frame holding a container is told
+// ---------------------------------------------------------------------------
+
+// The nth run a value views, as a place in this frame, or -1.
+//
+// `vec_slice($T, v)` views `v.storage`, and `ref e := vec_slice($T, v)[i]` views
+// the same run: a `ref` binding is a borrow of the place, so it holds on to the
+// storage rather than taking a copy out of it.
+//
+// Reaching an element or a field without a borrow in front of it is that copy,
+// and a copy is a value of its own from the moment it is made. The ECS reads
+// `vec_slice($EntitySlot, world.slots)[id].generation` into an `i64` and pushes
+// to the same container two lines later, and reading the number as a view of the
+// block it came out of refused that.
+viewed_run_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
+    if (id == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Ref) {
+        return run_behind_nth(p, node.a, n)
+    }
+    if (kind == NodeKind::Call) {
+        return run_call_place(p, node.a, node.val, n)
+    }
+    -1
+}
+
+// The run a place sits in, reaching through the borrows and the elements in
+// front of the call that formed the view.
+run_behind_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
+    if (id == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Ref || kind == NodeKind::Index
+        || kind == NodeKind::Field) {
+        return run_behind_nth(p, node.a, n)
+    }
+    if (kind == NodeKind::Call) {
+        return run_call_place(p, node.a, node.val, n)
+    }
+    -1
+}
+
+// Whichever place replaced the run a binding views, or -1.
+stale_view_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.stale_views.count) {
+        entry := arena_at(p.stale_views, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.slot
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Drop what a name held in one of the two tables. Compacted rather than marked,
+// since the branch walks save and restore these by length.
+forget_run_rows :: fn(mut p: Parser, which: i64, off: i64, len: i64) {
+    mut total := p.view_runs.count
+    if (which == 1) {
+        total = p.stale_views.count
+    }
+    mut kept : i64 = 0
+    mut i : i64 = 0
+    while (i < total) {
+        mut held_off : i64 = 0
+        mut held_len : i64 = 0
+        mut held_ty : i64 = 0
+        mut held_slot : i64 = -1
+        if (which == 1) {
+            entry := arena_at(p.stale_views, i)
+            held_off = entry.name_off
+            held_len = entry.name_len
+            held_ty = entry.ty
+            held_slot = entry.slot
+        } else {
+            entry := arena_at(p.view_runs, i)
+            held_off = entry.name_off
+            held_len = entry.name_len
+            held_ty = entry.ty
+            held_slot = entry.slot
+        }
+        if (held_len != len
+            || bytes_equal(p.src, held_off, off, len) == false) {
+            if (which == 1) {
+                mut target := arena_at(p.stale_views, kept)
+                target.name_off = held_off
+                target.name_len = held_len
+                target.ty = held_ty
+                target.slot = held_slot
+            } else {
+                mut target := arena_at(p.view_runs, kept)
+                target.name_off = held_off
+                target.name_len = held_len
+                target.ty = held_ty
+                target.slot = held_slot
+            }
+            kept = kept + 1
+        }
+        i = i + 1
+    }
+    if (which == 1) {
+        p.stale_views.count = kept
+    } else {
+        p.view_runs.count = kept
+    }
+}
+
+// A binding takes a view, or stops being one. Rebinding is what taking the view
+// again after a push amounts to, and it is what clears the staleness a push
+// left.
+note_view_runs :: fn(mut p: Parser, off: i64, len: i64, value: i64) {
+    forget_run_rows(p, 0, off, len)
+    forget_run_rows(p, 1, off, len)
+    if (value == (-1)) {
+        return
+    }
+    // Whether the view was taken by a borrow, held in `ty`. `ref e :=
+    // vec_slice($T, v)[i]` binds one, and `e = 999` writes through it into the
+    // container rather than binding the name to something else.
+    mut borrowed : i64 = 0
+    vnode := arena_at(p.arena, value)
+    if (vnode.kind == NodeKind::Ref) {
+        borrowed = 1
+    }
+    mut n : i64 = 0
+    mut place := viewed_run_nth(p, value, n)
+    while (place >= 0) {
+        arena_push(p.view_runs,
+            LocalVar { name_off = off, name_len = len, ty = borrowed,
+                slot = place })
+        n = n + 1
+        place = viewed_run_nth(p, value, n)
+    }
+}
+
+// Whether a binding that views a run took it by a borrow.
+view_is_borrow :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.view_runs.count) {
+        entry := arena_at(p.view_runs, i)
+        if (entry.ty == 1 && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Refuse a use of a view whose run has since been replaced. `verb` is what the
+// use does with the storage, since a read and a write through a stale borrow are
+// the same mistake told two ways.
+report_if_stale :: fn(mut p: Parser, name_off: i64, name_len: i64, verb: str) {
+    if (p.moves_quiet == 1) {
+        return
+    }
+    replaced := stale_view_of(p, name_off, name_len)
+    if (replaced < 0) {
+        return
+    }
+    report_where(p.modules, p.src, name_off)
+    report("'")
+    report_src(p.src, name_off, name_len)
+    report("' views a run that '")
+    report_place(p, replaced)
+    report("' has since replaced; growing a container gives its old block ")
+    report("back, so the storage this names is not the caller's to ")
+    report(verb)
+    report(". Take the view again after the growth")
+    frost_rt_die()
+}
+
+// A run has been given back to the allocator and a different one put in its
+// place, so every view still naming it names storage that is no longer this
+// program's.
+note_replaced_run :: fn(mut p: Parser, place: i64) {
+    if (place < 0) {
+        return
+    }
+    total := p.view_runs.count
+    mut marked : bool = false
+    mut i : i64 = 0
+    while (i < total) {
+        entry := arena_at(p.view_runs, i)
+        held_off := entry.name_off
+        held_len := entry.name_len
+        run := entry.slot
+        if (run >= 0 && places_overlap(p, run, place)
+            && stale_view_of(p, held_off, held_len) < 0) {
+            arena_push(p.stale_views,
+                LocalVar { name_off = held_off, name_len = held_len, ty = 0,
+                    slot = place })
+            marked = true
+        }
+        i = i + 1
+    }
+    if (marked) {
+        p.run_replacements = p.run_replacements + 1
+    }
+}
+
+// What a call replaces, read against the places the caller wrote.
+apply_run_replacements :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    total := p.run_replaces.count
+    mut i : i64 = 0
+    while (i < total) {
+        entry := arena_at(p.run_replaces, i)
+        held_fn := entry.fn_index
+        param := entry.param
+        start := entry.step_start
+        count := entry.step_count
+        if (held_fn == fn_index) {
+            arg := nth_value_arg(p, args, param)
+            if (arg != (-1) && is_place_expr(p, arg)) {
+                mut place := arg
+                mut k : i64 = 0
+                while (k < count) {
+                    step := arena_at(p.run_steps, start + k)
+                    step_off := step.name_off
+                    step_len := step.name_len
+                    place = new_field_node(p, place, step_off, step_len)
+                    k = k + 1
+                }
+                note_replaced_run(p, place)
+            }
+        }
+        i = i + 1
+    }
+}
+
+// Copy the stale set onto the scratch stack, answering where the copy starts.
+save_stale :: fn(mut p: Parser) -> i64 {
+    base := p.stale_scratch.count
+    total := p.stale_views.count
+    mut i : i64 = 0
+    while (i < total) {
+        entry := arena_at(p.stale_views, i)
+        held_off := entry.name_off
+        held_len := entry.name_len
+        held_slot := entry.slot
+        arena_push(p.stale_scratch,
+            LocalVar { name_off = held_off, name_len = held_len, ty = 0,
+                slot = held_slot })
+        i = i + 1
+    }
+    base
+}
+
+// Put the stale set back to the copy held between `base` and `top`.
+restore_stale :: fn(mut p: Parser, base: i64, top: i64) {
+    p.stale_views.count = 0
+    mut i := base
+    while (i < top) {
+        entry := arena_at(p.stale_scratch, i)
+        held_off := entry.name_off
+        held_len := entry.name_len
+        held_slot := entry.slot
+        arena_push(p.stale_views,
+            LocalVar { name_off = held_off, name_len = held_len, ty = 0,
+                slot = held_slot })
+        i = i + 1
+    }
+}
+
+// Everything an arm left stale, added to what is stale now. A view is stale
+// after a branch if any arm replaced the run behind it: growth on one path is
+// growth as far as the code below can tell.
+merge_stale :: fn(mut p: Parser, base: i64, top: i64) {
+    mut i := base
+    while (i < top) {
+        entry := arena_at(p.stale_scratch, i)
+        held_off := entry.name_off
+        held_len := entry.name_len
+        held_slot := entry.slot
+        if (stale_view_of(p, held_off, held_len) < 0) {
+            arena_push(p.stale_views,
+                LocalVar { name_off = held_off, name_len = held_len, ty = 0,
+                    slot = held_slot })
+        }
+        i = i + 1
+    }
+}
+
+// How a place reads back in a diagnostic.
+report_place :: fn(mut p: Parser, id: i64) {
+    if (id < 0) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Var) {
+        report_src(p.src, node.val, node.c)
+        return
+    }
+    if (kind == NodeKind::Field) {
+        report_place(p, node.a)
+        report(".")
+        report_src(p.src, node.val, node.c)
+        return
+    }
+    if (kind == NodeKind::Index) {
+        report_place(p, node.a)
+        report("[]")
+        return
+    }
+    if (kind == NodeKind::Deref) {
+        report_place(p, node.a)
+        report("^")
+    }
+}
+
 walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut id := args
     while (id != (-1)) {
@@ -1833,6 +2766,7 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         id = anode.next
     }
     apply_summaries(p, args, fn_index)
+    apply_run_replacements(p, args, fn_index)
     sym := arena_at(p.fns, fn_index)
     params := sym.params
     count := count_value_args(p, args)
@@ -1925,7 +2859,14 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     base := p.moved.count
     then_gone := block_diverges(p, then_head)
     else_gone := block_diverges(p, else_head)
+    // Every arm reads the views as they were before the branch, so a rebinding
+    // in one arm does not clear what another arm replaced.
+    before_base := save_stale(p)
+    before_top := p.stale_scratch.count
     walk_moves_block(p, then_head)
+    then_base := save_stale(p)
+    then_top := p.stale_scratch.count
+    restore_stale(p, before_base, before_top)
     scratch_base := p.move_scratch.count
     mut k := base
     while (k < p.moved.count) {
@@ -1955,6 +2896,8 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
         s = s + 1
     }
     p.move_scratch.count = scratch_base
+    merge_stale(p, then_base, then_top)
+    p.stale_scratch.count = before_base
 }
 
 // The names a block binds, including the ones its branches and nested loops
@@ -2014,7 +2957,23 @@ walk_moves_while :: fn(mut p: Parser, body: i64) {
     scratch_base := p.move_scratch.count
     collect_bound_names(p, body)
     scratch_top := p.move_scratch.count
+    replacements := p.run_replacements
     walk_moves_block(p, body)
+    // A second turn of the loop begins where the first one left off, so a view
+    // taken above the loop and read at the top of the body is read after the
+    // body has already replaced the run behind it. Walking once cannot see
+    // that, and walking a body that binds the view fresh every turn twice sees
+    // nothing wrong, since the binding clears what the last turn left.
+    //
+    // Only where a run under a live view was replaced. That is rare, and
+    // without the guard every nested loop in the program would be walked twice
+    // for each level of nesting.
+    if (p.run_replacements != replacements) {
+        moved_top := p.moved.count
+        p.moved.count = base
+        walk_moves_block(p, body)
+        p.moved.count = moved_top
+    }
     mut k := base
     while (k < p.moved.count) {
         e := arena_at(p.moved, k)
@@ -2258,6 +3217,7 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
         }
         if (kind == NodeKind::Let) {
             note_view(p, node.val, node.c, moves_viewed_container(p, node.a))
+            note_view_runs(p, node.val, node.c, node.a)
         }
         if (kind == NodeKind::Return) {
             note_handed_out(p, node.a)
@@ -2283,6 +3243,28 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
             }
             revive_place(p, node.a)
             walk_moves_expr(p, place_under(p, node.a))
+            // Writing to a `ref` writes through it into the container, so it is
+            // a use of the run rather than a rebinding of the name, and a stale
+            // one lands in the block that was given back.
+            if (node.a != (-1)) {
+                tnode := arena_at(p.arena, node.a)
+                target_kind := tnode.kind
+                target_off := tnode.val
+                target_len := tnode.c
+                if (target_kind == NodeKind::Var
+                    && view_is_borrow(p, target_off, target_len)) {
+                    report_if_stale(p, target_off, target_len, "write")
+                }
+                // A binding that is given a view again names the run it was
+                // just handed rather than the one it named before, which is
+                // what taking the view again after a push amounts to. A write
+                // that hands it no view is a write through it, and leaves what
+                // it views alone.
+                if (target_kind == NodeKind::Var
+                    && viewed_run_nth(p, node.b, 0) >= 0) {
+                    note_view_runs(p, target_off, target_len, node.b)
+                }
+            }
         }
         if (kind == NodeKind::If) {
             walk_moves_expr(p, node.a)
@@ -2308,11 +3290,21 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
 walk_moves_match :: fn(mut p: Parser, cases: i64) {
     base := p.moved.count
     scratch_base := p.move_scratch.count
+    before_base := save_stale(p)
+    before_top := p.stale_scratch.count
     mut cid := cases
     while (cid != (-1)) {
         cnode := arena_at(p.arena, cid)
         p.moved.count = base
+        restore_stale(p, before_base, before_top)
         walk_moves_block(p, cnode.a)
+        // What this arm left, stacked above the copy taken before the match and
+        // above what the arms before it left, so the whole run of them is one
+        // region to merge once every arm has been walked.
+        arm_start := save_stale(p)
+        if (arm_start < 0) {
+            return
+        }
         mut k := base
         while (k < p.moved.count) {
             e := arena_at(p.moved, k)
@@ -2333,6 +3325,10 @@ walk_moves_match :: fn(mut p: Parser, cases: i64) {
         s = s + 1
     }
     p.move_scratch.count = scratch_base
+    arms_top := p.stale_scratch.count
+    restore_stale(p, before_base, before_top)
+    merge_stale(p, before_top, arms_top)
+    p.stale_scratch.count = before_base
 }
 
 in_scratch :: fn(mut p: Parser, base: i64, off: i64, len: i64) -> bool {
@@ -2389,6 +3385,8 @@ settle_summaries :: fn(mut p: Parser) {
                 }
                 p.moved.count = 0
                 p.move_views.count = 0
+                p.view_runs.count = 0
+                p.stale_views.count = 0
                 walk_moves_body(p, body, params, answers)
                 note_summaries(p, fn_index, params)
             }
@@ -2399,6 +3397,7 @@ settle_summaries :: fn(mut p: Parser) {
 }
 
 check_moves :: fn(mut p: Parser) {
+    settle_runs(p)
     settle_summaries(p)
     mut i : i64 = 0
     while (i < p.arena.count) {
@@ -2413,6 +3412,8 @@ check_moves :: fn(mut p: Parser) {
             check_linear_locals(p, node.a, answers)
             p.moved.count = 0
             p.move_views.count = 0
+            p.view_runs.count = 0
+            p.stale_views.count = 0
             walk_moves_body(p, node.a, node.b, answers)
             report_unnameable(p, node.b, fn_index, i)
         }

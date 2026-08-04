@@ -36,6 +36,24 @@ to its caller, whose region checks it, but may not store one into a parameter.
 Chapter 8a is that check in full, along with the `uses` and `with` forms it runs
 over.
 
+A third way is checked separately, because no scope expresses it: the storage a
+view names can move while everything around it stays alive. A container that
+fills asks the allocator for a wider block and gives the old one back, so a view
+taken before that names storage the allocator has taken.
+
+```frost
+view := vec_slice($i64, v)
+vec_push($i64, v, 1)       // fills, so the block is replaced
+print view[0]              // refused
+```
+
+What makes it visible from the call is two summaries, worked out for every
+function in the program: which run under a parameter its answer views, and which
+run under a parameter it replaces. Both are runs of field names, since a
+container with more than one run grows one while a caller holds a view of
+another, and that is ordinary. Taking the view again after the growth is what
+clears it.
+
 ## 8.3 Borrow exclusivity
 
 Within one call, a value may be read-borrowed any number of times or write-
