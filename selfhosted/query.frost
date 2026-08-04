@@ -278,7 +278,7 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
-        if (node.kind == NodeKind :: Func) {
+        if (node.kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
             if (word_names(question, fn_at, p.src, sym.off, sym.len)) {
                 check_types_in(p, node.a, node.b, node.val, sym.ret_type)

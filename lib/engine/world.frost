@@ -143,8 +143,8 @@ Exit :: struct { wanted: bool }
 // this file cannot name one.
 world_schedule :: fn() -> Schedule {
     var held := schedule_new()
-    schedule_add(held, Stage :: FramePostUpdate, place_things)
-    schedule_add(held, Stage :: FrameUpdate, move_camera)
+    schedule_add(held, Stage::FramePostUpdate, place_things)
+    schedule_add(held, Stage::FrameUpdate, move_camera)
     held
 }
 
@@ -283,7 +283,7 @@ test "a system bound to a screen runs on that screen and no other" {
     world_prepare(world)
     ecs_resource_register($Score, world)
     var frame := schedule_new()
-    schedule_add_in_state(frame, Stage :: FrameUpdate, PLAYING, count_a_point)
+    schedule_add_in_state(frame, Stage::FrameUpdate, PLAYING, count_a_point)
 
     // The world starts on the title screen, where this system is not.
     schedule_run(frame, world, world_state(world))

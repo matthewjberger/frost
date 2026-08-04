@@ -99,13 +99,13 @@ geometry_new :: fn(device: Device, vertex_room: i64,
     // Copied from as well as into: growing one is a copy on the device from the
     // old buffer to the new, and a buffer that cannot be read from would have to
     // make the trip through the CPU instead.
-    vertex_descriptor.usage = BufferUsage :: Vertex | BufferUsage :: CopyDst
-        | BufferUsage :: CopySrc
+    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     vertex_descriptor.size = vertex_room * VERTEX_STRIDE
 
     var index_descriptor := buffer_descriptor_init()
-    index_descriptor.usage = BufferUsage :: Index | BufferUsage :: CopyDst
-        | BufferUsage :: CopySrc
+    index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     index_descriptor.size = index_room * INDEX_BYTES
 
     Geometry {
@@ -248,8 +248,8 @@ grow_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
 replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Vertex | BufferUsage :: CopyDst
-        | BufferUsage :: CopySrc
+    descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     descriptor.size = room * VERTEX_STRIDE
     made := device_create_buffer(device, ptr_to(descriptor))
     carry_over(store.vertices, made, device, queue,
@@ -262,8 +262,8 @@ replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
 replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Index | BufferUsage :: CopyDst
-        | BufferUsage :: CopySrc
+    descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+        | BufferUsage::CopySrc
     descriptor.size = room * INDEX_BYTES
     made := device_create_buffer(device, ptr_to(descriptor))
     carry_over(store.indices, made, device, queue,

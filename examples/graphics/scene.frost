@@ -257,7 +257,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask :: All
+    target.write_mask = ColorWriteMask::All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -333,7 +333,7 @@ run :: fn(move app: App) -> i64 {
     var far_render := render_world_new(device, INSTANCES, MAX_MESHES, MAX_LOOKS)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage :: Vertex | ShaderStage :: Fragment)
+        ShaderStage::Vertex | ShaderStage::Fragment)
     var layouts: [2]BindGroupLayout = [frame_layout,
         render_world_layout(app.render)]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()

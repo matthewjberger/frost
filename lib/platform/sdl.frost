@@ -104,19 +104,19 @@ event_number :: fn(e: Event) -> u32 {
 
 event_kind :: fn(e: Event) -> EventKind {
     held := event_number(e)
-    if (held == 256) { return EventKind :: Quit }
+    if (held == 256) { return EventKind::Quit }
     // 518 is a resize. 519 is `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`, a
     // different event, and it was what this asked for until the header was read
     // rather than remembered.
-    if (held == 518) { return EventKind :: WindowResized }
-    if (held == 528) { return EventKind :: WindowClosed }
-    if (held == 768) { return EventKind :: KeyDown }
-    if (held == 769) { return EventKind :: KeyUp }
-    if (held == 1024) { return EventKind :: MouseMotion }
-    if (held == 1025) { return EventKind :: MouseButtonDown }
-    if (held == 1026) { return EventKind :: MouseButtonUp }
-    if (held == 1027) { return EventKind :: MouseWheel }
-    EventKind :: Other
+    if (held == 518) { return EventKind::WindowResized }
+    if (held == 528) { return EventKind::WindowClosed }
+    if (held == 768) { return EventKind::KeyDown }
+    if (held == 769) { return EventKind::KeyUp }
+    if (held == 1024) { return EventKind::MouseMotion }
+    if (held == 1025) { return EventKind::MouseButtonDown }
+    if (held == 1026) { return EventKind::MouseButtonUp }
+    if (held == 1027) { return EventKind::MouseWheel }
+    EventKind::Other
 }
 
 // ---------------------------------------------------------------------------

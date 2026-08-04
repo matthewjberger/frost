@@ -61,7 +61,7 @@ template_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
     app_insert_resource($TemplateState, app,
         TemplateState { frames = 0, elapsed = 0.0 })
-    app_add_system(app, Stage :: FrameUpdate, tick)
+    app_add_system(app, Stage::FrameUpdate, tick)
 }
 
 // Once a frame: the counters advance, and everything wearing a `Spin` turns.

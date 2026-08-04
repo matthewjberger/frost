@@ -117,9 +117,9 @@ Platform :: struct {
 // back with `is_no_window` true on `platform_window`, which a caller checks
 // before drawing into it, and SDL says why in `sdl_error`.
 platform_open :: fn(title: str, w: i64, h: i64) -> Platform {
-    sdl_init(InitFlags :: Video | InitFlags :: Events)
+    sdl_init(InitFlags::Video | InitFlags::Events)
     made := window_create(title, cast($i32, w), cast($i32, h),
-        WindowFlags :: Resizable | WindowFlags :: HighPixelDensity)
+        WindowFlags::Resizable | WindowFlags::HighPixelDensity)
     now := sdl_ticks()
     Platform {
         window = made,
@@ -189,47 +189,47 @@ platform_poll :: fn(mut p: Platform) -> bool {
     var event := event_new()
     while (poll_event(event)) {
         kind := event_kind(event)
-        if (kind == EventKind :: Quit || kind == EventKind :: WindowClosed) {
+        if (kind == EventKind::Quit || kind == EventKind::WindowClosed) {
             p.closing = true
         }
-        if (kind == EventKind :: WindowResized) {
+        if (kind == EventKind::WindowResized) {
             p.state.window_width = event_window_width(event)
             p.state.window_height = event_window_height(event)
             p.state.was_resized = true
         }
         // A repeat is the system saying the key is still down, which the state
         // already says, so only the first press moves anything.
-        if (kind == EventKind :: KeyDown && event_key_repeat(event) == false) {
+        if (kind == EventKind::KeyDown && event_key_repeat(event) == false) {
             code := event_scancode(event)
             if (code >= 0 && code < KEY_COUNT) {
                 p.state.keys[code] = true
             }
         }
-        if (kind == EventKind :: KeyUp) {
+        if (kind == EventKind::KeyUp) {
             code := event_scancode(event)
             if (code >= 0 && code < KEY_COUNT) {
                 p.state.keys[code] = false
             }
         }
-        if (kind == EventKind :: MouseMotion) {
+        if (kind == EventKind::MouseMotion) {
             p.state.at_x = event_mouse_x(event)
             p.state.at_y = event_mouse_y(event)
             p.state.moved_x = p.state.moved_x + event_mouse_dx(event)
             p.state.moved_y = p.state.moved_y + event_mouse_dy(event)
         }
-        if (kind == EventKind :: MouseButtonDown) {
+        if (kind == EventKind::MouseButtonDown) {
             held := event_button(event)
             if (held >= 0 && held < BUTTON_COUNT) {
                 p.state.buttons[held] = true
             }
         }
-        if (kind == EventKind :: MouseButtonUp) {
+        if (kind == EventKind::MouseButtonUp) {
             held := event_button(event)
             if (held >= 0 && held < BUTTON_COUNT) {
                 p.state.buttons[held] = false
             }
         }
-        if (kind == EventKind :: MouseWheel) {
+        if (kind == EventKind::MouseWheel) {
             p.state.scrolled = p.state.scrolled + event_wheel_y(event)
         }
     }

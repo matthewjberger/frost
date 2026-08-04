@@ -36,7 +36,7 @@ LogConfig :: struct {
 }
 
 log_config :: fn() -> LogConfig {
-    LogConfig { directory = ".", rotation = LogRotation :: Never }
+    LogConfig { directory = ".", rotation = LogRotation::Never }
 }
 
 // An open log: where it is written and everything written to it so far.

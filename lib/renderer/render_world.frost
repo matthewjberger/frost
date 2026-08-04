@@ -381,8 +381,8 @@ render_world_new :: fn(device: Device, room: i64, meshes: i64,
     // Both indirect and storage: the compute passes write it and the draws read
     // their arguments from it.
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Indirect | BufferUsage :: Storage
-        | BufferUsage :: CopyDst
+    descriptor.usage = BufferUsage::Indirect | BufferUsage::Storage
+        | BufferUsage::CopyDst
     descriptor.size = total_slots * INDIRECT_BYTES
     indirect_buffer := device_create_buffer(device, ptr_to(descriptor))
 
@@ -1016,14 +1016,14 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 
 storage_buffer :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Storage | BufferUsage :: CopyDst
+    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 small_uniform :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Uniform | BufferUsage :: CopyDst
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
@@ -1035,7 +1035,7 @@ scene_layout :: fn(device: Device) -> BindGroupLayout {
     var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage :: Vertex | ShaderStage :: Fragment
+        entries[slot].visibility = ShaderStage::Vertex | ShaderStage::Fragment
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
         slot = slot + 1
     }
@@ -1077,7 +1077,7 @@ batch_layout_of :: fn(device: Device) -> BindGroupLayout {
     var slot: i64 = 0
     while (slot < 11) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage :: Compute
+        entries[slot].visibility = ShaderStage::Compute
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
         slot = slot + 1
     }

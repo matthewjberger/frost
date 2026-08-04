@@ -492,14 +492,14 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 
 storage_of :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Storage | BufferUsage :: CopyDst
+    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 uniform_of :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage :: Uniform | BufferUsage :: CopyDst
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
@@ -527,7 +527,7 @@ build_layout :: fn(device: Device) -> BindGroupLayout {
     var slot: i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage :: Compute
+        entries[slot].visibility = ShaderStage::Compute
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
         slot = slot + 1
     }

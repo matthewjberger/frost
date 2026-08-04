@@ -171,13 +171,13 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         // unreadable.
         said := platform_error()
         platform_close(p)
-        return AppError { why = AppFault :: NoWindow, said = said }
+        return AppError { why = AppFault::NoWindow, said = said }
     }
     var r := renderer_open(platform_window(p), config.width, config.height)
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)
-        return AppError { why = AppFault :: NoDevice,
+        return AppError { why = AppFault::NoDevice,
             said = "no adapter or no device that answers to this surface" }
     }
     device := renderer_device(r)
@@ -218,19 +218,19 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
 // a particular one does.
 engine_plugin :: fn(mut app: App) {
     world_prepare(app.world)
-    app_add_system(app, Stage :: FramePostUpdate, place_things)
+    app_add_system(app, Stage::FramePostUpdate, place_things)
 }
 
 // The camera moved by what was held. A program driving the camera itself
 // installs everything else and leaves this out.
 camera_controller_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage :: FrameUpdate, move_camera)
+    app_add_system(app, Stage::FrameUpdate, move_camera)
 }
 
 // Escape closes the window. Installed by a demo rather than built into the
 // poll, so a program that wants that key for a menu simply does not install it.
 exit_on_escape_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage :: FrameUpdate, exit_on_escape)
+    app_add_system(app, Stage::FrameUpdate, exit_on_escape)
 }
 
 // One plugin, built into this App.

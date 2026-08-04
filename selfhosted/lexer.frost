@@ -97,102 +97,102 @@ str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
 classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     if (len == 2) {
         if (str_range_eq(src, off, len, "fn")) {
-            return TokenKind :: KwFn
+            return TokenKind::KwFn
         }
         if (str_range_eq(src, off, len, "if")) {
-            return TokenKind :: KwIf
+            return TokenKind::KwIf
         }
         if (str_range_eq(src, off, len, "in")) {
-            return TokenKind :: KwIn
+            return TokenKind::KwIn
         }
     } else if (len == 3) {
         if (str_range_eq(src, off, len, "for")) {
-            return TokenKind :: KwFor
+            return TokenKind::KwFor
         }
         if (str_range_eq(src, off, len, "mut")) {
-            return TokenKind :: KwMut
+            return TokenKind::KwMut
         }
         if (str_range_eq(src, off, len, "ref")) {
-            return TokenKind :: KwRef
+            return TokenKind::KwRef
         }
         if (str_range_eq(src, off, len, "var")) {
-            return TokenKind :: KwVar
+            return TokenKind::KwVar
         }
     } else if (len == 4) {
         if (str_range_eq(src, off, len, "case")) {
-            return TokenKind :: KwCase
+            return TokenKind::KwCase
         }
         if (str_range_eq(src, off, len, "else")) {
-            return TokenKind :: KwElse
+            return TokenKind::KwElse
         }
         if (str_range_eq(src, off, len, "enum")) {
-            return TokenKind :: KwEnum
+            return TokenKind::KwEnum
         }
         if (str_range_eq(src, off, len, "move")) {
-            return TokenKind :: KwMove
+            return TokenKind::KwMove
         }
         if (str_range_eq(src, off, len, "safe")) {
-            return TokenKind :: KwSafe
+            return TokenKind::KwSafe
         }
         if (str_range_eq(src, off, len, "test")) {
-            return TokenKind :: KwTest
+            return TokenKind::KwTest
         }
         if (str_range_eq(src, off, len, "uses")) {
-            return TokenKind :: KwUses
+            return TokenKind::KwUses
         }
         if (str_range_eq(src, off, len, "with")) {
-            return TokenKind :: KwWith
+            return TokenKind::KwWith
         }
     } else if (len == 5) {
         if (str_range_eq(src, off, len, "break")) {
-            return TokenKind :: KwBreak
+            return TokenKind::KwBreak
         }
         if (str_range_eq(src, off, len, "defer")) {
-            return TokenKind :: KwDefer
+            return TokenKind::KwDefer
         }
         if (str_range_eq(src, off, len, "match")) {
-            return TokenKind :: KwMatch
+            return TokenKind::KwMatch
         }
         if (str_range_eq(src, off, len, "where")) {
-            return TokenKind :: KwWhere
+            return TokenKind::KwWhere
         }
         if (str_range_eq(src, off, len, "while")) {
-            return TokenKind :: KwWhile
+            return TokenKind::KwWhile
         }
     } else if (len == 6) {
         if (str_range_eq(src, off, len, "export")) {
-            return TokenKind :: KwExport
+            return TokenKind::KwExport
         }
         if (str_range_eq(src, off, len, "extern")) {
-            return TokenKind :: KwExtern
+            return TokenKind::KwExtern
         }
         if (str_range_eq(src, off, len, "import")) {
-            return TokenKind :: KwImport
+            return TokenKind::KwImport
         }
         if (str_range_eq(src, off, len, "inline")) {
-            return TokenKind :: KwInline
+            return TokenKind::KwInline
         }
         if (str_range_eq(src, off, len, "linear")) {
-            return TokenKind :: KwLinear
+            return TokenKind::KwLinear
         }
         if (str_range_eq(src, off, len, "return")) {
-            return TokenKind :: KwReturn
+            return TokenKind::KwReturn
         }
         if (str_range_eq(src, off, len, "struct")) {
-            return TokenKind :: KwStruct
+            return TokenKind::KwStruct
         }
         if (str_range_eq(src, off, len, "unsafe")) {
-            return TokenKind :: KwUnsafe
+            return TokenKind::KwUnsafe
         }
     } else if (len == 8) {
         if (str_range_eq(src, off, len, "continue")) {
-            return TokenKind :: KwContinue
+            return TokenKind::KwContinue
         }
         if (str_range_eq(src, off, len, "distinct")) {
-            return TokenKind :: KwDistinct
+            return TokenKind::KwDistinct
         }
     }
-    TokenKind :: Ident
+    TokenKind::Ident
 }
 
 push_token :: fn(mut tokens: Arena<Token>, kind: TokenKind, off: i64, len: i64,
@@ -206,100 +206,100 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     c := byte_of(src, i, len)
     d := byte_of(src, i + 1, len)
     if (c == CH_COLON && d == CH_COLON) {
-        push_token(tokens, TokenKind :: Coloncolon, i, 2, 0)
+        push_token(tokens, TokenKind::Coloncolon, i, 2, 0)
         return i + 2
     }
     if (c == CH_COLON && d == CH_EQ) {
-        push_token(tokens, TokenKind :: Coloneq, i, 2, 0)
+        push_token(tokens, TokenKind::Coloneq, i, 2, 0)
         return i + 2
     }
     if (c == CH_MINUS && d == CH_GT) {
-        push_token(tokens, TokenKind :: Arrow, i, 2, 0)
+        push_token(tokens, TokenKind::Arrow, i, 2, 0)
         return i + 2
     }
     if (c == CH_LT && d == CH_EQ) {
-        push_token(tokens, TokenKind :: Le, i, 2, 0)
+        push_token(tokens, TokenKind::Le, i, 2, 0)
         return i + 2
     }
     if (c == CH_GT && d == CH_EQ) {
-        push_token(tokens, TokenKind :: Ge, i, 2, 0)
+        push_token(tokens, TokenKind::Ge, i, 2, 0)
         return i + 2
     }
     if (c == CH_LT && d == CH_LT) {
-        push_token(tokens, TokenKind :: Shl, i, 2, 0)
+        push_token(tokens, TokenKind::Shl, i, 2, 0)
         return i + 2
     }
     if (c == CH_GT && d == CH_GT) {
-        push_token(tokens, TokenKind :: Shr, i, 2, 0)
+        push_token(tokens, TokenKind::Shr, i, 2, 0)
         return i + 2
     }
     if (c == CH_EQ && d == CH_EQ) {
-        push_token(tokens, TokenKind :: Eqeq, i, 2, 0)
+        push_token(tokens, TokenKind::Eqeq, i, 2, 0)
         return i + 2
     }
     if (c == CH_BANG && d == CH_EQ) {
-        push_token(tokens, TokenKind :: Ne, i, 2, 0)
+        push_token(tokens, TokenKind::Ne, i, 2, 0)
         return i + 2
     }
     if (c == CH_AMP && d == CH_AMP) {
-        push_token(tokens, TokenKind :: Andand, i, 2, 0)
+        push_token(tokens, TokenKind::Andand, i, 2, 0)
         return i + 2
     }
     if (c == CH_PIPE && d == CH_PIPE) {
-        push_token(tokens, TokenKind :: Oror, i, 2, 0)
+        push_token(tokens, TokenKind::Oror, i, 2, 0)
         return i + 2
     }
     // `$...`, the compile-time list, is three dots and is taken whole. Reading
     // it a byte at a time leaves the last two to be read as a range.
     if (c == CH_DOT && d == CH_DOT && byte_of(src, i + 2, len) == CH_DOT) {
-        push_token(tokens, TokenKind :: Dot, i, 1, 0)
-        push_token(tokens, TokenKind :: Dot, i + 1, 1, 0)
-        push_token(tokens, TokenKind :: Dot, i + 2, 1, 0)
+        push_token(tokens, TokenKind::Dot, i, 1, 0)
+        push_token(tokens, TokenKind::Dot, i + 1, 1, 0)
+        push_token(tokens, TokenKind::Dot, i + 2, 1, 0)
         return i + 3
     }
     // A range, which is written only between `in` and a `for`'s body. `..=`
     // reaches its bound and `..` stops before it.
     if (c == CH_DOT && d == CH_DOT) {
         if (byte_of(src, i + 2, len) == CH_EQ) {
-            push_token(tokens, TokenKind :: Dotdoteq, i, 3, 0)
+            push_token(tokens, TokenKind::Dotdoteq, i, 3, 0)
             return i + 3
         }
-        push_token(tokens, TokenKind :: Dotdot, i, 2, 0)
+        push_token(tokens, TokenKind::Dotdot, i, 2, 0)
         return i + 2
     }
     // TokenKind::Eof stands for "nothing matched" here. A byte that is none of the
     // operators below used to keep it and be pushed as an end-of-file token,
     // so the parser stopped where the byte was and the compiler wrote an empty
     // program and reported success. One stray byte silently truncated a file.
-    var kind: TokenKind = TokenKind :: Eof
-    if (c == CH_LPAREN) { kind = TokenKind :: Lparen }
-    if (c == CH_RPAREN) { kind = TokenKind :: Rparen }
-    if (c == CH_LBRACE) { kind = TokenKind :: Lbrace }
-    if (c == CH_RBRACE) { kind = TokenKind :: Rbrace }
-    if (c == CH_LBRACKET) { kind = TokenKind :: Lbracket }
-    if (c == CH_RBRACKET) { kind = TokenKind :: Rbracket }
-    if (c == CH_COMMA) { kind = TokenKind :: Comma }
-    if (c == CH_DOT) { kind = TokenKind :: Dot }
-    if (c == CH_COLON) { kind = TokenKind :: Colon }
-    if (c == CH_CARET) { kind = TokenKind :: Caret }
-    if (c == CH_AMP) { kind = TokenKind :: Amp }
-    if (c == CH_PIPE) { kind = TokenKind :: Pipe }
-    if (c == CH_EQ) { kind = TokenKind :: Assign }
-    if (c == CH_PLUS) { kind = TokenKind :: Plus }
-    if (c == CH_MINUS) { kind = TokenKind :: Minus }
-    if (c == CH_STAR) { kind = TokenKind :: Star }
-    if (c == CH_BANG) { kind = TokenKind :: Bang }
-    if (c == CH_QUESTION) { kind = TokenKind :: Question }
-    if (c == CH_SLASH) { kind = TokenKind :: Slash }
-    if (c == CH_PERCENT) { kind = TokenKind :: Percent }
-    if (c == CH_LT) { kind = TokenKind :: Lt }
-    if (c == CH_GT) { kind = TokenKind :: Gt }
-    if (c == CH_DOLLAR) { kind = TokenKind :: Dollar }
+    var kind: TokenKind = TokenKind::Eof
+    if (c == CH_LPAREN) { kind = TokenKind::Lparen }
+    if (c == CH_RPAREN) { kind = TokenKind::Rparen }
+    if (c == CH_LBRACE) { kind = TokenKind::Lbrace }
+    if (c == CH_RBRACE) { kind = TokenKind::Rbrace }
+    if (c == CH_LBRACKET) { kind = TokenKind::Lbracket }
+    if (c == CH_RBRACKET) { kind = TokenKind::Rbracket }
+    if (c == CH_COMMA) { kind = TokenKind::Comma }
+    if (c == CH_DOT) { kind = TokenKind::Dot }
+    if (c == CH_COLON) { kind = TokenKind::Colon }
+    if (c == CH_CARET) { kind = TokenKind::Caret }
+    if (c == CH_AMP) { kind = TokenKind::Amp }
+    if (c == CH_PIPE) { kind = TokenKind::Pipe }
+    if (c == CH_EQ) { kind = TokenKind::Assign }
+    if (c == CH_PLUS) { kind = TokenKind::Plus }
+    if (c == CH_MINUS) { kind = TokenKind::Minus }
+    if (c == CH_STAR) { kind = TokenKind::Star }
+    if (c == CH_BANG) { kind = TokenKind::Bang }
+    if (c == CH_QUESTION) { kind = TokenKind::Question }
+    if (c == CH_SLASH) { kind = TokenKind::Slash }
+    if (c == CH_PERCENT) { kind = TokenKind::Percent }
+    if (c == CH_LT) { kind = TokenKind::Lt }
+    if (c == CH_GT) { kind = TokenKind::Gt }
+    if (c == CH_DOLLAR) { kind = TokenKind::Dollar }
     // A semicolon used to be dropped with the whitespace, which made `[0; 4]`
     // lex as the two elements `0` and `4` and quietly build an array of two
     // rather than four. It is a token now, skipped where a statement ends.
-    if (c == CH_SEMI) { kind = TokenKind :: Semi }
-    if (kind == TokenKind :: Eof) {
+    if (c == CH_SEMI) { kind = TokenKind::Semi }
+    if (kind == TokenKind::Eof) {
         // A byte that is no operator becomes a token of its own rather than
         // the end of the compile. The parser refuses it where it stands, so
         // the fault is reported with a line and everything after it is still
@@ -312,7 +312,7 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
             && byte_of(src, i + span, len) < 192) {
             span = span + 1
         }
-        push_token(tokens, TokenKind :: Illegal, i, span, 0)
+        push_token(tokens, TokenKind::Illegal, i, span, 0)
         return i + span
     }
     push_token(tokens, kind, i, 1, 0)
@@ -363,7 +363,7 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                     }
                     i = i + 1
                 }
-                push_token(tokens, TokenKind :: Int, start, i - start, value)
+                push_token(tokens, TokenKind::Int, start, i - start, value)
                 continue
             }
             while (is_digit(byte_of(src, i, len))
@@ -403,9 +403,9 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                 }
             }
             if (is_float) {
-                push_token(tokens, TokenKind :: Float, start, i - start, 0)
+                push_token(tokens, TokenKind::Float, start, i - start, 0)
             } else {
-                push_token(tokens, TokenKind :: Int, start, i - start, value)
+                push_token(tokens, TokenKind::Int, start, i - start, value)
             }
         } else if (is_ident_start(c)) {
             start := i
@@ -426,12 +426,12 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                 i = i + 1
             }
             i = i + 1
-            push_token(tokens, TokenKind :: Str, start + 1, i - start - 2, 0)
+            push_token(tokens, TokenKind::Str, start + 1, i - start - 2, 0)
         } else {
             i = lex_operator(src, i, len, tokens)
         }
     }
-    push_token(tokens, TokenKind :: Eof, len, 0, 0)
+    push_token(tokens, TokenKind::Eof, len, 0, 0)
 }
 
 // ---------------------------------------------------------------------------

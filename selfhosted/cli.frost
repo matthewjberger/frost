@@ -349,7 +349,7 @@ options_from_command_line :: fn() -> Options {
     var options := Options {
         input = "",
         output = "",
-        backend = Backend :: Unset,
+        backend = Backend::Unset,
         link = 0,
         object = 0,
         assemble = 0,
@@ -373,13 +373,13 @@ options_from_command_line :: fn() -> Options {
             return options
         }
         if (cstr_eq(argument, "--emit-c")) {
-            options.backend = Backend :: C
+            options.backend = Backend::C
         } else if (cstr_eq(argument, "--emit-asm")) {
-            options.backend = Backend :: Asm
+            options.backend = Backend::Asm
         } else if (cstr_eq(argument, "--native") || cstr_eq(argument, "-n")) {
             // An object, which is what the bootstrap's `--native` answers with.
             // `--emit-asm` is the assembly on its own.
-            options.backend = Backend :: Asm
+            options.backend = Backend::Asm
             options.object = 1
         } else if (cstr_eq(argument, "--libs")) {
             index = index + 1
@@ -474,16 +474,16 @@ options_from_command_line :: fn() -> Options {
     // output into one for a fraction of what handing a C compiler a generated
     // translation unit costs. Emitting on its own stays C, which is the
     // portable answer and what a caller reading the output is asking for.
-    if (options.backend == Backend :: Unset) {
+    if (options.backend == Backend::Unset) {
         named := unsafe { frost_rt_getenv("FROST_BACKEND") }
         if (cstr_eq(named, "asm")) {
-            options.backend = Backend :: Asm
+            options.backend = Backend::Asm
         } else if (cstr_eq(named, "c")) {
-            options.backend = Backend :: C
+            options.backend = Backend::C
         } else if (options.link == 1) {
-            options.backend = Backend :: Asm
+            options.backend = Backend::Asm
         } else {
-            options.backend = Backend :: C
+            options.backend = Backend::C
         }
     }
     options

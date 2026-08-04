@@ -323,7 +323,7 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
     while (i + 1 < scratch.count) {
         entry := arena_at(scratch, i)
         named := arena_at(scratch, i + 1)
-        if (entry.kind == TokenKind :: KwImport && named.kind == TokenKind :: Str) {
+        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
             arena_push(
                 children,
                 Module {
@@ -624,7 +624,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     text := cstr_slice(unsafe { frost_rt_read_file(path) })
     var document := json_parse(text)
     root := json_root(document)
-    if (root < 0 || json_kind(document, root) != JsonKind :: Object) {
+    if (root < 0 || json_kind(document, root) != JsonKind::Object) {
         // Nothing is given back here, since the next thing this does is stop.
         report("frost: cannot read '")
         report_cstr(path)
@@ -636,7 +636,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     // build was started from.
     var named := json_at(document, json_member(document, root, "paths"), 0)
     while (named >= 0) {
-        if (json_kind(document, named) == JsonKind :: String) {
+        if (json_kind(document, named) == JsonKind::String) {
             off := json_text_off(document, named)
             len := json_text_len(document, named)
             add_root(roots, normalise_path(
@@ -649,7 +649,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     // resolves to, which is what a file is tested against.
     var layer := json_at(document, json_member(document, root, "layers"), 0)
     while (layer >= 0) {
-        if (json_kind(document, layer) == JsonKind :: String) {
+        if (json_kind(document, layer) == JsonKind::String) {
             off := json_text_off(document, layer)
             len := json_text_len(document, layer)
             add_layer(layers, text_as_cstr(text, off, len), absolute_path(
@@ -766,7 +766,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     while (j + 1 < scratch.count) {
         entry := arena_at(scratch, j)
         named := arena_at(scratch, j + 1)
-        if (entry.kind == TokenKind :: KwImport && named.kind == TokenKind :: Str) {
+        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
             // The line is about to be blanked, so the edge it stands for is
             // recorded first. The importer is whoever wrote the line, and the
             // module it names is resolved against that file's own directory,
@@ -790,7 +790,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             var r := j + 2
             if (r < scratch.count) {
                 opened := arena_at(scratch, r)
-                if (opened.kind == TokenKind :: Lparen) {
+                if (opened.kind == TokenKind::Lparen) {
                     through = opened.off
                     r = r + 1
                     var reading: bool = true
@@ -798,9 +798,9 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
                         exported := arena_at(scratch, r)
                         word := arena_at(scratch, r + 1)
                         local := arena_at(scratch, r + 2)
-                        if (exported.kind != TokenKind :: Ident
-                            || word.kind != TokenKind :: Ident
-                            || local.kind != TokenKind :: Ident) {
+                        if (exported.kind != TokenKind::Ident
+                            || word.kind != TokenKind::Ident
+                            || local.kind != TokenKind::Ident) {
                             reading = false
                         } else {
                             exported_at := named_at
@@ -820,7 +820,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
                             r = r + 3
                             if (r < scratch.count) {
                                 following := arena_at(scratch, r)
-                                if (following.kind == TokenKind :: Comma) {
+                                if (following.kind == TokenKind::Comma) {
                                     r = r + 1
                                 } else {
                                     reading = false
@@ -833,14 +833,14 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             }
             blank_range(buffer, entry.off, through)
         }
-        if (entry.kind == TokenKind :: KwExport) {
+        if (entry.kind == TokenKind::KwExport) {
             owner := module_at(modules, entry.off)
             var k := j + 1
             var through := entry.off + entry.len - 1
             var listing: bool = true
             while (listing) {
                 listed := arena_at(scratch, k)
-                if (listed.kind != TokenKind :: Ident) {
+                if (listed.kind != TokenKind::Ident) {
                     listing = false
                 } else {
                     // The name is copied out because the line it is written
@@ -859,7 +859,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
                     through = listed.off + listed.len - 1
                     k = k + 1
                     following := arena_at(scratch, k)
-                    if (following.kind == TokenKind :: Comma) {
+                    if (following.kind == TokenKind::Comma) {
                         through = following.off
                         k = k + 1
                     } else {

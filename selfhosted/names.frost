@@ -652,7 +652,7 @@ new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
         p.arena,
     // The name it binds, which is where the binding is. The cursor is past
     // the whole statement by now, since the value has been read.
-        Node { kind = NodeKind :: Let, a = value, b = annotation, c = length,
+        Node { kind = NodeKind::Let, a = value, b = annotation, c = length,
             val = offset, next = -1, pos = offset },
     )
 }
@@ -662,7 +662,7 @@ new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
     arena_push(
         p.arena,
         Node {
-            kind = NodeKind :: Func,
+            kind = NodeKind::Func,
             a = body,
             b = params,
             c = is_main,
@@ -683,7 +683,7 @@ set_next :: fn(mut p: Parser, id: i64, next_id: i64) {
 new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind :: Field, a = base, b = 0, c = length, val = offset,
+        Node { kind = NodeKind::Field, a = base, b = 0, c = length, val = offset,
             next = -1, pos = cur_off(p) },
     )
 }
@@ -693,7 +693,7 @@ new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 
 new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind :: StructLit, a = inits, b = 0, c = 0,
+        Node { kind = NodeKind::StructLit, a = inits, b = 0, c = 0,
             val = struct_index, next = -1, pos = cur_off(p) },
     )
 }
@@ -703,7 +703,7 @@ new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
 new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind :: FieldInit, a = value, b = 0, c = length,
+        Node { kind = NodeKind::FieldInit, a = value, b = 0, c = length,
             val = offset, next = -1, pos = cur_off(p) },
     )
 }
@@ -934,7 +934,7 @@ written_number :: fn(mut p: Parser, value: i64) -> bool {
         return false
     }
     node := arena_at(p.arena, value)
-    node.kind == NodeKind :: Num && node.b == 0
+    node.kind == NodeKind::Num && node.b == 0
 }
 
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
@@ -1290,7 +1290,7 @@ columns_fields_match :: fn(mut p: Parser, candidate: i64, element: i64) -> bool 
 // call node so neither backend emits a real call to it.
 is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
     node := arena_at(p.arena, value)
-    if (node.kind != NodeKind :: Call) {
+    if (node.kind != NodeKind::Call) {
         return false
     }
     sym := arena_at(p.fns, node.val)
@@ -1569,7 +1569,7 @@ new_unary :: fn(mut p: Parser, kind: NodeKind, child: i64) -> i64 {
 new_index :: fn(mut p: Parser, base: i64, index: i64, at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind :: Index, a = base, b = index, c = 0, val = 0,
+        Node { kind = NodeKind::Index, a = base, b = index, c = 0, val = 0,
             next = -1, pos = at },
     )
 }
@@ -1588,7 +1588,7 @@ new_type_node :: fn(mut p: Parser, kind: NodeKind, expr: i64, ty: i64) -> i64 {
 new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind :: Case, a = body, b = 0, c = is_default, val = value,
+        Node { kind = NodeKind::Case, a = body, b = 0, c = is_default, val = value,
             next = -1, pos = cur_off(p) },
     )
 }

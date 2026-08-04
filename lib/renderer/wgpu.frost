@@ -2362,7 +2362,7 @@ bind_group_layout_entry_init :: fn() -> BindGroupLayoutEntry {
     BindGroupLayoutEntry {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         binding = 0,
-        visibility = ShaderStage :: None,
+        visibility = ShaderStage::None,
         binding_array_size = 0,
         buffer = buffer_binding_layout_init(),
         sampler = sampler_binding_layout_init(),
@@ -2403,7 +2403,7 @@ buffer_descriptor_init :: fn() -> BufferDescriptor {
     BufferDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
-        usage = BufferUsage :: None,
+        usage = BufferUsage::None,
         size = 0,
         mapped_at_creation = 0,
     }
@@ -2425,7 +2425,7 @@ color_target_state_init :: fn() -> ColorTargetState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         format = 0,
         blend = unsafe { ptr_cast($u8, zero) },
-        write_mask = ColorWriteMask :: All,
+        write_mask = ColorWriteMask::All,
     }
 }
 
@@ -2955,7 +2955,7 @@ surface_configuration_init :: fn() -> SurfaceConfiguration {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         device = unsafe { ptr_cast($u8, zero) },
         format = 0,
-        usage = TextureUsage :: RenderAttachment,
+        usage = TextureUsage::RenderAttachment,
         width = 0,
         height = 0,
         view_formats_count = 0,
@@ -3102,7 +3102,7 @@ texture_descriptor_init :: fn() -> TextureDescriptor {
     TextureDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
-        usage = TextureUsage :: None,
+        usage = TextureUsage::None,
         dimension = 0,
         size = extent_3D_init(),
         format = 0,
@@ -3125,7 +3125,7 @@ texture_view_descriptor_init :: fn() -> TextureViewDescriptor {
         base_array_layer = 0,
         array_layer_count = ARRAY_LAYER_COUNT_UNDEFINED,
         aspect = 0,
-        usage = TextureUsage :: None,
+        usage = TextureUsage::None,
     }
 }
 

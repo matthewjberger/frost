@@ -216,8 +216,8 @@ lamp_colour :: fn(index: i64) -> Vec3 {
 swarm_plugin :: fn(mut app: App) {
     component_for($Orbit, app.world)
     app_insert_state(app, RUNNING)
-    app_add_system_in_state(app, Stage :: FrameUpdate, RUNNING, turn_the_swarm)
-    app_add_system(app, Stage :: FrameUpdate, watch_the_keys)
+    app_add_system_in_state(app, Stage::FrameUpdate, RUNNING, turn_the_swarm)
+    app_add_system(app, Stage::FrameUpdate, watch_the_keys)
 }
 
 // Every circling thing, moved along its circle. One system over the whole swarm,

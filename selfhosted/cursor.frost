@@ -21,7 +21,7 @@ peek_is_word :: fn(mut p: Parser, offset: i64, word: ^i8) -> bool {
 peek_kind :: fn(mut p: Parser, offset: i64) -> TokenKind {
     index := p.ti + offset
     if (index >= p.tokens.count) {
-        return TokenKind :: Eof
+        return TokenKind::Eof
     }
     arena_at(p.tokens, index).kind
 }
