@@ -3462,9 +3462,45 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
     }
 }
 
+// The column the line holding an offset begins its text at. Read from the line
+// rather than from the token, since a token's offset is where its text starts
+// and a string literal's text starts after the quote.
+column_at :: fn(src: str, off: i64) -> i64 {
+    var start := off
+    while (start > 0 && src[start - 1] != CH_LF) {
+        start = start - 1
+    }
+    var first := start
+    while (first < off
+        && (src[first] == CH_SPACE || src[first] == CH_TAB)) {
+        first = first + 1
+    }
+    first - start + 1
+}
+
+// Whether a line break sits between two offsets.
+breaks_between :: fn(src: str, from: i64, to: i64) -> bool {
+    var at := from
+    while (at < to) {
+        if (src[at] == CH_LF) {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
 parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
     var head: i64 = -1
     var tail: i64 = -1
+    // The column every statement of this block begins at, set by the first.
+    var block_column: i64 = 0
+    // The brace this list opens after. A statement sharing its line is not
+    // indented relative to anything.
+    var previous_at: i64 = 0
+    if (p.ti > 0) {
+        previous_at = arena_at(p.tokens, p.ti - 1).off
+    }
     // A statement may end with a semicolon, which says nothing the line break
     // has not already said. It is a token rather than whitespace so that an
     // array repeat count can be told from an element.
@@ -3476,6 +3512,23 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         // something else. Read before parsing, since parsing moves the cursor.
         opened_with_minus := head != (-1) && cur(p) == TokenKind::Minus
         minus_at := cur_off(p)
+        // Every statement of a block begins at the same column. One indented
+        // past its neighbours reads as a continuation of the line above, and a
+        // continuation that parses as a statement of its own is an expression
+        // that lost the operator joining it to that line.
+        stmt_at := cur_off(p)
+        if (block_column > 0 && breaks_between(p.src, previous_at, stmt_at)
+            && column_at(p.src, stmt_at) > block_column) {
+            report_where(p.modules, p.src, stmt_at)
+            report("this line is indented past the statement above it, so it reads as continuing that line, and it begins a statement of its own. An expression broken over lines carries the operator that joins them onto the second, or is written inside brackets")
+            frost_rt_recover_note()
+        }
+        // A statement sharing the line the block opens on is not indented
+        // relative to anything, so it sets no column for the rest to keep.
+        if (block_column == 0 && breaks_between(p.src, previous_at, stmt_at)) {
+            block_column = column_at(p.src, stmt_at)
+        }
+        previous_at = stmt_at
         mark := p.pending.count
         var turn := StmtTurn {
             parser = unsafe { ptr_cast($u8, ptr_to(p)) },
