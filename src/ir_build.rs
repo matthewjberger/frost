@@ -106,7 +106,7 @@ pub fn build_module(
     roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Result<IrModule> {
-    build_module_inner(ast, roots, linear, false)
+    strict(build_module_inner(ast, roots, linear, false)?)
 }
 
 // The same lowering, but a specialization is emitted once per module that
@@ -119,7 +119,56 @@ pub fn build_module_per_module(
     roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Result<IrModule> {
-    build_module_inner(ast, roots, linear, true)
+    strict(build_module_inner(ast, roots, linear, true)?)
+}
+
+/// Lower every function, reporting one failure per function rather than
+/// stopping at the first: unknown names are the most common fault while a
+/// file is being edited, and one of them should not mask the rest. The outer
+/// error is a whole-program fault, a generic struct that cannot expand or a
+/// constant cycle, below which no function can be lowered at all. A failed
+/// function contributes no IR and its pending specializations drop with it;
+/// the module holds what lowered, and a backend only ever sees it when the
+/// diagnostics list is empty.
+pub fn build_module_recovering(
+    ast: &mut Ast,
+    roots: &[StmtId],
+    linear: &HashSet<String>,
+) -> Result<(IrModule, Vec<crate::diagnostic::Diagnostic>)> {
+    build_module_inner(ast, roots, linear, false)
+}
+
+fn strict(
+    lowered: (IrModule, Vec<crate::diagnostic::Diagnostic>),
+) -> Result<IrModule> {
+    let (module, diagnostics) = lowered;
+    if diagnostics.is_empty() {
+        return Ok(module);
+    }
+    let reports: Vec<String> = diagnostics
+        .iter()
+        .map(|held| held.message.clone())
+        .collect();
+    Err(anyhow::anyhow!(reports.join("\n")))
+}
+
+// A collected report: the position anchors the failing function for a caller
+// that wants structure, and the message is the fully rendered text, located
+// the way `locate` renders it, so the strict join reads exactly as the old
+// first-failure error did.
+fn report(
+    diagnostics: &mut Vec<crate::diagnostic::Diagnostic>,
+    position: Position,
+    error: &anyhow::Error,
+) {
+    let text = crate::imports::demangle_private_names(&error.to_string());
+    let message = if position == Position::default() || text.starts_with("at ")
+    {
+        text
+    } else {
+        format!("at {}: {text}", position.describe())
+    };
+    diagnostics.push(crate::diagnostic::Diagnostic { position, message });
 }
 
 fn build_module_inner(
@@ -127,7 +176,7 @@ fn build_module_inner(
     roots: &[StmtId],
     linear: &HashSet<String>,
     per_module: bool,
-) -> Result<IrModule> {
+) -> Result<(IrModule, Vec<crate::diagnostic::Diagnostic>)> {
     let synthetic_structs = expand_generic_structs(ast, roots)?;
     let mut layout_roots: Vec<StmtId> = roots.to_vec();
     layout_roots.extend(synthetic_structs.iter().copied());
@@ -240,6 +289,7 @@ fn build_module_inner(
     let mut has_main = false;
     let mut pending: Vec<Specialization> = Vec::new();
     let mut pending_anon: Vec<AnonRequest> = Vec::new();
+    let mut diagnostics: Vec<crate::diagnostic::Diagnostic> = Vec::new();
 
     for statement in roots {
         let position = ast.stmt_position(*statement);
@@ -267,7 +317,7 @@ fn build_module_inner(
                 // specialization's: a walk over a type's fields is decided by
                 // a declaration rather than by a call, so an ordinary function
                 // may write one.
-                let body = expand_compile_time(
+                let body = match expand_compile_time(
                     ast,
                     body,
                     None,
@@ -277,7 +327,13 @@ fn build_module_inner(
                         subst: &HashMap::new(),
                         linear,
                     },
-                )?;
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        report(&mut diagnostics, position, &error);
+                        continue;
+                    }
+                };
                 // The ownership rules again, over the types specialization
                 // forms rather than only the ones the source writes down. A
                 // call that answers with an instantiation makes one without
@@ -287,26 +343,30 @@ fn build_module_inner(
                 if let Some(first) =
                     ownership.check(ast, parameters, body).first()
                 {
-                    bail!(
-                        "{}",
-                        crate::imports::demangle_private_names(&format!(
-                            "at {}: {first}",
-                            position.describe()
-                        ))
+                    let message = crate::imports::demangle_private_names(
+                        &format!("at {}: {first}", position.describe()),
                     );
+                    diagnostics.push(crate::diagnostic::Diagnostic {
+                        position,
+                        message,
+                    });
+                    continue;
                 }
-                let (function, requests, anon) = locate(
-                    builder.lower_function(
-                        ast,
-                        &name,
-                        FunctionSource {
-                            parameters,
-                            return_sig,
-                            body,
-                        },
-                    ),
-                    position,
-                )?;
+                let (function, requests, anon) = match builder.lower_function(
+                    ast,
+                    &name,
+                    FunctionSource {
+                        parameters,
+                        return_sig,
+                        body,
+                    },
+                ) {
+                    Ok(lowered) => lowered,
+                    Err(error) => {
+                        report(&mut diagnostics, position, &error);
+                        continue;
+                    }
+                };
                 functions.push(in_module(function, position.file));
                 pending.extend(requested_by(requests, position.file));
                 pending_anon.extend(anon_requested_by(anon, position.file));
@@ -320,7 +380,7 @@ fn build_module_inner(
                 let name = ast.name(name).to_string();
                 let return_type = return_type.unwrap_or(Type::Void);
                 let return_layout = builder.c_layout(&return_type);
-                let param_layouts = ast
+                let param_layouts = match ast
                     .params_in(params)
                     .iter()
                     .map(|parameter| {
@@ -341,7 +401,14 @@ fn build_module_inner(
                         };
                         Ok(Some(layout))
                     })
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>>>()
+                {
+                    Ok(layouts) => layouts,
+                    Err(error) => {
+                        report(&mut diagnostics, position, &error);
+                        continue;
+                    }
+                };
                 externs.push(IrExtern {
                     name,
                     params: extern_parameter_types(ast, params),
@@ -387,7 +454,7 @@ fn build_module_inner(
         let return_sig = ast.push_signature(ReturnSignature::plain(
             ReturnKind::Single(Type::I64),
         ));
-        let (function, requests, anon) = builder.lower_function(
+        match builder.lower_function(
             ast,
             "main",
             FunctionSource {
@@ -395,12 +462,18 @@ fn build_module_inner(
                 return_sig,
                 body,
             },
-        )?;
-        functions.push(in_module(function, 0));
-        // Synthesized `main` from loose top-level statements, which belong to
-        // the entry file.
-        pending.extend(requested_by(requests, 0));
-        pending_anon.extend(anon_requested_by(anon, 0));
+        ) {
+            Ok((function, requests, anon)) => {
+                functions.push(in_module(function, 0));
+                // Synthesized `main` from loose top-level statements, which
+                // belong to the entry file.
+                pending.extend(requested_by(requests, 0));
+                pending_anon.extend(anon_requested_by(anon, 0));
+            }
+            Err(error) => {
+                report(&mut diagnostics, Position::default(), &error);
+            }
+        }
     }
 
     // Which modules instantiate each specialization. Recorded for every
@@ -503,7 +576,7 @@ fn build_module_inner(
             // the Kth element, and an `if` over a type predicate keeps the one
             // branch that survives. All three are decided here, where the types
             // are known, and none of them exists afterwards.
-            let body = expand_compile_time(
+            let body = match expand_compile_time(
                 ast,
                 body,
                 specialization.pack.as_ref(),
@@ -513,7 +586,19 @@ fn build_module_inner(
                     subst: &specialization.subst,
                     linear,
                 },
-            )?;
+            ) {
+                Ok(body) => body,
+                Err(error) => {
+                    let error =
+                        locate_instantiation_error(&error, &specialization);
+                    report(
+                        &mut diagnostics,
+                        specialization.requested_at,
+                        &error,
+                    );
+                    continue;
+                }
+            };
             // The ownership rules, asked of the body that really exists. The
             // template's own says nothing: its parameters are bound to nothing,
             // so no type there is a resource and a list has no elements to
@@ -523,16 +608,18 @@ fn build_module_inner(
                 // The prefix an import gives a private name is nothing the
                 // reader wrote, so it comes back off the way it does in every
                 // other diagnostic.
-                bail!(
-                    "{}",
-                    crate::imports::demangle_private_names(&format!(
-                        "at {}: instantiating '{}': {first}",
-                        specialization.requested_at.describe(),
-                        specialization.display
-                    ))
-                );
+                let message = crate::imports::demangle_private_names(&format!(
+                    "at {}: instantiating '{}': {first}",
+                    specialization.requested_at.describe(),
+                    specialization.display
+                ));
+                diagnostics.push(crate::diagnostic::Diagnostic {
+                    position: specialization.requested_at,
+                    message,
+                });
+                continue;
             }
-            let (function, requests, anon) = locate_instantiation(
+            let (function, requests, anon) = match locate_instantiation(
                 builder.lower_function(
                     ast,
                     &specialization.mangled_name,
@@ -543,7 +630,17 @@ fn build_module_inner(
                     },
                 ),
                 &specialization,
-            )?;
+            ) {
+                Ok(lowered) => lowered,
+                Err(error) => {
+                    report(
+                        &mut diagnostics,
+                        specialization.requested_at,
+                        &error,
+                    );
+                    continue;
+                }
+            };
             let function =
                 local_to_module(function, specialization.requested_by);
             functions.push(IrFunction {
@@ -564,7 +661,7 @@ fn build_module_inner(
             pending_anon
                 .extend(anon_requested_by(anon, specialization.requested_by));
         } else if let Some(request) = pending_anon.pop() {
-            let (function, requests, anon) = builder.lower_function(
+            let (function, requests, anon) = match builder.lower_function(
                 ast,
                 &request.name,
                 FunctionSource {
@@ -572,7 +669,13 @@ fn build_module_inner(
                     return_sig: request.return_sig,
                     body: request.body,
                 },
-            )?;
+            ) {
+                Ok(lowered) => lowered,
+                Err(error) => {
+                    report(&mut diagnostics, Position::default(), &error);
+                    continue;
+                }
+            };
             functions.push(local_to_module(function, request.requested_by));
             pending.extend(requested_by(requests, request.requested_by));
             pending_anon.extend(anon_requested_by(anon, request.requested_by));
@@ -582,11 +685,14 @@ fn build_module_inner(
     }
 
     report_module_specializations(&instantiated_by);
-    Ok(IrModule {
-        functions,
-        externs,
-        imported: declared,
-    })
+    Ok((
+        IrModule {
+            functions,
+            externs,
+            imported: declared,
+        },
+        diagnostics,
+    ))
 }
 
 // The shape a declared function needs to have for a backend to emit a call to
@@ -693,19 +799,24 @@ fn locate_instantiation<T>(
     result: Result<T>,
     specialization: &Specialization,
 ) -> Result<T> {
-    result.map_err(|error| {
-        let text = crate::imports::demangle_private_names(&error.to_string());
-        let display =
-            crate::imports::demangle_private_names(&specialization.display);
-        if specialization.requested_at == Position::default() {
-            anyhow::anyhow!("instantiating '{display}': {text}")
-        } else {
-            anyhow::anyhow!(
-                "at {}: instantiating '{display}': {text}",
-                specialization.requested_at.describe()
-            )
-        }
-    })
+    result.map_err(|error| locate_instantiation_error(&error, specialization))
+}
+
+fn locate_instantiation_error(
+    error: &anyhow::Error,
+    specialization: &Specialization,
+) -> anyhow::Error {
+    let text = crate::imports::demangle_private_names(&error.to_string());
+    let display =
+        crate::imports::demangle_private_names(&specialization.display);
+    if specialization.requested_at == Position::default() {
+        anyhow::anyhow!("instantiating '{display}': {text}")
+    } else {
+        anyhow::anyhow!(
+            "at {}: instantiating '{display}': {text}",
+            specialization.requested_at.describe()
+        )
+    }
 }
 
 fn requested_by(
@@ -10018,4 +10129,59 @@ fn binop_of(operator: Operator) -> Result<IrBinOp> {
         Operator::GreaterThanOrEqual => IrBinOp::GreaterThanOrEqual,
         other => bail!("unsupported binary operator: {other}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Lexer, Parser};
+
+    fn lowered(source: &str) -> (IrModule, Vec<crate::diagnostic::Diagnostic>) {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let mut module = parser.parse().unwrap();
+        let linear = parser.linear_types().clone();
+        build_module_recovering(&mut module.ast, &module.roots, &linear)
+            .unwrap()
+    }
+
+    // One failed function does not mask another, and a function that lowers
+    // is in the module while a function that failed is not.
+    #[test]
+    fn every_failed_function_is_reported() {
+        let source = "a :: fn() -> i64 { missing_one() }\n\
+                      good :: fn() -> i64 { 7 }\n\
+                      b :: fn() -> i64 { missing_two() }\n";
+        let (module, diagnostics) = lowered(source);
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("missing_one"),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics[1].message.contains("missing_two"),
+            "{diagnostics:?}"
+        );
+        assert!(module.functions.iter().any(|held| held.name == "good"));
+        assert!(!module.functions.iter().any(|held| held.name == "a"));
+    }
+
+    // The strict entry point refuses with everything recovery found, so the
+    // command line reports every broken function in one build.
+    #[test]
+    fn the_strict_path_reports_every_failure_it_recovered() {
+        let source = "a :: fn() -> i64 { missing_one() }\n\
+                      b :: fn() -> i64 { missing_two() }\n";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let mut module = parser.parse().unwrap();
+        let linear = parser.linear_types().clone();
+        let error =
+            build_module(&mut module.ast, &module.roots, &linear).unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("missing_one"), "{text}");
+        assert!(text.contains("missing_two"), "{text}");
+    }
 }
