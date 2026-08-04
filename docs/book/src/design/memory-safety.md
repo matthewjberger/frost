@@ -212,6 +212,21 @@ and the `[]World` still holds the pointer and the length it held. A binding that
 views a run stands for that run wherever it is handed on, so a view forwarded
 through an accessor is followed rather than lost.
 
+A write is read the same way, which is what covers a body that grows a run of its
+own parameter and then reads a view of it. That shape has no call to carry it:
+`vec_push` writes `v.storage` directly, because handing the borrow to a helper
+would copy the header and lose the new block. Which write replaces a run is asked
+of the places rather than of the types, so `b.room = fresh` replaces the run,
+`b.len = count` is apart from it at the first step, and `b.room[0] = value` sits
+below it and leaves it alone. No type table is needed, which is what had kept
+this open.
+
+A place reached through a raw dereference is not one any of this answers for.
+Where it lands is what nothing here knows, so weighing it against a view reads it
+as possibly anything and one `unsafe { p^ = 42 }` would leave every view in the
+frame stale. Raw pointers are the escape hatch below, and what they reach is the
+caller's responsibility.
+
 The runs are settled to a fixpoint, since a wrapper views what the thing it
 forwards to views. The run of names is cut at four: a function that walks a
 recursive structure reaches `.next`, then `.next.next`, and a fixpoint over those
@@ -520,28 +535,6 @@ so nobody has to find out by reading the passes.
   question the frame check answers for borrows and does not yet answer for
   resources.
 
-- **A run replaced by a write this frame cannot see.** A view is checked against
-  growth (see the guarantee above), and what carries the growth is a call: the
-  summary says which run a call replaces, and the call site marks every view of
-  that run stale. A function that grows a run of its *own* parameter and then
-  reads a view of it in the same body writes the block directly rather than
-  calling anything, and the summary walk records that write for the function's
-  callers without the body itself consulting it:
-
-  ```frost
-  grow_and_read :: fn(mut b: Bag, fresh: []i64) -> i64 {
-      view := bag_slice(b)
-      b.room = fresh          // replaces the run, in this frame
-      view[0]                 // not refused
-  }
-  ```
-
-  A container's own growth is written this way once, inside the container, which
-  is why the shape exists at all: `vec_push` writes `v.storage` because passing
-  the borrow on to a helper would copy the header and lose the new block. Every
-  caller of it is checked. What is not is a body that both grows and reads.
-  Closing it needs the frame's own view of what a local place holds, and the
-  move walk runs before the locals are typed in both compilers.
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe

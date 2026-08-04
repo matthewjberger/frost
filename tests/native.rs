@@ -17276,6 +17276,22 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "which has been given away",
     ),
+    // A body that grows a run of its own parameter and reads a view of it. The
+    // write is direct rather than a call, which is how a container's own growth
+    // is always written: `vec_push` writes `v.storage` because handing the
+    // borrow to a helper would copy the header and lose the new block. No
+    // summary carries this one, so the write itself has to be read.
+    (
+        "a_view_read_after_the_same_body_replaced_its_run",
+        "Bag :: struct { room: []i64, len: i64 }\n\
+         bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+         grow_and_read :: fn(mut b: Bag, fresh: []i64) -> i64 {\n\
+         \x20   view := bag_slice(b)\n\
+         \x20   b.room = fresh\n\
+         \x20   view[0]\n}\n\
+         main :: fn() -> i64 { 0 }\n",
+        "has since replaced",
+    ),
     // The same question asked of an arena rather than of a frame. A `[]T`
     // carved out of one names the arena's storage exactly as a `^T` does, and
     // reading only the pointer let the slice beside it leave the block.
