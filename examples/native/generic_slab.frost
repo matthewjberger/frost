@@ -76,10 +76,10 @@ main :: fn() -> i64 {
     hero := slab_insert($Entity, $4, world, Entity { hp = 100, mana = 30 })
     foe := slab_insert($Entity, $4, world, Entity { hp = 40, mana = 10 })
 
-    print_int_line(world[hero].hp)  // 100, read in place
+    print_int_line(world[hero].hp) // 100, read in place
     world[hero].hp = world[hero].hp - 25
-    print_int_line(world[hero].hp)  // 75, written in place
-    print_int_line(world[foe].hp)  // 40
+    print_int_line(world[hero].hp) // 75, written in place
+    print_int_line(world[foe].hp) // 40
 
     if (slab_alive($Entity, $4, world, foe)) { print_int_line(1) } else { print_int_line(0) }
     slab_release($Entity, $4, world, foe)

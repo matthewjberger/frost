@@ -437,9 +437,9 @@ run :: fn(move app: App) -> i64 {
 
     ids := app_ids(app)
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(),
-        ids.local_transform), spin), ids.drawn),
-        ids.global_transform), ids.transform)
+                        mask_empty(),
+                        ids.local_transform), spin), ids.drawn),
+            ids.global_transform), ids.transform)
 
     half : f32 = 2.5
     var made : i64 = 0
@@ -451,8 +451,8 @@ run :: fn(move app: App) -> i64 {
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, entity,
             ids.local_transform, LocalTransform {
-            translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
-            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+                translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
+                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed : f32 = 0.4 + 0.09 * made
@@ -465,7 +465,7 @@ run :: fn(move app: App) -> i64 {
         }
         which := made - (made / LOOKS) * LOOKS
         ecs_set($Drawn, app.world, entity, ids.drawn, Drawn { mesh = shape,
-            material = looks[which], layer = ONE_LAYER })
+                material = looks[which], layer = ONE_LAYER })
         made = made + 1
     }
 

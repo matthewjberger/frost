@@ -135,11 +135,11 @@ run :: fn(move app: App) -> i64 {
     spin := component_of($Spin, app.world)
     lights := light_ids(app.world)
     drawn := mask_with(mask_with(mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.drawn),
-        ids.global_transform), ids.transform)
+                    ids.local_transform), ids.drawn),
+            ids.global_transform), ids.transform)
     spinning := mask_with(drawn, spin)
     lighting := mask_with(mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.global_transform), lights.light)
+                ids.local_transform), ids.global_transform), lights.light)
 
     floor := ecs_spawn_with(app.world, drawn)
     ecs_set($LocalTransform, app.world, floor, ids.local_transform,

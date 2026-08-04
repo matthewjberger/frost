@@ -30,7 +30,7 @@ import "strings.frost"
 // Saying which mistake was made needs the runtime, since a component named by a
 // type nothing registered cannot be answered with a value.
 frost_rt_error :: extern fn(text: ^i8)
-frost_rt_die   :: safe extern fn()
+frost_rt_die :: safe extern fn()
 
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
@@ -83,16 +83,15 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
     column_of, column_position, bits_below, bits_in,
-    // What writing a world down needs to reach: a column's width, how a fresh
-    // one is made and filled, and the archetype lookup a read rebuilds. The
-    // format is std/snapshot.frost's, and the layout is this file's, so these
-    // are the seam between them.
+// What writing a world down needs to reach: a column's width, how a fresh
+// one is made and filled, and the archetype lookup a read rebuilds. The
+// format is std/snapshot.frost's, and the layout is this file's, so these
+// are the seam between them.
     TICK_SIZE, column_new, column_push_zero,
     mask_hash, mask_keys,
     Mask, MASK_WORDS, MAX_COMPONENTS,
     mask_empty, mask_with, mask_without, mask_has, mask_covers, mask_disjoint,
     mask_or, mask_equal, mask_is_empty
-
 
 // A mask is a fixed run of 64-bit words, so a world holds this many component
 // types. Four words rather than one integer, because 64 components is a number
@@ -608,7 +607,7 @@ note_change :: fn(mut world: World, kind: ChangeKind, entity: Entity,
     }
     vec_push($Change, world.log,
         Change { kind = kind, entity = Entity { id = entity.id,
-            generation = entity.generation }, component = component,
+                generation = entity.generation }, component = component,
             tick = world.tick })
 }
 
@@ -2020,7 +2019,6 @@ commands_apply :: fn(mut c: Commands, mut world: World) {
     vec_clear($Command, c.queued)
 }
 
-
 // ---------------------------------------------------------------------------
 // Hierarchy
 //
@@ -3286,9 +3284,9 @@ test "a resource is found by the type it is" {
     ecs_resource_set($TestDamage, world, resource_of($TestDamage, world),
         TestDamage { amount = 3 })
     assert(ecs_resource($TestOrder, world,
-        resource_of($TestOrder, world)).steps == 7)
+            resource_of($TestOrder, world)).steps == 7)
     assert(ecs_resource($TestDamage, world,
-        resource_of($TestDamage, world)).amount == 3)
+            resource_of($TestDamage, world)).amount == 3)
     ecs_free(world)
 }
 
@@ -4386,7 +4384,6 @@ third_system :: fn(mut world: World) {
     held := ecs_resource($TestOrder, world, 0)
     ecs_resource_set($TestOrder, world, 0, TestOrder { steps = held.steps * 3 })
 }
-
 
 // ---------------------------------------------------------------------------
 // The query, and what it asks for
@@ -5499,13 +5496,13 @@ test "a startup system runs once and a frame does not" {
     // `first_system` doubles and adds one, `second_system` doubles.
     schedule_start(frame, world, ANY_STATE)
     assert(ecs_resource($TestOrder, world,
-        resource_of($TestOrder, world)).steps == 1)
+            resource_of($TestOrder, world)).steps == 1)
 
     schedule_run(frame, world, ANY_STATE)
     schedule_run(frame, world, ANY_STATE)
     // Two frames of doubling and no second startup.
     assert(ecs_resource($TestOrder, world,
-        resource_of($TestOrder, world)).steps == 4)
+            resource_of($TestOrder, world)).steps == 4)
 
     schedule_free(frame)
     ecs_free(world)

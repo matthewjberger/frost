@@ -324,7 +324,6 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
     true
 }
 
-
 SavedPosition :: struct { x: f32, y: f32 }
 SavedHealth :: struct { points: i64 }
 // The same eight bytes as a position and a different thing entirely, which is

@@ -18,22 +18,22 @@ export Assembly, assembly_of, assemble_into, asm_section_bytes, asm_section_coun
 // Which section a symbol or a byte belongs to. `SEC_ABS` is a `.set` name,
 // which stands for a number rather than a place. `SEC_UNDEF` is a name this
 // a calls and does not define.
-SEC_TEXT  :: 0
-SEC_DATA  :: 1
-SEC_ABS   :: 2
+SEC_TEXT :: 0
+SEC_DATA :: 1
+SEC_ABS :: 2
 SEC_UNDEF :: 3
 
 // Operand shapes.
-OPND_NONE     :: 0
-OPND_REG      :: 1
-OPND_IMM      :: 2
+OPND_NONE :: 0
+OPND_REG :: 1
+OPND_IMM :: 2
 // `$name`, an immediate whose value a `.set` gives later in the file. The
 // width is fixed at four bytes because the value is not known when the
 // instruction is laid out, which is the same choice `as` makes.
-OPND_IMM_SYM  :: 3
-OPND_MEM      :: 4
-OPND_MEM_RIP  :: 5
-OPND_SYM      :: 6
+OPND_IMM_SYM :: 3
+OPND_MEM :: 4
+OPND_MEM_RIP :: 5
+OPND_SYM :: 6
 OPND_INDIRECT :: 7
 
 // Register banks. A register is packed as kind, width and number so one i64
@@ -356,9 +356,9 @@ widen_symbols :: fn(mut unit: Assembly) {
     while (i < unit.syms.count) {
         held := arena_at(unit.syms, i)
         arena_push(wider, AsmSym {
-            off = held.off, len = held.len, section = held.section,
-            value = held.value, global = held.global, index = held.index,
-        })
+                off = held.off, len = held.len, section = held.section,
+                value = held.value, global = held.global, index = held.index,
+            })
         i = i + 1
     }
     unit.syms = wider
@@ -381,9 +381,9 @@ intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
         held := bucket.sym
         if (held == (-1)) {
             index := arena_push(unit.syms, AsmSym {
-                off = off, len = len, section = SEC_UNDEF,
-                value = 0, global = 0, index = -1,
-            })
+                    off = off, len = len, section = SEC_UNDEF,
+                    value = 0, global = 0, index = -1,
+                })
             bucket := arena_at(unit.buckets, slot)
             bucket.sym = index
             answer = index
@@ -841,7 +841,7 @@ byte_reg_forces_rex :: fn(register: i64) -> i64 {
 // The `/n` digit each arithmetic operation takes in the shared `81`/`83` form,
 // and the one-byte opcode it has against the accumulator.
 ARITH_ADD :: 0
-ARITH_OR  :: 1
+ARITH_OR :: 1
 ARITH_AND :: 4
 ARITH_SUB :: 5
 ARITH_XOR :: 6
@@ -852,7 +852,7 @@ arith_digit :: fn(op: i64) -> i64 {
     if (op == M_SUBQ) { return ARITH_SUB }
     if (op == M_CMPQ) { return ARITH_CMP }
     if (op == M_ANDQ) { return ARITH_AND }
-    if (op == M_ORQ)  { return ARITH_OR }
+    if (op == M_ORQ) { return ARITH_OR }
     if (op == M_XORQ) { return ARITH_XOR }
     -1
 }
@@ -871,15 +871,15 @@ note_reloc :: fn(mut unit: Assembly, sym: i64, addend: i64, kind: i64) {
         while (i < unit.relocs.count) {
             held := arena_at(unit.relocs, i)
             arena_push(wider, AsmReloc {
-                section = held.section, offset = held.offset, sym = held.sym,
-                addend = held.addend, kind = held.kind })
+                    section = held.section, offset = held.offset, sym = held.sym,
+                    addend = held.addend, kind = held.kind })
             i = i + 1
         }
         unit.relocs = wider
     }
     arena_push(unit.relocs, AsmReloc {
-        section = SEC_TEXT, offset = unit.text_count, sym = sym,
-        addend = addend, kind = kind })
+            section = SEC_TEXT, offset = unit.text_count, sym = sym,
+            addend = addend, kind = kind })
 }
 
 // A name used as an address: either this file works the distance out, or the
@@ -1833,11 +1833,11 @@ read_line :: fn(mut unit: Assembly, at: i64) -> i64 {
             define_symbol(unit, sym, SEC_DATA, unit.data_count, i)
         } else {
             push_insn(unit, Insn {
-                op = M_LABEL, cc = 0,
-                a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
-                b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = -1,
-                offset = 0, size = 0, long = 0,
-            })
+                    op = M_LABEL, cc = 0,
+                    a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
+                    b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = -1,
+                    offset = 0, size = 0, long = 0,
+                })
         }
         return read_line_rest(unit, i + len + 1, stop)
     }
@@ -1945,8 +1945,8 @@ read_loc_directive :: fn(mut unit: Assembly, at: i64) {
     line, after_line := read_number(src, skip_spaces(src, after_file))
     column, unused := read_number(src, skip_spaces(src, after_line))
     push_loc(unit, AsmLoc {
-        file = file, line = line, column = column, insn = unit.insns.count,
-    })
+            file = file, line = line, column = column, insn = unit.insns.count,
+        })
 }
 
 read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
@@ -1969,13 +1969,13 @@ read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 
         }
     }
     push_insn(unit, Insn {
-        op = op, cc = cc,
-        a_kind = first.kind, a_reg = first.reg, a_disp = first.disp,
-        a_sym = first.sym,
-        b_kind = second.kind, b_reg = second.reg, b_disp = second.disp,
-        b_sym = second.sym,
-        offset = 0, size = 0, long = 0,
-    })
+            op = op, cc = cc,
+            a_kind = first.kind, a_reg = first.reg, a_disp = first.disp,
+            a_sym = first.sym,
+            b_kind = second.kind, b_reg = second.reg, b_disp = second.disp,
+            b_sym = second.sym,
+            offset = 0, size = 0, long = 0,
+        })
     stop + 1
 }
 
@@ -2149,13 +2149,13 @@ push_insn :: fn(mut unit: Assembly, record: Insn) {
         while (i < unit.insns.count) {
             held := arena_at(unit.insns, i)
             arena_push(wider, Insn {
-                op = held.op, cc = held.cc,
-                a_kind = held.a_kind, a_reg = held.a_reg,
-                a_disp = held.a_disp, a_sym = held.a_sym,
-                b_kind = held.b_kind, b_reg = held.b_reg,
-                b_disp = held.b_disp, b_sym = held.b_sym,
-                offset = held.offset, size = held.size, long = held.long,
-            })
+                    op = held.op, cc = held.cc,
+                    a_kind = held.a_kind, a_reg = held.a_reg,
+                    a_disp = held.a_disp, a_sym = held.a_sym,
+                    b_kind = held.b_kind, b_reg = held.b_reg,
+                    b_disp = held.b_disp, b_sym = held.b_sym,
+                    offset = held.offset, size = held.size, long = held.long,
+                })
             i = i + 1
         }
         unit.insns = wider
@@ -2187,7 +2187,7 @@ push_loc :: fn(mut unit: Assembly, record: AsmLoc) {
         while (i < unit.locs.count) {
             held := arena_at(unit.locs, i)
             arena_push(wider, AsmLoc { file = held.file, line = held.line,
-                column = held.column, insn = held.insn })
+                    column = held.column, insn = held.insn })
             i = i + 1
         }
         unit.locs = wider

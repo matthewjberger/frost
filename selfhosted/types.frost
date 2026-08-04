@@ -557,7 +557,7 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     // size measured again on every step of it.
     p.frame_used = p.frame_used + align_up(type_size(p, ty), 8)
     arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty,
-        slot = -p.frame_used })
+            slot = -p.frame_used })
 }
 
 // The type of a struct field. The base type may be a pointer (a borrow of a
@@ -1044,7 +1044,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
         i = i + 1
     }
     arena_push(p.type_args, TypeArg { arg = arg, xarg_start = xarg_start,
-        xarg_count = xarg_count, is_pack = is_pack, owner = owner })
+            xarg_count = xarg_count, is_pack = is_pack, owner = owner })
 }
 
 collect_type_args :: fn(mut p: Parser) {
@@ -1247,7 +1247,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0,
-            pending = -1 })
+                pending = -1 })
         count = count + 1
         pid = pnode.next
     }
@@ -1319,7 +1319,7 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
 record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64,
     bound: i64) {
     arena_push(p.parse_locals, LocalVar { name_off = off, name_len = len,
-        ty = ty, slot = 0 })
+            ty = ty, slot = 0 })
     arena_push(p.parse_local_values, BoundValue { node = bound })
 }
 
@@ -1426,7 +1426,7 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
         i = i + 1
     }
     arena_push(p.pending_rets, PendingRet { fn_index = fn_index, arg = arg,
-        xarg_start = xarg_start, xarg_count = xarg_count })
+            xarg_start = xarg_start, xarg_count = xarg_count })
 }
 
 // The type of one argument given to a compile-time list. A name is what the
@@ -1821,4 +1821,3 @@ count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
     }
     count
 }
-

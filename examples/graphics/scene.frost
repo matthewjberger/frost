@@ -181,7 +181,7 @@ before_frame :: fn(mut s: FrameState, mut app: App) {
     ids := app_ids(app)
     view := app_view(app)
     app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
-        ids.drawn, NEAR), view)
+            ids.drawn, NEAR), view)
     far := render_world_at(s.far)
     render_world_begin(far)
     scene_sync(app.world, far, app.materials, app.meshes,
@@ -348,9 +348,9 @@ run :: fn(move app: App) -> i64 {
 
     ids := app_ids(app)
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(),
-        ids.local_transform), spin), ids.drawn),
-        ids.global_transform), ids.transform)
+                        mask_empty(),
+                        ids.local_transform), spin), ids.drawn),
+            ids.global_transform), ids.transform)
 
     var spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
     var depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
@@ -364,8 +364,8 @@ run :: fn(move app: App) -> i64 {
         held := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, held,
             ids.local_transform, LocalTransform {
-            translation = vec3(spread[made], 0.0, depths[made]),
-            rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
+                translation = vec3(spread[made], 0.0, depths[made]),
+                rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
         ecs_set($Spin, app.world, held, spin,
             spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
         var shape := cube
@@ -373,7 +373,7 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
-            material = looks[made], layer = layers[made] })
+                material = looks[made], layer = layers[made] })
         made = made + 1
     }
 

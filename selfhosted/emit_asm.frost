@@ -72,7 +72,6 @@ emit_frame_symbol :: fn(mut p: Parser) {
     frost_rt_emit_int(p.frame_id)
 }
 
-
 // Copy a struct. Both addresses arrive in registers. Sixteen bytes travel in
 // one register and so in one instruction each way, which is half what moving
 // them a word at a time costs, and the odd word at the end goes the old way.
@@ -141,7 +140,6 @@ emit_asm_zero :: fn(size: i64) {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // What a register may hold
 //
@@ -176,8 +174,8 @@ asm_name_at :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         i = i + 1
     }
     arena_push(p.asm_names, AsmName { name_off = off, name_len = len,
-        reads = 0, pinned = 0, writes = 0, binds = 0, ty = TY_VOID,
-        weight = 0, reg = 0 })
+            reads = 0, pinned = 0, writes = 0, binds = 0, ty = TY_VOID,
+            weight = 0, reg = 0 })
     p.asm_names.count - 1
 }
 
@@ -542,10 +540,10 @@ asm_scan_function :: fn(mut p: Parser, body: i64, params: i64) {
 ASM_REGS_AVAILABLE :: 5
 
 emit_asm_saved_reg :: fn(index: i64) {
-    if (index == 0) { emit_text("%rbx")  return }
-    if (index == 1) { emit_text("%r12")  return }
-    if (index == 2) { emit_text("%r13")  return }
-    if (index == 3) { emit_text("%r14")  return }
+    if (index == 0) { emit_text("%rbx") return }
+    if (index == 1) { emit_text("%r12") return }
+    if (index == 2) { emit_text("%r13") return }
+    if (index == 3) { emit_text("%r14") return }
     emit_text("%r15")
 }
 
@@ -1867,10 +1865,10 @@ emit_asm_extend_ret :: fn(mut p: Parser, ty: i64) {
 // %rax to compute and so needs the left operand spilled around it. Written as
 // one classification with one emitter below, since a pair that disagreed would
 // spill for a value it then did not clobber, or worse.
-SIMPLE_NONE     :: 0
-SIMPLE_NUMBER   :: 1
-SIMPLE_CONST    :: 2
-SIMPLE_LOCAL    :: 3
+SIMPLE_NONE :: 0
+SIMPLE_NUMBER :: 1
+SIMPLE_CONST :: 2
+SIMPLE_LOCAL :: 3
 
 simple_operand_kind :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
@@ -2015,17 +2013,17 @@ value_param_type :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
 
 emit_asm_arg_reg :: fn(mut p: Parser, index: i64) {
     if (p.abi_windows == 1) {
-        if (index == 0) { emit_text("%rcx")  return }
-        if (index == 1) { emit_text("%rdx")  return }
-        if (index == 2) { emit_text("%r8")   return }
+        if (index == 0) { emit_text("%rcx") return }
+        if (index == 1) { emit_text("%rdx") return }
+        if (index == 2) { emit_text("%r8") return }
         emit_text("%r9")
         return
     }
-    if (index == 0) { emit_text("%rdi")  return }
-    if (index == 1) { emit_text("%rsi")  return }
-    if (index == 2) { emit_text("%rdx")  return }
-    if (index == 3) { emit_text("%rcx")  return }
-    if (index == 4) { emit_text("%r8")   return }
+    if (index == 0) { emit_text("%rdi") return }
+    if (index == 1) { emit_text("%rsi") return }
+    if (index == 2) { emit_text("%rdx") return }
+    if (index == 3) { emit_text("%rcx") return }
+    if (index == 4) { emit_text("%r8") return }
     emit_text("%r9")
 }
 
@@ -2586,7 +2584,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             placed_directly = false
         }
         arena_push(kinds, LocalVar { name_off = kind, name_len = 0, ty = 0,
-            slot = 0 })
+                slot = 0 })
         probe = probe + 1
     }
     if (placed_directly) {
@@ -2946,7 +2944,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             if (into > 0) {
                 emit_asm_expr(p, value)
                 emit_asm_coerce(p, value, lookup_local(p, place_node.val,
-                    place_node.c))
+                        place_node.c))
                 emit_text("    movq %rax, ")
                 emit_asm_saved_reg(into - 1)
                 emit_text("\n")
@@ -3614,7 +3612,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                 is_pack := used.is_pack
                 owner := used.owner
                 if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                    owner) && tuple_is_first_for(p, gi, ii)) {
+                        owner) && tuple_is_first_for(p, gi, ii)) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
@@ -3727,4 +3725,3 @@ count_args :: fn(mut p: Parser, head: i64) -> i64 {
 // arenas and no closures, so a pointer can only reach an arena a function was
 // handed directly.
 // ---------------------------------------------------------------------------
-

@@ -168,4 +168,3 @@ alloc_temp :: fn(mut p: Parser, size: i64) -> i64 {
     p.frame_used = p.frame_used + align_up(size, 8)
     -p.frame_used
 }
-

@@ -477,13 +477,13 @@ read_meshes :: fn(mut document: Json, root: i64, mut model: Gltf,
             json_member(document, mesh, "primitives"), 0)
         while (primitive >= 0) {
             if (read_primitive(document, primitive, model, binary,
-                binary_length)) {
+                    binary_length)) {
                 count = count + 1
             }
             primitive = json_next(document, primitive)
         }
         vec_push($GltfMesh, model.meshes, GltfMesh { first = first,
-            count = count })
+                count = count })
         mesh = json_next(document, mesh)
     }
 }
@@ -549,9 +549,9 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
     }
 
     vec_push($GltfPrimitive, model.primitives, GltfPrimitive {
-        vertices = vertices, indices = order,
-        material = number_or(document,
-            json_member(document, primitive, "material"), -1) })
+            vertices = vertices, indices = order,
+            material = number_or(document,
+                json_member(document, primitive, "material"), -1) })
     true
 }
 
@@ -861,7 +861,7 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     var index : i64 = 0
     while (index < gltf_material_count(model)) {
         materials[index] = materials_add(registry, gltf_material_at(model,
-            index))
+                index))
         index = index + 1
     }
     index = 0
@@ -898,8 +898,8 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
     }
     held := gltf_node_at(model, node)
     entity := spawn_node_entity(world, ids, LocalTransform {
-        translation = held.translation, rotation = held.rotation,
-        scale = held.scale })
+            translation = held.translation, rotation = held.rotation,
+            scale = held.scale })
     tree := world_tree(world)
     hierarchy_attach(tree, entity, parent)
 
@@ -917,8 +917,8 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
             // The primitive sits where its node sits, so its own placement is
             // nothing at all and the node above carries the transform.
             piece := spawn_drawn(world, ids, Drawn {
-                mesh = meshes[first + part], material = wears,
-                layer = ONE_LAYER })
+                    mesh = meshes[first + part], material = wears,
+                    layer = ONE_LAYER })
             var under := world_tree(world)
             hierarchy_attach(under, piece, entity)
             part = part + 1
@@ -944,7 +944,7 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
 spawn_node_entity :: fn(mut world: World, ids: WorldIds,
     place: LocalTransform) -> Entity {
     wanted := mask_with(mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.global_transform), ids.transform)
+                ids.local_transform), ids.global_transform), ids.transform)
     entity := ecs_spawn_with(world, wanted)
     ecs_set($LocalTransform, world, entity, ids.local_transform, place)
     entity
@@ -953,12 +953,11 @@ spawn_node_entity :: fn(mut world: World, ids: WorldIds,
 // One primitive: drawn, and sitting exactly where the node above it sits.
 spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
     wanted := mask_with(mask_with(mask_with(mask_with(
-        mask_empty(), ids.local_transform),
-        ids.global_transform), ids.transform), ids.drawn)
+                    mask_empty(), ids.local_transform),
+                ids.global_transform), ids.transform), ids.drawn)
     entity := ecs_spawn_with(world, wanted)
     ecs_set($LocalTransform, world, entity, ids.local_transform,
         local_at(vec3(0.0, 0.0, 0.0)))
     ecs_set($Drawn, world, entity, ids.drawn, shown)
     entity
 }
-

@@ -149,4 +149,3 @@ report_missing_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
     }
     frost_rt_die()
 }
-

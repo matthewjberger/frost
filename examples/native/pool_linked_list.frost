@@ -46,9 +46,9 @@ main :: fn() -> i64 {
     head = push_front(p, head, 20)
     head = push_front(p, head, 30)
 
-    print_int_line(sum_list(p, head))  // 60
+    print_int_line(sum_list(p, head)) // 60
 
     front : Handle<Node> = head
-    print_int_line(p[front].value)  // 30, the most recent push
+    print_int_line(p[front].value) // 30, the most recent push
     0
 }

@@ -235,7 +235,7 @@ place_things :: fn(mut world: World) {
 place_subtree :: fn(mut world: World, local: i64, global: i64,
     entity: Entity, above: Mat4) {
     ecs_set($GlobalTransform, world, entity, global, GlobalTransform {
-        matrix = mat4_mul(above, local_of(world, local, entity)) })
+            matrix = mat4_mul(above, local_of(world, local, entity)) })
     tree := world_tree(world)
     var child := hierarchy_first_child(tree, entity)
     while (is_no_entity(child) == false) {
@@ -348,7 +348,7 @@ test "the engine finds its resources wherever they landed" {
 
     // And the thing that was there first is untouched by any of it.
     assert(ecs_resource($Bystander, world,
-        resource_of($Bystander, world)).count == 0)
+            resource_of($Bystander, world)).count == 0)
 
     schedule_free(frame)
     giving := world_tree_take(world)
@@ -426,7 +426,7 @@ test "a thing is placed against whatever it hangs off, however deep" {
     var world := ecs_new()
     ids := world_prepare(world)
     wanted := mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.global_transform)
+            ids.local_transform), ids.global_transform)
     // Held in one place, since spawning three and naming each would hand every
     // one of them over to the array anyway.
     var chain : [3]Entity = [ecs_spawn_with(world, wanted),

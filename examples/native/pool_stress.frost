@@ -31,12 +31,12 @@ main :: fn() -> i64 {
     for i in 0..4 {
         if (slab_alive($Unit, $4, p, handles[i])) { alive = alive + 1 }
     }
-    print_int_line(alive)  // 4
+    print_int_line(alive) // 4
 
-    show(slab_full($Unit, $4, p))                             // 1, exhausted
+    show(slab_full($Unit, $4, p)) // 1, exhausted
 
-    show(slab_release($Unit, $4, p, handles[1]))              // 1
-    show(slab_release($Unit, $4, p, handles[3]))              // 1
+    show(slab_release($Unit, $4, p, handles[1])) // 1
+    show(slab_release($Unit, $4, p, handles[3])) // 1
 
     var sum_hp : i64 = 0
     for i in 0..4 {
@@ -44,13 +44,13 @@ main :: fn() -> i64 {
             sum_hp = sum_hp + p[handles[i]].stats.hp
         }
     }
-    print_int_line(sum_hp)  // 0 + 20 = 20
+    print_int_line(sum_hp) // 0 + 20 = 20
 
     reborn := Unit { id = 99, stats = Stats { hp = 500, xp = 0, slot = 0 } }
     fresh := slab_insert($Unit, $4, p, reborn)
-    show(slab_alive($Unit, $4, p, fresh))                     // 1
-    show(slab_alive($Unit, $4, p, handles[3]))                // 0, the slot was reused
-    print_int_line(p[fresh].id)  // 99
-    print_int_line(p[fresh].stats.hp)  // 500
+    show(slab_alive($Unit, $4, p, fresh)) // 1
+    show(slab_alive($Unit, $4, p, handles[3])) // 0, the slot was reused
+    print_int_line(p[fresh].id) // 99
+    print_int_line(p[fresh].stats.hp) // 500
     0
 }

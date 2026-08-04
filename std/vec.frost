@@ -174,4 +174,3 @@ test "a vector gives back every block it took, however far it grew" {
     vec_free($i64, v)
     assert(heap_live() == before)
 }
-

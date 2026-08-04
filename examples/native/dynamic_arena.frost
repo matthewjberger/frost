@@ -39,11 +39,11 @@ main :: fn() -> i64 {
     q := alloc_int(a)
     unsafe { q^ = 100 }
 
-    print_int_line(unsafe { p^ })  // 42
-    print_int_line(unsafe { q^ })  // 100
-    print_int_line(unsafe { p^ } + unsafe { q^ })  // 142
-    print_int_line(a.offset)  // 16, two 8-byte allocations
+    print_int_line(unsafe { p^ }) // 42
+    print_int_line(unsafe { q^ }) // 100
+    print_int_line(unsafe { p^ } + unsafe { q^ }) // 142
+    print_int_line(a.offset) // 16, two 8-byte allocations
 
-    arena_destroy(a)              // frees the single OS allocation, required
+    arena_destroy(a) // frees the single OS allocation, required
     0
 }

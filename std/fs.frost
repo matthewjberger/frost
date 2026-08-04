@@ -15,12 +15,12 @@ import "strings.frost"
 
 export ReadResult, fs_read, fs_write, fs_free, fs_exists, fs_remove
 
-frost_rt_file_read   :: extern fn(path: ^i8) -> ^u8
-frost_rt_file_size   :: extern fn() -> i64
-frost_rt_file_write  :: extern fn(path: ^i8, bytes: ^u8, length: i64) -> i64
+frost_rt_file_read :: extern fn(path: ^i8) -> ^u8
+frost_rt_file_size :: extern fn() -> i64
+frost_rt_file_write :: extern fn(path: ^i8, bytes: ^u8, length: i64) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
 frost_rt_remove_file :: extern fn(path: ^i8) -> i64
-frost_rt_heap_free   :: extern fn(block: ^u8)
+frost_rt_heap_free :: extern fn(block: ^u8)
 
 // `ok` is false when the file could not be opened, in which case `text` is
 // empty. `buffer` is the heap block the text views, kept so fs_free can release

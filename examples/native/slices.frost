@@ -30,9 +30,9 @@ main :: fn() -> i64 {
     scores := [40, 10, 90, 30, 70]
     view : []i64 = scores
 
-    print_int_line(slice_len(view))  // 5
-    print_int_line(sum(view))  // 240
-    print_int_line(largest(view))  // 90
-    print_int_line(sum(scores))  // 240, the array coerces to a slice
+    print_int_line(slice_len(view)) // 5
+    print_int_line(sum(view)) // 240
+    print_int_line(largest(view)) // 90
+    print_int_line(sum(scores)) // 240, the array coerces to a slice
     0
 }

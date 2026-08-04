@@ -27,18 +27,18 @@ export Window, is_no_window, Event, event_new, event_kind, event_number,
 // `SDL_CreateWindow` already a `Window`, so nothing below has to make one out
 // of an address. A call taking no pointer cannot corrupt memory whatever it is
 // given, and says so with `safe`.
-SDL_Init                :: safe extern fn(flags: u32) -> bool
-SDL_Quit                :: safe extern fn()
-SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
+SDL_Init :: safe extern fn(flags: u32) -> bool
+SDL_Quit :: safe extern fn()
+SDL_CreateWindow :: extern fn(title: ^i8, width: i32, height: i32,
     flags: u64) -> Window
-SDL_DestroyWindow       :: extern fn(window: Window)
-SDL_PollEvent           :: extern fn(event: ^u8) -> bool
+SDL_DestroyWindow :: extern fn(window: Window)
+SDL_PollEvent :: extern fn(event: ^u8) -> bool
 SDL_GetWindowProperties :: extern fn(window: Window) -> u32
-SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
+SDL_GetPointerProperty :: extern fn(properties: u32, name: ^i8,
     fallback: ^u8) -> ^u8
-SDL_GetTicks            :: safe extern fn() -> u64
-SDL_Delay               :: safe extern fn(milliseconds: u32)
-SDL_GetError            :: extern fn() -> ^i8
+SDL_GetTicks :: safe extern fn() -> u64
+SDL_Delay :: safe extern fn(milliseconds: u32)
+SDL_GetError :: extern fn() -> ^i8
 
 // A window is a pointer SDL owns, under a name of its own, so it cannot be
 // handed to a call that wants some other pointer and no pointer from elsewhere
@@ -55,17 +55,17 @@ Window :: distinct ^u8
 // is how two are asked for. The combination is a WindowFlags because both
 // operands are, so nothing has to say so.
 InitFlags :: flags u32 {
-    Audio   = 16,
-    Video   = 32,
+    Audio = 16,
+    Video = 32,
     Gamepad = 8192,
-    Events  = 16384,
+    Events = 16384,
 }
 
 WindowFlags :: flags u64 {
-    Fullscreen       = 1,
-    Hidden           = 8,
-    Borderless       = 16,
-    Resizable        = 32,
+    Fullscreen = 1,
+    Hidden = 8,
+    Borderless = 16,
+    Resizable = 32,
     HighPixelDensity = 8192,
 }
 
@@ -84,9 +84,9 @@ EventKind :: enum {
 
 // The properties a window carries the platform's own handle under. Which one a
 // program wants is decided by the platform it is drawing on.
-PROP_WIN32_HWND   :: "SDL.window.win32.hwnd"
-PROP_X11_DISPLAY  :: "SDL.window.x11.display"
-PROP_X11_WINDOW   :: "SDL.window.x11.window"
+PROP_WIN32_HWND :: "SDL.window.win32.hwnd"
+PROP_X11_DISPLAY :: "SDL.window.x11.display"
+PROP_X11_WINDOW :: "SDL.window.x11.window"
 PROP_COCOA_WINDOW :: "SDL.window.cocoa.window"
 
 Event :: struct {

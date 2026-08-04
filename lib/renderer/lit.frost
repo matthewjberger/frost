@@ -451,4 +451,3 @@ make_depth_pipeline :: fn(device: Device, shader: ShaderModule,
     descriptor.depth_stencil = ptr_to(depth)
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
-
