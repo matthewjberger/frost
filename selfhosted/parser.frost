@@ -614,7 +614,12 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // bound belongs to a template's own parse. It is marked here so that
         // nothing later asks it for a type, since the tuple it would name is
         // read from elements that do not exist yet.
-        made := new_node(p, NodeKind::Call, args, p.args_unbound_map, fn_index)
+        // The call's place is the name it calls, not the bracket the arguments
+        // end at. A reader told a call is wrong is told where the call is, and
+        // for a call whose arguments run over three lines those are two
+        // different lines.
+        made := new_node_at(p, NodeKind::Call, args, p.args_unbound_map,
+            fn_index, offset)
         // What a compile-time list was given is the type of each argument past
         // the ordinary parameters, and only here are the names in scope to say
         // what those types are. Every later pass reads the tuple this noted.

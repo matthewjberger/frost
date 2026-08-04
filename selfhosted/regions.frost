@@ -101,7 +101,8 @@ report_pool :: fn(mut p: Parser, struct_ty: i64) {
     report("'")
     report_src(p.src, name_off, name_len)
     report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
-    frost_rt_recover_escape()
+    // One pool is asked about on its own, so the next one is asked too.
+    frost_rt_recover_note()
 }
 
 
@@ -3879,7 +3880,11 @@ check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) 
                             report("and mutable in a single call; mutable ")
                             report("borrows are exclusive")
                         }
-                        frost_rt_recover_escape()
+                        // One report per call, and the next call is still
+                        // checked. Every other overlapping pair in this call is
+                        // the same mistake seen again.
+                        frost_rt_recover_note()
+                        return
                     }
                 }
                 j = j + 1
@@ -3926,6 +3931,8 @@ check_reference_fields :: fn(mut p: Parser) {
         var fid := def.field_head
         while (fid != (-1)) {
             field := arena_at(p.fields, fid)
+            // Each field is asked about on its own, so a field that may not
+            // hold a borrow is reported and the walk goes on to the next.
             if (type_contains_borrow(p, field.ty)) {
                 report_where(p.modules, p.src, def.name_off)
                 report("cannot store a reference in struct '")
@@ -3933,7 +3940,7 @@ check_reference_fields :: fn(mut p: Parser) {
                 report("' (field '")
                 report_src(p.src, field.name_off, field.name_len)
                 report("'); references are second-class")
-                frost_rt_recover_escape()
+                frost_rt_recover_note()
             }
             fid = field.next
         }
@@ -5742,6 +5749,25 @@ frame_seed_types :: fn(mut p: Parser, params: i64) {
     }
 }
 
+// One function's frame walk, run with an escape armed so a fault ends the walk
+// of that function rather than the compile, and the loop goes on to the next
+// one. The tables it reads are cleared at the top of every turn, so whatever a
+// faulted function left half-written is gone before the next is walked.
+FrameTurn :: struct {
+    parser: ^u8,
+    body: i64,
+    params: i64,
+}
+
+check_frame_escapes_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($FrameTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    unsafe {
+        frame_seed_params(parser^, turn^.params)
+        frame_check_block(parser^, turn^.body, 1)
+    }
+}
+
 check_frame_escapes :: fn(mut p: Parser) {
     settle_answer_sources(p)
     settle_kept(p)
@@ -5767,8 +5793,13 @@ check_frame_escapes :: fn(mut p: Parser) {
             if (is_borrow(answer)) {
                 p.frame_answers_place = 1
             }
-            frame_seed_params(p, params)
-            frame_check_block(p, body, 1)
+            var turn := FrameTurn {
+                parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+                body = body, params = params }
+            unsafe {
+                frost_rt_recover_run(check_frame_escapes_guarded,
+                    ptr_cast($u8, ptr_to(turn)))
+            }
         }
         i = i + 1
     }
@@ -5995,6 +6026,28 @@ check_region_block :: fn(mut p: Parser, head: i64) {
 // into. This is what makes the check interprocedural without lifetimes: a
 // pointer can only reach an arena a function was handed directly, so following
 // the flow inside each body is enough.
+// One region's walk, armed the same way and for the same reason: a pointer that
+// escapes one region says nothing about the next region, and the tables the walk
+// fills are cleared before each turn.
+RegionTurn :: struct {
+    parser: ^u8,
+    body: i64,
+}
+
+check_regions_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($RegionTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    unsafe { check_region_block(parser^, turn^.body) }
+}
+
+check_region_once :: fn(mut p: Parser, body: i64) {
+    var turn := RegionTurn { parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+        body = body }
+    unsafe {
+        frost_rt_recover_run(check_regions_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+}
+
 check_regions :: fn(mut p: Parser) {
     var i : i64 = 0
     while (i < p.arena.count) {
@@ -6008,7 +6061,7 @@ check_regions :: fn(mut p: Parser) {
             p.region_via_pointer.count = 0
             p.inner.count = 0
             p.region_returns = 0
-            check_region_block(p, body)
+            check_region_once(p, body)
         }
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
@@ -6024,7 +6077,7 @@ check_regions :: fn(mut p: Parser) {
                 p.region_via_pointer.count = 0
                 p.inner.count = 0
                 p.region_returns = 1
-                check_region_block(p, body)
+                check_region_once(p, body)
                 p.region_returns = 0
                 cap = cap + 1
             }
@@ -6333,13 +6386,22 @@ check_calls :: fn(mut p: Parser) {
                     is_supplied = true
                 }
             }
+            // A call is checked against the signature it names and nothing is
+            // carried to the next call, so a wrong one is reported and the walk
+            // goes on. One run names every call it found wrong.
             if (defined == 0 && callee_proc < 0 && is_columns_new == false
                 && is_supplied == false) {
                 report_where(p.modules, p.src, node.pos)
                 report("call to undefined function '")
                 report_src(p.src, name_off, name_len)
                 report("'")
-                frost_rt_recover_escape()
+                frost_rt_recover_note()
+                // Nothing declares the callee, so nothing says how many
+                // arguments it takes. Counting them against the zero a symbol
+                // that was never declared carries would say every such call is
+                // also the wrong length, which is one mistake reported as two.
+                i = i + 1
+                continue
             }
             var expected : i64 = 0
             if (callee_proc >= 0) {
@@ -6356,15 +6418,20 @@ check_calls :: fn(mut p: Parser) {
             if (takes_pack(p, fn_index)) {
                 expected = got
             }
+            // At the call, not at the declaration. `name_off` is where the
+            // callee's name was declared, so a report using it sent the reader
+            // to the function that is right and away from the call that is
+            // wrong.
             if (expected != got && is_supplied == false) {
-                report_where(p.modules, p.src, name_off)
-                report("'")
+                report_where(p.modules, p.src, node.pos)
+                report("function '")
                 report_src(p.src, name_off, name_len)
                 report("' expects ")
                 frost_rt_error_int(expected)
-                report(" argument(s) but got ")
+                report(" argument(s) but ")
                 frost_rt_error_int(got)
-                frost_rt_recover_escape()
+                report(" were given")
+                frost_rt_recover_note()
             }
         }
         i = i + 1
