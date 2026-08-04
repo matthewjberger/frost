@@ -429,6 +429,96 @@ fn lowered_and_checked(
     Ok(module)
 }
 
+/// `frost fix <file>`: apply every edit the reports carry that can be applied
+/// unread.
+///
+/// The reports are read back out of `--diagnostics=json` rather than taken from
+/// a call into the checks, because that channel is what this is here to make
+/// usable. An edit that cannot be read out of it and applied is a hole in the
+/// channel, and going through it is what shows the hole.
+///
+/// Fixing what one round finds can uncover the next: a file whose parse was
+/// refused has never been checked, so its faults are not knowable until the
+/// parse is fixed. Rounds continue while each one applies something, and a
+/// bound stops a rule that would undo its own edit from running forever.
+fn apply_fixes(file: &str) -> Result<()> {
+    const ROUNDS: usize = 8;
+    let mut applied = 0usize;
+    for _ in 0..ROUNDS {
+        let reports = reports_for(file)?;
+        let mut edits: Vec<frost::Replacement> = reports
+            .into_iter()
+            .filter_map(|report| report.fix)
+            .filter(|fix| fix.certain)
+            .collect();
+        if edits.is_empty() {
+            break;
+        }
+        // Highest offset first, so applying one leaves the offsets of the ones
+        // not yet applied standing.
+        edits.sort_by_key(|fix| std::cmp::Reverse(fix.span.0));
+        let mut text = fs::read_to_string(file)
+            .with_context(|| format!("reading {file}"))?;
+        let mut written = 0usize;
+        let mut last = usize::MAX;
+        for fix in &edits {
+            // Two edits over the same bytes are one edit twice, and the second
+            // would be applied to text the first has already replaced.
+            if fix.span.1 > last {
+                continue;
+            }
+            if fix.span.1 > text.len() || fix.span.0 > fix.span.1 {
+                continue;
+            }
+            text.replace_range(fix.span.0..fix.span.1, &fix.replacement);
+            last = fix.span.0;
+            written += 1;
+        }
+        if written == 0 {
+            break;
+        }
+        fs::write(file, &text).with_context(|| format!("writing {file}"))?;
+        applied += written;
+    }
+    match applied {
+        0 => println!("frost fix: nothing to apply in {file}"),
+        1 => println!("frost fix: applied 1 edit to {file}"),
+        many => println!("frost fix: applied {many} edits to {file}"),
+    }
+    Ok(())
+}
+
+/// What this compiler says about a file, as reports.
+fn reports_for(file: &str) -> Result<Vec<frost::Report>> {
+    let executable =
+        std::env::current_exe().context("finding the compiler to ask")?;
+    let object = std::env::temp_dir()
+        .join(format!("frost_fix_{}.o", std::process::id()));
+    let asked = Command::new(&executable)
+        .arg("--diagnostics=json")
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(file)
+        .output()
+        .with_context(|| format!("asking about {file}"))?;
+    fs::remove_file(&object).ok();
+    let mut reports = Vec::new();
+    for line in String::from_utf8_lossy(&asked.stderr).lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // A line that is not a report is this compiler saying something in its
+        // own voice, which is worth passing on rather than swallowing.
+        match serde_json::from_str::<frost::Report>(line) {
+            Ok(report) => reports.push(report),
+            Err(_) => eprintln!("{line}"),
+        }
+    }
+    Ok(reports)
+}
+
 /// How much stack the compiler runs on.
 ///
 /// Every pass over a program recurses over its syntax, so how deep the compiler
@@ -444,6 +534,25 @@ fn lowered_and_checked(
 const COMPILER_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 fn main() -> std::process::ExitCode {
+    // `fix` is read off the arguments rather than declared as a subcommand,
+    // because the compiler takes a file as its first argument and has since
+    // before it took anything else. A file really named `fix` is still
+    // compilable by writing its extension, which every Frost file has.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|held| held == "fix") {
+        let Some(file) = arguments.get(1) else {
+            eprintln!("frost fix: which file?");
+            return std::process::ExitCode::FAILURE;
+        };
+        return match apply_fixes(file) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprint!("{}", frost::render_diagnostic(&error));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+
     let outcome = std::thread::Builder::new()
         .stack_size(COMPILER_STACK_BYTES)
         .spawn(compile)
@@ -550,7 +659,15 @@ fn compile() -> Result<()> {
         &project_root,
     ));
     parser.preload_diagnostics(lexer.diagnostics_in_file(entry));
-    let parsed = parser.parse().context("Parser error")?;
+    // The reports themselves rather than the text they render as, so a caller
+    // reading JSON gets the parse's faults as reports and the edits they carry.
+    // A parse fault is where an edit is most often the whole answer, and it is
+    // also where the program stops: recovery skipped the statement it was in,
+    // so a name that statement declared reads as undeclared everywhere after,
+    // and what the checks would say about it is about a program the reader did
+    // not write.
+    let (parsed, faulted) = parser.parse_recovering();
+    refuse(&faulted)?;
     // A module's object is only its own on the link path, so that is the only
     // place a cached one can be linked instead of built. `--test` needs every
     // module's `test` blocks, which a module answered for from the cache is
