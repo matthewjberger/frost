@@ -289,9 +289,9 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
+        let mut module = parser.parse()?;
         let linear = parser.linear_types().clone();
-        let module = build_module(&statements, &linear)?;
+        let module = build_module(&mut module.ast, &module.roots, &linear)?;
         check_linearity(&module)
     }
 

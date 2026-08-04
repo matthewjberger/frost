@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::parser::{
-    Block, Diagnostic, Expression, Literal, Statement, StructField,
+use crate::ast::{
+    Ast, ExprId, Expression, Literal, Range32, ReturnKind, Statement, StmtId,
 };
+use crate::lexer::Position;
+use crate::parser::Diagnostic;
 use crate::types::Type;
-use crate::{Position, Spanned};
 
 // Where the compiler's guarantees stop.
 //
@@ -47,18 +48,17 @@ use crate::{Position, Spanned};
 /// that is not there, and the list of blocks is worth what it is because
 /// everything on it earns its place.
 pub fn check_unsafety_and_audit(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
 ) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
-    walk_unsafety(statements, true)
+    walk_unsafety(ast, roots, true)
         .into_iter()
         .partition(|d| !d.message.starts_with("this `unsafe`"))
 }
 
-fn walk_unsafety(
-    statements: &[Spanned<Statement>],
-    audit: bool,
-) -> Vec<Diagnostic> {
+fn walk_unsafety(ast: &Ast, roots: &[StmtId], audit: bool) -> Vec<Diagnostic> {
     let mut checker = Checker {
+        ast,
         externs: HashSet::new(),
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
@@ -72,29 +72,33 @@ fn walk_unsafety(
         diagnostics: Vec::new(),
     };
     let mut top_level: HashMap<String, Type> = HashMap::new();
-    for statement in statements {
+    for statement in roots {
         // What each function answers with. The index rule below refuses a base
         // whose type it cannot name, and a binding is most often given its type
         // by the call that produced it, so without this the rule would fall to
         // the refusal on ordinary code rather than on a raw pointer.
-        match &statement.node {
+        match ast.stmt(*statement) {
             Statement::Constant(name, value) => {
-                if let Some(held) = declared_returns(value) {
-                    checker.multi_returns.insert(name.clone(), held);
+                if let Some(held) = declared_returns(ast, *value) {
+                    checker
+                        .multi_returns
+                        .insert(ast.name(*name).to_string(), held);
                 }
-                if let Some(ty) = declared_return(value) {
-                    checker.returns.insert(name.clone(), ty);
+                if let Some(ty) = declared_return(ast, *value) {
+                    checker.returns.insert(ast.name(*name).to_string(), ty);
                 }
-                let parameters = type_parameters(value);
+                let parameters = type_parameters(ast, *value);
                 if !parameters.is_empty() {
-                    checker.generics.insert(name.clone(), parameters);
+                    checker
+                        .generics
+                        .insert(ast.name(*name).to_string(), parameters);
                 }
                 // A constant is named from inside every function, so its type
                 // belongs to the walk before any of them start. `ROW :: [1, 2]`
                 // then `ROW[i]` is an index into an array, and without this the
                 // base has no type and the rule refuses it.
-                if let Some(ty) = constant_type(value) {
-                    top_level.insert(name.clone(), ty);
+                if let Some(ty) = constant_type(ast, *value) {
+                    top_level.insert(ast.name(*name).to_string(), ty);
                 }
             }
             Statement::Extern {
@@ -102,18 +106,22 @@ fn walk_unsafety(
                 return_type: Some(return_type),
                 ..
             } => {
-                checker.returns.insert(name.clone(), return_type.clone());
+                checker
+                    .returns
+                    .insert(ast.name(*name).to_string(), return_type.clone());
             }
             Statement::Declared {
                 name, return_sig, ..
             } => {
-                if let Some(ty) = return_sig.to_type() {
-                    checker.returns.insert(name.clone(), ty);
+                if let Some(ty) =
+                    ast.signature_to_type(ast.signature(*return_sig))
+                {
+                    checker.returns.insert(ast.name(*name).to_string(), ty);
                 }
             }
             _ => {}
         }
-        match &statement.node {
+        match ast.stmt(*statement) {
             // An extern is the built-in unsafe function. Calling C is
             // unchecked, so a call to one is gated exactly as a call to a
             // user's `unsafe fn` is. Unless it is declared `safe extern fn`,
@@ -124,29 +132,33 @@ fn walk_unsafety(
             // and listing it there makes the list worth less.
             Statement::Extern { name, safe, .. } => {
                 if !safe {
-                    checker.externs.insert(name.clone());
+                    checker.externs.insert(ast.name(*name).to_string());
                 }
             }
-            Statement::Constant(name, Expression::UnsafeFn(_)) => {
-                checker.unsafe_fns.insert(name.clone());
+            Statement::Constant(name, value)
+                if matches!(ast.expr(*value), Expression::UnsafeFn(_)) =>
+            {
+                checker.unsafe_fns.insert(ast.name(*name).to_string());
             }
             Statement::Struct(name, _, declared) => {
-                checker.fields.insert(name.clone(), declared.clone());
+                checker
+                    .fields
+                    .insert(ast.name(*name).to_string(), *declared);
             }
             _ => {}
         }
     }
     checker.scope.push(top_level);
-    for statement in statements {
-        checker.statement(statement);
+    for statement in roots {
+        checker.statement(*statement);
     }
     checker.diagnostics
 }
 
 /// The type a top-level constant holds, for the shapes that say so plainly. Only
 /// enough to tell an index into one from an index into a raw pointer.
-fn constant_type(value: &Expression) -> Option<Type> {
-    match value {
+fn constant_type(ast: &Ast, value: ExprId) -> Option<Type> {
+    match ast.expr(value) {
         Expression::Literal(Literal::Array(elements)) => {
             Some(Type::Array(Box::new(Type::Unknown), elements.len()))
         }
@@ -161,71 +173,71 @@ fn constant_type(value: &Expression) -> Option<Type> {
 // Replace every `unsafe fn(...)` with the plain function it wraps, once the
 // unsafety check has read which names were unsafe. No pass after that point
 // needs to know, so this keeps the marker out of lowering and the backends.
-pub fn strip_unsafe_fns(statements: &mut [Spanned<Statement>]) {
-    for statement in statements {
-        strip_statement(&mut statement.node);
+pub fn strip_unsafe_fns(ast: &mut Ast, roots: &[StmtId]) {
+    for statement in roots {
+        strip_statement(ast, *statement);
     }
 }
 
-fn strip_statement(statement: &mut Statement) {
-    match statement {
+fn strip_statement(ast: &mut Ast, statement: StmtId) {
+    match ast.stmt(statement).clone() {
         Statement::Let { value, .. }
         | Statement::Constant(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value) => strip_expression(value),
+        | Statement::Expression(value) => strip_expression(ast, value),
         Statement::Assignment(place, value) => {
-            strip_expression(place);
-            strip_expression(value);
+            strip_expression(ast, place);
+            strip_expression(ast, value);
         }
         Statement::For(_, _, range, body) => {
-            strip_expression(range);
-            strip_block(body);
+            strip_expression(ast, range);
+            strip_block(ast, body);
         }
         Statement::While(condition, body) => {
-            strip_expression(condition);
-            strip_block(body);
+            strip_expression(ast, condition);
+            strip_block(ast, body);
         }
-        Statement::With(_, body) => strip_block(body),
-        Statement::Defer(inner) => strip_statement(inner),
+        Statement::With(_, body) => strip_block(ast, body),
+        Statement::Defer(inner) => strip_statement(ast, inner),
         _ => {}
     }
 }
 
-fn strip_block(block: &mut Block) {
-    for statement in block {
-        strip_statement(&mut statement.node);
+fn strip_block(ast: &mut Ast, block: Range32) {
+    for index in block.indices() {
+        let statement = ast.stmt_list[index];
+        strip_statement(ast, statement);
     }
 }
 
-fn strip_expression(expression: &mut Expression) {
-    if let Expression::UnsafeFn(inner) = expression {
-        let mut taken =
-            std::mem::replace(inner.as_mut(), Expression::Boolean(false));
-        strip_expression(&mut taken);
-        *expression = taken;
-        return;
+fn strip_expression(ast: &mut Ast, expression: ExprId) {
+    while let Expression::UnsafeFn(inner) = ast.expr(expression) {
+        let inner = *inner;
+        ast.expressions[expression.0 as usize] = ast.expr(inner).clone();
     }
-    match expression {
+    match ast.expr(expression).clone() {
         Expression::Function(_, _, body)
         | Expression::Proc(_, _, body)
-        | Expression::Unsafe(body) => strip_block(body),
+        | Expression::Unsafe(body) => strip_block(ast, body),
         Expression::If(condition, consequence, alternative) => {
-            strip_expression(condition);
-            strip_block(consequence);
+            strip_expression(ast, condition);
+            strip_block(ast, consequence);
             if let Some(alternative) = alternative {
-                strip_block(alternative);
+                strip_block(ast, alternative);
             }
         }
         Expression::Switch(subject, cases) => {
-            strip_expression(subject);
-            for case in cases {
-                strip_block(&mut case.body);
+            strip_expression(ast, subject);
+            for index in cases.indices() {
+                let body = ast.cases[index].body;
+                strip_block(ast, body);
             }
         }
         Expression::Call(callee, arguments) => {
-            strip_expression(callee);
-            for argument in arguments {
-                strip_expression(argument);
+            strip_expression(ast, callee);
+            for index in arguments.indices() {
+                let argument = ast.expr_list[index];
+                strip_expression(ast, argument);
             }
         }
         Expression::PackMap(inner, _, _)
@@ -235,22 +247,24 @@ fn strip_expression(expression: &mut Expression) {
         | Expression::BorrowMut(inner)
         | Expression::Dereference(inner)
         | Expression::Try(inner)
-        | Expression::FieldAccess(inner, _) => strip_expression(inner),
+        | Expression::FieldAccess(inner, _) => strip_expression(ast, inner),
         Expression::Infix(left, _, right)
         | Expression::Index(left, right)
         | Expression::Range(left, right, _) => {
-            strip_expression(left);
-            strip_expression(right);
+            strip_expression(ast, left);
+            strip_expression(ast, right);
         }
         Expression::Tuple(parts) => {
-            for part in parts {
-                strip_expression(part);
+            for index in parts.indices() {
+                let part = ast.expr_list[index];
+                strip_expression(ast, part);
             }
         }
         Expression::StructInit(_, initializers)
         | Expression::EnumVariantInit(_, _, initializers) => {
-            for (_, initializer) in initializers {
-                strip_expression(initializer);
+            for index in initializers.indices() {
+                let initializer = ast.named_exprs[index].value;
+                strip_expression(ast, initializer);
             }
         }
         _ => {}
@@ -263,25 +277,32 @@ fn strip_expression(expression: &mut Expression) {
 ///
 /// The multiple-return lowering runs after this pass, so the struct those
 /// values become does not exist yet and the list is read off the signature.
-fn declared_returns(value: &Expression) -> Option<Vec<Type>> {
-    match value {
+fn declared_returns(ast: &Ast, value: ExprId) -> Option<Vec<Type>> {
+    match ast.expr(value) {
         Expression::Function(_, return_sig, _)
-        | Expression::Proc(_, return_sig, _) => match &return_sig.kind {
-            crate::parser::ReturnKind::Multiple(values) => {
-                Some(values.iter().map(|one| one.value_type.clone()).collect())
+        | Expression::Proc(_, return_sig, _) => {
+            match &ast.signature(*return_sig).kind {
+                ReturnKind::Multiple(values) => Some(
+                    ast.return_values_in(*values)
+                        .iter()
+                        .map(|one| one.value_type.clone())
+                        .collect(),
+                ),
+                _ => None,
             }
-            _ => None,
-        },
-        Expression::UnsafeFn(inner) => declared_returns(inner),
+        }
+        Expression::UnsafeFn(inner) => declared_returns(ast, *inner),
         _ => None,
     }
 }
 
-fn declared_return(value: &Expression) -> Option<Type> {
-    match value {
+fn declared_return(ast: &Ast, value: ExprId) -> Option<Type> {
+    match ast.expr(value) {
         Expression::Function(_, return_sig, _)
-        | Expression::Proc(_, return_sig, _) => return_sig.to_type(),
-        Expression::UnsafeFn(inner) => declared_return(inner),
+        | Expression::Proc(_, return_sig, _) => {
+            ast.signature_to_type(ast.signature(*return_sig))
+        }
+        Expression::UnsafeFn(inner) => declared_return(ast, *inner),
         _ => None,
     }
 }
@@ -299,15 +320,15 @@ fn without_borrow(ty: Type) -> Type {
 /// and the argument at that position at a call site is what `T` stands for
 /// there. Without it the return type names the parameter rather than the
 /// argument, so a field of the element has no declaration to look up.
-fn type_parameters(value: &Expression) -> Vec<(usize, String)> {
-    let params = match value {
+fn type_parameters(ast: &Ast, value: ExprId) -> Vec<(usize, String)> {
+    let params = match ast.expr(value) {
         Expression::Function(params, _, _) | Expression::Proc(params, _, _) => {
-            params
+            *params
         }
-        Expression::UnsafeFn(inner) => return type_parameters(inner),
+        Expression::UnsafeFn(inner) => return type_parameters(ast, *inner),
         _ => return Vec::new(),
     };
-    params
+    ast.params_in(params)
         .iter()
         .enumerate()
         .filter_map(|(position, param)| match &param.type_annotation {
@@ -317,10 +338,11 @@ fn type_parameters(value: &Expression) -> Vec<(usize, String)> {
         .collect()
 }
 
-struct Checker {
+struct Checker<'walk> {
+    ast: &'walk Ast,
     externs: HashSet<String>,
     unsafe_fns: HashSet<String>,
-    fields: HashMap<String, Vec<StructField>>,
+    fields: HashMap<String, Range32>,
     // What each named function answers with, so a binding takes its type from
     // the call that produced it.
     returns: HashMap<String, Type>,
@@ -341,7 +363,7 @@ struct Checker {
     diagnostics: Vec<Diagnostic>,
 }
 
-impl Checker {
+impl Checker<'_> {
     fn refuse(&mut self, what: &str, position: Position) {
         if self.depth > 0 {
             if self.audit
@@ -372,11 +394,14 @@ impl Checker {
     // What a place expression holds, where this pass can tell. `None` means
     // unknown rather than "not a pointer", which is why the index rule below
     // only fires on a definite raw pointer.
-    fn type_of(&self, expression: &Expression) -> Option<Type> {
-        match expression {
-            Expression::Identifier(name) => self.lookup(name).cloned(),
+    fn type_of(&self, expression: ExprId) -> Option<Type> {
+        let ast = self.ast;
+        match ast.expr(expression) {
+            Expression::Identifier(name) => {
+                self.lookup(ast.name(*name)).cloned()
+            }
             Expression::FieldAccess(base, field) => {
-                let base_type = self.type_of(base)?;
+                let base_type = self.type_of(*base)?;
                 // A `columns<T, N>` is laid out by reflecting T's fields, which
                 // happens after this pass, so the field a body names has no
                 // declaration to look up yet. Every one of them is an array,
@@ -402,16 +427,15 @@ impl Checker {
                 // them under `Box`. Without this the gate cannot see that
                 // `b.data` is a `^T`, and indexing a raw pointer held by any
                 // generic container is allowed outside an `unsafe` block.
-                self.fields
-                    .get(Type::template_of(&name))?
+                ast.fields_in(*self.fields.get(Type::template_of(&name))?)
                     .iter()
-                    .find(|declared| &declared.name == field)
+                    .find(|declared| declared.name == *field)
                     .map(|declared| declared.field_type.clone())
             }
             // An element of an array or a slice, so `rows[i][j]` names the inner
             // element rather than nothing. A `str` indexes to a byte, and a
             // borrow indexes as the place it names.
-            Expression::Index(base, _) => match self.type_of(base)? {
+            Expression::Index(base, _) => match self.type_of(*base)? {
                 Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
                 Type::Str => Some(Type::U8),
                 Type::Ptr(inner) => Some(*inner),
@@ -429,29 +453,32 @@ impl Checker {
             // all and every field and element reached through one falls to the
             // refusal.
             Expression::Borrow(place) => {
-                Some(Type::Ref(Box::new(self.type_of(place)?)))
+                Some(Type::Ref(Box::new(self.type_of(*place)?)))
             }
             Expression::BorrowMut(place) => {
-                Some(Type::RefMut(Box::new(self.type_of(place)?)))
+                Some(Type::RefMut(Box::new(self.type_of(*place)?)))
             }
-            Expression::Dereference(inner) => match self.type_of(inner)? {
+            Expression::Dereference(inner) => match self.type_of(*inner)? {
                 Type::Ptr(pointee)
                 | Type::Ref(pointee)
                 | Type::RefMut(pointee) => Some(*pointee),
                 _ => None,
             },
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(name) = &**callee else {
+                let Expression::Identifier(name) = ast.expr(*callee) else {
                     return None;
                 };
-                let declared = self.returns.get(name)?;
-                let Some(parameters) = self.generics.get(name) else {
+                let declared = self.returns.get(ast.name(*name))?;
+                let Some(parameters) = self.generics.get(ast.name(*name))
+                else {
                     return Some(declared.clone());
                 };
                 let mut bound = HashMap::new();
                 for (position, parameter) in parameters {
-                    if let Some(Expression::TypeValue(argument)) =
-                        arguments.get(*position)
+                    if let Some(argument) =
+                        ast.exprs_in(*arguments).get(*position)
+                        && let Expression::TypeValue(argument) =
+                            ast.expr(*argument)
                     {
                         bound.insert(parameter.clone(), argument.clone());
                     }
@@ -461,38 +488,49 @@ impl Checker {
             // A block's value is what its last statement answers with, and
             // `ptr_cast` is written inside one, so the type of what comes out is
             // read through it rather than lost at the boundary.
-            Expression::Unsafe(body) => match &body.last()?.node {
-                Statement::Expression(value) => self.produced_type(value),
-                _ => None,
-            },
+            Expression::Unsafe(body) => {
+                match ast.stmt(*ast.stmts_in(*body).last()?) {
+                    Statement::Expression(value) => self.produced_type(*value),
+                    _ => None,
+                }
+            }
             Expression::If(_, consequence, alternative) => {
-                [Some(consequence), alternative.as_ref()]
+                [Some(*consequence), *alternative]
                     .into_iter()
                     .flatten()
-                    .find_map(|block| match &block.last()?.node {
-                        Statement::Expression(value) => {
-                            self.produced_type(value)
+                    .find_map(|block| {
+                        match ast.stmt(*ast.stmts_in(block).last()?) {
+                            Statement::Expression(value) => {
+                                self.produced_type(*value)
+                            }
+                            _ => None,
                         }
-                        _ => None,
                     })
             }
             Expression::Switch(_, cases) => {
-                cases.iter().find_map(|case| match &case.body.last()?.node {
-                    Statement::Expression(value) => self.produced_type(value),
-                    _ => None,
+                ast.cases_in(*cases).iter().find_map(|case| {
+                    match ast.stmt(*ast.stmts_in(case.body).last()?) {
+                        Statement::Expression(value) => {
+                            self.produced_type(*value)
+                        }
+                        _ => None,
+                    }
                 })
             }
-            Expression::StructInit(name, _) => Some(Type::Struct(name.clone())),
+            Expression::StructInit(name, _) => {
+                Some(Type::Struct(ast.name(*name).to_string()))
+            }
             Expression::EnumVariantInit(name, _, _) => {
-                Some(Type::Enum(name.clone()))
+                Some(Type::Enum(ast.name(*name).to_string()))
             }
             // A written-out array. Its length is how many elements it holds, and
             // its element type is whatever the first one is, which is the whole
             // of what the index rule needs: a written array is not a pointer.
             Expression::Literal(Literal::Array(elements)) => {
-                let element = elements
+                let element = ast
+                    .exprs_in(*elements)
                     .first()
-                    .and_then(|first| self.produced_type(first))
+                    .and_then(|first| self.produced_type(*first))
                     .unwrap_or(Type::Unknown);
                 Some(Type::Array(Box::new(element), elements.len()))
             }
@@ -501,8 +539,11 @@ impl Checker {
             // ask how many.
             Expression::ArrayRepeat(value, count) => {
                 let element =
-                    self.produced_type(value).unwrap_or(Type::Unknown);
-                Some(Type::ArrayGeneric(Box::new(element), count.clone()))
+                    self.produced_type(*value).unwrap_or(Type::Unknown);
+                Some(Type::ArrayGeneric(
+                    Box::new(element),
+                    ast.name(*count).to_string(),
+                ))
             }
             Expression::Literal(Literal::String(_)) => Some(Type::Str),
             Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
@@ -516,98 +557,102 @@ impl Checker {
         }
     }
 
-    fn block(&mut self, block: &Block) {
+    fn block(&mut self, block: Range32) {
         self.scope.push(HashMap::new());
-        for statement in block {
-            self.statement(statement);
+        for statement in self.ast.stmts_in(block) {
+            self.statement(*statement);
         }
         self.scope.pop();
     }
 
-    fn statement(&mut self, statement: &Spanned<Statement>) {
-        let at = statement.position;
-        match &statement.node {
+    fn statement(&mut self, statement: StmtId) {
+        let at = self.ast.stmt_position(statement);
+        self.statement_at(statement, at);
+    }
+
+    fn statement_at(&mut self, statement: StmtId, at: Position) {
+        let ast = self.ast;
+        match ast.stmt(statement) {
             Statement::Let {
                 name,
                 type_annotation,
                 value,
                 ..
             } => {
-                self.expression(value, at);
+                self.expression(*value, at);
                 let known = type_annotation
                     .clone()
-                    .or_else(|| self.produced_type(value));
-                self.bind(name, known);
+                    .or_else(|| self.produced_type(*value));
+                self.bind(ast.name(*name), known);
             }
             // The multiple-return lowering runs after this pass, so a call
             // bound to several names is still written this way here. Walking
             // past it left an unchecked call with no block around it.
             Statement::LetMultiple(bindings, value) => {
-                self.expression(value, at);
+                self.expression(*value, at);
                 // Each binding takes the type of the value it was given. Left
                 // untyped, the index rule met a base it could not name and
                 // refused `view[0]` after `view, count := split()`, which is
                 // ordinary code and holds nothing unchecked.
-                let held = match value {
-                    Expression::Call(callee, _) => match callee.as_ref() {
+                let held = match ast.expr(*value) {
+                    Expression::Call(callee, _) => match ast.expr(*callee) {
                         Expression::Identifier(name) => {
-                            self.multi_returns.get(name).cloned()
+                            self.multi_returns.get(ast.name(*name)).cloned()
                         }
                         _ => None,
                     },
                     _ => None,
                 };
-                for (index, binding) in bindings.iter().enumerate() {
+                for (index, binding) in
+                    ast.bindings_in(*bindings).iter().enumerate()
+                {
                     let ty = held
                         .as_ref()
                         .and_then(|types| types.get(index).cloned());
-                    self.bind(&binding.name, ty);
+                    self.bind(ast.name(binding.name), ty);
                 }
             }
             Statement::Constant(_, value) | Statement::Return(value) => {
-                self.expression(value, at);
+                self.expression(*value, at);
             }
-            Statement::Expression(value) => self.expression(value, at),
+            Statement::Expression(value) => self.expression(*value, at),
             // `print` holds expressions the way any other statement does, and
             // the gated operations are expression forms. A walk that stopped
             // here let a raw-pointer read out of the block it belongs in.
             Statement::Print(value, arguments) => {
-                self.expression(value, at);
-                for argument in arguments {
-                    self.expression(argument, at);
+                self.expression(*value, at);
+                for argument in ast.exprs_in(*arguments) {
+                    self.expression(*argument, at);
                 }
             }
             Statement::Assignment(place, value) => {
-                self.expression(place, at);
-                self.expression(value, at);
+                self.expression(*place, at);
+                self.expression(*value, at);
             }
             Statement::Defer(inner) => {
-                self.statement(&Spanned {
-                    node: (**inner).clone(),
-                    position: at,
-                });
+                self.statement_at(*inner, at);
             }
             // Two names bind the index and then the element, so the first is an
             // integer either way. One name over a range is an integer too, and
             // one over a sequence is an element whose type this pass cannot
             // name, which is left unknown rather than assumed.
             Statement::For(name, element, range, body) => {
-                self.expression(range, at);
+                self.expression(*range, at);
                 self.scope.push(HashMap::new());
-                let counts =
-                    element.is_some() || matches!(range, Expression::Range(..));
-                self.bind(name, counts.then_some(Type::I64));
+                let counts = element.is_some()
+                    || matches!(ast.expr(*range), Expression::Range(..));
+                self.bind(ast.name(*name), counts.then_some(Type::I64));
                 if let Some(element) = element {
-                    self.bind(element, None);
+                    self.bind(ast.name(*element), None);
                 }
-                self.block(body);
+                self.block(*body);
                 self.scope.pop();
             }
             Statement::While(condition, body) => {
-                self.expression(condition, at);
-                self.block(body);
+                self.expression(*condition, at);
+                self.block(*body);
             }
-            Statement::With(_, body) => self.block(body),
+            Statement::With(_, body) => self.block(*body),
             // A declaration holds no expression to walk, and neither does a
             // control transfer. Listed rather than caught by `_`, so a new
             // statement form is a compile error here instead of a hole in the
@@ -625,14 +670,19 @@ impl Checker {
     }
 
     // The type an expression hands back, for the few forms that say so plainly.
-    fn produced_type(&self, value: &Expression) -> Option<Type> {
-        match value {
+    fn produced_type(&self, value: ExprId) -> Option<Type> {
+        let ast = self.ast;
+        match ast.expr(value) {
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(name) = &**callee else {
+                let Expression::Identifier(name) = ast.expr(*callee) else {
                     return None;
                 };
-                match name.as_str() {
-                    "ptr_cast" => match arguments.first() {
+                match ast.name(*name) {
+                    "ptr_cast" => match ast
+                        .exprs_in(*arguments)
+                        .first()
+                        .map(|first| ast.expr(*first))
+                    {
                         Some(Expression::TypeValue(inner)) => {
                             Some(Type::Ptr(Box::new(inner.clone())))
                         }
@@ -644,9 +694,9 @@ impl Checker {
                     // index gate below never learns the binding is a pointer and
                     // `p[i]` slips out of the `unsafe` block it belongs in.
                     "ptr_to" => Some(Type::Ptr(Box::new(
-                        arguments
+                        ast.exprs_in(*arguments)
                             .first()
-                            .and_then(|argument| self.type_of(argument))
+                            .and_then(|argument| self.type_of(*argument))
                             .unwrap_or(Type::Void),
                     ))),
                     // Anything else answers with whatever its signature says,
@@ -655,14 +705,15 @@ impl Checker {
                 }
             }
             Expression::AddressOf(inner) => {
-                Some(Type::Ptr(Box::new(self.type_of(inner)?)))
+                Some(Type::Ptr(Box::new(self.type_of(*inner)?)))
             }
             _ => self.type_of(value),
         }
     }
 
-    fn expression(&mut self, value: &Expression, at: Position) {
-        match value {
+    fn expression(&mut self, value: ExprId, at: Position) {
+        let ast = self.ast;
+        match ast.expr(value) {
             Expression::Unsafe(body) => {
                 if self.audit {
                     if self.depth > 0 {
@@ -674,7 +725,7 @@ impl Checker {
                     self.vouched.push(false);
                 }
                 self.depth += 1;
-                self.block(body);
+                self.block(*body);
                 self.depth -= 1;
                 if self.audit
                     && let Some(used) = self.vouched.pop()
@@ -691,12 +742,12 @@ impl Checker {
             // allowed throughout it without a nested block.
             Expression::UnsafeFn(inner) => {
                 self.depth += 1;
-                self.expression(inner, at);
+                self.expression(*inner, at);
                 self.depth -= 1;
             }
             Expression::Dereference(inner) => {
                 self.refuse("reading through a raw pointer", at);
-                self.expression(inner, at);
+                self.expression(*inner, at);
             }
             // An array, a slice and a `str` each carry a length and are checked,
             // so indexing one is not gated. A raw pointer carries neither, so
@@ -706,7 +757,7 @@ impl Checker {
             // recognize rather than what a program can reach. Refusing here is
             // what makes the list of blocks the whole list.
             Expression::Index(base, index) => {
-                match self.type_of(base).map(without_borrow) {
+                match self.type_of(*base).map(without_borrow) {
                     Some(Type::Ptr(_)) => {
                         self.refuse("indexing a raw pointer", at);
                     }
@@ -716,11 +767,12 @@ impl Checker {
                         at,
                     ),
                 }
-                self.expression(base, at);
-                self.expression(index, at);
+                self.expression(*base, at);
+                self.expression(*index, at);
             }
             Expression::Call(callee, arguments) => {
-                if let Expression::Identifier(name) = &**callee {
+                if let Expression::Identifier(name) = ast.expr(*callee) {
+                    let name = ast.name(*name);
                     if name == "ptr_cast" {
                         self.refuse("ptr_cast", at);
                     } else if name == "slice_from" {
@@ -734,17 +786,17 @@ impl Checker {
                         self.refuse(&what, at);
                     }
                 }
-                self.expression(callee, at);
-                for argument in arguments {
-                    self.expression(argument, at);
+                self.expression(*callee, at);
+                for argument in ast.exprs_in(*arguments) {
+                    self.expression(*argument, at);
                 }
             }
             Expression::Function(parameters, signature, body)
             | Expression::Proc(parameters, signature, body) => {
                 self.scope.push(HashMap::new());
-                for parameter in parameters {
+                for parameter in ast.params_in(*parameters) {
                     let annotation = parameter.type_annotation.clone();
-                    self.bind(&parameter.name, annotation);
+                    self.bind(ast.name(parameter.name), annotation);
                 }
                 // An allocation capability is threaded in as a parameter by a
                 // lowering that runs after this check, so the body names it
@@ -752,26 +804,26 @@ impl Checker {
                 // rule cannot tell `arena.data[0]` from a reach through a raw
                 // pointer, and it refuses what it cannot name: no `uses Arena`
                 // function could index its own arena outside an `unsafe` block.
-                for capability in &signature.uses {
+                for capability in &ast.signature(*signature).uses {
                     self.bind(
                         &crate::regions::capability_binding(capability),
                         Some(capability.clone()),
                     );
                 }
-                self.block(body);
+                self.block(*body);
                 self.scope.pop();
             }
             Expression::If(condition, consequence, alternative) => {
-                self.expression(condition, at);
-                self.block(consequence);
+                self.expression(*condition, at);
+                self.block(*consequence);
                 if let Some(alternative) = alternative {
-                    self.block(alternative);
+                    self.block(*alternative);
                 }
             }
             Expression::Switch(subject, cases) => {
-                self.expression(subject, at);
-                for case in cases {
-                    self.block(&case.body);
+                self.expression(*subject, at);
+                for case in ast.cases_in(*cases) {
+                    self.block(case.body);
                 }
             }
             Expression::PackMap(inner, _, _)
@@ -782,22 +834,22 @@ impl Checker {
             | Expression::Try(inner)
             | Expression::ArrayRepeat(inner, _)
             | Expression::FieldAccess(inner, _) => {
-                self.expression(inner, at);
+                self.expression(*inner, at);
             }
             Expression::Infix(left, _, right)
             | Expression::Range(left, right, _) => {
-                self.expression(left, at);
-                self.expression(right, at);
+                self.expression(*left, at);
+                self.expression(*right, at);
             }
             Expression::Tuple(parts) => {
-                for part in parts {
-                    self.expression(part, at);
+                for part in ast.exprs_in(*parts) {
+                    self.expression(*part, at);
                 }
             }
             Expression::StructInit(_, initializers)
             | Expression::EnumVariantInit(_, _, initializers) => {
-                for (_, initializer) in initializers {
-                    self.expression(initializer, at);
+                for initializer in ast.named_in(*initializers) {
+                    self.expression(initializer.value, at);
                 }
             }
             // Listed rather than caught by `_`, so a new expression form is a

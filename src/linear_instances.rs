@@ -13,19 +13,19 @@
 // is walked to find the names, since an instantiation is written wherever a type
 // is: a binding's annotation, a parameter, a return, a field of another struct.
 
+use crate::ast::{
+    Ast, ExprId, Expression, Range32, ReturnKind, Statement, StmtId,
+};
 use crate::ir_build::substitute_type;
 use crate::lexer::Position;
-use crate::parser::{
-    Block, Expression, Parameter, ReturnKind, Spanned, Statement, StructField,
-    SwitchCase, type_from_string,
-};
+use crate::parser::type_from_string;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
 /// The generic structs a program declares, by name, with their parameters and
 /// the field types written under them.
 pub(crate) type Templates<'a> =
-    HashMap<&'a str, (&'a [String], Vec<StructField>)>;
+    HashMap<&'a str, (Vec<&'a str>, Vec<(&'a str, &'a Type)>)>;
 
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
@@ -69,14 +69,15 @@ pub(crate) fn note_linear_instances(
 /// consume. It is refused where it is written, which is the only place a reader
 /// can do anything about it, and the message names what to write instead.
 pub(crate) fn check_pooled_resources(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
     instances: &Located,
     held: &HashSet<String>,
 ) -> Vec<String> {
     if held.is_empty() {
         return Vec::new();
     }
-    let templates = declared_structs(statements);
+    let templates = declared_structs(ast, roots);
     // Every pool a program has, which is an instantiation of a generic one and a
     // plainly declared one alike. A concrete `Pool :: struct { storage: [4]File,
     // generations: [4]i64 }` is the same container written out, and asking only
@@ -85,11 +86,14 @@ pub(crate) fn check_pooled_resources(
         .iter()
         .map(|(name, at)| (name.clone(), *at))
         .collect();
-    for statement in statements {
-        if let Statement::Struct(name, params, _) = &statement.node
+    for statement in roots {
+        if let Statement::Struct(name, params, _) = ast.stmt(*statement)
             && params.is_empty()
         {
-            pools.push((name.clone(), statement.position));
+            pools.push((
+                ast.name(*name).to_string(),
+                ast.stmt_position(*statement),
+            ));
         }
     }
     let mut reports = Vec::new();
@@ -185,10 +189,10 @@ fn walk_concrete(
             }
             let mut subst: HashMap<String, Type> = HashMap::new();
             for (param, argument) in params.iter().zip(arguments.iter()) {
-                subst.insert(param.clone(), argument_type(argument));
+                subst.insert((*param).to_string(), argument_type(argument));
             }
-            fields.iter().find_map(|field| {
-                let concrete = substitute_type(&field.field_type, &subst);
+            fields.iter().find_map(|(_, field_type)| {
+                let concrete = substitute_type(field_type, &subst);
                 walk_concrete(&concrete, templates, held, seen)
             })
         }
@@ -233,8 +237,8 @@ fn pool_element(
     let field_type = |wanted: &str| {
         fields
             .iter()
-            .find(|field| field.name == wanted)
-            .map(|field| &field.field_type)
+            .find(|(name, _)| *name == wanted)
+            .map(|(_, field_type)| *field_type)
     };
     let storage = field_type("storage")?;
     let generations = field_type("generations")?;
@@ -243,7 +247,7 @@ fn pool_element(
     }
     let mut subst: HashMap<String, Type> = HashMap::new();
     for (param, argument) in params.iter().zip(arguments.iter()) {
-        subst.insert(param.clone(), argument_type(argument));
+        subst.insert((*param).to_string(), argument_type(argument));
     }
     match substitute_type(storage, &subst) {
         Type::Array(inner, _) | Type::ArrayGeneric(inner, _) => Some(*inner),
@@ -261,28 +265,44 @@ fn is_run(ty: &Type) -> bool {
 /// and the pool rule read the same table, and building it per round made a pass
 /// meant to stay linear in a program's size walk it again for every type the
 /// closure found.
-pub(crate) fn declared_structs(
-    statements: &[Spanned<Statement>],
-) -> Templates<'_> {
+pub(crate) fn declared_structs<'a>(
+    ast: &'a Ast,
+    roots: &[StmtId],
+) -> Templates<'a> {
     let mut templates: Templates = HashMap::new();
-    for statement in statements {
-        match &statement.node {
+    for statement in roots {
+        match ast.stmt(*statement) {
             Statement::Struct(name, params, fields) => {
-                templates
-                    .insert(name.as_str(), (params.as_slice(), fields.clone()));
+                let params: Vec<&str> = ast
+                    .symbols_in(*params)
+                    .iter()
+                    .map(|param| ast.name(*param))
+                    .collect();
+                let fields: Vec<(&str, &Type)> = ast
+                    .fields_in(*fields)
+                    .iter()
+                    .map(|field| (ast.name(field.name), &field.field_type))
+                    .collect();
+                templates.insert(ast.name(*name), (params, fields));
             }
             // An enum holds a resource when any variant's payload does, the
             // same way a struct holds one when any field does. Reading only
             // the structs left `Option<File>` ordinary data, so a resource put
             // in one lost its obligation on the way in.
             Statement::Enum(name, params, variants) => {
-                let payload: Vec<StructField> = variants
+                let params: Vec<&str> = ast
+                    .symbols_in(*params)
                     .iter()
-                    .filter_map(|variant| variant.fields.as_ref())
-                    .flatten()
-                    .cloned()
+                    .map(|param| ast.name(*param))
                     .collect();
-                templates.insert(name.as_str(), (params.as_slice(), payload));
+                let payload: Vec<(&str, &Type)> = ast
+                    .variants_in(*variants)
+                    .iter()
+                    .filter_map(|variant| variant.fields)
+                    .flat_map(|fields| ast.fields_in(fields))
+                    .map(|field| (ast.name(field.name), &field.field_type))
+                    .collect();
+                templates.insert(ast.name(*name), (params, payload));
             }
             _ => {}
         }
@@ -309,10 +329,10 @@ fn instance_is_linear(
     }
     let mut subst: HashMap<String, Type> = HashMap::new();
     for (param, argument) in params.iter().zip(arguments.iter()) {
-        subst.insert(param.clone(), argument_type(argument));
+        subst.insert((*param).to_string(), argument_type(argument));
     }
-    fields.iter().any(|field| {
-        substitute_type(&field.field_type, &subst).is_linear_with(held)
+    fields.iter().any(|(_, field_type)| {
+        substitute_type(field_type, &subst).is_linear_with(held)
     })
 }
 
@@ -366,18 +386,24 @@ fn split_instance(name: &str) -> Option<(String, Vec<String>)> {
 /// Every generic instantiation a program writes down. Collected once, since the
 /// set does not change while the linear set grows.
 pub(crate) fn collect_instances(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
 ) -> HashSet<String> {
-    locate_instances(statements).into_keys().collect()
+    locate_instances(ast, roots).into_keys().collect()
 }
 
 /// The same, with where each was written, which is where a complaint about one
 /// belongs. The position is the statement the name was found in, since that is
 /// the line a reader looks at.
-pub(crate) fn locate_instances(statements: &[Spanned<Statement>]) -> Located {
+pub(crate) fn locate_instances(ast: &Ast, roots: &[StmtId]) -> Located {
     let mut found = Located::new();
-    for statement in statements {
-        walk_statement(&statement.node, &mut found, statement.position);
+    for statement in roots {
+        walk_statement(
+            ast,
+            *statement,
+            &mut found,
+            ast.stmt_position(*statement),
+        );
     }
     // An argument can itself be an instantiation, and a field of one names types
     // the outer name does not, so the names inside a name are taken too.
@@ -424,11 +450,12 @@ fn note_type(ty: &Type, found: &mut Located, at: Position) {
 }
 
 fn walk_parameters(
-    parameters: &[Parameter],
+    ast: &Ast,
+    parameters: Range32,
     found: &mut Located,
     at: Position,
 ) {
-    for parameter in parameters {
+    for parameter in ast.params_in(parameters) {
         if let Some(ty) = &parameter.type_annotation {
             note_type(ty, found, at);
         }
@@ -438,12 +465,17 @@ fn walk_parameters(
     }
 }
 
-fn walk_return(kind: &ReturnKind, found: &mut Located, at: Position) {
+fn walk_return(
+    ast: &Ast,
+    kind: &ReturnKind,
+    found: &mut Located,
+    at: Position,
+) {
     match kind {
         ReturnKind::None => {}
         ReturnKind::Single(ty) => note_type(ty, found, at),
         ReturnKind::Multiple(values) => {
-            for held in values {
+            for held in ast.return_values_in(*values) {
                 note_type(&held.value_type, found, at);
             }
         }
@@ -454,28 +486,33 @@ fn walk_return(kind: &ReturnKind, found: &mut Located, at: Position) {
     }
 }
 
-fn walk_block(block: &Block, found: &mut Located) {
-    for statement in block {
-        walk_statement(&statement.node, found, statement.position);
+fn walk_block(ast: &Ast, block: Range32, found: &mut Located) {
+    for statement in ast.stmts_in(block) {
+        walk_statement(ast, *statement, found, ast.stmt_position(*statement));
     }
 }
 
 // Listed rather than caught by a wildcard, so a new statement form is a compile
 // error here instead of a type position nobody walks.
-fn walk_statement(statement: &Statement, found: &mut Located, at: Position) {
-    match statement {
+fn walk_statement(
+    ast: &Ast,
+    statement: StmtId,
+    found: &mut Located,
+    at: Position,
+) {
+    match ast.stmt(statement) {
         Statement::TypeAlias(_, ty) | Statement::Flags(_, ty, _) => {
             note_type(ty, found, at)
         }
         Statement::Struct(_, _, fields) => {
-            for field in fields {
+            for field in ast.fields_in(*fields) {
                 note_type(&field.field_type, found, at);
             }
         }
         Statement::Enum(_, _, variants) => {
-            for variant in variants {
-                if let Some(fields) = &variant.fields {
-                    for field in fields {
+            for variant in ast.variants_in(*variants) {
+                if let Some(fields) = variant.fields {
+                    for field in ast.fields_in(fields) {
                         note_type(&field.field_type, found, at);
                     }
                 }
@@ -486,7 +523,7 @@ fn walk_statement(statement: &Statement, found: &mut Located, at: Position) {
             return_type,
             ..
         } => {
-            walk_parameters(params, found, at);
+            walk_parameters(ast, *params, found, at);
             if let Some(ty) = return_type {
                 note_type(ty, found, at);
             }
@@ -494,9 +531,10 @@ fn walk_statement(statement: &Statement, found: &mut Located, at: Position) {
         Statement::Declared {
             params, return_sig, ..
         } => {
-            walk_parameters(params, found, at);
-            walk_return(&return_sig.kind, found, at);
-            for capability in &return_sig.uses {
+            walk_parameters(ast, *params, found, at);
+            let signature = ast.signature(*return_sig);
+            walk_return(ast, &signature.kind, found, at);
+            for capability in &signature.uses {
                 note_type(capability, found, at);
             }
         }
@@ -508,41 +546,47 @@ fn walk_statement(statement: &Statement, found: &mut Located, at: Position) {
             if let Some(ty) = type_annotation {
                 note_type(ty, found, at);
             }
-            walk_expression(value, found, at);
+            walk_expression(ast, *value, found, at);
         }
         Statement::LetMultiple(_, value)
         | Statement::Constant(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)
-        | Statement::Print(value, _) => walk_expression(value, found, at),
+        | Statement::Print(value, _) => walk_expression(ast, *value, found, at),
         Statement::Assignment(place, value) => {
-            walk_expression(place, found, at);
-            walk_expression(value, found, at);
+            walk_expression(ast, *place, found, at);
+            walk_expression(ast, *value, found, at);
         }
-        Statement::Defer(inner) => walk_statement(inner, found, at),
+        Statement::Defer(inner) => walk_statement(ast, *inner, found, at),
         Statement::For(_, _, sequence, body) => {
-            walk_expression(sequence, found, at);
-            walk_block(body, found);
+            walk_expression(ast, *sequence, found, at);
+            walk_block(ast, *body, found);
         }
         Statement::While(condition, body) => {
-            walk_expression(condition, found, at);
-            walk_block(body, found);
+            walk_expression(ast, *condition, found, at);
+            walk_block(ast, *body, found);
         }
-        Statement::With(_, body) => walk_block(body, found),
+        Statement::With(_, body) => walk_block(ast, *body, found),
         Statement::Break | Statement::Continue | Statement::Import(..) => {}
     }
 }
 
-fn walk_expression(expression: &Expression, found: &mut Located, at: Position) {
-    match expression {
+fn walk_expression(
+    ast: &Ast,
+    expression: ExprId,
+    found: &mut Located,
+    at: Position,
+) {
+    match ast.expr(expression) {
         Expression::Function(parameters, signature, body)
         | Expression::Proc(parameters, signature, body) => {
-            walk_parameters(parameters, found, at);
-            walk_return(&signature.kind, found, at);
+            walk_parameters(ast, *parameters, found, at);
+            let signature = ast.signature(*signature);
+            walk_return(ast, &signature.kind, found, at);
             for capability in &signature.uses {
                 note_type(capability, found, at);
             }
-            walk_block(body, found);
+            walk_block(ast, *body, found);
         }
         Expression::Sizeof(ty)
         | Expression::TypeId(ty)
@@ -557,54 +601,56 @@ fn walk_expression(expression: &Expression, found: &mut Located, at: Position) {
         | Expression::UnsafeFn(inner)
         | Expression::FieldAccess(inner, _)
         | Expression::ArrayRepeat(inner, _)
-        | Expression::Try(inner) => walk_expression(inner, found, at),
+        | Expression::Try(inner) => walk_expression(ast, *inner, found, at),
         Expression::Infix(left, _, right)
         | Expression::Index(left, right)
         | Expression::Range(left, right, _) => {
-            walk_expression(left, found, at);
-            walk_expression(right, found, at);
+            walk_expression(ast, *left, found, at);
+            walk_expression(ast, *right, found, at);
         }
         Expression::If(condition, then_block, else_block) => {
-            walk_expression(condition, found, at);
-            walk_block(then_block, found);
+            walk_expression(ast, *condition, found, at);
+            walk_block(ast, *then_block, found);
             if let Some(block) = else_block {
-                walk_block(block, found);
+                walk_block(ast, *block, found);
             }
         }
-        Expression::Unsafe(block) => walk_block(block, found),
+        Expression::Unsafe(block) => walk_block(ast, *block, found),
         Expression::Switch(scrutinee, cases) => {
-            walk_expression(scrutinee, found, at);
-            for SwitchCase { body, .. } in cases {
-                walk_block(body, found);
+            walk_expression(ast, *scrutinee, found, at);
+            for case in ast.cases_in(*cases) {
+                walk_block(ast, case.body, found);
             }
         }
         Expression::Call(callee, arguments) => {
-            walk_expression(callee, found, at);
-            for argument in arguments {
-                walk_expression(argument, found, at);
+            walk_expression(ast, *callee, found, at);
+            for argument in ast.exprs_in(*arguments) {
+                walk_expression(ast, *argument, found, at);
             }
         }
         Expression::Tuple(values) => {
-            for held in values {
-                walk_expression(held, found, at);
+            for held in ast.exprs_in(*values) {
+                walk_expression(ast, *held, found, at);
             }
         }
         // A struct literal names its type, and a generic one names the
         // instantiation it makes.
         Expression::StructInit(name, fields) => {
+            let name = ast.name(*name);
             if name.contains('<') {
-                found.entry(name.clone()).or_insert(at);
+                found.entry(name.to_string()).or_insert(at);
             }
-            for (_, held) in fields {
-                walk_expression(held, found, at);
+            for field in ast.named_in(*fields) {
+                walk_expression(ast, field.value, found, at);
             }
         }
         Expression::EnumVariantInit(name, _, fields) => {
+            let name = ast.name(*name);
             if name.contains('<') {
-                found.entry(name.clone()).or_insert(at);
+                found.entry(name.to_string()).or_insert(at);
             }
-            for (_, held) in fields {
-                walk_expression(held, found, at);
+            for field in ast.named_in(*fields) {
+                walk_expression(ast, field.value, found, at);
             }
         }
         Expression::Identifier(_)
@@ -623,8 +669,8 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
-        collect_instances(&statements)
+        let module = parser.parse().unwrap();
+        collect_instances(&module.ast, &module.roots)
     }
 
     #[test]
@@ -637,10 +683,10 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
-        let found = collect_instances(&statements);
+        let module = parser.parse().unwrap();
+        let found = collect_instances(&module.ast, &module.roots);
         let mut held = parser.linear_types().clone();
-        let templates = declared_structs(&statements);
+        let templates = declared_structs(&module.ast, &module.roots);
         note_linear_instances(&templates, &found, &mut held);
         assert!(held.contains("Pool<File>"), "held {held:?}");
     }

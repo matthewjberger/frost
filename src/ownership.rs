@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
-use crate::lexer::Position;
-use crate::parser::{
-    Block, Expression, Literal, ParamMode, Parameter, Spanned, Statement,
+use crate::ast::{
+    Ast, ExprId, Expression, Literal, Parameter, Range32, Statement, StmtId,
 };
+use crate::ast_display::display_expr;
+use crate::lexer::Position;
+use crate::parser::ParamMode;
 use crate::types::Type;
 
 type Signatures = HashMap<String, Signature>;
@@ -28,11 +30,16 @@ struct Signature {
 }
 
 /// The parameter positions that take a type rather than a value.
-fn type_parameter_slots(parameters: &[Parameter]) -> Vec<Option<String>> {
+fn type_parameter_slots(
+    ast: &Ast,
+    parameters: &[Parameter],
+) -> Vec<Option<String>> {
     parameters
         .iter()
         .map(|parameter| match &parameter.type_annotation {
-            Some(Type::TypeParam(name)) if name == &parameter.name => {
+            Some(Type::TypeParam(name))
+                if name.as_str() == ast.name(parameter.name) =>
+            {
                 Some(name.clone())
             }
             _ => None,
@@ -90,16 +97,18 @@ pub struct Specializations {
 /// Gather them. A program with nothing to say about ownership still pays for
 /// this once, which is the same bargain `check_ownership` strikes.
 pub fn specializations(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Specializations {
-    let signatures = collect_signatures(statements);
-    let param_types = collect_param_types(statements);
-    let field_types = collect_field_types(statements);
-    let held = linear_closure(linear, &field_types, statements);
-    let runs = settle_runs(statements, &field_types);
+    let signatures = collect_signatures(ast, roots);
+    let param_types = collect_param_types(ast, roots);
+    let field_types = collect_field_types(ast, roots);
+    let held = linear_closure(linear, &field_types, ast, roots);
+    let runs = settle_runs(ast, roots, &field_types);
     let summaries = settle_summaries(
-        statements,
+        ast,
+        roots,
         &Program {
             linear: &held,
             signatures: &signatures,
@@ -122,8 +131,14 @@ pub fn specializations(
 impl Specializations {
     /// What is wrong with one specialized body, which is the same question
     /// asked of any other function.
-    pub fn check(&self, params: &[Parameter], body: &Block) -> Vec<String> {
+    pub fn check(
+        &self,
+        ast: &Ast,
+        params: Range32,
+        body: Range32,
+    ) -> Vec<String> {
         check_function_moves(
+            ast,
             params,
             body,
             &Program {
@@ -138,14 +153,17 @@ impl Specializations {
     }
 }
 
-fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
+fn collect_field_types(ast: &Ast, roots: &[StmtId]) -> FieldTypes {
     let mut fields = HashMap::new();
-    for statement in statements {
-        match &statement.node {
+    for statement in roots {
+        match ast.stmt(*statement) {
             Statement::Struct(name, _, declared) => {
-                for field in declared {
+                for field in ast.fields_in(*declared) {
                     fields.insert(
-                        (name.clone(), field.name.clone()),
+                        (
+                            ast.name(*name).to_string(),
+                            ast.name(field.name).to_string(),
+                        ),
                         field.field_type.clone(),
                     );
                 }
@@ -155,13 +173,16 @@ fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
             // only the structs left an option holding a file ordinary data, and
             // the obligation went in and did not come out.
             Statement::Enum(name, _, variants) => {
-                for variant in variants {
-                    let Some(declared) = &variant.fields else {
+                for variant in ast.variants_in(*variants) {
+                    let Some(declared) = variant.fields else {
                         continue;
                     };
-                    for field in declared {
+                    for field in ast.fields_in(declared) {
                         fields.insert(
-                            (name.clone(), field.name.clone()),
+                            (
+                                ast.name(*name).to_string(),
+                                ast.name(field.name).to_string(),
+                            ),
                             field.field_type.clone(),
                         );
                     }
@@ -174,10 +195,11 @@ fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
 }
 
 pub fn check_ownership(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Result<()> {
-    let reports = check_ownership_recovering(statements, linear);
+    let reports = check_ownership_recovering(ast, roots, linear);
     if reports.is_empty() {
         return Ok(());
     }
@@ -197,16 +219,18 @@ pub fn check_ownership(
 /// position rather than the item's, which is why these are the finished strings
 /// rather than `Diagnostic`s.
 pub fn check_ownership_recovering(
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Vec<String> {
-    let signatures = collect_signatures(statements);
-    let param_types = collect_param_types(statements);
-    let field_types = collect_field_types(statements);
-    let held = linear_closure(linear, &field_types, statements);
-    let runs = settle_runs(statements, &field_types);
+    let signatures = collect_signatures(ast, roots);
+    let param_types = collect_param_types(ast, roots);
+    let field_types = collect_field_types(ast, roots);
+    let held = linear_closure(linear, &field_types, ast, roots);
+    let runs = settle_runs(ast, roots, &field_types);
     let summaries = settle_summaries(
-        statements,
+        ast,
+        roots,
         &Program {
             linear: &held,
             signatures: &signatures,
@@ -225,13 +249,14 @@ pub fn check_ownership_recovering(
         runs: &runs,
     };
     let mut reports = crate::linear_instances::check_pooled_resources(
-        statements,
-        &crate::linear_instances::locate_instances(statements),
+        ast,
+        roots,
+        &crate::linear_instances::locate_instances(ast, roots),
         &held,
     );
-    for statement in statements {
-        let outcome = check_statement(&statement.node, &program, &mut reports);
-        if let Err(error) = locate(outcome, statement.position) {
+    for statement in roots {
+        let outcome = check_statement(ast, *statement, &program, &mut reports);
+        if let Err(error) = locate(outcome, ast.stmt_position(*statement)) {
             reports.push(error.to_string());
         }
     }
@@ -242,22 +267,22 @@ pub fn check_ownership_recovering(
 // so a call argument can be told to borrow (a reference parameter) rather than
 // move (a value parameter). Positions line up one-to-one with call arguments,
 // including a `$Type` argument against a `$T: Type` parameter.
-fn collect_param_types(statements: &[Spanned<Statement>]) -> ParamTypes {
+fn collect_param_types(ast: &Ast, roots: &[StmtId]) -> ParamTypes {
     let mut param_types = HashMap::new();
-    for statement in statements {
-        let (name, params) = match &statement.node {
-            Statement::Constant(
-                name,
+    for statement in roots {
+        let (name, params) = match ast.stmt(*statement) {
+            Statement::Constant(name, value) => match ast.expr(*value) {
                 Expression::Function(params, _, _)
-                | Expression::Proc(params, _, _),
-            ) => (name, params),
+                | Expression::Proc(params, _, _) => (*name, *params),
+                _ => continue,
+            },
             Statement::Extern { name, params, .. }
-            | Statement::Declared { name, params, .. } => (name, params),
+            | Statement::Declared { name, params, .. } => (*name, *params),
             _ => continue,
         };
         param_types.insert(
-            name.clone(),
-            params
+            ast.name(name).to_string(),
+            ast.params_in(params)
                 .iter()
                 .map(|parameter| {
                     let ty = parameter.type_annotation.clone()?;
@@ -276,20 +301,27 @@ fn collect_param_types(statements: &[Spanned<Statement>]) -> ParamTypes {
     param_types
 }
 
-fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
+fn collect_signatures(ast: &Ast, roots: &[StmtId]) -> Signatures {
     let mut signatures = HashMap::new();
-    for statement in statements {
-        match &statement.node {
-            Statement::Constant(
-                name,
-                Expression::Function(parameters, return_sig, _)
-                | Expression::Proc(parameters, return_sig, _),
-            ) => {
+    for statement in roots {
+        match ast.stmt(*statement) {
+            Statement::Constant(name, value) => {
+                let (Expression::Function(parameters, return_sig, _)
+                | Expression::Proc(parameters, return_sig, _)) =
+                    ast.expr(*value)
+                else {
+                    continue;
+                };
                 signatures.insert(
-                    name.clone(),
+                    ast.name(*name).to_string(),
                     Signature {
-                        result: return_sig.to_type().unwrap_or(Type::Void),
-                        type_params: type_parameter_slots(parameters),
+                        result: ast
+                            .signature_to_type(ast.signature(*return_sig))
+                            .unwrap_or(Type::Void),
+                        type_params: type_parameter_slots(
+                            ast,
+                            ast.params_in(*parameters),
+                        ),
                     },
                 );
             }
@@ -300,10 +332,13 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
                 ..
             } => {
                 signatures.insert(
-                    name.clone(),
+                    ast.name(*name).to_string(),
                     Signature {
                         result: return_type.clone().unwrap_or(Type::Void),
-                        type_params: type_parameter_slots(params),
+                        type_params: type_parameter_slots(
+                            ast,
+                            ast.params_in(*params),
+                        ),
                     },
                 );
             }
@@ -314,10 +349,15 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
                 ..
             } => {
                 signatures.insert(
-                    name.clone(),
+                    ast.name(*name).to_string(),
                     Signature {
-                        result: return_sig.to_type().unwrap_or(Type::Void),
-                        type_params: type_parameter_slots(params),
+                        result: ast
+                            .signature_to_type(ast.signature(*return_sig))
+                            .unwrap_or(Type::Void),
+                        type_params: type_parameter_slots(
+                            ast,
+                            ast.params_in(*params),
+                        ),
                     },
                 );
             }
@@ -328,53 +368,54 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
 }
 
 fn check_statement(
-    statement: &Statement,
+    ast: &Ast,
+    statement: StmtId,
     program: &Program,
     reports: &mut Vec<String>,
 ) -> Result<()> {
-    match statement {
+    match ast.stmt(statement) {
         Statement::Struct(name, _, fields) => {
-            for field in fields {
+            for field in ast.fields_in(*fields) {
                 if field.field_type.contains_reference() {
                     bail!(
-                        "ownership: cannot store a reference in struct '{name}' (field '{}'); references are second-class",
-                        field.name
+                        "ownership: cannot store a reference in struct '{}' (field '{}'); references are second-class",
+                        ast.name(*name),
+                        ast.name(field.name)
                     );
                 }
             }
         }
         Statement::Enum(name, _, variants) => {
-            for variant in variants {
-                let Some(fields) = &variant.fields else {
+            for variant in ast.variants_in(*variants) {
+                let Some(fields) = variant.fields else {
                     continue;
                 };
-                for field in fields {
+                for field in ast.fields_in(fields) {
                     if field.field_type.contains_reference() {
                         bail!(
-                            "ownership: cannot store a reference in enum '{name}' (variant '{}', field '{}'); references are second-class",
-                            variant.name,
-                            field.name
+                            "ownership: cannot store a reference in enum '{}' (variant '{}', field '{}'); references are second-class",
+                            ast.name(*name),
+                            ast.name(variant.name),
+                            ast.name(field.name)
                         );
                     }
                 }
             }
         }
-        Statement::Constant(
-            _name,
-            Expression::Function(params, _return_sig, body),
-        )
-        | Statement::Constant(
-            _name,
-            Expression::Proc(params, _return_sig, body),
-        ) => {
+        Statement::Constant(_name, value) => {
+            let (Expression::Function(params, _return_sig, body)
+            | Expression::Proc(params, _return_sig, body)) = ast.expr(*value)
+            else {
+                return Ok(());
+            };
             // A reference return is allowed. The frame-escape check holds a
             // borrow to storage that outlives the call, and the region check
             // holds an arena borrow to its region, so returning one is only ever
             // a borrow the caller may keep. `arena_at` is the reason it exists.
-            for inner in body {
-                check_statement(inner, program, reports)?;
+            for inner in ast.stmts_in(*body) {
+                check_statement(ast, *inner, program, reports)?;
             }
-            reports.extend(check_function_moves(params, body, program));
+            reports.extend(check_function_moves(ast, *params, *body, program));
         }
         Statement::Extern {
             name, return_type, ..
@@ -383,7 +424,8 @@ fn check_statement(
                 && return_type.contains_reference()
             {
                 bail!(
-                    "ownership: extern function '{name}' cannot return a reference"
+                    "ownership: extern function '{}' cannot return a reference",
+                    ast.name(*name)
                 );
             }
         }
@@ -412,10 +454,7 @@ type Summaries = HashMap<String, Summary>;
 ///
 /// A program with no resources at all pays nothing for this, which is the same
 /// bargain every other part of the linear machinery strikes.
-fn settle_summaries(
-    statements: &[Spanned<Statement>],
-    seed: &Program,
-) -> Summaries {
+fn settle_summaries(ast: &Ast, roots: &[StmtId], seed: &Program) -> Summaries {
     let mut summaries = Summaries::new();
     if seed.linear.is_empty() {
         return summaries;
@@ -426,18 +465,21 @@ fn settle_summaries(
             ..*seed
         };
         let mut round = Summaries::new();
-        for statement in statements {
-            let (name, params, body) = match &statement.node {
-                Statement::Constant(
-                    name,
-                    Expression::Function(params, _, body)
-                    | Expression::Proc(params, _, body),
-                ) => (name, params, body),
-                _ => continue,
+        for statement in roots {
+            let Statement::Constant(name, value) = ast.stmt(*statement) else {
+                continue;
             };
-            let checker = run_function(params, body, &program);
-            for entry in summarize(params, &checker) {
-                round.entry(name.clone()).or_default().push(entry);
+            let (Expression::Function(params, _, body)
+            | Expression::Proc(params, _, body)) = ast.expr(*value)
+            else {
+                continue;
+            };
+            let checker = run_function(ast, *params, *body, &program);
+            for entry in summarize(ast, *params, &checker) {
+                round
+                    .entry(ast.name(*name).to_string())
+                    .or_default()
+                    .push(entry);
             }
         }
         // Grown rather than replaced, so this settles. A round reads the round
@@ -495,17 +537,19 @@ fn nameable_under(path: &[Step]) -> Option<&[Step]> {
 /// element through a borrow that stays a borrow, or take the container by
 /// `move` and answer with it again.
 fn handed_out_unnameable(
-    params: &[Parameter],
+    ast: &Ast,
+    params: Range32,
     checker: &MoveChecker,
 ) -> Vec<String> {
     let mut reports = Vec::new();
-    for parameter in params {
+    for parameter in ast.params_in(params) {
         if !matches!(
             parameter.type_annotation,
             Some(Type::Ref(_) | Type::RefMut(_))
         ) {
             continue;
         }
+        let parameter_name = ast.name(parameter.name);
         for (key, state) in &checker.states {
             if *state == MoveState::Live {
                 continue;
@@ -516,7 +560,7 @@ fn handed_out_unnameable(
             let Some(Step::Named(root)) = path.first() else {
                 continue;
             };
-            if root != &parameter.name || path.len() < 2 {
+            if root.as_str() != parameter_name || path.len() < 2 {
                 continue;
             }
             if nameable_under(path).is_some() {
@@ -529,7 +573,7 @@ fn handed_out_unnameable(
                  so nothing stops it asking again and being handed the same one \
                  twice. Reach the element through a borrow that stays a borrow, \
                  or take '{}' by `move` and answer with it.",
-                parameter.name, parameter.name
+                parameter_name, parameter_name
             ));
         }
     }
@@ -544,9 +588,9 @@ fn handed_out_unnameable(
 /// A parameter taken by `move` is not one of these. The call site already reads
 /// the declaration and marks the whole argument gone, so counting it here would
 /// say the same thing twice.
-fn summarize(params: &[Parameter], checker: &MoveChecker) -> Summary {
+fn summarize(ast: &Ast, params: Range32, checker: &MoveChecker) -> Summary {
     let mut found = Summary::new();
-    for (index, parameter) in params.iter().enumerate() {
+    for (index, parameter) in ast.params_in(params).iter().enumerate() {
         if !matches!(
             parameter.type_annotation,
             Some(Type::Ref(_) | Type::RefMut(_))
@@ -563,7 +607,7 @@ fn summarize(params: &[Parameter], checker: &MoveChecker) -> Summary {
             let Some(Step::Named(root)) = path.first() else {
                 continue;
             };
-            if root != &parameter.name {
+            if root.as_str() != ast.name(parameter.name) {
                 continue;
             }
             let Some(under) = nameable_under(path) else {
@@ -624,34 +668,40 @@ fn program_holds_runs(fields: &FieldTypes) -> bool {
 /// `slice_prefix($T, v.storage, v.len)`, so it is only once `slice_prefix` is
 /// known to answer with a view of its own parameter that `v.storage` is the run
 /// behind it. The tables only gain entries, so this settles.
-fn settle_runs(statements: &[Spanned<Statement>], fields: &FieldTypes) -> Runs {
+fn settle_runs(ast: &Ast, roots: &[StmtId], fields: &FieldTypes) -> Runs {
     let mut runs = Runs::default();
     if !program_holds_runs(fields) {
         return runs;
     }
     loop {
         let mut grew = false;
-        for statement in statements {
-            let Statement::Constant(
-                name,
-                Expression::Function(parameters, signature, body)
-                | Expression::Proc(parameters, signature, body),
-            ) = &statement.node
+        for statement in roots {
+            let Statement::Constant(name, value) = ast.stmt(*statement) else {
+                continue;
+            };
+            let (Expression::Function(parameters, signature, body)
+            | Expression::Proc(parameters, signature, body)) = ast.expr(*value)
             else {
                 continue;
             };
-            let answers_view = signature
-                .to_type()
+            let answers_view = ast
+                .signature_to_type(ast.signature(*signature))
                 .is_some_and(|result| is_view_type(&result));
             let mut walk = RunWalk {
-                parameters: parameters
+                ast,
+                parameters: ast
+                    .params_in(*parameters)
                     .iter()
-                    .map(|one| one.name.clone())
+                    .map(|one| ast.name(one.name).to_string())
                     .collect(),
-                declared: parameters
+                declared: ast
+                    .params_in(*parameters)
                     .iter()
                     .filter_map(|one| {
-                        Some((one.name.clone(), one.type_annotation.clone()?))
+                        Some((
+                            ast.name(one.name).to_string(),
+                            one.type_annotation.clone()?,
+                        ))
                     })
                     .collect(),
                 fields,
@@ -662,16 +712,21 @@ fn settle_runs(statements: &[Spanned<Statement>], fields: &FieldTypes) -> Runs {
                 found_viewed: Vec::new(),
                 found_replaced: Vec::new(),
             };
-            walk.walk_block(body);
-            walk.note_tail(body);
+            walk.walk_block(*body);
+            walk.note_tail(*body);
             let viewed = walk.found_viewed.clone();
             let replaced = walk.found_replaced.clone();
             let parameters = walk.parameters.clone();
-            grew |=
-                record_runs(&mut runs.viewed, name, &parameters, &viewed, true);
+            grew |= record_runs(
+                &mut runs.viewed,
+                ast.name(*name),
+                &parameters,
+                &viewed,
+                true,
+            );
             grew |= record_runs(
                 &mut runs.replaced,
-                name,
+                ast.name(*name),
                 &parameters,
                 &replaced,
                 false,
@@ -765,6 +820,7 @@ fn without_borrow_derefs(path: Vec<Step>) -> Vec<Step> {
 
 /// One function's body, read for the runs it views and the runs it replaces.
 struct RunWalk<'a> {
+    ast: &'a Ast,
     parameters: Vec<String>,
     declared: HashMap<String, Type>,
     fields: &'a FieldTypes,
@@ -784,18 +840,19 @@ struct RunWalk<'a> {
 impl RunWalk<'_> {
     /// The type of a place, as far as the parameter declarations, the local
     /// bindings and the struct declarations give it.
-    fn place_type(&self, expression: &Expression) -> Option<Type> {
-        match expression {
+    fn place_type(&self, expression: ExprId) -> Option<Type> {
+        let ast = self.ast;
+        match ast.expr(expression) {
             // The borrow a parameter carries is left on, since the mode
             // lowering writes a `^` for every mention of a `mut` parameter and
             // that step is what this type answers for.
             Expression::Identifier(name) => self
                 .declared
-                .get(name)
-                .or_else(|| self.locals.get(name))
+                .get(ast.name(*name))
+                .or_else(|| self.locals.get(ast.name(*name)))
                 .cloned(),
             Expression::FieldAccess(base, field) => {
-                let held = through_borrow(self.place_type(base)?);
+                let held = through_borrow(self.place_type(*base)?);
                 let (Type::Struct(owner) | Type::Enum(owner)) = held else {
                     return None;
                 };
@@ -803,22 +860,22 @@ impl RunWalk<'_> {
                 // a generic's declaration is filed under `Vec`, and a parameter
                 // written `Vec<T>` names the instantiation.
                 self.fields
-                    .get(&(owner.clone(), field.clone()))
+                    .get(&(owner.clone(), ast.name(*field).to_string()))
                     .or_else(|| {
                         self.fields.get(&(
                             Type::template_of(&owner).to_string(),
-                            field.clone(),
+                            ast.name(*field).to_string(),
                         ))
                     })
                     .cloned()
             }
             Expression::Index(base, _) => {
-                match through_borrow(self.place_type(base)?) {
+                match through_borrow(self.place_type(*base)?) {
                     Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
                     _ => None,
                 }
             }
-            Expression::Dereference(base) => match self.place_type(base)? {
+            Expression::Dereference(base) => match self.place_type(*base)? {
                 Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
                     Some(*inner)
                 }
@@ -831,47 +888,53 @@ impl RunWalk<'_> {
     /// Where a place sits under this function's parameters, and nothing for a
     /// place rooted anywhere else. What a summary says has to be a place the
     /// caller can name too, and a local is nobody's but this frame's.
-    fn param_places(&self, expression: &Expression) -> Vec<Vec<Step>> {
-        match expression {
+    fn param_places(&self, expression: ExprId) -> Vec<Vec<Step>> {
+        let ast = self.ast;
+        match ast.expr(expression) {
             Expression::Identifier(name) => {
+                let name = ast.name(*name);
                 if self.parameters.iter().any(|one| one == name) {
-                    return vec![vec![Step::Named(name.clone())]];
+                    return vec![vec![Step::Named(name.to_string())]];
                 }
                 Vec::new()
             }
-            Expression::FieldAccess(base, field) => {
-                self.extend_places(base, Step::Named(format!(".{field}")))
-            }
+            Expression::FieldAccess(base, field) => self.extend_places(
+                *base,
+                Step::Named(format!(".{}", ast.name(*field))),
+            ),
             Expression::Index(base, index) => {
-                let literal = match index.as_ref() {
+                let literal = match ast.expr(*index) {
                     Expression::Literal(Literal::Integer(value)) => {
                         Some(*value)
                     }
                     _ => None,
                 };
                 self.extend_places(
-                    base,
-                    Step::Index(literal, format!("[{index}]")),
+                    *base,
+                    Step::Index(
+                        literal,
+                        format!("[{}]", display_expr(ast, *index)),
+                    ),
                 )
             }
             Expression::Dereference(base) => {
                 let raw = !matches!(
-                    self.place_type(base),
+                    self.place_type(*base),
                     Some(Type::Ref(_) | Type::RefMut(_))
                 );
-                self.extend_places(base, Step::Deref(raw))
+                self.extend_places(*base, Step::Deref(raw))
             }
             Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
-            | Expression::AddressOf(inner) => self.param_places(inner),
-            Expression::Unsafe(body) => block_tail(body)
+            | Expression::AddressOf(inner) => self.param_places(*inner),
+            Expression::Unsafe(body) => block_tail(ast, *body)
                 .map(|value| self.param_places(value))
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
     }
 
-    fn extend_places(&self, base: &Expression, step: Step) -> Vec<Vec<Step>> {
+    fn extend_places(&self, base: ExprId, step: Step) -> Vec<Vec<Step>> {
         self.param_places(base)
             .into_iter()
             .map(|mut path| {
@@ -884,9 +947,11 @@ impl RunWalk<'_> {
     /// The runs a value names the storage of. A field holding a view is one, an
     /// element of a run belongs to that run, and a call answers with whichever
     /// run its own summary says it does.
-    fn run_places(&self, expression: &Expression) -> Vec<Vec<Step>> {
-        match expression {
+    fn run_places(&self, expression: ExprId) -> Vec<Vec<Step>> {
+        let ast = self.ast;
+        match ast.expr(expression) {
             Expression::Identifier(name) => {
+                let name = ast.name(*name);
                 if self.parameters.iter().any(|one| one == name) {
                     let held = self
                         .declared
@@ -895,7 +960,7 @@ impl RunWalk<'_> {
                         .map(through_borrow)
                         .is_some_and(|ty| is_view_type(&ty));
                     if held {
-                        return vec![vec![Step::Named(name.clone())]];
+                        return vec![vec![Step::Named(name.to_string())]];
                     }
                     return Vec::new();
                 }
@@ -905,30 +970,31 @@ impl RunWalk<'_> {
                 Some(ty) if is_view_type(&ty) => self.param_places(expression),
                 _ => Vec::new(),
             },
-            Expression::Index(base, _) => self.run_places(base),
+            Expression::Index(base, _) => self.run_places(*base),
             Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::AddressOf(inner)
             | Expression::Dereference(inner)
-            | Expression::Try(inner) => self.run_places(inner),
+            | Expression::Try(inner) => self.run_places(*inner),
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(name) = callee.as_ref() else {
+                let Expression::Identifier(name) = ast.expr(*callee) else {
                     return Vec::new();
                 };
-                match self.runs.viewed.get(name) {
-                    Some(summary) => self.against(summary, arguments),
+                match self.runs.viewed.get(ast.name(*name)) {
+                    Some(summary) => self.against(summary, *arguments),
                     // A run reached through something with no summary of its
                     // own: the builtins that form a view, and the wrappers over
                     // them that this walk cannot see into. What they are given
                     // is what they can be naming, and nothing else is in reach.
-                    None if builtin_answers_a_view(name) => arguments
+                    None if builtin_answers_a_view(ast.name(*name)) => ast
+                        .exprs_in(*arguments)
                         .iter()
-                        .flat_map(|argument| self.run_places(argument))
+                        .flat_map(|argument| self.run_places(*argument))
                         .collect(),
                     None => Vec::new(),
                 }
             }
-            Expression::Unsafe(body) => block_tail(body)
+            Expression::Unsafe(body) => block_tail(ast, *body)
                 .map(|value| self.run_places(value))
                 .unwrap_or_default(),
             _ => Vec::new(),
@@ -940,20 +1006,21 @@ impl RunWalk<'_> {
     fn against(
         &self,
         summary: &RunSummary,
-        arguments: &[Expression],
+        arguments: Range32,
     ) -> Vec<Vec<Step>> {
         let mut found = Vec::new();
         for (index, under) in summary {
-            let Some(argument) = arguments.get(*index) else {
+            let Some(argument) = self.ast.exprs_in(arguments).get(*index)
+            else {
                 continue;
             };
             // The place the argument sits in, or, where it is a local holding a
             // view or a call of its own, the run it names. The lowering hoists a
             // nested call into a temporary, so a view forwarded to a wrapper
             // reaches here as a name rather than as the call that made it.
-            let mut bases = self.param_places(argument);
+            let mut bases = self.param_places(*argument);
             if bases.is_empty() {
-                bases = self.run_places(argument);
+                bases = self.run_places(*argument);
             }
             for mut path in bases {
                 path.extend(under.iter().cloned());
@@ -963,65 +1030,69 @@ impl RunWalk<'_> {
         found
     }
 
-    fn walk_block(&mut self, block: &Block) {
-        for statement in block {
-            self.walk_statement(&statement.node);
+    fn walk_block(&mut self, block: Range32) {
+        let ast = self.ast;
+        for statement in ast.stmts_in(block) {
+            self.walk_statement(*statement);
         }
     }
 
-    fn walk_statement(&mut self, statement: &Statement) {
-        match statement {
+    fn walk_statement(&mut self, statement: StmtId) {
+        let ast = self.ast;
+        match ast.stmt(statement) {
             Statement::Let {
                 name,
                 type_annotation,
                 value,
                 ..
             } => {
-                self.walk_expression(value);
+                let name = ast.name(*name).to_string();
+                self.walk_expression(*value);
                 let held =
-                    type_annotation.clone().or_else(|| self.place_type(value));
+                    type_annotation.clone().or_else(|| self.place_type(*value));
                 match held {
                     Some(ty) => {
                         self.locals.insert(name.clone(), ty);
                     }
                     None => {
-                        self.locals.remove(name);
+                        self.locals.remove(&name);
                     }
                 }
-                let views = self.run_places(value);
-                self.views.insert(name.clone(), views);
+                let views = self.run_places(*value);
+                self.views.insert(name, views);
             }
             Statement::Assignment(target, value) => {
-                self.walk_expression(value);
-                self.walk_expression(target);
+                self.walk_expression(*value);
+                self.walk_expression(*target);
                 // A write that puts a different run in a place is the growth
                 // this whole summary is about. Only a run: writing an element,
                 // or a length beside the run, leaves the storage where it was,
                 // and reading those as growth refuses every container that
                 // writes into what a caller is holding a `ref` into.
-                if self.place_type(target).is_some_and(|ty| is_view_type(&ty)) {
-                    let found = self.param_places(target);
+                if self.place_type(*target).is_some_and(|ty| is_view_type(&ty))
+                {
+                    let found = self.param_places(*target);
                     self.found_replaced.extend(found);
                 }
             }
             Statement::Return(value) => {
-                self.walk_expression(value);
-                self.note_answer(value);
+                self.walk_expression(*value);
+                self.note_answer(*value);
             }
             Statement::Constant(_, value)
             | Statement::LetMultiple(_, value)
             | Statement::Expression(value)
-            | Statement::Print(value, _) => self.walk_expression(value),
+            | Statement::Print(value, _) => self.walk_expression(*value),
             Statement::While(condition, body) => {
-                self.walk_expression(condition);
-                self.walk_block(body);
+                self.walk_expression(*condition);
+                self.walk_block(*body);
             }
             Statement::For(_, _, sequence, body) => {
-                self.walk_expression(sequence);
-                self.walk_block(body);
+                self.walk_expression(*sequence);
+                self.walk_block(*body);
             }
-            Statement::With(_, body) => self.walk_block(body),
-            Statement::Defer(inner) => self.walk_statement(inner),
+            Statement::With(_, body) => self.walk_block(*body),
+            Statement::Defer(inner) => self.walk_statement(*inner),
             _ => {}
         }
     }
@@ -1029,31 +1100,32 @@ impl RunWalk<'_> {
     /// The calls inside a value, and the blocks they hold. A container grows
     /// inside `if (v.len >= v.cap)`, and an `if` is an expression here, so a
     /// walk that reads only statements misses the one assignment this is for.
-    fn walk_expression(&mut self, expression: &Expression) {
-        if let Expression::Call(callee, arguments) = expression
-            && let Expression::Identifier(name) = callee.as_ref()
-            && let Some(summary) = self.runs.replaced.get(name)
+    fn walk_expression(&mut self, expression: ExprId) {
+        let ast = self.ast;
+        if let Expression::Call(callee, arguments) = ast.expr(expression)
+            && let Expression::Identifier(name) = ast.expr(*callee)
+            && let Some(summary) = self.runs.replaced.get(ast.name(*name))
         {
-            let found = self.against(summary, arguments);
+            let found = self.against(summary, *arguments);
             self.found_replaced.extend(found);
         }
-        match expression {
-            Expression::Unsafe(body) => self.walk_block(body),
+        match ast.expr(expression) {
+            Expression::Unsafe(body) => self.walk_block(*body),
             Expression::If(condition, consequence, alternative) => {
-                self.walk_expression(condition);
-                self.walk_block(consequence);
+                self.walk_expression(*condition);
+                self.walk_block(*consequence);
                 if let Some(block) = alternative {
-                    self.walk_block(block);
+                    self.walk_block(*block);
                 }
             }
             Expression::Switch(scrutinee, cases) => {
-                self.walk_expression(scrutinee);
-                for case in cases {
-                    self.walk_block(&case.body);
+                self.walk_expression(*scrutinee);
+                for case in ast.cases_in(*cases) {
+                    self.walk_block(case.body);
                 }
             }
             _ => {
-                for inner in crate::regions::sub_expressions(expression) {
+                for inner in crate::regions::sub_expressions(ast, expression) {
                     self.walk_expression(inner);
                 }
             }
@@ -1063,20 +1135,21 @@ impl RunWalk<'_> {
     /// What a body hands back, where it hands back a view. A branch in answer
     /// position hands back whatever its arms do, so each arm's own last value is
     /// an answer of its own.
-    fn note_answer(&mut self, value: &Expression) {
+    fn note_answer(&mut self, value: ExprId) {
         if !self.answers_view {
             return;
         }
-        match value {
+        let ast = self.ast;
+        match ast.expr(value) {
             Expression::If(_, consequence, alternative) => {
-                self.note_block_answer(consequence);
+                self.note_block_answer(*consequence);
                 if let Some(block) = alternative {
-                    self.note_block_answer(block);
+                    self.note_block_answer(*block);
                 }
             }
             Expression::Switch(_, cases) => {
-                for case in cases {
-                    self.note_block_answer(&case.body);
+                for case in ast.cases_in(*cases) {
+                    self.note_block_answer(case.body);
                 }
             }
             _ => {
@@ -1086,8 +1159,8 @@ impl RunWalk<'_> {
         }
     }
 
-    fn note_block_answer(&mut self, block: &Block) {
-        if let Some(value) = block_tail(block) {
+    fn note_block_answer(&mut self, block: Range32) {
+        if let Some(value) = block_tail(self.ast, block) {
             self.note_answer(value);
         }
     }
@@ -1095,15 +1168,15 @@ impl RunWalk<'_> {
     /// The value a body falls out of its end with, which is an answer the same
     /// as a `return` is. The emitters are what turn the last statement into a
     /// return, so nothing before them has marked it as one.
-    fn note_tail(&mut self, body: &Block) {
+    fn note_tail(&mut self, body: Range32) {
         self.note_block_answer(body);
     }
 }
 
 /// The value a block falls out of its end with.
-fn block_tail(block: &Block) -> Option<&Expression> {
-    match &block.last()?.node {
-        Statement::Expression(value) => Some(value),
+fn block_tail(ast: &Ast, block: Range32) -> Option<ExprId> {
+    match ast.stmt(*ast.stmts_in(block).last()?) {
+        Statement::Expression(value) => Some(*value),
         _ => None,
     }
 }
@@ -1129,23 +1202,26 @@ fn builtin_answers_a_view(name: &str) -> bool {
 }
 
 fn check_function_moves(
-    params: &[Parameter],
-    body: &Block,
+    ast: &Ast,
+    params: Range32,
+    body: Range32,
     program: &Program,
 ) -> Vec<String> {
-    let checker = run_function(params, body, program);
-    let unnameable = handed_out_unnameable(params, &checker);
+    let checker = run_function(ast, params, body, program);
+    let unnameable = handed_out_unnameable(ast, params, &checker);
     let mut reports = checker.reports;
     reports.extend(unnameable);
     reports
 }
 
 fn run_function<'a>(
-    params: &[Parameter],
-    body: &Block,
+    ast: &'a Ast,
+    params: Range32,
+    body: Range32,
     program: &Program<'a>,
 ) -> MoveChecker<'a> {
     let mut checker = MoveChecker {
+        ast,
         types: HashMap::new(),
         states: HashMap::new(),
         paths: HashMap::new(),
@@ -1154,15 +1230,17 @@ fn run_function<'a>(
         param_types: program.param_types,
         field_types: program.field_types,
         summaries: program.summaries,
-        compile_time: params
+        compile_time: ast
+            .params_in(params)
             .iter()
             .filter(|parameter| {
                 matches!(
                     &parameter.type_annotation,
-                    Some(Type::TypeParam(name)) if name == &parameter.name
+                    Some(Type::TypeParam(name))
+                        if name.as_str() == ast.name(parameter.name)
                 )
             })
-            .map(|parameter| parameter.name.clone())
+            .map(|parameter| ast.name(parameter.name).to_string())
             .collect(),
         views: HashMap::new(),
         runs: program.runs,
@@ -1174,9 +1252,9 @@ fn run_function<'a>(
         reports: Vec::new(),
         reported: HashSet::new(),
     };
-    for parameter in params {
+    for parameter in ast.params_in(params) {
         if let Some(ty) = &parameter.type_annotation {
-            checker.note_binding(&parameter.name, Some(ty.clone()));
+            checker.note_binding(ast.name(parameter.name), Some(ty.clone()));
         }
     }
     checker.check_function_body(body);
@@ -1200,6 +1278,7 @@ fn join_state(left: MoveState, right: MoveState) -> MoveState {
 }
 
 struct MoveChecker<'a> {
+    ast: &'a Ast,
     types: HashMap<String, Type>,
     // What each place a body names has been done with, keyed by the place
     // written out. A bare name is a place one step long, so a name and a field
@@ -1326,20 +1405,23 @@ impl MoveChecker<'_> {
     /// borrow and an element to the call underneath.
     fn viewed_container(
         &mut self,
-        value: &Expression,
+        value: ExprId,
     ) -> Option<(Vec<Step>, String)> {
-        match value {
+        let ast = self.ast;
+        match ast.expr(value) {
             Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::Index(inner, _)
-            | Expression::FieldAccess(inner, _) => self.viewed_container(inner),
+            | Expression::FieldAccess(inner, _) => {
+                self.viewed_container(*inner)
+            }
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(name) = callee.as_ref() else {
+                let Expression::Identifier(name) = ast.expr(*callee) else {
                     return None;
                 };
                 if !self
                     .signatures
-                    .get(name)
+                    .get(ast.name(*name))
                     .is_some_and(|held| is_view_type(&held.result))
                 {
                     return None;
@@ -1351,32 +1433,33 @@ impl MoveChecker<'_> {
                 // every local here is. The self-hosted compiler has no local
                 // types at all at this point, so asking the declaration is also
                 // what lets both compilers ask the same question.
-                let declared = self.param_types.get(name)?;
-                let held = arguments.iter().enumerate().find_map(
-                    |(index, argument)| {
-                        let ty = declared.get(index)?.as_ref()?;
-                        // Through the borrow the mode lowering put there. A
-                        // parameter that reads an aggregate is a reference by
-                        // the time this runs, and the question is about what it
-                        // refers to.
-                        let ty = match ty {
-                            Type::Ref(inner)
-                            | Type::RefMut(inner)
-                            | Type::Ptr(inner) => inner.as_ref(),
-                            other => other,
-                        };
-                        // A struct counts whether or not its declared fields
-                        // still show the run. The self-hosted compiler reads a
-                        // generic's parameter as whatever instantiation was
-                        // made last, and taking a view of something and then
-                        // giving that thing away is the same mistake whichever
-                        // instantiation the node happens to name.
-                        let container =
-                            matches!(ty, Type::Struct(_) | Type::Enum(_))
-                                || holds_run(ty, self.field_types);
-                        container.then_some(argument)
-                    },
-                )?;
+                let declared = self.param_types.get(ast.name(*name))?;
+                let held =
+                    ast.exprs_in(*arguments).iter().enumerate().find_map(
+                        |(index, argument)| {
+                            let ty = declared.get(index)?.as_ref()?;
+                            // Through the borrow the mode lowering put there. A
+                            // parameter that reads an aggregate is a reference by
+                            // the time this runs, and the question is about what it
+                            // refers to.
+                            let ty = match ty {
+                                Type::Ref(inner)
+                                | Type::RefMut(inner)
+                                | Type::Ptr(inner) => inner.as_ref(),
+                                other => other,
+                            };
+                            // A struct counts whether or not its declared fields
+                            // still show the run. The self-hosted compiler reads a
+                            // generic's parameter as whatever instantiation was
+                            // made last, and taking a view of something and then
+                            // giving that thing away is the same mistake whichever
+                            // instantiation the node happens to name.
+                            let container =
+                                matches!(ty, Type::Struct(_) | Type::Enum(_))
+                                    || holds_run(ty, self.field_types);
+                            container.then_some(*argument)
+                        },
+                    )?;
                 let path = self.borrow_place(held)?;
                 let key = self.place_key(&path);
                 Some((path, key))
@@ -1396,10 +1479,10 @@ impl MoveChecker<'_> {
     /// ECS reads `vec_slice($EntitySlot, world.slots)[id].generation` into an
     /// `i64` and pushes to the same container two lines later, and reading the
     /// number as a view of the block it came out of refused that.
-    fn viewed_runs(&self, value: &Expression) -> Vec<Vec<Step>> {
-        match value {
+    fn viewed_runs(&self, value: ExprId) -> Vec<Vec<Step>> {
+        match self.ast.expr(value) {
             Expression::Borrow(inner) | Expression::BorrowMut(inner) => {
-                self.run_behind(inner)
+                self.run_behind(*inner)
             }
             Expression::Call(..) => self.run_behind(value),
             _ => Vec::new(),
@@ -1408,25 +1491,28 @@ impl MoveChecker<'_> {
 
     /// The run a place sits in, reaching through the borrows and the elements
     /// in front of the call that formed the view.
-    fn run_behind(&self, value: &Expression) -> Vec<Vec<Step>> {
-        match value {
+    fn run_behind(&self, value: ExprId) -> Vec<Vec<Step>> {
+        let ast = self.ast;
+        match ast.expr(value) {
             Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::Index(inner, _)
-            | Expression::FieldAccess(inner, _) => self.run_behind(inner),
+            | Expression::FieldAccess(inner, _) => self.run_behind(*inner),
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(name) = callee.as_ref() else {
+                let Expression::Identifier(name) = ast.expr(*callee) else {
                     return Vec::new();
                 };
-                let Some(summary) = self.runs.viewed.get(name) else {
+                let Some(summary) = self.runs.viewed.get(ast.name(*name))
+                else {
                     return Vec::new();
                 };
                 let mut found = Vec::new();
                 for (index, under) in summary {
-                    let Some(argument) = arguments.get(*index) else {
+                    let Some(argument) = ast.exprs_in(*arguments).get(*index)
+                    else {
                         continue;
                     };
-                    for mut path in self.argument_bases(argument) {
+                    for mut path in self.argument_bases(*argument) {
                         path.extend(under.iter().cloned());
                         found.push(path);
                     }
@@ -1444,12 +1530,12 @@ impl MoveChecker<'_> {
     /// asking only for a place gave up there and tracked nothing, so a view
     /// taken through one wrapper was invisible to both the growth rule and the
     /// container-release one.
-    fn argument_bases(&self, argument: &Expression) -> Vec<Vec<Step>> {
+    fn argument_bases(&self, argument: ExprId) -> Vec<Vec<Step>> {
         // A binding that views a run stands for that run rather than for
         // storage of its own. `held := vec_slice($T, v)` handed to a wrapper is
         // the run inside `v`, and reading `held` as a place loses it.
-        if let Expression::Identifier(name) = argument
-            && let Some(runs) = self.view_runs.get(name)
+        if let Expression::Identifier(name) = self.ast.expr(argument)
+            && let Some(runs) = self.view_runs.get(self.ast.name(*name))
             && !runs.is_empty()
         {
             return runs.clone();
@@ -1506,22 +1592,20 @@ impl MoveChecker<'_> {
     /// What a call replaces, read against the places the caller wrote. The
     /// argument as written with the callee's names under it, which is the same
     /// reading `apply_summary` makes of what a call consumes.
-    fn apply_replacements(
-        &mut self,
-        callee: &Expression,
-        arguments: &[Expression],
-    ) {
-        let Expression::Identifier(name) = callee else {
+    fn apply_replacements(&mut self, callee: ExprId, arguments: Range32) {
+        let ast = self.ast;
+        let Expression::Identifier(name) = ast.expr(callee) else {
             return;
         };
-        let Some(summary) = self.runs.replaced.get(name).cloned() else {
+        let Some(summary) = self.runs.replaced.get(ast.name(*name)).cloned()
+        else {
             return;
         };
         for (index, under) in summary {
-            let Some(argument) = arguments.get(index) else {
+            let Some(argument) = ast.exprs_in(arguments).get(index) else {
                 continue;
             };
-            for mut path in self.argument_bases(argument) {
+            for mut path in self.argument_bases(*argument) {
                 path.extend(under.iter().cloned());
                 self.note_replaced(&path);
             }
@@ -1531,15 +1615,17 @@ impl MoveChecker<'_> {
     /// A binding takes a view, or stops being one. Rebinding is what taking the
     /// view again after a push amounts to, and it is what clears the staleness a
     /// push left.
-    fn note_view_runs(&mut self, name: &str, value: &Expression) {
+    fn note_view_runs(&mut self, name: &str, value: ExprId) {
         let runs = self.viewed_runs(value);
         if runs.is_empty() {
             self.view_runs.remove(name);
             self.view_borrows.remove(name);
         } else {
             self.view_runs.insert(name.to_string(), runs);
-            if matches!(value, Expression::Borrow(_) | Expression::BorrowMut(_))
-            {
+            if matches!(
+                self.ast.expr(value),
+                Expression::Borrow(_) | Expression::BorrowMut(_)
+            ) {
                 self.view_borrows.insert(name.to_string());
             } else {
                 self.view_borrows.remove(name);
@@ -1626,16 +1712,17 @@ impl MoveChecker<'_> {
     /// What a place reaches through, which is read even where the place itself
     /// is written: the index of `xs[i] = v`, and the base of a field of a
     /// borrow. A bare name reaches through nothing.
-    fn visit_beneath(&mut self, target: &Expression) -> Result<()> {
-        match target {
+    fn visit_beneath(&mut self, target: ExprId) -> Result<()> {
+        match self.ast.expr(target) {
             Expression::Identifier(_) => Ok(()),
             Expression::Index(base, index) => {
-                self.visit(index, false)?;
+                let base = *base;
+                self.visit(*index, false)?;
                 self.visit_beneath(base)
             }
             Expression::FieldAccess(base, _)
-            | Expression::Dereference(base) => self.visit_beneath(base),
-            other => self.visit(other, false),
+            | Expression::Dereference(base) => self.visit_beneath(*base),
+            _ => self.visit(target, false),
         }
     }
 
@@ -1645,7 +1732,7 @@ impl MoveChecker<'_> {
     /// moves.
     fn visit_place(
         &mut self,
-        expression: &Expression,
+        expression: ExprId,
         path: &[Step],
         moving: bool,
     ) -> Result<()> {
@@ -1722,20 +1809,21 @@ impl MoveChecker<'_> {
     /// elements one at a time stays what it always was.
     fn apply_summary(
         &mut self,
-        callee: &Expression,
-        arguments: &[Expression],
+        callee: ExprId,
+        arguments: Range32,
     ) -> Result<()> {
-        let Expression::Identifier(name) = callee else {
+        let ast = self.ast;
+        let Expression::Identifier(name) = ast.expr(callee) else {
             return Ok(());
         };
-        let Some(summary) = self.summaries.get(name) else {
+        let Some(summary) = self.summaries.get(ast.name(*name)) else {
             return Ok(());
         };
         for (index, under, state) in summary.clone() {
-            let Some(argument) = arguments.get(index) else {
+            let Some(argument) = ast.exprs_in(arguments).get(index) else {
                 continue;
             };
-            let Some(mut path) = self.borrow_place(argument) else {
+            let Some(mut path) = self.borrow_place(*argument) else {
                 continue;
             };
             path.extend(under);
@@ -1770,11 +1858,12 @@ impl MoveChecker<'_> {
         }
     }
 
-    fn check_block(&mut self, block: &Block) -> bool {
+    fn check_block(&mut self, block: Range32) -> bool {
+        let ast = self.ast;
         let mut diverges = false;
-        for statement in block {
-            let outcome = self.check_statement(&statement.node);
-            diverges = self.record(outcome, statement.position);
+        for statement in ast.stmts_in(block) {
+            let outcome = self.check_statement(*statement);
+            diverges = self.record(outcome, ast.stmt_position(*statement));
             if diverges {
                 break;
             }
@@ -1782,26 +1871,28 @@ impl MoveChecker<'_> {
         diverges
     }
 
-    fn check_function_body(&mut self, block: &Block) -> bool {
+    fn check_function_body(&mut self, block: Range32) -> bool {
+        let ast = self.ast;
+        let statements = ast.stmts_in(block);
         let mut diverges = false;
-        for (index, statement) in block.iter().enumerate() {
-            let is_last = index + 1 == block.len();
-            let position = statement.position;
+        for (index, statement) in statements.iter().enumerate() {
+            let is_last = index + 1 == statements.len();
+            let position = ast.stmt_position(*statement);
             if is_last
-                && let Statement::Expression(expression) = &statement.node
+                && let Statement::Expression(expression) = ast.stmt(*statement)
             {
                 if matches!(
-                    expression,
+                    ast.expr(*expression),
                     Expression::If(..) | Expression::Switch(..)
                 ) {
-                    let outcome = self.check_conditional(expression);
+                    let outcome = self.check_conditional(*expression);
                     diverges = self.record(outcome, position);
                 } else {
-                    let outcome = self.visit(expression, true).map(|()| false);
+                    let outcome = self.visit(*expression, true).map(|()| false);
                     self.record(outcome, position);
                 }
             } else {
-                let outcome = self.check_statement(&statement.node);
+                let outcome = self.check_statement(*statement);
                 diverges = self.record(outcome, position);
                 if diverges {
                     break;
@@ -1811,16 +1902,20 @@ impl MoveChecker<'_> {
         diverges
     }
 
-    fn check_statement(&mut self, statement: &Statement) -> Result<bool> {
-        match statement {
+    fn check_statement(&mut self, statement: StmtId) -> Result<bool> {
+        let ast = self.ast;
+        match ast.stmt(statement) {
             Statement::Let {
                 name,
                 type_annotation,
                 value,
                 ..
             } => {
+                let name = ast.name(*name).to_string();
+                let value = *value;
                 self.visit(value, true)?;
                 let inferred = infer_type(
+                    ast,
                     type_annotation.as_ref(),
                     value,
                     &self.types,
@@ -1830,7 +1925,7 @@ impl MoveChecker<'_> {
                 // which is how a function read out of a table is known to be
                 // one: `run := systems[i].run` then `run(world)`.
                 .or_else(|| self.value_type(value));
-                self.note_binding(name, inferred);
+                self.note_binding(&name, inferred);
                 match self.viewed_container(value) {
                     Some(held) => {
                         self.views.insert(name.clone(), held);
@@ -1838,24 +1933,31 @@ impl MoveChecker<'_> {
                     // Rebinding replaces whatever the name viewed before, which
                     // is what taking the view again after a push amounts to.
                     None => {
-                        self.views.remove(name);
+                        self.views.remove(&name);
                     }
                 }
-                self.note_view_runs(name, value);
+                self.note_view_runs(&name, value);
                 Ok(false)
             }
-            Statement::Constant(
-                _,
-                Expression::Function(..) | Expression::Proc(..),
-            ) => Ok(false),
+            Statement::Constant(_, value)
+                if matches!(
+                    ast.expr(*value),
+                    Expression::Function(..) | Expression::Proc(..)
+                ) =>
+            {
+                Ok(false)
+            }
             Statement::Constant(name, value) => {
+                let value = *value;
                 self.visit(value, true)?;
                 let inferred =
-                    infer_type(None, value, &self.types, self.signatures);
-                self.note_binding(name, inferred);
+                    infer_type(ast, None, value, &self.types, self.signatures);
+                self.note_binding(ast.name(*name), inferred);
                 Ok(false)
             }
             Statement::Assignment(target, value) => {
+                let target = *target;
+                let value = *value;
                 self.visit(value, true)?;
                 // A write that puts a different run in a place is the growth a
                 // container does inside itself, seen from the frame that holds
@@ -1875,10 +1977,12 @@ impl MoveChecker<'_> {
                 // Writing to a `ref` writes through it into the container, so
                 // it is a use of the run rather than a rebinding of the name,
                 // and a stale one lands in the block that was given back.
-                if let Expression::Identifier(name) = target
-                    && self.view_borrows.contains(name)
-                    && let Some(replaced) = self.views_replaced_run(name)
+                if let Expression::Identifier(name) = ast.expr(target)
+                    && self.view_borrows.contains(ast.name(*name))
+                    && let Some(replaced) =
+                        self.views_replaced_run(ast.name(*name))
                 {
+                    let name = ast.name(*name);
                     bail!(
                         "ownership: '{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to write. Take the view again after the growth"
                     );
@@ -1888,10 +1992,10 @@ impl MoveChecker<'_> {
                 // taking the view again after a push amounts to. A write that
                 // hands it no view is a write through it, and leaves what it
                 // views alone.
-                if let Expression::Identifier(name) = target
+                if let Expression::Identifier(name) = ast.expr(target)
                     && !self.viewed_runs(value).is_empty()
                 {
-                    self.note_view_runs(name, value);
+                    self.note_view_runs(ast.name(*name), value);
                 }
                 // The target is written, not read. Putting a value into a place
                 // is what makes it hold one again, so a place given away and
@@ -1899,8 +2003,9 @@ impl MoveChecker<'_> {
                 // followed by `world.tables = kept` is a container replacing
                 // what it released. Whatever the target reaches through is
                 // still a read, which is the index of `xs[i] = v`.
-                if let Expression::Identifier(name) = target {
-                    self.states.insert(name.clone(), MoveState::Live);
+                if let Expression::Identifier(name) = ast.expr(target) {
+                    self.states
+                        .insert(ast.name(*name).to_string(), MoveState::Live);
                 } else if let Some(path) = self.borrow_place(target) {
                     let key = self.place_key(&path);
                     if let Some(blamed) = self.moved_container_of(&path) {
@@ -1914,35 +2019,35 @@ impl MoveChecker<'_> {
                 Ok(false)
             }
             Statement::Return(expression) => {
-                self.visit(expression, true)?;
+                self.visit(*expression, true)?;
                 Ok(true)
             }
             Statement::Expression(expression) => {
                 if matches!(
-                    expression,
+                    ast.expr(*expression),
                     Expression::If(..) | Expression::Switch(..)
                 ) {
-                    self.check_conditional(expression)
+                    self.check_conditional(*expression)
                 } else {
-                    self.visit(expression, false)?;
+                    self.visit(*expression, false)?;
                     Ok(false)
                 }
             }
             Statement::While(condition, body) => {
-                self.visit(condition, false)?;
-                self.check_loop_body(body)?;
+                self.visit(*condition, false)?;
+                self.check_loop_body(*body)?;
                 Ok(false)
             }
             Statement::For(variable, _, range, body) => {
-                self.visit(range, false)?;
-                self.note_binding(variable, Some(Type::I64));
-                self.check_loop_body(body)?;
+                self.visit(*range, false)?;
+                self.note_binding(ast.name(*variable), Some(Type::I64));
+                self.check_loop_body(*body)?;
                 Ok(false)
             }
             Statement::Defer(inner) => {
                 let was_in_defer = self.in_defer;
                 self.in_defer = true;
-                let result = self.check_statement(inner);
+                let result = self.check_statement(*inner);
                 self.in_defer = was_in_defer;
                 result?;
                 Ok(false)
@@ -1953,9 +2058,9 @@ impl MoveChecker<'_> {
             // `print` stayed live and could be used again, which is the one
             // place a use-after-move went unnoticed.
             Statement::Print(expression, arguments) => {
-                self.visit(expression, false)?;
-                for argument in arguments {
-                    self.visit(argument, false)?;
+                self.visit(*expression, false)?;
+                for argument in ast.exprs_in(*arguments) {
+                    self.visit(*argument, false)?;
                 }
                 Ok(false)
             }
@@ -1964,13 +2069,13 @@ impl MoveChecker<'_> {
             // `LetMultiple`. Both are walked anyway, so neither becomes a hole
             // if that order ever changes.
             Statement::With(_, body) => {
-                self.check_block(body);
+                self.check_block(*body);
                 Ok(false)
             }
             Statement::LetMultiple(bindings, value) => {
-                self.visit(value, true)?;
-                for binding in bindings {
-                    self.note_binding(&binding.name, None);
+                self.visit(*value, true)?;
+                for binding in ast.bindings_in(*bindings) {
+                    self.note_binding(ast.name(binding.name), None);
                 }
                 Ok(false)
             }
@@ -1987,7 +2092,7 @@ impl MoveChecker<'_> {
         }
     }
 
-    fn check_loop_body(&mut self, body: &Block) -> Result<()> {
+    fn check_loop_body(&mut self, body: Range32) -> Result<()> {
         let before = self.states.clone();
         let replacements = self.replacements;
         self.check_block(body);
@@ -2031,13 +2136,13 @@ impl MoveChecker<'_> {
         Ok(())
     }
 
-    fn check_conditional(&mut self, expression: &Expression) -> Result<bool> {
-        match expression {
+    fn check_conditional(&mut self, expression: ExprId) -> Result<bool> {
+        match self.ast.expr(expression) {
             Expression::If(condition, consequence, alternative) => {
-                self.check_if(condition, consequence, alternative.as_ref())
+                self.check_if(*condition, *consequence, *alternative)
             }
             Expression::Switch(scrutinee, cases) => {
-                self.check_switch(scrutinee, cases)
+                self.check_switch(*scrutinee, *cases)
             }
             _ => {
                 self.visit(expression, false)?;
@@ -2048,7 +2153,7 @@ impl MoveChecker<'_> {
 
     fn check_arm(
         &mut self,
-        block: &Block,
+        block: Range32,
     ) -> Result<(HashMap<String, MoveState>, bool)> {
         let diverges = self.check_block(block);
         let states = self.states.clone();
@@ -2073,9 +2178,9 @@ impl MoveChecker<'_> {
 
     fn check_if(
         &mut self,
-        condition: &Expression,
-        consequence: &Block,
-        alternative: Option<&Block>,
+        condition: ExprId,
+        consequence: Range32,
+        alternative: Option<Range32>,
     ) -> Result<bool> {
         self.visit(condition, false)?;
         let before = self.states.clone();
@@ -2102,23 +2207,25 @@ impl MoveChecker<'_> {
 
     fn check_switch(
         &mut self,
-        scrutinee: &Expression,
-        cases: &[crate::parser::SwitchCase],
+        scrutinee: ExprId,
+        cases: Range32,
     ) -> Result<bool> {
+        let ast = self.ast;
         self.visit(scrutinee, false)?;
-        if let Expression::Identifier(name) = scrutinee
-            && self.is_linear_variable(name)
+        if let Expression::Identifier(name) = ast.expr(scrutinee)
+            && self.is_linear_variable(ast.name(*name))
         {
-            self.states.insert(name.clone(), MoveState::Moved);
+            self.states
+                .insert(ast.name(*name).to_string(), MoveState::Moved);
         }
         let before = self.states.clone();
         let stale_before = self.stale.clone();
         let mut arms = Vec::new();
         let mut stale_arms = Vec::new();
-        for case in cases {
+        for case in ast.cases_in(cases) {
             self.states = before.clone();
             self.stale = stale_before.clone();
-            arms.push(self.check_arm(&case.body)?);
+            arms.push(self.check_arm(case.body)?);
             stale_arms.push(std::mem::take(&mut self.stale));
         }
         self.merge_stale(&stale_before, stale_arms);
@@ -2172,9 +2279,11 @@ impl MoveChecker<'_> {
         result
     }
 
-    fn visit(&mut self, expression: &Expression, moving: bool) -> Result<()> {
-        match expression {
+    fn visit(&mut self, expression: ExprId, moving: bool) -> Result<()> {
+        let ast = self.ast;
+        match ast.expr(expression) {
             Expression::Identifier(name) => {
+                let name = ast.name(*name);
                 if let Some(container) = self.views_gone_storage(name) {
                     bail!(
                         "ownership: '{name}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
@@ -2193,7 +2302,7 @@ impl MoveChecker<'_> {
                             } else {
                                 MoveState::Moved
                             };
-                            self.states.insert(name.clone(), consumed);
+                            self.states.insert(name.to_string(), consumed);
                         }
                     }
                     MoveState::Deferred => {
@@ -2212,7 +2321,7 @@ impl MoveChecker<'_> {
             Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::AddressOf(inner)
-            | Expression::Dereference(inner) => self.visit(inner, false),
+            | Expression::Dereference(inner) => self.visit(*inner, false),
             // A field or an element is a place of its own. Consuming one
             // consumes part of what holds it, so the whole path is what the
             // table is asked about rather than the name at its root: reading
@@ -2228,10 +2337,11 @@ impl MoveChecker<'_> {
                     self.visit_place(expression, &path, moving)?;
                     return Ok(());
                 }
-                self.visit(base, false)
+                self.visit(*base, false)
             }
             Expression::Index(base, index) => {
-                self.visit(index, false)?;
+                let base = *base;
+                self.visit(*index, false)?;
                 if let Some(path) = self.borrow_place(expression) {
                     self.visit_place(expression, &path, moving)?;
                     return Ok(());
@@ -2239,18 +2349,24 @@ impl MoveChecker<'_> {
                 self.visit(base, false)
             }
             Expression::PackMap(operand, _, _)
-            | Expression::Prefix(_, operand) => self.visit(operand, false),
+            | Expression::Prefix(_, operand) => self.visit(*operand, false),
             Expression::Infix(left, _, right) => {
-                self.visit(left, false)?;
+                let right = *right;
+                self.visit(*left, false)?;
                 self.visit(right, false)
             }
             Expression::Call(callee, arguments) => {
+                let callee = *callee;
+                let arguments = *arguments;
                 self.visit(callee, false)?;
-                if let Expression::Identifier(name) = callee.as_ref()
-                    && let Some(borrows) = builtin_borrows_first_argument(name)
+                if let Expression::Identifier(name) = ast.expr(callee)
+                    && let Some(borrows) =
+                        builtin_borrows_first_argument(ast.name(*name))
                 {
-                    for (index, argument) in arguments.iter().enumerate() {
-                        self.visit(argument, !(borrows && index == 0))?;
+                    for (index, argument) in
+                        ast.exprs_in(arguments).iter().enumerate()
+                    {
+                        self.visit(*argument, !(borrows && index == 0))?;
                     }
                     return Ok(());
                 }
@@ -2262,13 +2378,17 @@ impl MoveChecker<'_> {
                 // systems could not be walked: `systems[i].run(world)` took the
                 // world away on the first one.
                 let held = self.callee_signature(callee);
-                let param_types = match callee.as_ref() {
+                let param_types = match ast.expr(callee) {
                     Expression::Identifier(name) => {
-                        self.param_types.get(name).or(held.as_ref())
+                        self.param_types.get(ast.name(*name)).or(held.as_ref())
                     }
                     _ => held.as_ref(),
                 };
-                check_borrow_exclusivity(self, arguments, param_types)?;
+                check_borrow_exclusivity(
+                    self,
+                    ast.exprs_in(arguments),
+                    param_types,
+                )?;
                 // A call to a compile-time parameter names a function only
                 // once the generic is specialized, so it says nothing about
                 // ownership yet and the specialized body answers for it
@@ -2276,12 +2396,14 @@ impl MoveChecker<'_> {
                 // consuming, so a function pointer does not quietly stop
                 // moving what it is given.
                 let deferred = matches!(
-                    callee.as_ref(),
+                    ast.expr(callee),
                     Expression::Identifier(name)
-                        if self.compile_time.contains(name)
+                        if self.compile_time.contains(ast.name(*name))
                 );
                 let known = !deferred;
-                for (index, argument) in arguments.iter().enumerate() {
+                for (index, argument) in
+                    ast.exprs_in(arguments).iter().enumerate()
+                {
                     let declared = param_types
                         .and_then(|types| types.get(index))
                         .and_then(|ty| ty.as_ref());
@@ -2289,7 +2411,7 @@ impl MoveChecker<'_> {
                         declared,
                         Some(Type::Ref(_) | Type::RefMut(_))
                     );
-                    self.visit(argument, known && !borrows)?;
+                    self.visit(*argument, known && !borrows)?;
                     // What the callee says it takes, rather than what the
                     // argument's own type works out to. A place behind a `mut`
                     // parameter types through a borrow and through the mode
@@ -2301,7 +2423,7 @@ impl MoveChecker<'_> {
                         && !borrows
                         && declared
                             .is_some_and(|ty| ty.is_linear_with(self.linear))
-                        && let Some(path) = self.borrow_place(argument)
+                        && let Some(path) = self.borrow_place(*argument)
                     {
                         let key = self.place_key(&path);
                         let consumed = if self.in_defer {
@@ -2319,24 +2441,24 @@ impl MoveChecker<'_> {
                 Ok(())
             }
             Expression::StructInit(_, fields) => {
-                for (_, value) in fields {
-                    self.visit(value, true)?;
+                for field in ast.named_in(*fields) {
+                    self.visit(field.value, true)?;
                 }
                 Ok(())
             }
             Expression::EnumVariantInit(_, _, fields) => {
-                for (_, value) in fields {
-                    self.visit(value, true)?;
+                for field in ast.named_in(*fields) {
+                    self.visit(field.value, true)?;
                 }
                 Ok(())
             }
             Expression::Literal(Literal::Array(elements)) => {
-                for element in elements {
-                    self.visit(element, true)?;
+                for element in ast.exprs_in(*elements) {
+                    self.visit(*element, true)?;
                 }
                 Ok(())
             }
-            Expression::ArrayRepeat(value, _) => self.visit(value, true),
+            Expression::ArrayRepeat(value, _) => self.visit(*value, true),
             Expression::If(..) | Expression::Switch(..) => {
                 self.check_conditional(expression)?;
                 Ok(())
@@ -2345,7 +2467,7 @@ impl MoveChecker<'_> {
             // inside one is a move, and not walking in meant a value consumed
             // there stayed live and could be consumed again.
             Expression::Unsafe(body) => {
-                self.check_block(body);
+                self.check_block(*body);
                 Ok(())
             }
             // Listed rather than caught by `_`, so a new expression form is a
@@ -2374,10 +2496,7 @@ impl MoveChecker<'_> {
 
     /// The parameter types of what this expression calls, for a callee that is
     /// a value of function-pointer type rather than a declared name.
-    fn callee_signature(
-        &self,
-        callee: &Expression,
-    ) -> Option<Vec<Option<Type>>> {
+    fn callee_signature(&self, callee: ExprId) -> Option<Vec<Option<Type>>> {
         let Type::Proc(params, _) = self.value_type(callee)? else {
             return None;
         };
@@ -2387,10 +2506,13 @@ impl MoveChecker<'_> {
     /// The type of a place, as far as the names and the struct declarations
     /// give it: a name, an element of one, a field of one, or a field of an
     /// element. This is what a function pointer held in a table is written as.
-    fn value_type(&self, expression: &Expression) -> Option<Type> {
-        match expression {
-            Expression::Identifier(name) => self.types.get(name).cloned(),
-            Expression::Index(base, _) => match self.value_type(base)? {
+    fn value_type(&self, expression: ExprId) -> Option<Type> {
+        let ast = self.ast;
+        match ast.expr(expression) {
+            Expression::Identifier(name) => {
+                self.types.get(ast.name(*name)).cloned()
+            }
+            Expression::Index(base, _) => match self.value_type(*base)? {
                 Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
                 _ => None,
             },
@@ -2399,14 +2521,16 @@ impl MoveChecker<'_> {
                 // field of it is the same field. Asking only about the struct
                 // itself left every place behind a borrow untyped, so nothing
                 // consumed through one was recorded.
-                let held = match self.value_type(base)? {
+                let held = match self.value_type(*base)? {
                     Type::Ref(inner) | Type::RefMut(inner) => *inner,
                     other => other,
                 };
                 let Type::Struct(name) = held else {
                     return None;
                 };
-                self.field_types.get(&(name, field.clone())).cloned()
+                self.field_types
+                    .get(&(name, ast.name(*field).to_string()))
+                    .cloned()
             }
             _ => None,
         }
@@ -2423,30 +2547,34 @@ impl MoveChecker<'_> {
     /// through fields, indexes and dereferences. `None` for an expression that
     /// is not a place (a call, a literal), which names no storage a second
     /// borrow could reach.
-    fn borrow_place(&self, expression: &Expression) -> Option<Vec<Step>> {
-        match expression {
+    fn borrow_place(&self, expression: ExprId) -> Option<Vec<Step>> {
+        let ast = self.ast;
+        match ast.expr(expression) {
             Expression::Identifier(name) => {
-                Some(vec![Step::Named(name.clone())])
+                Some(vec![Step::Named(ast.name(*name).to_string())])
             }
             Expression::FieldAccess(base, field) => {
-                let mut path = self.borrow_place(base)?;
-                path.push(Step::Named(format!(".{field}")));
+                let mut path = self.borrow_place(*base)?;
+                path.push(Step::Named(format!(".{}", ast.name(*field))));
                 Some(path)
             }
             Expression::Index(base, index) => {
-                let mut path = self.borrow_place(base)?;
-                let literal = match index.as_ref() {
+                let mut path = self.borrow_place(*base)?;
+                let literal = match ast.expr(*index) {
                     Expression::Literal(Literal::Integer(value)) => {
                         Some(*value)
                     }
                     _ => None,
                 };
-                path.push(Step::Index(literal, format!("[{index}]")));
+                path.push(Step::Index(
+                    literal,
+                    format!("[{}]", display_expr(ast, *index)),
+                ));
                 Some(path)
             }
             Expression::Dereference(base) => {
-                let mut path = self.borrow_place(base)?;
-                path.push(Step::Deref(self.reads_raw_pointer(base)));
+                let mut path = self.borrow_place(*base)?;
+                path.push(Step::Deref(self.reads_raw_pointer(*base)));
                 Some(path)
             }
             _ => None,
@@ -2459,7 +2587,7 @@ impl MoveChecker<'_> {
     /// A type the walk cannot name answers yes. Where it points is then exactly
     /// what nothing here knows, and this check is about what two places might
     /// share rather than what they are known to share.
-    fn reads_raw_pointer(&self, base: &Expression) -> bool {
+    fn reads_raw_pointer(&self, base: ExprId) -> bool {
         match self.value_type(base) {
             Some(Type::Ref(_) | Type::RefMut(_)) => false,
             Some(Type::Ptr(_)) => true,
@@ -2628,9 +2756,10 @@ fn describe_place(path: &[Step]) -> String {
 
 fn check_borrow_exclusivity(
     checker: &MoveChecker<'_>,
-    arguments: &[Expression],
+    arguments: &[ExprId],
     param_types: Option<&Vec<Option<Type>>>,
 ) -> Result<()> {
+    let ast = checker.ast;
     // Each borrowed argument as (place path, whether it is exclusive). A `mut`
     // parameter and an explicit `&mut` borrow exclusively. A `read` parameter
     // and a `&` share.
@@ -2639,19 +2768,19 @@ fn check_borrow_exclusivity(
         let mode = param_types
             .and_then(|types| types.get(index))
             .and_then(|ty| ty.as_ref());
-        let borrow = match argument {
+        let borrow = match ast.expr(*argument) {
             Expression::BorrowMut(inner) => {
-                checker.borrow_place(inner).map(|p| (p, true))
+                checker.borrow_place(*inner).map(|p| (p, true))
             }
             Expression::Borrow(inner) => {
-                checker.borrow_place(inner).map(|p| (p, false))
+                checker.borrow_place(*inner).map(|p| (p, false))
             }
             _ => match mode {
                 Some(Type::RefMut(_)) => {
-                    checker.borrow_place(argument).map(|p| (p, true))
+                    checker.borrow_place(*argument).map(|p| (p, true))
                 }
                 Some(Type::Ref(_)) => {
-                    checker.borrow_place(argument).map(|p| (p, false))
+                    checker.borrow_place(*argument).map(|p| (p, false))
                 }
                 _ => None,
             },
@@ -2703,14 +2832,15 @@ fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
 fn linear_closure(
     declared: &HashSet<String>,
     fields: &FieldTypes,
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
 ) -> HashSet<String> {
     let mut held = declared.clone();
     // The instantiations the program writes. A generic's declared field names a
     // parameter bound to nothing here, so the field table answers for `Slab` and
     // not for `Slab<Node, 2>`, and it is the second that holds the resource.
-    let instances = crate::linear_instances::collect_instances(statements);
-    let templates = crate::linear_instances::declared_structs(statements);
+    let instances = crate::linear_instances::collect_instances(ast, roots);
+    let templates = crate::linear_instances::declared_structs(ast, roots);
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
@@ -2743,18 +2873,21 @@ fn linear_closure(
 }
 
 fn infer_type(
+    ast: &Ast,
     annotation: Option<&Type>,
-    value: &Expression,
+    value: ExprId,
     types: &HashMap<String, Type>,
     signatures: &Signatures,
 ) -> Option<Type> {
     if let Some(ty) = annotation {
         return Some(ty.clone());
     }
-    match value {
-        Expression::StructInit(name, _) => Some(Type::Struct(name.clone())),
+    match ast.expr(value) {
+        Expression::StructInit(name, _) => {
+            Some(Type::Struct(ast.name(*name).to_string()))
+        }
         Expression::EnumVariantInit(name, _, _) => {
-            Some(Type::Enum(name.clone()))
+            Some(Type::Enum(ast.name(*name).to_string()))
         }
         Expression::Literal(Literal::String(_)) => Some(Type::Str),
         Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
@@ -2763,20 +2896,21 @@ fn infer_type(
         Expression::Literal(Literal::Boolean(_)) | Expression::Boolean(_) => {
             Some(Type::Bool)
         }
-        Expression::Identifier(name) => types.get(name).cloned(),
+        Expression::Identifier(name) => types.get(ast.name(*name)).cloned(),
         // The declared result with this call's type arguments put in, so a call
         // that answers with an instantiation is typed as the one it makes
         // rather than as the template it was declared from.
         Expression::Call(callee, arguments) => {
-            let Expression::Identifier(name) = &**callee else {
+            let Expression::Identifier(name) = ast.expr(*callee) else {
                 return None;
             };
-            let signature = signatures.get(name)?;
+            let signature = signatures.get(ast.name(*name))?;
             let mut subst: HashMap<String, Type> = HashMap::new();
-            for (slot, argument) in signature.type_params.iter().zip(arguments)
+            for (slot, argument) in
+                signature.type_params.iter().zip(ast.exprs_in(*arguments))
             {
                 if let Some(parameter) = slot
-                    && let Expression::TypeValue(ty) = argument
+                    && let Expression::TypeValue(ty) = ast.expr(*argument)
                 {
                     subst.insert(parameter.clone(), ty.clone());
                 }
@@ -2799,10 +2933,10 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
-        let mut statements = parser.parse()?;
+        let mut module = parser.parse()?;
         let linear = parser.linear_types().clone();
-        crate::param_modes::lower_param_modes(&mut statements);
-        check_ownership(&statements, &linear)
+        crate::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        check_ownership(&module.ast, &module.roots, &linear)
     }
 
     #[test]

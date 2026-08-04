@@ -11,42 +11,51 @@
 // Two functions that return the same list of types share the struct, since the
 // name is derived from the types.
 
-use crate::parser::{
-    Expression, MultiBinding, ReturnKind, ReturnValue, Spanned, Statement,
-    StructField, SwitchCase, multi_return_field_name, multi_return_struct_name,
+use crate::ast::{
+    Ast, ExprId, Expression, NamedExpr, Range32, ReturnKind, Statement, StmtId,
+    StructField, TokenSpan,
 };
 use crate::types::Type;
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashMap};
 
 pub fn lower_multiple_returns(
-    statements: &mut Vec<Spanned<Statement>>,
+    ast: &mut Ast,
+    roots: &mut Vec<StmtId>,
 ) -> Result<()> {
     let mut lowering = Lowering {
         signatures: HashMap::new(),
         structs: BTreeMap::new(),
         counter: 0,
     };
-    lowering.collect_signatures(statements)?;
+    lowering.collect_signatures(ast, roots)?;
     if lowering.signatures.is_empty() {
         // Nothing declares a return type list, so there is nothing to rewrite
         // and no call to reject.
         return Ok(());
     }
-    lowering.rewrite_statements(statements, None)?;
+    let rewritten = lowering.rewrite_statements(ast, roots, None)?;
+    *roots = rewritten;
 
     for (name, types) in std::mem::take(&mut lowering.structs) {
-        let fields = types
+        let field_types: Vec<Type> = ast
+            .return_values_in(types)
             .iter()
-            .enumerate()
-            .map(|(index, held)| StructField {
-                name: multi_return_field_name(&types, index),
-                field_type: held.value_type.clone(),
-            })
+            .map(|held| held.value_type.clone())
             .collect();
-        statements.push(Spanned::new(
-            Statement::Struct(name, Vec::new(), fields),
-            Default::default(),
+        let mut fields = Vec::with_capacity(field_types.len());
+        for (index, field_type) in field_types.into_iter().enumerate() {
+            let field_name = ast.multi_return_field_name(types, index);
+            fields.push(StructField {
+                name: ast.intern(&field_name),
+                field_type,
+            });
+        }
+        let fields = ast.add_struct_fields(fields);
+        let name = ast.intern(&name);
+        roots.push(ast.push_stmt(
+            Statement::Struct(name, Range32::EMPTY, fields),
+            TokenSpan::NONE,
         ));
     }
     Ok(())
@@ -54,121 +63,153 @@ pub fn lower_multiple_returns(
 
 struct Lowering {
     // Every function that returns a type list, by name.
-    signatures: HashMap<String, Vec<ReturnValue>>,
-    structs: BTreeMap<String, Vec<ReturnValue>>,
+    signatures: HashMap<String, Range32>,
+    structs: BTreeMap<String, Range32>,
     counter: usize,
 }
 
 impl Lowering {
     fn collect_signatures(
         &mut self,
-        statements: &[Spanned<Statement>],
+        ast: &Ast,
+        statements: &[StmtId],
     ) -> Result<()> {
         for statement in statements {
-            let (name, parameters, kind) = match &statement.node {
-                Statement::Constant(
-                    name,
+            let (name, parameters, signature) = match ast.stmt(*statement) {
+                Statement::Constant(name, value) => match ast.expr(*value) {
                     Expression::Function(parameters, signature, _)
-                    | Expression::Proc(parameters, signature, _),
-                ) => (name, Some(parameters), &signature.kind),
+                    | Expression::Proc(parameters, signature, _) => {
+                        (*name, Some(*parameters), *signature)
+                    }
+                    _ => continue,
+                },
                 Statement::Declared {
                     name, return_sig, ..
-                } => (name, None, &return_sig.kind),
+                } => (*name, None, *return_sig),
                 _ => continue,
             };
-            let ReturnKind::Multiple(types) = kind else {
+            let ReturnKind::Multiple(types) = &ast.signature(signature).kind
+            else {
                 continue;
             };
+            let types = *types;
             if let Some(parameters) = parameters
-                && parameters
+                && ast
+                    .params_in(parameters)
                     .iter()
-                    .any(|parameter| parameter.name.starts_with('$'))
+                    .any(|parameter| ast.name(parameter.name).starts_with('$'))
             {
+                let name = ast.name(name);
                 bail!(
                     "'{name}' takes a compile-time argument and returns a type list, and a return type list is one struct rather than one per specialization; return a named struct instead"
                 );
             }
-            self.signatures.insert(name.clone(), types.clone());
+            self.signatures.insert(ast.name(name).to_string(), types);
         }
         Ok(())
     }
 
-    fn struct_for(&mut self, types: &[ReturnValue]) -> String {
-        let name = multi_return_struct_name(types);
-        self.structs
-            .entry(name.clone())
-            .or_insert_with(|| types.to_vec());
+    fn struct_for(&mut self, ast: &Ast, types: Range32) -> String {
+        let name = ast.multi_return_struct_name(types);
+        self.structs.entry(name.clone()).or_insert(types);
         name
     }
 
     fn rewrite_statements(
         &mut self,
-        statements: &mut Vec<Spanned<Statement>>,
-        returns: Option<&[ReturnValue]>,
-    ) -> Result<()> {
-        let mut rewritten: Vec<Spanned<Statement>> =
-            Vec::with_capacity(statements.len());
-        for statement in std::mem::take(statements) {
-            let position = statement.position;
-            match statement.node {
+        ast: &mut Ast,
+        statements: &[StmtId],
+        returns: Option<Range32>,
+    ) -> Result<Vec<StmtId>> {
+        let mut rewritten: Vec<StmtId> = Vec::with_capacity(statements.len());
+        for statement in statements {
+            match ast.stmt(*statement) {
                 Statement::LetMultiple(bindings, value) => {
-                    for expanded in self.expand_binding(bindings, value)? {
-                        rewritten.push(Spanned::new(expanded, position));
-                    }
+                    let (bindings, value) = (*bindings, *value);
+                    rewritten.extend(
+                        self.expand_binding(ast, *statement, bindings, value)?,
+                    );
                 }
-                other => {
-                    let mut node = other;
+                _ => {
                     // Located here rather than inside, because this is where
                     // the statement and its position are both in hand.
+                    let position = ast.stmt_position(*statement);
                     crate::source_map::locate(
-                        self.rewrite_statement(&mut node, returns),
+                        self.rewrite_statement(ast, *statement, returns),
                         position,
                     )?;
-                    rewritten.push(Spanned::new(node, position));
+                    rewritten.push(*statement);
                 }
             }
         }
-        *statements = rewritten;
-        Ok(())
+        Ok(rewritten)
+    }
+
+    fn rewrite_block(
+        &mut self,
+        ast: &mut Ast,
+        block: Range32,
+        returns: Option<Range32>,
+    ) -> Result<Range32> {
+        let statements: Vec<StmtId> = ast.stmts_in(block).to_vec();
+        let rewritten = self.rewrite_statements(ast, &statements, returns)?;
+        if rewritten == statements {
+            Ok(block)
+        } else {
+            Ok(ast.add_stmt_list(&rewritten))
+        }
     }
 
     fn rewrite_statement(
         &mut self,
-        statement: &mut Statement,
-        returns: Option<&[ReturnValue]>,
+        ast: &mut Ast,
+        statement: StmtId,
+        returns: Option<Range32>,
     ) -> Result<()> {
-        match statement {
+        match ast.stmt(statement).clone() {
             Statement::LetMultiple(..) => {
                 unreachable!("a list binding is expanded by rewrite_statements")
             }
             Statement::Constant(name, value) => {
                 if let Expression::Function(_, signature, body)
-                | Expression::Proc(_, signature, body) = value
+                | Expression::Proc(_, signature, body) = ast.expr(value)
                 {
-                    let types = self.signatures.get(name).cloned();
-                    if let Some(types) = &types {
-                        let struct_name = self.struct_for(types);
-                        signature.kind =
+                    let (signature, body) = (*signature, *body);
+                    let types = self.signatures.get(ast.name(name)).copied();
+                    if let Some(types) = types {
+                        let struct_name = self.struct_for(ast, types);
+                        ast.signatures[signature.0 as usize].kind =
                             ReturnKind::Single(Type::Struct(struct_name));
                     }
-                    return self.rewrite_statements(body, types.as_deref());
+                    let body = self.rewrite_block(ast, body, types)?;
+                    let (Expression::Function(_, _, held)
+                    | Expression::Proc(_, _, held)) =
+                        &mut ast.expressions[value.0 as usize]
+                    else {
+                        return Ok(());
+                    };
+                    *held = body;
+                    return Ok(());
                 }
-                self.check_expression(value, None)
+                self.check_expression(ast, value, None)
             }
             Statement::Declared {
                 name, return_sig, ..
             } => {
-                if let Some(types) = self.signatures.get(name).cloned() {
-                    let struct_name = self.struct_for(&types);
-                    return_sig.kind =
+                if let Some(types) =
+                    self.signatures.get(ast.name(name)).copied()
+                {
+                    let struct_name = self.struct_for(ast, types);
+                    ast.signatures[return_sig.0 as usize].kind =
                         ReturnKind::Single(Type::Struct(struct_name));
                 }
                 Ok(())
             }
             Statement::Return(value) => {
-                if let Expression::Tuple(values) = value
+                if let Expression::Tuple(values) = ast.expr(value)
                     && !values.is_empty()
                 {
+                    let values = *values;
                     let Some(types) = returns else {
                         bail!(
                             "this `return` lists {} values and the function returns one; write a return type list to return several",
@@ -182,18 +223,24 @@ impl Lowering {
                             types.len()
                         );
                     }
-                    for held in values.iter_mut() {
-                        self.check_expression(held, returns)?;
+                    let elements = ast.exprs_in(values).to_vec();
+                    for held in &elements {
+                        self.check_expression(ast, *held, returns)?;
                     }
-                    let struct_name = self.struct_for(types);
-                    let fields = std::mem::take(values)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, held)| {
-                            (multi_return_field_name(types, index), held)
-                        })
-                        .collect();
-                    *value = Expression::StructInit(struct_name, fields);
+                    let struct_name = self.struct_for(ast, types);
+                    let mut fields = Vec::with_capacity(elements.len());
+                    for (index, held) in elements.into_iter().enumerate() {
+                        let field_name =
+                            ast.multi_return_field_name(types, index);
+                        fields.push(NamedExpr {
+                            name: ast.intern(&field_name),
+                            value: held,
+                        });
+                    }
+                    let fields = ast.add_named_exprs(&fields);
+                    let name = ast.intern(&struct_name);
+                    ast.expressions[value.0 as usize] =
+                        Expression::StructInit(name, fields);
                     return Ok(());
                 }
                 // `return { quotient = a / b, remainder = a % b }`: the values
@@ -201,20 +248,27 @@ impl Lowering {
                 // struct the list form builds and reads at the return site the
                 // way the signature reads at the definition.
                 if let Some(types) = returns
-                    && let Expression::StructInit(name, fields) = value
-                    && name.is_empty()
+                    && let Expression::StructInit(name, fields) =
+                        ast.expr(value)
+                    && ast.name(*name).is_empty()
                 {
-                    if types.iter().any(|held| held.name.is_none()) {
+                    let fields = *fields;
+                    if ast
+                        .return_values_in(types)
+                        .iter()
+                        .any(|held| held.name.is_none())
+                    {
                         bail!(
                             "this `return` names its values and the signature does not; name them there too, or list the values in order"
                         );
                     }
-                    for (_, held) in fields.iter_mut() {
-                        self.check_expression(held, returns)?;
+                    for field in ast.named_in(fields).to_vec() {
+                        self.check_expression(ast, field.value, returns)?;
                     }
-                    let fields = std::mem::take(fields);
-                    *name = self.struct_for(types);
-                    *value = Expression::StructInit(name.clone(), fields);
+                    let struct_name = self.struct_for(ast, types);
+                    let name = ast.intern(&struct_name);
+                    ast.expressions[value.0 as usize] =
+                        Expression::StructInit(name, fields);
                     return Ok(());
                 }
                 if let Some(types) = returns {
@@ -223,32 +277,57 @@ impl Lowering {
                         types.len()
                     );
                 }
-                self.check_expression(value, returns)
+                self.check_expression(ast, value, returns)
             }
             Statement::Let { value, .. } | Statement::Expression(value) => {
-                self.check_expression(value, returns)
+                self.check_expression(ast, value, returns)
             }
             Statement::Print(value, arguments) => {
-                self.check_expression(value, returns)?;
-                for argument in arguments {
-                    self.check_expression(argument, returns)?;
+                self.check_expression(ast, value, returns)?;
+                for argument in ast.exprs_in(arguments).to_vec() {
+                    self.check_expression(ast, argument, returns)?;
                 }
                 Ok(())
             }
             Statement::Assignment(place, value) => {
-                self.check_expression(place, returns)?;
-                self.check_expression(value, returns)
+                self.check_expression(ast, place, returns)?;
+                self.check_expression(ast, value, returns)
             }
-            Statement::Defer(inner) => self.rewrite_statement(inner, returns),
+            Statement::Defer(inner) => {
+                self.rewrite_statement(ast, inner, returns)
+            }
             Statement::For(_, _, sequence, body) => {
-                self.check_expression(sequence, returns)?;
-                self.rewrite_statements(body, returns)
+                self.check_expression(ast, sequence, returns)?;
+                let body = self.rewrite_block(ast, body, returns)?;
+                let Statement::For(_, _, _, held) =
+                    &mut ast.statements[statement.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held = body;
+                Ok(())
             }
             Statement::While(condition, body) => {
-                self.check_expression(condition, returns)?;
-                self.rewrite_statements(body, returns)
+                self.check_expression(ast, condition, returns)?;
+                let body = self.rewrite_block(ast, body, returns)?;
+                let Statement::While(_, held) =
+                    &mut ast.statements[statement.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held = body;
+                Ok(())
             }
-            Statement::With(_, body) => self.rewrite_statements(body, returns),
+            Statement::With(_, body) => {
+                let body = self.rewrite_block(ast, body, returns)?;
+                let Statement::With(_, held) =
+                    &mut ast.statements[statement.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held = body;
+                Ok(())
+            }
             Statement::Struct(..)
             | Statement::Enum(..)
             | Statement::Flags(..)
@@ -264,10 +343,12 @@ impl Lowering {
     // temporary and one field read per name.
     fn expand_binding(
         &mut self,
-        bindings: Vec<MultiBinding>,
-        mut value: Expression,
-    ) -> Result<Vec<Statement>> {
-        let Some(types) = self.called_signature(&value) else {
+        ast: &mut Ast,
+        statement: StmtId,
+        bindings: Range32,
+        value: ExprId,
+    ) -> Result<Vec<StmtId>> {
+        let Some(types) = self.called_signature(ast, value) else {
             bail!(
                 "a list of names binds the values of a call to a function whose return signature is a type list"
             );
@@ -279,43 +360,58 @@ impl Lowering {
                 types.len()
             );
         }
-        if let Expression::Call(_, arguments) = &mut value {
-            for argument in arguments.iter_mut() {
-                self.check_expression(argument, None)?;
+        let arguments = match ast.expr(value) {
+            Expression::Call(_, arguments) => Some(*arguments),
+            _ => None,
+        };
+        if let Some(arguments) = arguments {
+            for argument in ast.exprs_in(arguments).to_vec() {
+                self.check_expression(ast, argument, None)?;
             }
         }
 
+        let span = ast.stmt_span(statement);
         let temporary = format!("__multi_result{}", self.counter);
         self.counter += 1;
-        let mut expanded = vec![Statement::Let {
-            name: temporary.clone(),
-            type_annotation: None,
-            value,
-            mutable: false,
-        }];
-        for (index, binding) in bindings.into_iter().enumerate() {
-            expanded.push(Statement::Let {
-                name: binding.name,
+        let temporary = ast.intern(&temporary);
+        let mut expanded = vec![ast.push_stmt(
+            Statement::Let {
+                name: temporary,
                 type_annotation: None,
-                value: Expression::FieldAccess(
-                    Box::new(Expression::Identifier(temporary.clone())),
-                    multi_return_field_name(&types, index),
-                ),
-                mutable: binding.mutable,
-            });
+                value,
+                mutable: false,
+            },
+            span,
+        )];
+        let bindings = ast.bindings_in(bindings).to_vec();
+        for (index, binding) in bindings.into_iter().enumerate() {
+            let field_name = ast.multi_return_field_name(types, index);
+            let field = ast.intern(&field_name);
+            let base = ast.push_expr(Expression::Identifier(temporary), span);
+            let access =
+                ast.push_expr(Expression::FieldAccess(base, field), span);
+            expanded.push(ast.push_stmt(
+                Statement::Let {
+                    name: binding.name,
+                    type_annotation: None,
+                    value: access,
+                    mutable: binding.mutable,
+                },
+                span,
+            ));
         }
         Ok(expanded)
     }
 
     // The return type list of the function a call names, if it has one.
-    fn called_signature(&self, value: &Expression) -> Option<Vec<ReturnValue>> {
-        let Expression::Call(callee, _) = value else {
+    fn called_signature(&self, ast: &Ast, value: ExprId) -> Option<Range32> {
+        let Expression::Call(callee, _) = ast.expr(value) else {
             return None;
         };
-        let Expression::Identifier(name) = callee.as_ref() else {
+        let Expression::Identifier(name) = ast.expr(*callee) else {
             return None;
         };
-        self.signatures.get(name).cloned()
+        self.signatures.get(ast.name(*name)).copied()
     }
 
     // A call that returns several values is bound by a list of names and used
@@ -323,35 +419,48 @@ impl Lowering {
     // write.
     fn check_expression(
         &mut self,
-        expression: &mut Expression,
-        returns: Option<&[ReturnValue]>,
+        ast: &mut Ast,
+        expression: ExprId,
+        returns: Option<Range32>,
     ) -> Result<()> {
-        match expression {
+        match ast.expr(expression).clone() {
             Expression::Call(callee, arguments) => {
-                if let Expression::Identifier(name) = callee.as_ref()
-                    && let Some(types) = self.signatures.get(name)
+                if let Expression::Identifier(name) = ast.expr(callee)
+                    && let Some(types) =
+                        self.signatures.get(ast.name(*name)).copied()
                 {
+                    let name = ast.name(*name);
                     bail!(
                         "'{name}' returns {} values, so its call is bound by a list of names",
                         types.len()
                     );
                 }
-                self.check_expression(callee, returns)?;
-                for argument in arguments {
-                    self.check_expression(argument, returns)?;
+                self.check_expression(ast, callee, returns)?;
+                for argument in ast.exprs_in(arguments).to_vec() {
+                    self.check_expression(ast, argument, returns)?;
                 }
                 Ok(())
             }
             Expression::Function(_, signature, body)
             | Expression::Proc(_, signature, body) => {
-                if let ReturnKind::Multiple(types) = &signature.kind {
-                    let types = types.clone();
-                    let struct_name = self.struct_for(&types);
-                    signature.kind =
+                let types = match &ast.signature(signature).kind {
+                    ReturnKind::Multiple(values) => Some(*values),
+                    _ => None,
+                };
+                if let Some(types) = types {
+                    let struct_name = self.struct_for(ast, types);
+                    ast.signatures[signature.0 as usize].kind =
                         ReturnKind::Single(Type::Struct(struct_name));
-                    return self.rewrite_statements(body, Some(&types));
                 }
-                self.rewrite_statements(body, None)
+                let body = self.rewrite_block(ast, body, types)?;
+                let (Expression::Function(_, _, held)
+                | Expression::Proc(_, _, held)) =
+                    &mut ast.expressions[expression.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held = body;
+                Ok(())
             }
             Expression::PackMap(inner, _, _)
             | Expression::Prefix(_, inner)
@@ -360,49 +469,71 @@ impl Lowering {
             | Expression::BorrowMut(inner)
             | Expression::Dereference(inner)
             | Expression::UnsafeFn(inner)
-            | Expression::Try(inner) => self.check_expression(inner, returns),
+            | Expression::Try(inner) => {
+                self.check_expression(ast, inner, returns)
+            }
             Expression::Infix(left, _, right)
             | Expression::Index(left, right)
             | Expression::Range(left, right, _) => {
-                self.check_expression(left, returns)?;
-                self.check_expression(right, returns)
+                self.check_expression(ast, left, returns)?;
+                self.check_expression(ast, right, returns)
             }
             Expression::FieldAccess(inner, _) => {
-                self.check_expression(inner, returns)
+                self.check_expression(ast, inner, returns)
             }
             Expression::If(condition, then_block, else_block) => {
-                self.check_expression(condition, returns)?;
-                self.rewrite_statements(then_block, returns)?;
-                if let Some(block) = else_block {
-                    self.rewrite_statements(block, returns)?;
-                }
+                self.check_expression(ast, condition, returns)?;
+                let then_block =
+                    self.rewrite_block(ast, then_block, returns)?;
+                let else_block = match else_block {
+                    Some(block) => {
+                        Some(self.rewrite_block(ast, block, returns)?)
+                    }
+                    None => None,
+                };
+                let Expression::If(_, held_then, held_else) =
+                    &mut ast.expressions[expression.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held_then = then_block;
+                *held_else = else_block;
                 Ok(())
             }
             Expression::Unsafe(block) => {
-                self.rewrite_statements(block, returns)
+                let block = self.rewrite_block(ast, block, returns)?;
+                let Expression::Unsafe(held) =
+                    &mut ast.expressions[expression.0 as usize]
+                else {
+                    return Ok(());
+                };
+                *held = block;
+                Ok(())
             }
             Expression::Switch(scrutinee, cases) => {
-                self.check_expression(scrutinee, returns)?;
-                for SwitchCase { body, .. } in cases {
-                    self.rewrite_statements(body, returns)?;
+                self.check_expression(ast, scrutinee, returns)?;
+                for index in cases.indices() {
+                    let body = ast.cases[index].body;
+                    let body = self.rewrite_block(ast, body, returns)?;
+                    ast.cases[index].body = body;
                 }
                 Ok(())
             }
             Expression::Tuple(values) => {
-                for held in values {
-                    self.check_expression(held, returns)?;
+                for held in ast.exprs_in(values).to_vec() {
+                    self.check_expression(ast, held, returns)?;
                 }
                 Ok(())
             }
             Expression::StructInit(_, fields)
             | Expression::EnumVariantInit(_, _, fields) => {
-                for (_, held) in fields {
-                    self.check_expression(held, returns)?;
+                for field in ast.named_in(fields).to_vec() {
+                    self.check_expression(ast, field.value, returns)?;
                 }
                 Ok(())
             }
             Expression::ArrayRepeat(value, _) => {
-                self.check_expression(value, returns)
+                self.check_expression(ast, value, returns)
             }
             Expression::Identifier(_)
             | Expression::Literal(_)

@@ -2,18 +2,20 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
 
+use crate::ast::{
+    Ast, EnumVariant, ExprId, Expression, Literal, NamedExpr, Parameter,
+    Pattern, PatternId, Range32, ReturnKind, ReturnSignature, SignatureId,
+    Statement, StmtId, StructField, SwitchCase, Symbol, TokenSpan,
+};
+use crate::ast_display::{display_expr, display_stmt};
 use crate::ir::{
     BlockId, EnumLayout, EnumVariantLayout, FieldLayout, IrBinOp, IrBlock,
     IrConstant, IrExtern, IrFunction, IrLocal, IrModule, IrOperand, IrRvalue,
     IrStatement, IrTerminator, IrUnOp, LocalId, StructLayout,
 };
 use crate::lexer::Position;
-use crate::parser::{
-    Block, EnumVariant, Expression, Parameter, Pattern, ReturnKind,
-    ReturnSignature, Spanned, Statement, StructField, SwitchCase,
-};
+use crate::parser::Operator;
 use crate::types::Type;
-use crate::{Literal, Operator};
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
@@ -34,6 +36,19 @@ struct FunctionSignature {
     return_type: Type,
 }
 
+// A generic struct declaration as its parameter names and written fields, and
+// a generic enum's the same with one field list per variant that carries one.
+type GenericStructDefs = HashMap<String, (Vec<String>, Vec<(String, Type)>)>;
+type GenericEnumVariants = Vec<(String, Option<Vec<(String, Type)>>)>;
+type GenericEnumDefs = HashMap<String, (Vec<String>, GenericEnumVariants)>;
+
+// One function to lower: where its pieces live in the arena.
+struct FunctionSource {
+    parameters: Range32,
+    return_sig: SignatureId,
+    body: Range32,
+}
+
 pub struct IrBuilder {
     signatures: HashMap<String, FunctionSignature>,
     structs: HashMap<String, StructLayout>,
@@ -43,9 +58,9 @@ pub struct IrBuilder {
     // from any other distinct type, and only two questions need to: what
     // `InitFlags::Video` is, and which operators a bit set answers to.
     flags: HashMap<String, FlagsLayout>,
-    constants: HashMap<String, Expression>,
+    constants: HashMap<String, ExprId>,
     generic_functions: HashMap<String, GenericFunction>,
-    generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
+    generic_struct_defs: GenericStructDefs,
     linear: HashSet<String>,
     // Callback registrations, by name.
     registrations: HashMap<String, crate::callbacks::CallbackShape>,
@@ -66,9 +81,9 @@ struct FlagsLayout {
 
 struct AnonRequest {
     name: String,
-    parameters: Vec<Parameter>,
-    return_sig: ReturnSignature,
-    body: Block,
+    parameters: Range32,
+    return_sig: SignatureId,
+    body: Range32,
     // The module whose lowering produced this literal, carried for the same
     // reason `Specialization` carries it. A generic instantiated from inside an
     // anonymous function is work that module would have to do.
@@ -87,10 +102,11 @@ fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
 }
 
 pub fn build_module(
-    statements: &[Spanned<Statement>],
+    ast: &mut Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Result<IrModule> {
-    build_module_inner(statements, linear, false)
+    build_module_inner(ast, roots, linear, false)
 }
 
 // The same lowering, but a specialization is emitted once per module that
@@ -99,73 +115,90 @@ pub fn build_module(
 // in a single object is a duplicate symbol. Split, they are module-local and a
 // module's object is self-contained.
 pub fn build_module_per_module(
-    statements: &[Spanned<Statement>],
+    ast: &mut Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
 ) -> Result<IrModule> {
-    build_module_inner(statements, linear, true)
+    build_module_inner(ast, roots, linear, true)
 }
 
 fn build_module_inner(
-    statements: &[Spanned<Statement>],
+    ast: &mut Ast,
+    roots: &[StmtId],
     linear: &HashSet<String>,
     per_module: bool,
 ) -> Result<IrModule> {
-    let synthetic_structs = expand_generic_structs(statements)?;
-    let mut layout_statements: Vec<Statement> =
-        statements.iter().map(|s| s.node.clone()).collect();
-    layout_statements.extend(synthetic_structs);
-    let (structs, enums) = compute_layouts(&layout_statements);
+    let synthetic_structs = expand_generic_structs(ast, roots)?;
+    let mut layout_roots: Vec<StmtId> = roots.to_vec();
+    layout_roots.extend(synthetic_structs.iter().copied());
+    let (structs, enums) = compute_layouts(ast, &layout_roots);
     let mut constants = HashMap::new();
-    for statement in statements {
-        if let Statement::Constant(name, value) = &statement.node
-            && !matches!(value, Expression::Function(..) | Expression::Proc(..))
+    for statement in roots {
+        if let Statement::Constant(name, value) = ast.stmt(*statement)
+            && !matches!(
+                ast.expr(*value),
+                Expression::Function(..) | Expression::Proc(..)
+            )
         {
-            constants.insert(name.clone(), value.clone());
+            constants.insert(ast.name(*name).to_string(), *value);
         }
     }
-    check_constant_cycles(&constants)?;
+    check_constant_cycles(ast, &constants)?;
     let mut generic_functions = HashMap::new();
-    for statement in statements {
-        if let Statement::Constant(
-            name,
-            Expression::Function(parameters, return_sig, body)
-            | Expression::Proc(parameters, return_sig, body),
-        ) = &statement.node
-            && function_is_generic(parameters)
+    for statement in roots {
+        if let Statement::Constant(name, value) = ast.stmt(*statement)
+            && let Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body) =
+                ast.expr(*value)
+            && function_is_generic(ast, *parameters)
         {
-            let type_params = function_type_params(parameters);
+            let type_params = function_type_params(ast, *parameters);
             generic_functions.insert(
-                name.clone(),
+                ast.name(*name).to_string(),
                 GenericFunction {
                     type_params,
-                    parameters: parameters.clone(),
-                    return_sig: return_sig.clone(),
-                    body: body.clone(),
+                    parameters: *parameters,
+                    return_sig: *return_sig,
+                    body: *body,
                 },
             );
         }
     }
 
     let mut generic_struct_defs = HashMap::new();
-    for statement in statements {
-        if let Statement::Struct(name, type_params, fields) = &statement.node
+    for statement in roots {
+        if let Statement::Struct(name, type_params, fields) =
+            ast.stmt(*statement)
             && !type_params.is_empty()
         {
+            let params: Vec<String> = ast
+                .symbols_in(*type_params)
+                .iter()
+                .map(|param| ast.name(*param).to_string())
+                .collect();
+            let fields: Vec<(String, Type)> = ast
+                .fields_in(*fields)
+                .iter()
+                .map(|field| {
+                    (ast.name(field.name).to_string(), field.field_type.clone())
+                })
+                .collect();
             generic_struct_defs
-                .insert(name.clone(), (type_params.clone(), fields.clone()));
+                .insert(ast.name(*name).to_string(), (params, fields));
         }
     }
 
     let mut flags: HashMap<String, FlagsLayout> = HashMap::new();
-    for statement in statements {
-        if let Statement::Flags(name, repr, bits) = &statement.node {
+    for statement in roots {
+        if let Statement::Flags(name, repr, bits) = ast.stmt(*statement) {
             flags.insert(
-                name.clone(),
+                ast.name(*name).to_string(),
                 FlagsLayout {
                     repr: repr.clone(),
-                    bits: bits
+                    bits: ast
+                        .flag_bits_in(*bits)
                         .iter()
-                        .map(|bit| (bit.name.clone(), bit.value))
+                        .map(|bit| (ast.name(bit.name).to_string(), bit.value))
                         .collect(),
                 },
             );
@@ -179,15 +212,8 @@ fn build_module_inner(
     // answers with an instantiation makes one without anyone writing its name,
     // which is why this is read from what specialization forms rather than from
     // what the source spells out.
-    let mut with_instances: Vec<Spanned<Statement>> = statements.to_vec();
-    with_instances.extend(
-        layout_statements
-            .iter()
-            .skip(statements.len())
-            .map(|statement| {
-                Spanned::new(statement.clone(), Position::default())
-            }),
-    );
+    let mut with_instances: Vec<StmtId> = roots.to_vec();
+    with_instances.extend(layout_roots.iter().skip(roots.len()).copied());
 
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
@@ -197,14 +223,15 @@ fn build_module_inner(
         constants,
         generic_functions,
         generic_struct_defs,
-        linear: linear_with_holders(linear, &with_instances),
-        registrations: crate::callbacks::callback_registrations(statements),
+        linear: linear_with_holders(linear, ast, &with_instances),
+        registrations: crate::callbacks::callback_registrations(ast, roots),
         type_ids: std::cell::RefCell::new(HashMap::new()),
         anon_counter: std::cell::Cell::new(0),
     };
-    builder.collect_signatures(statements);
+    builder.collect_signatures(ast, roots);
 
-    let ownership = crate::ownership::specializations(&with_instances, linear);
+    let ownership =
+        crate::ownership::specializations(ast, &with_instances, linear);
 
     let mut functions = Vec::new();
     let mut externs = Vec::new();
@@ -214,17 +241,25 @@ fn build_module_inner(
     let mut pending: Vec<Specialization> = Vec::new();
     let mut pending_anon: Vec<AnonRequest> = Vec::new();
 
-    for statement in statements {
-        let position = statement.position;
-        match &statement.node {
-            Statement::Constant(
-                name,
-                Expression::Function(parameters, return_sig, body)
-                | Expression::Proc(parameters, return_sig, body),
-            ) => {
-                if function_is_generic(parameters) {
+    for statement in roots {
+        let position = ast.stmt_position(*statement);
+        match ast.stmt(*statement).clone() {
+            Statement::Constant(name, value)
+                if matches!(
+                    ast.expr(value),
+                    Expression::Function(..) | Expression::Proc(..)
+                ) =>
+            {
+                let (Expression::Function(parameters, return_sig, body)
+                | Expression::Proc(parameters, return_sig, body)) =
+                    ast.expr(value).clone()
+                else {
+                    unreachable!()
+                };
+                if function_is_generic(ast, parameters) {
                     continue;
                 }
+                let name = ast.name(name).to_string();
                 if name == "main" {
                     has_main = true;
                 }
@@ -232,8 +267,9 @@ fn build_module_inner(
                 // specialization's: a walk over a type's fields is decided by
                 // a declaration rather than by a call, so an ordinary function
                 // may write one.
-                let body = &expand_compile_time(
-                    body.clone(),
+                let body = expand_compile_time(
+                    ast,
+                    body,
                     None,
                     parameters,
                     ExpansionContext {
@@ -248,7 +284,9 @@ fn build_module_inner(
                 // anyone naming it, so `held := option_some($File, ...)` left
                 // `Option<File>` ordinary data and the obligation on the
                 // resource inside it went in and did not come out.
-                if let Some(first) = ownership.check(parameters, body).first() {
+                if let Some(first) =
+                    ownership.check(ast, parameters, body).first()
+                {
                     bail!(
                         "{}",
                         crate::imports::demangle_private_names(&format!(
@@ -258,7 +296,15 @@ fn build_module_inner(
                     );
                 }
                 let (function, requests, anon) = locate(
-                    builder.lower_function(name, parameters, return_sig, body),
+                    builder.lower_function(
+                        ast,
+                        &name,
+                        FunctionSource {
+                            parameters,
+                            return_sig,
+                            body,
+                        },
+                    ),
                     position,
                 )?;
                 functions.push(in_module(function, position.file));
@@ -271,9 +317,11 @@ fn build_module_inner(
                 return_type,
                 ..
             } => {
-                let return_type = return_type.clone().unwrap_or(Type::Void);
+                let name = ast.name(name).to_string();
+                let return_type = return_type.unwrap_or(Type::Void);
                 let return_layout = builder.c_layout(&return_type);
-                let param_layouts = params
+                let param_layouts = ast
+                    .params_in(params)
                     .iter()
                     .map(|parameter| {
                         if parameter.mode != crate::parser::ParamMode::Value {
@@ -282,21 +330,21 @@ fn build_module_inner(
                         let Some(ty) = &parameter.type_annotation else {
                             bail!(
                                 "the parameter '{}' of the extern '{name}' is written 'value' but has no type",
-                                parameter.name
+                                ast.name(parameter.name)
                             );
                         };
                         let Some(layout) = builder.c_layout(ty) else {
                             bail!(
                                 "'{}' of the extern '{name}' is written 'value', but '{ty}' is not an aggregate; a scalar already goes to C by value and needs no mode",
-                                parameter.name
+                                ast.name(parameter.name)
                             );
                         };
                         Ok(Some(layout))
                     })
                     .collect::<Result<Vec<_>>>()?;
                 externs.push(IrExtern {
-                    name: name.clone(),
-                    params: extern_parameter_types(params),
+                    name,
+                    params: extern_parameter_types(ast, params),
                     param_layouts,
                     return_type,
                     return_layout,
@@ -310,38 +358,43 @@ fn build_module_inner(
                 params,
                 return_sig,
             } => {
-                declared.push(declared_function(name, params, return_sig));
+                let name = ast.name(name).to_string();
+                declared
+                    .push(declared_function(ast, &name, params, return_sig));
             }
             Statement::Struct(..)
             | Statement::Enum(..)
             | Statement::Flags(..)
             | Statement::TypeAlias(..)
             | Statement::Import(..) => {}
-            _ => top_level.push(statement.clone()),
+            _ => top_level.push(*statement),
         }
     }
 
     if !has_main && !top_level.is_empty() {
-        let empty_params: Vec<Parameter> = Vec::new();
         let mut body = top_level.clone();
         let ends_in_expression = matches!(
-            body.last().map(|statement| &statement.node),
+            body.last().map(|statement| ast.stmt(*statement)),
             Some(Statement::Expression(_))
         );
-        if !ends_in_expression
-            && let Some(position) =
-                body.last().map(|statement| statement.position)
-        {
-            body.push(Spanned::new(
-                Statement::Expression(Expression::Literal(Literal::Integer(0))),
-                position,
-            ));
+        if !ends_in_expression && let Some(last) = body.last().copied() {
+            let span = ast.stmt_span(last);
+            let zero =
+                ast.push_expr(Expression::Literal(Literal::Integer(0)), span);
+            body.push(ast.push_stmt(Statement::Expression(zero), span));
         }
+        let body = ast.add_stmt_list(&body);
+        let return_sig = ast.push_signature(ReturnSignature::plain(
+            ReturnKind::Single(Type::I64),
+        ));
         let (function, requests, anon) = builder.lower_function(
+            ast,
             "main",
-            &empty_params,
-            &ReturnSignature::plain(ReturnKind::Single(Type::I64)),
-            &body,
+            FunctionSource {
+                parameters: Range32::EMPTY,
+                return_sig,
+                body,
+            },
         )?;
         functions.push(in_module(function, 0));
         // Synthesized `main` from loose top-level statements, which belong to
@@ -382,14 +435,14 @@ fn build_module_inner(
                 .get(&specialization.generic_name)
                 .expect("specialization references a known generic function")
                 .clone();
-            let mut parameters: Vec<Parameter> = generic
-                .parameters
+            let mut parameters: Vec<Parameter> = ast
+                .params_in(generic.parameters)
                 .iter()
                 .filter(|parameter| {
-                    !is_type_parameter(parameter) && !parameter.pack
+                    !is_type_parameter(ast, parameter) && !parameter.pack
                 })
                 .map(|parameter| Parameter {
-                    name: parameter.name.clone(),
+                    name: parameter.name,
                     type_annotation: parameter.type_annotation.as_ref().map(
                         |ty| {
                             specialized_param_type(
@@ -407,17 +460,17 @@ fn build_module_inner(
                 .collect();
             // The bound was checked at the call that asked for this
             // specialization, so the specialized signature carries none.
+            let generic_signature = ast.signature(generic.return_sig).clone();
             let return_sig = ReturnSignature {
                 bound: None,
-                kind: match generic.return_sig.to_type() {
+                kind: match ast.signature_to_type(&generic_signature) {
                     Some(ty) => ReturnKind::Single(substitute_type(
                         &ty,
                         &specialization.subst,
                     )),
                     None => ReturnKind::None,
                 },
-                uses: generic
-                    .return_sig
+                uses: generic_signature
                     .uses
                     .iter()
                     .map(|ty| substitute_type(ty, &specialization.subst))
@@ -433,7 +486,7 @@ fn build_module_inner(
                         continue;
                     };
                     parameters.push(Parameter {
-                        name: name.clone(),
+                        name: ast.intern(name),
                         type_annotation: Some(ty.clone()),
                         mutable: false,
                         mode: crate::parser::ParamMode::Read,
@@ -442,15 +495,19 @@ fn build_module_inner(
                     });
                 }
             }
-            let body = substitute_block(&generic.body, &specialization.subst);
+            let parameters = ast.add_parameters(parameters);
+            let return_sig = ast.push_signature(return_sig);
+            let body =
+                substitute_block(ast, generic.body, &specialization.subst);
             // Expansion time: a `for` over the list unrolls, `list[K]` becomes
             // the Kth element, and an `if` over a type predicate keeps the one
             // branch that survives. All three are decided here, where the types
             // are known, and none of them exists afterwards.
             let body = expand_compile_time(
+                ast,
                 body,
                 specialization.pack.as_ref(),
-                &parameters,
+                parameters,
                 ExpansionContext {
                     structs: &builder.structs,
                     subst: &specialization.subst,
@@ -461,7 +518,7 @@ fn build_module_inner(
             // template's own says nothing: its parameters are bound to nothing,
             // so no type there is a resource and a list has no elements to
             // unroll. This is the first and only point where both are true.
-            let complaints = ownership.check(&parameters, &body);
+            let complaints = ownership.check(ast, parameters, body);
             if let Some(first) = complaints.first() {
                 // The prefix an import gives a private name is nothing the
                 // reader wrote, so it comes back off the way it does in every
@@ -477,10 +534,13 @@ fn build_module_inner(
             }
             let (function, requests, anon) = locate_instantiation(
                 builder.lower_function(
+                    ast,
                     &specialization.mangled_name,
-                    &parameters,
-                    &return_sig,
-                    &body,
+                    FunctionSource {
+                        parameters,
+                        return_sig,
+                        body,
+                    },
                 ),
                 &specialization,
             )?;
@@ -505,10 +565,13 @@ fn build_module_inner(
                 .extend(anon_requested_by(anon, specialization.requested_by));
         } else if let Some(request) = pending_anon.pop() {
             let (function, requests, anon) = builder.lower_function(
+                ast,
                 &request.name,
-                &request.parameters,
-                &request.return_sig,
-                &request.body,
+                FunctionSource {
+                    parameters: request.parameters,
+                    return_sig: request.return_sig,
+                    body: request.body,
+                },
             )?;
             functions.push(local_to_module(function, request.requested_by));
             pending.extend(requested_by(requests, request.requested_by));
@@ -532,18 +595,20 @@ fn build_module_inner(
 // backends already declare with the same signature builder that builds a
 // definition.
 fn declared_function(
+    ast: &Ast,
     name: &str,
-    params: &[Parameter],
-    return_sig: &ReturnSignature,
+    params: Range32,
+    return_sig: SignatureId,
 ) -> IrFunction {
-    let locals: Vec<crate::ir::IrLocal> = params
+    let locals: Vec<crate::ir::IrLocal> = ast
+        .params_in(params)
         .iter()
         .map(|parameter| {
             let ty = parameter_type(parameter);
             crate::ir::IrLocal {
                 size: ty.size_of(),
                 ty,
-                name: Some(parameter.name.clone()),
+                name: Some(ast.name(parameter.name).to_string()),
                 in_memory: false,
                 linear: false,
                 position: Position::default(),
@@ -556,7 +621,9 @@ fn declared_function(
         // A declaration from another object contributes no body, so nothing
         // here collects a parameter. Only the object that defines it does.
         param_layouts: vec![None; locals.len()],
-        return_type: return_sig.to_type().unwrap_or(Type::Void),
+        return_type: ast
+            .signature_to_type(ast.signature(return_sig))
+            .unwrap_or(Type::Void),
         locals,
         blocks: Vec::new(),
         entry: 0,
@@ -570,7 +637,8 @@ fn declared_function(
 // are not what the declaration says literally. The `$handler` parameter is the
 // callback pointer, and the context is passed as an address, because the library
 // keeps it past the call.
-fn extern_parameter_types(params: &[Parameter]) -> Vec<Type> {
+fn extern_parameter_types(ast: &Ast, params: Range32) -> Vec<Type> {
+    let params = ast.params_in(params);
     let shape = crate::callbacks::callback_shape(params);
     params
         .iter()
@@ -722,21 +790,23 @@ fn report_module_specializations(
 /// different directions, and a guard at each would be four chances to forget
 /// one; a table with no cycle in it cannot be walked forever from anywhere.
 fn check_constant_cycles(
-    constants: &HashMap<String, Expression>,
+    ast: &Ast,
+    constants: &HashMap<String, ExprId>,
 ) -> Result<()> {
     let mut settled: HashSet<String> = HashSet::new();
     let mut path: Vec<String> = Vec::new();
     let mut names: Vec<&String> = constants.keys().collect();
     names.sort();
     for name in names {
-        walk_constant(name, constants, &mut settled, &mut path)?;
+        walk_constant(ast, name, constants, &mut settled, &mut path)?;
     }
     Ok(())
 }
 
 fn walk_constant(
+    ast: &Ast,
     name: &str,
-    constants: &HashMap<String, Expression>,
+    constants: &HashMap<String, ExprId>,
     settled: &mut HashSet<String>,
     path: &mut Vec<String>,
 ) -> Result<()> {
@@ -754,11 +824,15 @@ fn walk_constant(
     path.push(name.to_string());
     let mut referenced = Vec::new();
     if let Some(value) = constants.get(name) {
-        crate::interface_names::names_in_expression(value, &mut referenced);
+        crate::interface_names::names_in_expression(
+            ast,
+            *value,
+            &mut referenced,
+        );
     }
     for reference in referenced {
         if constants.contains_key(&reference) {
-            walk_constant(&reference, constants, settled, path)?;
+            walk_constant(ast, &reference, constants, settled, path)?;
         }
     }
     path.pop();
@@ -767,26 +841,34 @@ fn walk_constant(
 }
 
 impl IrBuilder {
-    fn collect_signatures(&mut self, statements: &[Spanned<Statement>]) {
-        for statement in statements {
-            match &statement.node {
-                Statement::Constant(
-                    name,
-                    Expression::Function(parameters, return_sig, _)
-                    | Expression::Proc(parameters, return_sig, _),
-                ) => {
-                    if function_is_generic(parameters) {
+    fn collect_signatures(&mut self, ast: &Ast, roots: &[StmtId]) {
+        for statement in roots {
+            match ast.stmt(*statement) {
+                Statement::Constant(name, value)
+                    if matches!(
+                        ast.expr(*value),
+                        Expression::Function(..) | Expression::Proc(..)
+                    ) =>
+                {
+                    let (Expression::Function(parameters, return_sig, _)
+                    | Expression::Proc(parameters, return_sig, _)) =
+                        ast.expr(*value)
+                    else {
+                        unreachable!()
+                    };
+                    if function_is_generic(ast, *parameters) {
                         continue;
                     }
                     self.signatures.insert(
-                        name.clone(),
+                        ast.name(*name).to_string(),
                         FunctionSignature {
-                            parameters: parameters
+                            parameters: ast
+                                .params_in(*parameters)
                                 .iter()
                                 .map(parameter_type)
                                 .collect(),
-                            return_type: return_sig
-                                .to_type()
+                            return_type: ast
+                                .signature_to_type(ast.signature(*return_sig))
                                 .unwrap_or(Type::Void),
                         },
                     );
@@ -798,9 +880,9 @@ impl IrBuilder {
                     ..
                 } => {
                     self.signatures.insert(
-                        name.clone(),
+                        ast.name(*name).to_string(),
                         FunctionSignature {
-                            parameters: extern_parameter_types(params),
+                            parameters: extern_parameter_types(ast, *params),
                             return_type: return_type
                                 .clone()
                                 .unwrap_or(Type::Void),
@@ -813,14 +895,15 @@ impl IrBuilder {
                     return_sig,
                 } => {
                     self.signatures.insert(
-                        name.clone(),
+                        ast.name(*name).to_string(),
                         FunctionSignature {
-                            parameters: params
+                            parameters: ast
+                                .params_in(*params)
                                 .iter()
                                 .map(parameter_type)
                                 .collect(),
-                            return_type: return_sig
-                                .to_type()
+                            return_type: ast
+                                .signature_to_type(ast.signature(*return_sig))
                                 .unwrap_or(Type::Void),
                         },
                     );
@@ -832,28 +915,41 @@ impl IrBuilder {
 
     fn lower_function(
         &self,
+        ast: &mut Ast,
         name: &str,
-        parameters: &[Parameter],
-        return_sig: &ReturnSignature,
-        body: &Block,
+        source: FunctionSource,
     ) -> Result<(IrFunction, Vec<Specialization>, Vec<AnonRequest>)> {
-        let return_type = return_sig.to_type().unwrap_or(Type::Void);
-        let mut function = FunctionLowering::new(self, return_type.clone());
+        let FunctionSource {
+            parameters,
+            return_sig,
+            body,
+        } = source;
+        let return_type = ast
+            .signature_to_type(ast.signature(return_sig))
+            .unwrap_or(Type::Void);
+        let declared_parameters: Vec<Parameter> =
+            ast.params_in(parameters).to_vec();
+        let mut function =
+            FunctionLowering::new(self, ast, return_type.clone());
 
         // A parameter is bound before any statement runs, so it would carry no
         // position and a type error about one would name a function and nothing
         // else. The body's first statement is where a reader looks.
-        if let Some(first) = body.first() {
-            function.current_position = first.position;
+        if let Some(first) = function.ast.stmts_in(body).first().copied() {
+            function.current_position = function.ast.stmt_position(first);
         }
-        for parameter in parameters {
+        for parameter in &declared_parameters {
             let ty = parameter_type(parameter);
-            let local = function.fresh_local(ty, Some(parameter.name.clone()));
-            function.define_variable(&parameter.name, local);
+            let parameter_name = function.ast.name(parameter.name).to_string();
+            let local = function.fresh_local(ty, Some(parameter_name.clone()));
+            function.define_variable(&parameter_name, local);
         }
 
-        let has_defers =
-            body.iter().any(|s| matches!(s.node, Statement::Defer(_)));
+        let has_defers = function
+            .ast
+            .stmts_in(body)
+            .iter()
+            .any(|s| matches!(function.ast.stmt(*s), Statement::Defer(_)));
         if has_defers {
             function.lower_body_with_defers(body, &return_type)?;
         } else {
@@ -877,7 +973,7 @@ impl IrBuilder {
         // Which parameters C hands over as the struct itself. The declaration
         // says `value`, and the type is the one it was written with, since the
         // mode lowering has already turned it into a borrow by here.
-        let param_layouts = parameters
+        let param_layouts = declared_parameters
             .iter()
             .map(|parameter| {
                 if parameter.mode != crate::parser::ParamMode::Value {
@@ -894,7 +990,7 @@ impl IrBuilder {
         Ok((
             IrFunction {
                 name: name.to_string(),
-                param_count: parameters.len(),
+                param_count: declared_parameters.len(),
                 param_layouts,
                 return_type,
                 locals,
@@ -1077,7 +1173,8 @@ impl IrBuilder {
 /// without anyone naming it.
 fn linear_with_holders(
     declared: &HashSet<String>,
-    statements: &[Spanned<Statement>],
+    ast: &Ast,
+    statements: &[StmtId],
 ) -> HashSet<String> {
     let mut held = declared.clone();
     if held.is_empty() {
@@ -1086,8 +1183,8 @@ fn linear_with_holders(
     // The instantiations, which the declarations alone cannot answer for: a
     // generic's field is a parameter bound to nothing here, so `Slab` holds no
     // resource while `Slab<Node, 2>` does.
-    let instances = crate::linear_instances::collect_instances(statements);
-    let templates = crate::linear_instances::declared_structs(statements);
+    let instances = crate::linear_instances::collect_instances(ast, statements);
+    let templates = crate::linear_instances::declared_structs(ast, statements);
     loop {
         let mut grew = false;
         for statement in statements {
@@ -1095,18 +1192,21 @@ fn linear_with_holders(
             // by a struct, so an enum carrying a resource is one. Reading only
             // the structs left an option holding a file ordinary data, and the
             // obligation went in and did not come out.
-            let (name, field_types): (&String, Vec<&Type>) =
-                match &statement.node {
+            let (name, field_types): (&str, Vec<&Type>) =
+                match ast.stmt(*statement) {
                     Statement::Struct(name, _, fields) => (
-                        name,
-                        fields.iter().map(|field| &field.field_type).collect(),
+                        ast.name(*name),
+                        ast.fields_in(*fields)
+                            .iter()
+                            .map(|field| &field.field_type)
+                            .collect(),
                     ),
                     Statement::Enum(name, _, variants) => (
-                        name,
-                        variants
+                        ast.name(*name),
+                        ast.variants_in(*variants)
                             .iter()
-                            .filter_map(|variant| variant.fields.as_ref())
-                            .flatten()
+                            .filter_map(|variant| variant.fields)
+                            .flat_map(|fields| ast.fields_in(fields))
                             .map(|field| &field.field_type)
                             .collect(),
                     ),
@@ -1117,13 +1217,11 @@ fn linear_with_holders(
             // names carry their arguments, so a guard reading only the template
             // asks about a name that was never going to be inserted and reports
             // growth on every round for ever.
-            if held.contains(name.as_str())
-                || held.contains(Type::template_of(name))
-            {
+            if held.contains(name) || held.contains(Type::template_of(name)) {
                 continue;
             }
             let holds = field_types.iter().any(|ty| ty.is_linear_with(&held));
-            if holds && held.insert(name.clone()) {
+            if holds && held.insert(name.to_string()) {
                 grew = true;
             }
         }
@@ -1148,9 +1246,9 @@ fn parameter_type(parameter: &Parameter) -> Type {
 #[derive(Clone)]
 struct GenericFunction {
     type_params: Vec<String>,
-    parameters: Vec<Parameter>,
-    return_sig: ReturnSignature,
-    body: Block,
+    parameters: Range32,
+    return_sig: SignatureId,
+    body: Range32,
 }
 
 struct Specialization {
@@ -1189,10 +1287,15 @@ enum PackElement {
 
 impl PackElement {
     // The element as an argument, for a call that hands a whole list on.
-    fn as_argument(&self) -> Expression {
+    fn as_argument(&self, ast: &mut Ast, span: TokenSpan) -> ExprId {
         match self {
-            PackElement::Value(name, _) => Expression::Identifier(name.clone()),
-            PackElement::Type(ty) => Expression::TypeValue(ty.clone()),
+            PackElement::Value(name, _) => {
+                let symbol = ast.intern(name);
+                ast.push_expr(Expression::Identifier(symbol), span)
+            }
+            PackElement::Type(ty) => {
+                ast.push_expr(Expression::TypeValue(ty.clone()), span)
+            }
         }
     }
 
@@ -1205,25 +1308,20 @@ impl PackElement {
     }
 }
 
-fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
+fn function_type_params(ast: &Ast, parameters: Range32) -> Vec<String> {
     let mut names = Vec::new();
-    for parameter in parameters {
+    for parameter in ast.params_in(parameters) {
         collect_type_params(&parameter_type(parameter), &mut names);
     }
     names
 }
 
-fn function_is_generic(parameters: &[Parameter]) -> bool {
-    !function_type_params(parameters).is_empty()
-        || parameters.iter().any(|parameter| parameter.pack)
-}
-
-// The compile-time list a function takes, if it takes one. It is the last
-// parameter, since what followed it at a call would have nothing to say which
-// side of the list it belonged to.
-fn pack_parameter(parameters: &[Parameter]) -> Option<&Parameter> {
-    let found = parameters.iter().position(|parameter| parameter.pack)?;
-    Some(&parameters[found])
+fn function_is_generic(ast: &Ast, parameters: Range32) -> bool {
+    !function_type_params(ast, parameters).is_empty()
+        || ast
+            .params_in(parameters)
+            .iter()
+            .any(|parameter| parameter.pack)
 }
 
 // The name the nth element of a list takes in a specialization. A list becomes
@@ -1238,13 +1336,14 @@ fn pack_element_name(pack: &str, index: usize) -> String {
 // it is not a place and has no address to borrow in the first place.
 fn argument_is_copy_value(
     probed: Option<&Type>,
-    argument: &Expression,
+    ast: &Ast,
+    argument: ExprId,
 ) -> bool {
     if let Some(ty) = probed {
         return ty.is_copy();
     }
     matches!(
-        argument,
+        ast.expr(argument),
         // `true` and `false` parse as their own expression rather than as a
         // literal, and leaving that out here made `f($bool, true)` pass a
         // boolean by address: a read-mode `$T` stays a reference until the
@@ -1283,10 +1382,10 @@ fn specialized_param_type(
     }
 }
 
-fn is_type_parameter(parameter: &Parameter) -> bool {
+fn is_type_parameter(ast: &Ast, parameter: &Parameter) -> bool {
     matches!(
         &parameter.type_annotation,
-        Some(Type::TypeParam(name)) if name == &parameter.name
+        Some(Type::TypeParam(name)) if name.as_str() == ast.name(parameter.name)
     )
 }
 
@@ -1487,33 +1586,40 @@ fn sanitize_identifier(name: &str) -> String {
 // expects. Without one there is nothing to infer from, which is what the
 // message says rather than leaving a nameless enum to fail later.
 fn name_inferred_variant(
-    variant: &str,
-    fields: &[(String, Expression)],
+    ast: &mut Ast,
+    expression: ExprId,
+    variant: Symbol,
+    fields: Range32,
     expected: Option<&Type>,
-) -> Result<Expression> {
+) -> Result<ExprId> {
     let Some(Type::Enum(name) | Type::Struct(name)) = expected else {
         bail!(
-            "`.{variant}` takes its enum from what the context expects, and here there is nothing to take it from; write `Enum::{variant}`"
+            "`.{variant}` takes its enum from what the context expects, and here there is nothing to take it from; write `Enum::{variant}`",
+            variant = ast.name(variant)
         );
     };
-    Ok(Expression::EnumVariantInit(
-        name.clone(),
-        variant.to_string(),
-        fields.to_vec(),
-    ))
+    let name = name.clone();
+    let span = ast.expr_span(expression);
+    let name = ast.intern(&name);
+    Ok(ast.push_expr(Expression::EnumVariantInit(name, variant, fields), span))
 }
 
 // The struct a `{ x = 1 }` builds, taken from what the context expects.
 fn name_inferred_literal(
-    fields: &[(String, Expression)],
+    ast: &mut Ast,
+    expression: ExprId,
+    fields: Range32,
     expected: Option<&Type>,
-) -> Result<Expression> {
+) -> Result<ExprId> {
     let Some(Type::Struct(name) | Type::Enum(name)) = expected else {
         bail!(
             "a `{{ ... }}` literal takes its type from what the context expects, and here there is nothing to take it from; name the struct"
         );
     };
-    Ok(Expression::StructInit(name.clone(), fields.to_vec()))
+    let name = name.clone();
+    let span = ast.expr_span(expression);
+    let name = ast.intern(&name);
+    Ok(ast.push_expr(Expression::StructInit(name, fields), span))
 }
 
 // A distinct type is built only from itself. Another distinct type over the
@@ -1528,7 +1634,8 @@ fn name_inferred_literal(
 // A flags type is not exempt. Its whole content is the names, so a number
 // written where one belongs is the thing the declaration exists to replace.
 fn distinct_mismatch(
-    value: &Expression,
+    ast: &Ast,
+    value: ExprId,
     from: &Type,
     to: &Type,
     flags: &HashMap<String, FlagsLayout>,
@@ -1537,7 +1644,7 @@ fn distinct_mismatch(
         return false;
     };
     let literal = matches!(
-        value,
+        ast.expr(value),
         Expression::Literal(Literal::Integer(_) | Literal::Float(_))
     );
     // A literal takes the type the context expects, so by the time the types
@@ -1558,7 +1665,8 @@ fn distinct_mismatch(
 // explain nothing. What the reader wrote is a number, and that is what this
 // says.
 fn nominal_reason(
-    value: &Expression,
+    ast: &Ast,
+    value: ExprId,
     to: &Type,
     flags: &HashMap<String, FlagsLayout>,
 ) -> (&'static str, &'static str) {
@@ -1568,7 +1676,7 @@ fn nominal_reason(
         return ("", "a distinct type is not its representation");
     }
     if matches!(
-        value,
+        ast.expr(value),
         Expression::Literal(Literal::Integer(_) | Literal::Float(_))
     ) {
         return (
@@ -1585,12 +1693,13 @@ fn nominal_reason(
 // The two halves as the message writes them: what the value is, and why it does
 // not fit.
 fn nominal_words(
-    value: &Expression,
+    ast: &Ast,
+    value: ExprId,
     value_type: &Type,
     to: &Type,
     flags: &HashMap<String, FlagsLayout>,
 ) -> (String, String) {
-    let (described, note) = nominal_reason(value, to, flags);
+    let (described, note) = nominal_reason(ast, value, to, flags);
     let described = if described.is_empty() {
         format!("a '{value_type}'")
     } else {
@@ -1706,14 +1815,15 @@ fn type_predicate(
 const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
 
 fn evaluate_bound(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     subst: &HashMap<String, Type>,
     linear: &HashSet<String>,
 ) -> Result<bool> {
-    match expression {
+    match ast.expr(expression) {
         Expression::Infix(left, operator, right) => {
-            let left = evaluate_bound(left, subst, linear)?;
-            let right = evaluate_bound(right, subst, linear)?;
+            let left = evaluate_bound(ast, *left, subst, linear)?;
+            let right = evaluate_bound(ast, *right, subst, linear)?;
             match operator {
                 crate::parser::Operator::And => Ok(left && right),
                 crate::parser::Operator::Or => Ok(left || right),
@@ -1723,23 +1833,27 @@ fn evaluate_bound(
             }
         }
         Expression::Prefix(crate::parser::Operator::Not, inner) => {
-            Ok(!evaluate_bound(inner, subst, linear)?)
+            Ok(!evaluate_bound(ast, *inner, subst, linear)?)
         }
         Expression::Call(callee, arguments) => {
-            let Expression::Identifier(predicate) = callee.as_ref() else {
+            let Expression::Identifier(predicate) = ast.expr(*callee) else {
                 bail!(
                     "a `where` bound is a predicate applied to a compile-time parameter"
                 )
             };
+            let predicate = ast.name(*predicate);
             if arguments.len() != 1 {
                 bail!(
                     "'{predicate}' takes one compile-time parameter, and {} were given",
                     arguments.len()
                 )
             }
-            let Expression::Identifier(parameter) = &arguments[0] else {
+            let Expression::Identifier(parameter) =
+                ast.expr(ast.exprs_in(*arguments)[0])
+            else {
                 bail!("'{predicate}' takes a compile-time parameter by name")
             };
+            let parameter = ast.name(*parameter);
             let Some(ty) = subst.get(parameter) else {
                 bail!(
                     "the bound names '{parameter}', which is not a compile-time parameter of this function"
@@ -1752,8 +1866,9 @@ fn evaluate_bound(
                 ),
             }
         }
-        other => bail!(
-            "a `where` bound is a predicate applied to a compile-time parameter, and '{other}' is not one"
+        _ => bail!(
+            "a `where` bound is a predicate applied to a compile-time parameter, and '{}' is not one",
+            display_expr(ast, expression)
         ),
     }
 }
@@ -1761,12 +1876,13 @@ fn evaluate_bound(
 // The bound, and what to say when it does not hold. The binding is named, since
 // the reader chose it at the call and the template is not theirs.
 fn check_bound(
-    bound: &Expression,
+    ast: &Ast,
+    bound: ExprId,
     subst: &HashMap<String, Type>,
     callee: &str,
     linear: &HashSet<String>,
 ) -> Result<()> {
-    if evaluate_bound(bound, subst, linear)? {
+    if evaluate_bound(ast, bound, subst, linear)? {
         return Ok(());
     }
     let mut bindings: Vec<String> = subst
@@ -1776,7 +1892,8 @@ fn check_bound(
     bindings.sort();
     bail!(
         "'{callee}' is declared `where {bound}`, and that does not hold for {}",
-        bindings.join(", ")
+        bindings.join(", "),
+        bound = display_expr(ast, bound)
     )
 }
 
@@ -1873,20 +1990,21 @@ struct ExpansionContext<'a> {
 }
 
 fn expand_compile_time(
-    body: Block,
+    ast: &mut Ast,
+    body: Range32,
     pack: Option<&(String, Vec<PackElement>)>,
-    parameters: &[Parameter],
+    parameters: Range32,
     context: ExpansionContext<'_>,
-) -> Result<Block> {
+) -> Result<Range32> {
     let ExpansionContext {
         structs,
         subst,
         linear,
     } = context;
     let mut types = HashMap::new();
-    for parameter in parameters {
+    for parameter in ast.params_in(parameters) {
         if let Some(ty) = &parameter.type_annotation {
-            types.insert(parameter.name.clone(), ty.clone());
+            types.insert(ast.name(parameter.name).to_string(), ty.clone());
         }
     }
     let expansion = Expansion {
@@ -1897,14 +2015,19 @@ fn expand_compile_time(
         fields: HashMap::new(),
         linear,
     };
-    expansion.block(body)
+    expansion.block(ast, body)
 }
 
 impl Expansion<'_> {
-    fn block(&self, block: Block) -> Result<Block> {
-        let mut expanded = Vec::with_capacity(block.len());
-        for statement in block {
-            let position = statement.position;
+    fn block(&self, ast: &mut Ast, block: Range32) -> Result<Range32> {
+        let expanded = self.statements(ast, block)?;
+        Ok(ast.add_stmt_list(&expanded))
+    }
+
+    fn statements(&self, ast: &mut Ast, block: Range32) -> Result<Vec<StmtId>> {
+        let statements: Vec<StmtId> = ast.stmts_in(block).to_vec();
+        let mut expanded = Vec::with_capacity(statements.len());
+        for statement in statements {
             // A `for` over the pack, and an `if` whose condition is answered
             // here, both stand for several statements or none, so they are
             // spliced rather than replaced.
@@ -1913,25 +2036,31 @@ impl Expansion<'_> {
             // field. The list is the struct's own field list, so its length is
             // fixed by a declaration rather than by anything this walks.
             if let Statement::For(variable, None, iterable, body) =
-                &statement.node
-                && let Some(layout) = self.fields_named(iterable)
+                ast.stmt(statement).clone()
+                && let Some(layout) = self.fields_named(ast, iterable)
             {
+                let variable = ast.name(variable).to_string();
                 let fields: Vec<(usize, Type)> = layout
                     .fields
                     .iter()
                     .map(|field| (field.offset, field.ty.clone()))
                     .collect();
                 for field in fields {
-                    let bound = self.with_field(variable, field);
-                    expanded.extend(bound.block(body.clone())?);
+                    let bound = self.with_field(&variable, field);
+                    expanded.extend(bound.statements(ast, body)?);
                 }
                 continue;
             }
             if let Statement::For(variable, None, iterable, body) =
-                &statement.node
-                && let Some(elements) = self.pack_named(iterable)
+                ast.stmt(statement).clone()
+                && self.pack_named(ast, iterable).is_some()
             {
-                for element in elements {
+                let variable = ast.name(variable).to_string();
+                let elements = self
+                    .pack_named(ast, iterable)
+                    .expect("the pack was just matched")
+                    .clone();
+                for element in &elements {
                     // A value element is a parameter of this specialization, so
                     // the loop's name stands for that parameter. A type element
                     // is not a value at all: the loop's name is a type, and
@@ -1939,42 +2068,37 @@ impl Expansion<'_> {
                     match element {
                         PackElement::Value(name, _) => {
                             let bound = substitute_identifier(
-                                Block::from(body.clone()),
-                                variable,
-                                name,
+                                ast, body, &variable, name,
                             );
-                            expanded.extend(self.block(bound)?);
+                            expanded.extend(self.statements(ast, bound)?);
                         }
                         PackElement::Type(ty) => {
                             let one =
                                 HashMap::from([(variable.clone(), ty.clone())]);
-                            let bound = substitute_block(&body.clone(), &one);
-                            let inner = self.with_type(variable, ty.clone());
-                            expanded.extend(inner.block(bound)?);
+                            let bound = substitute_block(ast, body, &one);
+                            let inner = self.with_type(&variable, ty.clone());
+                            expanded.extend(inner.statements(ast, bound)?);
                         }
                     }
                 }
                 continue;
             }
-            if let Statement::Expression(Expression::If(
-                condition,
-                consequence,
-                alternative,
-            )) = &statement.node
-                && let Some(taken) = self.answer(condition)?
+            if let Statement::Expression(value) = ast.stmt(statement)
+                && let Expression::If(condition, consequence, alternative) =
+                    ast.expr(*value).clone()
+                && let Some(taken) = self.answer(ast, condition)?
             {
                 let kept = if taken {
-                    Some(consequence.clone())
+                    Some(consequence)
                 } else {
-                    alternative.clone()
+                    alternative
                 };
                 if let Some(kept) = kept {
-                    expanded.extend(self.block(kept)?);
+                    expanded.extend(self.statements(ast, kept)?);
                 }
                 continue;
             }
-            let node = self.statement(statement.node)?;
-            expanded.push(Spanned { node, position });
+            expanded.push(self.statement(ast, statement)?);
         }
         Ok(expanded)
     }
@@ -1982,24 +2106,29 @@ impl Expansion<'_> {
     // The struct a `fields(...)` names, when this expression is one. The
     // argument is a type: a type parameter this specialization bound, or a
     // struct named outright.
-    fn fields_named(&self, expression: &Expression) -> Option<&StructLayout> {
-        let Expression::Call(callee, arguments) = expression else {
+    fn fields_named(
+        &self,
+        ast: &Ast,
+        expression: ExprId,
+    ) -> Option<&StructLayout> {
+        let Expression::Call(callee, arguments) = ast.expr(expression) else {
             return None;
         };
-        let Expression::Identifier(named) = callee.as_ref() else {
+        let Expression::Identifier(named) = ast.expr(*callee) else {
             return None;
         };
-        if named != "fields" || arguments.len() != 1 {
+        if ast.name(*named) != "fields" || arguments.len() != 1 {
             return None;
         }
-        self.structs.get(&self.named_type(&arguments[0])?)
+        self.structs
+            .get(&self.named_type(ast, ast.exprs_in(*arguments)[0])?)
     }
 
     // The name of the type an expression names, following the type arguments
     // this specialization was made for.
-    fn named_type(&self, expression: &Expression) -> Option<String> {
-        let named = match expression {
-            Expression::Identifier(named) => named.clone(),
+    fn named_type(&self, ast: &Ast, expression: ExprId) -> Option<String> {
+        let named = match ast.expr(expression) {
+            Expression::Identifier(named) => ast.name(*named).to_string(),
             Expression::TypeValue(Type::Struct(named)) => named.clone(),
             _ => return None,
         };
@@ -2011,9 +2140,13 @@ impl Expansion<'_> {
     }
 
     // The field a name is bound to, for a name a `for` over `fields(T)` bound.
-    fn field_named(&self, expression: &Expression) -> Option<&(usize, Type)> {
-        match expression {
-            Expression::Identifier(named) => self.fields.get(named),
+    fn field_named(
+        &self,
+        ast: &Ast,
+        expression: ExprId,
+    ) -> Option<&(usize, Type)> {
+        match ast.expr(expression) {
+            Expression::Identifier(named) => self.fields.get(ast.name(*named)),
             _ => None,
         }
     }
@@ -2023,24 +2156,23 @@ impl Expansion<'_> {
     // name standing for that element, expanded as an ordinary expression.
     fn mapped(
         &self,
+        ast: &mut Ast,
         element: &PackElement,
         variable: &str,
-        body: &Expression,
-    ) -> Result<Expression> {
+        body: ExprId,
+    ) -> Result<ExprId> {
         match element {
             PackElement::Value(name, _) => {
                 let bound = substitute_identifier_in_expression(
-                    body.clone(),
-                    variable,
-                    name,
+                    ast, body, variable, name,
                 );
-                self.expression(bound)
+                self.expression(ast, bound)
             }
             PackElement::Type(ty) => {
                 let one = HashMap::from([(variable.to_string(), ty.clone())]);
-                let bound = substitute_expression(body, &one);
+                let bound = substitute_expression(ast, body, &one);
                 let inner = self.with_type(variable, ty.clone());
-                inner.expression(bound)
+                inner.expression(ast, bound)
             }
         }
     }
@@ -2077,24 +2209,30 @@ impl Expansion<'_> {
     // A call this answers at expansion time: how many fields a type has, where
     // a field sits, and how wide it is. Every one of them is a number the
     // compiler worked out to lay the type out.
-    fn constant_call(&self, expression: &Expression) -> Result<Option<i64>> {
-        let Expression::Call(callee, arguments) = expression else {
+    fn constant_call(
+        &self,
+        ast: &Ast,
+        expression: ExprId,
+    ) -> Result<Option<i64>> {
+        let Expression::Call(callee, arguments) = ast.expr(expression) else {
             return Ok(None);
         };
-        let Expression::Identifier(named) = callee.as_ref() else {
+        let Expression::Identifier(named) = ast.expr(*callee) else {
             return Ok(None);
         };
+        let named = ast.name(*named);
         if arguments.len() != 1 {
             return Ok(None);
         }
+        let argument = ast.exprs_in(*arguments)[0];
         if named == "field_count"
-            && let Some(name) = self.named_type(&arguments[0])
+            && let Some(name) = self.named_type(ast, argument)
             && let Some(layout) = self.structs.get(&name)
         {
             return Ok(Some(layout.fields.len() as i64));
         }
         if named == "offset_of" {
-            let Some((offset, _)) = self.field_named(&arguments[0]) else {
+            let Some((offset, _)) = self.field_named(ast, argument) else {
                 bail!(
                     "offset_of names a field of a type, which is what a `for` over `fields(T)` binds"
                 )
@@ -2105,31 +2243,41 @@ impl Expansion<'_> {
     }
 
     // The elements of the pack, when this expression names it.
-    fn pack_named(&self, expression: &Expression) -> Option<&Vec<PackElement>> {
+    fn pack_named(
+        &self,
+        ast: &Ast,
+        expression: ExprId,
+    ) -> Option<&Vec<PackElement>> {
         let (name, elements) = self.pack?;
-        match expression {
-            Expression::Identifier(named) if named == name => Some(elements),
+        match ast.expr(expression) {
+            Expression::Identifier(named) if ast.name(*named) == name => {
+                Some(elements)
+            }
             _ => None,
         }
     }
 
     // Whether a condition is one this can answer, and what it answers. `None`
     // means it is an ordinary condition and stays one.
-    fn answer(&self, condition: &Expression) -> Result<Option<bool>> {
-        match condition {
+    fn answer(&self, ast: &Ast, condition: ExprId) -> Result<Option<bool>> {
+        match ast.expr(condition) {
             Expression::Prefix(crate::parser::Operator::Not, inner) => {
-                Ok(self.answer(inner)?.map(|held| !held))
+                Ok(self.answer(ast, *inner)?.map(|held| !held))
             }
             Expression::Call(callee, arguments) => {
-                let Expression::Identifier(predicate) = callee.as_ref() else {
+                let Expression::Identifier(predicate) = ast.expr(*callee)
+                else {
                     return Ok(None);
                 };
                 if arguments.len() != 1 {
                     return Ok(None);
                 }
-                let Expression::Identifier(subject) = &arguments[0] else {
+                let Expression::Identifier(subject) =
+                    ast.expr(ast.exprs_in(*arguments)[0])
+                else {
                     return Ok(None);
                 };
+                let subject = ast.name(*subject);
                 // A parameter of the specialization, or a field the `for`
                 // around this bound. Both are types known here.
                 let ty = match self.fields.get(subject) {
@@ -2139,14 +2287,15 @@ impl Expansion<'_> {
                         None => return Ok(None),
                     },
                 };
-                Ok(type_predicate(predicate, ty, self.linear))
+                Ok(type_predicate(ast.name(*predicate), ty, self.linear))
             }
             _ => Ok(None),
         }
     }
 
-    fn statement(&self, statement: Statement) -> Result<Statement> {
-        let expanded = match statement {
+    fn statement(&self, ast: &mut Ast, statement: StmtId) -> Result<StmtId> {
+        let span = ast.stmt_span(statement);
+        let expanded = match ast.stmt(statement).clone() {
             Statement::Let {
                 name,
                 type_annotation,
@@ -2155,107 +2304,119 @@ impl Expansion<'_> {
             } => Statement::Let {
                 name,
                 type_annotation,
-                value: self.expression(value)?,
+                value: self.expression(ast, value)?,
                 mutable,
             },
             Statement::Constant(name, value) => {
-                Statement::Constant(name, self.expression(value)?)
+                Statement::Constant(name, self.expression(ast, value)?)
             }
             Statement::Return(value) => {
-                Statement::Return(self.expression(value)?)
+                Statement::Return(self.expression(ast, value)?)
             }
             Statement::Expression(value) => {
-                Statement::Expression(self.expression(value)?)
+                Statement::Expression(self.expression(ast, value)?)
             }
             Statement::Print(value, arguments) => {
-                let mut expanded = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    expanded.push(self.expression(argument)?);
+                let argument_ids: Vec<ExprId> =
+                    ast.exprs_in(arguments).to_vec();
+                let mut expanded_arguments =
+                    Vec::with_capacity(argument_ids.len());
+                for argument in argument_ids {
+                    expanded_arguments.push(self.expression(ast, argument)?);
                 }
-                Statement::Print(self.expression(value)?, expanded)
+                let value = self.expression(ast, value)?;
+                Statement::Print(value, ast.add_expr_list(&expanded_arguments))
             }
             Statement::Assignment(place, value) => Statement::Assignment(
-                self.expression(place)?,
-                self.expression(value)?,
+                self.expression(ast, place)?,
+                self.expression(ast, value)?,
             ),
             Statement::Defer(inner) => {
-                Statement::Defer(Box::new(self.statement(*inner)?))
+                Statement::Defer(self.statement(ast, inner)?)
             }
             Statement::For(variable, second, iterable, body) => Statement::For(
                 variable,
                 second,
-                self.expression(iterable)?,
-                self.block(body)?,
+                self.expression(ast, iterable)?,
+                self.block(ast, body)?,
             ),
-            Statement::While(condition, body) => {
-                Statement::While(self.expression(condition)?, self.block(body)?)
-            }
+            Statement::While(condition, body) => Statement::While(
+                self.expression(ast, condition)?,
+                self.block(ast, body)?,
+            ),
             Statement::With(capability, body) => {
-                Statement::With(capability, self.block(body)?)
+                Statement::With(capability, self.block(ast, body)?)
             }
-            other => other,
+            _ => return Ok(statement),
         };
-        Ok(expanded)
+        Ok(ast.push_stmt(expanded, span))
     }
 
-    fn expression(&self, expression: Expression) -> Result<Expression> {
+    fn expression(&self, ast: &mut Ast, expression: ExprId) -> Result<ExprId> {
+        let span = ast.expr_span(expression);
         // `offset_of(field)` and `field_count(T)` are numbers this works out
         // here, where the layout is known and nothing has been emitted yet.
-        if let Some(value) = self.constant_call(&expression)? {
-            return Ok(Expression::Literal(Literal::Integer(value)));
+        if let Some(value) = self.constant_call(ast, expression)? {
+            return Ok(ast.push_expr(
+                Expression::Literal(Literal::Integer(value)),
+                span,
+            ));
         }
+        let node = ast.expr(expression).clone();
         // `sizeof(field)` is the width of what that field holds. A field reads
         // as a named type to the parser, which is what makes this the place
         // that tells the two apart.
-        if let Expression::Sizeof(Type::Struct(named)) = &expression
+        if let Expression::Sizeof(Type::Struct(named)) = &node
             && let Some((_, ty)) = self.fields.get(named)
         {
-            return Ok(Expression::Sizeof(ty.clone()));
+            return Ok(ast.push_expr(Expression::Sizeof(ty.clone()), span));
         }
         // The same for `type_id`, and for a name a `for` over a list of types
         // bound, which is a type here and nowhere else.
-        if let Expression::TypeId(Type::Struct(named)) = &expression {
+        if let Expression::TypeId(Type::Struct(named)) = &node {
             if let Some((_, ty)) = self.fields.get(named) {
-                return Ok(Expression::TypeId(ty.clone()));
+                return Ok(ast.push_expr(Expression::TypeId(ty.clone()), span));
             }
             if let Some(ty) = self.types.get(named) {
-                return Ok(Expression::TypeId(ty.clone()));
+                return Ok(ast.push_expr(Expression::TypeId(ty.clone()), span));
             }
         }
-        if let Expression::Sizeof(Type::Struct(named)) = &expression
+        if let Expression::Sizeof(Type::Struct(named)) = &node
             && let Some(ty) = self.types.get(named)
         {
-            return Ok(Expression::Sizeof(ty.clone()));
+            return Ok(ast.push_expr(Expression::Sizeof(ty.clone()), span));
         }
         // A type predicate is a question this answers wherever it is asked, not
         // only in the condition of an `if`, so a table may carry the answer as
         // an ordinary field.
-        if let Some(held) = self.answer(&expression)? {
-            return Ok(Expression::Boolean(held));
+        if let Some(held) = self.answer(ast, expression)? {
+            return Ok(ast.push_expr(Expression::Boolean(held), span));
         }
         // A field is not a value. Naming one anywhere else is a mistake worth
         // catching here rather than as an unknown variable later.
-        if let Expression::Identifier(named) = &expression
-            && self.fields.contains_key(named)
+        if let Expression::Identifier(named) = &node
+            && self.fields.contains_key(ast.name(*named))
         {
             bail!(
-                "'{named}' is a field of a type, so it is asked about with `offset_of`, `sizeof` and the type predicates, and is not a value"
+                "'{named}' is a field of a type, so it is asked about with `offset_of`, `sizeof` and the type predicates, and is not a value",
+                named = ast.name(*named)
             )
         }
         // `pack[K]` is the Kth element, which is a parameter of this
         // specialization. Anything else that names the pack is an error: a
         // compile-time list is not a value.
-        if let Expression::Index(base, index) = &expression
-            && let Some(elements) = self.pack_named(base)
+        if let Expression::Index(base, index) = &node
+            && let Some(elements) = self.pack_named(ast, *base)
         {
-            let Expression::Literal(Literal::Integer(at)) = index.as_ref()
+            let Expression::Literal(Literal::Integer(at)) = ast.expr(*index)
             else {
                 bail!(
                     "a compile-time list is indexed by a literal, since which element it is has to be known here"
                 )
             };
+            let at = *at;
             let Some(element) =
-                usize::try_from(*at).ok().and_then(|at| elements.get(at))
+                usize::try_from(at).ok().and_then(|at| elements.get(at))
             else {
                 bail!(
                     "this call gave {} element(s) to the list, so there is no element {at}",
@@ -2264,184 +2425,236 @@ impl Expansion<'_> {
             };
             return Ok(match element {
                 PackElement::Value(name, _) => {
-                    Expression::Identifier(name.clone())
+                    let name = name.clone();
+                    let symbol = ast.intern(&name);
+                    ast.push_expr(Expression::Identifier(symbol), span)
                 }
-                PackElement::Type(ty) => Expression::TypeValue(ty.clone()),
+                PackElement::Type(ty) => {
+                    ast.push_expr(Expression::TypeValue(ty.clone()), span)
+                }
             });
         }
-        if self.pack_named(&expression).is_some() {
+        if self.pack_named(ast, expression).is_some() {
             bail!(
                 "a compile-time list is iterated with `for` or indexed by a literal, and is not a value of its own"
             )
         }
-        let expanded = match expression {
+        let expanded = match node {
             Expression::Prefix(operator, inner) => {
-                Expression::Prefix(operator, Box::new(self.expression(*inner)?))
+                Expression::Prefix(operator, self.expression(ast, inner)?)
             }
-            Expression::Infix(left, operator, right) => Expression::Infix(
-                Box::new(self.expression(*left)?),
-                operator,
-                Box::new(self.expression(*right)?),
-            ),
+            Expression::Infix(left, operator, right) => {
+                let left = self.expression(ast, left)?;
+                let right = self.expression(ast, right)?;
+                Expression::Infix(left, operator, right)
+            }
             Expression::If(condition, consequence, alternative) => {
                 Expression::If(
-                    Box::new(self.expression(*condition)?),
-                    self.block(consequence)?,
+                    self.expression(ast, condition)?,
+                    self.block(ast, consequence)?,
                     match alternative {
-                        Some(block) => Some(self.block(block)?),
+                        Some(block) => Some(self.block(ast, block)?),
                         None => None,
                     },
                 )
             }
             Expression::Call(callee, arguments) => {
-                let mut expanded = Vec::with_capacity(arguments.len());
-                for argument in arguments {
+                let argument_ids: Vec<ExprId> =
+                    ast.exprs_in(arguments).to_vec();
+                let mut expanded_arguments =
+                    Vec::with_capacity(argument_ids.len());
+                for argument in argument_ids {
                     // An argument list is the one place a compile-time list
                     // stands for several things at once. Naming it hands over
                     // its elements, which is how one list is passed on to
                     // another. `g(T) for T in list` hands over the template
                     // once per element, which is how a call gets an arity the
                     // list decides.
-                    if let Some(elements) = self.pack_named(&argument) {
-                        for element in elements {
-                            expanded.push(element.as_argument());
+                    if self.pack_named(ast, argument).is_some() {
+                        let elements = self
+                            .pack_named(ast, argument)
+                            .expect("the pack was just matched")
+                            .clone();
+                        let argument_span = ast.expr_span(argument);
+                        for element in &elements {
+                            expanded_arguments
+                                .push(element.as_argument(ast, argument_span));
                         }
                         continue;
                     }
-                    if let Expression::PackMap(body, variable, list) = &argument
+                    if let Expression::PackMap(body, variable, list) =
+                        ast.expr(argument).clone()
                     {
-                        let named = Expression::Identifier(list.clone());
-                        let Some(elements) = self.pack_named(&named) else {
-                            bail!(
+                        let variable = ast.name(variable).to_string();
+                        let list = ast.name(list).to_string();
+                        let elements = match self.pack {
+                            Some((name, elements)) if *name == list => {
+                                elements.clone()
+                            }
+                            _ => bail!(
                                 "`for {variable} in {list}` walks a compile-time list, and '{list}' is not one here"
-                            );
+                            ),
                         };
-                        for element in elements.clone() {
-                            expanded
-                                .push(self.mapped(&element, variable, body)?);
+                        for element in &elements {
+                            expanded_arguments.push(
+                                self.mapped(ast, element, &variable, body)?,
+                            );
                         }
                         continue;
                     }
-                    expanded.push(self.expression(argument)?);
+                    expanded_arguments.push(self.expression(ast, argument)?);
                 }
-                Expression::Call(Box::new(self.expression(*callee)?), expanded)
+                let callee = self.expression(ast, callee)?;
+                Expression::Call(callee, ast.add_expr_list(&expanded_arguments))
             }
-            Expression::Index(base, index) => Expression::Index(
-                Box::new(self.expression(*base)?),
-                Box::new(self.expression(*index)?),
-            ),
-            Expression::FieldAccess(base, field) => Expression::FieldAccess(
-                Box::new(self.expression(*base)?),
-                field,
-            ),
+            Expression::Index(base, index) => {
+                let base = self.expression(ast, base)?;
+                let index = self.expression(ast, index)?;
+                Expression::Index(base, index)
+            }
+            Expression::FieldAccess(base, field) => {
+                Expression::FieldAccess(self.expression(ast, base)?, field)
+            }
             Expression::AddressOf(inner) => {
-                Expression::AddressOf(Box::new(self.expression(*inner)?))
+                Expression::AddressOf(self.expression(ast, inner)?)
             }
             Expression::Borrow(inner) => {
-                Expression::Borrow(Box::new(self.expression(*inner)?))
+                Expression::Borrow(self.expression(ast, inner)?)
             }
             Expression::BorrowMut(inner) => {
-                Expression::BorrowMut(Box::new(self.expression(*inner)?))
+                Expression::BorrowMut(self.expression(ast, inner)?)
             }
             Expression::Dereference(inner) => {
-                Expression::Dereference(Box::new(self.expression(*inner)?))
+                Expression::Dereference(self.expression(ast, inner)?)
             }
             Expression::Try(inner) => {
-                Expression::Try(Box::new(self.expression(*inner)?))
+                Expression::Try(self.expression(ast, inner)?)
             }
-            Expression::Unsafe(body) => Expression::Unsafe(self.block(body)?),
+            Expression::Unsafe(body) => {
+                Expression::Unsafe(self.block(ast, body)?)
+            }
             Expression::UnsafeFn(inner) => {
-                Expression::UnsafeFn(Box::new(self.expression(*inner)?))
+                Expression::UnsafeFn(self.expression(ast, inner)?)
             }
             Expression::StructInit(name, fields) => {
-                let mut expanded = Vec::with_capacity(fields.len());
-                for (field, value) in fields {
-                    expanded.push((field, self.expression(value)?));
-                }
-                Expression::StructInit(name, expanded)
-            }
-            Expression::EnumVariantInit(name, variant, fields) => {
-                let mut expanded = Vec::with_capacity(fields.len());
-                for (field, value) in fields {
-                    expanded.push((field, self.expression(value)?));
-                }
-                Expression::EnumVariantInit(name, variant, expanded)
-            }
-            Expression::Tuple(items) => {
-                let mut expanded = Vec::with_capacity(items.len());
-                for item in items {
-                    expanded.push(self.expression(item)?);
-                }
-                Expression::Tuple(expanded)
-            }
-            Expression::Range(start, end, inclusive) => Expression::Range(
-                Box::new(self.expression(*start)?),
-                Box::new(self.expression(*end)?),
-                inclusive,
-            ),
-            Expression::Switch(scrutinee, cases) => {
-                let mut expanded = Vec::with_capacity(cases.len());
-                for case in cases {
-                    expanded.push(crate::parser::SwitchCase {
-                        pattern: case.pattern,
-                        body: self.block(case.body)?,
+                let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+                let mut expanded_fields = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    expanded_fields.push(NamedExpr {
+                        name: entry.name,
+                        value: self.expression(ast, entry.value)?,
                     });
                 }
-                Expression::Switch(
-                    Box::new(self.expression(*scrutinee)?),
-                    expanded,
+                Expression::StructInit(
+                    name,
+                    ast.add_named_exprs(&expanded_fields),
                 )
             }
-            Expression::ArrayRepeat(value, count) => Expression::ArrayRepeat(
-                Box::new(self.expression(*value)?),
-                count,
-            ),
-            Expression::Literal(Literal::Array(elements)) => {
-                let mut expanded = Vec::with_capacity(elements.len());
-                for element in elements {
-                    expanded.push(self.expression(element)?);
+            Expression::EnumVariantInit(name, variant, fields) => {
+                let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+                let mut expanded_fields = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    expanded_fields.push(NamedExpr {
+                        name: entry.name,
+                        value: self.expression(ast, entry.value)?,
+                    });
                 }
-                Expression::Literal(Literal::Array(expanded))
+                Expression::EnumVariantInit(
+                    name,
+                    variant,
+                    ast.add_named_exprs(&expanded_fields),
+                )
             }
-            other => other,
+            Expression::Tuple(items) => {
+                let item_ids: Vec<ExprId> = ast.exprs_in(items).to_vec();
+                let mut expanded_items = Vec::with_capacity(item_ids.len());
+                for item in item_ids {
+                    expanded_items.push(self.expression(ast, item)?);
+                }
+                Expression::Tuple(ast.add_expr_list(&expanded_items))
+            }
+            Expression::Range(start, end, inclusive) => {
+                let start = self.expression(ast, start)?;
+                let end = self.expression(ast, end)?;
+                Expression::Range(start, end, inclusive)
+            }
+            Expression::Switch(scrutinee, cases) => {
+                let case_entries: Vec<SwitchCase> =
+                    ast.cases_in(cases).to_vec();
+                let mut expanded_cases = Vec::with_capacity(case_entries.len());
+                for case in case_entries {
+                    expanded_cases.push(SwitchCase {
+                        pattern: case.pattern,
+                        body: self.block(ast, case.body)?,
+                    });
+                }
+                let scrutinee = self.expression(ast, scrutinee)?;
+                Expression::Switch(scrutinee, ast.add_cases(&expanded_cases))
+            }
+            Expression::ArrayRepeat(value, count) => {
+                Expression::ArrayRepeat(self.expression(ast, value)?, count)
+            }
+            Expression::Literal(Literal::Array(elements)) => {
+                let element_ids: Vec<ExprId> = ast.exprs_in(elements).to_vec();
+                let mut expanded_elements =
+                    Vec::with_capacity(element_ids.len());
+                for element in element_ids {
+                    expanded_elements.push(self.expression(ast, element)?);
+                }
+                Expression::Literal(Literal::Array(
+                    ast.add_expr_list(&expanded_elements),
+                ))
+            }
+            _ => return Ok(expression),
         };
-        Ok(expanded)
+        Ok(ast.push_expr(expanded, span))
     }
 }
 
 // One name for another, through a block. This is what binds a `for` variable to
 // the element the copy is for.
-fn substitute_identifier(block: Block, from: &str, to: &str) -> Block {
+fn substitute_identifier(
+    ast: &mut Ast,
+    block: Range32,
+    from: &str,
+    to: &str,
+) -> Range32 {
     let mut subst = HashMap::new();
     subst.insert(from.to_string(), to.to_string());
-    rename_block(block, &subst)
+    rename_block(ast, block, &subst)
 }
 
 fn substitute_identifier_in_expression(
-    expression: Expression,
+    ast: &mut Ast,
+    expression: ExprId,
     from: &str,
     to: &str,
-) -> Expression {
+) -> ExprId {
     let mut subst = HashMap::new();
     subst.insert(from.to_string(), to.to_string());
-    rename_expression(expression, &subst)
+    rename_expression(ast, expression, &subst)
 }
 
-fn rename_block(block: Block, subst: &HashMap<String, String>) -> Block {
-    block
-        .into_iter()
-        .map(|statement| Spanned {
-            node: rename_statement(statement.node, subst),
-            position: statement.position,
-        })
-        .collect()
+fn rename_block(
+    ast: &mut Ast,
+    block: Range32,
+    subst: &HashMap<String, String>,
+) -> Range32 {
+    let statements: Vec<StmtId> = ast.stmts_in(block).to_vec();
+    let mut renamed = Vec::with_capacity(statements.len());
+    for statement in statements {
+        renamed.push(rename_statement(ast, statement, subst));
+    }
+    ast.add_stmt_list(&renamed)
 }
 
 fn rename_statement(
-    statement: Statement,
+    ast: &mut Ast,
+    statement: StmtId,
     subst: &HashMap<String, String>,
-) -> Statement {
-    match statement {
+) -> StmtId {
+    let span = ast.stmt_span(statement);
+    let renamed = match ast.stmt(statement).clone() {
         Statement::Let {
             name,
             type_annotation,
@@ -2450,162 +2663,188 @@ fn rename_statement(
         } => Statement::Let {
             name,
             type_annotation,
-            value: rename_expression(value, subst),
+            value: rename_expression(ast, value, subst),
             mutable,
         },
         Statement::Constant(name, value) => {
-            Statement::Constant(name, rename_expression(value, subst))
+            Statement::Constant(name, rename_expression(ast, value, subst))
         }
         Statement::Return(value) => {
-            Statement::Return(rename_expression(value, subst))
+            Statement::Return(rename_expression(ast, value, subst))
         }
         Statement::Expression(value) => {
-            Statement::Expression(rename_expression(value, subst))
+            Statement::Expression(rename_expression(ast, value, subst))
         }
-        Statement::Print(value, arguments) => Statement::Print(
-            rename_expression(value, subst),
-            arguments
-                .into_iter()
-                .map(|argument| rename_expression(argument, subst))
-                .collect(),
-        ),
+        Statement::Print(value, arguments) => {
+            let value = rename_expression(ast, value, subst);
+            let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
+            let renamed: Vec<ExprId> = {
+                let mut held = Vec::with_capacity(argument_ids.len());
+                for argument in argument_ids {
+                    held.push(rename_expression(ast, argument, subst));
+                }
+                held
+            };
+            Statement::Print(value, ast.add_expr_list(&renamed))
+        }
         Statement::Assignment(place, value) => Statement::Assignment(
-            rename_expression(place, subst),
-            rename_expression(value, subst),
+            rename_expression(ast, place, subst),
+            rename_expression(ast, value, subst),
         ),
         Statement::Defer(inner) => {
-            Statement::Defer(Box::new(rename_statement(*inner, subst)))
+            Statement::Defer(rename_statement(ast, inner, subst))
         }
         Statement::For(variable, second, iterable, body) => Statement::For(
             variable,
             second,
-            rename_expression(iterable, subst),
-            rename_block(body, subst),
+            rename_expression(ast, iterable, subst),
+            rename_block(ast, body, subst),
         ),
         Statement::While(condition, body) => Statement::While(
-            rename_expression(condition, subst),
-            rename_block(body, subst),
+            rename_expression(ast, condition, subst),
+            rename_block(ast, body, subst),
         ),
         Statement::With(capability, body) => {
-            Statement::With(capability, rename_block(body, subst))
+            Statement::With(capability, rename_block(ast, body, subst))
         }
-        other => other,
-    }
+        _ => return statement,
+    };
+    ast.push_stmt(renamed, span)
 }
 
 fn rename_expression(
-    expression: Expression,
+    ast: &mut Ast,
+    expression: ExprId,
     subst: &HashMap<String, String>,
-) -> Expression {
-    match expression {
-        Expression::Identifier(name) => match subst.get(&name) {
-            Some(renamed) => Expression::Identifier(renamed.clone()),
-            None => Expression::Identifier(name),
+) -> ExprId {
+    let span = ast.expr_span(expression);
+    let renamed = match ast.expr(expression).clone() {
+        Expression::Identifier(name) => match subst.get(ast.name(name)) {
+            Some(renamed) => {
+                let renamed = renamed.clone();
+                let symbol = ast.intern(&renamed);
+                Expression::Identifier(symbol)
+            }
+            None => return expression,
         },
-        Expression::Prefix(operator, inner) => Expression::Prefix(
-            operator,
-            Box::new(rename_expression(*inner, subst)),
-        ),
-        Expression::Infix(left, operator, right) => Expression::Infix(
-            Box::new(rename_expression(*left, subst)),
-            operator,
-            Box::new(rename_expression(*right, subst)),
-        ),
+        Expression::Prefix(operator, inner) => {
+            Expression::Prefix(operator, rename_expression(ast, inner, subst))
+        }
+        Expression::Infix(left, operator, right) => {
+            let left = rename_expression(ast, left, subst);
+            let right = rename_expression(ast, right, subst);
+            Expression::Infix(left, operator, right)
+        }
         Expression::If(condition, consequence, alternative) => Expression::If(
-            Box::new(rename_expression(*condition, subst)),
-            rename_block(consequence, subst),
-            alternative.map(|block| rename_block(block, subst)),
+            rename_expression(ast, condition, subst),
+            rename_block(ast, consequence, subst),
+            alternative.map(|block| rename_block(ast, block, subst)),
         ),
-        Expression::Call(callee, arguments) => Expression::Call(
-            Box::new(rename_expression(*callee, subst)),
-            arguments
-                .into_iter()
-                .map(|argument| rename_expression(argument, subst))
-                .collect(),
-        ),
-        Expression::Index(base, index) => Expression::Index(
-            Box::new(rename_expression(*base, subst)),
-            Box::new(rename_expression(*index, subst)),
-        ),
-        Expression::FieldAccess(base, field) => Expression::FieldAccess(
-            Box::new(rename_expression(*base, subst)),
-            field,
-        ),
+        Expression::Call(callee, arguments) => {
+            let callee = rename_expression(ast, callee, subst);
+            let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
+            let mut renamed_arguments = Vec::with_capacity(argument_ids.len());
+            for argument in argument_ids {
+                renamed_arguments.push(rename_expression(ast, argument, subst));
+            }
+            Expression::Call(callee, ast.add_expr_list(&renamed_arguments))
+        }
+        Expression::Index(base, index) => {
+            let base = rename_expression(ast, base, subst);
+            let index = rename_expression(ast, index, subst);
+            Expression::Index(base, index)
+        }
+        Expression::FieldAccess(base, field) => {
+            Expression::FieldAccess(rename_expression(ast, base, subst), field)
+        }
         Expression::AddressOf(inner) => {
-            Expression::AddressOf(Box::new(rename_expression(*inner, subst)))
+            Expression::AddressOf(rename_expression(ast, inner, subst))
         }
         Expression::Borrow(inner) => {
-            Expression::Borrow(Box::new(rename_expression(*inner, subst)))
+            Expression::Borrow(rename_expression(ast, inner, subst))
         }
         Expression::BorrowMut(inner) => {
-            Expression::BorrowMut(Box::new(rename_expression(*inner, subst)))
+            Expression::BorrowMut(rename_expression(ast, inner, subst))
         }
         Expression::Dereference(inner) => {
-            Expression::Dereference(Box::new(rename_expression(*inner, subst)))
+            Expression::Dereference(rename_expression(ast, inner, subst))
         }
         Expression::Try(inner) => {
-            Expression::Try(Box::new(rename_expression(*inner, subst)))
+            Expression::Try(rename_expression(ast, inner, subst))
         }
         Expression::Unsafe(body) => {
-            Expression::Unsafe(rename_block(body, subst))
+            Expression::Unsafe(rename_block(ast, body, subst))
         }
         Expression::UnsafeFn(inner) => {
-            Expression::UnsafeFn(Box::new(rename_expression(*inner, subst)))
+            Expression::UnsafeFn(rename_expression(ast, inner, subst))
         }
-        Expression::StructInit(name, fields) => Expression::StructInit(
-            name,
-            fields
-                .into_iter()
-                .map(|(field, value)| (field, rename_expression(value, subst)))
-                .collect(),
-        ),
+        Expression::StructInit(name, fields) => {
+            let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+            let mut renamed_fields = Vec::with_capacity(entries.len());
+            for entry in entries {
+                renamed_fields.push(NamedExpr {
+                    name: entry.name,
+                    value: rename_expression(ast, entry.value, subst),
+                });
+            }
+            Expression::StructInit(name, ast.add_named_exprs(&renamed_fields))
+        }
         Expression::EnumVariantInit(name, variant, fields) => {
+            let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+            let mut renamed_fields = Vec::with_capacity(entries.len());
+            for entry in entries {
+                renamed_fields.push(NamedExpr {
+                    name: entry.name,
+                    value: rename_expression(ast, entry.value, subst),
+                });
+            }
             Expression::EnumVariantInit(
                 name,
                 variant,
-                fields
-                    .into_iter()
-                    .map(|(field, value)| {
-                        (field, rename_expression(value, subst))
-                    })
-                    .collect(),
+                ast.add_named_exprs(&renamed_fields),
             )
         }
-        Expression::Tuple(items) => Expression::Tuple(
-            items
-                .into_iter()
-                .map(|item| rename_expression(item, subst))
-                .collect(),
-        ),
-        Expression::Range(start, end, inclusive) => Expression::Range(
-            Box::new(rename_expression(*start, subst)),
-            Box::new(rename_expression(*end, subst)),
-            inclusive,
-        ),
-        Expression::Switch(scrutinee, cases) => Expression::Switch(
-            Box::new(rename_expression(*scrutinee, subst)),
-            cases
-                .into_iter()
-                .map(|case| crate::parser::SwitchCase {
+        Expression::Tuple(items) => {
+            let item_ids: Vec<ExprId> = ast.exprs_in(items).to_vec();
+            let mut renamed_items = Vec::with_capacity(item_ids.len());
+            for item in item_ids {
+                renamed_items.push(rename_expression(ast, item, subst));
+            }
+            Expression::Tuple(ast.add_expr_list(&renamed_items))
+        }
+        Expression::Range(start, end, inclusive) => {
+            let start = rename_expression(ast, start, subst);
+            let end = rename_expression(ast, end, subst);
+            Expression::Range(start, end, inclusive)
+        }
+        Expression::Switch(scrutinee, cases) => {
+            let scrutinee = rename_expression(ast, scrutinee, subst);
+            let case_entries: Vec<SwitchCase> = ast.cases_in(cases).to_vec();
+            let mut renamed_cases = Vec::with_capacity(case_entries.len());
+            for case in case_entries {
+                renamed_cases.push(SwitchCase {
                     pattern: case.pattern,
-                    body: rename_block(case.body, subst),
-                })
-                .collect(),
-        ),
-        Expression::ArrayRepeat(value, count) => Expression::ArrayRepeat(
-            Box::new(rename_expression(*value, subst)),
-            count,
-        ),
+                    body: rename_block(ast, case.body, subst),
+                });
+            }
+            Expression::Switch(scrutinee, ast.add_cases(&renamed_cases))
+        }
+        Expression::ArrayRepeat(value, count) => {
+            Expression::ArrayRepeat(rename_expression(ast, value, subst), count)
+        }
         Expression::Literal(Literal::Array(elements)) => {
+            let element_ids: Vec<ExprId> = ast.exprs_in(elements).to_vec();
+            let mut renamed_elements = Vec::with_capacity(element_ids.len());
+            for element in element_ids {
+                renamed_elements.push(rename_expression(ast, element, subst));
+            }
             Expression::Literal(Literal::Array(
-                elements
-                    .into_iter()
-                    .map(|element| rename_expression(element, subst))
-                    .collect(),
+                ast.add_expr_list(&renamed_elements),
             ))
         }
-        other => other,
-    }
+        _ => return expression,
+    };
+    ast.push_expr(renamed, span)
 }
 
 fn is_generic_instance(name: &str) -> bool {
@@ -2662,17 +2901,22 @@ fn collect_instances_in_type(ty: &Type, out: &mut Vec<String>) {
     }
 }
 
-fn collect_instances_in_block(block: &Block, out: &mut Vec<String>) {
-    for statement in block {
-        collect_instances_in_statement(statement, out);
+fn collect_instances_in_block(
+    ast: &Ast,
+    block: Range32,
+    out: &mut Vec<String>,
+) {
+    for statement in ast.stmts_in(block) {
+        collect_instances_in_statement(ast, *statement, out);
     }
 }
 
 fn collect_instances_in_statement(
-    statement: &Statement,
+    ast: &Ast,
+    statement: StmtId,
     out: &mut Vec<String>,
 ) {
-    match statement {
+    match ast.stmt(statement) {
         Statement::Let {
             type_annotation,
             value,
@@ -2681,46 +2925,47 @@ fn collect_instances_in_statement(
             if let Some(ty) = type_annotation {
                 collect_instances_in_type(ty, out);
             }
-            collect_instances_in_expression(value, out);
+            collect_instances_in_expression(ast, *value, out);
         }
         Statement::Return(expression) | Statement::Expression(expression) => {
-            collect_instances_in_expression(expression, out);
+            collect_instances_in_expression(ast, *expression, out);
         }
         Statement::Assignment(target, value) => {
-            collect_instances_in_expression(target, out);
-            collect_instances_in_expression(value, out);
+            collect_instances_in_expression(ast, *target, out);
+            collect_instances_in_expression(ast, *value, out);
         }
         Statement::For(_, _, range, body) => {
-            collect_instances_in_expression(range, out);
-            collect_instances_in_block(body, out);
+            collect_instances_in_expression(ast, *range, out);
+            collect_instances_in_block(ast, *body, out);
         }
         Statement::While(condition, body) => {
-            collect_instances_in_expression(condition, out);
-            collect_instances_in_block(body, out);
+            collect_instances_in_expression(ast, *condition, out);
+            collect_instances_in_block(ast, *body, out);
         }
         Statement::Defer(inner) => {
-            collect_instances_in_statement(inner, out);
+            collect_instances_in_statement(ast, *inner, out);
         }
         // A constant whose value is not a function is that value wherever it is
         // named, so an instance it builds is asked for here. A function
         // constant's body is walked with its parameter types in scope instead.
         Statement::Constant(_, value)
             if !matches!(
-                value,
+                ast.expr(*value),
                 Expression::Function(..) | Expression::Proc(..)
             ) =>
         {
-            collect_instances_in_expression(value, out);
+            collect_instances_in_expression(ast, *value, out);
         }
         _ => {}
     }
 }
 
 fn collect_instances_in_expression(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     out: &mut Vec<String>,
 ) {
-    match expression {
+    match ast.expr(expression) {
         Expression::Sizeof(ty)
         | Expression::TypeId(ty)
         | Expression::TypeName(ty) => collect_instances_in_type(ty, out),
@@ -2729,63 +2974,64 @@ fn collect_instances_in_expression(
         | Expression::Borrow(operand)
         | Expression::BorrowMut(operand)
         | Expression::Dereference(operand) => {
-            collect_instances_in_expression(operand, out);
+            collect_instances_in_expression(ast, *operand, out);
         }
         Expression::Infix(left, _, right) => {
-            collect_instances_in_expression(left, out);
-            collect_instances_in_expression(right, out);
+            collect_instances_in_expression(ast, *left, out);
+            collect_instances_in_expression(ast, *right, out);
         }
         Expression::If(condition, consequence, alternative) => {
-            collect_instances_in_expression(condition, out);
-            collect_instances_in_block(consequence, out);
+            collect_instances_in_expression(ast, *condition, out);
+            collect_instances_in_block(ast, *consequence, out);
             if let Some(block) = alternative {
-                collect_instances_in_block(block, out);
+                collect_instances_in_block(ast, *block, out);
             }
         }
         Expression::Call(callee, arguments) => {
-            collect_instances_in_expression(callee, out);
-            for argument in arguments {
-                collect_instances_in_expression(argument, out);
+            collect_instances_in_expression(ast, *callee, out);
+            for argument in ast.exprs_in(*arguments) {
+                collect_instances_in_expression(ast, *argument, out);
             }
         }
         Expression::Index(base, index) => {
-            collect_instances_in_expression(base, out);
-            collect_instances_in_expression(index, out);
+            collect_instances_in_expression(ast, *base, out);
+            collect_instances_in_expression(ast, *index, out);
         }
         Expression::FieldAccess(base, _) => {
-            collect_instances_in_expression(base, out);
+            collect_instances_in_expression(ast, *base, out);
         }
         // A literal that says which instance it is asks for that instance, the
         // same as a type annotation naming one. Without this the only literals
         // that reached an instance were the ones a name elsewhere had already
         // built.
         Expression::StructInit(name, fields)
-            if is_generic_instance(name) && !out.contains(name) =>
+            if is_generic_instance(ast.name(*name))
+                && !out.iter().any(|held| held == ast.name(*name)) =>
         {
-            out.push(name.clone());
-            for (_, value) in fields {
-                collect_instances_in_expression(value, out);
+            out.push(ast.name(*name).to_string());
+            for field in ast.named_in(*fields) {
+                collect_instances_in_expression(ast, field.value, out);
             }
         }
         Expression::StructInit(_, fields)
         | Expression::EnumVariantInit(_, _, fields) => {
-            for (_, value) in fields {
-                collect_instances_in_expression(value, out);
+            for field in ast.named_in(*fields) {
+                collect_instances_in_expression(ast, field.value, out);
             }
         }
         Expression::Range(start, end, _) => {
-            collect_instances_in_expression(start, out);
-            collect_instances_in_expression(end, out);
+            collect_instances_in_expression(ast, *start, out);
+            collect_instances_in_expression(ast, *end, out);
         }
         Expression::Tuple(elements) => {
-            for element in elements {
-                collect_instances_in_expression(element, out);
+            for element in ast.exprs_in(*elements) {
+                collect_instances_in_expression(ast, *element, out);
             }
         }
         Expression::Switch(scrutinee, cases) => {
-            collect_instances_in_expression(scrutinee, out);
-            for case in cases {
-                collect_instances_in_block(&case.body, out);
+            collect_instances_in_expression(ast, *scrutinee, out);
+            for case in ast.cases_in(*cases) {
+                collect_instances_in_block(ast, case.body, out);
             }
         }
         _ => {}
@@ -2794,29 +3040,26 @@ fn collect_instances_in_expression(
 
 struct Discovery<'a> {
     functions: &'a HashMap<String, GenericFunction>,
-    structs: &'a HashMap<String, (Vec<String>, Vec<StructField>)>,
+    structs: &'a GenericStructDefs,
 }
 
 fn infer_struct_instance_shallow(
+    ast: &Ast,
     struct_name: &str,
-    field_inits: &[(String, Expression)],
+    field_inits: Range32,
     env: &HashMap<String, Type>,
     discovery: &Discovery,
 ) -> Option<String> {
     let (type_params, fields) = discovery.structs.get(struct_name)?;
     let mut subst: HashMap<String, Type> = HashMap::new();
-    for (field_name, value) in field_inits {
-        if let Some(field) =
-            fields.iter().find(|field| &field.name == field_name)
+    for entry in ast.named_in(field_inits) {
+        if let Some((_, field_type)) = fields
+            .iter()
+            .find(|(field_name, _)| field_name == ast.name(entry.name))
             && let Some(value_type) =
-                infer_expr_type_shallow(value, env, discovery)
+                infer_expr_type_shallow(ast, entry.value, env, discovery)
         {
-            infer_subst_into(
-                &field.field_type,
-                &value_type,
-                type_params,
-                &mut subst,
-            );
+            infer_subst_into(field_type, &value_type, type_params, &mut subst);
         }
     }
     let rendered: Vec<String> = type_params
@@ -2832,46 +3075,54 @@ fn infer_struct_instance_shallow(
 }
 
 fn infer_expr_type_shallow(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     env: &HashMap<String, Type>,
     discovery: &Discovery,
 ) -> Option<Type> {
-    match expression {
+    match ast.expr(expression) {
         Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
         Expression::Literal(Literal::Float(_)) => Some(Type::F64),
         Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
         Expression::Boolean(_) | Expression::Literal(Literal::Boolean(_)) => {
             Some(Type::Bool)
         }
-        Expression::Identifier(name) => env.get(name).cloned(),
+        Expression::Identifier(name) => env.get(ast.name(*name)).cloned(),
         Expression::StructInit(name, fields) => {
+            let name = ast.name(*name);
             if discovery.structs.contains_key(name) {
-                infer_struct_instance_shallow(name, fields, env, discovery)
-                    .map(Type::Struct)
+                infer_struct_instance_shallow(
+                    ast, name, *fields, env, discovery,
+                )
+                .map(Type::Struct)
             } else {
-                Some(Type::Struct(name.clone()))
+                Some(Type::Struct(name.to_string()))
             }
         }
         Expression::EnumVariantInit(name, _, _) => {
-            Some(Type::Enum(name.clone()))
+            Some(Type::Enum(ast.name(*name).to_string()))
         }
         Expression::Borrow(inner) => {
-            infer_expr_type_shallow(inner, env, discovery)
+            infer_expr_type_shallow(ast, *inner, env, discovery)
                 .map(|inner| Type::Ref(Box::new(inner)))
         }
         Expression::BorrowMut(inner) => {
-            infer_expr_type_shallow(inner, env, discovery)
+            infer_expr_type_shallow(ast, *inner, env, discovery)
                 .map(|inner| Type::RefMut(Box::new(inner)))
         }
         Expression::Call(callee, arguments) => {
-            let Expression::Identifier(name) = callee.as_ref() else {
+            let Expression::Identifier(name) = ast.expr(*callee) else {
                 return None;
             };
-            let generic = discovery.functions.get(name)?;
-            let subst = infer_call_subst(generic, arguments, env, discovery);
-            generic
-                .return_sig
-                .to_type()
+            let generic = discovery.functions.get(ast.name(*name))?;
+            let subst = infer_call_subst(
+                ast,
+                generic,
+                ast.exprs_in(*arguments),
+                env,
+                discovery,
+            );
+            ast.signature_to_type(ast.signature(generic.return_sig))
                 .map(|ty| substitute_type(&ty, &subst))
         }
         _ => None,
@@ -2879,21 +3130,24 @@ fn infer_expr_type_shallow(
 }
 
 fn infer_call_subst(
+    ast: &Ast,
     generic: &GenericFunction,
-    arguments: &[Expression],
+    arguments: &[ExprId],
     env: &HashMap<String, Type>,
     discovery: &Discovery,
 ) -> HashMap<String, Type> {
     let mut subst = HashMap::new();
-    for (parameter, argument) in generic.parameters.iter().zip(arguments) {
-        if is_type_parameter(parameter)
-            && let Expression::TypeValue(ty) = argument
+    for (parameter, argument) in
+        ast.params_in(generic.parameters).iter().zip(arguments)
+    {
+        if is_type_parameter(ast, parameter)
+            && let Expression::TypeValue(ty) = ast.expr(*argument)
         {
-            subst.insert(parameter.name.clone(), ty.clone());
+            subst.insert(ast.name(parameter.name).to_string(), ty.clone());
             continue;
         }
         if let Some(argument_type) =
-            infer_expr_type_shallow(argument, env, discovery)
+            infer_expr_type_shallow(ast, *argument, env, discovery)
         {
             infer_subst_into(
                 &parameter_type(parameter),
@@ -2907,107 +3161,144 @@ fn infer_call_subst(
 }
 
 fn collect_call_instances_in_block(
-    block: &Block,
+    ast: &Ast,
+    block: Range32,
     env: &mut HashMap<String, Type>,
     discovery: &Discovery,
     out: &mut Vec<String>,
 ) {
-    for statement in block {
-        collect_call_instances_in_statement(statement, env, discovery, out);
+    for statement in ast.stmts_in(block) {
+        collect_call_instances_in_statement(
+            ast, *statement, env, discovery, out,
+        );
     }
 }
 
 fn collect_call_instances_in_statement(
-    statement: &Statement,
+    ast: &Ast,
+    statement: StmtId,
     env: &mut HashMap<String, Type>,
     discovery: &Discovery,
     out: &mut Vec<String>,
 ) {
-    match statement {
+    match ast.stmt(statement) {
         Statement::Let {
             name,
             type_annotation,
             value,
             ..
         } => {
-            collect_call_instances_in_expression(value, env, discovery, out);
-            let inferred = type_annotation
-                .clone()
-                .or_else(|| infer_expr_type_shallow(value, env, discovery));
+            collect_call_instances_in_expression(
+                ast, *value, env, discovery, out,
+            );
+            let inferred = type_annotation.clone().or_else(|| {
+                infer_expr_type_shallow(ast, *value, env, discovery)
+            });
             if let Some(ty) = inferred {
-                env.insert(name.clone(), ty);
+                env.insert(ast.name(*name).to_string(), ty);
             }
         }
         Statement::Return(expression) | Statement::Expression(expression) => {
             collect_call_instances_in_expression(
-                expression, env, discovery, out,
+                ast,
+                *expression,
+                env,
+                discovery,
+                out,
             );
         }
         Statement::Assignment(target, value) => {
-            collect_call_instances_in_expression(target, env, discovery, out);
-            collect_call_instances_in_expression(value, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *target, env, discovery, out,
+            );
+            collect_call_instances_in_expression(
+                ast, *value, env, discovery, out,
+            );
         }
         Statement::For(variable, _, range, body) => {
-            collect_call_instances_in_expression(range, env, discovery, out);
-            env.insert(variable.clone(), Type::I64);
-            collect_call_instances_in_block(body, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *range, env, discovery, out,
+            );
+            env.insert(ast.name(*variable).to_string(), Type::I64);
+            collect_call_instances_in_block(ast, *body, env, discovery, out);
         }
         Statement::While(condition, body) => {
             collect_call_instances_in_expression(
-                condition, env, discovery, out,
+                ast, *condition, env, discovery, out,
             );
-            collect_call_instances_in_block(body, env, discovery, out);
+            collect_call_instances_in_block(ast, *body, env, discovery, out);
         }
         Statement::Defer(inner) => {
-            collect_call_instances_in_statement(inner, env, discovery, out);
+            collect_call_instances_in_statement(
+                ast, *inner, env, discovery, out,
+            );
         }
         _ => {}
     }
 }
 
 fn collect_call_instances_in_expression(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     env: &mut HashMap<String, Type>,
     discovery: &Discovery,
     out: &mut Vec<String>,
 ) {
-    match expression {
+    match ast.expr(expression) {
         Expression::Call(callee, arguments) => {
-            if let Expression::Identifier(name) = callee.as_ref()
-                && let Some(generic) = discovery.functions.get(name)
+            if let Expression::Identifier(name) = ast.expr(*callee)
+                && let Some(generic) = discovery.functions.get(ast.name(*name))
             {
-                let subst =
-                    infer_call_subst(generic, arguments, env, discovery);
-                if let Some(return_type) = generic.return_sig.to_type() {
+                let subst = infer_call_subst(
+                    ast,
+                    generic,
+                    ast.exprs_in(*arguments),
+                    env,
+                    discovery,
+                );
+                if let Some(return_type) =
+                    ast.signature_to_type(ast.signature(generic.return_sig))
+                {
                     collect_instances_in_type(
                         &substitute_type(&return_type, &subst),
                         out,
                     );
                 }
-                for parameter in &generic.parameters {
+                for parameter in ast.params_in(generic.parameters) {
                     collect_instances_in_type(
                         &substitute_type(&parameter_type(parameter), &subst),
                         out,
                     );
                 }
             }
-            collect_call_instances_in_expression(callee, env, discovery, out);
-            for argument in arguments {
+            collect_call_instances_in_expression(
+                ast, *callee, env, discovery, out,
+            );
+            for argument in ast.exprs_in(*arguments) {
                 collect_call_instances_in_expression(
-                    argument, env, discovery, out,
+                    ast, *argument, env, discovery, out,
                 );
             }
         }
         Expression::StructInit(name, fields) => {
-            if discovery.structs.contains_key(name)
-                && let Some(instance) =
-                    infer_struct_instance_shallow(name, fields, env, discovery)
+            if discovery.structs.contains_key(ast.name(*name))
+                && let Some(instance) = infer_struct_instance_shallow(
+                    ast,
+                    ast.name(*name),
+                    *fields,
+                    env,
+                    discovery,
+                )
             {
                 out.push(instance);
             }
-            for (_, value) in fields {
+            for field in ast.named_in(*fields) {
                 collect_call_instances_in_expression(
-                    value, env, discovery, out,
+                    ast,
+                    field.value,
+                    env,
+                    discovery,
+                    out,
                 );
             }
         }
@@ -3016,19 +3307,26 @@ fn collect_call_instances_in_expression(
         | Expression::Borrow(operand)
         | Expression::BorrowMut(operand)
         | Expression::Dereference(operand) => {
-            collect_call_instances_in_expression(operand, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *operand, env, discovery, out,
+            );
         }
         Expression::Infix(left, _, right) => {
-            collect_call_instances_in_expression(left, env, discovery, out);
-            collect_call_instances_in_expression(right, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *left, env, discovery, out,
+            );
+            collect_call_instances_in_expression(
+                ast, *right, env, discovery, out,
+            );
         }
         Expression::If(condition, consequence, alternative) => {
             collect_call_instances_in_expression(
-                condition, env, discovery, out,
+                ast, *condition, env, discovery, out,
             );
             let mut branch_env = env.clone();
             collect_call_instances_in_block(
-                consequence,
+                ast,
+                *consequence,
                 &mut branch_env,
                 discovery,
                 out,
@@ -3036,7 +3334,8 @@ fn collect_call_instances_in_expression(
             if let Some(block) = alternative {
                 let mut branch_env = env.clone();
                 collect_call_instances_in_block(
-                    block,
+                    ast,
+                    *block,
                     &mut branch_env,
                     discovery,
                     out,
@@ -3044,27 +3343,38 @@ fn collect_call_instances_in_expression(
             }
         }
         Expression::Index(base, index) => {
-            collect_call_instances_in_expression(base, env, discovery, out);
-            collect_call_instances_in_expression(index, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *base, env, discovery, out,
+            );
+            collect_call_instances_in_expression(
+                ast, *index, env, discovery, out,
+            );
         }
         Expression::FieldAccess(base, _) => {
-            collect_call_instances_in_expression(base, env, discovery, out);
+            collect_call_instances_in_expression(
+                ast, *base, env, discovery, out,
+            );
         }
         Expression::EnumVariantInit(_, _, fields) => {
-            for (_, value) in fields {
+            for field in ast.named_in(*fields) {
                 collect_call_instances_in_expression(
-                    value, env, discovery, out,
+                    ast,
+                    field.value,
+                    env,
+                    discovery,
+                    out,
                 );
             }
         }
         Expression::Switch(scrutinee, cases) => {
             collect_call_instances_in_expression(
-                scrutinee, env, discovery, out,
+                ast, *scrutinee, env, discovery, out,
             );
-            for case in cases {
+            for case in ast.cases_in(*cases) {
                 let mut branch_env = env.clone();
                 collect_call_instances_in_block(
-                    &case.body,
+                    ast,
+                    case.body,
                     &mut branch_env,
                     discovery,
                     out,
@@ -3076,25 +3386,62 @@ fn collect_call_instances_in_expression(
 }
 
 fn expand_generic_structs(
-    statements: &[Spanned<Statement>],
-) -> Result<Vec<Statement>> {
-    let mut generic_structs: HashMap<String, (Vec<String>, Vec<StructField>)> =
-        HashMap::new();
-    let mut generic_enums: HashMap<String, (Vec<String>, Vec<EnumVariant>)> =
-        HashMap::new();
-    for statement in statements {
-        let statement = &statement.node;
-        if let Statement::Struct(name, type_params, fields) = statement
+    ast: &mut Ast,
+    roots: &[StmtId],
+) -> Result<Vec<StmtId>> {
+    let mut generic_structs: GenericStructDefs = HashMap::new();
+    let mut generic_enums: GenericEnumDefs = HashMap::new();
+    for statement in roots {
+        if let Statement::Struct(name, type_params, fields) =
+            ast.stmt(*statement)
             && !type_params.is_empty()
         {
+            let params: Vec<String> = ast
+                .symbols_in(*type_params)
+                .iter()
+                .map(|param| ast.name(*param).to_string())
+                .collect();
+            let fields: Vec<(String, Type)> = ast
+                .fields_in(*fields)
+                .iter()
+                .map(|field| {
+                    (ast.name(field.name).to_string(), field.field_type.clone())
+                })
+                .collect();
             generic_structs
-                .insert(name.clone(), (type_params.clone(), fields.clone()));
+                .insert(ast.name(*name).to_string(), (params, fields));
         }
-        if let Statement::Enum(name, type_params, variants) = statement
+        if let Statement::Enum(name, type_params, variants) =
+            ast.stmt(*statement)
             && !type_params.is_empty()
         {
+            let params: Vec<String> = ast
+                .symbols_in(*type_params)
+                .iter()
+                .map(|param| ast.name(*param).to_string())
+                .collect();
+            let variants: GenericEnumVariants = ast
+                .variants_in(*variants)
+                .iter()
+                .map(|variant| {
+                    (
+                        ast.name(variant.name).to_string(),
+                        variant.fields.map(|fields| {
+                            ast.fields_in(fields)
+                                .iter()
+                                .map(|field| {
+                                    (
+                                        ast.name(field.name).to_string(),
+                                        field.field_type.clone(),
+                                    )
+                                })
+                                .collect()
+                        }),
+                    )
+                })
+                .collect();
             generic_enums
-                .insert(name.clone(), (type_params.clone(), variants.clone()));
+                .insert(ast.name(*name).to_string(), (params, variants));
         }
     }
     // No early return on empty templates. A `columns<T, N>` is synthesized here
@@ -3102,22 +3449,20 @@ fn expand_generic_structs(
 
     let mut generic_functions: HashMap<String, GenericFunction> =
         HashMap::new();
-    for statement in statements {
-        let statement = &statement.node;
-        if let Statement::Constant(
-            name,
-            Expression::Function(parameters, return_sig, body)
-            | Expression::Proc(parameters, return_sig, body),
-        ) = statement
-            && function_is_generic(parameters)
+    for statement in roots {
+        if let Statement::Constant(name, value) = ast.stmt(*statement)
+            && let Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body) =
+                ast.expr(*value)
+            && function_is_generic(ast, *parameters)
         {
             generic_functions.insert(
-                name.clone(),
+                ast.name(*name).to_string(),
                 GenericFunction {
-                    type_params: function_type_params(parameters),
-                    parameters: parameters.clone(),
-                    return_sig: return_sig.clone(),
-                    body: body.clone(),
+                    type_params: function_type_params(ast, *parameters),
+                    parameters: *parameters,
+                    return_sig: *return_sig,
+                    body: *body,
                 },
             );
         }
@@ -3128,34 +3473,34 @@ fn expand_generic_structs(
         structs: &generic_structs,
     };
     let mut queue: Vec<String> = Vec::new();
-    for statement in statements {
-        let statement = &statement.node;
-        if let Statement::Constant(
-            _,
-            Expression::Function(parameters, _, body)
-            | Expression::Proc(parameters, _, body),
-        ) = statement
+    for statement in roots {
+        if let Statement::Constant(_, value) = ast.stmt(*statement)
+            && let Expression::Function(parameters, _, body)
+            | Expression::Proc(parameters, _, body) = ast.expr(*value)
         {
             let mut env: HashMap<String, Type> = HashMap::new();
-            for parameter in parameters {
+            for parameter in ast.params_in(*parameters) {
                 if let Some(ty) = &parameter.type_annotation {
-                    env.insert(parameter.name.clone(), ty.clone());
+                    env.insert(
+                        ast.name(parameter.name).to_string(),
+                        ty.clone(),
+                    );
                 }
             }
             collect_call_instances_in_block(
-                body, &mut env, &discovery, &mut queue,
+                ast, *body, &mut env, &discovery, &mut queue,
             );
         }
-        collect_instances_in_statement(statement, &mut queue);
-        if let Statement::Struct(_, _, fields) = statement {
-            for field in fields {
+        collect_instances_in_statement(ast, *statement, &mut queue);
+        if let Statement::Struct(_, _, fields) = ast.stmt(*statement) {
+            for field in ast.fields_in(*fields) {
                 collect_instances_in_type(&field.field_type, &mut queue);
             }
         }
-        if let Statement::Enum(_, _, variants) = statement {
-            for variant in variants {
-                if let Some(fields) = &variant.fields {
-                    for field in fields {
+        if let Statement::Enum(_, _, variants) = ast.stmt(*statement) {
+            for variant in ast.variants_in(*variants) {
+                if let Some(fields) = variant.fields {
+                    for field in ast.fields_in(fields) {
                         collect_instances_in_type(
                             &field.field_type,
                             &mut queue,
@@ -3168,9 +3513,9 @@ fn expand_generic_structs(
             params,
             return_type,
             ..
-        } = statement
+        } = ast.stmt(*statement)
         {
-            for parameter in params {
+            for parameter in ast.params_in(*params) {
                 if let Some(ty) = &parameter.type_annotation {
                     collect_instances_in_type(ty, &mut queue);
                 }
@@ -3179,34 +3524,45 @@ fn expand_generic_structs(
                 collect_instances_in_type(ty, &mut queue);
             }
         }
-        if let Statement::Constant(
-            _,
-            Expression::Function(parameters, return_sig, body)
-            | Expression::Proc(parameters, return_sig, body),
-        ) = statement
+        if let Statement::Constant(_, value) = ast.stmt(*statement)
+            && let Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body) =
+                ast.expr(*value)
         {
-            for parameter in parameters {
+            for parameter in ast.params_in(*parameters) {
                 if let Some(ty) = &parameter.type_annotation {
                     collect_instances_in_type(ty, &mut queue);
                 }
             }
-            if let Some(ty) = return_sig.to_type() {
+            if let Some(ty) = ast.signature_to_type(ast.signature(*return_sig))
+            {
                 collect_instances_in_type(&ty, &mut queue);
             }
-            collect_instances_in_block(body, &mut queue);
+            collect_instances_in_block(ast, *body, &mut queue);
         }
     }
 
     // The non-generic struct definitions, so a `columns<T, N>` can reflect over
     // T's fields to synthesize one array per field. T is required to be a plain
     // struct, the same restriction the self-hosted compiler has.
-    let concrete_structs: HashMap<String, Vec<StructField>> = statements
+    let concrete_structs: HashMap<String, Vec<(String, Type)>> = roots
         .iter()
-        .filter_map(|statement| match &statement.node {
+        .filter_map(|statement| match ast.stmt(*statement) {
             Statement::Struct(name, type_params, fields)
                 if type_params.is_empty() =>
             {
-                Some((name.clone(), fields.clone()))
+                Some((
+                    ast.name(*name).to_string(),
+                    ast.fields_in(*fields)
+                        .iter()
+                        .map(|field| {
+                            (
+                                ast.name(field.name).to_string(),
+                                field.field_type.clone(),
+                            )
+                        })
+                        .collect(),
+                ))
             }
             _ => None,
         })
@@ -3230,38 +3586,54 @@ fn expand_generic_structs(
                 &instance,
                 "enum",
             )?;
-            let concrete_variants: Vec<EnumVariant> = variants
+            let concrete_variants: GenericEnumVariants = variants
                 .iter()
-                .map(|variant| EnumVariant {
-                    name: variant.name.clone(),
-                    fields: variant.fields.as_ref().map(|fields| {
-                        fields
-                            .iter()
-                            .map(|field| StructField {
-                                name: field.name.clone(),
-                                field_type: substitute_type(
-                                    &field.field_type,
-                                    &subst,
-                                ),
-                            })
-                            .collect()
-                    }),
+                .map(|(variant_name, fields)| {
+                    (
+                        variant_name.clone(),
+                        fields.as_ref().map(|fields| {
+                            fields
+                                .iter()
+                                .map(|(field_name, field_type)| {
+                                    (
+                                        field_name.clone(),
+                                        substitute_type(field_type, &subst),
+                                    )
+                                })
+                                .collect()
+                        }),
+                    )
                 })
                 .collect();
-            for variant in &concrete_variants {
-                if let Some(fields) = &variant.fields {
-                    for field in fields {
-                        collect_instances_in_type(
-                            &field.field_type,
-                            &mut queue,
-                        );
+            for (_, fields) in &concrete_variants {
+                if let Some(fields) = fields {
+                    for (_, field_type) in fields {
+                        collect_instances_in_type(field_type, &mut queue);
                     }
                 }
             }
-            synthetic.push(Statement::Enum(
-                instance.clone(),
-                Vec::new(),
-                concrete_variants,
+            let variant_entries: Vec<EnumVariant> = concrete_variants
+                .iter()
+                .map(|(variant_name, fields)| {
+                    let name = ast.intern(variant_name);
+                    let fields = fields.as_ref().map(|fields| {
+                        let entries: Vec<StructField> = fields
+                            .iter()
+                            .map(|(field_name, field_type)| StructField {
+                                name: ast.intern(field_name),
+                                field_type: field_type.clone(),
+                            })
+                            .collect();
+                        ast.add_struct_fields(entries)
+                    });
+                    EnumVariant { name, fields }
+                })
+                .collect();
+            let name = ast.intern(&instance);
+            let variants = ast.add_enum_variants(&variant_entries);
+            synthetic.push(ast.push_stmt(
+                Statement::Enum(name, Range32::EMPTY, variants),
+                TokenSpan::NONE,
             ));
             continue;
         }
@@ -3291,35 +3663,39 @@ fn expand_generic_structs(
             else {
                 continue;
             };
-            let mut columns_fields: Vec<StructField> = element_fields
+            let mut columns_fields: Vec<(String, Type)> = element_fields
                 .iter()
-                .map(|field| StructField {
-                    name: field.name.clone(),
-                    field_type: Type::Array(
-                        Box::new(field.field_type.clone()),
-                        count,
-                    ),
+                .map(|(field_name, field_type)| {
+                    (
+                        field_name.clone(),
+                        Type::Array(Box::new(field_type.clone()), count),
+                    )
                 })
                 .collect();
-            columns_fields.push(StructField {
-                name: "generations".to_string(),
-                field_type: Type::Array(Box::new(Type::I64), count),
-            });
-            columns_fields.push(StructField {
-                name: "free_list".to_string(),
-                field_type: Type::Array(Box::new(Type::I64), count),
-            });
-            columns_fields.push(StructField {
-                name: "free_count".to_string(),
-                field_type: Type::I64,
-            });
-            for field in &columns_fields {
-                collect_instances_in_type(&field.field_type, &mut queue);
+            columns_fields.push((
+                "generations".to_string(),
+                Type::Array(Box::new(Type::I64), count),
+            ));
+            columns_fields.push((
+                "free_list".to_string(),
+                Type::Array(Box::new(Type::I64), count),
+            ));
+            columns_fields.push(("free_count".to_string(), Type::I64));
+            for (_, field_type) in &columns_fields {
+                collect_instances_in_type(field_type, &mut queue);
             }
-            synthetic.push(Statement::Struct(
-                instance.clone(),
-                Vec::new(),
-                columns_fields,
+            let entries: Vec<StructField> = columns_fields
+                .iter()
+                .map(|(field_name, field_type)| StructField {
+                    name: ast.intern(field_name),
+                    field_type: field_type.clone(),
+                })
+                .collect();
+            let name = ast.intern(&instance);
+            let fields = ast.add_struct_fields(entries);
+            synthetic.push(ast.push_stmt(
+                Statement::Struct(name, Range32::EMPTY, fields),
+                TokenSpan::NONE,
             ));
             continue;
         }
@@ -3333,20 +3709,27 @@ fn expand_generic_structs(
             &instance,
             "struct",
         )?;
-        let concrete_fields: Vec<StructField> = fields
+        let concrete_fields: Vec<(String, Type)> = fields
             .iter()
-            .map(|field| StructField {
-                name: field.name.clone(),
-                field_type: substitute_type(&field.field_type, &subst),
+            .map(|(field_name, field_type)| {
+                (field_name.clone(), substitute_type(field_type, &subst))
             })
             .collect();
-        for field in &concrete_fields {
-            collect_instances_in_type(&field.field_type, &mut queue);
+        for (_, field_type) in &concrete_fields {
+            collect_instances_in_type(field_type, &mut queue);
         }
-        synthetic.push(Statement::Struct(
-            instance.clone(),
-            Vec::new(),
-            concrete_fields,
+        let entries: Vec<StructField> = concrete_fields
+            .iter()
+            .map(|(field_name, field_type)| StructField {
+                name: ast.intern(field_name),
+                field_type: field_type.clone(),
+            })
+            .collect();
+        let name = ast.intern(&instance);
+        let fields = ast.add_struct_fields(entries);
+        synthetic.push(ast.push_stmt(
+            Statement::Struct(name, Range32::EMPTY, fields),
+            TokenSpan::NONE,
         ));
     }
     Ok(synthetic)
@@ -3379,239 +3762,267 @@ fn instance_substitution(
     Ok(subst)
 }
 
-fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
-    block
-        .iter()
-        .map(|statement| {
-            Spanned::new(
-                substitute_statement(&statement.node, subst),
-                statement.position,
-            )
-        })
-        .collect()
+fn substitute_block(
+    ast: &mut Ast,
+    block: Range32,
+    subst: &HashMap<String, Type>,
+) -> Range32 {
+    let statements: Vec<StmtId> = ast.stmts_in(block).to_vec();
+    let mut copied = Vec::with_capacity(statements.len());
+    for statement in statements {
+        copied.push(substitute_statement(ast, statement, subst));
+    }
+    ast.add_stmt_list(&copied)
 }
 
 fn substitute_statement(
-    statement: &Statement,
+    ast: &mut Ast,
+    statement: StmtId,
     subst: &HashMap<String, Type>,
-) -> Statement {
-    match statement {
+) -> StmtId {
+    let span = ast.stmt_span(statement);
+    let substituted = match ast.stmt(statement).clone() {
         Statement::Let {
             name,
             type_annotation,
             value,
             mutable,
         } => Statement::Let {
-            name: name.clone(),
+            name,
             type_annotation: type_annotation
                 .as_ref()
                 .map(|ty| substitute_type(ty, subst)),
-            value: substitute_expression(value, subst),
-            mutable: *mutable,
+            value: substitute_expression(ast, value, subst),
+            mutable,
         },
         Statement::Return(expression) => {
-            Statement::Return(substitute_expression(expression, subst))
+            Statement::Return(substitute_expression(ast, expression, subst))
         }
         Statement::Expression(expression) => {
-            Statement::Expression(substitute_expression(expression, subst))
+            Statement::Expression(substitute_expression(ast, expression, subst))
         }
         Statement::Assignment(target, value) => Statement::Assignment(
-            substitute_expression(target, subst),
-            substitute_expression(value, subst),
+            substitute_expression(ast, target, subst),
+            substitute_expression(ast, value, subst),
         ),
         Statement::For(variable, second, range, body) => Statement::For(
-            variable.clone(),
-            second.clone(),
-            substitute_expression(range, subst),
-            substitute_block(body, subst),
+            variable,
+            second,
+            substitute_expression(ast, range, subst),
+            substitute_block(ast, body, subst),
         ),
         Statement::While(condition, body) => Statement::While(
-            substitute_expression(condition, subst),
-            substitute_block(body, subst),
+            substitute_expression(ast, condition, subst),
+            substitute_block(ast, body, subst),
         ),
         Statement::Defer(inner) => {
-            Statement::Defer(Box::new(substitute_statement(inner, subst)))
+            Statement::Defer(substitute_statement(ast, inner, subst))
         }
-        Statement::Print(value, arguments) => Statement::Print(
-            substitute_expression(value, subst),
-            arguments
-                .iter()
-                .map(|argument| substitute_expression(argument, subst))
-                .collect(),
-        ),
-        Statement::Constant(name, value) => Statement::Constant(
-            name.clone(),
-            substitute_expression(value, subst),
-        ),
+        Statement::Print(value, arguments) => {
+            let value = substitute_expression(ast, value, subst);
+            let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
+            let mut substituted = Vec::with_capacity(argument_ids.len());
+            for argument in argument_ids {
+                substituted.push(substitute_expression(ast, argument, subst));
+            }
+            Statement::Print(value, ast.add_expr_list(&substituted))
+        }
+        Statement::Constant(name, value) => {
+            Statement::Constant(name, substitute_expression(ast, value, subst))
+        }
         Statement::LetMultiple(bindings, value) => Statement::LetMultiple(
-            bindings.clone(),
-            substitute_expression(value, subst),
+            bindings,
+            substitute_expression(ast, value, subst),
         ),
         Statement::With(name, body) => {
-            Statement::With(name.clone(), substitute_block(body, subst))
+            Statement::With(name, substitute_block(ast, body, subst))
         }
-        other => other.clone(),
-    }
+        _ => return statement,
+    };
+    ast.push_stmt(substituted, span)
 }
 
 fn substitute_expression(
-    expression: &Expression,
+    ast: &mut Ast,
+    expression: ExprId,
     subst: &HashMap<String, Type>,
-) -> Expression {
+) -> ExprId {
+    let span = ast.expr_span(expression);
     // A call through a compile-time function parameter is a call to the
     // function that parameter was given. There is nothing left to dispatch on
     // by the time the specialized body is lowered: the comparator ends up
     // inlined into the loop rather than called through a pointer.
     // A value parameter stands for its integer everywhere the body names it, not
     // only in a type. `while (i < N)` has to mean the capacity.
-    if let Expression::Identifier(name) = expression
-        && let Some(Type::ConstUsize(value)) = subst.get(name)
+    if let Expression::Identifier(name) = ast.expr(expression)
+        && let Some(Type::ConstUsize(value)) = subst.get(ast.name(*name))
     {
-        return Expression::Literal(crate::parser::Literal::Integer(
-            *value as i64,
-        ));
-    }
-    if let Expression::Identifier(name) = expression
-        && let Some(Type::ConstValue(target)) = subst.get(name)
-    {
-        return Expression::Identifier(target.clone());
-    }
-    if let Expression::Call(callee, arguments) = expression
-        && let Expression::Identifier(name) = callee.as_ref()
-        && let Some(Type::ConstFn(target)) = subst.get(name)
-    {
-        return Expression::Call(
-            Box::new(Expression::Identifier(target.clone())),
-            arguments
-                .iter()
-                .map(|argument| substitute_expression(argument, subst))
-                .collect(),
+        return ast.push_expr(
+            Expression::Literal(Literal::Integer(*value as i64)),
+            span,
         );
     }
-    match expression {
+    if let Expression::Identifier(name) = ast.expr(expression)
+        && let Some(Type::ConstValue(target)) = subst.get(ast.name(*name))
+    {
+        let target = target.clone();
+        let symbol = ast.intern(&target);
+        return ast.push_expr(Expression::Identifier(symbol), span);
+    }
+    if let Expression::Call(callee, arguments) = ast.expr(expression)
+        && let Expression::Identifier(name) = ast.expr(*callee)
+        && let Some(Type::ConstFn(target)) = subst.get(ast.name(*name))
+    {
+        let target = target.clone();
+        let callee_span = ast.expr_span(*callee);
+        let argument_ids: Vec<ExprId> = ast.exprs_in(*arguments).to_vec();
+        let symbol = ast.intern(&target);
+        let callee = ast.push_expr(Expression::Identifier(symbol), callee_span);
+        let mut substituted = Vec::with_capacity(argument_ids.len());
+        for argument in argument_ids {
+            substituted.push(substitute_expression(ast, argument, subst));
+        }
+        let arguments = ast.add_expr_list(&substituted);
+        return ast.push_expr(Expression::Call(callee, arguments), span);
+    }
+    let node = match ast.expr(expression).clone() {
         Expression::Prefix(operator, operand) => Expression::Prefix(
-            *operator,
-            Box::new(substitute_expression(operand, subst)),
+            operator,
+            substitute_expression(ast, operand, subst),
         ),
-        Expression::Infix(left, operator, right) => Expression::Infix(
-            Box::new(substitute_expression(left, subst)),
-            *operator,
-            Box::new(substitute_expression(right, subst)),
-        ),
+        Expression::Infix(left, operator, right) => {
+            let left = substitute_expression(ast, left, subst);
+            let right = substitute_expression(ast, right, subst);
+            Expression::Infix(left, operator, right)
+        }
         Expression::If(condition, consequence, alternative) => Expression::If(
-            Box::new(substitute_expression(condition, subst)),
-            substitute_block(consequence, subst),
-            alternative
-                .as_ref()
-                .map(|block| substitute_block(block, subst)),
+            substitute_expression(ast, condition, subst),
+            substitute_block(ast, consequence, subst),
+            alternative.map(|block| substitute_block(ast, block, subst)),
         ),
-        Expression::Call(callee, arguments) => Expression::Call(
-            Box::new(substitute_expression(callee, subst)),
-            arguments
-                .iter()
-                .map(|argument| substitute_expression(argument, subst))
-                .collect(),
-        ),
-        Expression::Index(base, index) => Expression::Index(
-            Box::new(substitute_expression(base, subst)),
-            Box::new(substitute_expression(index, subst)),
-        ),
+        Expression::Call(callee, arguments) => {
+            let callee = substitute_expression(ast, callee, subst);
+            let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
+            let mut substituted = Vec::with_capacity(argument_ids.len());
+            for argument in argument_ids {
+                substituted.push(substitute_expression(ast, argument, subst));
+            }
+            Expression::Call(callee, ast.add_expr_list(&substituted))
+        }
+        Expression::Index(base, index) => {
+            let base = substitute_expression(ast, base, subst);
+            let index = substitute_expression(ast, index, subst);
+            Expression::Index(base, index)
+        }
         Expression::FieldAccess(base, field) => Expression::FieldAccess(
-            Box::new(substitute_expression(base, subst)),
-            field.clone(),
+            substitute_expression(ast, base, subst),
+            field,
         ),
         Expression::AddressOf(inner) => {
-            Expression::AddressOf(Box::new(substitute_expression(inner, subst)))
+            Expression::AddressOf(substitute_expression(ast, inner, subst))
         }
         Expression::Borrow(inner) => {
-            Expression::Borrow(Box::new(substitute_expression(inner, subst)))
+            Expression::Borrow(substitute_expression(ast, inner, subst))
         }
         Expression::BorrowMut(inner) => {
-            Expression::BorrowMut(Box::new(substitute_expression(inner, subst)))
+            Expression::BorrowMut(substitute_expression(ast, inner, subst))
         }
-        Expression::Dereference(inner) => Expression::Dereference(Box::new(
-            substitute_expression(inner, subst),
-        )),
-        Expression::StructInit(name, fields) => Expression::StructInit(
-            name.clone(),
-            fields
-                .iter()
-                .map(|(field, value)| {
-                    (field.clone(), substitute_expression(value, subst))
-                })
-                .collect(),
-        ),
+        Expression::Dereference(inner) => {
+            Expression::Dereference(substitute_expression(ast, inner, subst))
+        }
+        Expression::StructInit(name, fields) => {
+            let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+            let mut substituted = Vec::with_capacity(entries.len());
+            for entry in entries {
+                substituted.push(NamedExpr {
+                    name: entry.name,
+                    value: substitute_expression(ast, entry.value, subst),
+                });
+            }
+            Expression::StructInit(name, ast.add_named_exprs(&substituted))
+        }
         Expression::EnumVariantInit(name, variant, fields) => {
+            let entries: Vec<NamedExpr> = ast.named_in(fields).to_vec();
+            let mut substituted = Vec::with_capacity(entries.len());
+            for entry in entries {
+                substituted.push(NamedExpr {
+                    name: entry.name,
+                    value: substitute_expression(ast, entry.value, subst),
+                });
+            }
             Expression::EnumVariantInit(
-                name.clone(),
-                variant.clone(),
-                fields
-                    .iter()
-                    .map(|(field, value)| {
-                        (field.clone(), substitute_expression(value, subst))
-                    })
-                    .collect(),
+                name,
+                variant,
+                ast.add_named_exprs(&substituted),
             )
         }
         Expression::Sizeof(ty) => {
-            Expression::Sizeof(substitute_type(ty, subst))
+            Expression::Sizeof(substitute_type(&ty, subst))
         }
         Expression::TypeName(ty) => {
-            Expression::TypeName(substitute_type(ty, subst))
+            Expression::TypeName(substitute_type(&ty, subst))
         }
         Expression::TypeId(ty) => {
-            Expression::TypeId(substitute_type(ty, subst))
+            Expression::TypeId(substitute_type(&ty, subst))
         }
         // `[value; N]` becomes the array it always meant, now that N is a
         // number. A count still unbound is one the enclosing generic passes on
         // to a further instantiation, so the form is carried along.
         Expression::ArrayRepeat(value, count) => {
-            let value = substitute_expression(value, subst);
-            match subst.get(count) {
+            let value = substitute_expression(ast, value, subst);
+            match subst.get(ast.name(count)) {
                 Some(Type::ConstUsize(size)) => {
-                    Expression::Literal(Literal::Array(vec![value; *size]))
+                    let elements = vec![value; *size];
+                    Expression::Literal(Literal::Array(
+                        ast.add_expr_list(&elements),
+                    ))
                 }
-                _ => Expression::ArrayRepeat(Box::new(value), count.clone()),
+                _ => Expression::ArrayRepeat(value, count),
             }
         }
         // A compile-time argument handed on to another generic. Without this a
         // `$T` or a `$f` forwarded from one generic to the next arrived as the
         // parameter's own name rather than what it was bound to.
         Expression::TypeValue(ty) => {
-            Expression::TypeValue(substitute_type(ty, subst))
+            Expression::TypeValue(substitute_type(&ty, subst))
         }
-        Expression::Range(start, end, inclusive) => Expression::Range(
-            Box::new(substitute_expression(start, subst)),
-            Box::new(substitute_expression(end, subst)),
-            *inclusive,
-        ),
-        Expression::Tuple(elements) => Expression::Tuple(
-            elements
-                .iter()
-                .map(|element| substitute_expression(element, subst))
-                .collect(),
-        ),
-        Expression::Switch(scrutinee, cases) => Expression::Switch(
-            Box::new(substitute_expression(scrutinee, subst)),
-            cases
-                .iter()
-                .map(|case| SwitchCase {
-                    pattern: case.pattern.clone(),
-                    body: substitute_block(&case.body, subst),
-                })
-                .collect(),
-        ),
+        Expression::Range(start, end, inclusive) => {
+            let start = substitute_expression(ast, start, subst);
+            let end = substitute_expression(ast, end, subst);
+            Expression::Range(start, end, inclusive)
+        }
+        Expression::Tuple(elements) => {
+            let element_ids: Vec<ExprId> = ast.exprs_in(elements).to_vec();
+            let mut substituted = Vec::with_capacity(element_ids.len());
+            for element in element_ids {
+                substituted.push(substitute_expression(ast, element, subst));
+            }
+            Expression::Tuple(ast.add_expr_list(&substituted))
+        }
+        Expression::Switch(scrutinee, cases) => {
+            let scrutinee = substitute_expression(ast, scrutinee, subst);
+            let case_entries: Vec<SwitchCase> = ast.cases_in(cases).to_vec();
+            let mut substituted = Vec::with_capacity(case_entries.len());
+            for case in case_entries {
+                substituted.push(SwitchCase {
+                    pattern: case.pattern,
+                    body: substitute_block(ast, case.body, subst),
+                });
+            }
+            Expression::Switch(scrutinee, ast.add_cases(&substituted))
+        }
         // The body of an `unsafe` block is ordinary code, so a type parameter
         // used inside one substitutes the same as anywhere else. Missing this
         // left `sizeof(T)` reading as zero inside `unsafe { }`.
         Expression::Unsafe(body) => {
-            Expression::Unsafe(substitute_block(body, subst))
+            Expression::Unsafe(substitute_block(ast, body, subst))
         }
         Expression::UnsafeFn(inner) => {
-            Expression::UnsafeFn(Box::new(substitute_expression(inner, subst)))
+            Expression::UnsafeFn(substitute_expression(ast, inner, subst))
         }
-        other => other.clone(),
-    }
+        _ => return expression,
+    };
+    ast.push_expr(node, span)
 }
 
 // What a struct or an enum is called, looking through a borrow of one, or
@@ -3656,9 +4067,9 @@ fn needs_memory(ty: &Type) -> bool {
 // A place expression names storage: a variable, a field, an element, or a
 // dereference. Anything else is a value expression, whose result has to be
 // spilled to memory before its address can be taken.
-fn is_place_expression(expression: &Expression) -> bool {
+fn is_place_expression(ast: &Ast, expression: ExprId) -> bool {
     matches!(
-        expression,
+        ast.expr(expression),
         Expression::Identifier(_)
             | Expression::FieldAccess(_, _)
             | Expression::Index(_, _)
@@ -3678,8 +4089,9 @@ fn str_byte_ptr_type() -> Type {
 }
 
 fn array_element_type(
+    ast: &Ast,
     annotation: Option<&Type>,
-    elements: &[Expression],
+    elements: &[ExprId],
     signatures: &HashMap<String, FunctionSignature>,
 ) -> Type {
     match annotation {
@@ -3688,18 +4100,20 @@ fn array_element_type(
         }
         _ => {}
     }
-    match elements.first() {
+    match elements.first().map(|element| ast.expr(*element)) {
         Some(Expression::Literal(Literal::Integer(_))) => Type::I64,
         Some(Expression::Literal(Literal::Float(_))) => Type::F64,
         Some(Expression::Literal(Literal::Float32(_))) => Type::F32,
         Some(Expression::Literal(Literal::Boolean(_)))
         | Some(Expression::Boolean(_)) => Type::Bool,
-        Some(Expression::StructInit(name, _)) => Type::Struct(name.clone()),
+        Some(Expression::StructInit(name, _)) => {
+            Type::Struct(ast.name(*name).to_string())
+        }
         Some(Expression::EnumVariantInit(name, _, _)) => {
-            Type::Enum(name.clone())
+            Type::Enum(ast.name(*name).to_string())
         }
         Some(Expression::Identifier(name))
-            if let Some(signature) = signatures.get(name) =>
+            if let Some(signature) = signatures.get(ast.name(*name)) =>
         {
             Type::Proc(
                 signature.parameters.clone(),
@@ -3710,11 +4124,22 @@ fn array_element_type(
             Expression::Function(parameters, return_sig, _)
             | Expression::Proc(parameters, return_sig, _),
         ) => Type::Proc(
-            parameters.iter().map(parameter_type).collect(),
-            Box::new(return_sig.to_type().unwrap_or(Type::Void)),
+            ast.params_in(*parameters)
+                .iter()
+                .map(parameter_type)
+                .collect(),
+            Box::new(
+                ast.signature_to_type(ast.signature(*return_sig))
+                    .unwrap_or(Type::Void),
+            ),
         ),
         Some(Expression::Literal(Literal::Array(inner))) => Type::Array(
-            Box::new(array_element_type(None, inner, signatures)),
+            Box::new(array_element_type(
+                ast,
+                None,
+                ast.exprs_in(*inner),
+                signatures,
+            )),
             inner.len(),
         ),
         _ => Type::I64,
@@ -3729,15 +4154,17 @@ fn array_element_type(
 // compiler refuses the same programs, walking the deferred statement's tokens
 // against the locals the function bound.
 fn check_defer_names(
-    deferred: &Statement,
-    rest: &[Spanned<Statement>],
+    ast: &Ast,
+    deferred: StmtId,
+    rest: &[StmtId],
 ) -> Result<()> {
     let mut mentioned = Vec::new();
-    crate::interface_names::names_in_statement(deferred, &mut mentioned);
+    crate::interface_names::names_in_statement(ast, deferred, &mut mentioned);
     let mut rebound = HashSet::new();
     for statement in rest {
         crate::import_visibility::bound_in_statement(
-            &statement.node,
+            ast,
+            *statement,
             &mut rebound,
         );
     }
@@ -3753,18 +4180,22 @@ fn check_defer_names(
 
 type LayoutMaps = (HashMap<String, StructLayout>, HashMap<String, EnumLayout>);
 
-fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
-    let struct_defs: Vec<(&String, &Vec<StructField>)> = statements
+fn compute_layouts(ast: &Ast, statements: &[StmtId]) -> LayoutMaps {
+    let struct_defs: Vec<(&str, Range32)> = statements
         .iter()
-        .filter_map(|statement| match statement {
-            Statement::Struct(name, _, fields) => Some((name, fields)),
+        .filter_map(|statement| match ast.stmt(*statement) {
+            Statement::Struct(name, _, fields) => {
+                Some((ast.name(*name), *fields))
+            }
             _ => None,
         })
         .collect();
-    let enum_defs: Vec<(&String, &Vec<EnumVariant>)> = statements
+    let enum_defs: Vec<(&str, Range32)> = statements
         .iter()
-        .filter_map(|statement| match statement {
-            Statement::Enum(name, _, variants) => Some((name, variants)),
+        .filter_map(|statement| match ast.stmt(*statement) {
+            Statement::Enum(name, _, variants) => {
+                Some((ast.name(*name), *variants))
+            }
             _ => None,
         })
         .collect();
@@ -3777,8 +4208,10 @@ fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
             if structs.contains_key(*name) {
                 continue;
             }
-            if let Some(layout) = try_struct_layout(fields, &structs, &enums) {
-                structs.insert((*name).clone(), layout);
+            if let Some(layout) =
+                try_struct_layout(ast, ast.fields_in(*fields), &structs, &enums)
+            {
+                structs.insert((*name).to_string(), layout);
                 progress = true;
             }
         }
@@ -3786,8 +4219,13 @@ fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
             if enums.contains_key(*name) {
                 continue;
             }
-            if let Some(layout) = try_enum_layout(variants, &structs, &enums) {
-                enums.insert((*name).clone(), layout);
+            if let Some(layout) = try_enum_layout(
+                ast,
+                ast.variants_in(*variants),
+                &structs,
+                &enums,
+            ) {
+                enums.insert((*name).to_string(), layout);
                 progress = true;
             }
         }
@@ -3799,6 +4237,7 @@ fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
 }
 
 fn try_struct_layout(
+    ast: &Ast,
     fields: &[StructField],
     structs: &HashMap<String, StructLayout>,
     enums: &HashMap<String, EnumLayout>,
@@ -3811,7 +4250,7 @@ fn try_struct_layout(
             size_and_align(&field.field_type, structs, enums)?;
         offset = round_up(offset, field_align);
         field_layouts.push(FieldLayout {
-            name: field.name.clone(),
+            name: ast.name(field.name).to_string(),
             ty: field.field_type.clone(),
             offset,
         });
@@ -3826,6 +4265,7 @@ fn try_struct_layout(
 }
 
 fn try_enum_layout(
+    ast: &Ast,
     variants: &[EnumVariant],
     structs: &HashMap<String, StructLayout>,
     enums: &HashMap<String, EnumLayout>,
@@ -3833,8 +4273,8 @@ fn try_enum_layout(
     let tag_size = 4;
     let mut payload_align = 1;
     for variant in variants {
-        if let Some(fields) = &variant.fields {
-            for field in fields {
+        if let Some(fields) = variant.fields {
+            for field in ast.fields_in(fields) {
                 let (_, field_align) =
                     size_and_align(&field.field_type, structs, enums)?;
                 payload_align = payload_align.max(field_align);
@@ -3848,13 +4288,13 @@ fn try_enum_layout(
     for (index, variant) in variants.iter().enumerate() {
         let mut offset = payload_offset;
         let mut field_layouts = Vec::new();
-        if let Some(fields) = &variant.fields {
-            for field in fields {
+        if let Some(fields) = variant.fields {
+            for field in ast.fields_in(fields) {
                 let (field_size, field_align) =
                     size_and_align(&field.field_type, structs, enums)?;
                 offset = round_up(offset, field_align);
                 field_layouts.push(FieldLayout {
-                    name: field.name.clone(),
+                    name: ast.name(field.name).to_string(),
                     ty: field.field_type.clone(),
                     offset,
                 });
@@ -3863,7 +4303,7 @@ fn try_enum_layout(
         }
         max_end = max_end.max(offset);
         variant_layouts.push(EnumVariantLayout {
-            name: variant.name.clone(),
+            name: ast.name(variant.name).to_string(),
             tag: index as u32,
             fields: field_layouts,
         });
@@ -3921,26 +4361,32 @@ struct LoopTargets {
 
 struct FunctionLowering<'a> {
     builder: &'a IrBuilder,
+    ast: &'a mut Ast,
     locals: Vec<IrLocal>,
     blocks: Vec<BlockUnderConstruction>,
     scopes: Vec<HashMap<String, LocalId>>,
     loops: Vec<LoopTargets>,
     current: BlockId,
     return_type: Type,
-    active_defers: Vec<Statement>,
+    active_defers: Vec<StmtId>,
     current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
 }
 
 impl<'a> FunctionLowering<'a> {
-    fn new(builder: &'a IrBuilder, return_type: Type) -> Self {
+    fn new(
+        builder: &'a IrBuilder,
+        ast: &'a mut Ast,
+        return_type: Type,
+    ) -> Self {
         let entry = BlockUnderConstruction {
             statements: Vec::new(),
             terminator: None,
         };
         FunctionLowering {
             builder,
+            ast,
             locals: Vec::new(),
             blocks: vec![entry],
             scopes: vec![HashMap::new()],
@@ -4045,24 +4491,27 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_block(
         &mut self,
-        block: &Block,
+        block: Range32,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         self.push_scope();
         let mut result = (unit_operand(), Type::Void);
-        for (index, statement) in block.iter().enumerate() {
-            let is_last = index + 1 == block.len();
-            let position = statement.position;
+        let statements: Vec<StmtId> = self.ast.stmts_in(block).to_vec();
+        for (index, statement) in statements.iter().enumerate() {
+            let is_last = index + 1 == statements.len();
+            let position = self.ast.stmt_position(*statement);
             self.current_position = position;
             if is_last
-                && let Statement::Expression(expression) = &statement.node
+                && let Statement::Expression(expression) =
+                    self.ast.stmt(*statement)
             {
+                let expression = *expression;
                 result = locate(
                     self.lower_expression(expression, expected),
                     position,
                 )?;
             } else {
-                locate(self.lower_statement(&statement.node), position)?;
+                locate(self.lower_statement(*statement), position)?;
             }
         }
         self.pop_scope();
@@ -4071,22 +4520,27 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_body_with_defers(
         &mut self,
-        body: &Block,
+        body: Range32,
         return_type: &Type,
     ) -> Result<()> {
         let outer_defers = self.active_defers.len();
         self.push_scope();
-        for (index, statement) in body.iter().enumerate() {
-            let is_last = index + 1 == body.len();
-            let position = statement.position;
+        let statements: Vec<StmtId> = self.ast.stmts_in(body).to_vec();
+        for (index, statement) in statements.iter().enumerate() {
+            let is_last = index + 1 == statements.len();
+            let position = self.ast.stmt_position(*statement);
             self.current_position = position;
-            match &statement.node {
+            match self.ast.stmt(*statement).clone() {
                 Statement::Defer(inner) => {
                     locate(
-                        check_defer_names(inner, &body[index + 1..]),
+                        check_defer_names(
+                            self.ast,
+                            inner,
+                            &statements[index + 1..],
+                        ),
                         position,
                     )?;
-                    self.active_defers.push((**inner).clone());
+                    self.active_defers.push(inner);
                 }
                 Statement::Expression(expression) if is_last => {
                     let (value, value_type) = locate(
@@ -4106,7 +4560,7 @@ impl<'a> FunctionLowering<'a> {
                         self.emit_return(operand)?;
                     }
                 }
-                other => locate(self.lower_statement(other), position)?,
+                _ => locate(self.lower_statement(*statement), position)?,
             }
             if self.current_is_terminated() {
                 break;
@@ -4130,22 +4584,25 @@ impl<'a> FunctionLowering<'a> {
     fn run_active_defers(&mut self) -> Result<()> {
         let defers = self.active_defers.clone();
         for deferred in defers.iter().rev() {
-            self.lower_statement(deferred)?;
+            self.lower_statement(*deferred)?;
         }
         Ok(())
     }
 
-    fn lower_statement(&mut self, statement: &Statement) -> Result<()> {
-        match statement {
+    fn lower_statement(&mut self, statement: StmtId) -> Result<()> {
+        match self.ast.stmt(statement).clone() {
             Statement::Let {
                 name,
                 type_annotation,
                 value,
                 ..
             } => {
-                if let Expression::StructInit(struct_name, field_inits) = value
+                let name = self.ast.name(name).to_string();
+                if let Expression::StructInit(struct_name, field_inits) =
+                    self.ast.expr(value).clone()
                 {
-                    let layout_name = match type_annotation {
+                    let struct_name = self.ast.name(struct_name).to_string();
+                    let layout_name = match &type_annotation {
                         // `p : Point = { x = 1, y = 2 }`: the annotation is the
                         // only place the struct is named.
                         Some(Type::Struct(annotated))
@@ -4157,10 +4614,10 @@ impl<'a> FunctionLowering<'a> {
                         _ if self
                             .builder
                             .generic_struct_defs
-                            .contains_key(struct_name) =>
+                            .contains_key(&struct_name) =>
                         {
                             let Some(instance) = self
-                                .generic_instance_of(struct_name, field_inits)
+                                .generic_instance_of(&struct_name, field_inits)
                             else {
                                 bail!(
                                     "'{struct_name}' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '{struct_name}<i64> {{ ... }}', or give the binding a declared type that names them"
@@ -4178,13 +4635,18 @@ impl<'a> FunctionLowering<'a> {
                     let ty = Type::Struct(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_struct(local, &layout_name, field_inits)?;
-                    self.define_variable(name, local);
+                    self.define_variable(&name, local);
                     return Ok(());
                 }
-                if let Expression::Literal(Literal::Array(elements)) = value {
+                if let Expression::Literal(Literal::Array(elements)) =
+                    self.ast.expr(value)
+                {
+                    let elements: Vec<ExprId> =
+                        self.ast.exprs_in(*elements).to_vec();
                     let element_type = array_element_type(
+                        self.ast,
                         type_annotation.as_ref(),
-                        elements,
+                        &elements,
                         &self.builder.signatures,
                     );
                     let ty = Type::Array(
@@ -4192,21 +4654,23 @@ impl<'a> FunctionLowering<'a> {
                         elements.len(),
                     );
                     let local = self.fresh_local(ty, Some(name.clone()));
-                    self.init_array(local, &element_type, elements)?;
-                    self.define_variable(name, local);
+                    self.init_array(local, &element_type, &elements)?;
+                    self.define_variable(&name, local);
                     return Ok(());
                 }
                 if let Expression::EnumVariantInit(
                     enum_name,
                     variant_name,
                     field_inits,
-                ) = value
+                ) = self.ast.expr(value).clone()
                 {
+                    let enum_name = self.ast.name(enum_name).to_string();
+                    let variant_name = self.ast.name(variant_name).to_string();
                     // `o : Option<i64> = Option::Some { value = 3 }`: the
                     // annotation says which instance, the literal does not
                     // carry arguments, so the annotation is what names the
                     // layout. Same rule as a generic struct literal above.
-                    let layout_name = match type_annotation {
+                    let layout_name = match &type_annotation {
                         // `c : Color = .Red`: the annotation is the only place
                         // the enum is named, which is the whole point of the
                         // leading dot.
@@ -4233,16 +4697,17 @@ impl<'a> FunctionLowering<'a> {
                     self.init_enum(
                         local,
                         &layout_name,
-                        variant_name,
+                        &variant_name,
                         field_inits,
                     )?;
-                    self.define_variable(name, local);
+                    self.define_variable(&name, local);
                     return Ok(());
                 }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
-                if let Some(annotated) = type_annotation
+                if let Some(annotated) = &type_annotation
                     && distinct_mismatch(
+                        self.ast,
                         value,
                         &value_type,
                         annotated,
@@ -4250,6 +4715,7 @@ impl<'a> FunctionLowering<'a> {
                     )
                 {
                     let (described, note) = nominal_words(
+                        self.ast,
                         value,
                         &value_type,
                         annotated,
@@ -4273,7 +4739,10 @@ impl<'a> FunctionLowering<'a> {
                 let borrowed_aggregate = match &value_type {
                     Type::Ref(inner) | Type::RefMut(inner)
                         if needs_memory(inner)
-                            && matches!(value, Expression::Identifier(_)) =>
+                            && matches!(
+                                self.ast.expr(value),
+                                Expression::Identifier(_)
+                            ) =>
                     {
                         Some(inner.as_ref().clone())
                     }
@@ -4286,7 +4755,7 @@ impl<'a> FunctionLowering<'a> {
                         "'{name}' would be a second owner of a '{inner}', which is consumed exactly once; bind a `ref` to read it in place"
                     );
                 }
-                let declared = match (type_annotation, &borrowed_aggregate) {
+                let declared = match (&type_annotation, &borrowed_aggregate) {
                     (Some(annotated), _) => annotated.clone(),
                     (None, Some(inner)) => inner.clone(),
                     (None, None) => value_type.clone(),
@@ -4295,15 +4764,16 @@ impl<'a> FunctionLowering<'a> {
                 let local =
                     self.fresh_local(declared.clone(), Some(name.clone()));
                 self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
-                self.define_variable(name, local);
+                self.define_variable(&name, local);
                 Ok(())
             }
             Statement::Constant(name, value) => {
+                let name = self.ast.name(name).to_string();
                 let (operand, value_type) =
                     self.lower_expression(value, None)?;
                 let local = self.fresh_local(value_type, Some(name.clone()));
                 self.emit(IrStatement::Assign(local, IrRvalue::Use(operand)));
-                self.define_variable(name, local);
+                self.define_variable(&name, local);
                 Ok(())
             }
             Statement::Assignment(target, value) => {
@@ -4317,12 +4787,14 @@ impl<'a> FunctionLowering<'a> {
                     let (operand, value_type) =
                         self.lower_expression(expression, Some(&return_type))?;
                     if distinct_mismatch(
+                        self.ast,
                         expression,
                         &value_type,
                         &return_type,
                         &self.builder.flags,
                     ) {
                         let (described, note) = nominal_words(
+                            self.ast,
                             expression,
                             &value_type,
                             &return_type,
@@ -4343,13 +4815,17 @@ impl<'a> FunctionLowering<'a> {
                 Ok(())
             }
             Statement::Print(expression, arguments) => {
-                self.lower_print(expression, arguments)
+                let arguments: Vec<ExprId> =
+                    self.ast.exprs_in(arguments).to_vec();
+                self.lower_print(expression, &arguments)
             }
             Statement::While(condition, body) => {
                 self.lower_while(condition, body)
             }
             Statement::For(variable, second, range, body) => {
-                self.lower_for(variable, second.as_deref(), range, body)
+                let variable = self.ast.name(variable).to_string();
+                let second = second.map(|held| self.ast.name(held).to_string());
+                self.lower_for(&variable, second.as_deref(), range, body)
             }
             // Only the top level of a function body collects a `defer`, so one
             // reaching here is written inside a block. Named rather than left to
@@ -4374,15 +4850,14 @@ impl<'a> FunctionLowering<'a> {
                 self.set_terminator(IrTerminator::Jump(targets.continue_block));
                 Ok(())
             }
-            other => bail!("unsupported statement: {other}"),
+            _ => bail!(
+                "unsupported statement: {}",
+                display_stmt(self.ast, statement)
+            ),
         }
     }
 
-    fn lower_while(
-        &mut self,
-        condition: &Expression,
-        body: &Block,
-    ) -> Result<()> {
+    fn lower_while(&mut self, condition: ExprId, body: Range32) -> Result<()> {
         let header = self.new_block();
         let body_block = self.new_block();
         let exit = self.new_block();
@@ -4419,8 +4894,8 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         variable: &str,
         second: Option<&str>,
-        iterable: &Expression,
-        body: &Block,
+        iterable: ExprId,
+        body: Range32,
     ) -> Result<()> {
         // The sequence is evaluated once, into a local the loop owns, so
         // `for x in make()` calls `make` once and a body that appends to the
@@ -4440,7 +4915,11 @@ impl<'a> FunctionLowering<'a> {
         };
         let sequence_name = format!("__for_sequence_{held}");
         self.define_variable(&sequence_name, held);
-        let walked = Expression::Identifier(sequence_name);
+        let span = self.ast.expr_span(iterable);
+        let sequence_symbol = self.ast.intern(&sequence_name);
+        let walked = self
+            .ast
+            .push_expr(Expression::Identifier(sequence_symbol), span);
 
         let (length, length_type) = match &sequence_type {
             Type::Array(_, count) => (
@@ -4450,10 +4929,8 @@ impl<'a> FunctionLowering<'a> {
                 )),
                 Type::I64,
             ),
-            Type::Str => {
-                self.lower_str_len(std::slice::from_ref(&walked.clone()))?
-            }
-            _ => self.lower_slice_len(std::slice::from_ref(&walked.clone()))?,
+            Type::Str => self.lower_str_len(&[walked])?,
+            _ => self.lower_slice_len(&[walked])?,
         };
         let bound = self.fresh_local(Type::I64, None);
         let coerced = self.coerce(length, &length_type, &Type::I64)?;
@@ -4496,9 +4973,9 @@ impl<'a> FunctionLowering<'a> {
         self.push_scope();
         if let Some(item) = second {
             self.define_variable(variable, index);
-            self.bind_sequence_element(item, &walked, index, &element)?;
+            self.bind_sequence_element(item, walked, index, &element)?;
         } else {
-            self.bind_sequence_element(variable, &walked, index, &element)?;
+            self.bind_sequence_element(variable, walked, index, &element)?;
         }
         self.loops.push(LoopTargets {
             continue_block: step_block,
@@ -4530,18 +5007,23 @@ impl<'a> FunctionLowering<'a> {
     fn bind_sequence_element(
         &mut self,
         name: &str,
-        iterable: &Expression,
+        iterable: ExprId,
         index: LocalId,
         element: &Type,
     ) -> Result<()> {
-        let indexed = Expression::Index(
-            Box::new(iterable.clone()),
-            Box::new(Expression::Identifier(format!("__for_index_{index}"))),
-        );
+        let index_name = format!("__for_index_{index}");
+        let span = self.ast.expr_span(iterable);
+        let index_symbol = self.ast.intern(&index_name);
+        let index_expression = self
+            .ast
+            .push_expr(Expression::Identifier(index_symbol), span);
+        let indexed = self
+            .ast
+            .push_expr(Expression::Index(iterable, index_expression), span);
         // The index is a local the loop owns rather than something the reader
         // wrote, so it is named into scope only for this lookup.
-        self.define_variable(&format!("__for_index_{index}"), index);
-        let (address, _) = self.element_address_of(&indexed)?;
+        self.define_variable(&index_name, index);
+        let (address, _) = self.element_address_of(indexed)?;
         if needs_memory(element) {
             let local = self.fresh_local(
                 Type::Ref(Box::new(element.clone())),
@@ -4561,11 +5043,12 @@ impl<'a> FunctionLowering<'a> {
 
     fn element_address_of(
         &mut self,
-        indexed: &Expression,
+        indexed: ExprId,
     ) -> Result<(IrOperand, Type)> {
-        let Expression::Index(base, index) = indexed else {
+        let Expression::Index(base, index) = self.ast.expr(indexed) else {
             bail!("expected an index expression");
         };
+        let (base, index) = (*base, *index);
         self.element_address(base, index)
     }
 
@@ -4573,10 +5056,12 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         variable: &str,
         second: Option<&str>,
-        range: &Expression,
-        body: &Block,
+        range: ExprId,
+        body: Range32,
     ) -> Result<()> {
-        let Expression::Range(start, end, inclusive) = range else {
+        let Expression::Range(start, end, inclusive) =
+            self.ast.expr(range).clone()
+        else {
             return self.lower_for_sequence(variable, second, range, body);
         };
         if let Some(second) = second {
@@ -4607,7 +5092,7 @@ impl<'a> FunctionLowering<'a> {
         self.set_terminator(IrTerminator::Jump(header));
         self.switch_to(header);
         let condition = self.fresh_local(Type::Bool, None);
-        let compare = if *inclusive {
+        let compare = if inclusive {
             IrBinOp::LessThanOrEqual
         } else {
             IrBinOp::LessThan
@@ -4653,36 +5138,38 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_expression(
         &mut self,
-        expression: &Expression,
+        expression: ExprId,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         // `.Circle { radius = 5 }` and `{ x = 1, y = 2 }` name their type
         // nowhere, so the type the context expects is what says what they are.
         // Filling it in here covers every position that carries one: an
         // argument, a field, a return, an assignment and an element.
-        let named;
-        let expression = match expression {
+        let expression = match self.ast.expr(expression).clone() {
             Expression::EnumVariantInit(name, variant, fields)
-                if name.is_empty() =>
+                if self.ast.name(name).is_empty() =>
             {
-                named = name_inferred_variant(variant, fields, expected)?;
-                &named
+                name_inferred_variant(
+                    self.ast, expression, variant, fields, expected,
+                )?
             }
-            Expression::StructInit(name, fields) if name.is_empty() => {
-                named = name_inferred_literal(fields, expected)?;
-                &named
+            Expression::StructInit(name, fields)
+                if self.ast.name(name).is_empty() =>
+            {
+                name_inferred_literal(self.ast, expression, fields, expected)?
             }
-            other => other,
+            _ => expression,
         };
-        match expression {
+        match self.ast.expr(expression).clone() {
             Expression::Literal(literal) => {
-                self.lower_literal(literal, expected)
+                self.lower_literal(&literal, expected)
             }
             Expression::Boolean(value) => {
-                Ok((IrOperand::Constant(IrConstant::Bool(*value)), Type::Bool))
+                Ok((IrOperand::Constant(IrConstant::Bool(value)), Type::Bool))
             }
             Expression::Identifier(name) => {
-                if let Some(local) = self.resolve_variable(name) {
+                let name = self.ast.name(name).to_string();
+                if let Some(local) = self.resolve_variable(&name) {
                     if self.locals[local].linear {
                         self.emit(IrStatement::Consume(local));
                     }
@@ -4691,7 +5178,7 @@ impl<'a> FunctionLowering<'a> {
                         self.type_of_local(local),
                     ));
                 }
-                if let Some(signature) = self.builder.signature(name) {
+                if let Some(signature) = self.builder.signature(&name) {
                     let proc_type = Type::Proc(
                         signature.parameters.clone(),
                         Box::new(signature.return_type.clone()),
@@ -4703,8 +5190,9 @@ impl<'a> FunctionLowering<'a> {
                     ));
                     return Ok((IrOperand::Local(result), proc_type));
                 }
-                if let Some(value) = self.builder.constants.get(name).cloned() {
-                    return self.lower_expression(&value, expected);
+                if let Some(value) = self.builder.constants.get(&name).copied()
+                {
+                    return self.lower_expression(value, expected);
                 }
                 bail!("unknown variable '{name}'");
             }
@@ -4713,15 +5201,22 @@ impl<'a> FunctionLowering<'a> {
                 let id = self.builder.anon_counter.get();
                 self.builder.anon_counter.set(id + 1);
                 let name = format!("__anon_{id}");
-                let param_types: Vec<Type> =
-                    parameters.iter().map(parameter_type).collect();
-                let return_type = return_sig.to_type().unwrap_or(Type::Void);
+                let param_types: Vec<Type> = self
+                    .ast
+                    .params_in(parameters)
+                    .iter()
+                    .map(parameter_type)
+                    .collect();
+                let return_type = self
+                    .ast
+                    .signature_to_type(self.ast.signature(return_sig))
+                    .unwrap_or(Type::Void);
                 let proc_type = Type::Proc(param_types, Box::new(return_type));
                 self.anonymous.push(AnonRequest {
                     name: name.clone(),
-                    parameters: parameters.clone(),
-                    return_sig: return_sig.clone(),
-                    body: body.clone(),
+                    parameters,
+                    return_sig,
+                    body,
                     requested_by: 0,
                 });
                 let result = self.fresh_local(proc_type.clone(), None);
@@ -4737,50 +5232,50 @@ impl<'a> FunctionLowering<'a> {
             // check and was quietly 255.
             Expression::Prefix(crate::parser::Operator::Negate, operand)
                 if matches!(
-                    operand.as_ref(),
+                    self.ast.expr(operand),
                     Expression::Literal(Literal::Integer(_))
                 ) =>
             {
                 let Expression::Literal(Literal::Integer(value)) =
-                    operand.as_ref()
+                    self.ast.expr(operand)
                 else {
                     unreachable!()
                 };
+                let value = *value;
                 self.lower_literal(&Literal::Integer(-value), expected)
             }
             Expression::Prefix(operator, operand) => {
-                self.lower_prefix(*operator, operand, expected)
+                self.lower_prefix(operator, operand, expected)
             }
             Expression::Infix(left, operator, right) => {
-                self.lower_infix(left, *operator, right, expected)
+                self.lower_infix(left, operator, right, expected)
             }
-            Expression::If(condition, consequence, alternative) => self
-                .lower_if(
-                    condition,
-                    consequence,
-                    alternative.as_ref(),
-                    expected,
-                ),
+            Expression::If(condition, consequence, alternative) => {
+                self.lower_if(condition, consequence, alternative, expected)
+            }
             Expression::Call(callee, arguments) => {
-                if let Expression::Identifier(name) = callee.as_ref()
-                    && name == "columns_new"
-                    && self.resolve_variable(name).is_none()
-                    && self.builder.signature(name).is_none()
-                    && !self.builder.generic_functions.contains_key(name)
+                if let Expression::Identifier(name) = self.ast.expr(callee)
+                    && self.ast.name(*name) == "columns_new"
+                    && self.resolve_variable("columns_new").is_none()
+                    && self.builder.signature("columns_new").is_none()
+                    && !self
+                        .builder
+                        .generic_functions
+                        .contains_key("columns_new")
                 {
                     return self.lower_columns_new(expected);
                 }
                 self.lower_call(callee, arguments)
             }
             Expression::Sizeof(ty) => {
-                let size = self.builder.byte_size(ty) as i64;
+                let size = self.builder.byte_size(&ty) as i64;
                 Ok((
                     IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
                     Type::I64,
                 ))
             }
             Expression::TypeId(ty) => {
-                let id = self.builder.type_id(ty);
+                let id = self.builder.type_id(&ty);
                 Ok((
                     IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
                     Type::I64,
@@ -4816,7 +5311,8 @@ impl<'a> FunctionLowering<'a> {
             // plain block that answers with its last expression.
             Expression::Unsafe(body) => self.lower_block(body, expected),
             Expression::FieldAccess(base, field) => {
-                self.lower_field_read(base, field)
+                let field = self.ast.name(field).to_string();
+                self.lower_field_read(base, &field)
             }
             Expression::Index(base, index) => {
                 let (address, element_type) =
@@ -4827,6 +5323,7 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_match(scrutinee, cases, expected)
             }
             Expression::StructInit(struct_name, _) => {
+                let struct_name = self.ast.name(struct_name).to_string();
                 let ty = match expected {
                     Some(Type::Struct(instance))
                         if is_generic_instance(instance)
@@ -4844,15 +5341,20 @@ impl<'a> FunctionLowering<'a> {
             // `InitFlags::Video` reads as a variant and is one bit of a flags
             // type: a constant of that type rather than a value carrying a tag.
             Expression::EnumVariantInit(type_name, bit, fields)
-                if self.builder.flags.contains_key(type_name) =>
+                if self
+                    .builder
+                    .flags
+                    .contains_key(self.ast.name(type_name)) =>
             {
-                let layout = &self.builder.flags[type_name];
+                let type_name = self.ast.name(type_name).to_string();
+                let bit = self.ast.name(bit).to_string();
+                let layout = &self.builder.flags[&type_name];
                 if !fields.is_empty() {
                     bail!(
                         "'{type_name}::{bit}' is a bit of a set, so it carries nothing"
                     );
                 }
-                let Some(value) = layout.bits.get(bit).copied() else {
+                let Some(value) = layout.bits.get(&bit).copied() else {
                     bail!("'{type_name}' names no bit called '{bit}'");
                 };
                 let ty = Type::Distinct(
@@ -4865,6 +5367,7 @@ impl<'a> FunctionLowering<'a> {
                 ))
             }
             Expression::EnumVariantInit(enum_name, _, _) => {
+                let enum_name = self.ast.name(enum_name).to_string();
                 // A generic enum is written `Option::Some { value = 3 }` with no
                 // arguments on it, so which instance it is comes from what the
                 // context expects, exactly as for a generic struct literal.
@@ -4887,11 +5390,15 @@ impl<'a> FunctionLowering<'a> {
             // written in, so there is no number to expand it to.
             Expression::ArrayRepeat(_, count) => {
                 bail!(
-                    "'{count}' is not a constant or a value parameter, so there is no count for this array literal"
+                    "'{count}' is not a constant or a value parameter, so there is no count for this array literal",
+                    count = self.ast.name(count)
                 )
             }
-            other => {
-                bail!("unsupported expression: {other}")
+            _ => {
+                bail!(
+                    "unsupported expression: {}",
+                    display_expr(self.ast, expression)
+                )
             }
         }
     }
@@ -4961,14 +5468,17 @@ impl<'a> FunctionLowering<'a> {
             // temporary, which is where an array bound to a name lives too, so
             // nothing after this can tell the two apart.
             Literal::Array(elements) => {
+                let elements: Vec<ExprId> =
+                    self.ast.exprs_in(*elements).to_vec();
                 let element = array_element_type(
+                    self.ast,
                     expected,
-                    elements,
+                    &elements,
                     &self.builder.signatures,
                 );
                 let ty = Type::Array(Box::new(element.clone()), elements.len());
                 let temp = self.fresh_local(ty.clone(), None);
-                self.init_array(temp, &element, elements)?;
+                self.init_array(temp, &element, &elements)?;
                 Ok((IrOperand::Local(temp), ty))
             }
         }
@@ -4984,11 +5494,13 @@ impl<'a> FunctionLowering<'a> {
     // which is what keeps this from needing an evaluator of its own.
     fn lower_print(
         &mut self,
-        first: &Expression,
-        arguments: &[Expression],
+        first: ExprId,
+        arguments: &[ExprId],
     ) -> Result<()> {
-        if let Expression::Literal(Literal::String(text)) = first {
-            let pieces = split_format(text)?;
+        if let Expression::Literal(Literal::String(text)) = self.ast.expr(first)
+        {
+            let text = text.clone();
+            let pieces = split_format(&text)?;
             let holes = pieces.iter().filter(|piece| piece.is_none()).count();
             if holes != arguments.len() {
                 bail!(
@@ -5002,7 +5514,7 @@ impl<'a> FunctionLowering<'a> {
                     Some(literal) => self.write_bytes(literal),
                     None => {
                         let argument = next.next().expect("hole counted above");
-                        self.write_value(argument)?;
+                        self.write_value(*argument)?;
                     }
                 }
             }
@@ -5050,9 +5562,12 @@ impl<'a> FunctionLowering<'a> {
     // One value, written as what it is. An integer of any width widens to i64
     // and a float to f64, since that is what the two helpers take. A `str` is
     // its bytes, which is the one thing `print` could not do before.
-    fn write_value(&mut self, expression: &Expression) -> Result<()> {
-        if let Expression::Literal(Literal::String(text)) = expression {
-            self.write_bytes(text);
+    fn write_value(&mut self, expression: ExprId) -> Result<()> {
+        if let Expression::Literal(Literal::String(text)) =
+            self.ast.expr(expression)
+        {
+            let text = text.clone();
+            self.write_bytes(&text);
             return Ok(());
         }
         let (operand, value_type) = self.lower_expression(expression, None)?;
@@ -5129,7 +5644,7 @@ impl<'a> FunctionLowering<'a> {
     fn lower_prefix(
         &mut self,
         operator: Operator,
-        operand: &Expression,
+        operand: ExprId,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         match operator {
@@ -5196,9 +5711,9 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_infix(
         &mut self,
-        left: &Expression,
+        left: ExprId,
         operator: Operator,
-        right: &Expression,
+        right: ExprId,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         if matches!(operator, Operator::And | Operator::Or) {
@@ -5215,7 +5730,9 @@ impl<'a> FunctionLowering<'a> {
             // and false for the rest, which is the shape of a wrong answer
             // that looks right in a test written with round numbers.
             let (left_operand, left_type, right_operand, right_type) =
-                if is_bare_number(left) && !is_bare_number(right) {
+                if is_bare_number(self.ast, left)
+                    && !is_bare_number(self.ast, right)
+                {
                     let (right_operand, right_type) =
                         self.lower_expression(right, None)?;
                     let (left_operand, left_type) =
@@ -5354,8 +5871,8 @@ impl<'a> FunctionLowering<'a> {
     fn check_flags_operator(
         &self,
         binop: IrBinOp,
-        left: (&Expression, &Type),
-        right: (&Expression, &Type),
+        left: (ExprId, &Type),
+        right: (ExprId, &Type),
     ) -> Result<()> {
         let (left, left_type) = left;
         let (right, right_type) = right;
@@ -5380,9 +5897,13 @@ impl<'a> FunctionLowering<'a> {
         }
         // A written number takes the other side's type, so by the time the two
         // are compared they agree and what was written is the question.
-        if matches!(left, Expression::Literal(Literal::Integer(_)))
-            || matches!(right, Expression::Literal(Literal::Integer(_)))
-        {
+        if matches!(
+            self.ast.expr(left),
+            Expression::Literal(Literal::Integer(_))
+        ) || matches!(
+            self.ast.expr(right),
+            Expression::Literal(Literal::Integer(_))
+        ) {
             bail!(
                 "'{readable}' is a set of bits, built from the names declared under it, and a number is not one of them"
             );
@@ -5399,9 +5920,9 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_logical(
         &mut self,
-        left: &Expression,
+        left: ExprId,
         operator: Operator,
-        right: &Expression,
+        right: ExprId,
     ) -> Result<(IrOperand, Type)> {
         let result = self.fresh_local(Type::Bool, None);
         let (left_operand, _) =
@@ -5446,9 +5967,9 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_if(
         &mut self,
-        condition: &Expression,
-        consequence: &Block,
-        alternative: Option<&Block>,
+        condition: ExprId,
+        consequence: Range32,
+        alternative: Option<Range32>,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         let (condition_operand, _) =
@@ -5543,7 +6064,7 @@ impl<'a> FunctionLowering<'a> {
     fn lower_registration_call(
         &mut self,
         name: &str,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         let shape = self
             .builder
@@ -5552,38 +6073,57 @@ impl<'a> FunctionLowering<'a> {
             .cloned()
             .expect("a registration the caller just looked up");
         let mut rewritten = arguments.to_vec();
-        let Some(handler) = rewritten.get(shape.handler) else {
+        let Some(handler) = rewritten.get(shape.handler).copied() else {
             bail!(
                 "'{name}' registers a callback and needs one as its argument {}",
                 shape.handler + 1
             );
         };
-        let Expression::TypeValue(Type::Struct(handler)) = handler else {
+        let Expression::TypeValue(Type::Struct(handler_name)) =
+            self.ast.expr(handler)
+        else {
             bail!(
                 "argument {} of '{name}' is the callback and has to be written '$name'",
                 shape.handler + 1
             );
         };
-        rewritten[shape.handler] = Expression::Identifier(handler.clone());
-        let Some(context) = rewritten.get(shape.context).cloned() else {
+        let handler_name = handler_name.clone();
+        let handler_span = self.ast.expr_span(handler);
+        let handler_symbol = self.ast.intern(&handler_name);
+        rewritten[shape.handler] = self
+            .ast
+            .push_expr(Expression::Identifier(handler_symbol), handler_span);
+        let Some(context) = rewritten.get(shape.context).copied() else {
             bail!(
                 "'{name}' registers a callback and needs its context as argument {}",
                 shape.context + 1
             );
         };
-        rewritten[shape.context] = Expression::Call(
-            Box::new(Expression::Identifier("ptr_to".to_string())),
-            vec![context],
-        );
+        let context_span = self.ast.expr_span(context);
+        let ptr_to_symbol = self.ast.intern("ptr_to");
+        let callee = self
+            .ast
+            .push_expr(Expression::Identifier(ptr_to_symbol), context_span);
+        let call_arguments = self.ast.add_expr_list(&[context]);
+        rewritten[shape.context] = self
+            .ast
+            .push_expr(Expression::Call(callee, call_arguments), context_span);
         self.lower_direct_call(name, &rewritten)
     }
 
     fn lower_call(
         &mut self,
-        callee: &Expression,
-        arguments: &[Expression],
+        callee: ExprId,
+        arguments: Range32,
     ) -> Result<(IrOperand, Type)> {
-        if let Expression::Identifier(name) = callee
+        let arguments: Vec<ExprId> = self.ast.exprs_in(arguments).to_vec();
+        let callee_name = match self.ast.expr(callee) {
+            Expression::Identifier(name) => {
+                Some(self.ast.name(*name).to_string())
+            }
+            _ => None,
+        };
+        if let Some(name) = &callee_name
             && name == "assert"
             && self.resolve_variable(name).is_none()
             && (self.builder.signature("frost_rt_assert_at").is_some()
@@ -5594,80 +6134,83 @@ impl<'a> FunctionLowering<'a> {
             // which test it was in. Programs that declare the older one-argument
             // `frost_rt_assert` themselves still work.
             if self.builder.signature("frost_rt_assert_at").is_some() {
-                let mut located = arguments.to_vec();
-                located.push(Expression::Literal(Literal::String(
-                    self.current_position.describe(),
-                )));
+                let mut located = arguments.clone();
+                let span = self.ast.expr_span(callee);
+                let described = self.current_position.describe();
+                located.push(self.ast.push_expr(
+                    Expression::Literal(Literal::String(described)),
+                    span,
+                ));
                 return self.lower_direct_call("frost_rt_assert_at", &located);
             }
-            return self.lower_direct_call("frost_rt_assert", arguments);
+            return self.lower_direct_call("frost_rt_assert", &arguments);
         }
-        if let Expression::Identifier(name) = callee
+        if let Some(name) = &callee_name
             && name == "str_len"
             && self.resolve_variable(name).is_none()
             && self.builder.signature(name).is_none()
             && !self.builder.generic_functions.contains_key(name)
         {
-            return self.lower_str_len(arguments);
+            return self.lower_str_len(&arguments);
         }
-        if let Expression::Identifier(name) = callee
+        if let Some(name) = &callee_name
             && name == "slice_len"
             && self.resolve_variable(name).is_none()
             && self.builder.signature(name).is_none()
             && !self.builder.generic_functions.contains_key(name)
         {
-            return self.lower_slice_len(arguments);
+            return self.lower_slice_len(&arguments);
         }
-        if let Expression::Identifier(name) = callee
+        if let Some(name) = &callee_name
             && name == "flags_has"
             && self.resolve_variable(name).is_none()
             && self.builder.signature(name).is_none()
             && !self.builder.generic_functions.contains_key(name)
         {
-            return self.lower_flags_has(arguments);
+            return self.lower_flags_has(&arguments);
         }
-        if let Expression::Identifier(name) = callee
+        if let Some(name) = &callee_name
             && self.resolve_variable(name).is_none()
             && self.builder.signature(name).is_none()
             && !self.builder.generic_functions.contains_key(name)
         {
             match name.as_str() {
-                "ptr_to" => return self.lower_ptr_to(arguments),
-                "cast" => return self.lower_cast(arguments),
-                "ptr_cast" => return self.lower_ptr_cast(arguments),
-                "slice_from" => return self.lower_slice_from(arguments),
+                "ptr_to" => return self.lower_ptr_to(&arguments),
+                "cast" => return self.lower_cast(&arguments),
+                "ptr_cast" => return self.lower_ptr_cast(&arguments),
+                "slice_from" => return self.lower_slice_from(&arguments),
                 "wrap_add" => {
                     return self
-                        .lower_wrapping(IrBinOp::WrappingAdd, arguments);
+                        .lower_wrapping(IrBinOp::WrappingAdd, &arguments);
                 }
                 "wrap_sub" => {
                     return self
-                        .lower_wrapping(IrBinOp::WrappingSubtract, arguments);
+                        .lower_wrapping(IrBinOp::WrappingSubtract, &arguments);
                 }
                 "wrap_mul" => {
                     return self
-                        .lower_wrapping(IrBinOp::WrappingMultiply, arguments);
+                        .lower_wrapping(IrBinOp::WrappingMultiply, &arguments);
                 }
                 _ => {}
             }
         }
-        if let Expression::Identifier(name) = callee
+        if let Some(name) = &callee_name
             && self.resolve_variable(name).is_none()
         {
             if self.builder.generic_functions.contains_key(name) {
-                return self.lower_generic_call(name, arguments);
+                return self.lower_generic_call(name, &arguments);
             }
             if self.builder.registrations.contains_key(name) {
-                return self.lower_registration_call(name, arguments);
+                return self.lower_registration_call(name, &arguments);
             }
             if self.builder.signature(name).is_some() {
-                return self.lower_direct_call(name, arguments);
+                return self.lower_direct_call(name, &arguments);
             }
         }
         if let Some(target) = self.bundle_field_function(callee) {
-            return self.lower_direct_call(&target, arguments);
+            return self.lower_direct_call(&target, &arguments);
         }
-        self.lower_indirect_call(callee, arguments)
+        self.lower_indirect_call(callee, &arguments)
     }
 
     // The function a bundle's field names, for a bundle that is a constant.
@@ -5675,36 +6218,40 @@ impl<'a> FunctionLowering<'a> {
     // function is a call to that function: there is one value the field can
     // hold and it is known here, so nothing is loaded and nothing is called
     // through a pointer.
-    fn bundle_field_function(&self, callee: &Expression) -> Option<String> {
-        let Expression::FieldAccess(base, field) = callee else {
+    fn bundle_field_function(&self, callee: ExprId) -> Option<String> {
+        let Expression::FieldAccess(base, field) = self.ast.expr(callee) else {
             return None;
         };
-        let Expression::Identifier(name) = base.as_ref() else {
+        let Expression::Identifier(name) = self.ast.expr(*base) else {
             return None;
         };
+        let name = self.ast.name(*name);
         if self.resolve_variable(name).is_some() {
             return None;
         }
-        let Some(Expression::StructInit(_, fields)) =
-            self.builder.constants.get(name)
-        else {
+        let constant = self.builder.constants.get(name).copied()?;
+        let Expression::StructInit(_, fields) = self.ast.expr(constant) else {
             return None;
         };
-        let (_, value) =
-            fields.iter().find(|(field_name, _)| field_name == field)?;
-        let Expression::Identifier(target) = value else {
+        let entry = self
+            .ast
+            .named_in(*fields)
+            .iter()
+            .find(|held| held.name == *field)?;
+        let Expression::Identifier(target) = self.ast.expr(entry.value) else {
             return None;
         };
+        let target = self.ast.name(*target);
         self.builder
             .signature(target)
             .is_some()
-            .then(|| target.clone())
+            .then(|| target.to_string())
     }
 
     fn lower_generic_call(
         &mut self,
         name: &str,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         let generic = self
             .builder
@@ -5712,18 +6259,20 @@ impl<'a> FunctionLowering<'a> {
             .get(name)
             .expect("generic function exists")
             .clone();
+        let generic_parameters: Vec<Parameter> =
+            self.ast.params_in(generic.parameters).to_vec();
 
         // A compile-time list takes every argument past the parameters written
         // before it, so a call may give more arguments than there are
         // parameters, and one fewer when the list is empty.
-        let packed = pack_parameter(&generic.parameters).is_some();
-        let fixed = generic.parameters.len() - usize::from(packed);
+        let packed = generic_parameters.iter().any(|parameter| parameter.pack);
+        let fixed = generic_parameters.len() - usize::from(packed);
         if (packed && arguments.len() < fixed)
-            || (!packed && arguments.len() != generic.parameters.len())
+            || (!packed && arguments.len() != generic_parameters.len())
         {
             bail!(
                 "generic function '{name}' expects {} argument(s) but {} were given",
-                generic.parameters.len(),
+                generic_parameters.len(),
                 arguments.len()
             );
         }
@@ -5744,26 +6293,26 @@ impl<'a> FunctionLowering<'a> {
         // the argument names has to be of that type.
         let mut bundle_checks: Vec<(&Parameter, String)> = Vec::new();
         for (index, (parameter, argument)) in
-            generic.parameters.iter().zip(arguments).enumerate()
+            generic_parameters.iter().zip(arguments).enumerate()
         {
             // The list is last, and what it took is lowered below. Nothing
             // after it is a parameter of its own.
             if parameter.pack {
                 break;
             }
-            if is_type_parameter(parameter) {
-                let Expression::TypeValue(ty) = argument else {
+            if is_type_parameter(self.ast, parameter) {
+                let Expression::TypeValue(ty) = self.ast.expr(*argument) else {
                     bail!(
-                        "type parameter '{}' of '{name}' requires a type argument like '${}'",
-                        parameter.name,
-                        parameter.name
+                        "type parameter '{parameter_name}' of '{name}' requires a type argument like '${parameter_name}'",
+                        parameter_name = self.ast.name(parameter.name)
                     );
                 };
+                let ty = ty.clone();
                 // `$f` where f is a function rather than a type is a
                 // compile-time function argument. It reads as a named type
                 // here, so which one it is comes from whether the name is a
                 // function this program declares.
-                let bound = match ty {
+                let bound = match &ty {
                     Type::Struct(named)
                         if self.builder.signature(named).is_some() =>
                     {
@@ -5789,7 +6338,7 @@ impl<'a> FunctionLowering<'a> {
                         bail!(
                             "'{named}' given to '{}' as the compile-time argument '{}' names neither a type nor a function",
                             name,
-                            parameter.name
+                            self.ast.name(parameter.name)
                         );
                     }
                     other => other.clone(),
@@ -5799,7 +6348,7 @@ impl<'a> FunctionLowering<'a> {
                         let Type::ConstFn(target) = &bound else {
                             bail!(
                                 "'{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
-                                parameter.name,
+                                self.ast.name(parameter.name),
                                 bound
                             );
                         };
@@ -5809,7 +6358,7 @@ impl<'a> FunctionLowering<'a> {
                         let Type::ConstValue(target) = &bound else {
                             bail!(
                                 "'{}' of '{name}' is declared as a bundle, so it needs a constant of that type as its argument, not '{}'",
-                                parameter.name,
+                                self.ast.name(parameter.name),
                                 bound
                             );
                         };
@@ -5817,7 +6366,7 @@ impl<'a> FunctionLowering<'a> {
                     }
                     None => {}
                 }
-                subst.insert(parameter.name.clone(), bound);
+                subst.insert(self.ast.name(parameter.name).to_string(), bound);
                 continue;
             }
             // A read-mode `$T` parameter became `Ref(T)` before `T` was known.
@@ -5833,8 +6382,9 @@ impl<'a> FunctionLowering<'a> {
                         Type::TypeParam(param)
                             if generic.type_params.contains(param)
                     ) && argument_is_copy_value(
-                        self.probe_type(argument).as_ref(),
-                        argument,
+                        self.probe_type(*argument).as_ref(),
+                        self.ast,
+                        *argument,
                     ) =>
                 {
                     *inner
@@ -5847,17 +6397,17 @@ impl<'a> FunctionLowering<'a> {
             // the pointee against the place's type.
             if let Type::Ref(inner) | Type::RefMut(inner) = &param_ty {
                 let already_reference = matches!(
-                    argument,
+                    self.ast.expr(*argument),
                     Expression::Borrow(_)
                         | Expression::BorrowMut(_)
                         | Expression::AddressOf(_)
                 ) || matches!(
-                    self.probe_type(argument),
+                    self.probe_type(*argument),
                     Some(Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_))
                 );
                 if already_reference {
                     let (operand, value_type) =
-                        self.lower_expression(argument, None)?;
+                        self.lower_expression(*argument, None)?;
                     infer_subst_into(
                         &param_ty,
                         &value_type,
@@ -5866,7 +6416,7 @@ impl<'a> FunctionLowering<'a> {
                     );
                     plans.push(ArgPlan::Value(operand, value_type));
                 } else {
-                    if let Some(place_type) = self.probe_type(argument) {
+                    if let Some(place_type) = self.probe_type(*argument) {
                         infer_subst_into(
                             inner,
                             &place_type,
@@ -5892,7 +6442,7 @@ impl<'a> FunctionLowering<'a> {
                 collect_type_params(&substituted, &mut unresolved);
                 let expected = unresolved.is_empty().then_some(substituted);
                 let (operand, value_type) =
-                    self.lower_expression(argument, expected.as_ref())?;
+                    self.lower_expression(*argument, expected.as_ref())?;
                 infer_subst_into(
                     &param_ty,
                     &value_type,
@@ -5905,8 +6455,8 @@ impl<'a> FunctionLowering<'a> {
 
         // The bound, before the body is specialized, so a type that cannot
         // work is refused here rather than inside code the reader never wrote.
-        if let Some(bound) = &generic.return_sig.bound {
-            check_bound(bound, &subst, name, &self.builder.linear)?;
+        if let Some(bound) = self.ast.signature(generic.return_sig).bound {
+            check_bound(self.ast, bound, &subst, name, &self.builder.linear)?;
         }
 
         for (parameter, target) in bundle_checks {
@@ -5915,20 +6465,22 @@ impl<'a> FunctionLowering<'a> {
                 continue;
             };
             let expected = substitute_type(declared, &subst);
+            let constant = self.builder.constants.get(&target).copied();
             let Some(Expression::StructInit(actual, _)) =
-                self.builder.constants.get(&target)
+                constant.map(|held| self.ast.expr(held))
             else {
                 bail!(
                     "'{target}' given to '{name}' as '{}' is not a struct constant, and '{}' is declared as '{expected}'",
-                    parameter.name,
-                    parameter.name
+                    self.ast.name(parameter.name),
+                    self.ast.name(parameter.name)
                 );
             };
+            let actual = self.ast.name(*actual).to_string();
             if Type::Struct(actual.clone()) != expected {
                 bail!(
                     "'{target}' given to '{name}' as '{}' is a '{actual}', but '{}' is declared as '{expected}'",
-                    parameter.name,
-                    parameter.name
+                    self.ast.name(parameter.name),
+                    self.ast.name(parameter.name)
                 );
             }
         }
@@ -5950,8 +6502,8 @@ impl<'a> FunctionLowering<'a> {
                 bail!(
                     "'{}' given to '{name}' as '{}' has the signature '{actual}', but '{}' is declared as '{expected}'",
                     target,
-                    parameter.name,
-                    parameter.name
+                    self.ast.name(parameter.name),
+                    self.ast.name(parameter.name)
                 );
             }
         }
@@ -5959,32 +6511,36 @@ impl<'a> FunctionLowering<'a> {
         // Every argument the list took, lowered as a value. The specialization
         // takes one ordinary parameter for each, so each is evaluated once
         // however many times the unrolled body names it.
+        let pack_name = generic_parameters
+            .iter()
+            .find(|parameter| parameter.pack)
+            .map(|parameter| self.ast.name(parameter.name).to_string());
         let mut pack_elements: Vec<PackElement> = Vec::new();
-        if let Some(parameter) = pack_parameter(&generic.parameters) {
+        if let Some(pack_name) = &pack_name {
             for (index, argument) in arguments[fixed..].iter().enumerate() {
                 // `$Position` in the list is a type rather than a value. It
                 // takes no parameter and is evaluated nowhere: what it leaves
                 // behind is a name the body writes where a type belongs.
-                if let Expression::TypeValue(ty) = argument {
+                if let Expression::TypeValue(ty) = self.ast.expr(*argument) {
+                    let ty = ty.clone();
                     pack_elements
-                        .push(PackElement::Type(substitute_type(ty, &subst)));
+                        .push(PackElement::Type(substitute_type(&ty, &subst)));
                     continue;
                 }
                 let (operand, value_type) =
-                    self.lower_expression(argument, None)?;
+                    self.lower_expression(*argument, None)?;
                 pack_elements.push(PackElement::Value(
-                    pack_element_name(&parameter.name, index),
+                    pack_element_name(pack_name, index),
                     value_type.clone(),
                 ));
                 plans.push(ArgPlan::Value(operand, value_type));
             }
         }
 
-        let mut value_parameter_types: Vec<Type> = generic
-            .parameters
+        let mut value_parameter_types: Vec<Type> = generic_parameters
             .iter()
             .filter(|parameter| {
-                !is_type_parameter(parameter) && !parameter.pack
+                !is_type_parameter(self.ast, parameter) && !parameter.pack
             })
             .map(|parameter| {
                 substitute_type(&parameter_type(parameter), &subst)
@@ -5995,9 +6551,9 @@ impl<'a> FunctionLowering<'a> {
                 value_parameter_types.push(ty.clone());
             }
         }
-        let return_type = generic
-            .return_sig
-            .to_type()
+        let return_type = self
+            .ast
+            .signature_to_type(self.ast.signature(generic.return_sig))
             .map(|ty| substitute_type(&ty, &subst))
             .unwrap_or(Type::Void);
         let mut mangled_name =
@@ -6029,7 +6585,21 @@ impl<'a> FunctionLowering<'a> {
                 .generic_struct_defs
                 .iter()
                 .map(|(held, (params, fields))| {
-                    (held.as_str(), (params.as_slice(), fields.clone()))
+                    (
+                        held.as_str(),
+                        (
+                            params
+                                .iter()
+                                .map(String::as_str)
+                                .collect::<Vec<&str>>(),
+                            fields
+                                .iter()
+                                .map(|(field_name, field_type)| {
+                                    (field_name.as_str(), field_type)
+                                })
+                                .collect::<Vec<(&str, &Type)>>(),
+                        ),
+                    )
                 })
                 .collect();
             for concrete in value_parameter_types
@@ -6057,9 +6627,7 @@ impl<'a> FunctionLowering<'a> {
             // Stamped by whoever drains these, which is the only place that
             // knows which module's lowering produced them.
             requested_by: 0,
-            pack: pack_parameter(&generic.parameters).map(|parameter| {
-                (parameter.name.clone(), pack_elements.clone())
-            }),
+            pack: pack_name.map(|pack_name| (pack_name, pack_elements.clone())),
         });
 
         let mut lowered = Vec::with_capacity(plans.len());
@@ -6173,7 +6741,7 @@ impl<'a> FunctionLowering<'a> {
                     if matches!(target, Type::Ref(_)) && !needs_memory(&pointee)
                     {
                         let (operand, value_type) = self.lower_expression(
-                            &arguments[index],
+                            arguments[index],
                             Some(&pointee),
                         )?;
                         let coerced =
@@ -6182,7 +6750,7 @@ impl<'a> FunctionLowering<'a> {
                         continue;
                     }
                     let address = self.aggregate_argument_address(
-                        &arguments[index],
+                        arguments[index],
                         &pointee,
                         false,
                     )?;
@@ -6208,7 +6776,7 @@ impl<'a> FunctionLowering<'a> {
     fn lower_direct_call(
         &mut self,
         name: &str,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         let signature = self.builder.signature(name).unwrap();
         let parameter_types = signature.parameters.clone();
@@ -6233,17 +6801,17 @@ impl<'a> FunctionLowering<'a> {
             if let Some(reference @ (Type::Ref(inner) | Type::RefMut(inner))) =
                 expected
             {
-                let already_reference = matches!(
-                    argument,
-                    Expression::Borrow(_)
-                        | Expression::BorrowMut(_)
-                        | Expression::AddressOf(_)
-                ) || self.probe_type(argument).as_ref()
-                    == Some(reference);
+                let already_reference =
+                    matches!(
+                        self.ast.expr(*argument),
+                        Expression::Borrow(_)
+                            | Expression::BorrowMut(_)
+                            | Expression::AddressOf(_)
+                    ) || self.probe_type(*argument).as_ref() == Some(reference);
                 if !already_reference {
                     let pointee = (**inner).clone();
                     let address = self.aggregate_argument_address(
-                        argument, &pointee, false,
+                        *argument, &pointee, false,
                     )?;
                     lowered.push(address);
                     continue;
@@ -6255,7 +6823,7 @@ impl<'a> FunctionLowering<'a> {
             // written as. A `str` passed on from one generic to another is
             // this, and passing it in a register is what the backend refuses.
             let expected = match expected {
-                Some(Type::TypeParam(_)) => match self.probe_type(argument) {
+                Some(Type::TypeParam(_)) => match self.probe_type(*argument) {
                     Some(ty) if needs_memory(&ty) => {
                         held_target = ty;
                         Some(&held_target)
@@ -6268,12 +6836,12 @@ impl<'a> FunctionLowering<'a> {
                 && needs_memory(target)
             {
                 let address =
-                    self.aggregate_argument_address(argument, target, true)?;
+                    self.aggregate_argument_address(*argument, target, true)?;
                 lowered.push(address);
                 continue;
             }
             let (operand, value_type) =
-                self.lower_expression(argument, expected)?;
+                self.lower_expression(*argument, expected)?;
             if let Some(Type::Ref(inner) | Type::RefMut(inner)) = expected
                 && needs_memory(&value_type)
                 && value_type == **inner
@@ -6284,14 +6852,16 @@ impl<'a> FunctionLowering<'a> {
             }
             if let Some(target) = expected
                 && distinct_mismatch(
-                    argument,
+                    self.ast,
+                    *argument,
                     &value_type,
                     target,
                     &self.builder.flags,
                 )
             {
                 let (described, note) = nominal_words(
-                    argument,
+                    self.ast,
+                    *argument,
                     &value_type,
                     target,
                     &self.builder.flags,
@@ -6320,8 +6890,8 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_indirect_call(
         &mut self,
-        callee: &Expression,
-        arguments: &[Expression],
+        callee: ExprId,
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         let (callee_operand, callee_type) =
             self.lower_expression(callee, None)?;
@@ -6348,17 +6918,17 @@ impl<'a> FunctionLowering<'a> {
             if let Some(reference @ (Type::Ref(inner) | Type::RefMut(inner))) =
                 expected
             {
-                let already_reference = matches!(
-                    argument,
-                    Expression::Borrow(_)
-                        | Expression::BorrowMut(_)
-                        | Expression::AddressOf(_)
-                ) || self.probe_type(argument).as_ref()
-                    == Some(reference);
+                let already_reference =
+                    matches!(
+                        self.ast.expr(*argument),
+                        Expression::Borrow(_)
+                            | Expression::BorrowMut(_)
+                            | Expression::AddressOf(_)
+                    ) || self.probe_type(*argument).as_ref() == Some(reference);
                 if !already_reference {
                     let pointee = (**inner).clone();
                     let address = self.aggregate_argument_address(
-                        argument, &pointee, false,
+                        *argument, &pointee, false,
                     )?;
                     lowered.push(address);
                     continue;
@@ -6370,7 +6940,7 @@ impl<'a> FunctionLowering<'a> {
             // written as. A `str` passed on from one generic to another is
             // this, and passing it in a register is what the backend refuses.
             let expected = match expected {
-                Some(Type::TypeParam(_)) => match self.probe_type(argument) {
+                Some(Type::TypeParam(_)) => match self.probe_type(*argument) {
                     Some(ty) if needs_memory(&ty) => {
                         held_target = ty;
                         Some(&held_target)
@@ -6383,12 +6953,12 @@ impl<'a> FunctionLowering<'a> {
                 && needs_memory(target)
             {
                 let address =
-                    self.aggregate_argument_address(argument, target, true)?;
+                    self.aggregate_argument_address(*argument, target, true)?;
                 lowered.push(address);
                 continue;
             }
             let (operand, value_type) =
-                self.lower_expression(argument, expected)?;
+                self.lower_expression(*argument, expected)?;
             if let Some(Type::Ref(inner) | Type::RefMut(inner)) = expected
                 && needs_memory(&value_type)
                 && value_type == **inner
@@ -6419,7 +6989,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn aggregate_argument_address(
         &mut self,
-        argument: &Expression,
+        argument: ExprId,
         target: &Type,
         consume: bool,
     ) -> Result<IrOperand> {
@@ -6460,10 +7030,11 @@ impl<'a> FunctionLowering<'a> {
             };
             return Ok(self.address_of_local(slice_local, target));
         }
-        match argument {
+        match self.ast.expr(argument).clone() {
             Expression::Identifier(name) => {
+                let name = self.ast.name(name).to_string();
                 if consume
-                    && let Some(local) = self.resolve_variable(name)
+                    && let Some(local) = self.resolve_variable(&name)
                     && self.locals[local].linear
                 {
                     self.emit(IrStatement::Consume(local));
@@ -6473,7 +7044,7 @@ impl<'a> FunctionLowering<'a> {
                 // as a borrow, so what it holds is where the value is, and
                 // taking its address again would hand over the address of the
                 // pointer.
-                if let Some(local) = self.resolve_variable(name)
+                if let Some(local) = self.resolve_variable(&name)
                     && let Type::Ref(inner)
                     | Type::RefMut(inner)
                     | Type::Ptr(inner) = self.type_of_local(local)
@@ -6542,10 +7113,11 @@ impl<'a> FunctionLowering<'a> {
     fn materialize_aggregate(
         &mut self,
         local: LocalId,
-        expression: &Expression,
+        expression: ExprId,
     ) -> Result<()> {
-        match expression {
+        match self.ast.expr(expression).clone() {
             Expression::StructInit(name, fields) => {
+                let name = self.ast.name(name).to_string();
                 let layout_name = match self.type_of_local(local) {
                     Type::Struct(instance)
                         if name.is_empty()
@@ -6558,6 +7130,8 @@ impl<'a> FunctionLowering<'a> {
                 self.init_struct(local, &layout_name, fields)
             }
             Expression::EnumVariantInit(name, variant, fields) => {
+                let name = self.ast.name(name).to_string();
+                let variant = self.ast.name(variant).to_string();
                 // The local's type already names the instance when the context
                 // resolved one, and that is the layout to write into. It is also
                 // what names the enum of a `.Variant`, which names none itself.
@@ -6570,13 +7144,15 @@ impl<'a> FunctionLowering<'a> {
                     }
                     _ => name.clone(),
                 };
-                self.init_enum(local, &layout_name, variant, fields)
+                self.init_enum(local, &layout_name, &variant, fields)
             }
             Expression::Literal(Literal::Array(elements)) => {
                 let Type::Array(element, _) = self.type_of_local(local) else {
                     bail!("array literal has non-array type");
                 };
-                self.init_array(local, &element, elements)
+                let elements: Vec<ExprId> =
+                    self.ast.exprs_in(elements).to_vec();
+                self.init_array(local, &element, &elements)
             }
             _ => {
                 bail!("cannot materialize this aggregate")
@@ -6586,23 +7162,26 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_assignment(
         &mut self,
-        target: &Expression,
-        value: &Expression,
+        target: ExprId,
+        value: ExprId,
     ) -> Result<()> {
-        if let Expression::Identifier(name) = target {
-            let Some(local) = self.resolve_variable(name) else {
+        if let Expression::Identifier(name) = self.ast.expr(target) {
+            let name = self.ast.name(*name).to_string();
+            let Some(local) = self.resolve_variable(&name) else {
                 bail!("assignment to unknown variable '{name}'");
             };
             let target_type = self.type_of_local(local);
             let (operand, value_type) =
                 self.lower_expression(value, Some(&target_type))?;
             if distinct_mismatch(
+                self.ast,
                 value,
                 &value_type,
                 &target_type,
                 &self.builder.flags,
             ) {
                 let (described, note) = nominal_words(
+                    self.ast,
                     value,
                     &value_type,
                     &target_type,
@@ -6620,7 +7199,8 @@ impl<'a> FunctionLowering<'a> {
         // `c[h] = value`: scatter the whole element into the columns' per-field
         // arrays at the handle's slot. It cannot go through `place_address`,
         // which yields one address. The scatter is inherently multi-store.
-        if let Expression::Index(container, index_expr) = target
+        if let Expression::Index(container, index_expr) =
+            self.ast.expr(target).clone()
             && let Some(struct_name) = self.columns_shaped_base(container)
         {
             let (index_operand, index_type) =
@@ -6643,9 +7223,15 @@ impl<'a> FunctionLowering<'a> {
         // distinct type reached through one of them was taking its
         // representation without a `cast` saying so: `h.usage = plain` put a
         // number into a set of bits.
-        if distinct_mismatch(value, &value_type, &pointee, &self.builder.flags)
-        {
+        if distinct_mismatch(
+            self.ast,
+            value,
+            &value_type,
+            &pointee,
+            &self.builder.flags,
+        ) {
             let (described, note) = nominal_words(
+                self.ast,
                 value,
                 &value_type,
                 &pointee,
@@ -6688,7 +7274,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_address_of(
         &mut self,
-        inner: &Expression,
+        inner: ExprId,
         kind: RefKind,
     ) -> Result<(IrOperand, Type)> {
         let (address, pointee) = self.place_address(inner)?;
@@ -6702,7 +7288,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_dereference(
         &mut self,
-        pointer: &Expression,
+        pointer: ExprId,
     ) -> Result<(IrOperand, Type)> {
         let (address, pointee) = self.place_address_of_deref(pointer)?;
         self.load_from(address, pointee)
@@ -6710,7 +7296,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_field_read(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         field: &str,
     ) -> Result<(IrOperand, Type)> {
         let (address, field_type) = self.field_address(base, field)?;
@@ -6780,13 +7366,13 @@ impl<'a> FunctionLowering<'a> {
     // Best-effort static type of a place expression, without lowering it. Used to
     // recognize a raw-pointer base for indexing. Handles the identifier, deref,
     // and field-access chains that a pointer flows through.
-    fn probe_type(&self, expression: &Expression) -> Option<Type> {
-        match expression {
+    fn probe_type(&self, expression: ExprId) -> Option<Type> {
+        match self.ast.expr(expression) {
             Expression::Identifier(name) => self
-                .resolve_variable(name)
+                .resolve_variable(self.ast.name(*name))
                 .map(|local| self.type_of_local(local)),
             Expression::Dereference(inner) => {
-                deref_target(&self.probe_type(inner)?).ok()
+                deref_target(&self.probe_type(*inner)?).ok()
             }
             // An element of an array, a slice or a raw pointer. Without this an
             // index whose base is itself an index answered nothing, so
@@ -6796,7 +7382,7 @@ impl<'a> FunctionLowering<'a> {
             // number, which is what says what the answer is rather than whether
             // there should be one.
             Expression::Index(base, _) => {
-                let held = match self.probe_type(base)? {
+                let held = match self.probe_type(*base)? {
                     Type::Ref(inner) | Type::RefMut(inner) => *inner,
                     other => other,
                 };
@@ -6808,7 +7394,7 @@ impl<'a> FunctionLowering<'a> {
                 }
             }
             Expression::FieldAccess(base, field) => {
-                let base_type = self.probe_type(base)?;
+                let base_type = self.probe_type(*base)?;
                 let struct_name = match base_type {
                     Type::Struct(name) => name,
                     Type::Ref(inner)
@@ -6821,7 +7407,7 @@ impl<'a> FunctionLowering<'a> {
                 };
                 self.builder
                     .struct_layout(&struct_name)?
-                    .field(field)
+                    .field(self.ast.name(*field))
                     .map(|field| field.ty.clone())
             }
             _ => None,
@@ -6830,7 +7416,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn raw_pointer_element_address(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         pointee: Type,
         index_operand: IrOperand,
         index_type: Type,
@@ -6851,10 +7437,7 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), pointee))
     }
 
-    fn str_value_address(
-        &mut self,
-        expression: &Expression,
-    ) -> Result<IrOperand> {
+    fn str_value_address(&mut self, expression: ExprId) -> Result<IrOperand> {
         if matches!(self.probe_type(expression), Some(Type::Str)) {
             let (address, _) = self.place_address(expression)?;
             return Ok(address);
@@ -6896,19 +7479,19 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_str_len(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
             bail!("str_len expects one argument");
         }
-        let base = self.str_value_address(&arguments[0])?;
+        let base = self.str_value_address(arguments[0])?;
         let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
         Ok((length, Type::Usize))
     }
 
     fn str_byte_address(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         index_operand: IrOperand,
         index_type: Type,
     ) -> Result<(IrOperand, Type)> {
@@ -6983,10 +7566,7 @@ impl<'a> FunctionLowering<'a> {
         IrOperand::Local(slice_local)
     }
 
-    fn slice_value_address(
-        &mut self,
-        expression: &Expression,
-    ) -> Result<IrOperand> {
+    fn slice_value_address(&mut self, expression: ExprId) -> Result<IrOperand> {
         // A slice that lives somewhere addressable, reached by any place chain:
         // a local, a struct field holding one, or a `mut` parameter, which
         // param-mode lowering turns into a deref of a pointer to the slice.
@@ -7007,7 +7587,7 @@ impl<'a> FunctionLowering<'a> {
         Ok(self.address_of_local(local, &value_type))
     }
 
-    fn slice_element_of(&self, base: &Expression) -> Option<Type> {
+    fn slice_element_of(&self, base: ExprId) -> Option<Type> {
         match self.probe_type(base) {
             Some(Type::Slice(element)) => Some(*element),
             _ => None,
@@ -7016,7 +7596,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn slice_element_address(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         index_operand: IrOperand,
         index_type: Type,
         element: Type,
@@ -7073,12 +7653,12 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_slice_len(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
             bail!("slice_len expects one argument");
         }
-        let base = self.slice_value_address(&arguments[0])?;
+        let base = self.slice_value_address(arguments[0])?;
         let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
         Ok((length, Type::Usize))
     }
@@ -7093,24 +7673,26 @@ impl<'a> FunctionLowering<'a> {
     // asked of an init flag is refused.
     fn lower_flags_has(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 2 {
             bail!(
                 "flags_has takes the set and the bits to look for, as in 'flags_has(chosen, InitFlags::Video)'"
             );
         }
-        let (set, set_type) = self.lower_expression(&arguments[0], None)?;
+        let (set, set_type) = self.lower_expression(arguments[0], None)?;
         let (wanted, wanted_type) =
-            self.lower_expression(&arguments[1], Some(&set_type))?;
+            self.lower_expression(arguments[1], Some(&set_type))?;
         if distinct_mismatch(
-            &arguments[1],
+            self.ast,
+            arguments[1],
             &wanted_type,
             &set_type,
             &self.builder.flags,
         ) {
             let (described, note) = nominal_words(
-                &arguments[1],
+                self.ast,
+                arguments[1],
                 &wanted_type,
                 &set_type,
                 &self.builder.flags,
@@ -7155,12 +7737,12 @@ impl<'a> FunctionLowering<'a> {
     // ptr_to gives the same address as a `^T` that may be stored and returned.
     fn lower_ptr_to(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
             bail!("ptr_to expects one place argument");
         }
-        let (address, pointee) = self.place_address(&arguments[0])?;
+        let (address, pointee) = self.place_address(arguments[0])?;
         Ok((address, Type::Ptr(Box::new(pointee))))
     }
 
@@ -7173,20 +7755,20 @@ impl<'a> FunctionLowering<'a> {
     // is why forming one is a gated operation like ptr_cast.
     fn lower_slice_from(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 3 {
             bail!(
                 "slice_from expects a type, a pointer and a length, as in slice_from($T, p, n)"
             );
         }
-        let Expression::TypeValue(element) = &arguments[0] else {
+        let Expression::TypeValue(element) = self.ast.expr(arguments[0]) else {
             bail!("slice_from's first argument must be a type, as in $Entity");
         };
         let element = element.clone();
-        let (pointer, _) = self.lower_expression(&arguments[1], None)?;
+        let (pointer, _) = self.lower_expression(arguments[1], None)?;
         let (length, length_type) =
-            self.lower_expression(&arguments[2], None)?;
+            self.lower_expression(arguments[2], None)?;
         // Checked while it is still signed. The bounds check every later access
         // goes through compares unsigned, so a negative length would read as
         // enormous there and let every index past the end of the run.
@@ -7244,14 +7826,14 @@ impl<'a> FunctionLowering<'a> {
     fn lower_wrapping(
         &mut self,
         op: IrBinOp,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 2 {
             bail!("this takes two numbers, as in wrap_mul(a, b)");
         }
-        let (left, left_type) = self.lower_expression(&arguments[0], None)?;
+        let (left, left_type) = self.lower_expression(arguments[0], None)?;
         let (right, right_type) =
-            self.lower_expression(&arguments[1], Some(&left_type))?;
+            self.lower_expression(arguments[1], Some(&left_type))?;
         let right = self.coerce(right, &right_type, &left_type)?;
         let result = self.fresh_local(left_type.clone(), None);
         self.emit(IrStatement::Assign(
@@ -7273,16 +7855,16 @@ impl<'a> FunctionLowering<'a> {
     /// `held : u8 = cast($u8, wide)` is what you write instead.
     fn lower_cast(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 2 {
             bail!("cast expects a type and a value, as in cast($u8, n)");
         }
-        let Expression::TypeValue(target) = &arguments[0] else {
+        let Expression::TypeValue(target) = self.ast.expr(arguments[0]) else {
             bail!("cast's first argument must be a type, as in $u8");
         };
         let target = target.clone();
-        let (value, from) = self.lower_expression(&arguments[1], None)?;
+        let (value, from) = self.lower_expression(arguments[1], None)?;
         if !is_numeric(&from) || !is_numeric(&target) {
             bail!(
                 "cast converts between numbers, and this is asked to turn a {from} into a {target}"
@@ -7301,14 +7883,14 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_ptr_cast(
         &mut self,
-        arguments: &[Expression],
+        arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 2 {
             bail!(
                 "ptr_cast expects a type and a pointer, as in ptr_cast($T, p)"
             );
         }
-        let Expression::TypeValue(target) = &arguments[0] else {
+        let Expression::TypeValue(target) = self.ast.expr(arguments[0]) else {
             bail!("ptr_cast's first argument must be a type, as in $Entity");
         };
         // A function type is already an address, so naming one asks for that
@@ -7319,35 +7901,33 @@ impl<'a> FunctionLowering<'a> {
             Type::Proc(_, _) => target.clone(),
             _ => Type::Ptr(Box::new(target.clone())),
         };
-        let (pointer, _) = self.lower_expression(&arguments[1], None)?;
+        let (pointer, _) = self.lower_expression(arguments[1], None)?;
         let result = self.fresh_local(target.clone(), None);
         self.emit(IrStatement::Assign(result, IrRvalue::Use(pointer)));
         Ok((IrOperand::Local(result), target))
     }
 
-    fn place_address(
-        &mut self,
-        place: &Expression,
-    ) -> Result<(IrOperand, Type)> {
-        match place {
+    fn place_address(&mut self, place: ExprId) -> Result<(IrOperand, Type)> {
+        match self.ast.expr(place).clone() {
             Expression::Identifier(name) => {
-                let Some(local) = self.resolve_variable(name) else {
+                let name = self.ast.name(name).to_string();
+                let Some(local) = self.resolve_variable(&name) else {
                     // A constant has no storage of its own, so the address of
                     // one is the address of the copy built here. This is what a
                     // bundle passed at runtime, rather than as a compile-time
                     // argument, travels as.
                     if let Some(value) =
-                        self.builder.constants.get(name).cloned()
+                        self.builder.constants.get(&name).copied()
                     {
                         // A constant naming a place is that place. One naming a
                         // value has none, so the copy built here is what the
                         // address is of: `fs_read(PATH)` with `PATH :: "x"` is
                         // this, and a string constant is the common case.
-                        if is_place_expression(&value) {
-                            return self.place_address(&value);
+                        if is_place_expression(self.ast, value) {
+                            return self.place_address(value);
                         }
                         let (operand, ty) =
-                            self.lower_expression(&value, None)?;
+                            self.lower_expression(value, None)?;
                         if let IrOperand::Local(local) = operand {
                             self.mark_in_memory(local);
                             let address = self.address_of_local(local, &ty);
@@ -7375,7 +7955,8 @@ impl<'a> FunctionLowering<'a> {
                 Ok((IrOperand::Local(result), pointee))
             }
             Expression::FieldAccess(base, field) => {
-                self.field_address(base, field)
+                let field = self.ast.name(field).to_string();
+                self.field_address(base, &field)
             }
             Expression::Index(base, index) => self.element_address(base, index),
             Expression::Dereference(pointer) => {
@@ -7390,16 +7971,19 @@ impl<'a> FunctionLowering<'a> {
                 };
                 Ok((self.address_of_local(local, &ty), ty))
             }
-            other => {
-                bail!("expression is not an assignable place: {other}")
+            _ => {
+                bail!(
+                    "expression is not an assignable place: {}",
+                    display_expr(self.ast, place)
+                )
             }
         }
     }
 
     fn element_address(
         &mut self,
-        base: &Expression,
-        index: &Expression,
+        base: ExprId,
+        index: ExprId,
     ) -> Result<(IrOperand, Type)> {
         // A constant is its value wherever it is named, and every question
         // below asks what the base is before it asks where it lives: whether it
@@ -7407,11 +7991,13 @@ impl<'a> FunctionLowering<'a> {
         // reaches the array path and comes back as an unknown variable, so the
         // value goes in ahead of them and they see a string literal rather than
         // a name. Before the index is lowered, so it is lowered once.
-        if let Expression::Identifier(name) = base
-            && self.resolve_variable(name).is_none()
-            && let Some(value) = self.builder.constants.get(name).cloned()
-        {
-            return self.element_address(&value, index);
+        if let Expression::Identifier(name) = self.ast.expr(base) {
+            let name = self.ast.name(*name).to_string();
+            if self.resolve_variable(&name).is_none()
+                && let Some(value) = self.builder.constants.get(&name).copied()
+            {
+                return self.element_address(value, index);
+            }
         }
         let (index_operand, index_type) = self.lower_expression(index, None)?;
         if matches!(index_type, Type::Handle(_)) {
@@ -7429,7 +8015,10 @@ impl<'a> FunctionLowering<'a> {
         // The literal as well as a place holding one, because a string constant
         // is the literal it was written as by the time it gets here.
         if matches!(self.probe_type(base), Some(Type::Str))
-            || matches!(base, Expression::Literal(Literal::String(_)))
+            || matches!(
+                self.ast.expr(base),
+                Expression::Literal(Literal::String(_))
+            )
         {
             return self.str_byte_address(base, index_operand, index_type);
         }
@@ -7454,45 +8043,53 @@ impl<'a> FunctionLowering<'a> {
         // storage, so indexing the spilled temporary reads and writes there.
         // Only a non-place base reaches here without a matched probe, so this
         // does not lower a place twice.
-        let (base_pointer, element_type, length) = if !is_place_expression(base)
-        {
-            let (value, value_type) = self.lower_expression(base, None)?;
-            let IrOperand::Local(local) = value else {
-                bail!("cannot index into: {base}");
+        let (base_pointer, element_type, length) =
+            if !is_place_expression(self.ast, base) {
+                let (value, value_type) = self.lower_expression(base, None)?;
+                let IrOperand::Local(local) = value else {
+                    bail!(
+                        "cannot index into: {}",
+                        display_expr(self.ast, base)
+                    );
+                };
+                match value_type {
+                    Type::Slice(element) => {
+                        self.mark_in_memory(local);
+                        let slice_address = self.address_of_local(
+                            local,
+                            &Type::Slice(element.clone()),
+                        );
+                        return self.slice_element_address_from(
+                            slice_address,
+                            index_operand,
+                            index_type,
+                            *element,
+                        );
+                    }
+                    // An array with no place of its own: a constant written out
+                    // here, or what a call handed back. Spilling it gives the index
+                    // something to be an offset from, and the count it was declared
+                    // with is still known, so it is bounds-checked like any other.
+                    Type::Array(element, count) => {
+                        self.mark_in_memory(local);
+                        let result = self.fresh_local(
+                            Type::Ptr(Box::new((*element).clone())),
+                            None,
+                        );
+                        self.emit(IrStatement::Assign(
+                            result,
+                            IrRvalue::AddressOf { local, offset: 0 },
+                        ));
+                        (IrOperand::Local(result), *element, Some(count))
+                    }
+                    _ => bail!(
+                        "cannot index into: {}",
+                        display_expr(self.ast, base)
+                    ),
+                }
+            } else {
+                self.array_base_pointer(base)?
             };
-            match value_type {
-                Type::Slice(element) => {
-                    self.mark_in_memory(local);
-                    let slice_address = self
-                        .address_of_local(local, &Type::Slice(element.clone()));
-                    return self.slice_element_address_from(
-                        slice_address,
-                        index_operand,
-                        index_type,
-                        *element,
-                    );
-                }
-                // An array with no place of its own: a constant written out
-                // here, or what a call handed back. Spilling it gives the index
-                // something to be an offset from, and the count it was declared
-                // with is still known, so it is bounds-checked like any other.
-                Type::Array(element, count) => {
-                    self.mark_in_memory(local);
-                    let result = self.fresh_local(
-                        Type::Ptr(Box::new((*element).clone())),
-                        None,
-                    );
-                    self.emit(IrStatement::Assign(
-                        result,
-                        IrRvalue::AddressOf { local, offset: 0 },
-                    ));
-                    (IrOperand::Local(result), *element, Some(count))
-                }
-                _ => bail!("cannot index into: {base}"),
-            }
-        } else {
-            self.array_base_pointer(base)?
-        };
         let element_size = self.builder.byte_size(&element_type);
         let index_operand =
             self.coerce(index_operand, &index_type, &Type::I64)?;
@@ -7528,7 +8125,7 @@ impl<'a> FunctionLowering<'a> {
     // A struct is "slab-shaped" when it has a `storage` array and a parallel
     // `generations` array, the layout of a generational pool. Indexing such a
     // struct by a Handle is a validated place-deref, generated inline.
-    fn slab_shaped_base(&self, base: &Expression) -> Option<String> {
+    fn slab_shaped_base(&self, base: ExprId) -> Option<String> {
         let Type::Struct(name) = self.probe_type(base)? else {
             return None;
         };
@@ -7578,7 +8175,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn slab_place_deref(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         struct_name: &str,
         handle: IrOperand,
     ) -> Result<(IrOperand, Type)> {
@@ -7688,7 +8285,7 @@ impl<'a> FunctionLowering<'a> {
     // synthesized `columns<...>` name. Its data is one array per field of the
     // element rather than one `storage` array, so a Handle deref picks a column
     // before indexing.
-    fn columns_shaped_base(&self, base: &Expression) -> Option<String> {
+    fn columns_shaped_base(&self, base: ExprId) -> Option<String> {
         match self.probe_type(base)? {
             Type::Struct(name) if name.starts_with("columns<") => Some(name),
             _ => None,
@@ -7701,7 +8298,7 @@ impl<'a> FunctionLowering<'a> {
     // own `[N]field` column rather than a single storage run.
     fn columns_place_deref(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         struct_name: &str,
         handle: IrOperand,
         field: &str,
@@ -7815,10 +8412,10 @@ impl<'a> FunctionLowering<'a> {
     // re-validated per field, aborting identically if it is stale.
     fn columns_scatter(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         struct_name: &str,
         handle: IrOperand,
-        value: &Expression,
+        value: ExprId,
     ) -> Result<()> {
         let column_fields: Vec<String> = {
             let layout =
@@ -7941,11 +8538,12 @@ impl<'a> FunctionLowering<'a> {
 
     fn array_base_pointer(
         &mut self,
-        base: &Expression,
+        base: ExprId,
     ) -> Result<(IrOperand, Type, Option<usize>)> {
-        match base {
+        match self.ast.expr(base).clone() {
             Expression::Identifier(name) => {
-                let Some(local) = self.resolve_variable(name) else {
+                let name = self.ast.name(name).to_string();
+                let Some(local) = self.resolve_variable(&name) else {
                     bail!("unknown variable '{name}'");
                 };
                 match self.type_of_local(local) {
@@ -7975,7 +8573,9 @@ impl<'a> FunctionLowering<'a> {
                 }
             }
             Expression::FieldAccess(inner, field) => {
-                let (address, field_type) = self.field_address(inner, field)?;
+                let field = self.ast.name(field).to_string();
+                let (address, field_type) =
+                    self.field_address(inner, &field)?;
                 let Type::Array(element, count) = field_type else {
                     bail!("field '{field}' is not an array");
                 };
@@ -7996,10 +8596,16 @@ impl<'a> FunctionLowering<'a> {
                 let (Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner)) =
                     pointer_type
                 else {
-                    bail!("cannot index into: {base}");
+                    bail!(
+                        "cannot index into: {}",
+                        display_expr(self.ast, base)
+                    );
                 };
                 let Type::Array(element, count) = *inner else {
-                    bail!("cannot index into: {base}");
+                    bail!(
+                        "cannot index into: {}",
+                        display_expr(self.ast, base)
+                    );
                 };
                 Ok((operand, *element, Some(count)))
             }
@@ -8011,8 +8617,8 @@ impl<'a> FunctionLowering<'a> {
                 };
                 Ok((address, *element, Some(count)))
             }
-            other => {
-                bail!("cannot index into: {other}")
+            _ => {
+                bail!("cannot index into: {}", display_expr(self.ast, base))
             }
         }
     }
@@ -8021,7 +8627,7 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         local: LocalId,
         element_type: &Type,
-        elements: &[Expression],
+        elements: &[ExprId],
     ) -> Result<()> {
         self.mark_owned(local);
         let element_size = self.builder.byte_size(element_type);
@@ -8037,7 +8643,7 @@ impl<'a> FunctionLowering<'a> {
             ));
             if needs_memory(element_type) {
                 let source =
-                    self.aggregate_field_source(element, element_type)?;
+                    self.aggregate_field_source(*element, element_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -8045,7 +8651,7 @@ impl<'a> FunctionLowering<'a> {
                 });
             } else {
                 let (operand, value_type) =
-                    self.lower_expression(element, Some(element_type))?;
+                    self.lower_expression(*element, Some(element_type))?;
                 let coerced =
                     self.coerce(operand, &value_type, element_type)?;
                 self.emit(IrStatement::Store {
@@ -8059,7 +8665,7 @@ impl<'a> FunctionLowering<'a> {
 
     fn place_address_of_deref(
         &mut self,
-        pointer: &Expression,
+        pointer: ExprId,
     ) -> Result<(IrOperand, Type)> {
         let (pointer_operand, pointer_type) =
             self.lower_expression(pointer, None)?;
@@ -8069,12 +8675,13 @@ impl<'a> FunctionLowering<'a> {
 
     fn field_address(
         &mut self,
-        base: &Expression,
+        base: ExprId,
         field: &str,
     ) -> Result<(IrOperand, Type)> {
         // A columns element field `c[h].field`: the field selects a column, the
         // handle a validated slot in it.
-        if let Expression::Index(container, index_expr) = base
+        if let Expression::Index(container, index_expr) =
+            self.ast.expr(base).clone()
             && let Some(struct_name) = self.columns_shaped_base(container)
         {
             let (index_operand, index_type) =
@@ -8110,19 +8717,17 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), field_type))
     }
 
-    fn struct_place(
-        &mut self,
-        base: &Expression,
-    ) -> Result<(IrOperand, String)> {
-        match base {
+    fn struct_place(&mut self, base: ExprId) -> Result<(IrOperand, String)> {
+        match self.ast.expr(base).clone() {
             Expression::Identifier(name) => {
-                let Some(local) = self.resolve_variable(name) else {
+                let name = self.ast.name(name).to_string();
+                let Some(local) = self.resolve_variable(&name) else {
                     // A top-level constant is its value wherever it is named,
                     // so a field of one is a field of that value.
                     if let Some(value) =
-                        self.builder.constants.get(name).cloned()
+                        self.builder.constants.get(&name).copied()
                     {
-                        return self.struct_place(&value);
+                        return self.struct_place(value);
                     }
                     bail!("unknown variable '{name}'");
                 };
@@ -8155,7 +8760,9 @@ impl<'a> FunctionLowering<'a> {
                 }
             }
             Expression::FieldAccess(inner, field) => {
-                let (address, field_type) = self.field_address(inner, field)?;
+                let field = self.ast.name(field).to_string();
+                let (address, field_type) =
+                    self.field_address(inner, &field)?;
                 let Type::Struct(struct_name) = field_type else {
                     bail!("field '{field}' is not a struct");
                 };
@@ -8181,8 +8788,8 @@ impl<'a> FunctionLowering<'a> {
             // Any other expression that yields a borrow or pointer to a struct
             // names that struct. The operand is its address. This is what lets a
             // borrow-returning accessor be written to, as in `at(b, i).field = x`.
-            other => {
-                let (operand, ty) = self.lower_expression(other, None)?;
+            _ => {
+                let (operand, ty) = self.lower_expression(base, None)?;
                 match ty {
                     Type::Ref(inner)
                     | Type::RefMut(inner)
@@ -8199,7 +8806,10 @@ impl<'a> FunctionLowering<'a> {
                     // was built.
                     Type::Struct(struct_name) => {
                         let IrOperand::Local(local) = operand else {
-                            bail!("not a struct place: {other}");
+                            bail!(
+                                "not a struct place: {}",
+                                display_expr(self.ast, base)
+                            );
                         };
                         self.mark_in_memory(local);
                         let address = self.address_of_local(
@@ -8208,7 +8818,10 @@ impl<'a> FunctionLowering<'a> {
                         );
                         Ok((address, struct_name))
                     }
-                    _ => bail!("not a struct place: {other}"),
+                    _ => bail!(
+                        "not a struct place: {}",
+                        display_expr(self.ast, base)
+                    ),
                 }
             }
         }
@@ -8224,9 +8837,11 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         local: LocalId,
         struct_name: &str,
-        field_inits: &[(String, Expression)],
+        field_inits: Range32,
     ) -> Result<()> {
         self.mark_owned(local);
+        let field_inits: Vec<NamedExpr> =
+            self.ast.named_in(field_inits).to_vec();
         let fields: Vec<(String, usize, Type)> = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
@@ -8247,7 +8862,11 @@ impl<'a> FunctionLowering<'a> {
         let missing: Vec<&str> = fields
             .iter()
             .map(|(name, _, _)| name.as_str())
-            .filter(|name| !field_inits.iter().any(|(given, _)| given == name))
+            .filter(|name| {
+                !field_inits
+                    .iter()
+                    .any(|given| self.ast.name(given.name) == *name)
+            })
             .collect();
         if !missing.is_empty() {
             bail!(
@@ -8265,9 +8884,10 @@ impl<'a> FunctionLowering<'a> {
             );
         }
 
-        for (field_name, field_value) in field_inits {
+        for given in &field_inits {
+            let field_name = self.ast.name(given.name).to_string();
             let Some((_, offset, field_type)) =
-                fields.iter().find(|(name, _, _)| name == field_name)
+                fields.iter().find(|(name, _, _)| *name == field_name)
             else {
                 bail!("struct '{struct_name}' has no field '{field_name}'");
             };
@@ -8282,7 +8902,7 @@ impl<'a> FunctionLowering<'a> {
             ));
             if needs_memory(field_type) {
                 let source =
-                    self.aggregate_field_source(field_value, field_type)?;
+                    self.aggregate_field_source(given.value, field_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -8290,7 +8910,7 @@ impl<'a> FunctionLowering<'a> {
                 });
             } else {
                 let (operand, value_type) =
-                    self.lower_expression(field_value, Some(field_type))?;
+                    self.lower_expression(given.value, Some(field_type))?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -8308,10 +8928,10 @@ impl<'a> FunctionLowering<'a> {
     // points at.
     fn aggregate_field_source(
         &mut self,
-        expression: &Expression,
+        expression: ExprId,
         field_type: &Type,
     ) -> Result<IrOperand> {
-        match expression {
+        match self.ast.expr(expression) {
             Expression::StructInit(..)
             | Expression::EnumVariantInit(..)
             | Expression::Literal(Literal::Array(_)) => {
@@ -8344,9 +8964,11 @@ impl<'a> FunctionLowering<'a> {
         local: LocalId,
         enum_name: &str,
         variant_name: &str,
-        field_inits: &[(String, Expression)],
+        field_inits: Range32,
     ) -> Result<()> {
         self.mark_owned(local);
+        let field_inits: Vec<NamedExpr> =
+            self.ast.named_in(field_inits).to_vec();
         let (tag, fields): (u32, Vec<(String, usize, Type)>) = {
             let layout = self
                 .builder
@@ -8388,7 +9010,11 @@ impl<'a> FunctionLowering<'a> {
         let missing: Vec<&str> = fields
             .iter()
             .map(|(name, _, _)| name.as_str())
-            .filter(|name| !field_inits.iter().any(|(given, _)| given == name))
+            .filter(|name| {
+                !field_inits
+                    .iter()
+                    .any(|given| self.ast.name(given.name) == *name)
+            })
             .collect();
         if !missing.is_empty() {
             bail!(
@@ -8406,9 +9032,10 @@ impl<'a> FunctionLowering<'a> {
             );
         }
 
-        for (field_name, field_value) in field_inits {
+        for given in &field_inits {
+            let field_name = self.ast.name(given.name).to_string();
             let Some((_, offset, field_type)) =
-                fields.iter().find(|(name, _, _)| name == field_name)
+                fields.iter().find(|(name, _, _)| *name == field_name)
             else {
                 bail!(
                     "enum variant '{variant_name}' has no field '{field_name}'"
@@ -8425,7 +9052,7 @@ impl<'a> FunctionLowering<'a> {
             ));
             if needs_memory(field_type) {
                 let source =
-                    self.aggregate_field_source(field_value, field_type)?;
+                    self.aggregate_field_source(given.value, field_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -8433,7 +9060,7 @@ impl<'a> FunctionLowering<'a> {
                 });
             } else {
                 let (operand, value_type) =
-                    self.lower_expression(field_value, Some(field_type))?;
+                    self.lower_expression(given.value, Some(field_type))?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -8457,7 +9084,10 @@ impl<'a> FunctionLowering<'a> {
         cases: &[SwitchCase],
     ) -> Result<()> {
         let catches_rest = cases.iter().any(|case| {
-            matches!(case.pattern, Pattern::Wildcard | Pattern::Identifier(_))
+            matches!(
+                self.ast.pattern(case.pattern),
+                Pattern::Wildcard | Pattern::Identifier(_)
+            )
         });
         if catches_rest {
             return Ok(());
@@ -8467,9 +9097,9 @@ impl<'a> FunctionLowering<'a> {
         };
         let covered = cases
             .iter()
-            .filter_map(|case| match &case.pattern {
+            .filter_map(|case| match self.ast.pattern(case.pattern) {
                 Pattern::EnumVariant { variant_name, .. } => {
-                    Some(variant_name.as_str())
+                    Some(self.ast.name(*variant_name))
                 }
                 _ => None,
             })
@@ -8496,16 +9126,18 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_match(
         &mut self,
-        scrutinee: &Expression,
-        cases: &[SwitchCase],
+        scrutinee: ExprId,
+        cases: Range32,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
+        let cases: Vec<SwitchCase> = self.ast.cases_in(cases).to_vec();
         if cases.is_empty() {
             bail!("match with no cases");
         }
 
-        if let Expression::Tuple(elements) = scrutinee {
-            return self.lower_tuple_match(elements, cases, expected);
+        if let Expression::Tuple(elements) = self.ast.expr(scrutinee) {
+            let elements: Vec<ExprId> = self.ast.exprs_in(*elements).to_vec();
+            return self.lower_tuple_match(&elements, &cases, expected);
         }
 
         let enum_info = self.enum_scrutinee_address(scrutinee)?;
@@ -8550,7 +9182,7 @@ impl<'a> FunctionLowering<'a> {
             };
 
         if let Some(name) = &enum_name {
-            self.check_exhaustive(name, cases)?;
+            self.check_exhaustive(name, &cases)?;
         }
 
         // Taking a linear value apart is consuming it: every arm names what it
@@ -8563,11 +9195,11 @@ impl<'a> FunctionLowering<'a> {
         let mut result_local: Option<LocalId> = None;
         let mut result_type = Type::Void;
 
-        for case in cases {
+        for case in &cases {
             let case_block = self.new_block();
             let next_block = self.new_block();
 
-            match &case.pattern {
+            match self.ast.pattern(case.pattern).clone() {
                 Pattern::Wildcard | Pattern::Identifier(_) => {
                     self.set_terminator(IrTerminator::Jump(case_block));
                 }
@@ -8575,14 +9207,16 @@ impl<'a> FunctionLowering<'a> {
                     let Some((value, value_type)) = &scalar else {
                         bail!("literal pattern requires a scalar match value");
                     };
+                    let value = value.clone();
+                    let value_type = value_type.clone();
                     let (literal_operand, _) =
-                        self.lower_literal(literal, Some(value_type))?;
+                        self.lower_literal(&literal, Some(&value_type))?;
                     let condition = self.fresh_local(Type::Bool, None);
                     self.emit(IrStatement::Assign(
                         condition,
                         IrRvalue::Binary(
                             IrBinOp::Equal,
-                            value.clone(),
+                            value,
                             literal_operand,
                         ),
                     ));
@@ -8593,6 +9227,7 @@ impl<'a> FunctionLowering<'a> {
                     });
                 }
                 Pattern::EnumVariant { variant_name, .. } => {
+                    let variant_name = self.ast.name(variant_name).to_string();
                     let Some(tag) = &tag_operand else {
                         bail!(
                             "enum variant pattern requires an enum match value"
@@ -8602,19 +9237,20 @@ impl<'a> FunctionLowering<'a> {
                     let variant_tag = self
                         .builder
                         .enum_layout(enum_name)
-                        .and_then(|layout| layout.variant(variant_name))
+                        .and_then(|layout| layout.variant(&variant_name))
                         .map(|variant| variant.tag)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
                                 "enum '{enum_name}' has no variant '{variant_name}'"
                             )
                         })?;
+                    let tag = tag.clone();
                     let condition = self.fresh_local(Type::Bool, None);
                     self.emit(IrStatement::Assign(
                         condition,
                         IrRvalue::Binary(
                             IrBinOp::Equal,
-                            tag.clone(),
+                            tag,
                             IrOperand::Constant(IrConstant::Integer(
                                 variant_tag as i64,
                                 Type::I32,
@@ -8652,12 +9288,12 @@ impl<'a> FunctionLowering<'a> {
             }
             self.push_scope();
             self.bind_pattern(
-                &case.pattern,
+                case.pattern,
                 enum_address.as_ref(),
                 enum_name.as_deref(),
                 scalar.as_ref(),
             )?;
-            let (value, value_type) = self.lower_block(&case.body, expected)?;
+            let (value, value_type) = self.lower_block(case.body, expected)?;
             // An arm that returns, breaks, or continues yields no value and has
             // already set its terminator, so it contributes nothing to merge.
             if self.current_is_terminated() {
@@ -8712,10 +9348,10 @@ impl<'a> FunctionLowering<'a> {
 
     fn enum_scrutinee_address(
         &mut self,
-        scrutinee: &Expression,
+        scrutinee: ExprId,
     ) -> Result<Option<(String, IrOperand)>> {
         if matches!(
-            scrutinee,
+            self.ast.expr(scrutinee),
             Expression::FieldAccess(..)
                 | Expression::Index(..)
                 | Expression::Dereference(..)
@@ -8726,10 +9362,11 @@ impl<'a> FunctionLowering<'a> {
             }
             return Ok(None);
         }
-        let Expression::Identifier(name) = scrutinee else {
+        let Expression::Identifier(name) = self.ast.expr(scrutinee) else {
             return Ok(None);
         };
-        let Some(local) = self.resolve_variable(name) else {
+        let name = self.ast.name(*name).to_string();
+        let Some(local) = self.resolve_variable(&name) else {
             return Ok(None);
         };
         let ty = self.type_of_local(local);
@@ -8758,13 +9395,13 @@ impl<'a> FunctionLowering<'a> {
 
     fn lower_tuple_match(
         &mut self,
-        elements: &[Expression],
+        elements: &[ExprId],
         cases: &[SwitchCase],
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         let mut values = Vec::with_capacity(elements.len());
         for element in elements {
-            values.push(self.lower_expression(element, None)?);
+            values.push(self.lower_expression(*element, None)?);
         }
 
         let merge = self.new_block();
@@ -8775,25 +9412,38 @@ impl<'a> FunctionLowering<'a> {
             let case_block = self.new_block();
             let next_block = self.new_block();
 
-            let patterns: Vec<&Pattern> = match &case.pattern {
-                Pattern::Tuple(patterns) => patterns.iter().collect(),
+            let patterns: Vec<PatternId> = match self.ast.pattern(case.pattern)
+            {
+                Pattern::Tuple(patterns) => {
+                    self.ast.patterns_in(*patterns).to_vec()
+                }
                 Pattern::Wildcard | Pattern::Identifier(_) => Vec::new(),
-                other => bail!("unsupported tuple match pattern: {other:?}"),
+                _ => {
+                    let written = crate::ast_display::display_pattern(
+                        self.ast,
+                        case.pattern,
+                    );
+                    bail!("unsupported tuple match pattern: {written}")
+                }
             };
 
             let mut condition: Option<LocalId> = None;
             for (pattern, (value, value_type)) in
                 patterns.iter().zip(values.iter())
             {
-                if let Pattern::Literal(literal) = pattern {
+                if let Pattern::Literal(literal) =
+                    self.ast.pattern(*pattern).clone()
+                {
+                    let value = value.clone();
+                    let value_type = value_type.clone();
                     let (literal_operand, _) =
-                        self.lower_literal(literal, Some(value_type))?;
+                        self.lower_literal(&literal, Some(&value_type))?;
                     let test = self.fresh_local(Type::Bool, None);
                     self.emit(IrStatement::Assign(
                         test,
                         IrRvalue::Binary(
                             IrBinOp::Equal,
-                            value.clone(),
+                            value,
                             literal_operand,
                         ),
                     ));
@@ -8829,17 +9479,17 @@ impl<'a> FunctionLowering<'a> {
             for (pattern, (value, value_type)) in
                 patterns.iter().zip(values.iter())
             {
-                if let Pattern::Identifier(name) = pattern {
+                if let Pattern::Identifier(name) = self.ast.pattern(*pattern) {
+                    let name = self.ast.name(*name).to_string();
+                    let value = value.clone();
+                    let value_type = value_type.clone();
                     let bound = self
                         .fresh_local(value_type.clone(), Some(name.clone()));
-                    self.emit(IrStatement::Assign(
-                        bound,
-                        IrRvalue::Use(value.clone()),
-                    ));
-                    self.define_variable(name, bound);
+                    self.emit(IrStatement::Assign(bound, IrRvalue::Use(value)));
+                    self.define_variable(&name, bound);
                 }
             }
-            let (value, value_type) = self.lower_block(&case.body, expected)?;
+            let (value, value_type) = self.lower_block(case.body, expected)?;
             // An arm that returns, breaks, or continues yields no value and has
             // already set its terminator, so it contributes nothing to merge.
             if self.current_is_terminated() {
@@ -8881,11 +9531,11 @@ impl<'a> FunctionLowering<'a> {
     // answer of a call) is the local it landed in.
     fn linear_scrutinee(
         &self,
-        scrutinee: &Expression,
+        scrutinee: ExprId,
         scalar: &Option<(IrOperand, Type)>,
     ) -> Option<LocalId> {
-        if let Expression::Identifier(name) = scrutinee
-            && let Some(local) = self.resolve_variable(name)
+        if let Expression::Identifier(name) = self.ast.expr(scrutinee)
+            && let Some(local) = self.resolve_variable(self.ast.name(*name))
             && self.locals[local].linear
         {
             return Some(local);
@@ -8900,17 +9550,18 @@ impl<'a> FunctionLowering<'a> {
 
     fn bind_pattern(
         &mut self,
-        pattern: &Pattern,
+        pattern: PatternId,
         enum_address: Option<&IrOperand>,
         enum_name: Option<&str>,
         scalar: Option<&(IrOperand, Type)>,
     ) -> Result<()> {
-        match pattern {
+        match self.ast.pattern(pattern).clone() {
             Pattern::EnumVariant {
                 variant_name,
                 bindings,
                 ..
             } => {
+                let variant_name = self.ast.name(variant_name).to_string();
                 let (Some(address), Some(enum_name)) =
                     (enum_address, enum_name)
                 else {
@@ -8919,7 +9570,7 @@ impl<'a> FunctionLowering<'a> {
                 let fields: Vec<(String, usize, Type)> = self
                     .builder
                     .enum_layout(enum_name)
-                    .and_then(|layout| layout.variant(variant_name))
+                    .and_then(|layout| layout.variant(&variant_name))
                     .map(|variant| {
                         variant
                             .fields
@@ -8934,9 +9585,13 @@ impl<'a> FunctionLowering<'a> {
                             .collect()
                     })
                     .unwrap_or_default();
-                for (field_name, bound_name) in bindings {
+                let bindings: Vec<crate::ast::PatternBinding> =
+                    self.ast.pattern_bindings_in(bindings).to_vec();
+                for binding in &bindings {
+                    let field_name = self.ast.name(binding.field).to_string();
+                    let bound_name = self.ast.name(binding.binding).to_string();
                     let Some((_, offset, field_type)) =
-                        fields.iter().find(|(name, _, _)| name == field_name)
+                        fields.iter().find(|(name, _, _)| *name == field_name)
                     else {
                         bail!(
                             "variant '{variant_name}' has no field '{field_name}'"
@@ -8974,7 +9629,7 @@ impl<'a> FunctionLowering<'a> {
                             },
                         ));
                     }
-                    self.define_variable(bound_name, bound);
+                    self.define_variable(&bound_name, bound);
                     // A binding takes the field out of the value being
                     // matched, so it holds whatever that field held. Without
                     // this a linear field could not be consumed by the arm
@@ -8984,14 +9639,14 @@ impl<'a> FunctionLowering<'a> {
                 Ok(())
             }
             Pattern::Identifier(name) => {
+                let name = self.ast.name(name).to_string();
                 if let Some((value, value_type)) = scalar {
+                    let value = value.clone();
+                    let value_type = value_type.clone();
                     let bound = self
                         .fresh_local(value_type.clone(), Some(name.clone()));
-                    self.emit(IrStatement::Assign(
-                        bound,
-                        IrRvalue::Use(value.clone()),
-                    ));
-                    self.define_variable(name, bound);
+                    self.emit(IrStatement::Assign(bound, IrRvalue::Use(value)));
+                    self.define_variable(&name, bound);
                 }
                 Ok(())
             }
@@ -9003,27 +9658,28 @@ impl<'a> FunctionLowering<'a> {
         self.locals[local].ty.clone()
     }
 
-    fn shallow_value_type(&self, expression: &Expression) -> Option<Type> {
-        match expression {
+    fn shallow_value_type(&self, expression: ExprId) -> Option<Type> {
+        match self.ast.expr(expression) {
             Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
             Expression::Literal(Literal::Float(_)) => Some(Type::F64),
             Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
             Expression::Boolean(_)
             | Expression::Literal(Literal::Boolean(_)) => Some(Type::Bool),
             Expression::Identifier(name) => self
-                .resolve_variable(name)
+                .resolve_variable(self.ast.name(*name))
                 .map(|local| self.type_of_local(local)),
             Expression::Borrow(inner) => self
-                .shallow_value_type(inner)
+                .shallow_value_type(*inner)
                 .map(|ty| Type::Ref(Box::new(ty))),
             Expression::BorrowMut(inner) => self
-                .shallow_value_type(inner)
+                .shallow_value_type(*inner)
                 .map(|ty| Type::RefMut(Box::new(ty))),
             Expression::StructInit(name, fields) => {
+                let name = self.ast.name(*name);
                 if self.builder.generic_struct_defs.contains_key(name) {
-                    self.generic_instance_of(name, fields).map(Type::Struct)
+                    self.generic_instance_of(name, *fields).map(Type::Struct)
                 } else {
-                    Some(Type::Struct(name.clone()))
+                    Some(Type::Struct(name.to_string()))
                 }
             }
             _ => None,
@@ -9036,20 +9692,21 @@ impl<'a> FunctionLowering<'a> {
     fn generic_instance_of(
         &self,
         struct_name: &str,
-        field_inits: &[(String, Expression)],
+        field_inits: Range32,
     ) -> Option<String> {
         let (type_params, fields) =
-            self.builder.generic_struct_defs.get(struct_name)?.clone();
+            self.builder.generic_struct_defs.get(struct_name)?;
         let mut subst: HashMap<String, Type> = HashMap::new();
-        for (field_name, value) in field_inits {
-            if let Some(field) =
-                fields.iter().find(|field| &field.name == field_name)
-                && let Some(value_type) = self.shallow_value_type(value)
+        for entry in self.ast.named_in(field_inits) {
+            if let Some((_, field_type)) = fields
+                .iter()
+                .find(|(field_name, _)| field_name == self.ast.name(entry.name))
+                && let Some(value_type) = self.shallow_value_type(entry.value)
             {
                 infer_subst_into(
-                    &field.field_type,
+                    field_type,
                     &value_type,
-                    &type_params,
+                    type_params,
                     &mut subst,
                 );
             }
@@ -9331,11 +9988,13 @@ fn operator_text(binop: IrBinOp) -> &'static str {
 // Whether an expression is a number written down rather than a value with a
 // type of its own. One of these takes the type of whatever it sits beside; a
 // negated one counts, since `-0.6` is the same literal with a sign.
-fn is_bare_number(expression: &Expression) -> bool {
-    match expression {
+fn is_bare_number(ast: &Ast, expression: ExprId) -> bool {
+    match ast.expr(expression) {
         Expression::Literal(Literal::Integer(_))
         | Expression::Literal(Literal::Float(_)) => true,
-        Expression::Prefix(Operator::Negate, inner) => is_bare_number(inner),
+        Expression::Prefix(Operator::Negate, inner) => {
+            is_bare_number(ast, *inner)
+        }
         _ => false,
     }
 }

@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::ast::{
+    Ast, ExprId, Expression, Module, Pattern, PatternId, Range32, ReturnKind,
+    SignatureId, Splicer, Statement, StmtId, TokenSpan, splice_positions,
+};
 use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
@@ -14,10 +18,7 @@ use crate::layers::Layer;
 use crate::lexer::Lexer;
 use crate::lexer::Token;
 use crate::parser::Parser;
-use crate::parser::{
-    Block, Expression, Parameter, Pattern, ReturnKind, ReturnSignature,
-    Spanned, Statement, SwitchCase, TEST_PREFIX,
-};
+use crate::parser::TEST_PREFIX;
 use crate::types::Type;
 
 // One place an import may be found, and the name that place gives a module.
@@ -58,18 +59,15 @@ impl SearchRoot {
 //
 // `--test <file>` runs that file's tests. `--test <directory>` runs everything
 // under it, one file at a time.
-fn without_tests(
-    statements: Vec<Spanned<Statement>>,
-) -> Vec<Spanned<Statement>> {
-    statements
-        .into_iter()
-        .filter(|statement| {
-            !matches!(
-                &statement.node,
-                Statement::Constant(name, _) if name.contains(TEST_PREFIX)
-            )
-        })
-        .collect()
+fn without_tests(module: &mut Module) {
+    let ast = &module.ast;
+    module.roots.retain(|statement| {
+        !matches!(
+            ast.stmt(*statement),
+            Statement::Constant(name, _)
+                if ast.name(*name).contains(TEST_PREFIX)
+        )
+    });
 }
 
 // Where an import was found: the file itself, and the identity to give it.
@@ -252,7 +250,7 @@ fn digest_with_includes(source: &str, directory: &Path) -> String {
 }
 
 pub struct Resolved {
-    pub statements: Vec<Spanned<Statement>>,
+    pub program: Module,
     pub linear_types: HashSet<String>,
     pub tests: Vec<(String, String)>,
     // One per imported module, and empty unless interface checking is on. The
@@ -287,13 +285,13 @@ pub fn register_entry_file(path: &Path, base_dir: &Path) -> u32 {
 }
 
 pub fn resolve_imports(
-    statements: Vec<Spanned<Statement>>,
+    entry: Module,
     base_dir: &Path,
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
 ) -> Result<Resolved> {
     resolve_imports_cached(
-        statements,
+        entry,
         base_dir,
         linear_types,
         tests,
@@ -316,7 +314,7 @@ pub struct Resolution<'a> {
 // first line. It contributes the interface the cache already holds, and its
 // object is linked rather than built.
 pub fn resolve_imports_cached(
-    statements: Vec<Spanned<Statement>>,
+    entry: Module,
     base_dir: &Path,
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
@@ -328,7 +326,7 @@ pub fn resolve_imports_cached(
         layers,
     } = options;
     let resolved = Resolved {
-        statements: Vec::new(),
+        program: Module::default(),
         linear_types,
         tests,
         interfaces: Vec::new(),
@@ -347,8 +345,8 @@ pub fn resolve_imports_cached(
     let mut plans: Plans = BTreeMap::new();
     if let Some(cache) = cache {
         let mut stack = HashSet::new();
-        for statement in &statements {
-            if let Statement::Import(path, _) = &statement.node {
+        for statement in &entry.roots {
+            if let Statement::Import(path, _) = entry.ast.stmt(*statement) {
                 let Some(found) =
                     find_import(base_dir, path, roots, layers, &root)?
                 else {
@@ -384,10 +382,11 @@ pub fn resolve_imports_cached(
     // been leaning on a name it never imported.
     walk.files.push(FileNames::of(
         "the entry file",
-        &statements,
-        &import_identities(&statements, base_dir, roots, layers, &root),
+        &entry.ast,
+        &entry.roots,
+        &import_identities(&entry, base_dir, roots, layers, &root),
     ));
-    walk.resolve_into(statements, base_dir, "the entry file")?;
+    walk.resolve_into(entry, base_dir, "the entry file")?;
     let reports = unimported_names(&walk.files, &walk.module_exports);
     if !reports.is_empty() {
         bail!(
@@ -412,7 +411,7 @@ pub fn resolve_imports_cached(
             // A file id is handed out in registration order, so an interface
             // written down with one in it would mean something different in the
             // process that reads it back.
-            stamp_file(&mut interface.declarations, 0);
+            stamp_file(&mut interface, 0);
             ModulePlan {
                 file: planned.file,
                 object: planned.object,
@@ -420,6 +419,7 @@ pub fn resolve_imports_cached(
                 tag: planned.tag,
                 module: planned.module.clone(),
                 record: ModuleRecord {
+                    format_version: crate::build_cache::CACHE_FORMAT,
                     module: planned.module,
                     source_hash: planned.source_hash,
                     imports: planned.imports,
@@ -433,7 +433,7 @@ pub fn resolve_imports_cached(
 }
 
 struct ParsedModule {
-    statements: Vec<Spanned<Statement>>,
+    module: Module,
     exports: Vec<String>,
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
@@ -483,11 +483,11 @@ fn parse_module(
             .with_context(|| format!("in {}", path.display()))?;
     let mut parser = Parser::with_positions(&tokens, &positions);
     parser.also_generic(generics);
-    let statements = parser
+    let module = parser
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
     Ok(Box::new(ParsedModule {
-        statements,
+        module,
         exports: parser.exports().to_vec(),
         linear_types: parser.linear_types().iter().cloned().collect(),
         tests: parser.tests().to_vec(),
@@ -534,7 +534,7 @@ fn plan_module(
     let mut interface = match &record {
         Some(record) => {
             let mut interface = record.interface.clone();
-            stamp_file(&mut interface.declarations, file);
+            stamp_file(&mut interface, file);
             interface
         }
         None => {
@@ -552,7 +552,8 @@ fn plan_module(
             )?;
             let interface = ModuleInterface::of(
                 &module,
-                &fresh.statements,
+                &fresh.module.ast,
+                &fresh.module.roots,
                 &fresh.exports,
                 &fresh.linear_types,
             );
@@ -562,7 +563,7 @@ fn plan_module(
     };
     let imports: Vec<String> = match (&record, &parsed) {
         (Some(record), _) => record.imports.clone(),
-        (None, Some(fresh)) => import_paths(&fresh.statements),
+        (None, Some(fresh)) => import_paths(&fresh.module),
         (None, None) => Vec::new(),
     };
 
@@ -602,7 +603,8 @@ fn plan_module(
         )?;
         interface = ModuleInterface::of(
             &module,
-            &fresh.statements,
+            &fresh.module.ast,
+            &fresh.module.roots,
             &fresh.exports,
             &fresh.linear_types,
         );
@@ -633,13 +635,13 @@ fn plan_module(
 }
 
 fn import_identities(
-    statements: &[Spanned<Statement>],
+    module: &Module,
     base_dir: &Path,
     roots: &[SearchRoot],
     layers: &[Layer],
     root: &Path,
 ) -> Vec<PathBuf> {
-    import_paths(statements)
+    import_paths(module)
         .iter()
         .filter_map(|path| {
             find_import(base_dir, path, roots, layers, root)
@@ -655,10 +657,11 @@ fn import_identities(
         .collect()
 }
 
-fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
-    statements
+fn import_paths(module: &Module) -> Vec<String> {
+    module
+        .roots
         .iter()
-        .filter_map(|statement| match &statement.node {
+        .filter_map(|statement| match module.ast.stmt(*statement) {
             Statement::Import(path, _) => Some(path.clone()),
             _ => None,
         })
@@ -706,7 +709,7 @@ struct Walk<'a> {
     module_view: HashMap<PathBuf, ModuleView>,
 }
 
-type Contribution = (Vec<Spanned<Statement>>, HashSet<String>, String);
+type Contribution = (Module, HashSet<String>, String);
 
 // What an importer needs to know about a module: what it is called, what it
 // exports, and what each of its names became in the spliced program. An
@@ -724,7 +727,7 @@ impl Walk<'_> {
     // first either way, since a module has to be declared before it is used.
     fn resolve_into(
         &mut self,
-        statements: Vec<Spanned<Statement>>,
+        mut source: Module,
         base_dir: &Path,
         module: &str,
     ) -> Result<()> {
@@ -738,12 +741,25 @@ impl Walk<'_> {
         let mut owner_of: HashMap<String, String> = HashMap::new();
         let mut body = Vec::new();
 
-        for statement in statements {
-            let Statement::Import(path, renames) = &statement.node else {
+        for statement in std::mem::take(&mut source.roots) {
+            let Statement::Import(path, renames) = source.ast.stmt(statement)
+            else {
                 body.push(statement);
                 continue;
             };
-            let renames = renames.clone();
+            let path = path.clone();
+            let renames: Vec<(String, String)> = source
+                .ast
+                .renames_in(*renames)
+                .iter()
+                .map(|held| {
+                    (
+                        source.ast.name(held.exported).to_string(),
+                        source.ast.name(held.local).to_string(),
+                    )
+                })
+                .collect();
+            let path = &path;
 
             let Some(found) = find_import(
                 base_dir,
@@ -775,15 +791,15 @@ impl Walk<'_> {
             // the names this import renamed.
             let local_of: HashMap<&str, &str> = renames
                 .iter()
-                .map(|held| (held.exported.as_str(), held.local.as_str()))
+                .map(|held| (held.0.as_str(), held.1.as_str()))
                 .collect();
-            for name in &renames {
-                if !exports.contains(&name.exported) {
+            for (exported, local) in &renames {
+                if !exports.contains(exported) {
                     bail!(
                         "'{}' does not export '{}', so there is nothing to read as '{}'",
                         owner,
-                        name.exported,
-                        name.local
+                        exported,
+                        local
                     );
                 }
             }
@@ -814,14 +830,15 @@ impl Walk<'_> {
         // A file's own declarations win over anything it imported, so the view
         // only reaches the names it did not declare itself.
         for statement in &body {
-            if let Some(name) = top_level_name(&statement.node) {
-                view.remove(name);
-                ambiguous.remove(name);
+            if let Some(name) = top_level_name(&source.ast, *statement) {
+                let name = name.to_string();
+                view.remove(&name);
+                ambiguous.remove(&name);
             }
         }
 
         if !ambiguous.is_empty() {
-            let used = FileNames::of(module, &body, &[]);
+            let used = FileNames::of(module, &source.ast, &body, &[]);
             for name in &used.used {
                 if let Some((first, second)) = ambiguous.get(name) {
                     bail!(
@@ -833,9 +850,19 @@ impl Walk<'_> {
 
         if !view.is_empty() {
             let renamer = Renamer { renames: view };
-            renamer.block(&mut body, &mut Vec::new());
+            renamer.run(&mut source.ast, &body);
         }
-        self.resolved.statements.extend(body);
+        let offset =
+            splice_positions(&mut self.resolved.program.ast, &source.ast);
+        let splicer = Splicer::new(&source.ast, offset);
+        for statement in body {
+            let copied = splicer.statement(
+                &mut self.resolved.program.ast,
+                statement,
+                &mut |name| name.to_string(),
+            );
+            self.resolved.program.roots.push(copied);
+        }
         Ok(())
     }
 
@@ -856,7 +883,8 @@ impl Walk<'_> {
             full.parent().map(Path::to_path_buf).unwrap_or_default();
         self.files.push(FileNames::of(
             module,
-            &imported,
+            &imported.ast,
+            &imported.roots,
             &import_identities(
                 &imported,
                 &child_dir,
@@ -885,8 +913,9 @@ impl Walk<'_> {
             }
         }
         if !renames.is_empty() {
+            let roots = imported.roots.clone();
             let renamer = Renamer { renames };
-            renamer.block(&mut imported, &mut Vec::new());
+            renamer.run(&mut imported.ast, &roots);
         }
 
         self.resolve_into(imported, &child_dir, module)
@@ -909,26 +938,37 @@ impl Walk<'_> {
             self.resolved
                 .linear_types
                 .extend(interface.linear_types.iter().cloned());
-            let mut statements: Vec<Spanned<Statement>> = imports
-                .into_iter()
-                .map(|path| Spanned::from(Statement::Import(path, Vec::new())))
-                .collect();
+            let mut contribution = Module::default();
+            for path in imports {
+                let id = contribution.ast.push_stmt(
+                    Statement::Import(path, Range32::EMPTY),
+                    TokenSpan::NONE,
+                );
+                contribution.roots.push(id);
+            }
             // The module's object is being linked rather than rebuilt, so it
             // contributes signatures where it can and bodies only where a
             // caller needs one. See `as_declaration`.
-            statements.extend(interface.declarations.into_iter().map(
-                |statement| match crate::build_cache::as_declaration(
-                    &statement.node,
+            let held = &interface.declarations;
+            let offset = splice_positions(&mut contribution.ast, &held.ast);
+            let splicer = Splicer::new(&held.ast, offset);
+            for statement in &held.roots {
+                let copied = match crate::build_cache::push_as_declaration(
+                    &mut contribution.ast,
+                    &splicer,
+                    *statement,
                 ) {
-                    Some(declared) => Spanned {
-                        node: declared,
-                        position: statement.position,
-                    },
-                    None => statement,
-                },
-            ));
+                    Some(declared) => declared,
+                    None => splicer.statement(
+                        &mut contribution.ast,
+                        *statement,
+                        &mut |name| name.to_string(),
+                    ),
+                };
+                contribution.roots.push(copied);
+            }
             let exports = interface.exports.into_iter().collect();
-            return Ok((statements, exports, tag));
+            return Ok((contribution, exports, tag));
         };
 
         self.resolved
@@ -936,9 +976,9 @@ impl Walk<'_> {
             .extend(parsed.linear_types.iter().cloned());
         self.resolved.tests.extend(parsed.tests.iter().cloned());
         let exports: HashSet<String> = parsed.exports.into_iter().collect();
-        let mut statements = parsed.statements;
-        self.check_and_reduce(&interface, &mut statements)?;
-        Ok((statements, exports, tag))
+        let mut contribution = parsed.module;
+        self.check_and_reduce(&interface, &mut contribution)?;
+        Ok((contribution, exports, tag))
     }
 
     fn read_module(
@@ -971,7 +1011,8 @@ impl Walk<'_> {
 
         let exports: HashSet<String> = parsed.exports.iter().cloned().collect();
         let tag = module_tag_of(module_name);
-        let mut statements = without_tests(parsed.statements);
+        let mut module = parsed.module;
+        without_tests(&mut module);
 
         // The interface is derived at the one place a module is parsed, which is what keeps it
         // from drifting out of step with the source it describes.
@@ -980,27 +1021,28 @@ impl Walk<'_> {
         {
             let interface = ModuleInterface::of(
                 module_name,
-                &statements,
+                &module.ast,
+                &module.roots,
                 &parsed.exports,
                 &parsed.linear_types,
             );
-            self.check_and_reduce(&interface, &mut statements)?;
+            self.check_and_reduce(&interface, &mut module)?;
         }
-        Ok((statements, exports, tag))
+        Ok((module, exports, tag))
     }
 
     fn check_and_reduce(
         &mut self,
         interface: &ModuleInterface,
-        statements: &mut Vec<Spanned<Statement>>,
+        module: &mut Module,
     ) -> Result<()> {
-        check_and_reduce(interface, statements, &mut self.resolved.interfaces)
+        check_and_reduce(interface, module, &mut self.resolved.interfaces)
     }
 }
 
 fn check_and_reduce(
     interface: &ModuleInterface,
-    statements: &mut Vec<Spanned<Statement>>,
+    module: &mut Module,
     interfaces: &mut Vec<ModuleInterface>,
 ) -> Result<()> {
     if !crate::interface::interfaces_are_checked()
@@ -1010,7 +1052,11 @@ fn check_and_reduce(
     }
     crate::interface::check_interface_round_trip(interface)?;
     crate::interface::check_interface_covers_exports(interface)?;
-    crate::interface::check_interface_is_closed(interface, statements)?;
+    crate::interface::check_interface_is_closed(
+        interface,
+        &module.ast,
+        &module.roots,
+    )?;
 
     // The oracle for step 4: build the program from what the interface says
     // rather than from the module's source, and require the result to be the
@@ -1024,13 +1070,41 @@ fn check_and_reduce(
     // interface's view of it, so anything it kept private and nothing reaches
     // is gone.
     if crate::interface::built_from_interfaces() {
-        let mut rebuilt: Vec<Spanned<Statement>> = statements
-            .iter()
-            .filter(|statement| matches!(statement.node, Statement::Import(..)))
-            .cloned()
-            .collect();
-        rebuilt.extend(interface.declarations.iter().cloned());
-        *statements = rebuilt;
+        let mut rebuilt = Module::default();
+        for statement in &module.roots {
+            if matches!(module.ast.stmt(*statement), Statement::Import(..)) {
+                let offset = rebuilt.ast.token_positions.len() as u32;
+                let source_span = module.ast.stmt_span(*statement);
+                rebuilt
+                    .ast
+                    .token_positions
+                    .push(module.ast.position_of(source_span));
+                let splicer = Splicer::new(&module.ast, 0);
+                let copied = splicer.statement(
+                    &mut rebuilt.ast,
+                    *statement,
+                    &mut |name| name.to_string(),
+                );
+                let span = TokenSpan {
+                    first: offset,
+                    last: offset,
+                };
+                let index = copied.0 as usize;
+                rebuilt.ast.stmt_spans[index] = span;
+                rebuilt.roots.push(copied);
+            }
+        }
+        let held = &interface.declarations;
+        let offset = splice_positions(&mut rebuilt.ast, &held.ast);
+        let splicer = Splicer::new(&held.ast, offset);
+        for statement in &held.roots {
+            let copied =
+                splicer.statement(&mut rebuilt.ast, *statement, &mut |name| {
+                    name.to_string()
+                });
+            rebuilt.roots.push(copied);
+        }
+        *module = rebuilt;
     }
     interfaces.push(interface.clone());
     Ok(())
@@ -1133,15 +1207,15 @@ fn import_paths_in_source(source: &str) -> Vec<String> {
     paths
 }
 
-fn top_level_name(statement: &Statement) -> Option<&str> {
-    match statement {
+fn top_level_name(ast: &Ast, statement: StmtId) -> Option<&str> {
+    match ast.stmt(statement) {
         Statement::Constant(name, _)
         | Statement::Struct(name, _, _)
         | Statement::Enum(name, _, _)
         | Statement::Flags(name, _, _)
         | Statement::TypeAlias(name, _)
         | Statement::Extern { name, .. }
-        | Statement::Declared { name, .. } => Some(name),
+        | Statement::Declared { name, .. } => Some(ast.name(*name)),
         _ => None,
     }
 }
@@ -1172,21 +1246,18 @@ pub fn demangle_private_names(text: &str) -> String {
     out
 }
 
-fn module_renames(
-    statements: &[Spanned<Statement>],
-    tag: &str,
-) -> HashMap<String, String> {
+fn module_renames(module: &Module, tag: &str) -> HashMap<String, String> {
     let mut renames = HashMap::new();
-    for statement in statements {
+    for statement in &module.roots {
         // An `extern` name is not this module's to rename. It is the symbol a
         // C library defines, so mangling it produces a link against a
         // name nothing exports. That only showed up once a module other than
         // the entry file declared one, which is what a standard library doing
         // its own IO is.
-        if matches!(statement.node, Statement::Extern { .. }) {
+        if matches!(module.ast.stmt(*statement), Statement::Extern { .. }) {
             continue;
         }
-        if let Some(name) = top_level_name(&statement.node) {
+        if let Some(name) = top_level_name(&module.ast, *statement) {
             renames.insert(name.to_string(), mangled_name(tag, name));
         }
     }
@@ -1207,62 +1278,116 @@ struct Renamer {
     renames: HashMap<String, String>,
 }
 
-type Scope = Vec<HashSet<String>>;
+type Scope = Vec<HashSet<crate::ast::Symbol>>;
 
 impl Renamer {
-    fn mapped(&self, name: &str, scope: &Scope) -> Option<String> {
-        if scope.iter().any(|frame| frame.contains(name)) {
-            return None;
+    fn run(&self, ast: &mut Ast, roots: &[StmtId]) {
+        let mut scope: Scope = vec![HashSet::new()];
+        for statement in roots {
+            self.statement(ast, *statement, &mut scope);
         }
-        self.renames.get(name).cloned()
     }
 
-    fn block(&self, block: &mut Block, scope: &mut Scope) {
+    // The renamed symbol for a name, unless a local binding shadows it. The
+    // symbol table is injective, so a frame holding the symbol is a frame
+    // holding the spelling.
+    fn mapped(
+        &self,
+        ast: &mut Ast,
+        name: crate::ast::Symbol,
+        scope: &Scope,
+    ) -> Option<crate::ast::Symbol> {
+        if scope.iter().any(|frame| frame.contains(&name)) {
+            return None;
+        }
+        let mangled = self.renames.get(ast.name(name))?.clone();
+        Some(ast.intern(&mangled))
+    }
+
+    fn plain(
+        &self,
+        ast: &mut Ast,
+        name: crate::ast::Symbol,
+    ) -> Option<crate::ast::Symbol> {
+        let mangled = self.renames.get(ast.name(name))?.clone();
+        Some(ast.intern(&mangled))
+    }
+
+    fn block(&self, ast: &mut Ast, block: Range32, scope: &mut Scope) {
         scope.push(HashSet::new());
-        for statement in block.iter_mut() {
-            self.statement(&mut statement.node, scope);
+        for index in block.indices() {
+            let statement = ast.stmt_list[index];
+            self.statement(ast, statement, scope);
         }
         scope.pop();
     }
 
-    fn bind(&self, scope: &mut Scope, name: &str) {
+    fn bind(&self, scope: &mut Scope, name: crate::ast::Symbol) {
         if let Some(frame) = scope.last_mut() {
-            frame.insert(name.to_string());
+            frame.insert(name);
         }
     }
 
-    fn statement(&self, statement: &mut Statement, scope: &mut Scope) {
-        match statement {
+    fn statement(&self, ast: &mut Ast, id: StmtId, scope: &mut Scope) {
+        match ast.stmt(id).clone() {
             Statement::Constant(name, value) => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, name) {
+                    let Statement::Constant(held, _) =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                self.expression(value, scope);
+                self.expression(ast, value, scope);
             }
             Statement::Struct(name, _, fields) => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, name) {
+                    let Statement::Struct(held, _, _) =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for field in fields {
-                    self.ty(&mut field.field_type);
+                for index in fields.indices() {
+                    self.ty(&mut ast.struct_fields[index].field_type);
                 }
             }
             Statement::Enum(name, _, variants) => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, name) {
+                    let Statement::Enum(held, _, _) =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for variant in variants {
-                    if let Some(fields) = &mut variant.fields {
-                        for field in fields {
-                            self.ty(&mut field.field_type);
+                for variant_index in variants.indices() {
+                    if let Some(fields) =
+                        ast.enum_variants[variant_index].fields
+                    {
+                        for index in fields.indices() {
+                            self.ty(&mut ast.struct_fields[index].field_type);
                         }
                     }
                 }
             }
-            Statement::TypeAlias(name, ty) | Statement::Flags(name, ty, _) => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+            Statement::TypeAlias(name, _) | Statement::Flags(name, _, _) => {
+                if let Some(mangled) = self.plain(ast, name) {
+                    let (Statement::TypeAlias(held, _)
+                    | Statement::Flags(held, _, _)) =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
+                let (Statement::TypeAlias(_, ty) | Statement::Flags(_, ty, _)) =
+                    &mut ast.statements[id.0 as usize]
+                else {
+                    return;
+                };
                 self.ty(ty);
             }
             Statement::Extern {
@@ -1271,18 +1396,33 @@ impl Renamer {
                 return_type,
                 ..
             } => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, name) {
+                    let Statement::Extern { name: held, .. } =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for param in params.iter_mut() {
-                    if let Some(ty) = &mut param.type_annotation {
+                for index in params.indices() {
+                    if let Some(ty) = &mut ast.parameters[index].type_annotation
+                    {
                         self.ty(ty);
                     }
-                    if let Some(ty) = &mut param.compile_time_signature {
+                    if let Some(ty) =
+                        &mut ast.parameters[index].compile_time_signature
+                    {
                         self.ty(ty);
                     }
                 }
-                if let Some(ty) = return_type {
+                if return_type.is_some() {
+                    let Statement::Extern {
+                        return_type: Some(ty),
+                        ..
+                    } = &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
                     self.ty(ty);
                 }
             }
@@ -1291,11 +1431,16 @@ impl Renamer {
                 params,
                 return_sig,
             } => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, name) {
+                    let Statement::Declared { name: held, .. } =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                self.parameters(params, &mut Vec::new());
-                self.return_signature(return_sig);
+                self.parameters(ast, params, &mut vec![HashSet::new()]);
+                self.return_signature(ast, return_sig);
             }
             Statement::Let {
                 name,
@@ -1303,49 +1448,64 @@ impl Renamer {
                 value,
                 ..
             } => {
-                self.expression(value, scope);
-                if let Some(ty) = type_annotation {
+                self.expression(ast, value, scope);
+                if type_annotation.is_some() {
+                    let Statement::Let {
+                        type_annotation: Some(ty),
+                        ..
+                    } = &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
                     self.ty(ty);
                 }
                 self.bind(scope, name);
             }
             Statement::LetMultiple(bindings, value) => {
-                self.expression(value, scope);
-                for binding in bindings.iter() {
-                    self.bind(scope, &binding.name);
+                self.expression(ast, value, scope);
+                for binding in bindings.indices() {
+                    let name = ast.bindings[binding].name;
+                    self.bind(scope, name);
                 }
             }
-            Statement::Return(value) => self.expression(value, scope),
-            Statement::Expression(value) => self.expression(value, scope),
+            Statement::Return(value) => self.expression(ast, value, scope),
+            Statement::Expression(value) => self.expression(ast, value, scope),
             Statement::Print(value, arguments) => {
-                self.expression(value, scope);
-                for argument in arguments {
-                    self.expression(argument, scope);
+                self.expression(ast, value, scope);
+                for index in arguments.indices() {
+                    let argument = ast.expr_list[index];
+                    self.expression(ast, argument, scope);
                 }
             }
             Statement::Assignment(target, value) => {
-                self.expression(target, scope);
-                self.expression(value, scope);
+                self.expression(ast, target, scope);
+                self.expression(ast, value, scope);
             }
-            Statement::Defer(inner) => self.statement(inner, scope),
+            Statement::Defer(inner) => self.statement(ast, inner, scope),
             Statement::For(variable, _, range, body) => {
-                self.expression(range, scope);
+                self.expression(ast, range, scope);
                 scope.push(HashSet::new());
                 self.bind(scope, variable);
-                for statement in body.iter_mut() {
-                    self.statement(&mut statement.node, scope);
+                for index in body.indices() {
+                    let statement = ast.stmt_list[index];
+                    self.statement(ast, statement, scope);
                 }
                 scope.pop();
             }
             Statement::While(condition, body) => {
-                self.expression(condition, scope);
-                self.block(body, scope);
+                self.expression(ast, condition, scope);
+                self.block(ast, body, scope);
             }
             Statement::With(capability, body) => {
-                if let Some(mangled) = self.mapped(capability, scope) {
-                    *capability = mangled;
+                if let Some(mangled) = self.mapped(ast, capability, scope) {
+                    let Statement::With(held, _) =
+                        &mut ast.statements[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                self.block(body, scope);
+                self.block(ast, body, scope);
             }
             Statement::Break | Statement::Continue | Statement::Import(..) => {}
         }
@@ -1411,44 +1571,57 @@ impl Renamer {
         changed.then(|| format!("{renamed_base}<{}>", arguments.join(", ")))
     }
 
-    fn return_signature(&self, signature: &mut ReturnSignature) {
-        match &mut signature.kind {
-            ReturnKind::None => {}
-            ReturnKind::Single(ty) => self.ty(ty),
-            ReturnKind::Multiple(values) => {
-                for held in values.iter_mut() {
-                    self.ty(&mut held.value_type);
+    fn return_signature(&self, ast: &mut Ast, signature: SignatureId) {
+        let values = {
+            let held = &mut ast.signatures[signature.0 as usize];
+            let mut values = None;
+            match &mut held.kind {
+                ReturnKind::None => {}
+                ReturnKind::Single(ty) => self.ty(ty),
+                ReturnKind::Multiple(range) => values = Some(*range),
+                ReturnKind::Fallible(value, failure) => {
+                    self.ty(value);
+                    self.ty(failure);
                 }
             }
-            ReturnKind::Fallible(value, failure) => {
-                self.ty(value);
-                self.ty(failure);
+            for capability in held.uses.iter_mut() {
+                self.ty(capability);
             }
-        }
-        for capability in signature.uses.iter_mut() {
-            self.ty(capability);
+            values
+        };
+        if let Some(values) = values {
+            for index in values.indices() {
+                self.ty(&mut ast.return_values[index].value_type);
+            }
         }
     }
 
-    fn parameters(&self, params: &mut [Parameter], scope: &mut Scope) {
-        for param in params.iter_mut() {
-            if let Some(ty) = &mut param.type_annotation {
+    fn parameters(&self, ast: &mut Ast, params: Range32, scope: &mut Scope) {
+        for index in params.indices() {
+            if let Some(ty) = &mut ast.parameters[index].type_annotation {
                 self.ty(ty);
             }
             // What a compile-time parameter is declared to take is a type like
             // any other, and a bundle parameter names one this module imported.
-            if let Some(ty) = &mut param.compile_time_signature {
+            if let Some(ty) = &mut ast.parameters[index].compile_time_signature
+            {
                 self.ty(ty);
             }
-            self.bind(scope, &param.name);
+            let name = ast.parameters[index].name;
+            self.bind(scope, name);
         }
     }
 
-    fn expression(&self, expression: &mut Expression, scope: &mut Scope) {
-        match expression {
+    fn expression(&self, ast: &mut Ast, id: ExprId, scope: &mut Scope) {
+        match ast.expr(id).clone() {
             Expression::Identifier(name) => {
-                if let Some(mangled) = self.mapped(name, scope) {
-                    *name = mangled;
+                if let Some(mangled) = self.mapped(ast, name, scope) {
+                    let Expression::Identifier(held) =
+                        &mut ast.expressions[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
             }
             // An array literal holds expressions, so a name written inside one
@@ -1456,9 +1629,10 @@ impl Renamer {
             // as a leaf left those unmapped, and a call to an imported function
             // written inside an array literal reached the backend under a name
             // nothing had defined.
-            Expression::Literal(crate::parser::Literal::Array(elements)) => {
-                for element in elements.iter_mut() {
-                    self.expression(element, scope);
+            Expression::Literal(crate::ast::Literal::Array(elements)) => {
+                for index in elements.indices() {
+                    let element = ast.expr_list[index];
+                    self.expression(ast, element, scope);
                 }
             }
             Expression::Literal(_) | Expression::Boolean(_) => {}
@@ -1470,111 +1644,160 @@ impl Renamer {
             | Expression::Try(operand)
             | Expression::ArrayRepeat(operand, _)
             | Expression::Dereference(operand) => {
-                self.expression(operand, scope)
+                self.expression(ast, operand, scope)
             }
             Expression::Infix(left, _, right)
             | Expression::Index(left, right) => {
-                self.expression(left, scope);
-                self.expression(right, scope);
+                self.expression(ast, left, scope);
+                self.expression(ast, right, scope);
             }
             Expression::Range(start, end, _) => {
-                self.expression(start, scope);
-                self.expression(end, scope);
+                self.expression(ast, start, scope);
+                self.expression(ast, end, scope);
             }
             Expression::If(condition, consequence, alternative) => {
-                self.expression(condition, scope);
-                self.block(consequence, scope);
+                self.expression(ast, condition, scope);
+                self.block(ast, consequence, scope);
                 if let Some(block) = alternative {
-                    self.block(block, scope);
+                    self.block(ast, block, scope);
                 }
             }
             Expression::Function(params, return_sig, body)
             | Expression::Proc(params, return_sig, body) => {
                 scope.push(HashSet::new());
-                self.parameters(params, scope);
-                self.return_signature(return_sig);
-                for statement in body.iter_mut() {
-                    self.statement(&mut statement.node, scope);
+                self.parameters(ast, params, scope);
+                self.return_signature(ast, return_sig);
+                for index in body.indices() {
+                    let statement = ast.stmt_list[index];
+                    self.statement(ast, statement, scope);
                 }
                 scope.pop();
             }
             Expression::Call(callee, arguments) => {
-                self.expression(callee, scope);
-                for argument in arguments.iter_mut() {
-                    self.expression(argument, scope);
+                self.expression(ast, callee, scope);
+                for index in arguments.indices() {
+                    let argument = ast.expr_list[index];
+                    self.expression(ast, argument, scope);
                 }
             }
-            Expression::FieldAccess(base, _) => self.expression(base, scope),
+            Expression::FieldAccess(base, _) => {
+                self.expression(ast, base, scope)
+            }
             Expression::StructInit(name, fields) => {
-                if let Some(mangled) = self.renames.get(name.as_str()) {
-                    *name = mangled.clone();
-                } else if let Some(renamed) = self.generic_instance(name) {
-                    // A literal that says which instance it is names it as one
-                    // string, `Ordering<i64>`, so looking the whole thing up
-                    // finds nothing. Both halves are renamed the way a type
-                    // annotation naming the same instance is.
-                    *name = renamed;
+                let renamed = match self.plain(ast, name) {
+                    Some(mangled) => Some(mangled),
+                    None => {
+                        // A literal that says which instance it is names it as
+                        // one string, `Ordering<i64>`, so looking the whole
+                        // thing up finds nothing. Both halves are renamed the
+                        // way a type annotation naming the same instance is.
+                        let spelled = ast.name(name).to_string();
+                        self.generic_instance(&spelled)
+                            .map(|held| ast.intern(&held))
+                    }
+                };
+                if let Some(mangled) = renamed {
+                    let Expression::StructInit(held, _) =
+                        &mut ast.expressions[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for (_, value) in fields.iter_mut() {
-                    self.expression(value, scope);
+                for index in fields.indices() {
+                    let value = ast.named_exprs[index].value;
+                    self.expression(ast, value, scope);
                 }
             }
             Expression::EnumVariantInit(enum_name, _, fields) => {
-                if let Some(mangled) = self.renames.get(enum_name.as_str()) {
-                    *enum_name = mangled.clone();
+                if let Some(mangled) = self.plain(ast, enum_name) {
+                    let Expression::EnumVariantInit(held, _, _) =
+                        &mut ast.expressions[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for (_, value) in fields.iter_mut() {
-                    self.expression(value, scope);
+                for index in fields.indices() {
+                    let value = ast.named_exprs[index].value;
+                    self.expression(ast, value, scope);
                 }
             }
-            Expression::Sizeof(ty)
-            | Expression::TypeId(ty)
-            | Expression::TypeName(ty)
-            | Expression::TypeValue(ty) => self.ty(ty),
+            Expression::Sizeof(..)
+            | Expression::TypeId(..)
+            | Expression::TypeName(..)
+            | Expression::TypeValue(..) => {
+                let (Expression::Sizeof(ty)
+                | Expression::TypeId(ty)
+                | Expression::TypeName(ty)
+                | Expression::TypeValue(ty)) =
+                    &mut ast.expressions[id.0 as usize]
+                else {
+                    return;
+                };
+                self.ty(ty);
+            }
             Expression::Tuple(elements) => {
-                for element in elements.iter_mut() {
-                    self.expression(element, scope);
+                for index in elements.indices() {
+                    let element = ast.expr_list[index];
+                    self.expression(ast, element, scope);
                 }
             }
             Expression::Switch(scrutinee, cases) => {
-                self.expression(scrutinee, scope);
-                for case in cases.iter_mut() {
-                    self.switch_case(case, scope);
+                self.expression(ast, scrutinee, scope);
+                for index in cases.indices() {
+                    let case = ast.cases[index];
+                    self.switch_case(ast, case, scope);
                 }
             }
-            Expression::Unsafe(body) => self.block(body, scope),
-            Expression::UnsafeFn(inner) => self.expression(inner, scope),
+            Expression::Unsafe(body) => self.block(ast, body, scope),
+            Expression::UnsafeFn(inner) => self.expression(ast, inner, scope),
         }
     }
 
-    fn switch_case(&self, case: &mut SwitchCase, scope: &mut Scope) {
+    fn switch_case(
+        &self,
+        ast: &mut Ast,
+        case: crate::ast::SwitchCase,
+        scope: &mut Scope,
+    ) {
         scope.push(HashSet::new());
-        self.pattern(&mut case.pattern, scope);
-        for statement in case.body.iter_mut() {
-            self.statement(&mut statement.node, scope);
+        self.pattern(ast, case.pattern, scope);
+        for index in case.body.indices() {
+            let statement = ast.stmt_list[index];
+            self.statement(ast, statement, scope);
         }
         scope.pop();
     }
 
-    fn pattern(&self, pattern: &mut Pattern, scope: &mut Scope) {
-        match pattern {
+    fn pattern(&self, ast: &mut Ast, id: PatternId, scope: &mut Scope) {
+        match ast.pattern(id).clone() {
             Pattern::EnumVariant {
                 enum_name,
                 bindings,
                 ..
             } => {
                 if let Some(name) = enum_name
-                    && let Some(mangled) = self.renames.get(name.as_str())
+                    && let Some(mangled) = self.plain(ast, name)
                 {
-                    *name = mangled.clone();
+                    let Pattern::EnumVariant {
+                        enum_name: Some(held),
+                        ..
+                    } = &mut ast.patterns[id.0 as usize]
+                    else {
+                        return;
+                    };
+                    *held = mangled;
                 }
-                for (_, binding) in bindings {
+                for index in bindings.indices() {
+                    let binding = ast.pattern_bindings[index].binding;
                     self.bind(scope, binding);
                 }
             }
             Pattern::Tuple(patterns) => {
-                for pattern in patterns {
-                    self.pattern(pattern, scope);
+                for index in patterns.indices() {
+                    let pattern = ast.pattern_list[index];
+                    self.pattern(ast, pattern, scope);
                 }
             }
             Pattern::Identifier(name) => self.bind(scope, name),

@@ -1,17 +1,23 @@
-use crate::parser::{Block, Expression, Statement};
+use crate::ast::{
+    Ast, ExprId, Expression, Range32, ReturnKind, Statement, StmtId,
+};
 use crate::types::Type;
 
 // Every named type or function a declaration refers to, so an interface can
 // carry the things an exported name depends on. Deliberately over-approximate:
 // naming something that turns out not to be a type costs an entry that nothing
 // matches, while missing one costs a caller that cannot compile.
-pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
-    match statement {
-        Statement::Constant(_, value) => names_in_expression(value, out),
+pub(crate) fn names_in_statement(
+    ast: &Ast,
+    statement: StmtId,
+    out: &mut Vec<String>,
+) {
+    match ast.stmt(statement) {
+        Statement::Constant(_, value) => names_in_expression(ast, *value, out),
         Statement::Declared {
             params, return_sig, ..
         } => {
-            for param in params {
+            for param in ast.params_in(*params) {
                 if let Some(ty) = &param.type_annotation {
                     names_in_type(ty, out);
                 }
@@ -19,32 +25,33 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
                     names_in_type(ty, out);
                 }
             }
-            match &return_sig.kind {
-                crate::parser::ReturnKind::None => {}
-                crate::parser::ReturnKind::Single(ty) => names_in_type(ty, out),
-                crate::parser::ReturnKind::Multiple(values) => {
-                    for held in values {
+            let signature = ast.signature(*return_sig);
+            match &signature.kind {
+                ReturnKind::None => {}
+                ReturnKind::Single(ty) => names_in_type(ty, out),
+                ReturnKind::Multiple(values) => {
+                    for held in ast.return_values_in(*values) {
                         names_in_type(&held.value_type, out);
                     }
                 }
-                crate::parser::ReturnKind::Fallible(value, failure) => {
+                ReturnKind::Fallible(value, failure) => {
                     names_in_type(value, out);
                     names_in_type(failure, out);
                 }
             }
-            for capability in &return_sig.uses {
+            for capability in &signature.uses {
                 names_in_type(capability, out);
             }
         }
         Statement::Struct(_, _, fields) => {
-            for field in fields {
+            for field in ast.fields_in(*fields) {
                 names_in_type(&field.field_type, out);
             }
         }
         Statement::Enum(_, _, variants) => {
-            for variant in variants {
-                if let Some(fields) = &variant.fields {
-                    for field in fields {
+            for variant in ast.variants_in(*variants) {
+                if let Some(fields) = variant.fields {
+                    for field in ast.fields_in(fields) {
                         names_in_type(&field.field_type, out);
                     }
                 }
@@ -58,7 +65,7 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             return_type,
             ..
         } => {
-            for parameter in params {
+            for parameter in ast.params_in(*params) {
                 if let Some(ty) = &parameter.type_annotation {
                     names_in_type(ty, out);
                 }
@@ -75,57 +82,58 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             if let Some(ty) = type_annotation {
                 names_in_type(ty, out);
             }
-            names_in_expression(value, out);
+            names_in_expression(ast, *value, out);
         }
         Statement::LetMultiple(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)
-        | Statement::Print(value, _) => names_in_expression(value, out),
+        | Statement::Print(value, _) => names_in_expression(ast, *value, out),
         Statement::Assignment(place, value) => {
-            names_in_expression(place, out);
-            names_in_expression(value, out);
+            names_in_expression(ast, *place, out);
+            names_in_expression(ast, *value, out);
         }
-        Statement::Defer(inner) => names_in_statement(inner, out),
+        Statement::Defer(inner) => names_in_statement(ast, *inner, out),
         Statement::For(_, _, iterable, body) => {
-            names_in_expression(iterable, out);
-            names_in_block(body, out);
+            names_in_expression(ast, *iterable, out);
+            names_in_block(ast, *body, out);
         }
         Statement::While(condition, body) => {
-            names_in_expression(condition, out);
-            names_in_block(body, out);
+            names_in_expression(ast, *condition, out);
+            names_in_block(ast, *body, out);
         }
         Statement::With(capability, body) => {
-            out.push(capability.clone());
-            names_in_block(body, out);
+            out.push(ast.name(*capability).to_string());
+            names_in_block(ast, *body, out);
         }
         Statement::Break | Statement::Continue | Statement::Import(..) => {}
     }
 }
 
-fn names_in_block(block: &Block, out: &mut Vec<String>) {
-    for statement in block {
-        names_in_statement(&statement.node, out);
+fn names_in_block(ast: &Ast, block: Range32, out: &mut Vec<String>) {
+    for statement in ast.stmts_in(block) {
+        names_in_statement(ast, *statement, out);
     }
 }
 
 pub(crate) fn names_in_expression(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     out: &mut Vec<String>,
 ) {
-    match expression {
+    match ast.expr(expression) {
         // A call names its callee, which for a generic body is how a template
         // reaches a helper the module did not export.
-        Expression::Identifier(name) => out.push(name.clone()),
+        Expression::Identifier(name) => out.push(ast.name(*name).to_string()),
         Expression::StructInit(name, fields) => {
-            out.push(name.clone());
-            for (_, value) in fields {
-                names_in_expression(value, out);
+            out.push(ast.name(*name).to_string());
+            for field in ast.named_in(*fields) {
+                names_in_expression(ast, field.value, out);
             }
         }
         Expression::EnumVariantInit(name, _, fields) => {
-            out.push(name.clone());
-            for (_, value) in fields {
-                names_in_expression(value, out);
+            out.push(ast.name(*name).to_string());
+            for field in ast.named_in(*fields) {
+                names_in_expression(ast, field.value, out);
             }
         }
         Expression::Sizeof(ty)
@@ -134,7 +142,7 @@ pub(crate) fn names_in_expression(
         | Expression::TypeValue(ty) => names_in_type(ty, out),
         Expression::Function(params, return_sig, body)
         | Expression::Proc(params, return_sig, body) => {
-            for parameter in params {
+            for parameter in ast.params_in(*params) {
                 if let Some(ty) = &parameter.type_annotation {
                     names_in_type(ty, out);
                 }
@@ -142,18 +150,19 @@ pub(crate) fn names_in_expression(
                     names_in_type(ty, out);
                 }
             }
-            if let Some(ty) = return_sig.to_type() {
+            let signature = ast.signature(*return_sig);
+            if let Some(ty) = ast.signature_to_type(signature) {
                 names_in_type(&ty, out);
             }
-            for ty in &return_sig.uses {
+            for ty in &signature.uses {
                 names_in_type(ty, out);
             }
-            names_in_block(body, out);
+            names_in_block(ast, *body, out);
         }
         Expression::Call(callee, arguments) => {
-            names_in_expression(callee, out);
-            for argument in arguments {
-                names_in_expression(argument, out);
+            names_in_expression(ast, *callee, out);
+            for argument in ast.exprs_in(*arguments) {
+                names_in_expression(ast, *argument, out);
             }
         }
         Expression::PackMap(inner, _, _)
@@ -163,41 +172,45 @@ pub(crate) fn names_in_expression(
         | Expression::BorrowMut(inner)
         | Expression::Try(inner)
         | Expression::Dereference(inner)
-        | Expression::FieldAccess(inner, _) => names_in_expression(inner, out),
+        | Expression::FieldAccess(inner, _) => {
+            names_in_expression(ast, *inner, out)
+        }
         Expression::Infix(left, _, right)
         | Expression::Index(left, right)
         | Expression::Range(left, right, _) => {
-            names_in_expression(left, out);
-            names_in_expression(right, out);
+            names_in_expression(ast, *left, out);
+            names_in_expression(ast, *right, out);
         }
         Expression::If(condition, consequence, alternative) => {
-            names_in_expression(condition, out);
-            names_in_block(consequence, out);
+            names_in_expression(ast, *condition, out);
+            names_in_block(ast, *consequence, out);
             if let Some(block) = alternative {
-                names_in_block(block, out);
+                names_in_block(ast, *block, out);
             }
         }
         Expression::Switch(scrutinee, cases) => {
-            names_in_expression(scrutinee, out);
-            for case in cases {
-                if let crate::parser::Pattern::EnumVariant {
+            names_in_expression(ast, *scrutinee, out);
+            for case in ast.cases_in(*cases) {
+                if let crate::ast::Pattern::EnumVariant {
                     enum_name: Some(name),
                     ..
-                } = &case.pattern
+                } = ast.pattern(case.pattern)
                 {
-                    out.push(name.clone());
+                    out.push(ast.name(*name).to_string());
                 }
-                names_in_block(&case.body, out);
+                names_in_block(ast, case.body, out);
             }
         }
         Expression::Tuple(elements) => {
-            for element in elements {
-                names_in_expression(element, out);
+            for element in ast.exprs_in(*elements) {
+                names_in_expression(ast, *element, out);
             }
         }
-        Expression::Unsafe(body) => names_in_block(body, out),
-        Expression::UnsafeFn(inner) => names_in_expression(inner, out),
-        Expression::ArrayRepeat(value, _) => names_in_expression(value, out),
+        Expression::Unsafe(body) => names_in_block(ast, *body, out),
+        Expression::UnsafeFn(inner) => names_in_expression(ast, *inner, out),
+        Expression::ArrayRepeat(value, _) => {
+            names_in_expression(ast, *value, out)
+        }
         Expression::Literal(_) | Expression::Boolean(_) => {}
     }
 }

@@ -1,4 +1,10 @@
-use crate::{flatten, lexer::Position, lexer::Token, types::Type};
+use crate::ast::{
+    Ast, EnumVariant, ExprId, Expression, FlagBit, ImportRename, Literal,
+    Module, MultiBinding, NamedExpr, Parameter, Pattern, PatternBinding,
+    PatternId, Range32, ReturnKind, ReturnSignature, ReturnValue, Statement,
+    StmtId, StructField, SwitchCase, Symbol, TokenSpan,
+};
+use crate::{lexer::Position, lexer::Token, types::Type};
 use anyhow::{Result, bail};
 use std::{
     collections::HashMap,
@@ -9,52 +15,9 @@ use std::{
 
 pub type Identifier = String;
 
-pub type Block = Vec<Spanned<Statement>>;
-
 // The prefix a `test` block's generated function carries, so import resolution
 // can recognize one without a second registry to keep in step.
 pub const TEST_PREFIX: &str = "__frost_test_";
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct Spanned<T> {
-    pub node: T,
-    pub position: Position,
-}
-
-impl<T> Spanned<T> {
-    pub fn new(node: T, position: Position) -> Self {
-        Self { node, position }
-    }
-}
-
-impl<T: PartialEq> PartialEq for Spanned<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.node == other.node
-    }
-}
-
-impl From<Statement> for Spanned<Statement> {
-    fn from(node: Statement) -> Self {
-        Self {
-            node,
-            position: Position::default(),
-        }
-    }
-}
-
-impl<T> std::ops::Deref for Spanned<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.node
-    }
-}
-
-impl<T: Display> Display for Spanned<T> {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{}", self.node)
-    }
-}
 
 // How a parameter takes its argument. `read` (the default) is a shared borrow,
 // `mut` an exclusive borrow, `move` takes ownership. These are the surface. A
@@ -74,213 +37,6 @@ pub enum ParamMode {
     // what most C APIs take and what Frost does internally, but a library that
     // takes a struct by value could not be called at all. See src/c_abi.rs.
     Value,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct Parameter {
-    pub name: Identifier,
-    pub type_annotation: Option<Type>,
-    pub mutable: bool,
-    pub mode: ParamMode,
-    // For a compile-time parameter written `$compare: fn(T, T) -> bool`, the
-    // signature the argument has to have. This is kept beside the annotation
-    // rather than in it. Every pass that asks "is this a compile-time
-    // parameter" asks whether the annotation *is* `TypeParam(name)`, so putting
-    // the signature there would turn the parameter back into a runtime one.
-    pub compile_time_signature: Option<Type>,
-    // `args: $...`, a compile-time list of values. It is not a runtime
-    // parameter: each call has its own count and its own types, and the
-    // specialization takes one ordinary parameter per element. A body iterates
-    // it with `for` and indexes it with a literal, both at expansion time, and
-    // nothing else.
-    pub pack: bool,
-}
-
-impl Display for Parameter {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match &self.type_annotation {
-            Some(typ) => write!(f, "{}: {}", self.name, typ),
-            None => write!(f, "{}", self.name),
-        }
-    }
-}
-
-// One value of a return type list. `-> (quotient: i64, remainder: i64)` names
-// both. `-> (i64, i64)` names neither. A name is what the value is called at
-// the return site and in the struct the list lowers to, so it is the field name
-// a `return { quotient = .. }` writes.
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct ReturnValue {
-    pub name: Option<Identifier>,
-    pub value_type: Type,
-}
-
-impl Display for ReturnValue {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match &self.name {
-            Some(name) => write!(f, "{}: {}", name, self.value_type),
-            None => write!(f, "{}", self.value_type),
-        }
-    }
-}
-
-// One `old as new` of an import. `exported` is what the module calls it,
-// `local` is what this file calls it.
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct ImportRename {
-    pub exported: Identifier,
-    pub local: Identifier,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct MultiBinding {
-    pub name: Identifier,
-    pub mutable: bool,
-}
-
-// The struct a return type list becomes. One per distinct list, named after
-// what it holds, so two functions returning the same list under the same names
-// share it and two that name their values differently do not.
-pub fn multi_return_struct_name(values: &[ReturnValue]) -> String {
-    let mut name = String::from("__multi");
-    for held in values {
-        name.push('_');
-        for character in held.to_string().chars() {
-            if character.is_ascii_alphanumeric() {
-                name.push(character);
-            } else {
-                name.push('_');
-            }
-        }
-    }
-    name
-}
-
-// The field a return type list's nth value lives in: the name the signature
-// gave it, or its position when the signature gave none.
-pub fn multi_return_field_name(values: &[ReturnValue], index: usize) -> String {
-    match values.get(index).and_then(|held| held.name.as_ref()) {
-        Some(name) => name.clone(),
-        None => format!("value{index}"),
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub enum ReturnKind {
-    None,
-    Single(Type),
-    // `-> (i64, i64)` or `-> (quotient: i64, remainder: i64)`: several values
-    // from one call, bound by `quotient, remainder := divide(a, b)`. There is no
-    // tuple type behind it. The multi-return lowering gives each distinct list
-    // one struct and rewrites the returns and the bindings, so nothing after the
-    // front end sees this kind.
-    Multiple(Vec<ReturnValue>),
-    // `-> T ! E`: succeeds with T or fails with the error enum E. The failure set
-    // is E. The value type is T.
-    Fallible(Type, Type),
-}
-
-// The whole output contract of a function: what it returns (the kind), and the
-// allocation sources it draws from (`uses A`). A failure set lives in the kind
-// as `Fallible`. Allocation sources are the capabilities the caller must supply,
-// threaded in by the allocation-sources lowering pass.
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct ReturnSignature {
-    pub kind: ReturnKind,
-    pub uses: Vec<Type>,
-    // A `where` bound on the function's compile-time parameters, checked at
-    // every call before the body is specialized. It is a precondition rather
-    // than a set of operations a type joins: nothing registers into it and
-    // nothing implements it.
-    pub bound: Option<Box<Expression>>,
-}
-
-impl ReturnSignature {
-    pub fn plain(kind: ReturnKind) -> Self {
-        Self {
-            kind,
-            uses: Vec::new(),
-            bound: None,
-        }
-    }
-
-    pub fn to_type(&self) -> Option<Type> {
-        match &self.kind {
-            ReturnKind::None => None,
-            ReturnKind::Single(t) => Some(t.clone()),
-            ReturnKind::Multiple(values) => {
-                Some(Type::Struct(multi_return_struct_name(values)))
-            }
-            ReturnKind::Fallible(value, _) => Some(value.clone()),
-        }
-    }
-
-    // The error enum of a fallible return, if any.
-    pub fn failure_type(&self) -> Option<&Type> {
-        match &self.kind {
-            ReturnKind::Fallible(_, error) => Some(error),
-            _ => None,
-        }
-    }
-
-    pub fn is_multiple(&self) -> bool {
-        matches!(self.kind, ReturnKind::Multiple(_))
-    }
-
-    pub fn has_second_class(&self) -> Option<&Type> {
-        match &self.kind {
-            ReturnKind::None => None,
-            ReturnKind::Single(t) => {
-                if t.is_second_class() {
-                    Some(t)
-                } else {
-                    None
-                }
-            }
-            ReturnKind::Multiple(values) => values
-                .iter()
-                .map(|held| &held.value_type)
-                .find(|held| held.is_second_class()),
-            ReturnKind::Fallible(value, _) => {
-                if value.is_second_class() {
-                    Some(value)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub fn contains_reference(&self) -> Option<&Type> {
-        match &self.kind {
-            ReturnKind::None => None,
-            ReturnKind::Single(t) => {
-                if t.contains_reference() {
-                    Some(t)
-                } else {
-                    None
-                }
-            }
-            ReturnKind::Multiple(values) => values
-                .iter()
-                .map(|held| &held.value_type)
-                .find(|held| held.contains_reference()),
-            ReturnKind::Fallible(value, _) => {
-                if value.contains_reference() {
-                    Some(value)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub fn multiple_values(&self) -> Option<&Vec<ReturnValue>> {
-        match &self.kind {
-            ReturnKind::Multiple(values) => Some(values),
-            _ => None,
-        }
-    }
 }
 
 // A function whose signature declares a return, a failure set, or an allocation
@@ -305,70 +61,6 @@ fn is_constant_operator(token: &Token) -> bool {
             | Token::Ampersand
             | Token::Pipe
     )
-}
-
-impl Display for ReturnSignature {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match &self.kind {
-            ReturnKind::None => write!(f, "")?,
-            ReturnKind::Single(t) => write!(f, " -> {}", t)?,
-            ReturnKind::Fallible(value, error) => {
-                write!(f, " -> {} ! {}", value, error)?
-            }
-            ReturnKind::Multiple(values) => {
-                let parts: Vec<String> =
-                    values.iter().map(|held| held.to_string()).collect();
-                write!(f, " -> ({})", parts.join(", "))?
-            }
-        }
-        for capability in &self.uses {
-            write!(f, " uses {}", capability)?;
-        }
-        if let Some(bound) = &self.bound {
-            write!(f, " where {}", bound)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct StructField {
-    pub name: Identifier,
-    pub field_type: Type,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct EnumVariant {
-    pub name: Identifier,
-    pub fields: Option<Vec<StructField>>,
-}
-
-// One named bit of a `flags` declaration. The number is written rather than
-// derived, because a flags type mirrors a C header's numbers and a compiler
-// that chose them would be choosing different ones.
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct FlagBit {
-    pub name: Identifier,
-    pub value: i64,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct SwitchCase {
-    pub pattern: Pattern,
-    pub body: Block,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub enum Pattern {
-    Wildcard,
-    Literal(Literal),
-    Identifier(Identifier),
-    EnumVariant {
-        enum_name: Option<Identifier>,
-        variant_name: Identifier,
-        bindings: Vec<(Identifier, Identifier)>,
-    },
-    Tuple(Vec<Pattern>),
 }
 
 #[derive(
@@ -461,573 +153,6 @@ impl Display for Operator {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub enum Statement {
-    Let {
-        name: Identifier,
-        type_annotation: Option<Type>,
-        value: Expression,
-        mutable: bool,
-    },
-    // `quotient, remainder := divide(a, b)`: one call, several values, each
-    // bound by name. Only a call to a function whose return signature is a type
-    // list produces one, and the multi-return lowering rewrites it into the
-    // temporary and the field reads before any later pass sees it.
-    LetMultiple(Vec<MultiBinding>, Expression),
-    Constant(Identifier, Expression),
-    Return(Expression),
-    Expression(Expression),
-    // `print expr`: write the value and a newline to standard output, an integer
-    // as `%lld` and a float as `%g`, the way the self-hosted compiler's `print`
-    // statement does. A convenience for small programs and the standard library's
-    // examples, lowered to a runtime call rather than a synthesized `printf`.
-    Print(Expression, Vec<Expression>),
-    Struct(Identifier, Vec<String>, Vec<StructField>),
-    Enum(Identifier, Vec<String>, Vec<EnumVariant>),
-    // `InitFlags :: flags u32 { Video = 32, Audio = 16 }`: a named set of bits
-    // with a type of its own. The type is the representation under a name, the
-    // way a `distinct` declaration is, and the bits are constants of that type
-    // rather than loose integers beside it. The representation is written
-    // because these are a C header's numbers.
-    Flags(Identifier, Type, Vec<FlagBit>),
-    TypeAlias(Identifier, Type),
-    Defer(Box<Statement>),
-    Assignment(Expression, Expression),
-    // As written: one name binds the element, two bind the index and then the
-    // element. The iterable is a range, or a sequence to walk.
-    For(Identifier, Option<Identifier>, Expression, Block),
-    While(Expression, Block),
-    // `with arena { ... }`: inside the block, `arena` supplies the allocation
-    // capability threaded into `uses` calls. The block is a region.
-    With(Identifier, Block),
-    Break,
-    Continue,
-    // `import "list.frost" (insert as list_insert)`. The path, and the names
-    // this file reads under a different one. A rename belongs to the file that
-    // wrote it: another importer of the same module still says `insert`.
-    Import(String, Vec<ImportRename>),
-    Extern {
-        name: Identifier,
-        params: Vec<Parameter>,
-        return_type: Option<Type>,
-        // `safe extern fn` says this C function was audited and cannot corrupt
-        // memory, so calling it needs no `unsafe` block. The assertion belongs
-        // here, once, rather than at every call site.
-        safe: bool,
-    },
-    // A Frost function's signature with no body. Not surface syntax. Import
-    // resolution produces it for a module the build cache answered for, whose
-    // object is being linked rather than rebuilt, so the program needs the
-    // signature to type and emit calls and needs nothing else. This is the last
-    // whole-program piece of the front end.
-    //
-    // Not an `Extern`, which means C linkage and a C ABI. This is a Frost
-    // function that some other object defines.
-    Declared {
-        name: Identifier,
-        params: Vec<Parameter>,
-        return_sig: ReturnSignature,
-    },
-}
-
-impl Display for Statement {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let statement = match self {
-            Self::Let {
-                name,
-                type_annotation,
-                value,
-                mutable,
-            } => {
-                let mut_str = if *mutable { "mut " } else { "" };
-                match type_annotation {
-                    Some(typ) => {
-                        format!("{}{} : {} = {};", mut_str, name, typ, value)
-                    }
-                    None => format!("{}{} := {};", mut_str, name, value),
-                }
-            }
-            Self::LetMultiple(bindings, value) => {
-                let names: Vec<String> = bindings
-                    .iter()
-                    .map(|binding| {
-                        let prefix = if binding.mutable { "mut " } else { "" };
-                        format!("{}{}", prefix, binding.name)
-                    })
-                    .collect();
-                format!("{} := {};", names.join(", "), value)
-            }
-            Self::Constant(identifier, expression) => {
-                format!("{} :: {};", identifier, expression)
-            }
-            Self::Return(expression) => format!("return {};", expression),
-            Self::Print(expression, arguments) => {
-                let mut written = format!("print {expression}");
-                for argument in arguments {
-                    written.push_str(&format!(", {argument}"));
-                }
-                written.push(char::from(59));
-                written
-            }
-            Self::Expression(expression) => expression.to_string(),
-            Self::Struct(name, type_params, fields) => {
-                let field_strs: Vec<String> = fields
-                    .iter()
-                    .map(|field| {
-                        format!("{}: {}", field.name, field.field_type)
-                    })
-                    .collect();
-                if type_params.is_empty() {
-                    format!(
-                        "{} :: struct {{ {} }}",
-                        name,
-                        field_strs.join(", ")
-                    )
-                } else {
-                    let params_str = type_params
-                        .iter()
-                        .map(|p| format!("${}: Type", p))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(
-                        "{} :: struct({}) {{ {} }}",
-                        name,
-                        params_str,
-                        field_strs.join(", ")
-                    )
-                }
-            }
-            Self::Enum(name, _, variants) => {
-                let variant_strs: Vec<String> = variants
-                    .iter()
-                    .map(|v| match &v.fields {
-                        Some(fields) => {
-                            let field_strs: Vec<String> = fields
-                                .iter()
-                                .map(|f| {
-                                    format!("{}: {}", f.name, f.field_type)
-                                })
-                                .collect();
-                            format!(
-                                "{} {{ {} }}",
-                                v.name,
-                                field_strs.join(", ")
-                            )
-                        }
-                        None => v.name.clone(),
-                    })
-                    .collect();
-                format!("{} :: enum {{ {} }}", name, variant_strs.join(", "))
-            }
-            Self::Flags(name, repr, bits) => {
-                let bit_strs: Vec<String> = bits
-                    .iter()
-                    .map(|bit| format!("{} = {}", bit.name, bit.value))
-                    .collect();
-                format!(
-                    "{} :: flags {} {{ {} }}",
-                    name,
-                    repr,
-                    bit_strs.join(", ")
-                )
-            }
-            Self::TypeAlias(name, typ) => {
-                format!("{} :: {};", name, typ)
-            }
-            Self::Defer(statement) => format!("defer {}", statement),
-            Self::Assignment(lhs, rhs) => format!("{} = {}", lhs, rhs),
-            Self::For(iterator, second, range, body) => {
-                let body_str: Vec<String> =
-                    body.iter().map(|s| s.to_string()).collect();
-                let names = match second {
-                    Some(second) => format!("{iterator}, {second}"),
-                    None => iterator.clone(),
-                };
-                format!(
-                    "for {} in {} {{ {} }}",
-                    names,
-                    range,
-                    body_str.join("; ")
-                )
-            }
-            Self::While(condition, body) => {
-                let body_str: Vec<String> =
-                    body.iter().map(|s| s.to_string()).collect();
-                format!("while ({}) {{ {} }}", condition, body_str.join("; "))
-            }
-            Self::With(capability, body) => {
-                let body_str: Vec<String> =
-                    body.iter().map(|s| s.to_string()).collect();
-                format!("with {} {{ {} }}", capability, body_str.join("; "))
-            }
-            Self::Break => "break".to_string(),
-            Self::Continue => "continue".to_string(),
-            Self::Import(path, renames) => {
-                if renames.is_empty() {
-                    format!("import \"{}\"", path)
-                } else {
-                    let parts: Vec<String> = renames
-                        .iter()
-                        .map(|held| {
-                            format!("{} as {}", held.exported, held.local)
-                        })
-                        .collect();
-                    format!("import \"{}\" ({})", path, parts.join(", "))
-                }
-            }
-            Self::Declared {
-                name,
-                params,
-                return_sig,
-            } => {
-                let params = crate::flatten(params, ", ");
-                format!("{name} :: fn({params}){return_sig}")
-            }
-            Self::Extern {
-                name,
-                params,
-                return_type,
-                safe,
-            } => {
-                let params_str = params
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let marker = if *safe { "safe extern" } else { "extern" };
-                match return_type {
-                    Some(typ) => format!(
-                        "{} :: {} fn({}) -> {}",
-                        name, marker, params_str, typ
-                    ),
-                    None => {
-                        format!("{} :: {} fn({})", name, marker, params_str)
-                    }
-                }
-            }
-        };
-        write!(f, "{}", statement)
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub enum Expression {
-    Identifier(Identifier),
-    Literal(Literal),
-    Boolean(bool),
-    Prefix(Operator, Box<Expression>),
-    Infix(Box<Expression>, Operator, Box<Expression>),
-    If(Box<Expression>, Block, Option<Block>),
-    Function(Vec<Parameter>, ReturnSignature, Block),
-    Proc(Vec<Parameter>, ReturnSignature, Block),
-    Call(Box<Expression>, Vec<Expression>),
-    Index(Box<Expression>, Box<Expression>),
-    FieldAccess(Box<Expression>, Identifier),
-    AddressOf(Box<Expression>),
-    Borrow(Box<Expression>),
-    BorrowMut(Box<Expression>),
-    Dereference(Box<Expression>),
-    StructInit(Identifier, Vec<(Identifier, Expression)>),
-    Sizeof(Type),
-    /// The type's name as the source spells it, as text. The compiler knows it
-    /// to report a diagnostic, and a registry that wants to be readable in a
-    /// file or a debugger wants the same string.
-    TypeName(Type),
-    // `type_id(T)`: a number this build gives that type, the same one wherever
-    // the type is written and different for every other type. What it is for is
-    // a table keyed by type in a program whose contents are decided at run
-    // time.
-    TypeId(Type),
-    // `g(T) for T in list`, an argument that stands for one argument per
-    // element of a compile-time list, with the element's name standing for it.
-    // The template, the name it binds, and the list. Expanded where the
-    // specialization is made, and nothing downstream sees one.
-    PackMap(Box<Expression>, Identifier, Identifier),
-    Range(Box<Expression>, Box<Expression>, bool),
-    Switch(Box<Expression>, Vec<SwitchCase>),
-    Tuple(Vec<Expression>),
-    EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
-    TypeValue(Type),
-    Unsafe(Block),
-    // `unsafe fn(...)`: a function whose body is an implicit `unsafe` block and
-    // whose call is itself a gated operation. Stripped to the inner function
-    // right after the unsafety check reads it, so no later pass sees it.
-    UnsafeFn(Box<Expression>),
-    // `expr?`: on a fallible expression, unwrap the value or propagate the
-    // failure to the enclosing fallible function.
-    Try(Box<Expression>),
-    // `[value; N]` where `N` is a generic's value parameter, so how many
-    // elements there are is not known until the generic is specialized. Every
-    // other repeat count is a number the parser can read, and those expand to
-    // an array literal where they are written. This one carries the parameter's
-    // name until the substitution that binds it, and expands there.
-    ArrayRepeat(Box<Expression>, Identifier),
-}
-
-impl Display for Expression {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let expression = match self {
-            Self::Try(inner) => format!("{}?", inner),
-            Self::PackMap(body, variable, list) => {
-                format!("{body} for {variable} in {list}")
-            }
-            Self::ArrayRepeat(value, count) => format!("[{value}; {count}]"),
-            Self::Identifier(identifier) => identifier.to_string(),
-            Self::Literal(literal) => literal.to_string(),
-            Self::Boolean(boolean) => boolean.to_string(),
-            Self::Prefix(operator, expression) => {
-                format!("({}{})", operator, expression)
-            }
-            Self::Infix(left_expression, operator, right_expression) => {
-                format!(
-                    "({} {} {})",
-                    left_expression, operator, right_expression
-                )
-            }
-            Self::If(condition, consequence, alternative) => {
-                let statement = format!(
-                    "if ({}) {{ {} }}",
-                    condition,
-                    flatten(consequence, "\n"),
-                );
-
-                let mut result = String::new();
-                result.push_str(statement.as_str());
-
-                if let Some(alternative) = alternative {
-                    let else_statement =
-                        format!("else {{ {} }}", flatten(alternative, "\n"));
-                    result.push_str(&else_statement);
-                }
-
-                result
-            }
-            Self::Function(parameters, return_sig, body) => {
-                let params_str = parameters
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "fn({}){}{{ {} }}",
-                    params_str,
-                    return_sig,
-                    flatten(body, "\n")
-                )
-            }
-            Self::Proc(parameters, return_sig, body) => {
-                let params_str = parameters
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "fn({}){}{{ {} }}",
-                    params_str,
-                    return_sig,
-                    flatten(body, "\n")
-                )
-            }
-            Self::Call(expression, arguments) => {
-                format!("{}({})", expression, flatten(arguments, ", "),)
-            }
-            Self::Index(left_expression, index_expression) => {
-                format!("({}[{}])", left_expression, index_expression,)
-            }
-            Self::FieldAccess(expression, field) => {
-                format!("{}.{}", expression, field)
-            }
-            Self::AddressOf(expression) => {
-                format!("(&{})", expression)
-            }
-            Self::Borrow(expression) => {
-                format!("(&{})", expression)
-            }
-            Self::BorrowMut(expression) => {
-                format!("(&mut {})", expression)
-            }
-            Self::Dereference(expression) => {
-                format!("({}^)", expression)
-            }
-            Self::StructInit(name, fields) => {
-                let field_strs: Vec<String> = fields
-                    .iter()
-                    .map(|(n, v)| format!("{} = {}", n, v))
-                    .collect();
-                format!("{} {{ {} }}", name, field_strs.join(", "))
-            }
-            Self::TypeId(typ) => format!("type_id({typ})"),
-            Self::TypeName(typ) => format!("typename({typ})"),
-            Self::Sizeof(typ) => {
-                format!("sizeof({})", typ)
-            }
-            Self::Range(start, end, inclusive) => {
-                if *inclusive {
-                    format!("{}..={}", start, end)
-                } else {
-                    format!("{}..{}", start, end)
-                }
-            }
-            Self::Switch(scrutinee, cases) => {
-                let case_strs: Vec<String> = cases
-                    .iter()
-                    .map(|c| {
-                        let pattern_str = match &c.pattern {
-                            Pattern::Wildcard => "_".to_string(),
-                            Pattern::Literal(lit) => lit.to_string(),
-                            Pattern::Identifier(id) => id.clone(),
-                            Pattern::EnumVariant {
-                                enum_name,
-                                variant_name,
-                                bindings,
-                            } => {
-                                let prefix = match enum_name {
-                                    Some(e) => format!("{}::", e),
-                                    None => ".".to_string(),
-                                };
-                                if bindings.is_empty() {
-                                    format!("{}{}", prefix, variant_name)
-                                } else {
-                                    let binding_strs: Vec<String> = bindings
-                                        .iter()
-                                        .map(|(f, b)| {
-                                            if f == b {
-                                                f.clone()
-                                            } else {
-                                                format!("{} = {}", f, b)
-                                            }
-                                        })
-                                        .collect();
-                                    format!(
-                                        "{}{} {{ {} }}",
-                                        prefix,
-                                        variant_name,
-                                        binding_strs.join(", ")
-                                    )
-                                }
-                            }
-                            Pattern::Tuple(patterns) => {
-                                let pat_strs: Vec<String> = patterns
-                                    .iter()
-                                    .map(|p| match p {
-                                        Pattern::Wildcard => "_".to_string(),
-                                        Pattern::Literal(lit) => {
-                                            lit.to_string()
-                                        }
-                                        Pattern::Identifier(id) => id.clone(),
-                                        _ => format!("{:?}", p),
-                                    })
-                                    .collect();
-                                format!("({})", pat_strs.join(", "))
-                            }
-                        };
-                        let body_str: Vec<String> =
-                            c.body.iter().map(|s| s.to_string()).collect();
-                        format!(
-                            "case {}: {{ {} }}",
-                            pattern_str,
-                            body_str.join("; ")
-                        )
-                    })
-                    .collect();
-                format!("match {} {{ {} }}", scrutinee, case_strs.join(" "))
-            }
-            Self::Tuple(elements) => {
-                let elem_strs: Vec<String> =
-                    elements.iter().map(|e| e.to_string()).collect();
-                format!("({})", elem_strs.join(", "))
-            }
-            Self::EnumVariantInit(enum_name, variant_name, fields) => {
-                let field_strs: Vec<String> = fields
-                    .iter()
-                    .map(|(n, v)| format!("{} = {}", n, v))
-                    .collect();
-                format!(
-                    "{}::{} {{ {} }}",
-                    enum_name,
-                    variant_name,
-                    field_strs.join(", ")
-                )
-            }
-            Self::TypeValue(typ) => format!("{}", typ),
-            Self::Unsafe(body) => {
-                let body_str: Vec<String> =
-                    body.iter().map(|s| s.to_string()).collect();
-                format!("unsafe {{ {} }}", body_str.join("; "))
-            }
-            Self::UnsafeFn(inner) => format!("unsafe {inner}"),
-        };
-        write!(f, "{}", expression)
-    }
-}
-
-/// A float written as its bits. An interface has to mean the same thing written
-/// down as it does in memory, and a decimal is only lossless where both ends
-/// round correctly: `PITCH_LIMIT :: 1.5607963267948966` came back one unit in
-/// the last place lighter, which made a module's own interface disagree with
-/// its source. The bits carry no such question.
-mod double_bits {
-    pub fn serialize<S: serde::Serializer>(
-        value: &f64,
-        writer: S,
-    ) -> Result<S::Ok, S::Error> {
-        writer.serialize_u64(value.to_bits())
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        reader: D,
-    ) -> Result<f64, D::Error> {
-        let bits: u64 = serde::Deserialize::deserialize(reader)?;
-        Ok(f64::from_bits(bits))
-    }
-}
-
-mod single_bits {
-    pub fn serialize<S: serde::Serializer>(
-        value: &f32,
-        writer: S,
-    ) -> Result<S::Ok, S::Error> {
-        writer.serialize_u32(value.to_bits())
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        reader: D,
-    ) -> Result<f32, D::Error> {
-        let bits: u32 = serde::Deserialize::deserialize(reader)?;
-        Ok(f32::from_bits(bits))
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub enum Literal {
-    Integer(i64),
-    #[serde(with = "double_bits")]
-    Float(f64),
-    #[serde(with = "single_bits")]
-    Float32(f32),
-    Boolean(bool),
-    String(String),
-    Array(Vec<Expression>),
-}
-
-impl Display for Literal {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let literal = match self {
-            Self::Integer(x) => x.to_string(),
-            Self::Float(x) => x.to_string(),
-            Self::Float32(x) => format!("{}f32", x),
-            Self::Boolean(x) => x.to_string(),
-            Self::String(x) => x.to_string(),
-            Self::Array(array) => {
-                let expressions =
-                    array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
-                format!("[{}]", expressions.join(", "))
-            }
-        };
-        write!(f, "{}", literal)
-    }
-}
-
 #[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub enum Precedence {
     Lowest,
@@ -1080,7 +205,10 @@ impl From<&Token> for Precedence {
     }
 }
 
-pub type Program = Vec<Spanned<Statement>>;
+// The whole program the front end hands on: one arena and the top-level
+// statements in order. Import resolution splices every module into one of
+// these, which is the flat AST the passes walk.
+pub type Program = Module;
 
 // Reads a type back from its `Display` form. This is the compiler talking to
 // itself, so unlike the surface it accepts the reference types that parameter
@@ -1107,6 +235,9 @@ impl std::fmt::Display for Diagnostic {
 
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
+    // The arena every parse method pushes into. `parse` hands it out inside
+    // the finished `Module`.
+    ast: Ast,
     linear_types: std::collections::HashSet<String>,
     tests: Vec<(String, String)>,
     exports: Vec<String>,
@@ -1178,18 +309,19 @@ fn declaration_value_end(tokens: &[Token], start: usize) -> usize {
 // operators bind here exactly as they do everywhere else rather than by a
 // second precedence table written to agree with the first.
 fn evaluate_constant(
-    expression: &Expression,
+    ast: &Ast,
+    expression: ExprId,
     known: &HashMap<String, i64>,
 ) -> Option<i64> {
-    match expression {
+    match ast.expr(expression) {
         Expression::Literal(Literal::Integer(value)) => Some(*value),
-        Expression::Identifier(name) => known.get(name).copied(),
+        Expression::Identifier(name) => known.get(ast.name(*name)).copied(),
         Expression::Prefix(Operator::Negate, inner) => {
-            evaluate_constant(inner, known)?.checked_neg()
+            evaluate_constant(ast, *inner, known)?.checked_neg()
         }
         Expression::Infix(left, operator, right) => {
-            let left = evaluate_constant(left, known)?;
-            let right = evaluate_constant(right, known)?;
+            let left = evaluate_constant(ast, *left, known)?;
+            let right = evaluate_constant(ast, *right, known)?;
             match operator {
                 Operator::Add => left.checked_add(right),
                 Operator::Subtract => left.checked_sub(right),
@@ -1307,6 +439,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
         let end = declaration_value_end(tokens, index + 2);
         let mut sub = Parser {
             tokens: tokens[index + 2..end].iter(),
+            ast: Ast::default(),
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
             exports: Vec::new(),
@@ -1323,7 +456,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
         let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
             continue;
         };
-        if let Some(value) = evaluate_constant(&expression, &values) {
+        if let Some(value) = evaluate_constant(&sub.ast, expression, &values) {
             values.insert(name.clone(), value);
         }
     }
@@ -1338,6 +471,7 @@ impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
         Self {
             tokens: tokens.iter(),
+            ast: Ast::default(),
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
             exports: Vec::new(),
@@ -1357,8 +491,13 @@ impl<'a> Parser<'a> {
         tokens: &'a [Token],
         positions: &'a [Position],
     ) -> Self {
+        let ast = Ast {
+            token_positions: positions.to_vec(),
+            ..Ast::default()
+        };
         Self {
             tokens: tokens.iter(),
+            ast,
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
             exports: Vec::new(),
@@ -1454,6 +593,24 @@ impl<'a> Parser<'a> {
         Some(self.positions[index])
     }
 
+    // The token index a node's span opens at, taken before the node's first
+    // token is read. `span_from` closes the span over everything consumed
+    // since.
+    fn mark(&self) -> u32 {
+        self.consumed as u32
+    }
+
+    fn span_from(&self, start: u32) -> TokenSpan {
+        let last = self.consumed.saturating_sub(1).max(start as usize) as u32;
+        TokenSpan { first: start, last }
+    }
+
+    fn intern_all(&mut self, names: &[String]) -> Range32 {
+        let symbols: Vec<Symbol> =
+            names.iter().map(|name| self.ast.intern(name)).collect();
+        self.ast.add_symbol_list(&symbols)
+    }
+
     // Whether the token about to be read sits on the same line as the one
     // before it. A call's `(` and an index's `[` bind to what is on their left,
     // and a statement ends at the line break rather than at a semicolon, so on
@@ -1476,11 +633,8 @@ impl<'a> Parser<'a> {
         self.positions[here].line == self.positions[here - 1].line
     }
 
-    fn spanned_here(&self, statement: Statement) -> Spanned<Statement> {
-        Spanned::new(statement, self.current_position().unwrap_or_default())
-    }
-
-    fn parse_test_statement(&mut self) -> Result<Statement> {
+    fn parse_test_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
         let name = match self.read_token() {
             Token::StringLiteral(text) => text.clone(),
@@ -1491,17 +645,21 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
         let function_name = format!("{TEST_PREFIX}{}", self.tests.len());
         self.tests.push((name, function_name.clone()));
-        Ok(Statement::Constant(
-            function_name,
-            Expression::Function(
-                Vec::new(),
-                ReturnSignature::plain(ReturnKind::None),
-                body,
-            ),
-        ))
+        let span = self.span_from(start);
+        let signature = self
+            .ast
+            .push_signature(ReturnSignature::plain(ReturnKind::None));
+        let function = self.ast.push_expr(
+            Expression::Function(Range32::EMPTY, signature, body),
+            span,
+        );
+        let symbol = self.ast.intern(&function_name);
+        Ok(self
+            .ast
+            .push_stmt(Statement::Constant(symbol, function), span))
     }
 
-    pub fn parse(&mut self) -> Result<Program> {
+    pub fn parse(&mut self) -> Result<Module> {
         let (program, diagnostics) = self.parse_recovering();
         if diagnostics.is_empty() {
             return Ok(program);
@@ -1516,16 +674,16 @@ impl<'a> Parser<'a> {
 
     /// Parse the whole token stream, recovering at statement boundaries so a
     /// single malformed statement does not discard the rest of the file. The
-    /// returned program holds every statement that parsed, and the diagnostics
+    /// returned module holds every statement that parsed, and the diagnostics
     /// list holds one entry per error encountered, at the top level and inside
     /// function bodies alike.
-    pub fn parse_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
-        let mut program = Program::new();
+    pub fn parse_recovering(&mut self) -> (Module, Vec<Diagnostic>) {
+        let mut roots = Vec::new();
         loop {
             let position = self.current_position().unwrap_or_default();
             match self.parse_statement() {
                 Ok(Some(statement)) => {
-                    program.push(Spanned::new(statement, position));
+                    roots.push(statement);
                 }
                 Ok(None) => break,
                 Err(error) => {
@@ -1537,7 +695,11 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        (program, std::mem::take(&mut self.diagnostics))
+        let module = Module {
+            ast: std::mem::take(&mut self.ast),
+            roots,
+        };
+        (module, std::mem::take(&mut self.diagnostics))
     }
 
     fn record_error(&mut self, fallback: Position, error: &anyhow::Error) {
@@ -1620,7 +782,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_statement(&mut self) -> Result<Option<Statement>> {
+    pub fn parse_statement(&mut self) -> Result<Option<StmtId>> {
         if let Token::Identifier(name) = self.peek_nth(0)
             && name == "export"
             && matches!(self.peek_nth(1), Token::Identifier(_))
@@ -1644,18 +806,25 @@ impl<'a> Parser<'a> {
             Token::While => Some(self.parse_while_statement()?),
             Token::With => Some(self.parse_with_statement()?),
             Token::Break => {
+                let start = self.mark();
                 self.read_token();
                 if matches!(self.peek_nth(0), Token::Semicolon) {
                     self.read_token();
                 }
-                Some(Statement::Break)
+                Some(
+                    self.ast.push_stmt(Statement::Break, self.span_from(start)),
+                )
             }
             Token::Continue => {
+                let start = self.mark();
                 self.read_token();
                 if matches!(self.peek_nth(0), Token::Semicolon) {
                     self.read_token();
                 }
-                Some(Statement::Continue)
+                Some(
+                    self.ast
+                        .push_stmt(Statement::Continue, self.span_from(start)),
+                )
             }
             Token::Import => Some(self.parse_import_statement()?),
             Token::Ref => Some(self.parse_ref_declaration()?),
@@ -1752,7 +921,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_import_statement(&mut self) -> Result<Statement> {
+    fn parse_import_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
         let path = match self.read_token() {
             Token::StringLiteral(path) => path.clone(),
@@ -1789,6 +959,8 @@ impl<'a> Parser<'a> {
                         "Expected the name to read '{exported}' under, found {other}"
                     ),
                 };
+                let exported = self.ast.intern(&exported);
+                let local = self.ast.intern(&local);
                 renames.push(ImportRename { exported, local });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -1799,30 +971,41 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
-        Ok(Statement::Import(path, renames))
+        let renames = self.ast.add_renames(&renames);
+        Ok(self
+            .ast
+            .push_stmt(Statement::Import(path, renames), self.span_from(start)))
     }
 
-    fn parse_defer_statement(&mut self) -> Result<Statement> {
+    fn parse_defer_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
         let statement = self
             .parse_statement()?
             .ok_or_else(|| anyhow::anyhow!("Expected statement after defer"))?;
-        Ok(Statement::Defer(Box::new(statement)))
+        Ok(self
+            .ast
+            .push_stmt(Statement::Defer(statement), self.span_from(start)))
     }
 
-    fn parse_for_statement(&mut self) -> Result<Statement> {
+    fn parse_for_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
 
         let iterator = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier after 'for'"),
         };
+        let iterator = self.ast.intern(&iterator);
         // `for index, item in items` names the position as well as the element,
         // for the loops that need to know where they are.
         let second = if matches!(self.peek_nth(0), Token::Comma) {
             self.read_token();
             match self.read_token() {
-                Token::Identifier(name) => Some(name.to_string()),
+                Token::Identifier(name) => {
+                    let name = name.to_string();
+                    Some(self.ast.intern(&name))
+                }
                 other => bail!(
                     "Expected a second name after ',' in a for loop, found {other:?}"
                 ),
@@ -1843,10 +1026,14 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
 
-        Ok(Statement::For(iterator, second, range, body))
+        Ok(self.ast.push_stmt(
+            Statement::For(iterator, second, range, body),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_while_statement(&mut self) -> Result<Statement> {
+    fn parse_while_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
 
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
@@ -1863,10 +1050,14 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
 
-        Ok(Statement::While(condition, body))
+        Ok(self.ast.push_stmt(
+            Statement::While(condition, body),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_with_statement(&mut self) -> Result<Statement> {
+    fn parse_with_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
 
         let capability = match self.read_token() {
@@ -1877,16 +1068,21 @@ impl<'a> Parser<'a> {
                 )
             }
         };
+        let capability = self.ast.intern(&capability);
 
         let body = self.parse_block()?;
 
-        Ok(Statement::With(capability, body))
+        Ok(self.ast.push_stmt(
+            Statement::With(capability, body),
+            self.span_from(start),
+        ))
     }
 
     // `quotient, remainder := divide(a, b)`, and `mut` in front of any name
     // that the body goes on to write. The list is names, not patterns, since
     // what it takes apart is a return type list rather than a value.
-    fn parse_multiple_declaration(&mut self) -> Result<Statement> {
+    fn parse_multiple_declaration(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         let mut bindings = Vec::new();
         loop {
             let mutable = if matches!(self.peek_nth(0), Token::Mut) {
@@ -1899,6 +1095,7 @@ impl<'a> Parser<'a> {
                 Token::Identifier(name) => name.to_string(),
                 other => bail!("Expected a name to bind, found {other}"),
             };
+            let name = self.ast.intern(&name);
             bindings.push(MultiBinding { name, mutable });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
@@ -1916,10 +1113,14 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
 
-        Ok(Statement::LetMultiple(bindings, value))
+        let bindings = self.ast.add_bindings(&bindings);
+        Ok(self.ast.push_stmt(
+            Statement::LetMultiple(bindings, value),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_mutable_declaration(&mut self) -> Result<Statement> {
+    fn parse_mutable_declaration(&mut self) -> Result<StmtId> {
         self.read_token();
 
         if matches!(self.peek_nth(1), Token::ColonAssign) {
@@ -1931,7 +1132,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_declaration(&mut self, mutable: bool) -> Result<Statement> {
+    fn parse_declaration(&mut self, mutable: bool) -> Result<StmtId> {
+        let start = self.mark();
         let name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
@@ -1947,12 +1149,16 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
 
-        Ok(Statement::Let {
-            name,
-            type_annotation: None,
-            value,
-            mutable,
-        })
+        let name = self.ast.intern(&name);
+        Ok(self.ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: None,
+                value,
+                mutable,
+            },
+            self.span_from(start),
+        ))
     }
 
     // `ref name := place`: a borrow bound to a local, not a copy. It aliases the
@@ -1961,7 +1167,8 @@ impl<'a> Parser<'a> {
     // pointer. It is the local counterpart of a `mut` parameter, and the region
     // check holds it to its frame the same way. Lowered to a BorrowMut, which is
     // the internal mutable reference parameter modes already produce.
-    fn parse_ref_declaration(&mut self) -> Result<Statement> {
+    fn parse_ref_declaration(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         self.read_token();
         let name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
@@ -1974,15 +1181,22 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
-        Ok(Statement::Let {
-            name,
-            type_annotation: None,
-            value: Expression::BorrowMut(Box::new(place)),
-            mutable: false,
-        })
+        let span = self.span_from(start);
+        let value = self.ast.push_expr(Expression::BorrowMut(place), span);
+        let name = self.ast.intern(&name);
+        Ok(self.ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: None,
+                value,
+                mutable: false,
+            },
+            span,
+        ))
     }
 
-    fn parse_typed_declaration(&mut self, mutable: bool) -> Result<Statement> {
+    fn parse_typed_declaration(&mut self, mutable: bool) -> Result<StmtId> {
+        let start = self.mark();
         let name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
@@ -2004,15 +1218,20 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
 
-        Ok(Statement::Let {
-            name,
-            type_annotation,
-            value,
-            mutable,
-        })
+        let name = self.ast.intern(&name);
+        Ok(self.ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                mutable,
+            },
+            self.span_from(start),
+        ))
     }
 
-    fn parse_constant_or_struct_statement(&mut self) -> Result<Statement> {
+    fn parse_constant_or_struct_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         let identifier = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
@@ -2041,6 +1260,7 @@ impl<'a> Parser<'a> {
                         bail!("Expected ':' after field name");
                     }
                     let field_type = self.parse_type()?;
+                    let field_name = self.ast.intern(&field_name);
                     fields.push(StructField {
                         name: field_name,
                         field_type,
@@ -2054,7 +1274,13 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Struct(identifier, type_params, fields))
+            let name = self.ast.intern(&identifier);
+            let type_params = self.intern_all(&type_params);
+            let fields = self.ast.add_struct_fields(fields);
+            Ok(self.ast.push_stmt(
+                Statement::Struct(name, type_params, fields),
+                self.span_from(start),
+            ))
         } else if matches!(self.peek_nth(0), Token::Enum) {
             self.read_token();
             // An enum takes type parameters exactly as a struct does, and for
@@ -2084,6 +1310,7 @@ impl<'a> Parser<'a> {
                             );
                         }
                         let field_type = self.parse_type()?;
+                        let field_name = self.ast.intern(&field_name);
                         variant_fields.push(StructField {
                             name: field_name,
                             field_type,
@@ -2093,10 +1320,11 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.read_token();
-                    Some(variant_fields)
+                    Some(self.ast.add_struct_fields(variant_fields))
                 } else {
                     None
                 };
+                let variant_name = self.ast.intern(&variant_name);
                 variants.push(EnumVariant {
                     name: variant_name,
                     fields,
@@ -2109,7 +1337,13 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Enum(identifier, type_params, variants))
+            let name = self.ast.intern(&identifier);
+            let type_params = self.intern_all(&type_params);
+            let variants = self.ast.add_enum_variants(&variants);
+            Ok(self.ast.push_stmt(
+                Statement::Enum(name, type_params, variants),
+                self.span_from(start),
+            ))
         } else if self.at_flags_declaration(0) {
             self.read_token();
             let repr = self.parse_type()?;
@@ -2138,6 +1372,7 @@ impl<'a> Parser<'a> {
                         "a bit of '{identifier}' is a number a C header wrote down, and '{other}' is not one"
                     ),
                 };
+                let name = self.ast.intern(&name);
                 bits.push(FlagBit { name, value });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -2147,7 +1382,12 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Flags(identifier, repr, bits))
+            let name = self.ast.intern(&identifier);
+            let bits = self.ast.add_flag_bits(&bits);
+            Ok(self.ast.push_stmt(
+                Statement::Flags(name, repr, bits),
+                self.span_from(start),
+            ))
         } else if matches!(self.peek_nth(0), Token::Distinct) {
             let typ = self.parse_type()?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -2159,7 +1399,11 @@ impl<'a> Parser<'a> {
                 }
                 other => other,
             };
-            Ok(Statement::TypeAlias(identifier, typ))
+            let name = self.ast.intern(&identifier);
+            Ok(self.ast.push_stmt(
+                Statement::TypeAlias(name, typ),
+                self.span_from(start),
+            ))
         } else if matches!(self.peek_nth(0), Token::Extern)
             || (matches!(self.peek_nth(0), Token::Safe)
                 && matches!(self.peek_nth(1), Token::Extern))
@@ -2222,6 +1466,7 @@ impl<'a> Parser<'a> {
                     bail!("Expected ':' after parameter name");
                 }
                 let param_type = self.parse_type()?;
+                let param_name = self.ast.intern(&param_name);
                 params.push(Parameter {
                     name: param_name,
                     type_annotation: Some(param_type),
@@ -2244,12 +1489,17 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Extern {
-                name: identifier,
-                params,
-                return_type,
-                safe,
-            })
+            let name = self.ast.intern(&identifier);
+            let params = self.ast.add_parameters(params);
+            Ok(self.ast.push_stmt(
+                Statement::Extern {
+                    name,
+                    params,
+                    return_type,
+                    safe,
+                },
+                self.span_from(start),
+            ))
         } else if matches!(self.peek_nth(0), Token::Inline) {
             // `name :: inline fn(...)`: the inline hint is the self-hosted C
             // backend's to honor, where it forces the fold. The bootstrap is the
@@ -2260,17 +1510,26 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Constant(identifier, expression))
+            let name = self.ast.intern(&identifier);
+            Ok(self.ast.push_stmt(
+                Statement::Constant(name, expression),
+                self.span_from(start),
+            ))
         } else {
             let expression = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Constant(identifier, expression))
+            let name = self.ast.intern(&identifier);
+            Ok(self.ast.push_stmt(
+                Statement::Constant(name, expression),
+                self.span_from(start),
+            ))
         }
     }
 
-    fn parse_print_statement(&mut self) -> Result<Statement> {
+    fn parse_print_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         if !matches!(self.read_token(), Token::Print) {
             bail!("Expected 'print' token!");
         }
@@ -2287,10 +1546,15 @@ impl<'a> Parser<'a> {
             self.read_token();
             arguments.push(self.parse_expression(Precedence::Lowest)?);
         }
-        Ok(Statement::Print(expression, arguments))
+        let arguments = self.ast.add_expr_list(&arguments);
+        Ok(self.ast.push_stmt(
+            Statement::Print(expression, arguments),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_return_statement(&mut self) -> Result<Statement> {
+    fn parse_return_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         if !matches!(self.read_token(), Token::Return) {
             bail!("Expected 'Return' token!");
         }
@@ -2298,7 +1562,8 @@ impl<'a> Parser<'a> {
         let expression =
             if matches!(self.peek_nth(0), Token::Semicolon | Token::RightBrace)
             {
-                Expression::Tuple(vec![])
+                let span = self.span_from(start);
+                self.ast.push_expr(Expression::Tuple(Range32::EMPTY), span)
             } else {
                 let first = self.parse_expression(Precedence::Lowest)?;
                 // `return quotient, remainder`, the several values a return type
@@ -2310,7 +1575,11 @@ impl<'a> Parser<'a> {
                         self.read_token();
                         values.push(self.parse_expression(Precedence::Lowest)?);
                     }
-                    Expression::Tuple(values)
+                    let values = self.ast.add_expr_list(&values);
+                    self.ast.push_expr(
+                        Expression::Tuple(values),
+                        self.span_from(start),
+                    )
                 } else {
                     first
                 }
@@ -2320,10 +1589,13 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
 
-        Ok(Statement::Return(expression))
+        Ok(self
+            .ast
+            .push_stmt(Statement::Return(expression), self.span_from(start)))
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Statement> {
+    fn parse_expression_statement(&mut self) -> Result<StmtId> {
+        let start = self.mark();
         let expression = self.parse_expression(Precedence::Lowest)?;
         let statement = if matches!(self.peek_nth(0), Token::Assign) {
             self.read_token();
@@ -2335,14 +1607,11 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
-        Ok(statement)
+        Ok(self.ast.push_stmt(statement, self.span_from(start)))
     }
 
-    fn parse_expression(
-        &mut self,
-        precedence: Precedence,
-    ) -> Result<Expression> {
-        let mut advance = true;
+    fn parse_expression(&mut self, precedence: Precedence) -> Result<ExprId> {
+        let start = self.mark();
         let mut expression = match self.peek_nth(0) {
             // `type_id(T)` reads as a call and takes a type, so it is
             // recognized here rather than left to the ordinary call path, which
@@ -2351,7 +1620,6 @@ impl<'a> Parser<'a> {
                 if word == "type_id"
                     && matches!(self.peek_nth(1), Token::LeftParentheses) =>
             {
-                advance = false;
                 self.read_token();
                 self.read_token();
                 if matches!(self.peek_nth(0), Token::Dollar) {
@@ -2361,7 +1629,8 @@ impl<'a> Parser<'a> {
                 if !matches!(self.read_token(), Token::RightParentheses) {
                     bail!("Expected ')' after the type in type_id");
                 }
-                Expression::TypeId(held)
+                self.ast
+                    .push_expr(Expression::TypeId(held), self.span_from(start))
             }
             Token::Identifier(identifier) => {
                 let identifier = identifier.to_string();
@@ -2371,98 +1640,107 @@ impl<'a> Parser<'a> {
                 if matches!(self.peek_nth(1), Token::LessThan)
                     && self.generic_types.contains(&identifier)
                 {
-                    advance = false;
                     self.read_token();
-                    Expression::Identifier(
-                        self.parse_generic_instance_name(&identifier)?,
+                    let instance =
+                        self.parse_generic_instance_name(&identifier)?;
+                    let symbol = self.ast.intern(&instance);
+                    self.ast.push_expr(
+                        Expression::Identifier(symbol),
+                        self.span_from(start),
                     )
                 } else {
-                    Expression::Identifier(identifier)
+                    self.read_token();
+                    let symbol = self.ast.intern(&identifier);
+                    self.ast.push_expr(
+                        Expression::Identifier(symbol),
+                        self.span_from(start),
+                    )
                 }
             }
             Token::StringLiteral(string) => {
-                Expression::Literal(Literal::String(string.to_string()))
+                let string = string.to_string();
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Literal(Literal::String(string)),
+                    self.span_from(start),
+                )
             }
             Token::Integer(value) => {
-                Expression::Literal(Literal::Integer(*value))
+                let value = *value;
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Literal(Literal::Integer(value)),
+                    self.span_from(start),
+                )
             }
-            Token::Float(value) => Expression::Literal(Literal::Float(*value)),
+            Token::Float(value) => {
+                let value = *value;
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Literal(Literal::Float(value)),
+                    self.span_from(start),
+                )
+            }
             Token::Float32(value) => {
-                Expression::Literal(Literal::Float32(*value))
+                let value = *value;
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Literal(Literal::Float32(value)),
+                    self.span_from(start),
+                )
             }
-            Token::Bang | Token::Minus => {
-                advance = false;
-                self.parse_prefix_expression()?
-            }
+            Token::Bang | Token::Minus => self.parse_prefix_expression()?,
             Token::Ampersand => {
                 bail!(
                     "a borrow `&`/`&mut` is not surface syntax; pass a plain value and the compiler borrows for the parameter mode, or take a raw pointer with ptr_to(x)"
                 );
             }
-            Token::Sizeof => {
-                advance = false;
-                self.parse_sizeof()?
-            }
-            Token::Typename => {
-                advance = false;
-                self.parse_typename()?
-            }
+            Token::Sizeof => self.parse_sizeof()?,
+            Token::Typename => self.parse_typename()?,
             Token::Dollar => {
-                advance = false;
                 self.read_token();
-                Expression::TypeValue(self.parse_type()?)
+                let held = self.parse_type()?;
+                self.ast.push_expr(
+                    Expression::TypeValue(held),
+                    self.span_from(start),
+                )
             }
-            Token::True => Expression::Boolean(true),
-            Token::False => Expression::Boolean(false),
+            Token::True => {
+                self.read_token();
+                self.ast
+                    .push_expr(Expression::Boolean(true), self.span_from(start))
+            }
+            Token::False => {
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Boolean(false),
+                    self.span_from(start),
+                )
+            }
             // `.Circle { radius = 5 }` where the type is already known, the
             // construction counterpart of the `case .Circle` a pattern writes.
             // The enum name is left empty and filled in from what the context
             // expects.
-            Token::Dot => {
-                advance = false;
-                self.parse_inferred_variant()?
-            }
+            Token::Dot => self.parse_inferred_variant()?,
             // `{ x = 1, y = 2 }`, a struct literal that leaves out a type name
             // the context already carries. The name is empty here and the
             // lowering fills it in. Every field is still named: there is no
             // positional form of this literal or of any other.
             Token::LeftBrace => {
-                advance = false;
-                self.parse_struct_init(String::new())?
+                let empty = self.ast.intern("");
+                self.parse_struct_init(empty)?
             }
-            Token::LeftBracket => {
-                advance = false;
-                self.parse_array_literal()?
-            }
-            Token::LeftParentheses => {
-                advance = false;
-                self.parse_grouped_expressions()?
-            }
-            Token::If => {
-                advance = false;
-                self.parse_if_expression()?
-            }
-            Token::Function => {
-                advance = false;
-                self.parse_function_literal()?
-            }
-            Token::Match => {
-                advance = false;
-                self.parse_match_expression()?
-            }
-            Token::Unsafe => {
-                advance = false;
-                self.parse_unsafe_expression()?
-            }
+            Token::LeftBracket => self.parse_array_literal()?,
+            Token::LeftParentheses => self.parse_grouped_expressions()?,
+            Token::If => self.parse_if_expression()?,
+            Token::Function => self.parse_function_literal()?,
+            Token::Match => self.parse_match_expression()?,
+            Token::Unsafe => self.parse_unsafe_expression()?,
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
             token => bail!("Token not valid for an expression: {:?}", token),
         };
-
-        if advance {
-            self.read_token();
-        }
 
         while self.peek_nth(0) != &Token::Semicolon
             && precedence < Precedence::from(self.peek_nth(0))
@@ -2491,40 +1769,40 @@ impl<'a> Parser<'a> {
                 | Token::Pipe
                 | Token::ShiftLeft
                 | Token::ShiftRight => {
-                    expression =
-                        self.parse_infix_expression(expression.clone())?;
+                    expression = self.parse_infix_expression(expression)?;
                 }
                 Token::DotDot => {
                     expression =
-                        self.parse_range_expression(expression.clone(), false)?;
+                        self.parse_range_expression(expression, false)?;
                 }
                 Token::DotDotEqual => {
                     expression =
-                        self.parse_range_expression(expression.clone(), true)?;
+                        self.parse_range_expression(expression, true)?;
                 }
                 Token::LeftBracket => {
                     if !self.on_the_same_line() {
                         break;
                     }
-                    expression =
-                        self.parse_index_expression(expression.clone())?;
+                    expression = self.parse_index_expression(expression)?;
                 }
                 Token::LeftParentheses => {
                     if !self.on_the_same_line() {
                         break;
                     }
-                    expression =
-                        self.parse_call_expression(expression.clone())?;
+                    expression = self.parse_call_expression(expression)?;
                 }
                 Token::Dot => {
-                    expression = self.parse_field_access(expression.clone())?;
+                    expression = self.parse_field_access(expression)?;
                 }
                 Token::Caret => {
-                    expression = self.parse_dereference(expression.clone())?;
+                    expression = self.parse_dereference(expression)?;
                 }
                 Token::Question => {
                     self.read_token();
-                    expression = Expression::Try(Box::new(expression.clone()));
+                    expression = self.ast.push_expr(
+                        Expression::Try(expression),
+                        self.span_covering(expression),
+                    );
                 }
                 Token::LeftBrace => {
                     if self.peek_nth(1) == &Token::Case
@@ -2532,19 +1810,26 @@ impl<'a> Parser<'a> {
                     {
                         return Ok(expression);
                     }
-                    if let Expression::Identifier(name) = &expression {
-                        expression = self.parse_struct_init(name.clone())?;
+                    if let Expression::Identifier(name) =
+                        self.ast.expr(expression)
+                    {
+                        let name = *name;
+                        expression = self.parse_struct_init(name)?;
                     } else {
                         return Ok(expression);
                     }
                 }
                 Token::DoubleColon => {
-                    if let Expression::Identifier(enum_name) = &expression {
+                    if let Expression::Identifier(enum_name) =
+                        self.ast.expr(expression)
+                    {
+                        let enum_name = *enum_name;
                         self.read_token();
                         let variant_name = match self.read_token() {
                             Token::Identifier(v) => v.to_string(),
                             _ => bail!("Expected identifier after '::'"),
                         };
+                        let variant_name = self.ast.intern(&variant_name);
                         if matches!(self.peek_nth(0), Token::LeftBrace) {
                             self.read_token();
                             let mut fields = Vec::new();
@@ -2559,22 +1844,30 @@ impl<'a> Parser<'a> {
                                 }
                                 let value =
                                     self.parse_expression(Precedence::Lowest)?;
-                                fields.push((field_name, value));
+                                let name = self.ast.intern(&field_name);
+                                fields.push(NamedExpr { name, value });
                                 if matches!(self.peek_nth(0), Token::Comma) {
                                     self.read_token();
                                 }
                             }
                             self.read_token();
-                            expression = Expression::EnumVariantInit(
-                                enum_name.clone(),
-                                variant_name,
-                                fields,
+                            let fields = self.ast.add_named_exprs(&fields);
+                            expression = self.ast.push_expr(
+                                Expression::EnumVariantInit(
+                                    enum_name,
+                                    variant_name,
+                                    fields,
+                                ),
+                                self.span_from(start),
                             );
                         } else {
-                            expression = Expression::EnumVariantInit(
-                                enum_name.clone(),
-                                variant_name,
-                                vec![],
+                            expression = self.ast.push_expr(
+                                Expression::EnumVariantInit(
+                                    enum_name,
+                                    variant_name,
+                                    Range32::EMPTY,
+                                ),
+                                self.span_from(start),
                             );
                         }
                     } else {
@@ -2588,70 +1881,90 @@ impl<'a> Parser<'a> {
         Ok(expression)
     }
 
+    // The span an expression grown leftward carries: from the first token of
+    // the node it grew out of, through everything consumed since.
+    fn span_covering(&self, left: ExprId) -> TokenSpan {
+        let first = self.ast.expr_span(left).first;
+        let last = self.consumed.saturating_sub(1).max(first as usize) as u32;
+        TokenSpan { first, last }
+    }
+
     // `.Variant` or `.Variant { field = value }`. The enum is whatever the
     // context expects, so the name is empty here and the lowering fills it in.
-    fn parse_inferred_variant(&mut self) -> Result<Expression> {
+    fn parse_inferred_variant(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         let variant = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             other => bail!("Expected a variant name after '.', found {other}"),
         };
-        let mut fields = Vec::new();
+        let mut fields = Range32::EMPTY;
         if matches!(self.peek_nth(0), Token::LeftBrace)
             && !self.no_struct_literal
         {
-            let Expression::StructInit(_, parsed) =
-                self.parse_struct_init(String::new())?
+            let empty = self.ast.intern("");
+            let literal = self.parse_struct_init(empty)?;
+            let Expression::StructInit(_, parsed) = self.ast.expr(literal)
             else {
                 bail!("Expected the fields of a variant literal");
             };
-            fields = parsed;
+            fields = *parsed;
         }
-        Ok(Expression::EnumVariantInit(String::new(), variant, fields))
+        let empty = self.ast.intern("");
+        let variant = self.ast.intern(&variant);
+        Ok(self.ast.push_expr(
+            Expression::EnumVariantInit(empty, variant, fields),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_prefix_expression(&mut self) -> Result<Expression> {
+    fn parse_prefix_expression(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         let operator = Operator::from_token(self.peek_nth(0), true)?;
         self.read_token();
-        Ok(Expression::Prefix(
-            operator,
-            Box::new(self.parse_expression(Precedence::Prefix)?),
+        let inner = self.parse_expression(Precedence::Prefix)?;
+        Ok(self.ast.push_expr(
+            Expression::Prefix(operator, inner),
+            self.span_from(start),
         ))
     }
 
     fn parse_infix_expression(
         &mut self,
-        left_expression: Expression,
-    ) -> Result<Expression> {
+        left_expression: ExprId,
+    ) -> Result<ExprId> {
         let operator = Operator::from_token(self.peek_nth(0), false)?;
         let precedence = Precedence::from(self.peek_nth(0));
         self.read_token();
-        Ok(Expression::Infix(
-            Box::new(left_expression),
-            operator,
-            Box::new(self.parse_expression(precedence)?),
+        let right = self.parse_expression(precedence)?;
+        Ok(self.ast.push_expr(
+            Expression::Infix(left_expression, operator, right),
+            self.span_covering(left_expression),
         ))
     }
 
     fn parse_range_expression(
         &mut self,
-        left_expression: Expression,
+        left_expression: ExprId,
         inclusive: bool,
-    ) -> Result<Expression> {
+    ) -> Result<ExprId> {
         self.read_token();
         let right_expression = self.parse_expression(Precedence::Range)?;
-        Ok(Expression::Range(
-            Box::new(left_expression),
-            Box::new(right_expression),
-            inclusive,
+        Ok(self.ast.push_expr(
+            Expression::Range(left_expression, right_expression, inclusive),
+            self.span_covering(left_expression),
         ))
     }
 
-    fn parse_array_literal(&mut self) -> Result<Expression> {
+    fn parse_array_literal(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         if matches!(self.peek_nth(0), Token::RightBracket) {
             self.read_token();
-            return Ok(Expression::Literal(Literal::Array(Vec::new())));
+            return Ok(self.ast.push_expr(
+                Expression::Literal(Literal::Array(Range32::EMPTY)),
+                self.span_from(start),
+            ));
         }
         let first = self.parse_expression(Precedence::Lowest)?;
         if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -2671,9 +1984,10 @@ impl<'a> Parser<'a> {
                     if !matches!(self.read_token(), Token::RightBracket) {
                         bail!("Expected ']' after an array repeat count");
                     }
-                    return Ok(Expression::ArrayRepeat(
-                        Box::new(first),
-                        name.clone(),
+                    let name = self.ast.intern(name);
+                    return Ok(self.ast.push_expr(
+                        Expression::ArrayRepeat(first, name),
+                        self.span_from(start),
                     ));
                 }
                 token => bail!(
@@ -2683,7 +1997,12 @@ impl<'a> Parser<'a> {
             if !matches!(self.read_token(), Token::RightBracket) {
                 bail!("Expected ']' after an array repeat count");
             }
-            return Ok(Expression::Literal(Literal::Array(vec![first; count])));
+            let elements = vec![first; count];
+            let elements = self.ast.add_expr_list(&elements);
+            return Ok(self.ast.push_expr(
+                Expression::Literal(Literal::Array(elements)),
+                self.span_from(start),
+            ));
         }
         let mut elements = vec![first];
         if matches!(self.peek_nth(0), Token::Comma) {
@@ -2698,32 +2017,35 @@ impl<'a> Parser<'a> {
             }
         }
         self.read_token();
-        Ok(Expression::Literal(Literal::Array(elements)))
+        let elements = self.ast.add_expr_list(&elements);
+        Ok(self.ast.push_expr(
+            Expression::Literal(Literal::Array(elements)),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_call_expression(
-        &mut self,
-        expression: Expression,
-    ) -> Result<Expression> {
+    fn parse_call_expression(&mut self, expression: ExprId) -> Result<ExprId> {
         let elements = self.parse_expression_list(&Token::RightParentheses)?;
-        Ok(Expression::Call(Box::new(expression), elements))
+        let elements = self.ast.add_expr_list(&elements);
+        Ok(self.ast.push_expr(
+            Expression::Call(expression, elements),
+            self.span_covering(expression),
+        ))
     }
 
-    fn parse_index_expression(
-        &mut self,
-        expression: Expression,
-    ) -> Result<Expression> {
+    fn parse_index_expression(&mut self, expression: ExprId) -> Result<ExprId> {
         self.read_token();
         let index_expression = self.parse_expression(Precedence::Lowest)?;
         self.read_token();
-        Ok(Expression::Index(
-            Box::new(expression),
-            Box::new(index_expression),
+        Ok(self.ast.push_expr(
+            Expression::Index(expression, index_expression),
+            self.span_covering(expression),
         ))
     }
 
     // `typename(T)` and `typename($T)`, the same shape `type_id` takes.
-    fn parse_typename(&mut self) -> Result<Expression> {
+    fn parse_typename(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         if !matches!(self.read_token(), Token::LeftParentheses) {
             bail!("Expected '(' after typename");
@@ -2735,10 +2057,13 @@ impl<'a> Parser<'a> {
         if !matches!(self.read_token(), Token::RightParentheses) {
             bail!("Expected ')' after the type in typename");
         }
-        Ok(Expression::TypeName(typ))
+        Ok(self
+            .ast
+            .push_expr(Expression::TypeName(typ), self.span_from(start)))
     }
 
-    fn parse_sizeof(&mut self) -> Result<Expression> {
+    fn parse_sizeof(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         if !matches!(self.read_token(), Token::LeftParentheses) {
             bail!("Expected '(' after sizeof");
@@ -2747,7 +2072,9 @@ impl<'a> Parser<'a> {
         if !matches!(self.read_token(), Token::RightParentheses) {
             bail!("Expected ')' after type in sizeof");
         }
-        Ok(Expression::Sizeof(typ))
+        Ok(self
+            .ast
+            .push_expr(Expression::Sizeof(typ), self.span_from(start)))
     }
 
     // A field name, wherever one is read: declaring a struct or an enum
@@ -2768,21 +2095,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_field_access(
-        &mut self,
-        expression: Expression,
-    ) -> Result<Expression> {
+    fn parse_field_access(&mut self, expression: ExprId) -> Result<ExprId> {
         self.read_token();
         let field_name = self.read_field_name("a field name after '.'")?;
-        Ok(Expression::FieldAccess(Box::new(expression), field_name))
+        let field_name = self.ast.intern(&field_name);
+        Ok(self.ast.push_expr(
+            Expression::FieldAccess(expression, field_name),
+            self.span_covering(expression),
+        ))
     }
 
-    fn parse_dereference(
-        &mut self,
-        expression: Expression,
-    ) -> Result<Expression> {
+    fn parse_dereference(&mut self, expression: ExprId) -> Result<ExprId> {
         self.read_token();
-        Ok(Expression::Dereference(Box::new(expression)))
+        Ok(self.ast.push_expr(
+            Expression::Dereference(expression),
+            self.span_covering(expression),
+        ))
     }
 
     // The name of a generic instance written in expression position, read from
@@ -2811,7 +2139,8 @@ impl<'a> Parser<'a> {
         Ok(format!("{base}<{}>", rendered.join(", ")))
     }
 
-    fn parse_struct_init(&mut self, struct_name: String) -> Result<Expression> {
+    fn parse_struct_init(&mut self, struct_name: Symbol) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         let mut fields = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
@@ -2821,19 +2150,24 @@ impl<'a> Parser<'a> {
                 bail!("Expected '=' after field name in struct init");
             }
             let value = self.parse_expression(Precedence::Lowest)?;
-            fields.push((field_name, value));
+            let name = self.ast.intern(&field_name);
+            fields.push(NamedExpr { name, value });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             }
         }
         self.read_token();
-        Ok(Expression::StructInit(struct_name, fields))
+        let fields = self.ast.add_named_exprs(&fields);
+        Ok(self.ast.push_expr(
+            Expression::StructInit(struct_name, fields),
+            self.span_from(start),
+        ))
     }
 
     fn parse_expression_list(
         &mut self,
         end_token: &Token,
-    ) -> Result<Vec<Expression>> {
+    ) -> Result<Vec<ExprId>> {
         self.read_token();
         let mut elements = Vec::new();
         while self.peek_nth(0) != end_token {
@@ -2861,10 +2195,13 @@ impl<'a> Parser<'a> {
                         "`for {variable} in` names the compile-time list to walk"
                     );
                 };
-                elements.push(Expression::PackMap(
-                    Box::new(held),
-                    variable,
-                    list.to_string(),
+                let list = list.to_string();
+                let variable = self.ast.intern(&variable);
+                let list = self.ast.intern(&list);
+                let span = self.span_covering(held);
+                elements.push(self.ast.push_expr(
+                    Expression::PackMap(held, variable, list),
+                    span,
                 ));
             } else {
                 elements.push(held);
@@ -2878,7 +2215,8 @@ impl<'a> Parser<'a> {
         Ok(elements)
     }
 
-    fn parse_grouped_expressions(&mut self) -> Result<Expression> {
+    fn parse_grouped_expressions(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
 
         if matches!(self.peek_nth(0), Token::RightParentheses) {
@@ -2886,9 +2224,16 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::LeftBrace | Token::Arrow) {
                 let return_sig = self.parse_return_signature()?;
                 let block = self.parse_block()?;
-                return Ok(Expression::Proc(vec![], return_sig, block));
+                let signature = self.ast.push_signature(return_sig);
+                return Ok(self.ast.push_expr(
+                    Expression::Proc(Range32::EMPTY, signature, block),
+                    self.span_from(start),
+                ));
             }
-            return Ok(Expression::Tuple(vec![]));
+            return Ok(self.ast.push_expr(
+                Expression::Tuple(Range32::EMPTY),
+                self.span_from(start),
+            ));
         }
 
         let looks_like_params =
@@ -2906,24 +2251,29 @@ impl<'a> Parser<'a> {
                 let has_type_annotations =
                     parameters.iter().any(|p| p.type_annotation.is_some())
                         || signature_is_typed(&return_sig);
-                if has_type_annotations {
-                    return Ok(Expression::Proc(parameters, return_sig, block));
+                let parameters = self.ast.add_parameters(parameters);
+                let signature = self.ast.push_signature(return_sig);
+                let node = if has_type_annotations {
+                    Expression::Proc(parameters, signature, block)
                 } else {
-                    return Ok(Expression::Function(
-                        parameters, return_sig, block,
-                    ));
-                }
+                    Expression::Function(parameters, signature, block)
+                };
+                return Ok(self.ast.push_expr(node, self.span_from(start)));
             }
 
-            let expressions: Vec<Expression> = parameters
+            let span = self.span_from(start);
+            let expressions: Vec<ExprId> = parameters
                 .into_iter()
-                .map(|p| Expression::Identifier(p.name))
+                .map(|p| {
+                    self.ast.push_expr(Expression::Identifier(p.name), span)
+                })
                 .collect();
 
             if expressions.len() == 1 {
-                return Ok(expressions.into_iter().next().unwrap());
+                return Ok(expressions[0]);
             }
-            return Ok(Expression::Tuple(expressions));
+            let elements = self.ast.add_expr_list(&expressions);
+            return Ok(self.ast.push_expr(Expression::Tuple(elements), span));
         }
 
         let first_expression = self.parse_expression(Precedence::Lowest)?;
@@ -2937,7 +2287,10 @@ impl<'a> Parser<'a> {
                 }
             }
             self.read_token();
-            Ok(Expression::Tuple(elements))
+            let elements = self.ast.add_expr_list(&elements);
+            Ok(self
+                .ast
+                .push_expr(Expression::Tuple(elements), self.span_from(start)))
         } else {
             if matches!(self.peek_nth(0), Token::RightParentheses) {
                 self.read_token();
@@ -3081,6 +2434,7 @@ impl<'a> Parser<'a> {
                         None
                     };
 
+                let name = self.ast.intern(&name);
                 parameters.push(Parameter {
                     name,
                     type_annotation,
@@ -3109,7 +2463,8 @@ impl<'a> Parser<'a> {
         Ok(parameters)
     }
 
-    fn parse_match_expression(&mut self) -> Result<Expression> {
+    fn parse_match_expression(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         // A `{` after the scrutinee opens the arms, so neither a struct literal
         // nor a function literal is available here. Without that, the `(a, b)`
@@ -3135,48 +2490,78 @@ impl<'a> Parser<'a> {
             let body = if matches!(self.peek_nth(0), Token::LeftBrace) {
                 self.parse_block()?
             } else {
+                let arm_start = self.mark();
                 let expr = self.parse_expression(Precedence::Lowest)?;
-                vec![self.spanned_here(Statement::Expression(expr))]
+                let statement = self.ast.push_stmt(
+                    Statement::Expression(expr),
+                    self.span_from(arm_start),
+                );
+                self.ast.add_stmt_list(&[statement])
             };
             cases.push(SwitchCase { pattern, body });
         }
         self.read_token();
-        Ok(Expression::Switch(Box::new(scrutinee), cases))
+        let cases = self.ast.add_cases(&cases);
+        Ok(self.ast.push_expr(
+            Expression::Switch(scrutinee, cases),
+            self.span_from(start),
+        ))
     }
 
-    fn parse_pattern(&mut self) -> Result<Pattern> {
-        match self.peek_nth(0) {
+    fn parse_pattern_bindings(&mut self) -> Result<Range32> {
+        self.read_token();
+        let mut bindings = Vec::new();
+        while self.peek_nth(0) != &Token::RightBrace {
+            let field_name = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!("Expected binding name in pattern"),
+            };
+            let symbol = self.ast.intern(&field_name);
+            bindings.push(PatternBinding {
+                field: symbol,
+                binding: symbol,
+            });
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        self.read_token();
+        Ok(self.ast.add_pattern_bindings(&bindings))
+    }
+
+    fn parse_pattern(&mut self) -> Result<PatternId> {
+        let pattern = match self.peek_nth(0) {
             Token::Underscore => {
                 self.read_token();
-                Ok(Pattern::Wildcard)
+                Pattern::Wildcard
             }
             Token::Integer(value) => {
                 let value = *value;
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Integer(value)))
+                Pattern::Literal(Literal::Integer(value))
             }
             Token::Float(value) => {
                 let value = *value;
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Float(value)))
+                Pattern::Literal(Literal::Float(value))
             }
             Token::Float32(value) => {
                 let value = *value;
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Float32(value)))
+                Pattern::Literal(Literal::Float32(value))
             }
             Token::StringLiteral(s) => {
                 let s = s.clone();
                 self.read_token();
-                Ok(Pattern::Literal(Literal::String(s)))
+                Pattern::Literal(Literal::String(s))
             }
             Token::True => {
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Boolean(true)))
+                Pattern::Literal(Literal::Boolean(true))
             }
             Token::False => {
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Boolean(false)))
+                Pattern::Literal(Literal::Boolean(false))
             }
             Token::Dot => {
                 self.read_token();
@@ -3185,28 +2570,16 @@ impl<'a> Parser<'a> {
                     _ => bail!("Expected variant name after '.'"),
                 };
                 let bindings = if matches!(self.peek_nth(0), Token::LeftBrace) {
-                    self.read_token();
-                    let mut bindings = Vec::new();
-                    while self.peek_nth(0) != &Token::RightBrace {
-                        let field_name = match self.read_token() {
-                            Token::Identifier(name) => name.to_string(),
-                            _ => bail!("Expected binding name in pattern"),
-                        };
-                        bindings.push((field_name.clone(), field_name));
-                        if matches!(self.peek_nth(0), Token::Comma) {
-                            self.read_token();
-                        }
-                    }
-                    self.read_token();
-                    bindings
+                    self.parse_pattern_bindings()?
                 } else {
-                    Vec::new()
+                    Range32::EMPTY
                 };
-                Ok(Pattern::EnumVariant {
+                let variant_name = self.ast.intern(&variant_name);
+                Pattern::EnumVariant {
                     enum_name: None,
                     variant_name,
                     bindings,
-                })
+                }
             }
             Token::LeftParentheses => {
                 self.read_token();
@@ -3218,7 +2591,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.read_token();
-                Ok(Pattern::Tuple(patterns))
+                Pattern::Tuple(self.ast.add_pattern_list(&patterns))
             }
             Token::Identifier(name) => {
                 let name = name.clone();
@@ -3231,39 +2604,28 @@ impl<'a> Parser<'a> {
                     };
                     let bindings =
                         if matches!(self.peek_nth(0), Token::LeftBrace) {
-                            self.read_token();
-                            let mut bindings = Vec::new();
-                            while self.peek_nth(0) != &Token::RightBrace {
-                                let field_name = match self.read_token() {
-                                    Token::Identifier(n) => n.to_string(),
-                                    _ => bail!(
-                                        "Expected binding name in pattern"
-                                    ),
-                                };
-                                bindings.push((field_name.clone(), field_name));
-                                if matches!(self.peek_nth(0), Token::Comma) {
-                                    self.read_token();
-                                }
-                            }
-                            self.read_token();
-                            bindings
+                            self.parse_pattern_bindings()?
                         } else {
-                            Vec::new()
+                            Range32::EMPTY
                         };
-                    Ok(Pattern::EnumVariant {
-                        enum_name: Some(name),
+                    let enum_name = self.ast.intern(&name);
+                    let variant_name = self.ast.intern(&variant_name);
+                    Pattern::EnumVariant {
+                        enum_name: Some(enum_name),
                         variant_name,
                         bindings,
-                    })
+                    }
                 } else {
-                    Ok(Pattern::Identifier(name))
+                    Pattern::Identifier(self.ast.intern(&name))
                 }
             }
             token => bail!("Unexpected token in pattern: {:?}", token),
-        }
+        };
+        Ok(self.ast.push_pattern(pattern))
     }
 
-    fn parse_if_expression(&mut self) -> Result<Expression> {
+    fn parse_if_expression(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
 
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
@@ -3284,23 +2646,26 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Else) {
             self.read_token();
             if matches!(self.peek_nth(0), Token::If) {
+                let arm_start = self.mark();
                 let else_if = self.parse_if_expression()?;
-                alternative = Some(vec![
-                    self.spanned_here(Statement::Expression(else_if)),
-                ]);
+                let statement = self.ast.push_stmt(
+                    Statement::Expression(else_if),
+                    self.span_from(arm_start),
+                );
+                alternative = Some(self.ast.add_stmt_list(&[statement]));
             } else {
                 alternative = Some(self.parse_block()?);
             }
         }
 
-        Ok(Expression::If(
-            Box::new(condition),
-            consequence,
-            alternative,
+        Ok(self.ast.push_expr(
+            Expression::If(condition, consequence, alternative),
+            self.span_from(start),
         ))
     }
 
-    fn parse_function_literal(&mut self) -> Result<Expression> {
+    fn parse_function_literal(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         let parameters = self.parse_function_parameters()?;
         let return_sig = self.parse_return_signature()?;
@@ -3308,11 +2673,14 @@ impl<'a> Parser<'a> {
         let has_type_annotations =
             parameters.iter().any(|p| p.type_annotation.is_some())
                 || signature_is_typed(&return_sig);
-        if has_type_annotations {
-            Ok(Expression::Proc(parameters, return_sig, block))
+        let parameters = self.ast.add_parameters(parameters);
+        let signature = self.ast.push_signature(return_sig);
+        let node = if has_type_annotations {
+            Expression::Proc(parameters, signature, block)
         } else {
-            Ok(Expression::Function(parameters, return_sig, block))
-        }
+            Expression::Function(parameters, signature, block)
+        };
+        Ok(self.ast.push_expr(node, self.span_from(start)))
     }
 
     fn parse_return_signature(&mut self) -> Result<ReturnSignature> {
@@ -3335,7 +2703,7 @@ impl<'a> Parser<'a> {
             self.no_struct_literal = true;
             let expression = self.parse_expression(Precedence::Lowest);
             self.no_struct_literal = held;
-            bound = Some(Box::new(expression?));
+            bound = Some(expression?);
         }
         Ok(ReturnSignature { kind, uses, bound })
     }
@@ -3387,10 +2755,9 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 self.read_token();
             }
-            values.push(ReturnValue {
-                name,
-                value_type: self.parse_type()?,
-            });
+            let value_type = self.parse_type()?;
+            let name = name.map(|held| self.ast.intern(&held));
+            values.push(ReturnValue { name, value_type });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             }
@@ -3409,14 +2776,16 @@ impl<'a> Parser<'a> {
             );
         }
         for (index, held) in values.iter().enumerate() {
-            if let Some(name) = &held.name
+            if let Some(name) = held.name
                 && values[..index]
                     .iter()
-                    .any(|earlier| earlier.name.as_ref() == Some(name))
+                    .any(|earlier| earlier.name == Some(name))
             {
+                let name = self.ast.name(name);
                 bail!("this return type list names '{name}' twice");
             }
         }
+        let values = self.ast.add_return_values(values);
         Ok(ReturnKind::Multiple(values))
     }
 
@@ -3482,6 +2851,7 @@ impl<'a> Parser<'a> {
                         None
                     };
 
+                let name = self.ast.intern(&name);
                 parameters.push(Parameter {
                     name,
                     type_annotation,
@@ -3595,8 +2965,9 @@ impl<'a> Parser<'a> {
                 "Expected 'Type', 'usize', a struct type or a function signature after ':' in the compile-time parameter '${name}'"
             ),
         };
+        let symbol = self.ast.intern(&name);
         Ok(Parameter {
-            name: name.clone(),
+            name: symbol,
             type_annotation: Some(Type::TypeParam(name)),
             mutable: false,
             mode: ParamMode::Read,
@@ -3879,7 +3250,7 @@ impl<'a> Parser<'a> {
         Ok(base_type)
     }
 
-    fn parse_block(&mut self) -> Result<Block> {
+    fn parse_block(&mut self) -> Result<Range32> {
         if !matches!(self.peek_nth(0), Token::LeftBrace) {
             bail!("Expected a left brace in block!");
         }
@@ -3902,7 +3273,7 @@ impl<'a> Parser<'a> {
                 !statements.is_empty() && self.peek_nth(0) == &Token::Minus;
             match self.parse_statement() {
                 Ok(Some(statement)) => {
-                    statements.push(Spanned::new(statement, position));
+                    statements.push(statement);
                 }
                 Ok(None) => break,
                 Err(error) => {
@@ -3937,7 +3308,7 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
 
-        Ok(statements)
+        Ok(self.ast.add_stmt_list(&statements))
     }
 
     fn read_token(&mut self) -> &Token {
@@ -3976,73 +3347,149 @@ impl<'a> Parser<'a> {
             )
     }
 
-    fn parse_unsafe_expression(&mut self) -> Result<Expression> {
+    fn parse_unsafe_expression(&mut self) -> Result<ExprId> {
+        let start = self.mark();
         self.read_token();
         // `unsafe fn(...)` is an unsafe function, not a block. Calling it is a
         // gated operation and its body is an implicit unsafe block.
         if matches!(self.peek_nth(0), Token::Function) {
             let function = self.parse_function_literal()?;
-            return Ok(Expression::UnsafeFn(Box::new(function)));
+            return Ok(self.ast.push_expr(
+                Expression::UnsafeFn(function),
+                self.span_from(start),
+            ));
         }
         if !matches!(self.peek_nth(0), Token::LeftBrace) {
             bail!("Expected '{{' or 'fn' after 'unsafe'");
         }
         let body = self.parse_block()?;
-        Ok(Expression::Unsafe(body))
+        Ok(self
+            .ast
+            .push_expr(Expression::Unsafe(body), self.span_from(start)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, ParamMode, Parameter, Parser, Pattern, ReturnKind,
-        ReturnSignature, Statement, StructField,
+        Ast, ExprId, Expression, Literal, Module, Operator, ParamMode,
+        Parameter, Parser, Pattern, ReturnKind, ReturnSignature, ReturnValue,
+        Statement, TokenSpan,
     };
-    use crate::{Operator, lexer::Lexer, types::Type};
+    use crate::ast_display::display_stmt;
+    use crate::{lexer::Lexer, types::Type};
     use anyhow::{Result, bail};
+
+    fn parse_module(input: &str) -> Result<Module> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        parser.parse()
+    }
+
+    fn single_expression(input: &str) -> Result<(Module, ExprId)> {
+        let module = parse_module(input)?;
+        let Some(first) = module.roots.first().copied() else {
+            bail!("Expected a statement");
+        };
+        let expression = match module.ast.stmt(first) {
+            Statement::Expression(expression)
+            | Statement::Return(expression) => *expression,
+            _ => bail!("Expected an expression statement!"),
+        };
+        Ok((module, expression))
+    }
+
+    fn assert_integer(ast: &Ast, id: ExprId, expected: i64) -> Result<()> {
+        match ast.expr(id) {
+            Expression::Literal(Literal::Integer(value))
+                if *value == expected =>
+            {
+                Ok(())
+            }
+            other => bail!("Expected the integer {expected}, got {other:?}"),
+        }
+    }
+
+    fn assert_identifier(ast: &Ast, id: ExprId, expected: &str) -> Result<()> {
+        match ast.expr(id) {
+            Expression::Identifier(name) if ast.name(*name) == expected => {
+                Ok(())
+            }
+            other => {
+                bail!("Expected the identifier {expected}, got {other:?}")
+            }
+        }
+    }
+
+    fn assert_boolean(ast: &Ast, id: ExprId, expected: bool) -> Result<()> {
+        match ast.expr(id) {
+            Expression::Boolean(value) if *value == expected => Ok(()),
+            other => bail!("Expected the boolean {expected}, got {other:?}"),
+        }
+    }
+
+    fn infix_parts(
+        ast: &Ast,
+        id: ExprId,
+        expected: Operator,
+    ) -> Result<(ExprId, ExprId)> {
+        match ast.expr(id) {
+            Expression::Infix(left, operator, right)
+                if *operator == expected =>
+            {
+                Ok((*left, *right))
+            }
+            other => {
+                bail!("Expected an infix {expected} expression, got {other:?}")
+            }
+        }
+    }
+
+    fn assert_untyped_read_parameter(
+        ast: &Ast,
+        parameter: &Parameter,
+        name: &str,
+    ) {
+        assert_eq!(ast.name(parameter.name), name);
+        assert_eq!(parameter.type_annotation, None);
+        assert!(!parameter.mutable);
+        assert_eq!(parameter.mode, ParamMode::Read);
+        assert_eq!(parameter.compile_time_signature, None);
+        assert!(!parameter.pack);
+    }
+
+    enum Leaf {
+        Integer(i64),
+        Identifier(&'static str),
+    }
+
+    fn assert_leaf(ast: &Ast, id: ExprId, expected: &Leaf) -> Result<()> {
+        match expected {
+            Leaf::Integer(value) => assert_integer(ast, id, *value),
+            Leaf::Identifier(name) => assert_identifier(ast, id, name),
+        }
+    }
 
     #[test]
     fn test_let_statements() -> Result<()> {
         let tests = [
-            (
-                "x := 5;",
-                "x".to_string(),
-                Expression::Literal(Literal::Integer(5)),
-            ),
-            (
-                "y := 10;",
-                "y".to_string(),
-                Expression::Literal(Literal::Integer(10)),
-            ),
-            (
-                "foobar := 838383;",
-                "foobar".to_string(),
-                Expression::Literal(Literal::Integer(838383)),
-            ),
-            (
-                "foobar := y;",
-                "foobar".to_string(),
-                Expression::Identifier("y".to_string()),
-            ),
+            ("x := 5;", "x", Leaf::Integer(5)),
+            ("y := 10;", "y", Leaf::Integer(10)),
+            ("foobar := 838383;", "foobar", Leaf::Integer(838383)),
+            ("foobar := y;", "foobar", Leaf::Identifier("y")),
         ];
 
         for (input, expected_identifier, expected_expression) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            for statement in program.into_iter() {
-                match statement.node {
-                    Statement::Let { name, value, .. } => {
-                        assert_eq!(name, *expected_identifier);
-                        assert_eq!(value, *expected_expression);
-                    }
-                    _ => bail!("Expected a let statement!"),
+            match module.ast.stmt(module.roots[0]) {
+                Statement::Let { name, value, .. } => {
+                    assert_eq!(module.ast.name(*name), *expected_identifier);
+                    assert_leaf(&module.ast, *value, expected_expression)?;
                 }
+                _ => bail!("Expected a let statement!"),
             }
         }
 
@@ -4052,17 +3499,15 @@ mod tests {
     #[test]
     fn test_return_statements() -> Result<()> {
         let tests = [
-            ("return 5;", Expression::Literal(Literal::Integer(5))),
-            ("return 10;", Expression::Literal(Literal::Integer(10))),
-            (
-                "return 993322;",
-                Expression::Literal(Literal::Integer(993322)),
-            ),
-            ("return y;", Expression::Identifier("y".to_string())),
+            ("return 5;", Leaf::Integer(5)),
+            ("return 10;", Leaf::Integer(10)),
+            ("return 993322;", Leaf::Integer(993322)),
+            ("return y;", Leaf::Identifier("y")),
         ];
 
         for (input, expected_expression) in tests.iter() {
-            parse_statement(input, expected_expression)?;
+            let (module, expression) = single_expression(input)?;
+            assert_leaf(&module.ast, expression, expected_expression)?;
         }
 
         Ok(())
@@ -4071,27 +3516,34 @@ mod tests {
     #[test]
     fn ast() -> Result<()> {
         let output = "myVar := anotherVar;";
-        let ast = Statement::Let {
-            name: "myVar".to_string(),
-            type_annotation: None,
-            value: Expression::Identifier("anotherVar".to_string()),
-            mutable: false,
-        };
-        assert_eq!(ast.to_string(), output.to_string());
+        let mut ast = Ast::default();
+        let another = ast.intern("anotherVar");
+        let value =
+            ast.push_expr(Expression::Identifier(another), TokenSpan::NONE);
+        let name = ast.intern("myVar");
+        let statement = ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: None,
+                value,
+                mutable: false,
+            },
+            TokenSpan::NONE,
+        );
+        assert_eq!(display_stmt(&ast, statement), output.to_string());
         Ok(())
     }
 
     #[test]
     fn identifier_expressions() -> Result<()> {
-        parse_statement(
-            "foobar;",
-            &Expression::Identifier("foobar".to_string()),
-        )
+        let (module, expression) = single_expression("foobar;")?;
+        assert_identifier(&module.ast, expression, "foobar")
     }
 
     #[test]
     fn integer_expressions() -> Result<()> {
-        parse_statement("5;", &Expression::Literal(Literal::Integer(5)))
+        let (module, expression) = single_expression("5;")?;
+        assert_integer(&module.ast, expression, 5)
     }
 
     #[test]
@@ -4099,18 +3551,14 @@ mod tests {
         let tests = [("true;", true), ("false;", false)];
 
         for (input, expected_value) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(Statement::Expression(Expression::Boolean(value))) =
-                program.into_iter().next().map(|s| s.node)
+            if let Statement::Expression(expression) =
+                module.ast.stmt(module.roots[0])
+                && let Expression::Boolean(value) = module.ast.expr(*expression)
             {
-                assert_eq!(value, *expected_value)
+                assert_eq!(value, expected_value)
             } else {
                 bail!("Expected a boolean expression statement!");
             }
@@ -4124,29 +3572,20 @@ mod tests {
         let tests = [("!5;", Operator::Not, 5), ("-15;", Operator::Negate, 15)];
 
         for (input, operator, value) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(statement) = program.into_iter().next() {
-                match statement.node {
-                    Statement::Expression(expression) => {
-                        assert_eq!(
-                            expression,
-                            Expression::Prefix(
-                                *operator,
-                                Box::new(Expression::Literal(
-                                    Literal::Integer(*value)
-                                )),
-                            )
-                        )
-                    }
-                    _ => bail!("Expected an expression statement!"),
+            match module.ast.stmt(module.roots[0]) {
+                Statement::Expression(expression) => {
+                    let Expression::Prefix(found, inner) =
+                        module.ast.expr(*expression)
+                    else {
+                        bail!("Expected a prefix expression!");
+                    };
+                    assert_eq!(found, operator);
+                    assert_integer(&module.ast, *inner, *value)?;
                 }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
@@ -4161,27 +3600,20 @@ mod tests {
         ];
 
         for (input, operator, value) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(statement) = program.into_iter().next() {
-                match statement.node {
-                    Statement::Expression(expression) => {
-                        assert_eq!(
-                            expression,
-                            Expression::Prefix(
-                                *operator,
-                                Box::new(Expression::Boolean(*value)),
-                            )
-                        )
-                    }
-                    _ => bail!("Expected an expression statement!"),
+            match module.ast.stmt(module.roots[0]) {
+                Statement::Expression(expression) => {
+                    let Expression::Prefix(found, inner) =
+                        module.ast.expr(*expression)
+                    else {
+                        bail!("Expected a prefix expression!");
+                    };
+                    assert_eq!(found, operator);
+                    assert_boolean(&module.ast, *inner, *value)?;
                 }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
@@ -4205,32 +3637,17 @@ mod tests {
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(statement) = program.into_iter().next() {
-                match statement.node {
-                    Statement::Expression(expression) => {
-                        assert_eq!(
-                            expression,
-                            Expression::Infix(
-                                Box::new(Expression::Literal(
-                                    Literal::Integer(*left_value)
-                                )),
-                                *operator,
-                                Box::new(Expression::Literal(
-                                    Literal::Integer(*right_value,)
-                                )),
-                            )
-                        )
-                    }
-                    _ => bail!("Expected an expression statement!"),
+            match module.ast.stmt(module.roots[0]) {
+                Statement::Expression(expression) => {
+                    let (left, right) =
+                        infix_parts(&module.ast, *expression, *operator)?;
+                    assert_integer(&module.ast, left, *left_value)?;
+                    assert_integer(&module.ast, right, *right_value)?;
                 }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
@@ -4246,28 +3663,17 @@ mod tests {
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(statement) = program.into_iter().next() {
-                match statement.node {
-                    Statement::Expression(expression) => {
-                        assert_eq!(
-                            expression,
-                            Expression::Infix(
-                                Box::new(Expression::Boolean(*left_value)),
-                                *operator,
-                                Box::new(Expression::Boolean(*right_value)),
-                            )
-                        )
-                    }
-                    _ => bail!("Expected an expression statement!"),
+            match module.ast.stmt(module.roots[0]) {
+                Statement::Expression(expression) => {
+                    let (left, right) =
+                        infix_parts(&module.ast, *expression, *operator)?;
+                    assert_boolean(&module.ast, left, *left_value)?;
+                    assert_boolean(&module.ast, right, *right_value)?;
                 }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
@@ -4321,14 +3727,11 @@ mod tests {
         ];
 
         for (input, expected) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
-
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-            let program_string = program
+            let module = parse_module(input)?;
+            let program_string = module
+                .roots
                 .iter()
-                .map(|s| s.to_string())
+                .map(|statement| display_stmt(&module.ast, *statement))
                 .collect::<Vec<_>>()
                 .join("");
 
@@ -4340,146 +3743,119 @@ mod tests {
 
     #[test]
     fn if_expressions() -> Result<()> {
-        let expression = Expression::If(
-            Box::new(Expression::Infix(
-                Box::new(Expression::Identifier("x".to_string())),
-                Operator::LessThan,
-                Box::new(Expression::Identifier("y".to_string())),
-            )),
-            vec![
-                Statement::Expression(Expression::Identifier("x".to_string()))
-                    .into(),
-            ],
-            None,
-        );
-
-        parse_statement("if (x < y) { x }", &expression)
+        let (module, expression) = single_expression("if (x < y) { x }")?;
+        let ast = &module.ast;
+        let Expression::If(condition, consequence, alternative) =
+            ast.expr(expression)
+        else {
+            bail!("Expected an if expression!");
+        };
+        let (left, right) = infix_parts(ast, *condition, Operator::LessThan)?;
+        assert_identifier(ast, left, "x")?;
+        assert_identifier(ast, right, "y")?;
+        let consequence = ast.stmts_in(*consequence);
+        assert_eq!(consequence.len(), 1);
+        let Statement::Expression(held) = ast.stmt(consequence[0]) else {
+            bail!("Expected an expression statement!");
+        };
+        assert_identifier(ast, *held, "x")?;
+        assert!(alternative.is_none());
+        Ok(())
     }
 
     #[test]
     fn if_else_expressions() -> Result<()> {
-        let expression = Expression::If(
-            Box::new(Expression::Infix(
-                Box::new(Expression::Identifier("x".to_string())),
-                Operator::LessThan,
-                Box::new(Expression::Identifier("y".to_string())),
-            )),
-            vec![
-                Statement::Expression(Expression::Identifier("x".to_string()))
-                    .into(),
-            ],
-            Some(vec![
-                Statement::Expression(Expression::Identifier("y".to_string()))
-                    .into(),
-            ]),
-        );
-
-        parse_statement("if (x < y) { x } else { y }", &expression)
+        let (module, expression) =
+            single_expression("if (x < y) { x } else { y }")?;
+        let ast = &module.ast;
+        let Expression::If(condition, consequence, alternative) =
+            ast.expr(expression)
+        else {
+            bail!("Expected an if expression!");
+        };
+        let (left, right) = infix_parts(ast, *condition, Operator::LessThan)?;
+        assert_identifier(ast, left, "x")?;
+        assert_identifier(ast, right, "y")?;
+        let consequence = ast.stmts_in(*consequence);
+        assert_eq!(consequence.len(), 1);
+        let Statement::Expression(held) = ast.stmt(consequence[0]) else {
+            bail!("Expected an expression statement!");
+        };
+        assert_identifier(ast, *held, "x")?;
+        let Some(alternative) = alternative else {
+            bail!("Expected an else block!");
+        };
+        let alternative = ast.stmts_in(*alternative);
+        assert_eq!(alternative.len(), 1);
+        let Statement::Expression(held) = ast.stmt(alternative[0]) else {
+            bail!("Expected an expression statement!");
+        };
+        assert_identifier(ast, *held, "y")?;
+        Ok(())
     }
 
     #[test]
     fn function_expressions() -> Result<()> {
-        let expression = Expression::Function(
-            vec![
-                Parameter {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    mutable: false,
-                    mode: ParamMode::Read,
-                    compile_time_signature: None,
-                    pack: false,
-                },
-                Parameter {
-                    name: "y".to_string(),
-                    type_annotation: None,
-                    mutable: false,
-                    mode: ParamMode::Read,
-                    compile_time_signature: None,
-                    pack: false,
-                },
-            ],
-            ReturnSignature::plain(ReturnKind::None),
-            vec![
-                Statement::Expression(Expression::Infix(
-                    Box::new(Expression::Identifier("x".to_string())),
-                    Operator::Add,
-                    Box::new(Expression::Identifier("y".to_string())),
-                ))
-                .into(),
-            ],
+        let (module, expression) = single_expression("fn(x, y) { x + y; }")?;
+        let ast = &module.ast;
+        let Expression::Function(parameters, signature, body) =
+            ast.expr(expression)
+        else {
+            bail!("Expected a function expression!");
+        };
+        let parameters = ast.params_in(*parameters);
+        assert_eq!(parameters.len(), 2);
+        assert_untyped_read_parameter(ast, &parameters[0], "x");
+        assert_untyped_read_parameter(ast, &parameters[1], "y");
+        assert_eq!(
+            ast.signature(*signature),
+            &ReturnSignature::plain(ReturnKind::None)
         );
-        parse_statement("fn(x, y) { x + y; }", &expression)
+        let body = ast.stmts_in(*body);
+        assert_eq!(body.len(), 1);
+        let Statement::Expression(held) = ast.stmt(body[0]) else {
+            bail!("Expected an expression statement!");
+        };
+        let (left, right) = infix_parts(ast, *held, Operator::Add)?;
+        assert_identifier(ast, left, "x")?;
+        assert_identifier(ast, right, "y")?;
+        Ok(())
     }
 
     #[test]
     fn function_parameter_parsing() -> Result<()> {
-        let tests: Vec<(&str, Vec<Parameter>)> = vec![
+        let tests: Vec<(&str, Vec<&str>)> = vec![
             ("fn() {};", vec![]),
-            (
-                "fn(x) {};",
-                vec![Parameter {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    mutable: false,
-                    mode: ParamMode::Read,
-                    compile_time_signature: None,
-                    pack: false,
-                }],
-            ),
-            (
-                "fn(x, y, z) {};",
-                vec![
-                    Parameter {
-                        name: "x".to_string(),
-                        type_annotation: None,
-                        mutable: false,
-                        mode: ParamMode::Read,
-                        compile_time_signature: None,
-                        pack: false,
-                    },
-                    Parameter {
-                        name: "y".to_string(),
-                        type_annotation: None,
-                        mutable: false,
-                        mode: ParamMode::Read,
-                        compile_time_signature: None,
-                        pack: false,
-                    },
-                    Parameter {
-                        name: "z".to_string(),
-                        type_annotation: None,
-                        mutable: false,
-                        mode: ParamMode::Read,
-                        compile_time_signature: None,
-                        pack: false,
-                    },
-                ],
-            ),
+            ("fn(x) {};", vec!["x"]),
+            ("fn(x, y, z) {};", vec!["x", "y", "z"]),
         ];
 
         for (input, expected_parameters) in tests.iter() {
-            let mut lexer = Lexer::new(input);
-            let tokens = lexer.tokenize()?;
+            let module = parse_module(input)?;
+            assert_eq!(module.roots.len(), 1);
+            let ast = &module.ast;
 
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            if let Some(statement) = program.into_iter().next() {
-                match statement.node {
-                    Statement::Expression(expression) => {
-                        assert_eq!(
-                            expression,
-                            Expression::Function(
-                                expected_parameters.to_vec(),
-                                ReturnSignature::plain(ReturnKind::None),
-                                Vec::new()
-                            )
-                        )
+            match ast.stmt(module.roots[0]) {
+                Statement::Expression(expression) => {
+                    let Expression::Function(parameters, signature, body) =
+                        ast.expr(*expression)
+                    else {
+                        bail!("Expected a function expression!");
+                    };
+                    let parameters = ast.params_in(*parameters);
+                    assert_eq!(parameters.len(), expected_parameters.len());
+                    for (parameter, expected) in
+                        parameters.iter().zip(expected_parameters.iter())
+                    {
+                        assert_untyped_read_parameter(ast, parameter, expected);
                     }
-                    _ => bail!("Expected an expression statement!"),
+                    assert_eq!(
+                        ast.signature(*signature),
+                        &ReturnSignature::plain(ReturnKind::None)
+                    );
+                    assert!(ast.stmts_in(*body).is_empty());
                 }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
@@ -4488,88 +3864,85 @@ mod tests {
 
     #[test]
     fn call_expressions() -> Result<()> {
-        let expression = Expression::Call(
-            Box::new(Expression::Identifier("add".to_string())),
-            vec![
-                Expression::Literal(Literal::Integer(1)),
-                Expression::Infix(
-                    Box::new(Expression::Literal(Literal::Integer(2))),
-                    Operator::Multiply,
-                    Box::new(Expression::Literal(Literal::Integer(3))),
-                ),
-                Expression::Infix(
-                    Box::new(Expression::Literal(Literal::Integer(4))),
-                    Operator::Add,
-                    Box::new(Expression::Literal(Literal::Integer(5))),
-                ),
-            ],
-        );
-
-        parse_statement("add(1, 2 * 3, 4 + 5);", &expression)
+        let (module, expression) = single_expression("add(1, 2 * 3, 4 + 5);")?;
+        let ast = &module.ast;
+        let Expression::Call(callee, arguments) = ast.expr(expression) else {
+            bail!("Expected a call expression!");
+        };
+        assert_identifier(ast, *callee, "add")?;
+        let arguments = ast.exprs_in(*arguments);
+        assert_eq!(arguments.len(), 3);
+        assert_integer(ast, arguments[0], 1)?;
+        let (left, right) = infix_parts(ast, arguments[1], Operator::Multiply)?;
+        assert_integer(ast, left, 2)?;
+        assert_integer(ast, right, 3)?;
+        let (left, right) = infix_parts(ast, arguments[2], Operator::Add)?;
+        assert_integer(ast, left, 4)?;
+        assert_integer(ast, right, 5)?;
+        Ok(())
     }
 
     #[test]
     fn string_literal_expression() -> Result<()> {
-        parse_statement(
-            "\"hello world\"",
-            &Expression::Literal(Literal::String("hello world".to_string())),
-        )
+        let (module, expression) = single_expression("\"hello world\"")?;
+        let Expression::Literal(Literal::String(value)) =
+            module.ast.expr(expression)
+        else {
+            bail!("Expected a string literal!");
+        };
+        assert_eq!(value, "hello world");
+        Ok(())
     }
 
     #[test]
     fn array_literal_expression() -> Result<()> {
-        parse_statement(
-            "[1, 2 * 2, 3 + 3]",
-            &Expression::Literal(Literal::Array(vec![
-                Expression::Literal(Literal::Integer(1)),
-                Expression::Infix(
-                    Box::new(Expression::Literal(Literal::Integer(2))),
-                    Operator::Multiply,
-                    Box::new(Expression::Literal(Literal::Integer(2))),
-                ),
-                Expression::Infix(
-                    Box::new(Expression::Literal(Literal::Integer(3))),
-                    Operator::Add,
-                    Box::new(Expression::Literal(Literal::Integer(3))),
-                ),
-            ])),
-        )
+        let (module, expression) = single_expression("[1, 2 * 2, 3 + 3]")?;
+        let ast = &module.ast;
+        let Expression::Literal(Literal::Array(elements)) =
+            ast.expr(expression)
+        else {
+            bail!("Expected an array literal!");
+        };
+        let elements = ast.exprs_in(*elements);
+        assert_eq!(elements.len(), 3);
+        assert_integer(ast, elements[0], 1)?;
+        let (left, right) = infix_parts(ast, elements[1], Operator::Multiply)?;
+        assert_integer(ast, left, 2)?;
+        assert_integer(ast, right, 2)?;
+        let (left, right) = infix_parts(ast, elements[2], Operator::Add)?;
+        assert_integer(ast, left, 3)?;
+        assert_integer(ast, right, 3)?;
+        Ok(())
     }
 
     #[test]
     fn index_expression() -> Result<()> {
-        parse_statement(
-            "myArray[1 + 1]",
-            &Expression::Index(
-                Box::new(Expression::Identifier("myArray".to_string())),
-                Box::new(Expression::Infix(
-                    Box::new(Expression::Literal(Literal::Integer(1))),
-                    Operator::Add,
-                    Box::new(Expression::Literal(Literal::Integer(1))),
-                )),
-            ),
-        )
+        let (module, expression) = single_expression("myArray[1 + 1]")?;
+        let ast = &module.ast;
+        let Expression::Index(base, index) = ast.expr(expression) else {
+            bail!("Expected an index expression!");
+        };
+        assert_identifier(ast, *base, "myArray")?;
+        let (left, right) = infix_parts(ast, *index, Operator::Add)?;
+        assert_integer(ast, left, 1)?;
+        assert_integer(ast, right, 1)?;
+        Ok(())
     }
 
     #[test]
     fn let_with_type_annotation() -> Result<()> {
-        let input = "x : i64 = 5;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        match &program[0].node {
+        let module = parse_module("x : i64 = 5;")?;
+        assert_eq!(module.roots.len(), 1);
+        match module.ast.stmt(module.roots[0]) {
             Statement::Let {
                 name,
                 type_annotation,
                 value,
                 ..
             } => {
-                assert_eq!(name, "x");
+                assert_eq!(module.ast.name(*name), "x");
                 assert_eq!(type_annotation, &Some(Type::I64));
-                assert_eq!(value, &Expression::Literal(Literal::Integer(5)));
+                assert_integer(&module.ast, *value, 5)?;
             }
             _ => bail!("Expected let statement"),
         }
@@ -4578,29 +3951,24 @@ mod tests {
 
     #[test]
     fn function_with_typed_parameters() -> Result<()> {
-        let input = "fn(a: i64, b: i32) -> bool { true }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(
-            params,
-            return_type,
-            body,
-        )) = &program[0].node
+        let module = parse_module("fn(a: i64, b: i32) -> bool { true }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Expression(expression) = ast.stmt(module.roots[0])
+            && let Expression::Proc(params, return_type, body) =
+                ast.expr(*expression)
         {
+            let params = ast.params_in(*params);
             assert_eq!(params.len(), 2);
-            assert_eq!(params[0].name, "a");
+            assert_eq!(ast.name(params[0].name), "a");
             assert_eq!(params[0].type_annotation, Some(Type::I64));
-            assert_eq!(params[1].name, "b");
+            assert_eq!(ast.name(params[1].name), "b");
             assert_eq!(params[1].type_annotation, Some(Type::I32));
             assert_eq!(
-                return_type,
+                ast.signature(*return_type),
                 &ReturnSignature::plain(ReturnKind::Single(Type::Bool))
             );
-            assert_eq!(body.len(), 1);
+            assert_eq!(ast.stmts_in(*body).len(), 1);
         } else {
             bail!("Expected typed function expression");
         }
@@ -4609,27 +3977,22 @@ mod tests {
 
     #[test]
     fn typed_function_literal() -> Result<()> {
-        let input = "fn(x: i64) -> i64 { x }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(
-            params,
-            return_type,
-            body,
-        )) = &program[0].node
+        let module = parse_module("fn(x: i64) -> i64 { x }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Expression(expression) = ast.stmt(module.roots[0])
+            && let Expression::Proc(params, return_type, body) =
+                ast.expr(*expression)
         {
+            let params = ast.params_in(*params);
             assert_eq!(params.len(), 1);
-            assert_eq!(params[0].name, "x");
+            assert_eq!(ast.name(params[0].name), "x");
             assert_eq!(params[0].type_annotation, Some(Type::I64));
             assert_eq!(
-                return_type,
+                ast.signature(*return_type),
                 &ReturnSignature::plain(ReturnKind::Single(Type::I64))
             );
-            assert_eq!(body.len(), 1);
+            assert_eq!(ast.stmts_in(*body).len(), 1);
         } else {
             bail!("Expected typed function expression");
         }
@@ -4638,38 +4001,22 @@ mod tests {
 
     #[test]
     fn struct_declaration() -> Result<()> {
-        let input = "Vec3 :: struct { x: f32, y: f32, z: f32 }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0].node {
-            assert_eq!(name, "Vec3");
+        let module = parse_module("Vec3 :: struct { x: f32, y: f32, z: f32 }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Struct(name, type_params, fields) =
+            ast.stmt(module.roots[0])
+        {
+            assert_eq!(ast.name(*name), "Vec3");
             assert!(type_params.is_empty());
+            let fields = ast.fields_in(*fields);
             assert_eq!(fields.len(), 3);
-            assert_eq!(
-                fields[0],
-                StructField {
-                    name: "x".to_string(),
-                    field_type: Type::F32
-                }
-            );
-            assert_eq!(
-                fields[1],
-                StructField {
-                    name: "y".to_string(),
-                    field_type: Type::F32
-                }
-            );
-            assert_eq!(
-                fields[2],
-                StructField {
-                    name: "z".to_string(),
-                    field_type: Type::F32
-                }
-            );
+            assert_eq!(ast.name(fields[0].name), "x");
+            assert_eq!(fields[0].field_type, Type::F32);
+            assert_eq!(ast.name(fields[1].name), "y");
+            assert_eq!(fields[1].field_type, Type::F32);
+            assert_eq!(ast.name(fields[2].name), "z");
+            assert_eq!(fields[2].field_type, Type::F32);
         } else {
             bail!("Expected struct declaration");
         }
@@ -4678,16 +4025,13 @@ mod tests {
 
     #[test]
     fn constant_declaration() -> Result<()> {
-        let input = "PI :: 3;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Constant(name, expr) = &program[0].node {
-            assert_eq!(name, "PI");
-            assert_eq!(expr, &Expression::Literal(Literal::Integer(3)));
+        let module = parse_module("PI :: 3;")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Constant(name, value) =
+            module.ast.stmt(module.roots[0])
+        {
+            assert_eq!(module.ast.name(*name), "PI");
+            assert_integer(&module.ast, *value, 3)?;
         } else {
             bail!("Expected constant declaration");
         }
@@ -4696,16 +4040,11 @@ mod tests {
 
     #[test]
     fn defer_statement() -> Result<()> {
-        let input = "defer return 5;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Defer(inner) = &program[0].node {
-            if let Statement::Return(expr) = inner.as_ref() {
-                assert_eq!(expr, &Expression::Literal(Literal::Integer(5)));
+        let module = parse_module("defer return 5;")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Defer(inner) = module.ast.stmt(module.roots[0]) {
+            if let Statement::Return(value) = module.ast.stmt(*inner) {
+                assert_integer(&module.ast, *value, 5)?;
             } else {
                 bail!("Expected return inside defer");
             }
@@ -4717,29 +4056,21 @@ mod tests {
 
     #[test]
     fn for_statement() -> Result<()> {
-        let input = "for i in 0..10 { i }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::For(iterator, _, range, body) = &program[0].node {
-            assert_eq!(iterator, "i");
-            if let Expression::Range(start, end, inclusive) = range {
-                assert_eq!(
-                    start.as_ref(),
-                    &Expression::Literal(Literal::Integer(0))
-                );
-                assert_eq!(
-                    end.as_ref(),
-                    &Expression::Literal(Literal::Integer(10))
-                );
+        let module = parse_module("for i in 0..10 { i }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::For(iterator, _, range, body) =
+            ast.stmt(module.roots[0])
+        {
+            assert_eq!(ast.name(*iterator), "i");
+            if let Expression::Range(start, end, inclusive) = ast.expr(*range) {
+                assert_integer(ast, *start, 0)?;
+                assert_integer(ast, *end, 10)?;
                 assert!(!inclusive);
             } else {
                 bail!("Expected range expression");
             }
-            assert_eq!(body.len(), 1);
+            assert_eq!(ast.stmts_in(*body).len(), 1);
         } else {
             bail!("Expected for statement");
         }
@@ -4748,21 +4079,14 @@ mod tests {
 
     #[test]
     fn field_access() -> Result<()> {
-        let input = "point.x";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::FieldAccess(expr, field)) =
-            &program[0].node
+        let module = parse_module("point.x")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Expression(expression) = ast.stmt(module.roots[0])
+            && let Expression::FieldAccess(base, field) = ast.expr(*expression)
         {
-            assert_eq!(
-                expr.as_ref(),
-                &Expression::Identifier("point".to_string())
-            );
-            assert_eq!(field, "x");
+            assert_identifier(ast, *base, "point")?;
+            assert_eq!(ast.name(*field), "x");
         } else {
             bail!("Expected field access expression");
         }
@@ -4798,28 +4122,27 @@ mod tests {
         // exit code, which a variant is not one of either.
         let input =
             "shown :: fn() -> i64 {\n    held := Color::Green\n    0\n}";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        let (Statement::Constant(_, Expression::Function(_, _, body))
-        | Statement::Constant(_, Expression::Proc(_, _, body))) =
-            &program[0].node
-        else {
-            bail!("Expected a function, got {:?}", program[0]);
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        let Statement::Constant(_, value) = ast.stmt(module.roots[0]) else {
+            bail!("Expected a function, got {:?}", ast.stmt(module.roots[0]));
         };
-        if let Statement::Let {
-            value: Expression::EnumVariantInit(enum_name, variant_name, fields),
-            ..
-        } = &body[0].node
+        let (Expression::Function(_, _, body) | Expression::Proc(_, _, body)) =
+            ast.expr(*value)
+        else {
+            bail!("Expected a function, got {:?}", ast.expr(*value));
+        };
+        let body = ast.stmts_in(*body);
+        if let Statement::Let { value, .. } = ast.stmt(body[0])
+            && let Expression::EnumVariantInit(enum_name, variant_name, fields) =
+                ast.expr(*value)
         {
-            assert_eq!(enum_name, "Color");
-            assert_eq!(variant_name, "Green");
+            assert_eq!(ast.name(*enum_name), "Color");
+            assert_eq!(ast.name(*variant_name), "Green");
             assert!(fields.is_empty());
         } else {
-            bail!("Expected EnumVariantInit, got {:?}", body[0]);
+            bail!("Expected EnumVariantInit, got {:?}", ast.stmt(body[0]));
         }
         Ok(())
     }
@@ -4829,20 +4152,17 @@ mod tests {
         // The same two tokens at the top level. This used to parse as the
         // variant access above, so the constant it declares did not exist and
         // every use of it was an unknown variable.
-        let input = "DEPTH :: TEXTURE_DEPTH24";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        let Statement::Constant(name, Expression::Identifier(value)) =
-            &program[0].node
+        let module = parse_module("DEPTH :: TEXTURE_DEPTH24")?;
+        assert_eq!(module.roots.len(), 1);
+        let Statement::Constant(name, value) = module.ast.stmt(module.roots[0])
         else {
-            bail!("Expected a constant, got {:?}", program[0]);
+            bail!(
+                "Expected a constant, got {:?}",
+                module.ast.stmt(module.roots[0])
+            );
         };
-        assert_eq!(name, "DEPTH");
-        assert_eq!(value, "TEXTURE_DEPTH24");
+        assert_eq!(module.ast.name(*name), "DEPTH");
+        assert_identifier(&module.ast, *value, "TEXTURE_DEPTH24")?;
         Ok(())
     }
 
@@ -4870,17 +4190,13 @@ mod tests {
 
     #[test]
     fn dereference_expression() -> Result<()> {
-        let input = "p^";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Dereference(expr)) =
-            &program[0].node
+        let module = parse_module("p^")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Expression(expression) =
+            module.ast.stmt(module.roots[0])
+            && let Expression::Dereference(inner) = module.ast.expr(*expression)
         {
-            assert_eq!(expr.as_ref(), &Expression::Identifier("p".to_string()));
+            assert_identifier(&module.ast, *inner, "p")?;
         } else {
             bail!("Expected dereference expression");
         }
@@ -4889,20 +4205,15 @@ mod tests {
 
     #[test]
     fn pointer_type_annotation() -> Result<()> {
-        let input = "p : ^i64 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("p : ^i64 = x;")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             name,
             type_annotation,
             ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "p");
+            assert_eq!(module.ast.name(*name), "p");
             assert_eq!(type_annotation, &Some(Type::Ptr(Box::new(Type::I64))));
         } else {
             bail!("Expected let statement with pointer type");
@@ -4912,20 +4223,15 @@ mod tests {
 
     #[test]
     fn array_type_annotation() -> Result<()> {
-        let input = "arr : [10]i64 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("arr : [10]i64 = x;")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             name,
             type_annotation,
             ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "arr");
+            assert_eq!(module.ast.name(*name), "arr");
             assert_eq!(
                 type_annotation,
                 &Some(Type::Array(Box::new(Type::I64), 10))
@@ -4938,20 +4244,15 @@ mod tests {
 
     #[test]
     fn slice_type_annotation() -> Result<()> {
-        let input = "slice : []f32 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("slice : []f32 = x;")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             name,
             type_annotation,
             ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "slice");
+            assert_eq!(module.ast.name(*name), "slice");
             assert_eq!(
                 type_annotation,
                 &Some(Type::Slice(Box::new(Type::F32)))
@@ -4964,20 +4265,15 @@ mod tests {
 
     #[test]
     fn fn_type_annotation() -> Result<()> {
-        let input = "callback : fn(i64, i64) -> i64 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("callback : fn(i64, i64) -> i64 = x;")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             name,
             type_annotation,
             ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "callback");
+            assert_eq!(module.ast.name(*name), "callback");
             assert_eq!(
                 type_annotation,
                 &Some(Type::Proc(
@@ -4993,20 +4289,17 @@ mod tests {
 
     #[test]
     fn struct_init() -> Result<()> {
-        let input = "Point { x = 1, y = 2 }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::StructInit(name, fields)) =
-            &program[0].node
+        let module = parse_module("Point { x = 1, y = 2 }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Expression(expression) = ast.stmt(module.roots[0])
+            && let Expression::StructInit(name, fields) = ast.expr(*expression)
         {
-            assert_eq!(name, "Point");
+            assert_eq!(ast.name(*name), "Point");
+            let fields = ast.named_in(*fields);
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].0, "x");
-            assert_eq!(fields[1].0, "y");
+            assert_eq!(ast.name(fields[0].name), "x");
+            assert_eq!(ast.name(fields[1].name), "y");
         } else {
             bail!("Expected struct init expression");
         }
@@ -5015,23 +4308,16 @@ mod tests {
 
     #[test]
     fn pointer_store() -> Result<()> {
-        let input = "p^ = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Assignment(lhs, rhs) = &program[0].node {
-            if let Expression::Dereference(ptr) = lhs {
-                assert_eq!(
-                    ptr.as_ref(),
-                    &Expression::Identifier("p".to_string())
-                );
+        let module = parse_module("p^ = 42")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Assignment(place, value) = ast.stmt(module.roots[0]) {
+            if let Expression::Dereference(pointer) = ast.expr(*place) {
+                assert_identifier(ast, *pointer, "p")?;
             } else {
                 bail!("Expected dereference on lhs");
             }
-            assert_eq!(rhs, &Expression::Literal(Literal::Integer(42)));
+            assert_integer(ast, *value, 42)?;
         } else {
             bail!("Expected assignment statement");
         }
@@ -5040,24 +4326,17 @@ mod tests {
 
     #[test]
     fn field_assignment() -> Result<()> {
-        let input = "p.x = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Assignment(lhs, rhs) = &program[0].node {
-            if let Expression::FieldAccess(expr, field) = lhs {
-                assert_eq!(
-                    expr.as_ref(),
-                    &Expression::Identifier("p".to_string())
-                );
-                assert_eq!(field, "x");
+        let module = parse_module("p.x = 42")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Assignment(place, value) = ast.stmt(module.roots[0]) {
+            if let Expression::FieldAccess(base, field) = ast.expr(*place) {
+                assert_identifier(ast, *base, "p")?;
+                assert_eq!(ast.name(*field), "x");
             } else {
                 bail!("Expected field access on lhs");
             }
-            assert_eq!(rhs, &Expression::Literal(Literal::Integer(42)));
+            assert_integer(ast, *value, 42)?;
         } else {
             bail!("Expected assignment statement");
         }
@@ -5066,18 +4345,13 @@ mod tests {
 
     #[test]
     fn sizeof_expression() -> Result<()> {
-        let input = "sizeof(i64)";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(
-            Expression::Sizeof(typ)
+        let module = parse_module("sizeof(i64)")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Expression(expression) =
+            module.ast.stmt(module.roots[0])
+            && let Expression::Sizeof(typ)
             | Expression::TypeId(typ)
-            | Expression::TypeName(typ),
-        ) = &program[0].node
+            | Expression::TypeName(typ) = module.ast.expr(*expression)
         {
             assert_eq!(*typ, Type::I64);
         } else {
@@ -5088,18 +4362,13 @@ mod tests {
 
     #[test]
     fn sizeof_pointer_expression() -> Result<()> {
-        let input = "sizeof(^i64)";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(
-            Expression::Sizeof(typ)
+        let module = parse_module("sizeof(^i64)")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Expression(expression) =
+            module.ast.stmt(module.roots[0])
+            && let Expression::Sizeof(typ)
             | Expression::TypeId(typ)
-            | Expression::TypeName(typ),
-        ) = &program[0].node
+            | Expression::TypeName(typ) = module.ast.expr(*expression)
         {
             assert_eq!(*typ, Type::Ptr(Box::new(Type::I64)));
         } else {
@@ -5108,89 +4377,63 @@ mod tests {
         Ok(())
     }
 
-    fn parse_statement(
-        input: &str,
-        expected_expression: &Expression,
-    ) -> Result<()> {
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        if let Some(statement) = program.into_iter().next() {
-            match statement.node {
-                Statement::Expression(expression)
-                | Statement::Return(expression) => {
-                    assert_eq!(expression, *expected_expression)
-                }
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
-    }
-
     #[test]
     fn colon_assign_declaration() -> Result<()> {
-        let input = "x := 5";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        assert_eq!(
-            program[0].node,
+        let module = parse_module("x := 5")?;
+        assert_eq!(module.roots.len(), 1);
+        match module.ast.stmt(module.roots[0]) {
             Statement::Let {
-                name: "x".to_string(),
-                type_annotation: None,
-                value: Expression::Literal(Literal::Integer(5)),
-                mutable: false,
+                name,
+                type_annotation,
+                value,
+                mutable,
+            } => {
+                assert_eq!(module.ast.name(*name), "x");
+                assert_eq!(type_annotation, &None);
+                assert_integer(&module.ast, *value, 5)?;
+                assert!(!mutable);
             }
-        );
+            other => bail!("Expected a let statement, got {other:?}"),
+        }
         Ok(())
     }
 
     #[test]
     fn typed_declaration() -> Result<()> {
-        let input = "x : i64 = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        assert_eq!(
-            program[0].node,
+        let module = parse_module("x : i64 = 42")?;
+        assert_eq!(module.roots.len(), 1);
+        match module.ast.stmt(module.roots[0]) {
             Statement::Let {
-                name: "x".to_string(),
-                type_annotation: Some(Type::I64),
-                value: Expression::Literal(Literal::Integer(42)),
-                mutable: false,
+                name,
+                type_annotation,
+                value,
+                mutable,
+            } => {
+                assert_eq!(module.ast.name(*name), "x");
+                assert_eq!(type_annotation, &Some(Type::I64));
+                assert_integer(&module.ast, *value, 42)?;
+                assert!(!mutable);
             }
-        );
+            other => bail!("Expected a let statement, got {other:?}"),
+        }
         Ok(())
     }
 
     #[test]
     fn function_declaration() -> Result<()> {
-        let input = "add := fn(a, b) { a + b }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("add := fn(a, b) { a + b }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
         if let Statement::Let {
             name,
             type_annotation: None,
-            value: Expression::Function(params, _, _),
+            value,
             ..
-        } = &program[0].node
+        } = ast.stmt(module.roots[0])
+            && let Expression::Function(params, _, _) = ast.expr(*value)
         {
-            assert_eq!(name, "add");
-            assert_eq!(params.len(), 2);
+            assert_eq!(ast.name(*name), "add");
+            assert_eq!(ast.params_in(*params).len(), 2);
         } else {
             bail!("Expected let statement with function");
         }
@@ -5199,56 +4442,52 @@ mod tests {
 
     #[test]
     fn mutable_declaration() -> Result<()> {
-        let input = "mut x := 5";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        assert_eq!(
-            program[0].node,
+        let module = parse_module("mut x := 5")?;
+        assert_eq!(module.roots.len(), 1);
+        match module.ast.stmt(module.roots[0]) {
             Statement::Let {
-                name: "x".to_string(),
-                type_annotation: None,
-                value: Expression::Literal(Literal::Integer(5)),
-                mutable: true,
+                name,
+                type_annotation,
+                value,
+                mutable,
+            } => {
+                assert_eq!(module.ast.name(*name), "x");
+                assert_eq!(type_annotation, &None);
+                assert_integer(&module.ast, *value, 5)?;
+                assert!(*mutable);
             }
-        );
+            other => bail!("Expected a let statement, got {other:?}"),
+        }
         Ok(())
     }
 
     #[test]
     fn mutable_typed_declaration() -> Result<()> {
-        let input = "mut x : i64 = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        assert_eq!(
-            program[0].node,
+        let module = parse_module("mut x : i64 = 42")?;
+        assert_eq!(module.roots.len(), 1);
+        match module.ast.stmt(module.roots[0]) {
             Statement::Let {
-                name: "x".to_string(),
-                type_annotation: Some(Type::I64),
-                value: Expression::Literal(Literal::Integer(42)),
-                mutable: true,
+                name,
+                type_annotation,
+                value,
+                mutable,
+            } => {
+                assert_eq!(module.ast.name(*name), "x");
+                assert_eq!(type_annotation, &Some(Type::I64));
+                assert_integer(&module.ast, *value, 42)?;
+                assert!(*mutable);
             }
-        );
+            other => bail!("Expected a let statement, got {other:?}"),
+        }
         Ok(())
     }
 
     #[test]
     fn immutable_declaration_default() -> Result<()> {
-        let input = "x := 5";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { mutable, .. } = &program[0].node {
+        let module = parse_module("x := 5")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Let { mutable, .. } = module.ast.stmt(module.roots[0])
+        {
             assert!(!mutable, "Declaration without mut should be immutable");
         } else {
             bail!("Expected let statement");
@@ -5259,40 +4498,53 @@ mod tests {
     #[test]
     fn mutable_ast_display() -> Result<()> {
         let output = "mut myVar := anotherVar;";
-        let ast = Statement::Let {
-            name: "myVar".to_string(),
-            type_annotation: None,
-            value: Expression::Identifier("anotherVar".to_string()),
-            mutable: true,
-        };
-        assert_eq!(ast.to_string(), output.to_string());
+        let mut ast = Ast::default();
+        let another = ast.intern("anotherVar");
+        let value =
+            ast.push_expr(Expression::Identifier(another), TokenSpan::NONE);
+        let name = ast.intern("myVar");
+        let statement = ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: None,
+                value,
+                mutable: true,
+            },
+            TokenSpan::NONE,
+        );
+        assert_eq!(display_stmt(&ast, statement), output.to_string());
         Ok(())
     }
 
     #[test]
     fn mutable_typed_ast_display() -> Result<()> {
         let output = "mut x : i64 = 5;";
-        let ast = Statement::Let {
-            name: "x".to_string(),
-            type_annotation: Some(Type::I64),
-            value: Expression::Literal(Literal::Integer(5)),
-            mutable: true,
-        };
-        assert_eq!(ast.to_string(), output.to_string());
+        let mut ast = Ast::default();
+        let value = ast.push_expr(
+            Expression::Literal(Literal::Integer(5)),
+            TokenSpan::NONE,
+        );
+        let name = ast.intern("x");
+        let statement = ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: Some(Type::I64),
+                value,
+                mutable: true,
+            },
+            TokenSpan::NONE,
+        );
+        assert_eq!(display_stmt(&ast, statement), output.to_string());
         Ok(())
     }
 
     #[test]
     fn shift_operators() -> Result<()> {
-        let input = "x := 1 << 2";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0].node {
-            if let Expression::Infix(_, op, _) = value {
-                assert_eq!(*op, Operator::ShiftLeft);
+        let module = parse_module("x := 1 << 2")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Let { value, .. } = module.ast.stmt(module.roots[0]) {
+            if let Expression::Infix(_, operator, _) = module.ast.expr(*value) {
+                assert_eq!(*operator, Operator::ShiftLeft);
             } else {
                 bail!("Expected Infix expression");
             }
@@ -5304,15 +4556,11 @@ mod tests {
 
     #[test]
     fn bitwise_or_operator() -> Result<()> {
-        let input = "x := 1 | 2";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0].node {
-            if let Expression::Infix(_, op, _) = value {
-                assert_eq!(*op, Operator::BitwiseOr);
+        let module = parse_module("x := 1 | 2")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Let { value, .. } = module.ast.stmt(module.roots[0]) {
+            if let Expression::Infix(_, operator, _) = module.ast.expr(*value) {
+                assert_eq!(*operator, Operator::BitwiseOr);
             } else {
                 bail!("Expected Infix expression");
             }
@@ -5324,20 +4572,15 @@ mod tests {
 
     #[test]
     fn handle_type_annotation() -> Result<()> {
-        let input = "h : Handle<Entity> = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("h : Handle<Entity> = x;")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             name,
             type_annotation,
             ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "h");
+            assert_eq!(module.ast.name(*name), "h");
             assert_eq!(
                 type_annotation,
                 &Some(Type::Handle(Box::new(Type::Struct(
@@ -5352,23 +4595,20 @@ mod tests {
 
     #[test]
     fn extern_declaration() -> Result<()> {
-        let input = "puts :: extern fn(s: ^i8) -> i32";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("puts :: extern fn(s: ^i8) -> i32")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
         if let Statement::Extern {
             name,
             params,
             return_type,
             ..
-        } = &program[0].node
+        } = ast.stmt(module.roots[0])
         {
-            assert_eq!(name, "puts");
+            assert_eq!(ast.name(*name), "puts");
+            let params = ast.params_in(*params);
             assert_eq!(params.len(), 1);
-            assert_eq!(params[0].name, "s");
+            assert_eq!(ast.name(params[0].name), "s");
             assert_eq!(
                 params[0].type_annotation,
                 Some(Type::Ptr(Box::new(Type::I8)))
@@ -5382,16 +4622,11 @@ mod tests {
 
     #[test]
     fn unsafe_block() -> Result<()> {
-        let input = "x := unsafe { ptr^ }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Unsafe(body) = value {
-                assert_eq!(body.len(), 1);
+        let module = parse_module("x := unsafe { ptr^ }")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::Let { value, .. } = module.ast.stmt(module.roots[0]) {
+            if let Expression::Unsafe(body) = module.ast.expr(*value) {
+                assert_eq!(module.ast.stmts_in(*body).len(), 1);
             } else {
                 bail!("Expected unsafe expression");
             }
@@ -5403,15 +4638,12 @@ mod tests {
 
     #[test]
     fn inclusive_range_expression() -> Result<()> {
-        let input = "for i in 0..=10 { print(i) }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::For(_, _, range_expr, _) = &program[0].node {
-            if let Expression::Range(_, _, inclusive) = range_expr {
+        let module = parse_module("for i in 0..=10 { print(i) }")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::For(_, _, range, _) = module.ast.stmt(module.roots[0])
+        {
+            if let Expression::Range(_, _, inclusive) = module.ast.expr(*range)
+            {
                 assert!(inclusive, "Expected inclusive range");
             } else {
                 bail!("Expected range expression");
@@ -5424,15 +4656,12 @@ mod tests {
 
     #[test]
     fn exclusive_range_expression() -> Result<()> {
-        let input = "for i in 0..10 { print(i) }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::For(_, _, range_expr, _) = &program[0].node {
-            if let Expression::Range(_, _, inclusive) = range_expr {
+        let module = parse_module("for i in 0..10 { print(i) }")?;
+        assert_eq!(module.roots.len(), 1);
+        if let Statement::For(_, _, range, _) = module.ast.stmt(module.roots[0])
+        {
+            if let Expression::Range(_, _, inclusive) = module.ast.expr(*range)
+            {
                 assert!(!inclusive, "Expected exclusive range");
             } else {
                 bail!("Expected range expression");
@@ -5445,16 +4674,11 @@ mod tests {
 
     #[test]
     fn isize_type_annotation() -> Result<()> {
-        let input = "x: isize = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("x: isize = 42")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             type_annotation, ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
             assert_eq!(type_annotation.as_ref(), Some(&Type::Isize));
         } else {
@@ -5465,16 +4689,11 @@ mod tests {
 
     #[test]
     fn usize_type_annotation() -> Result<()> {
-        let input = "x: usize = 42";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
+        let module = parse_module("x: usize = 42")?;
+        assert_eq!(module.roots.len(), 1);
         if let Statement::Let {
             type_annotation, ..
-        } = &program[0].node
+        } = module.ast.stmt(module.roots[0])
         {
             assert_eq!(type_annotation.as_ref(), Some(&Type::Usize));
         } else {
@@ -5485,21 +4704,18 @@ mod tests {
 
     #[test]
     fn enum_declaration_unit_variants() -> Result<()> {
-        let input = "Color :: enum { Red, Green, Blue }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, _, variants) = &program[0].node {
-            assert_eq!(name, "Color");
+        let module = parse_module("Color :: enum { Red, Green, Blue }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Enum(name, _, variants) = ast.stmt(module.roots[0]) {
+            assert_eq!(ast.name(*name), "Color");
+            let variants = ast.variants_in(*variants);
             assert_eq!(variants.len(), 3);
-            assert_eq!(variants[0].name, "Red");
+            assert_eq!(ast.name(variants[0].name), "Red");
             assert!(variants[0].fields.is_none());
-            assert_eq!(variants[1].name, "Green");
+            assert_eq!(ast.name(variants[1].name), "Green");
             assert!(variants[1].fields.is_none());
-            assert_eq!(variants[2].name, "Blue");
+            assert_eq!(ast.name(variants[2].name), "Blue");
             assert!(variants[2].fields.is_none());
         } else {
             bail!("Expected enum declaration");
@@ -5510,24 +4726,22 @@ mod tests {
     #[test]
     fn enum_declaration_data_variants() -> Result<()> {
         let input = "Result :: enum { Ok { value: i64 }, Err { code: i64, message: str } }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, _, variants) = &program[0].node {
-            assert_eq!(name, "Result");
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Enum(name, _, variants) = ast.stmt(module.roots[0]) {
+            assert_eq!(ast.name(*name), "Result");
+            let variants = ast.variants_in(*variants);
             assert_eq!(variants.len(), 2);
-            assert_eq!(variants[0].name, "Ok");
-            let ok_fields = variants[0].fields.as_ref().unwrap();
+            assert_eq!(ast.name(variants[0].name), "Ok");
+            let ok_fields = ast.fields_in(variants[0].fields.unwrap());
             assert_eq!(ok_fields.len(), 1);
-            assert_eq!(ok_fields[0].name, "value");
-            assert_eq!(variants[1].name, "Err");
-            let err_fields = variants[1].fields.as_ref().unwrap();
+            assert_eq!(ast.name(ok_fields[0].name), "value");
+            assert_eq!(ast.name(variants[1].name), "Err");
+            let err_fields = ast.fields_in(variants[1].fields.unwrap());
             assert_eq!(err_fields.len(), 2);
-            assert_eq!(err_fields[0].name, "code");
-            assert_eq!(err_fields[1].name, "message");
+            assert_eq!(ast.name(err_fields[0].name), "code");
+            assert_eq!(ast.name(err_fields[1].name), "message");
         } else {
             bail!("Expected enum declaration");
         }
@@ -5536,25 +4750,21 @@ mod tests {
 
     #[test]
     fn enum_variant_init_unit() -> Result<()> {
-        let input = "color := Color::Red";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
+        let module = parse_module("color := Color::Red")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
             if let Expression::EnumVariantInit(
                 enum_name,
                 variant_name,
                 fields,
-            ) = value
+            ) = ast.expr(*value)
             {
-                assert_eq!(enum_name, "Color");
-                assert_eq!(variant_name, "Red");
+                assert_eq!(ast.name(*enum_name), "Color");
+                assert_eq!(ast.name(*variant_name), "Red");
                 assert!(fields.is_empty());
             } else {
-                bail!("Expected enum variant init, got {:?}", value);
+                bail!("Expected enum variant init, got {:?}", ast.expr(*value));
             }
         } else {
             bail!("Expected let statement");
@@ -5564,26 +4774,23 @@ mod tests {
 
     #[test]
     fn enum_variant_init_with_fields() -> Result<()> {
-        let input = "result := Result::Ok { value = 42 }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
+        let module = parse_module("result := Result::Ok { value = 42 }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
             if let Expression::EnumVariantInit(
                 enum_name,
                 variant_name,
                 fields,
-            ) = value
+            ) = ast.expr(*value)
             {
-                assert_eq!(enum_name, "Result");
-                assert_eq!(variant_name, "Ok");
+                assert_eq!(ast.name(*enum_name), "Result");
+                assert_eq!(ast.name(*variant_name), "Ok");
+                let fields = ast.named_in(*fields);
                 assert_eq!(fields.len(), 1);
-                assert_eq!(fields[0].0, "value");
+                assert_eq!(ast.name(fields[0].name), "value");
             } else {
-                bail!("Expected enum variant init, got {:?}", value);
+                bail!("Expected enum variant init, got {:?}", ast.expr(*value));
             }
         } else {
             bail!("Expected let statement");
@@ -5600,29 +4807,26 @@ mod tests {
                 case _: "other"
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(scrutinee, cases) = value {
-                if let Expression::Identifier(name) = scrutinee.as_ref() {
-                    assert_eq!(name, "x");
-                } else {
-                    bail!("Expected identifier scrutinee");
-                }
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(scrutinee, cases) = ast.expr(*value) {
+                assert_identifier(ast, *scrutinee, "x")?;
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 3);
                 assert!(matches!(
-                    &cases[0].pattern,
+                    ast.pattern(cases[0].pattern),
                     Pattern::Literal(Literal::Integer(1))
                 ));
                 assert!(matches!(
-                    &cases[1].pattern,
+                    ast.pattern(cases[1].pattern),
                     Pattern::Literal(Literal::Integer(2))
                 ));
-                assert!(matches!(&cases[2].pattern, Pattern::Wildcard));
+                assert!(matches!(
+                    ast.pattern(cases[2].pattern),
+                    Pattern::Wildcard
+                ));
             } else {
                 bail!("Expected match expression");
             }
@@ -5641,23 +4845,21 @@ mod tests {
                 case .Blue: 2
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(_, cases) = value {
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(_, cases) = ast.expr(*value) {
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 3);
                 if let Pattern::EnumVariant {
                     enum_name,
                     variant_name,
                     bindings,
-                } = &cases[0].pattern
+                } = ast.pattern(cases[0].pattern)
                 {
                     assert!(enum_name.is_none());
-                    assert_eq!(variant_name, "Red");
+                    assert_eq!(ast.name(*variant_name), "Red");
                     assert!(bindings.is_empty());
                 } else {
                     bail!("Expected enum variant pattern");
@@ -5679,25 +4881,24 @@ mod tests {
                 case .None: 0
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(_, cases) = value {
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(_, cases) = ast.expr(*value) {
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 2);
                 if let Pattern::EnumVariant {
                     enum_name,
                     variant_name,
                     bindings,
-                } = &cases[0].pattern
+                } = ast.pattern(cases[0].pattern)
                 {
                     assert!(enum_name.is_none());
-                    assert_eq!(variant_name, "Some");
+                    assert_eq!(ast.name(*variant_name), "Some");
+                    let bindings = ast.pattern_bindings_in(*bindings);
                     assert_eq!(bindings.len(), 1);
-                    assert_eq!(bindings[0].0, "value");
+                    assert_eq!(ast.name(bindings[0].field), "value");
                 } else {
                     bail!("Expected enum variant pattern with bindings");
                 }
@@ -5718,23 +4919,21 @@ mod tests {
                 case Color::Green: 1
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(_, cases) = value {
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(_, cases) = ast.expr(*value) {
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 2);
                 if let Pattern::EnumVariant {
                     enum_name,
                     variant_name,
                     ..
-                } = &cases[0].pattern
+                } = ast.pattern(cases[0].pattern)
                 {
-                    assert_eq!(enum_name.as_ref().unwrap(), "Color");
-                    assert_eq!(variant_name, "Red");
+                    assert_eq!(ast.name((*enum_name).unwrap()), "Color");
+                    assert_eq!(ast.name(*variant_name), "Red");
                 } else {
                     bail!("Expected fully qualified enum variant pattern");
                 }
@@ -5756,30 +4955,35 @@ mod tests {
                 case (_, 0): "Buzz"
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(_, cases) = value {
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(_, cases) = ast.expr(*value) {
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 3);
-                if let Pattern::Tuple(patterns) = &cases[0].pattern {
+                if let Pattern::Tuple(patterns) = ast.pattern(cases[0].pattern)
+                {
+                    let patterns = ast.patterns_in(*patterns);
                     assert_eq!(patterns.len(), 2);
                     assert!(matches!(
-                        &patterns[0],
+                        ast.pattern(patterns[0]),
                         Pattern::Literal(Literal::Integer(0))
                     ));
                     assert!(matches!(
-                        &patterns[1],
+                        ast.pattern(patterns[1]),
                         Pattern::Literal(Literal::Integer(0))
                     ));
                 } else {
                     bail!("Expected tuple pattern");
                 }
-                if let Pattern::Tuple(patterns) = &cases[1].pattern {
-                    assert!(matches!(&patterns[1], Pattern::Wildcard));
+                if let Pattern::Tuple(patterns) = ast.pattern(cases[1].pattern)
+                {
+                    let patterns = ast.patterns_in(*patterns);
+                    assert!(matches!(
+                        ast.pattern(patterns[1]),
+                        Pattern::Wildcard
+                    ));
                 } else {
                     bail!("Expected tuple pattern with wildcard");
                 }
@@ -5800,21 +5004,19 @@ mod tests {
                 case false: 0
             }
         "#;
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0].node {
-            if let Expression::Switch(_, cases) = value {
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Let { value, .. } = ast.stmt(module.roots[0]) {
+            if let Expression::Switch(_, cases) = ast.expr(*value) {
+                let cases = ast.cases_in(*cases);
                 assert_eq!(cases.len(), 2);
                 assert!(matches!(
-                    &cases[0].pattern,
+                    ast.pattern(cases[0].pattern),
                     Pattern::Literal(Literal::Boolean(true))
                 ));
                 assert!(matches!(
-                    &cases[1].pattern,
+                    ast.pattern(cases[1].pattern),
                     Pattern::Literal(Literal::Boolean(false))
                 ));
             } else {
@@ -5828,21 +5030,19 @@ mod tests {
 
     #[test]
     fn enum_mixed_variants() -> Result<()> {
-        let input = "Option :: enum { None, Some { value: i64 } }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, _, variants) = &program[0].node {
-            assert_eq!(name, "Option");
+        let module =
+            parse_module("Option :: enum { None, Some { value: i64 } }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Enum(name, _, variants) = ast.stmt(module.roots[0]) {
+            assert_eq!(ast.name(*name), "Option");
+            let variants = ast.variants_in(*variants);
             assert_eq!(variants.len(), 2);
-            assert_eq!(variants[0].name, "None");
+            assert_eq!(ast.name(variants[0].name), "None");
             assert!(variants[0].fields.is_none());
-            assert_eq!(variants[1].name, "Some");
+            assert_eq!(ast.name(variants[1].name), "Some");
             assert!(variants[1].fields.is_some());
-            assert_eq!(variants[1].fields.as_ref().unwrap().len(), 1);
+            assert_eq!(ast.fields_in(variants[1].fields.unwrap()).len(), 1);
         } else {
             bail!("Expected enum declaration");
         }
@@ -5852,27 +5052,27 @@ mod tests {
     #[test]
     fn multiple_returns_two_types() -> Result<()> {
         let input = "fn(a: i64, b: i64) -> (i64, i64) { return a / b, a % b }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(
-            params,
-            return_sig,
-            body,
-        )) = &program[0].node
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Expression(expression) = ast.stmt(module.roots[0])
+            && let Expression::Proc(params, return_sig, body) =
+                ast.expr(*expression)
         {
-            assert_eq!(params.len(), 2);
-            if let ReturnKind::Multiple(values) = &return_sig.kind {
+            assert_eq!(ast.params_in(*params).len(), 2);
+            if let ReturnKind::Multiple(values) =
+                &ast.signature(*return_sig).kind
+            {
+                let values = ast.return_values_in(*values);
                 assert_eq!(values.len(), 2);
                 assert!(values.iter().all(|held| held.name.is_none()));
                 assert!(values.iter().all(|held| held.value_type == Type::I64));
             } else {
                 bail!("Expected a return type list");
             }
-            if let Statement::Return(Expression::Tuple(values)) = &body[0].node
+            let body = ast.stmts_in(*body);
+            if let Statement::Return(value) = ast.stmt(body[0])
+                && let Expression::Tuple(values) = ast.expr(*value)
             {
                 assert_eq!(values.len(), 2);
             } else {
@@ -5886,18 +5086,15 @@ mod tests {
 
     #[test]
     fn multiple_returns_bind_by_name() -> Result<()> {
-        let input = "quotient, mut remainder := divide(7, 2)";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::LetMultiple(bindings, _) = &program[0].node {
+        let module = parse_module("quotient, mut remainder := divide(7, 2)")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::LetMultiple(bindings, _) = ast.stmt(module.roots[0]) {
+            let bindings = ast.bindings_in(*bindings);
             assert_eq!(bindings.len(), 2);
-            assert_eq!(bindings[0].name, "quotient");
+            assert_eq!(ast.name(bindings[0].name), "quotient");
             assert!(!bindings[0].mutable);
-            assert_eq!(bindings[1].name, "remainder");
+            assert_eq!(ast.name(bindings[1].name), "remainder");
             assert!(bindings[1].mutable);
         } else {
             bail!("Expected a list binding");
@@ -5916,38 +5113,43 @@ mod tests {
 
     #[test]
     fn return_signature_to_type_single() {
+        let ast = Ast::default();
         let sig = ReturnSignature::plain(ReturnKind::Single(Type::I64));
-        assert_eq!(sig.to_type(), Some(Type::I64));
+        assert_eq!(ast.signature_to_type(&sig), Some(Type::I64));
     }
 
     #[test]
     fn return_signature_to_type_multiple() {
-        use super::ReturnValue;
+        let mut ast = Ast::default();
         let unnamed = |value_type| ReturnValue {
             name: None,
             value_type,
         };
-        let sig = ReturnSignature::plain(ReturnKind::Multiple(vec![
-            unnamed(Type::I64),
-            unnamed(Type::Bool),
-        ]));
+        let values = ast
+            .add_return_values(vec![unnamed(Type::I64), unnamed(Type::Bool)]);
+        let sig = ReturnSignature::plain(ReturnKind::Multiple(values));
         assert_eq!(
-            sig.to_type(),
+            ast.signature_to_type(&sig),
             Some(Type::Struct("__multi_i64_bool".to_string()))
         );
 
         // Named values are part of what the struct is, so a list that names
         // them is a different struct from one that does not.
-        let named = |name: &str, value_type| ReturnValue {
-            name: Some(name.to_string()),
-            value_type,
-        };
-        let sig = ReturnSignature::plain(ReturnKind::Multiple(vec![
-            named("quotient", Type::I64),
-            named("remainder", Type::I64),
-        ]));
+        let quotient = ast.intern("quotient");
+        let remainder = ast.intern("remainder");
+        let values = ast.add_return_values(vec![
+            ReturnValue {
+                name: Some(quotient),
+                value_type: Type::I64,
+            },
+            ReturnValue {
+                name: Some(remainder),
+                value_type: Type::I64,
+            },
+        ]);
+        let sig = ReturnSignature::plain(ReturnKind::Multiple(values));
         assert_eq!(
-            sig.to_type(),
+            ast.signature_to_type(&sig),
             Some(Type::Struct(
                 "__multi_quotient__i64_remainder__i64".to_string()
             ))
@@ -5965,32 +5167,31 @@ mod tests {
 
     #[test]
     fn return_signature_to_type_none() {
+        let ast = Ast::default();
         let sig = ReturnSignature::plain(ReturnKind::None);
-        assert_eq!(sig.to_type(), None);
+        assert_eq!(ast.signature_to_type(&sig), None);
     }
 
     #[test]
     fn generic_function_parameter() -> Result<()> {
-        let input = "identity :: fn(x: $T) -> T { x }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Constant(
-            name,
-            Expression::Proc(params, return_sig, _body),
-        ) = &program[0].node
+        let module = parse_module("identity :: fn(x: $T) -> T { x }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Constant(name, value) = ast.stmt(module.roots[0])
+            && let Expression::Proc(params, return_sig, _body) =
+                ast.expr(*value)
         {
-            assert_eq!(name, "identity");
+            assert_eq!(ast.name(*name), "identity");
+            let params = ast.params_in(*params);
             assert_eq!(params.len(), 1);
-            assert_eq!(params[0].name, "x");
+            assert_eq!(ast.name(params[0].name), "x");
             assert_eq!(
                 params[0].type_annotation,
                 Some(Type::TypeParam("T".to_string()))
             );
-            if let ReturnKind::Single(ret_type) = &return_sig.kind {
+            if let ReturnKind::Single(ret_type) =
+                &ast.signature(*return_sig).kind
+            {
                 assert_eq!(*ret_type, Type::Struct("T".to_string()));
             } else {
                 bail!("Expected single return type");
@@ -6003,17 +5204,14 @@ mod tests {
 
     #[test]
     fn generic_function_multiple_type_params() -> Result<()> {
-        let input = "pair :: fn(a: $T, b: $U) -> void { }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Constant(name, Expression::Proc(params, _, _)) =
-            &program[0].node
+        let module = parse_module("pair :: fn(a: $T, b: $U) -> void { }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Constant(name, value) = ast.stmt(module.roots[0])
+            && let Expression::Proc(params, _, _) = ast.expr(*value)
         {
-            assert_eq!(name, "pair");
+            assert_eq!(ast.name(*name), "pair");
+            let params = ast.params_in(*params);
             assert_eq!(params.len(), 2);
             assert_eq!(
                 params[0].type_annotation,
@@ -6033,21 +5231,22 @@ mod tests {
     fn parameterized_struct() -> Result<()> {
         let input =
             "Pair :: struct($T: Type, $U: Type) { first: T, second: U }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0].node {
-            assert_eq!(name, "Pair");
+        let module = parse_module(input)?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Struct(name, type_params, fields) =
+            ast.stmt(module.roots[0])
+        {
+            assert_eq!(ast.name(*name), "Pair");
+            let type_params = ast.symbols_in(*type_params);
             assert_eq!(type_params.len(), 2);
-            assert_eq!(type_params[0], "T");
-            assert_eq!(type_params[1], "U");
+            assert_eq!(ast.name(type_params[0]), "T");
+            assert_eq!(ast.name(type_params[1]), "U");
+            let fields = ast.fields_in(*fields);
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "first");
+            assert_eq!(ast.name(fields[0].name), "first");
             assert_eq!(fields[0].field_type, Type::Struct("T".to_string()));
-            assert_eq!(fields[1].name, "second");
+            assert_eq!(ast.name(fields[1].name), "second");
             assert_eq!(fields[1].field_type, Type::Struct("U".to_string()));
         } else {
             bail!("Expected struct declaration");
@@ -6057,19 +5256,19 @@ mod tests {
 
     #[test]
     fn parameterized_struct_single_param() -> Result<()> {
-        let input = "Wrapper :: struct($T: Type) { value: T }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0].node {
-            assert_eq!(name, "Wrapper");
+        let module = parse_module("Wrapper :: struct($T: Type) { value: T }")?;
+        assert_eq!(module.roots.len(), 1);
+        let ast = &module.ast;
+        if let Statement::Struct(name, type_params, fields) =
+            ast.stmt(module.roots[0])
+        {
+            assert_eq!(ast.name(*name), "Wrapper");
+            let type_params = ast.symbols_in(*type_params);
             assert_eq!(type_params.len(), 1);
-            assert_eq!(type_params[0], "T");
+            assert_eq!(ast.name(type_params[0]), "T");
+            let fields = ast.fields_in(*fields);
             assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].name, "value");
+            assert_eq!(ast.name(fields[0].name), "value");
             assert_eq!(fields[0].field_type, Type::Struct("T".to_string()));
         } else {
             bail!("Expected struct declaration");
@@ -6077,12 +5276,17 @@ mod tests {
         Ok(())
     }
 
-    fn constant_names(program: &[super::Spanned<Statement>]) -> Vec<String> {
-        program
+    fn constant_names(module: &Module) -> Vec<String> {
+        module
+            .roots
             .iter()
-            .filter_map(|statement| match &statement.node {
-                Statement::Constant(name, _) => Some(name.clone()),
-                Statement::Struct(name, _, _) => Some(name.clone()),
+            .filter_map(|statement| match module.ast.stmt(*statement) {
+                Statement::Constant(name, _) => {
+                    Some(module.ast.name(*name).to_string())
+                }
+                Statement::Struct(name, _, _) => {
+                    Some(module.ast.name(*name).to_string())
+                }
                 _ => None,
             })
             .collect()
@@ -6145,7 +5349,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let (program, diagnostics) = parser.parse_recovering();
         assert!(diagnostics.is_empty(), "clean input has no diagnostics");
-        assert_eq!(program.len(), 2);
+        assert_eq!(program.roots.len(), 2);
         Ok(())
     }
 
@@ -6166,17 +5370,22 @@ mod tests {
             !diagnostics.is_empty(),
             "the malformed statement should produce a diagnostic"
         );
-        let (Statement::Constant(name, Expression::Function(_, _, body))
-        | Statement::Constant(name, Expression::Proc(_, _, body))) =
-            &program[0].node
+        let ast = &program.ast;
+        let Statement::Constant(name, value) = ast.stmt(program.roots[0])
         else {
             bail!("expected a function constant");
         };
-        assert_eq!(name, "main");
-        let bindings: Vec<&str> = body
+        let (Expression::Function(_, _, body) | Expression::Proc(_, _, body)) =
+            ast.expr(*value)
+        else {
+            bail!("expected a function constant");
+        };
+        assert_eq!(ast.name(*name), "main");
+        let bindings: Vec<&str> = ast
+            .stmts_in(*body)
             .iter()
-            .filter_map(|statement| match &statement.node {
-                Statement::Let { name, .. } => Some(name.as_str()),
+            .filter_map(|statement| match ast.stmt(*statement) {
+                Statement::Let { name, .. } => Some(ast.name(*name)),
                 _ => None,
             })
             .collect();
@@ -6200,16 +5409,20 @@ mod tests {
         let mut parser = Parser::with_positions(&tokens, &positions);
         let (program, diagnostics) = parser.parse_recovering();
         assert!(!diagnostics.is_empty());
-        let (Statement::Constant(_, Expression::Function(_, _, body))
-        | Statement::Constant(_, Expression::Proc(_, _, body))) =
-            &program[0].node
+        let ast = &program.ast;
+        let Statement::Constant(_, value) = ast.stmt(program.roots[0]) else {
+            bail!("expected a function constant");
+        };
+        let (Expression::Function(_, _, body) | Expression::Proc(_, _, body)) =
+            ast.expr(*value)
         else {
             bail!("expected a function constant");
         };
-        let has_call = body.iter().any(|statement| {
+        let has_call = ast.stmts_in(*body).iter().any(|statement| {
             matches!(
-                &statement.node,
-                Statement::Expression(Expression::Call(..))
+                ast.stmt(*statement),
+                Statement::Expression(expression)
+                    if matches!(ast.expr(*expression), Expression::Call(..))
             )
         });
         assert!(

@@ -7,10 +7,11 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use frost::{
-    BuildCache, Expression, Layer, Lexer, Literal, Manifest, Parameter,
-    Parser as FrostParser, Position, Resolution, ReturnKind, ReturnSignature,
-    RunOutcome, SearchRoot, Spanned, Statement, TEST_PREFIX, Type,
-    build_module, build_module_per_module, check_callback_declarations,
+    Ast, BuildCache, ExprId, Expression as AstExpression, Layer, Lexer,
+    Literal as AstLiteral, Manifest, Module, Parameter as AstParameter,
+    Parser as FrostParser, Position, Range32, Resolution, ReturnKind,
+    ReturnSignature, RunOutcome, SearchRoot, Statement, TEST_PREFIX, TokenSpan,
+    Type, build_module, build_module_per_module, check_callback_declarations,
     check_frame_escapes, check_linearity, check_module, check_ownership,
     check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
     lower_failure_sets, lower_multiple_returns, lower_param_modes,
@@ -122,125 +123,137 @@ fn search_roots(
 
 /// Whether the program already declares this runtime entry point itself, which
 /// the compiler's own source does. Declaring it twice is a redefinition.
-fn declares_extern(statements: &[Spanned<Statement>], wanted: &str) -> bool {
-    statements.iter().any(|statement| {
-        matches!(&statement.node, Statement::Extern { name, .. } if name == wanted)
+fn declares_extern(program: &Module, wanted: &str) -> bool {
+    program.roots.iter().any(|statement| {
+        matches!(
+            program.ast.stmt(*statement),
+            Statement::Extern { name, .. }
+                if program.ast.name(*name) == wanted
+        )
     })
 }
 
-/// What `assert` lowers to. Generated here and audited by construction, so a
-/// call the compiler wrote itself needs no `unsafe` block around it.
-fn assert_declaration() -> Spanned<Statement> {
-    Spanned::new(
-        Statement::Extern {
-            name: "frost_rt_assert_at".to_string(),
-            params: vec![
-                Parameter {
-                    name: "cond".to_string(),
-                    type_annotation: Some(Type::Bool),
-                    mutable: false,
-                    mode: frost::ParamMode::Read,
-                    compile_time_signature: None,
-                    pack: false,
-                },
-                Parameter {
-                    name: "where".to_string(),
-                    type_annotation: Some(Type::Ptr(Box::new(Type::I8))),
-                    mutable: false,
-                    mode: frost::ParamMode::Read,
-                    compile_time_signature: None,
-                    pack: false,
-                },
-            ],
-            return_type: None,
-            safe: true,
-        },
-        Position::default(),
-    )
-}
-
-fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
-    let spanned = |statement| Spanned::new(statement, Position::default());
-    let call = |name: &str, arguments: Vec<Expression>| {
-        Expression::Call(
-            Box::new(Expression::Identifier(name.to_string())),
-            arguments,
-        )
-    };
-    let call_stmt = |name: &str, arguments: Vec<Expression>| {
-        spanned(Statement::Expression(call(name, arguments)))
-    };
-    let param = |name: &str, ty: Type| Parameter {
-        name: name.to_string(),
+fn harness_parameter(ast: &mut Ast, name: &str, ty: Type) -> AstParameter {
+    let name = ast.intern(name);
+    AstParameter {
+        name,
         type_annotation: Some(ty),
         mutable: false,
         mode: frost::ParamMode::Read,
         compile_time_signature: None,
         pack: false,
-    };
-    let external =
-        |name: &str, params: Vec<Parameter>, return_type: Option<Type>| {
-            spanned(Statement::Extern {
-                name: name.to_string(),
-                params,
-                return_type,
-                // The harness's own runtime entry points, generated here and
-                // audited by construction, so the generated body needs no
-                // `unsafe` block around a call the compiler wrote itself.
-                safe: true,
-            })
-        };
+    }
+}
 
-    // The runner takes each test body as a function pointer rather than the
-    // harness calling it directly, because a failing assertion has to escape
-    // back into the runner without ending the run, and the setjmp that makes
-    // that possible has to own the call. See runtime/frost_runtime.c.
-    let mut items = vec![
-        external(
-            "frost_rt_test_run",
-            vec![
-                param("name", Type::Ptr(Box::new(Type::I8))),
-                param("body", Type::Proc(Vec::new(), Box::new(Type::Void))),
-            ],
-            None,
-        ),
-        external("frost_rt_test_summary", Vec::new(), Some(Type::I64)),
-        external(
-            "frost_rt_assert_at",
-            vec![
-                param("cond", Type::Bool),
-                param("where", Type::Ptr(Box::new(Type::I8))),
-            ],
-            None,
-        ),
-    ];
+fn push_extern(
+    program: &mut Module,
+    name: &str,
+    params: Vec<AstParameter>,
+    return_type: Option<Type>,
+) {
+    let name = program.ast.intern(name);
+    let params = program.ast.add_parameters(params);
+    let id = program.ast.push_stmt(
+        Statement::Extern {
+            name,
+            params,
+            return_type,
+            // The harness's own runtime entry points, generated here and
+            // audited by construction, so the generated body needs no
+            // `unsafe` block around a call the compiler wrote itself.
+            safe: true,
+        },
+        TokenSpan::NONE,
+    );
+    program.roots.push(id);
+}
+
+/// What `assert` lowers to. Generated here and audited by construction, so a
+/// call the compiler wrote itself needs no `unsafe` block around it.
+fn push_assert_declaration(program: &mut Module) {
+    let cond = harness_parameter(&mut program.ast, "cond", Type::Bool);
+    let place = harness_parameter(
+        &mut program.ast,
+        "where",
+        Type::Ptr(Box::new(Type::I8)),
+    );
+    push_extern(program, "frost_rt_assert_at", vec![cond, place], None);
+}
+
+// The runner takes each test body as a function pointer rather than the
+// harness calling it directly, because a failing assertion has to escape
+// back into the runner without ending the run, and the setjmp that makes
+// that possible has to own the call. See runtime/frost_runtime.c.
+fn push_test_harness(program: &mut Module, tests: &[(String, String)]) {
+    let name = harness_parameter(
+        &mut program.ast,
+        "name",
+        Type::Ptr(Box::new(Type::I8)),
+    );
+    let body_parameter = harness_parameter(
+        &mut program.ast,
+        "body",
+        Type::Proc(Vec::new(), Box::new(Type::Void)),
+    );
+    push_extern(
+        program,
+        "frost_rt_test_run",
+        vec![name, body_parameter],
+        None,
+    );
+    push_extern(
+        program,
+        "frost_rt_test_summary",
+        Vec::new(),
+        Some(Type::I64),
+    );
+    let cond = harness_parameter(&mut program.ast, "cond", Type::Bool);
+    let place = harness_parameter(
+        &mut program.ast,
+        "where",
+        Type::Ptr(Box::new(Type::I8)),
+    );
+    push_extern(program, "frost_rt_assert_at", vec![cond, place], None);
+
+    let ast = &mut program.ast;
+    let call = |ast: &mut Ast, name: &str, arguments: Vec<ExprId>| {
+        let callee = ast.intern(name);
+        let callee =
+            ast.push_expr(AstExpression::Identifier(callee), TokenSpan::NONE);
+        let arguments = ast.add_expr_list(&arguments);
+        ast.push_expr(AstExpression::Call(callee, arguments), TokenSpan::NONE)
+    };
 
     let mut body = Vec::new();
     for (test_name, function_name) in tests {
-        body.push(call_stmt(
-            "frost_rt_test_run",
-            vec![
-                Expression::Literal(Literal::String(test_name.clone())),
-                Expression::Identifier(function_name.clone()),
-            ],
-        ));
+        let test_name = ast.push_expr(
+            AstExpression::Literal(AstLiteral::String(test_name.clone())),
+            TokenSpan::NONE,
+        );
+        let function = ast.intern(function_name);
+        let function =
+            ast.push_expr(AstExpression::Identifier(function), TokenSpan::NONE);
+        let run = call(ast, "frost_rt_test_run", vec![test_name, function]);
+        body.push(ast.push_stmt(Statement::Expression(run), TokenSpan::NONE));
     }
     // The summary is the last expression, so its failure count is what `main`
     // answers with and what the process exits on.
-    body.push(spanned(Statement::Expression(call(
-        "frost_rt_test_summary",
-        Vec::new(),
-    ))));
+    let summary = call(ast, "frost_rt_test_summary", Vec::new());
+    body.push(ast.push_stmt(Statement::Expression(summary), TokenSpan::NONE));
 
-    items.push(spanned(Statement::Constant(
-        "main".to_string(),
-        Expression::Function(
-            Vec::new(),
-            ReturnSignature::plain(ReturnKind::Single(Type::I64)),
-            body,
-        ),
-    )));
-    items
+    let body = ast.add_stmt_list(&body);
+    let signature = ast
+        .push_signature(ReturnSignature::plain(ReturnKind::Single(Type::I64)));
+    let main_function = ast.push_expr(
+        AstExpression::Function(Range32::EMPTY, signature, body),
+        TokenSpan::NONE,
+    );
+    let main_name = ast.intern("main");
+    let main_id = ast.push_stmt(
+        Statement::Constant(main_name, main_function),
+        TokenSpan::NONE,
+    );
+    program.roots.push(main_id);
 }
 
 // Every `.frost` file under a directory, in a stable order.
@@ -431,20 +444,24 @@ fn compile() -> Result<()> {
         },
     )
     .context("Import error")?;
-    let mut statements = resolved.statements;
+    let mut program = resolved.program;
     let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;
     let mut modules = resolved.modules;
     if !cli.test {
-        statements.retain(|statement| {
+        let ast = &program.ast;
+        program.roots.retain(|statement| {
             !matches!(
-                &statement.node,
-                Statement::Constant(name, _) if name.contains(TEST_PREFIX)
+                ast.stmt(*statement),
+                Statement::Constant(name, _)
+                    if ast.name(*name).contains(TEST_PREFIX)
             )
         });
     }
-    check_callback_declarations(&statements).context("Callback error")?;
-    let (unchecked, idle) = frost::check_unsafety_and_audit(&statements);
+    check_callback_declarations(&program.ast, &program.roots)
+        .context("Callback error")?;
+    let (unchecked, idle) =
+        frost::check_unsafety_and_audit(&program.ast, &program.roots);
     if !unchecked.is_empty() {
         let listed: Vec<String> = unchecked
             .iter()
@@ -468,39 +485,43 @@ fn compile() -> Result<()> {
     }
     // `unsafe fn` is only meaningful to the unsafety check. Strip it to the
     // plain function it wraps before any later pass or backend sees one.
-    strip_unsafe_fns(&mut statements);
-    resolve_distinct_types(&mut statements);
-    lower_multiple_returns(&mut statements).context("Multiple return error")?;
-    check_regions(&statements).context("Region error")?;
-    check_frame_escapes(&statements).context("Region error")?;
-    lower_allocation_sources(&mut statements)
+    strip_unsafe_fns(&mut program.ast, &program.roots);
+    resolve_distinct_types(&mut program.ast, &program.roots);
+    lower_multiple_returns(&mut program.ast, &mut program.roots)
+        .context("Multiple return error")?;
+    check_regions(&program.ast, &program.roots).context("Region error")?;
+    check_frame_escapes(&program.ast, &program.roots)
+        .context("Region error")?;
+    lower_allocation_sources(&mut program.ast, &program.roots)
         .context("Allocation source error")?;
     // A failure set's result is linear when what it carries is, so the set of
     // linear types grows here and the ownership check below sees the whole of
     // it.
-    lower_failure_sets(&mut statements, &mut linear_types)
+    lower_failure_sets(&mut program, &mut linear_types)
         .context("Failure set error")?;
-    lower_param_modes(&mut statements);
+    lower_param_modes(&mut program.ast, &program.roots);
     // `assert` is a builtin, so it belongs to every program rather than to the
     // test harness that used to be the only thing declaring what it lowers to.
     // Without this it read as an unknown variable outside a test, which is a
     // different language from the one the self-hosted compiler accepts.
-    if !cli.test && !declares_extern(&statements, "frost_rt_assert_at") {
-        statements.push(assert_declaration());
+    if !cli.test && !declares_extern(&program, "frost_rt_assert_at") {
+        push_assert_declaration(&mut program);
     }
-    check_ownership(&statements, &linear_types).context("Ownership error")?;
+    check_ownership(&program.ast, &program.roots, &linear_types)
+        .context("Ownership error")?;
 
     if cli.test {
         if tests.is_empty() {
             println!("no tests found in {}", cli.file);
             return Ok(());
         }
-        let mut augmented = statements.clone();
-        augmented.extend(test_harness(&tests));
-        check_ownership(&augmented, &linear_types)
+        let mut augmented = program.clone();
+        push_test_harness(&mut augmented, &tests);
+        check_ownership(&augmented.ast, &augmented.roots, &linear_types)
             .context("Ownership error")?;
-        let module = build_module(&augmented, &linear_types)
-            .context("IR lowering error")?;
+        let module =
+            build_module(&mut augmented.ast, &augmented.roots, &linear_types)
+                .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
         let stem = Path::new(&cli.file)
@@ -554,8 +575,9 @@ fn compile() -> Result<()> {
     }
 
     if cli.run_ir {
-        let module = build_module(&statements, &linear_types)
-            .context("IR lowering error")?;
+        let module =
+            build_module(&mut program.ast, &program.roots, &linear_types)
+                .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
         match run_module(&module) {
@@ -571,8 +593,9 @@ fn compile() -> Result<()> {
     }
 
     if cli.emit_c {
-        let module = build_module(&statements, &linear_types)
-            .context("IR lowering error")?;
+        let module =
+            build_module(&mut program.ast, &program.roots, &linear_types)
+                .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
         let c_source = emit_c(&module).context("C emission error")?;
@@ -617,9 +640,13 @@ fn compile() -> Result<()> {
         // also where a specialization is emitted once per module that asked for
         // it rather than once per program.
         let module = if cli.link {
-            build_module_per_module(&statements, &linear_types)
+            build_module_per_module(
+                &mut program.ast,
+                &program.roots,
+                &linear_types,
+            )
         } else {
-            build_module(&statements, &linear_types)
+            build_module(&mut program.ast, &program.roots, &linear_types)
         }
         .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
@@ -737,8 +764,9 @@ fn compile() -> Result<()> {
             }
         }
     } else {
-        let module = build_module(&statements, &linear_types)
-            .context("IR lowering error")?;
+        let module =
+            build_module(&mut program.ast, &program.roots, &linear_types)
+                .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
         let object_bytes = compile_ir_to_object(&module)
