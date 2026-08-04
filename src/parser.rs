@@ -3427,10 +3427,17 @@ impl<'a> Parser<'a> {
         if !matches!(self.peek_nth(0), Token::LeftBrace) {
             bail!("Expected a left brace in block!");
         }
+        // The line the block opens on. A statement sharing it is not indented
+        // relative to anything, so it sets no column for the rest to keep.
+        let opened_on = self.current_position().unwrap_or_default().line;
         self.read_token();
         self.block_depth += 1;
 
         let mut statements = Vec::new();
+        // The column every statement of this block begins at, set by the first,
+        // and the line the last one started on.
+        let mut block_column: Option<usize> = None;
+        let mut previous_line = opened_on;
 
         while self.peek_nth(0) != &Token::RightBrace
             && self.peek_nth(0) != &Token::EndOfFile
@@ -3444,6 +3451,29 @@ impl<'a> Parser<'a> {
             // parsing moves the cursor.
             let opened_with_minus =
                 !statements.is_empty() && self.peek_nth(0) == &Token::Minus;
+            // Every statement of a block begins at the same column. One
+            // indented past its neighbours reads as a continuation of the line
+            // above, and a continuation that parses as a statement of its own
+            // is an expression that lost the operator joining it to that line.
+            if let Some(column) = block_column
+                && position.line != previous_line
+                && position.column > column
+            {
+                self.record_error(
+                    position,
+                    &anyhow::anyhow!(
+                        "this line is indented past the statement above it, so \
+                         it reads as continuing that line, and it begins a \
+                         statement of its own. An expression broken over lines \
+                         carries the operator that joins them onto the second, \
+                         or is written inside brackets"
+                    ),
+                );
+            }
+            if block_column.is_none() && position.line != previous_line {
+                block_column = Some(position.column);
+            }
+            previous_line = position.line;
             match self.parse_statement() {
                 Ok(Some(statement)) => {
                     statements.push(statement);

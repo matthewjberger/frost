@@ -17296,6 +17296,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // about what is wrong with it.
     // A comma separates one argument from the next. Without the rule
     // `add(1 2)` compiled and answered what `add(1, 2)` answers.
+    // A leading operator continues the line above, so dropping one turns one
+    // statement into two and the terms after the break stop being read.
+    // `x := 10` over `+ 20` answers 30, and without the `+` it answers 10.
+    (
+        "a_continuation_that_lost_its_operator",
+        "main :: fn() -> i64 {
+             x := 10
+                 20
+             x
+}
+",
+        "indented past the statement above it",
+    ),
     (
         "a_dropped_comma_between_arguments",
         "add :: fn(a: i64, b: i64) -> i64 { a + b }
