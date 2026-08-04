@@ -28,22 +28,6 @@ asm_i :: fn(before: str, value: i64, after: str) {
     emit_text("\n")
 }
 
-// A label definition, and a jump or branch to one.
-asm_label :: fn(name: str, id: i64) {
-    emit_text(name)
-    frost_rt_emit_int(id)
-    emit_text(":\n")
-}
-
-asm_jump :: fn(op: str, name: str, id: i64) {
-    emit_text("    ")
-    emit_text(op)
-    emit_text(" ")
-    emit_text(name)
-    frost_rt_emit_int(id)
-    emit_text("\n")
-}
-
 abi_arg_regs :: fn(mut p: Parser) -> i64 {
     if (p.abi_windows == 1) {
         return 4
@@ -233,36 +217,6 @@ asm_read :: fn(mut p: Parser, off: i64, len: i64) {
     held := arena_at(p.asm_names, at)
     held.reads = held.reads + 1
     held.weight = held.weight + weight
-}
-
-// Whether the name is one the emitter has to read from its slot every time.
-// A name the scan never met is pinned, since the scan is what says otherwise.
-asm_pinned :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    var i: i64 = 0
-    while (i < p.asm_names.count) {
-        entry := arena_at(p.asm_names, i)
-        if (entry.name_len == len
-            && bytes_equal(p.src, entry.name_off, off, len)) {
-            return entry.pinned == 1
-        }
-        i = i + 1
-    }
-    true
-}
-
-// How many times the body asks for the name's value. 0 for a name the scan
-// never met, which together with `asm_pinned` leaves it alone.
-asm_reads_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i: i64 = 0
-    while (i < p.asm_names.count) {
-        entry := arena_at(p.asm_names, i)
-        if (entry.name_len == len
-            && bytes_equal(p.src, entry.name_off, off, len)) {
-            return entry.reads
-        }
-        i = i + 1
-    }
-    0
 }
 
 // One expression. `place` says the emitter wants where this expression lives
@@ -1328,11 +1282,6 @@ emit_asm_push :: fn() {
     asm("movq %rax, (%rsp)")
 }
 
-emit_asm_pop_rax :: fn() {
-    asm("movq (%rsp), %rax")
-    asm("addq $16, %rsp")
-}
-
 // Where an expression leaves its left half while its right half is worked out.
 // The stack would do, and did, but moving the stack pointer either side of the
 // value costs an instruction each way that the frame does not: the function has
@@ -1359,13 +1308,6 @@ emit_asm_unspill :: fn(mut p: Parser) {
     p.spill_depth = p.spill_depth - 1
     held := arena_at(p.spill_slots, p.spill_depth)
     asm_i("movq ", held.slot, "(%rbp), %rax")
-}
-
-emit_asm_pop_arg :: fn(mut p: Parser, index: i64) {
-    emit_text("    movq (%rsp), ")
-    emit_asm_arg_reg(p, index)
-    emit_text("\n")
-    asm("addq $16, %rsp")
 }
 
 // A comparison leaves 0 or 1 in rax.

@@ -399,13 +399,6 @@ intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
     answer
 }
 
-// Whether a name is local to this unit, which is what a leading `.L` says. The
-// object never carries one: a reference to a local name is arithmetic done
-// here. 76 is `L`.
-is_local_name :: fn(src: str, off: i64, len: i64) -> bool {
-    len >= 2 && src[off] == CH_DOT && src[off + 1] == 76
-}
-
 // ---------------------------------------------------------------------------
 // Registers
 // ---------------------------------------------------------------------------
