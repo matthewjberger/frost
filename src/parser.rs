@@ -1719,8 +1719,6 @@ impl<'a> Parser<'a> {
                 | Token::Bang
                 | Token::Minus
                 | Token::Ampersand
-                | Token::Sizeof
-                | Token::Typename
                 | Token::Dollar
                 | Token::True
                 | Token::False
@@ -1738,24 +1736,38 @@ impl<'a> Parser<'a> {
     fn parse_expression(&mut self, precedence: Precedence) -> Result<ExprId> {
         let start = self.mark();
         let mut expression = match self.peek_nth(0) {
-            // `type_id(T)` reads as a call and takes a type, so it is
-            // recognized here rather than left to the ordinary call path, which
-            // would have to parse a type as an expression.
+            // `sizeof(T)`, `typename(T)` and `type_id(T)` read as calls and
+            // take a type, so they are recognized here rather than left to the
+            // ordinary call path, which would have to parse a type as an
+            // expression. What comes out is the same `Call` every other builtin
+            // is: the type rides along as an argument, so no pass has a node
+            // form to enumerate for these.
             Token::Identifier(word)
-                if word == "type_id"
-                    && matches!(self.peek_nth(1), Token::LeftParentheses) =>
+                if matches!(
+                    word.as_str(),
+                    "sizeof" | "typename" | "type_id"
+                ) && matches!(self.peek_nth(1), Token::LeftParentheses) =>
             {
+                let word = word.clone();
                 self.read_token();
                 self.read_token();
-                if matches!(self.peek_nth(0), Token::Dollar) {
+                if word != "sizeof" && matches!(self.peek_nth(0), Token::Dollar)
+                {
                     self.read_token();
                 }
                 let held = self.parse_type()?;
                 if !matches!(self.read_token(), Token::RightParentheses) {
-                    bail!("Expected ')' after the type in type_id");
+                    bail!("Expected ')' after the type in {word}");
                 }
+                let span = self.span_from(start);
+                let argument =
+                    self.ast.push_expr(Expression::TypeValue(held), span);
+                let callee = self.ast.intern(&word);
+                let callee =
+                    self.ast.push_expr(Expression::Identifier(callee), span);
+                let arguments = self.ast.add_expr_list(&[argument]);
                 self.ast
-                    .push_expr(Expression::TypeId(held), self.span_from(start))
+                    .push_expr(Expression::Call(callee, arguments), span)
             }
             Token::Identifier(identifier) => {
                 let identifier = identifier.to_string();
@@ -1820,8 +1832,6 @@ impl<'a> Parser<'a> {
                     "a borrow `&`/`&mut` is not surface syntax; pass a plain value and the compiler borrows for the parameter mode, or take a raw pointer with ptr_to(x)"
                 );
             }
-            Token::Sizeof => self.parse_sizeof()?,
-            Token::Typename => self.parse_typename()?,
             Token::Dollar => {
                 self.read_token();
                 let held = self.parse_type()?;
@@ -2174,40 +2184,6 @@ impl<'a> Parser<'a> {
             Expression::Index(expression, index_expression),
             self.span_covering(expression),
         ))
-    }
-
-    // `typename(T)` and `typename($T)`, the same shape `type_id` takes.
-    fn parse_typename(&mut self) -> Result<ExprId> {
-        let start = self.mark();
-        self.read_token();
-        if !matches!(self.read_token(), Token::LeftParentheses) {
-            bail!("Expected '(' after typename");
-        }
-        if matches!(self.peek_nth(0), Token::Dollar) {
-            self.read_token();
-        }
-        let typ = self.parse_type()?;
-        if !matches!(self.read_token(), Token::RightParentheses) {
-            bail!("Expected ')' after the type in typename");
-        }
-        Ok(self
-            .ast
-            .push_expr(Expression::TypeName(typ), self.span_from(start)))
-    }
-
-    fn parse_sizeof(&mut self) -> Result<ExprId> {
-        let start = self.mark();
-        self.read_token();
-        if !matches!(self.read_token(), Token::LeftParentheses) {
-            bail!("Expected '(' after sizeof");
-        }
-        let typ = self.parse_type()?;
-        if !matches!(self.read_token(), Token::RightParentheses) {
-            bail!("Expected ')' after type in sizeof");
-        }
-        Ok(self
-            .ast
-            .push_expr(Expression::Sizeof(typ), self.span_from(start)))
     }
 
     // A field name, wherever one is read: declaring a struct or an enum
@@ -4506,20 +4482,37 @@ mod tests {
         Ok(())
     }
 
+    // The type a builtin call carries, when the statement is one. `sizeof`,
+    // `typename` and `type_id` all parse as a call to the name with the type
+    // riding along as a `TypeValue` argument, so no pass has a node form to
+    // enumerate for them.
+    fn builtin_call_type(module: &Module, name: &str) -> Result<Type> {
+        let Statement::Expression(expression) =
+            module.ast.stmt(module.roots[0])
+        else {
+            bail!("Expected an expression statement");
+        };
+        let Expression::Call(callee, arguments) = module.ast.expr(*expression)
+        else {
+            bail!("Expected a call expression");
+        };
+        let Expression::Identifier(word) = module.ast.expr(*callee) else {
+            bail!("Expected the builtin's name as the callee");
+        };
+        assert_eq!(module.ast.name(*word), name);
+        let arguments = module.ast.exprs_in(*arguments);
+        assert_eq!(arguments.len(), 1);
+        let Expression::TypeValue(typ) = module.ast.expr(arguments[0]) else {
+            bail!("Expected the type as a TypeValue argument");
+        };
+        Ok(typ.clone())
+    }
+
     #[test]
     fn sizeof_expression() -> Result<()> {
         let module = parse_module("sizeof(i64)")?;
         assert_eq!(module.roots.len(), 1);
-        if let Statement::Expression(expression) =
-            module.ast.stmt(module.roots[0])
-            && let Expression::Sizeof(typ)
-            | Expression::TypeId(typ)
-            | Expression::TypeName(typ) = module.ast.expr(*expression)
-        {
-            assert_eq!(*typ, Type::I64);
-        } else {
-            bail!("Expected sizeof expression");
-        }
+        assert_eq!(builtin_call_type(&module, "sizeof")?, Type::I64);
         Ok(())
     }
 
@@ -4527,16 +4520,10 @@ mod tests {
     fn sizeof_pointer_expression() -> Result<()> {
         let module = parse_module("sizeof(^i64)")?;
         assert_eq!(module.roots.len(), 1);
-        if let Statement::Expression(expression) =
-            module.ast.stmt(module.roots[0])
-            && let Expression::Sizeof(typ)
-            | Expression::TypeId(typ)
-            | Expression::TypeName(typ) = module.ast.expr(*expression)
-        {
-            assert_eq!(*typ, Type::Ptr(Box::new(Type::I64)));
-        } else {
-            bail!("Expected sizeof expression");
-        }
+        assert_eq!(
+            builtin_call_type(&module, "sizeof")?,
+            Type::Ptr(Box::new(Type::I64))
+        );
         Ok(())
     }
 

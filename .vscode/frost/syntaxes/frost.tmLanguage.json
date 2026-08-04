@@ -190,7 +190,7 @@
         },
         {
           "name": "keyword.other.frost",
-          "match": "\\b(cast|print|sizeof|typename)\\b"
+          "match": "\\b(print)\\b"
         },
         {
           "name": "constant.language.boolean.frost",
@@ -205,7 +205,7 @@
     "builtin-functions": {
       "comment": "the primitives the compiler provides rather than the standard library",
       "name": "support.function.builtin.frost",
-      "match": "\\b(assert|flags_has|include_str|ptr_to|ptr_cast|slice_from|slice_len|str_len|wrap_add|wrap_sub|wrap_mul)\\b"
+      "match": "\\b(assert|cast|flags_has|include_str|ptr_to|ptr_cast|sizeof|slice_from|slice_len|str_len|type_id|typename|wrap_add|wrap_sub|wrap_mul)\\b"
     },
     "builtin-types": {
       "patterns": [

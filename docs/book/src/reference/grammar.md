@@ -123,7 +123,9 @@ Prefix =
     | "-" Expr
     | "!" Expr
     | "$" Type                                // type value (11.3)
-    | "sizeof" "(" Type ")"
+    | TypeBuiltin "(" "$"? Type ")"           // sizeof / typename / type_id (6.8)
+
+TypeBuiltin = "sizeof" | "typename" | "type_id"
 
 Primary =
       INTEGER | FLOAT | STRING | "true" | "false"

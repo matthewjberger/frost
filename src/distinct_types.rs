@@ -246,14 +246,8 @@ fn walk_expression(
             walk_signature(ast, signature, declared);
             walk_block(ast, body, declared);
         }
-        Expression::Sizeof(..)
-        | Expression::TypeId(..)
-        | Expression::TypeName(..)
-        | Expression::TypeValue(..) => {
-            let (Expression::Sizeof(ty)
-            | Expression::TypeId(ty)
-            | Expression::TypeName(ty)
-            | Expression::TypeValue(ty)) =
+        Expression::TypeValue(..) => {
+            let Expression::TypeValue(ty) =
                 &mut ast.expressions[expression.0 as usize]
             else {
                 return;

@@ -2525,9 +2525,6 @@ impl MoveChecker<'_> {
             // compile error here instead of being walked past unexamined.
             Expression::Literal(_)
             | Expression::Boolean(_)
-            | Expression::Sizeof(_)
-            | Expression::TypeId(_)
-            | Expression::TypeName(_)
             | Expression::TypeValue(_)
             | Expression::Range(..)
             | Expression::Function(..)

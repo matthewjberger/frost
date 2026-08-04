@@ -61,7 +61,7 @@ in full:
 
 ```
 break case continue defer distinct else enum extern false fn for if import
-in inline linear match move mut print ref return safe sizeof struct true
+in inline linear match move mut print ref return safe struct true
 type unsafe uses where while with
 ```
 
@@ -80,6 +80,11 @@ read as a declaration only when a scalar type and a brace follow it (3.6b), and
 `value` only as a parameter mode, where a name follows it (chapter 12). `Type`
 (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
 identifier recognized in that position, unlike the lowercase keyword `type`.
+
+The type builtins `sizeof`, `typename` and `type_id` are not reserved either:
+each is an ordinary name read as the builtin only where it is called with a
+type argument (6.8), the way `ptr_to` and the other builtin functions are read
+at a call.
 
 ## 2.5 Literals
 
