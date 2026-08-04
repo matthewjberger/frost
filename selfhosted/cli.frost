@@ -93,7 +93,7 @@ value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
     if (argument_len <= flag_len) {
         return ""
     }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < flag_len) {
         if (byte_at(argument, k) != byte_at(flag, k)) {
             return ""
@@ -117,7 +117,7 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
     first_len := cstr_len(first)
     second_len := cstr_len(second)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(first_len + second_len + 1)) }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < first_len) {
         byte_set(out, k, byte_at(first, k))
         k = k + 1
@@ -134,8 +134,8 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
 // A string with a number after it, for the per-module file names an
 // incremental build works with: `<build>/m3.s` and `<build>/m3.o`.
 join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
-    var digits : i64 = 1
-    var scale : i64 = 1
+    var digits: i64 = 1
+    var scale: i64 = 1
     var counted := number
     while (counted >= 10) {
         counted = counted / 10
@@ -147,13 +147,13 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     out := unsafe {
         ptr_cast($i8, frost_rt_alloc(first_len + digits + last_len + 1))
     }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < first_len) {
         byte_set(out, k, byte_at(first, k))
         k = k + 1
     }
     var value := number
-    var written : i64 = 0
+    var written: i64 = 0
     while (written < digits) {
         digit := value / scale
         byte_set(out, first_len + written, CH_0 + digit)
@@ -182,8 +182,8 @@ file_checksum :: fn(path: ^i8) -> i64 {
     }
     text := unsafe { frost_rt_read_file(path) }
     length := cstr_len(text)
-    var sum : i64 = length + 1
-    var k : i64 = 0
+    var sum: i64 = length + 1
+    var k: i64 = 0
     while (k < length) {
         sum = wrap_add(wrap_mul(sum, 131), byte_at(text, k))
         k = k + 1
@@ -196,8 +196,8 @@ file_checksum :: fn(path: ^i8) -> i64 {
 // there is nothing to read back and checksum.
 text_checksum :: fn(text: str) -> i64 {
     length := str_len(text)
-    var sum : i64 = length + 1
-    var k : i64 = 0
+    var sum: i64 = length + 1
+    var k: i64 = 0
     while (k < length) {
         sum = wrap_add(wrap_mul(sum, 131), text[k])
         k = k + 1
@@ -213,9 +213,9 @@ stored_checksum :: fn(path: ^i8) -> i64 {
     }
     text := unsafe { frost_rt_read_file(path) }
     length := cstr_len(text)
-    var value : i64 = 0
-    var negative : bool = false
-    var k : i64 = 0
+    var value: i64 = 0
+    var negative: bool = false
+    var k: i64 = 0
     while (k < length) {
         byte := byte_at(text, k)
         if (byte == CH_MINUS) {
@@ -256,7 +256,7 @@ runtime_source :: fn() -> ^i8 {
     length := cstr_len(program)
     if (length > 0) {
         var directory := directory_part(program, length)
-        var tries : i64 = 0
+        var tries: i64 = 0
         while (tries < 3) {
             here := joined_path(program, directory,
                 "runtime/frost_runtime.c")
@@ -331,7 +331,7 @@ make_directory :: fn(path: ^i8) {
     var command := join_two("mkdir -p ", path)
     if (frost_rt_is_windows() == 1) {
         command = join_two(join_two("if not exist \"", path),
-            "\" mkdir \"" )
+            "\" mkdir \"")
         command = join_two(join_two(command, path), "\"")
     }
     unsafe { frost_rt_run_command(command) }
@@ -349,7 +349,7 @@ options_from_command_line :: fn() -> Options {
     var options := Options {
         input = "",
         output = "",
-        backend = Backend::Unset,
+        backend = Backend :: Unset,
         link = 0,
         object = 0,
         assemble = 0,
@@ -365,7 +365,7 @@ options_from_command_line :: fn() -> Options {
         ok = 1,
     }
     count := frost_rt_arg_count()
-    var index : i64 = 1
+    var index: i64 = 1
     while (index < count) {
         argument := frost_rt_arg_at(index)
         if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
@@ -373,13 +373,13 @@ options_from_command_line :: fn() -> Options {
             return options
         }
         if (cstr_eq(argument, "--emit-c")) {
-            options.backend = Backend::C
+            options.backend = Backend :: C
         } else if (cstr_eq(argument, "--emit-asm")) {
-            options.backend = Backend::Asm
+            options.backend = Backend :: Asm
         } else if (cstr_eq(argument, "--native") || cstr_eq(argument, "-n")) {
             // An object, which is what the bootstrap's `--native` answers with.
             // `--emit-asm` is the assembly on its own.
-            options.backend = Backend::Asm
+            options.backend = Backend :: Asm
             options.object = 1
         } else if (cstr_eq(argument, "--libs")) {
             index = index + 1
@@ -474,16 +474,16 @@ options_from_command_line :: fn() -> Options {
     // output into one for a fraction of what handing a C compiler a generated
     // translation unit costs. Emitting on its own stays C, which is the
     // portable answer and what a caller reading the output is asking for.
-    if (options.backend == Backend::Unset) {
+    if (options.backend == Backend :: Unset) {
         named := unsafe { frost_rt_getenv("FROST_BACKEND") }
         if (cstr_eq(named, "asm")) {
-            options.backend = Backend::Asm
+            options.backend = Backend :: Asm
         } else if (cstr_eq(named, "c")) {
-            options.backend = Backend::C
+            options.backend = Backend :: C
         } else if (options.link == 1) {
-            options.backend = Backend::Asm
+            options.backend = Backend :: Asm
         } else {
-            options.backend = Backend::C
+            options.backend = Backend :: C
         }
     }
     options

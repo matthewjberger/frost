@@ -35,7 +35,7 @@ uniform_layout :: fn(device: Device, size: i64,
 
 uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Uniform | BufferUsage :: CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }

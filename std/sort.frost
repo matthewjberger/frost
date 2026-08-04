@@ -87,7 +87,7 @@ test "a slice is ordered by the bundle it is given" {
 test "a run longer than the insertion threshold takes the quicksort path" {
     var items := [13, 4, 17, 2, 8, 20, 1, 15, 6, 11, 19, 3, 9, 16, 5]
     sort($i64, $i64_ascending, items)
-    var i : i64 = 1
+    var i: i64 = 1
     while (i < 15) {
         assert(items[i - 1] < items[i])
         i = i + 1

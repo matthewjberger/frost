@@ -15,28 +15,28 @@ Entity :: struct { hp: i64, kind: Kind }
 
 delta :: fn(k: Kind) -> i64 {
     match k {
-        case .Player: 0
-        case .Enemy { damage }: -damage
-        case .Pickup { amount }: amount
+        case.Player: 0
+        case.Enemy { damage }: -damage
+        case.Pickup { amount }: amount
     }
 }
 
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = Slab {
-        storage = [Entity { hp = 0, kind = Kind::Player }; 16],
+    var world: Slab<Entity, 16> = Slab {
+        storage = [Entity { hp = 0, kind = Kind :: Player }; 16],
         generations = [0; 16],
         free_list = [0; 16],
         free_count = 0,
     }
     slab_reset($Entity, $16, world)
 
-    player := slab_insert($Entity, $16, world, Entity { hp = 100, kind = Kind::Player })
+    player := slab_insert($Entity, $16, world, Entity { hp = 100, kind = Kind :: Player })
     goblin := slab_insert($Entity, $16, world,
-        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
+        Entity { hp = 30, kind = Kind :: Enemy { damage = 15 } })
     potion := slab_insert($Entity, $16, world,
-        Entity { hp = 0, kind = Kind::Pickup { amount = 25 } })
+        Entity { hp = 0, kind = Kind :: Pickup { amount = 25 } })
 
     // Read the kind out and apply it, all through handles, with the entities
     // never leaving the slab.
@@ -50,7 +50,7 @@ main :: fn() -> i64 {
     show(slab_alive($Entity, $16, world, player)) // 1, untouched
 
     // The newcomer takes the goblin's slot, and the goblin's handle stays stale.
-    newcomer := slab_insert($Entity, $16, world, Entity { hp = 5, kind = Kind::Player })
+    newcomer := slab_insert($Entity, $16, world, Entity { hp = 5, kind = Kind :: Player })
     show(slab_alive($Entity, $16, world, goblin)) // 0
     print_int_line(world[newcomer].hp) // 5
     0

@@ -10,7 +10,7 @@ export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
     manifest_above
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < modules.count) {
         entry := arena_at(modules, i)
         if (cstr_eq(entry.path, path)) {
@@ -25,8 +25,8 @@ module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
 // named it.
 join_path :: fn(parent: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     parent_len := cstr_len(parent)
-    var cut : i64 = 0
-    var k : i64 = 0
+    var cut: i64 = 0
+    var k: i64 = 0
     while (k < parent_len) {
         c := byte_at(parent, k)
         if (c == CH_SLASH || c == CH_BACKSLASH) {
@@ -53,7 +53,7 @@ join_path :: fn(parent: ^i8, src: str, off: i64, len: i64) -> ^i8 {
 // needs one.
 join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     directory_len := cstr_len(directory)
-    var separator : i64 = 0
+    var separator: i64 = 0
     if (directory_len > 0) {
         last := byte_at(directory, directory_len - 1)
         if (last != CH_SLASH && last != CH_BACKSLASH) {
@@ -61,7 +61,7 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
         }
     }
     out := unsafe { ptr_cast($i8, frost_rt_alloc(directory_len + separator + len + 1)) }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < directory_len) {
         byte_set(out, k, byte_at(directory, k))
         k = k + 1
@@ -94,7 +94,7 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
 normalise_path :: fn(path: ^i8) -> ^i8 {
     length := cstr_len(path)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 2)) }
-    var at : i64 = 0
+    var at: i64 = 0
     // A path that begins at the root stays at the root. Every separator after
     // this is written by the segments themselves, and the first of them writes
     // none, so without this `/tmp/x` comes back as `tmp/x` and names a
@@ -110,9 +110,9 @@ normalise_path :: fn(path: ^i8) -> ^i8 {
     // them and stops there.
     root_at := at
     // Where each segment written so far starts, so a `..` knows what to undo.
-    var starts : [MAX_PATH_STEPS]i64 = [0; MAX_PATH_STEPS]
-    var depth : i64 = 0
-    var read : i64 = 0
+    var starts: [MAX_PATH_STEPS]i64 = [0; MAX_PATH_STEPS]
+    var depth: i64 = 0
+    var read: i64 = 0
     while (read < length) {
         c := byte_at(path, read)
         if (c == CH_SLASH || c == CH_BACKSLASH) {
@@ -154,7 +154,7 @@ normalise_path :: fn(path: ^i8) -> ^i8 {
             starts[depth] = at
             depth = depth + 1
         }
-        var k : i64 = 0
+        var k: i64 = 0
         while (k < span) {
             byte_set(out, at + k, byte_at(path, read + k))
             k = k + 1
@@ -204,7 +204,7 @@ locate_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     if (unsafe { frost_rt_file_exists(beside) } == 1) {
         return beside
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < roots.count) {
         entry := arena_at(roots, i)
         candidate := normalise_path(join_under(entry.path, src, off, len))
@@ -257,7 +257,7 @@ layer_relative :: fn(path: ^i8, held: Layer) -> ^i8 {
     rest := cstr_len(path) - length - 1
     name_len := cstr_len(held.name)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(name_len + rest + 2)) }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < name_len) {
         byte_set(out, k, byte_at(held.name, k))
         k = k + 1
@@ -277,7 +277,7 @@ layer_relative :: fn(path: ^i8, held: Layer) -> ^i8 {
 append_text :: fn(buffer: str, at: i64, text: str) -> i64 {
     length := str_len(text)
     var into := buffer
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < length) {
         into[at + k] = text[k]
         k = k + 1
@@ -319,11 +319,11 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
     var children := arena_make($Module, 256)
     scratch.count = 0
     tokenize(text, str_len(text), scratch)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i + 1 < scratch.count) {
         entry := arena_at(scratch, i)
         named := arena_at(scratch, i + 1)
-        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
+        if (entry.kind == TokenKind :: KwImport && named.kind == TokenKind :: Str) {
             arena_push(
                 children,
                 Module {
@@ -337,7 +337,7 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
         i = i + 1
     }
     var here := at
-    var c : i64 = 0
+    var c: i64 = 0
     while (c < children.count) {
         child := arena_at(children, c)
         here = place_module(buffer, here, child.path, modules, roots,
@@ -384,7 +384,7 @@ line_of :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
     // Bounded by the text as well as by the offset. A module's range covers the
     // room appended after it for synthesized names, and a node built out of one
     // carries an offset in there, which is past anything to read.
-    var line : i64 = 1
+    var line: i64 = 1
     var at := entry.start
     stop := str_len(src)
     while (at < offset && at < stop) {
@@ -402,7 +402,7 @@ column_of :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
         return 0
     }
     entry := arena_at(modules, index)
-    var column : i64 = 1
+    var column: i64 = 1
     var at := entry.start
     stop := str_len(src)
     while (at < offset && at < stop) {
@@ -429,8 +429,8 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         return
     }
     entry := arena_at(modules, index)
-    var line : i64 = 1
-    var column : i64 = 1
+    var line: i64 = 1
+    var column: i64 = 1
     // The start of the line the offset is on, and the end of it, so the source
     // can be shown with a caret under the column the error is at.
     var line_start := entry.start
@@ -460,7 +460,7 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     // writes next follows the caret on that line, so it sits right at the spot.
     report_src(src, line_start, line_end - line_start)
     report("\n")
-    var space : i64 = 1
+    var space: i64 = 1
     while (space < column) {
         report(" ")
         space = space + 1
@@ -477,8 +477,8 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         return
     }
     entry := arena_at(modules, index)
-    var line : i64 = 1
-    var column : i64 = 1
+    var line: i64 = 1
+    var column: i64 = 1
     var at := entry.start
     // Carry on from the last answer when this one is further into the file,
     // which is the ordinary case, and start over when it is behind.
@@ -499,7 +499,7 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     entry.cursor_off = offset
     entry.cursor_line = line
     entry.cursor_column = column
-    var k : i64 = 0
+    var k: i64 = 0
     length := cstr_len(entry.path)
     while (k < length) {
         byte := byte_at(entry.path, k)
@@ -516,7 +516,7 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
 }
 
 module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < modules.count) {
         entry := arena_at(modules, i)
         if (offset >= entry.start && offset < entry.finish) {
@@ -541,13 +541,13 @@ blank_range :: fn(buffer: str, from: i64, through: i64) {
 joined_path :: fn(directory: ^i8, upto: i64, name: ^i8) -> ^i8 {
     extra := cstr_len(name)
     block := unsafe { ptr_cast($i8, frost_rt_alloc(upto + extra + 2)) }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < upto) {
         byte_set(block, i, byte_at(directory, i))
         i = i + 1
     }
     byte_set(block, upto, CH_SLASH)
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < extra) {
         byte_set(block, upto + 1 + k, byte_at(name, k))
         k = k + 1
@@ -587,7 +587,7 @@ MANIFEST_NAME :: "frost.json"
 // build might start in.
 manifest_above :: fn(entry: ^i8) -> i64 {
     var length := directory_part(entry, cstr_len(entry))
-    var going : bool = true
+    var going: bool = true
     while (going) {
         if (unsafe { frost_rt_file_exists(manifest_path(entry, length)) } == 1) {
             return length
@@ -624,7 +624,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     text := cstr_slice(unsafe { frost_rt_read_file(path) })
     var document := json_parse(text)
     root := json_root(document)
-    if (root < 0 || json_kind(document, root) != JsonKind::Object) {
+    if (root < 0 || json_kind(document, root) != JsonKind :: Object) {
         // Nothing is given back here, since the next thing this does is stop.
         report("frost: cannot read '")
         report_cstr(path)
@@ -636,7 +636,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     // build was started from.
     var named := json_at(document, json_member(document, root, "paths"), 0)
     while (named >= 0) {
-        if (json_kind(document, named) == JsonKind::String) {
+        if (json_kind(document, named) == JsonKind :: String) {
             off := json_text_off(document, named)
             len := json_text_len(document, named)
             add_root(roots, normalise_path(
@@ -649,7 +649,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
     // resolves to, which is what a file is tested against.
     var layer := json_at(document, json_member(document, root, "layers"), 0)
     while (layer >= 0) {
-        if (json_kind(document, layer) == JsonKind::String) {
+        if (json_kind(document, layer) == JsonKind :: String) {
             off := json_text_off(document, layer)
             len := json_text_len(document, layer)
             add_layer(layers, text_as_cstr(text, off, len), absolute_path(
@@ -663,7 +663,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
 // A run of the manifest's text as a string of its own.
 text_as_cstr :: fn(src: str, off: i64, len: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, frost_rt_alloc(len + 1)) }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < len) {
         byte_set(out, k, src[off + k])
         k = k + 1
@@ -677,7 +677,7 @@ text_as_cstr :: fn(src: str, off: i64, len: i64) -> ^i8 {
 // a string, since every other caller wants to keep walking back through it.
 prefix_of :: fn(path: ^i8, length: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 1)) }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < length) {
         byte_set(out, k, byte_at(path, k))
         k = k + 1
@@ -721,7 +721,7 @@ search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
 
 // Which module a path is, or -1 for one that was never placed.
 module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < modules.count) {
         entry := arena_at(modules, i)
         if (cstr_eq(entry.path, path)) {
@@ -740,7 +740,7 @@ module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
 // not what it means.
 copy_name :: fn(into: str, at: i64, from: str, off: i64, len: i64) -> i64 {
     var destination := into
-    var b : i64 = 0
+    var b: i64 = 0
     while (b < len) {
         destination[at + b] = from[off + b]
         b = b + 1
@@ -753,7 +753,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     mut edges: Arena<ImportEdge>, mut renames: Arena<Rename>,
     mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>,
     mut layers: Arena<Layer>) -> i64 {
-    var named_at : i64 = 0
+    var named_at: i64 = 0
     length := place_module(buffer, 0, root, modules, roots, layers,
         scratch)
     // Every imported file's text is in the buffer now, so the imports have
@@ -762,17 +762,17 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     // it was.
     scratch.count = 0
     tokenize(buffer, length, scratch)
-    var j : i64 = 0
+    var j: i64 = 0
     while (j + 1 < scratch.count) {
         entry := arena_at(scratch, j)
         named := arena_at(scratch, j + 1)
-        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
+        if (entry.kind == TokenKind :: KwImport && named.kind == TokenKind :: Str) {
             // The line is about to be blanked, so the edge it stands for is
             // recorded first. The importer is whoever wrote the line, and the
             // module it names is resolved against that file's own directory,
             // the same way it was when the text was placed.
             importer := module_at(modules, entry.off)
-            var imported : i64 = -1
+            var imported: i64 = -1
             if (importer >= 0) {
                 mine := arena_at(modules, importer)
                 found := find_import(mine.path, buffer, named.off,
@@ -790,17 +790,17 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             var r := j + 2
             if (r < scratch.count) {
                 opened := arena_at(scratch, r)
-                if (opened.kind == TokenKind::Lparen) {
+                if (opened.kind == TokenKind :: Lparen) {
                     through = opened.off
                     r = r + 1
-                    var reading : bool = true
+                    var reading: bool = true
                     while (reading && r + 2 < scratch.count) {
                         exported := arena_at(scratch, r)
                         word := arena_at(scratch, r + 1)
                         local := arena_at(scratch, r + 2)
-                        if (exported.kind != TokenKind::Ident
-                            || word.kind != TokenKind::Ident
-                            || local.kind != TokenKind::Ident) {
+                        if (exported.kind != TokenKind :: Ident
+                            || word.kind != TokenKind :: Ident
+                            || local.kind != TokenKind :: Ident) {
                             reading = false
                         } else {
                             exported_at := named_at
@@ -820,7 +820,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
                             r = r + 3
                             if (r < scratch.count) {
                                 following := arena_at(scratch, r)
-                                if (following.kind == TokenKind::Comma) {
+                                if (following.kind == TokenKind :: Comma) {
                                     r = r + 1
                                 } else {
                                     reading = false
@@ -833,21 +833,21 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             }
             blank_range(buffer, entry.off, through)
         }
-        if (entry.kind == TokenKind::KwExport) {
+        if (entry.kind == TokenKind :: KwExport) {
             owner := module_at(modules, entry.off)
             var k := j + 1
             var through := entry.off + entry.len - 1
-            var listing : bool = true
+            var listing: bool = true
             while (listing) {
                 listed := arena_at(scratch, k)
-                if (listed.kind != TokenKind::Ident) {
+                if (listed.kind != TokenKind :: Ident) {
                     listing = false
                 } else {
                     // The name is copied out because the line it is written
                     // on is about to be blanked.
-                    var b : i64 = 0
+                    var b: i64 = 0
                     while (b < listed.len) {
-                                                    names[named_at + b] = buffer[listed.off + b]
+                        names[named_at + b] = buffer[listed.off + b]
                         b = b + 1
                     }
                     arena_push(
@@ -859,7 +859,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
                     through = listed.off + listed.len - 1
                     k = k + 1
                     following := arena_at(scratch, k)
-                    if (following.kind == TokenKind::Comma) {
+                    if (following.kind == TokenKind :: Comma) {
                         through = following.off
                         k = k + 1
                     } else {
@@ -892,7 +892,7 @@ SOURCE_ROOM :: 8388608
 source_with_room :: fn(text: str) -> str {
     length := str_len(text)
     var buffer := buffer_of(length + SYNTH_ROOM + 1)
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < length) {
         buffer[k] = text[k]
         k = k + 1

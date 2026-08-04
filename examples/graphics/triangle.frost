@@ -111,12 +111,12 @@ WIDTH :: 960
 HEIGHT :: 540
 
 main :: fn() -> i64 {
-    if (sdl_init(InitFlags::Video) == false) {
+    if (sdl_init(InitFlags :: Video) == false) {
         print_int_line(0)
         return 1
     }
     window := window_create("Frost triangle", WIDTH, HEIGHT,
-        WindowFlags::Resizable)
+        WindowFlags :: Resizable)
     if (is_no_window(window)) { return 2 }
 
     properties := window_properties(window)
@@ -135,8 +135,8 @@ main :: fn() -> i64 {
     if (hwnd == null_handle()) { return 23 }
 
     // The adapter.
-    var adapter_slot : AdapterSlot =
-        AdapterSlot { handle = no_adapter(), ready = 0 }
+    var adapter_slot: AdapterSlot =
+    AdapterSlot { handle = no_adapter(), ready = 0 }
     var adapter_info := request_adapter_callback_info_of($AdapterSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_adapter, ptr_to(adapter_slot))
     // The adapter has to be chosen knowing which surface it will draw to, or
@@ -146,8 +146,8 @@ main :: fn() -> i64 {
     adapter_options.feature_level = FEATURE_LEVEL_CORE
     adapter_options.compatible_surface = surface
     instance_request_adapter(instance, ptr_to(adapter_options),
-            ptr_to(adapter_info))
-    var adapter_spins : i64 = 0
+        ptr_to(adapter_info))
+    var adapter_spins: i64 = 0
     while (adapter_slot.ready == 0 && adapter_spins < 2000000) {
         instance_process_events(instance)
         adapter_spins = adapter_spins + 1
@@ -157,13 +157,13 @@ main :: fn() -> i64 {
     if (adapter == null_handle()) { return 24 }
 
     // The device.
-    var device_slot : DeviceSlot =
-        DeviceSlot { handle = no_device(), ready = 0 }
+    var device_slot: DeviceSlot =
+    DeviceSlot { handle = no_device(), ready = 0 }
     var device_info := request_device_callback_info_of($DeviceSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_device, ptr_to(device_slot))
     adapter_request_device(adapter,
-            null_handle(), ptr_to(device_info))
-    var device_spins : i64 = 0
+        null_handle(), ptr_to(device_info))
+    var device_spins: i64 = 0
     while (device_slot.ready == 0 && device_spins < 2000000) {
         instance_process_events(instance)
         device_spins = device_spins + 1
@@ -185,7 +185,7 @@ main :: fn() -> i64 {
     var configuration := surface_configuration_init()
     configuration.device = device
     configuration.format = surface_format
-    configuration.usage = TextureUsage::RenderAttachment
+    configuration.usage = TextureUsage :: RenderAttachment
     configuration.width = WIDTH
     configuration.height = HEIGHT
     configuration.present_mode = PRESENT_MODE_FIFO
@@ -203,7 +203,7 @@ main :: fn() -> i64 {
     // The three vertices, written once into a buffer the GPU reads. The
     // positions are what a Vec4 holds, so the bytes handed over are the bytes
     // Frost laid out.
-    var vertices : [VERTEX_COUNT]Vertex = [
+    var vertices: [VERTEX_COUNT]Vertex = [
         Vertex {
             position = vec4(-1.0, -1.0, 0.0, 1.0),
             colour = vec4(1.0, 0.2, 0.2, 1.0),
@@ -219,16 +219,16 @@ main :: fn() -> i64 {
     ]
 
     var vertex_buffer_descriptor := buffer_descriptor_init()
-    vertex_buffer_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+    vertex_buffer_descriptor.usage = BufferUsage :: Vertex | BufferUsage :: CopyDst
     vertex_buffer_descriptor.size = VERTEX_BYTES
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
     queue_write_buffer(queue, vertex_buffer, 0,
-            ptr_to(vertices[0]), VERTEX_BYTES)
+        ptr_to(vertices[0]), VERTEX_BYTES)
 
     // The uniform holding the matrix, rewritten every frame.
     var uniform_buffer_descriptor := buffer_descriptor_init()
     uniform_buffer_descriptor.usage =
-        BufferUsage::Uniform | BufferUsage::CopyDst
+    BufferUsage :: Uniform | BufferUsage :: CopyDst
     uniform_buffer_descriptor.size = UNIFORM_BYTES
     uniform_buffer := device_create_buffer(device, ptr_to(uniform_buffer_descriptor))
 
@@ -236,7 +236,7 @@ main :: fn() -> i64 {
     // promise, the group is the binding that keeps it.
     var layout_entry := bind_group_layout_entry_init()
     layout_entry.binding = 0
-    layout_entry.visibility = ShaderStage::Vertex
+    layout_entry.visibility = ShaderStage :: Vertex
     layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     layout_entry.buffer.min_binding_size = UNIFORM_BYTES
 
@@ -260,10 +260,10 @@ main :: fn() -> i64 {
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(group_layout)
     pipeline_layout := device_create_pipeline_layout(device,
-            ptr_to(pipeline_layout_descriptor))
+        ptr_to(pipeline_layout_descriptor))
 
     // How the vertex buffer's bytes reach the shader's two inputs.
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X4
     attributes[0].offset = 0
     attributes[0].shader_location = 0
@@ -290,10 +290,10 @@ main :: fn() -> i64 {
     pipeline_descriptor.layout = pipeline_layout
     pipeline_descriptor.vertex.module = shader
     pipeline_descriptor.vertex.entry_point =
-        StringView { data = "vs_main", length = 7 }
+    StringView { data = "vs_main", length = 7 }
     pipeline_descriptor.vertex.buffers_count = 1
     pipeline_descriptor.vertex.buffers =
-        ptr_to(buffer_layout)
+    ptr_to(buffer_layout)
     pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     pipeline_descriptor.multisample.count = 1
     pipeline_descriptor.multisample.mask = 4294967295
@@ -307,8 +307,8 @@ main :: fn() -> i64 {
     // triangle needs no depth buffer to sort it, so nothing in this file reads
     // the result; it is the same projection so that a program starting from
     // this one starts from the convention the rest of it keeps.
-    width : f32 = WIDTH
-    height : f32 = HEIGHT
+    width: f32 = WIDTH
+    height: f32 = HEIGHT
     projection := mat4_perspective_infinite_reverse_z(radians(60.0),
         width / height, 0.1)
     view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
@@ -316,11 +316,11 @@ main :: fn() -> i64 {
     view_projection := mat4_mul(projection, view)
     started := sdl_ticks()
 
-    var running : bool = true
+    var running: bool = true
     while (running) {
         var event := event_new()
         while (poll_event(event)) {
-            if (event_kind(event) == EventKind::Quit) {
+            if (event_kind(event) == EventKind :: Quit) {
                 running = false
             }
         }
@@ -342,7 +342,7 @@ main :: fn() -> i64 {
             // Wrapped before it becomes a float, so the value stays small
             // enough that single precision keeps every millisecond.
             elapsed := (sdl_ticks() - started) % 100000
-            milliseconds : f32 = elapsed
+            milliseconds: f32 = elapsed
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
             var mvp := mat4_mul(view_projection, model)
             queue_write_buffer(queue, uniform_buffer, 0,
@@ -356,12 +356,12 @@ main :: fn() -> i64 {
             attachment.load_op = LOAD_OP_CLEAR
             attachment.store_op = STORE_OP_STORE
             attachment.clear_value =
-                Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
+            Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
 
             var pass_descriptor := render_pass_descriptor_init()
             pass_descriptor.color_attachments_count = 1
             pass_descriptor.color_attachments =
-                ptr_to(attachment)
+            ptr_to(attachment)
 
             pass := command_encoder_begin_render_pass(encoder,
                 ptr_to(pass_descriptor))

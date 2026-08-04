@@ -16,7 +16,7 @@ Tile :: struct { height: i64 }
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 8> = Slab {
+    var world: Slab<Entity, 8> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 8],
         generations = [0; 8],
         free_list = [0; 8],
@@ -31,7 +31,7 @@ main :: fn() -> i64 {
     print_int_line(world[h].hp) // 75
 
     // The same code at a different element type and a different capacity.
-    var ground : Slab<Tile, 4> = Slab {
+    var ground: Slab<Tile, 4> = Slab {
         storage = [Tile { height = 0 }; 4],
         generations = [0; 4],
         free_list = [0; 4],

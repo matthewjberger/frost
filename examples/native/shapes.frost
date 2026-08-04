@@ -8,16 +8,16 @@ Shape :: enum {
 
 area :: fn(s: Shape) -> i64 {
     match s {
-        case .Circle { radius }: 3 * radius * radius
-        case .Rectangle { width, height }: width * height
-        case .Triangle { base, height }: base * height / 2
+        case.Circle { radius }: 3 * radius * radius
+        case.Rectangle { width, height }: width * height
+        case.Triangle { base, height }: base * height / 2
     }
 }
 
 main :: fn() -> i64 {
-    c := Shape::Circle { radius = 5 }
-    r := Shape::Rectangle { width = 4, height = 6 }
-    t := Shape::Triangle { base = 8, height = 3 }
+    c := Shape :: Circle { radius = 5 }
+    r := Shape :: Rectangle { width = 4, height = 6 }
+    t := Shape :: Triangle { base = 8, height = 3 }
 
     print_str("circle area    = ")
     print_int_line(area(c))

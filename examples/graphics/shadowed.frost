@@ -597,15 +597,15 @@ light_view_projection :: fn(direction: Vec3) -> Mat4 {
 // them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
     seconds: f32, w: i64, h: i64) {
-    var values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
     var view_projection := camera_view_projection(eye, w, h)
-    var element : i64 = 0
+    var element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
     }
     var light := light_view_projection(direction)
-    var second : i64 = 0
+    var second: i64 = 0
     while (second < 16) {
         values[16 + second] = light.m[second]
         second = second + 1
@@ -641,13 +641,13 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
 // of the neighbourhood passed the depth test rather than what the depth was,
 // which is what makes one read give a soft edge.
 shadow_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
+    var entries: [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
     entries[0].binding = 0
-    entries[0].visibility = ShaderStage::Fragment
+    entries[0].visibility = ShaderStage :: Fragment
     entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_DEPTH
     entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
     entries[1].binding = 1
-    entries[1].visibility = ShaderStage::Fragment
+    entries[1].visibility = ShaderStage :: Fragment
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_COMPARISON
     var descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 2
@@ -657,7 +657,7 @@ shadow_layout :: fn(device: Device) -> BindGroupLayout {
 
 shadow_group_of :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
     reader: Sampler) -> BindGroup {
-    var entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
+    var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = view
     entries[1].binding = 1
@@ -711,7 +711,7 @@ make_shader :: fn(device: Device) -> ShaderModule {
 // the stripes rather than removing them.
 make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     layout: PipelineLayout) -> RenderPipeline {
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     var buffer_layout := vertex_layout(attributes)
 
     var depth := depth_stencil_state_init()
@@ -739,12 +739,12 @@ make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
 
 make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     layout: PipelineLayout) -> RenderPipeline {
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     var buffer_layout := vertex_layout(attributes)
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -833,7 +833,7 @@ rebuild_step :: fn(mut step: Step, mut g: Graph) {
 storage_layout :: fn(device: Device, writable: bool) -> BindGroupLayout {
     var entry := bind_group_layout_entry_init()
     entry.binding = 0
-    entry.visibility = ShaderStage::Fragment | ShaderStage::Compute
+    entry.visibility = ShaderStage :: Fragment | ShaderStage :: Compute
     if (writable) {
         entry.buffer.type = BUFFER_BINDING_TYPE_STORAGE
     } else {
@@ -891,13 +891,13 @@ make_pulse_pipeline :: fn(device: Device, shader: ShaderModule,
 // A texture and the sampler that reads it, which is what every step of the
 // chain binds and nothing else.
 sampled_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
+    var entries: [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
     entries[0].binding = 0
-    entries[0].visibility = ShaderStage::Fragment
+    entries[0].visibility = ShaderStage :: Fragment
     entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
     entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
     entries[1].binding = 1
-    entries[1].visibility = ShaderStage::Fragment
+    entries[1].visibility = ShaderStage :: Fragment
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
     var descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 2
@@ -907,7 +907,7 @@ sampled_layout :: fn(device: Device) -> BindGroupLayout {
 
 sampled_group :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
     reader: Sampler) -> BindGroup {
-    var entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
+    var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = view
     entries[1].binding = 1
@@ -924,7 +924,7 @@ make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     entry: StringView, layout: PipelineLayout) -> RenderPipeline {
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -997,7 +997,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // A run of bytes rather than a picture. Nothing draws into it and nothing
     // samples it; one pass fills it and another reads it, which is the only
     // thing the graph needs to put them in order.
-    glow := graph_buffer(g, "glow", GLOW_BYTES, BufferUsage::Storage)
+    glow := graph_buffer(g, "glow", GLOW_BYTES, BufferUsage :: Storage)
     // What the second view is drawn into. Transient like the rest of the chain,
     // and a fixed size, so the binding that reads it is built once.
     inset := graph_transient_color(g, "inset", INSET_WIDTH, INSET_HEIGHT,
@@ -1124,8 +1124,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 
@@ -1144,7 +1144,7 @@ run :: fn(move app: App) -> i64 {
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
-    var looks : [4]i64 = [0; 4]
+    var looks: [4]i64 = [0; 4]
     looks[0] = materials_add(app.materials, material_of(vec4(0.86, 0.33, 0.3, 1.0), 0.4, 0.0))
     looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.48, 1.0), 0.55, 0.0))
     looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.25, 0.0))
@@ -1162,7 +1162,7 @@ run :: fn(move app: App) -> i64 {
     var inset_render := render_world_new(device, MAX_DRAWN, MAX_MESHES, MAX_LOOKS)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
+        ShaderStage :: Vertex | ShaderStage :: Fragment | ShaderStage :: Compute)
     object_layout := render_world_layout(app.render)
     map_layout := shadow_layout(device)
     // The same buffer through two bindings: the compute pass writes it, the
@@ -1173,15 +1173,15 @@ run :: fn(move app: App) -> i64 {
 
     // Two layouts, because the shadow pass has no shadow map to bind and a
     // pipeline may not name a group its shader never reads.
-    var shadow_layouts : [4]BindGroupLayout = [frame_layout, object_layout,
+    var shadow_layouts: [4]BindGroupLayout = [frame_layout, object_layout,
         map_layout, read_glow]
     shadow_pipeline_layout := wide_layout(device, 2, shadow_layouts)
 
-    var scene_layouts : [4]BindGroupLayout = [frame_layout, object_layout,
+    var scene_layouts: [4]BindGroupLayout = [frame_layout, object_layout,
         map_layout, read_glow]
     scene_pipeline_layout := wide_layout(device, 4, scene_layouts)
 
-    var pulse_layouts : [4]BindGroupLayout = [frame_layout, written_glow,
+    var pulse_layouts: [4]BindGroupLayout = [frame_layout, written_glow,
         frame_layout, frame_layout]
     pulse_pipeline_layout := wide_layout(device, 2, pulse_layouts)
 
@@ -1224,14 +1224,14 @@ run :: fn(move app: App) -> i64 {
 
     // The middle column and the middle row, so the grid is centred on the
     // floor and the bottom row is the one measured against it.
-    half : f32 = 1.0
-    lowest : f32 = FLOOR_TOP + LOWEST_CLEARANCE
-    var made : i64 = 0
+    half: f32 = 1.0
+    lowest: f32 = FLOOR_TOP + LOWEST_CLEARANCE
+    var made: i64 = 0
     while (made < SHAPES) {
         row := made / GRID
         column := made - row * GRID
-        across : f32 = column
-        up : f32 = row
+        across: f32 = column
+        up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, entity, local,
             LocalTransform { translation = vec3((across - half) * COLUMN_SPACING,
@@ -1242,7 +1242,7 @@ run :: fn(move app: App) -> i64 {
         // An axis that differs from one to the next, so the shadows underneath
         // move differently rather than as one shape.
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
-        speed : f32 = 0.5 + 0.11 * made
+        speed: f32 = 0.5 + 0.11 * made
         ecs_set($Spin, app.world, entity, spin,
             spinning(turning, speed, quat_identity()))
 
@@ -1271,7 +1271,7 @@ run :: fn(move app: App) -> i64 {
         spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
     // Hung off the root before the root is put in the table, since putting it
     // there is handing it over and the name does not hold it afterwards.
-    var hung : i64 = 1
+    var hung: i64 = 1
     while (hung < INSTANCES) {
         tree := world_tree(app.world)
         hierarchy_attach(tree, entities[hung], root)
@@ -1285,9 +1285,9 @@ run :: fn(move app: App) -> i64 {
     compose_shader := make_post_shader(device,
         StringView { data = COMPOSE_SHADER, length = str_len(COMPOSE_SHADER) })
     sampled := sampled_layout(device)
-    var one_group : [2]BindGroupLayout = [sampled, sampled]
+    var one_group: [2]BindGroupLayout = [sampled, sampled]
     one_layout := cover_layout(device, 1, one_group)
-    var two_groups : [2]BindGroupLayout = [sampled, sampled]
+    var two_groups: [2]BindGroupLayout = [sampled, sampled]
     two_layout := cover_layout(device, 2, two_groups)
 
     // The second view, drawn from somewhere else with the same scene. Only the
@@ -1390,7 +1390,7 @@ run :: fn(move app: App) -> i64 {
     app_camera_set(app, eye)
 
     app_insert_resource($ShowInset, app, ShowInset { on = true })
-    app_add_system(app, Stage::FrameUpdate, watch_inset)
+    app_add_system(app, Stage :: FrameUpdate, watch_inset)
     app_configure_graph($Built, app, declare_passes, ptr_to(built))
     app_update_graph($Built, app, update_inset, ptr_to(built))
     app_before_render($Built, app, before_frame, ptr_to(built))

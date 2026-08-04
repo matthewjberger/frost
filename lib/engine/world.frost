@@ -143,8 +143,8 @@ Exit :: struct { wanted: bool }
 // this file cannot name one.
 world_schedule :: fn() -> Schedule {
     var held := schedule_new()
-    schedule_add(held, Stage::FramePostUpdate, place_things)
-    schedule_add(held, Stage::FrameUpdate, move_camera)
+    schedule_add(held, Stage :: FramePostUpdate, place_things)
+    schedule_add(held, Stage :: FrameUpdate, move_camera)
     held
 }
 
@@ -218,7 +218,7 @@ place_things :: fn(mut world: World) {
     query_with(q, ids.local_transform)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             tree := world_tree(world)
@@ -283,7 +283,7 @@ test "a system bound to a screen runs on that screen and no other" {
     world_prepare(world)
     ecs_resource_register($Score, world)
     var frame := schedule_new()
-    schedule_add_in_state(frame, Stage::FrameUpdate, PLAYING, count_a_point)
+    schedule_add_in_state(frame, Stage :: FrameUpdate, PLAYING, count_a_point)
 
     // The world starts on the title screen, where this system is not.
     schedule_run(frame, world, world_state(world))
@@ -429,9 +429,9 @@ test "a thing is placed against whatever it hangs off, however deep" {
             ids.local_transform), ids.global_transform)
     // Held in one place, since spawning three and naming each would hand every
     // one of them over to the array anyway.
-    var chain : [3]Entity = [ecs_spawn_with(world, wanted),
+    var chain: [3]Entity = [ecs_spawn_with(world, wanted),
         ecs_spawn_with(world, wanted), ecs_spawn_with(world, wanted)]
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 3) {
         ecs_set($LocalTransform, world, chain[made], ids.local_transform,
             LocalTransform { translation = vec3(1.0, 0.0, 0.0),

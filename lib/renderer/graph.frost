@@ -60,17 +60,17 @@ no_resource :: fn() -> ResourceId {
 }
 
 resource_is_none :: fn(r: ResourceId) -> bool {
-    held : i64 = r
+    held: i64 = r
     held < 0
 }
 
 resource_index :: fn(r: ResourceId) -> i64 {
-    held : i64 = r
+    held: i64 = r
     held
 }
 
 pass_index :: fn(p: PassId) -> i64 {
-    held : i64 = p
+    held: i64 = p
     held
 }
 
@@ -285,7 +285,7 @@ graph_set_device :: fn(mut g: Graph, device: Device) {
 }
 
 graph_free :: fn(move g: Graph) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         if (held[i].made && held[i].external == false) {
@@ -299,7 +299,7 @@ graph_free :: fn(move g: Graph) {
         }
         i = i + 1
     }
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < g.pool_count) {
         var pool := g.pool
         if (pool[slot].made) {
@@ -312,7 +312,7 @@ graph_free :: fn(move g: Graph) {
     heap_release_slice($GraphPass, g.passes)
     heap_release_slice($i64, g.order)
     heap_release_slice($PoolSlot, g.pool)
-    var sub : i64 = 0
+    var sub: i64 = 0
     while (sub < g.sub_count) {
         var nested := g.subs
         graph_free(nested[sub])
@@ -327,17 +327,17 @@ graph_free :: fn(move g: Graph) {
 // The window's own texture, which the graph does not own and does not make. Its
 // view changes every frame and comes from the frame.
 graph_backbuffer :: fn(mut g: Graph) -> ResourceId {
-    add_resource(g, "backbuffer", ResourceKind::Backbuffer, 0, 0, 0)
+    add_resource(g, "backbuffer", ResourceKind :: Backbuffer, 0, 0, 0)
 }
 
 graph_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    add_resource(g, name, ResourceKind::Color, format, w, h)
+    add_resource(g, name, ResourceKind :: Color, format, w, h)
 }
 
 graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    add_resource(g, name, ResourceKind::Depth, format, w, h)
+    add_resource(g, name, ResourceKind :: Depth, format, w, h)
 }
 
 // A target that lives inside one frame. It is written by a pass and consumed by
@@ -346,18 +346,18 @@ graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
 // costs one texture per step that is alive at once rather than one per step.
 graph_transient_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    mark_transient(g, add_resource(g, name, ResourceKind::Color, format, w, h))
+    mark_transient(g, add_resource(g, name, ResourceKind :: Color, format, w, h))
 }
 
 graph_transient_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    mark_transient(g, add_resource(g, name, ResourceKind::Depth, format, w, h))
+    mark_transient(g, add_resource(g, name, ResourceKind :: Depth, format, w, h))
 }
 
 // A target the graph orders passes around and does not own. The program hands
 // it a view each frame, or each camera.
 graph_external_color :: fn(mut g: Graph, name: str) -> ResourceId {
-    made := add_resource(g, name, ResourceKind::Color, 0, 0, 0)
+    made := add_resource(g, name, ResourceKind :: Color, 0, 0, 0)
     if (resource_is_none(made) == false) {
         var held := g.resources
         held[resource_index(made)].external = true
@@ -393,7 +393,7 @@ mark_transient :: fn(mut g: Graph, r: ResourceId) -> ResourceId {
 // reads, the counts an indirect draw is issued from.
 graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
     usage: BufferUsage) -> ResourceId {
-    made := add_resource(g, name, ResourceKind::Buffer, 0, bytes, 0)
+    made := add_resource(g, name, ResourceKind :: Buffer, 0, bytes, 0)
     if (resource_is_none(made) == false) {
         var held := g.resources
         held[resource_index(made)].usage = usage
@@ -415,7 +415,7 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     var held := g.resources
     held[index] = Resource {
         name = name, kind = kind, format = format, width = w, height = h,
-        usage = BufferUsage::None,
+        usage = BufferUsage :: None,
         held = no_texture2d(), buffer = no_buffer(),
         made = false, written = false, sampled = false,
         transient = false, slot = -1, first_use = -1, last_use = -1,
@@ -435,7 +435,7 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
 // is what keeps `unsafe` out of the passes themselves.
 graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     draw: fn(mut Ctx, RenderPassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Render,
+    add_pass(g, name, PassKind :: Render,
         unsafe { ptr_cast($fn(^u8, RenderPassEncoder), draw) },
         dispatches_nothing, records_nothing,
         unsafe { ptr_cast($u8, state) })
@@ -451,7 +451,7 @@ graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
 // only that the node applies them itself.
 graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     record: fn(mut Ctx, NodeContext), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Node, draws_nothing, dispatches_nothing,
+    add_pass(g, name, PassKind :: Node, draws_nothing, dispatches_nothing,
         unsafe { ptr_cast($fn(^u8, NodeContext), record) },
         unsafe { ptr_cast($u8, state) })
 }
@@ -461,7 +461,7 @@ graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
 // difference is only what it is handed to record into.
 graph_compute_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     dispatch: fn(mut Ctx, ComputePassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Compute, draws_nothing,
+    add_pass(g, name, PassKind :: Compute, draws_nothing,
         unsafe { ptr_cast($fn(^u8, ComputePassEncoder), dispatch) },
         records_nothing, unsafe { ptr_cast($u8, state) })
 }
@@ -511,7 +511,7 @@ graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
 // other, which is what puts the nested work in the right place in this graph's
 // order.
 graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
-    made := add_pass(g, name, PassKind::SubGraph, draws_nothing,
+    made := add_pass(g, name, PassKind :: SubGraph, draws_nothing,
         dispatches_nothing, records_nothing, no_pointer())
     if (pass_index(made) >= 0) {
         var held := g.passes
@@ -537,10 +537,10 @@ graph_takes :: fn(mut g: Graph, sub: i64, inner: ResourceId,
 
 is_sub :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .SubGraph: true
-        case .Render: false
-        case .Compute: false
-        case .Node: false
+        case.SubGraph: true
+        case.Render: false
+        case.Compute: false
+        case.Node: false
     }
 }
 
@@ -550,18 +550,18 @@ graph_rebuilds :: fn($Ctx: Type, mut g: Graph, p: PassId,
     rebuild: fn(mut Ctx, mut Graph), state: ^Ctx) {
     var held := g.passes
     held[pass_index(p)].rebuild =
-        unsafe { ptr_cast($fn(^u8, mut Graph), rebuild) }
+    unsafe { ptr_cast($fn(^u8, mut Graph), rebuild) }
     held[pass_index(p)].rebuild_state = unsafe { ptr_cast($u8, state) }
 }
 
-rebuilds_nothing :: fn(state: ^u8, g: Graph) { }
+rebuilds_nothing :: fn(state: ^u8, g: Graph) {}
 
 // The half of a pass that its kind does not use. Neither is ever called: the
 // kind decides which one is, and a pass is made through one of the two entry
 // points above rather than by filling the struct in.
-draws_nothing :: fn(state: ^u8, pass: RenderPassEncoder) { }
-records_nothing :: fn(state: ^u8, context: NodeContext) { }
-dispatches_nothing :: fn(state: ^u8, pass: ComputePassEncoder) { }
+draws_nothing :: fn(state: ^u8, pass: RenderPassEncoder) {}
+records_nothing :: fn(state: ^u8, context: NodeContext) {}
+dispatches_nothing :: fn(state: ^u8, pass: ComputePassEncoder) {}
 
 clear_black :: fn() -> Color {
     Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
@@ -620,7 +620,7 @@ pass_writes :: fn(mut g: Graph, pass: i64, resource: i64) -> bool {
         && resource_index(one.depth) == resource) {
         return true
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < one.write_count) {
         if (resource_index(one.writes[i]) == resource) {
             return true
@@ -633,7 +633,7 @@ pass_writes :: fn(mut g: Graph, pass: i64, resource: i64) -> bool {
 pass_reads :: fn(mut g: Graph, pass: i64, resource: i64) -> bool {
     held := g.passes
     one := held[pass]
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < one.read_count) {
         if (resource_index(one.reads[i]) == resource) {
             return true
@@ -662,7 +662,7 @@ graph_runs_after :: fn(mut g: Graph, after: PassId, before: PassId) {
 
 said_before :: fn(mut g: Graph, before: i64, after: i64) -> bool {
     held := g.edges
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.edge_count) {
         one := held[i]
         if (one.before == before && one.after == after) {
@@ -680,7 +680,7 @@ runs_before :: fn(mut g: Graph, before: i64, after: i64) -> bool {
     if (said_before(g, before, after)) {
         return true
     }
-    var r : i64 = 0
+    var r: i64 = 0
     while (r < g.resource_count) {
         if (pass_writes(g, before, r) && pass_reads(g, after, r)) {
             return true
@@ -704,10 +704,10 @@ graph_schedule :: fn(mut g: Graph) -> bool {
     // order so a graph with no dependencies runs exactly as it was written.
     var waiting := heap_slice($i64, g.pass_count)
     var placed := heap_slice($i64, g.pass_count)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
-        var count : i64 = 0
-        var j : i64 = 0
+        var count: i64 = 0
+        var j: i64 = 0
         while (j < g.pass_count) {
             if (j != i && runs_before(g, j, i)) {
                 count = count + 1
@@ -719,13 +719,13 @@ graph_schedule :: fn(mut g: Graph) -> bool {
         i = i + 1
     }
 
-    var done : i64 = 0
-    var settled : i64 = 0
+    var done: i64 = 0
+    var settled: i64 = 0
     while (settled < g.pass_count) {
         // The first pass in declaration order that waits on nothing, which is
         // what keeps the order stable.
-        var chosen : i64 = -1
-        var k : i64 = 0
+        var chosen: i64 = -1
+        var k: i64 = 0
         while (k < g.pass_count) {
             if (placed[k] == 0 && waiting[k] == 0 && chosen < 0) {
                 chosen = k
@@ -742,7 +742,7 @@ graph_schedule :: fn(mut g: Graph) -> bool {
         var order := g.order
         order[done] = chosen
         done = done + 1
-        var m : i64 = 0
+        var m: i64 = 0
         while (m < g.pass_count) {
             if (placed[m] == 0 && runs_before(g, chosen, m)) {
                 waiting[m] = waiting[m] - 1
@@ -764,17 +764,17 @@ graph_schedule :: fn(mut g: Graph) -> bool {
 // or reads is a use; a resource nothing touches keeps -1 and is left out of the
 // pool, since sharing memory with something that is never read buys nothing.
 settle_lifetimes :: fn(mut g: Graph) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         held[i].first_use = -1
         held[i].last_use = -1
         i = i + 1
     }
-    var step : i64 = 0
+    var step: i64 = 0
     while (step < g.pass_count) {
         which := graph_order_at(g, step)
-        var r : i64 = 0
+        var r: i64 = 0
         while (r < g.resource_count) {
             if (pass_writes(g, which, r) || pass_reads(g, which, r)) {
                 var held := g.resources
@@ -795,9 +795,9 @@ settle_lifetimes :: fn(mut g: Graph) {
 // one before is finished with before this one starts.
 settle_pool :: fn(mut g: Graph) {
     g.pool_count = 0
-    var step : i64 = 0
+    var step: i64 = 0
     while (step < g.pass_count) {
-        var r : i64 = 0
+        var r: i64 = 0
         while (r < g.resource_count) {
             var held := g.resources
             one := held[r]
@@ -812,7 +812,7 @@ settle_pool :: fn(mut g: Graph) {
 
 // A slot of the right shape that nothing is still reading, or a new one.
 slot_for :: fn(mut g: Graph, one: Resource) -> i64 {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pool_count) {
         var pool := g.pool
         slot := pool[i]
@@ -844,17 +844,17 @@ same_kind :: fn(a: ResourceKind, b: ResourceKind) -> bool {
 
 kind_order :: fn(k: ResourceKind) -> i64 {
     match k {
-        case .Color: 0
-        case .Depth: 1
-        case .Buffer: 2
-        case .Backbuffer: 3
+        case.Color: 0
+        case.Depth: 1
+        case.Buffer: 2
+        case.Backbuffer: 3
     }
 }
 
 // What a graph has to say before it can be ordered at all.
 check_declarations :: fn(mut g: Graph) -> bool {
-    var ok : bool = true
-    var i : i64 = 0
+    var ok: bool = true
+    var i: i64 = 0
     while (i < g.pass_count) {
         held := g.passes
         one := held[i]
@@ -864,11 +864,11 @@ check_declarations :: fn(mut g: Graph) -> bool {
             print_str_line(one.name)
             ok = false
         }
-        var k : i64 = 0
+        var k: i64 = 0
         while (k < one.read_count) {
             wanted := resource_index(one.reads[k])
-            var written : bool = false
-            var j : i64 = 0
+            var written: bool = false
+            var j: i64 = 0
             while (j < g.pass_count) {
                 if (pass_writes(g, j, wanted)) {
                     written = true
@@ -899,7 +899,7 @@ check_declarations :: fn(mut g: Graph) -> bool {
     // work thrown away. Depth is different: a buffer a pass sorts against has
     // done its job by the time the pass ends, and a later pass reading it is
     // the rarer case.
-    var r : i64 = 0
+    var r: i64 = 0
     while (r < g.resource_count) {
         held := g.resources
         one := held[r]
@@ -923,19 +923,19 @@ rebuilds :: fn(one: GraphPass) -> bool {
 
 is_backbuffer :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Backbuffer: true
-        case .Color: false
-        case .Depth: false
-        case .Buffer: false
+        case.Backbuffer: true
+        case.Color: false
+        case.Depth: false
+        case.Buffer: false
     }
 }
 
 is_color :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Color: true
-        case .Backbuffer: false
-        case .Depth: false
-        case .Buffer: false
+        case.Color: true
+        case.Backbuffer: false
+        case.Depth: false
+        case.Buffer: false
     }
 }
 
@@ -944,10 +944,10 @@ is_color :: fn(one: Resource) -> bool {
 // what a compute step needs from a graph.
 is_buffer :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Buffer: true
-        case .Color: false
-        case .Depth: false
-        case .Backbuffer: false
+        case.Buffer: true
+        case.Color: false
+        case.Depth: false
+        case.Backbuffer: false
     }
 }
 
@@ -967,7 +967,7 @@ resource_name :: fn(mut g: Graph, index: i64) -> str {
 
 report_cycle :: fn(mut g: Graph, placed: []i64) {
     print_str_line("graph: these passes wait on each other and cannot be ordered:")
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
         if (placed[i] == 0) {
             held := g.passes
@@ -980,7 +980,7 @@ report_cycle :: fn(mut g: Graph, placed: []i64) {
 // Every resource the graph owns, made at the size it declared. The backbuffer
 // is the window's and is filled from the frame instead.
 make_resources :: fn(mut g: Graph) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         one := held[i]
@@ -1009,7 +1009,7 @@ make_resources :: fn(mut g: Graph) {
 // made once and handed to every resource that shares it, which is what makes
 // two steps of a chain cost one texture.
 make_pool :: fn(mut g: Graph) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pool_count) {
         var pool := g.pool
         slot := pool[i]
@@ -1029,7 +1029,7 @@ make_pool :: fn(mut g: Graph) {
 // Every resource sharing a slot has a new view when that slot is made again.
 mark_slot_remade :: fn(mut g: Graph, slot: i64) {
     var held := g.resources
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         if (held[i].transient && held[i].slot == slot) {
             held[i].remade = true
@@ -1041,10 +1041,10 @@ mark_slot_remade :: fn(mut g: Graph, slot: i64) {
 make_pool_one :: fn(device: Device, slot: PoolSlot, w: i64,
     h: i64) -> Texture2D {
     match slot.kind {
-        case .Depth: texture_depth_target(device, w, h, slot.format)
-        case .Color: texture_render_target(device, w, h, slot.format)
-        case .Buffer: no_texture2d()
-        case .Backbuffer: no_texture2d()
+        case.Depth: texture_depth_target(device, w, h, slot.format)
+        case.Color: texture_render_target(device, w, h, slot.format)
+        case.Buffer: no_texture2d()
+        case.Backbuffer: no_texture2d()
     }
 }
 
@@ -1062,10 +1062,10 @@ sized :: fn(declared: i64, window: i64) -> i64 {
 
 make_one :: fn(device: Device, one: Resource, w: i64, h: i64) -> Texture2D {
     match one.kind {
-        case .Depth: texture_depth_target(device, w, h, one.format)
-        case .Color: texture_render_target(device, w, h, one.format)
-        case .Buffer: no_texture2d()
-        case .Backbuffer: no_texture2d()
+        case.Depth: texture_depth_target(device, w, h, one.format)
+        case.Color: texture_render_target(device, w, h, one.format)
+        case.Buffer: no_texture2d()
+        case.Backbuffer: no_texture2d()
     }
 }
 
@@ -1081,7 +1081,7 @@ make_buffer :: fn(device: Device, bytes: i64, usage: BufferUsage) -> Buffer {
 graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
     g.width = w
     g.height = h
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         one := held[i]
@@ -1094,7 +1094,7 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
         }
         i = i + 1
     }
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < g.pool_count) {
         var pool := g.pool
         if (pool[slot].made && pool[slot].width < 0) {
@@ -1109,7 +1109,7 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
     // sized through the one that holds it. A child whose resources are a fixed
     // size makes them on the first of these and ignores the rest; one whose
     // resources follow the window follows the same window this does.
-    var sub : i64 = 0
+    var sub: i64 = 0
     while (sub < g.sub_count) {
         var nested := g.subs
         graph_resize(nested[sub], w, h)
@@ -1120,12 +1120,12 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
 // Every pass that names a resource made again since it last built its
 // bindings, told once, and the marks cleared behind them.
 tell_passes :: fn(mut g: Graph) {
-    var p : i64 = 0
+    var p: i64 = 0
     while (p < g.pass_count) {
         held := g.passes
         one := held[p]
-        var touched : bool = false
-        var r : i64 = 0
+        var touched: bool = false
+        var r: i64 = 0
         while (r < g.resource_count) {
             kept := g.resources
             if (kept[r].remade && (pass_reads(g, p, r) || pass_writes(g, p, r))) {
@@ -1142,7 +1142,7 @@ tell_passes :: fn(mut g: Graph) {
         }
         p = p + 1
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var kept := g.resources
         kept[i].remade = false
@@ -1250,7 +1250,7 @@ graph_enabled :: fn(g: Graph, p: PassId) -> bool {
 graph_only :: fn(mut g: Graph, p: PassId) {
     kept := pass_index(p)
     var held := g.passes
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
         held[i].enabled = i == kept
         i = i + 1
@@ -1259,7 +1259,7 @@ graph_only :: fn(mut g: Graph, p: PassId) {
 
 graph_all_enabled :: fn(mut g: Graph) {
     var held := g.passes
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
         held[i].enabled = true
         i = i + 1
@@ -1271,7 +1271,7 @@ graph_all_enabled :: fn(mut g: Graph) {
 graph_save_enabled :: fn(mut g: Graph) {
     var into := g.saved
     held := g.passes
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
         into[i] = held[i].enabled
         i = i + 1
@@ -1281,7 +1281,7 @@ graph_save_enabled :: fn(mut g: Graph) {
 graph_restore_enabled :: fn(mut g: Graph) {
     from := g.saved
     var held := g.passes
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.pass_count) {
         held[i].enabled = from[i]
         i = i + 1
@@ -1313,14 +1313,14 @@ graph_run_phase :: fn(mut g: Graph, mut f: Frame, wanted: i64) {
         print_str_line("graph: this graph was never scheduled, so it has no order to run")
         return
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         held[i].written = false
         i = i + 1
     }
 
-    var step : i64 = 0
+    var step: i64 = 0
     while (step < g.pass_count) {
         which := graph_order_at(g, step)
         held := g.passes
@@ -1374,19 +1374,19 @@ graph_phase_of :: fn(g: Graph, p: PassId) -> i64 {
 
 is_compute :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .Compute: true
-        case .Render: false
-        case .Node: false
-        case .SubGraph: false
+        case.Compute: true
+        case.Render: false
+        case.Node: false
+        case.SubGraph: false
     }
 }
 
 is_node :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .Node: true
-        case .Compute: false
-        case .Render: false
-        case .SubGraph: false
+        case.Node: true
+        case.Compute: false
+        case.Render: false
+        case.SubGraph: false
     }
 }
 
@@ -1427,7 +1427,7 @@ run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
     if (sub < 0 || sub >= g.sub_count) {
         return
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.binding_count) {
         held := g.bindings
         one := held[i]
@@ -1487,13 +1487,13 @@ mark_written :: fn(mut g: Graph, r: ResourceId) {
 // every frame; everything else is the graph's.
 target_for :: fn(mut g: Graph, f: Frame, one: GraphPass) -> Target {
     var color := no_view()
-    var has_color : bool = false
+    var has_color: bool = false
     if (resource_is_none(one.color) == false) {
         color = view_of(g, f, one.color)
         has_color = true
     }
     var depth := no_view()
-    var has_depth : bool = false
+    var has_depth: bool = false
     if (resource_is_none(one.depth) == false) {
         depth = view_of(g, f, one.depth)
         has_depth = true
@@ -1621,7 +1621,7 @@ test "a pass runs after the compute pass whose buffer it reads" {
     var nothing := Recorded { times = 0 }
     var g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    visible := graph_buffer(g, "visible", 4096, BufferUsage::Storage)
+    visible := graph_buffer(g, "visible", 4096, BufferUsage :: Storage)
     // Declared first, and it reads what the compute pass writes.
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
@@ -1638,7 +1638,7 @@ test "a compute pass that writes a buffer draws nowhere and is allowed" {
     var nothing := Recorded { times = 0 }
     var g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
+    counts := graph_buffer(g, "counts", 256, BufferUsage :: Storage)
     cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
     graph_writes(g, cull, counts)
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
@@ -1910,7 +1910,7 @@ test "a graph takes more passes and resources than it started with" {
     var writer := graph_pass($Recorded, g, "write", nothing_drawn,
         ptr_to(nothing))
     graph_writes_color(g, writer, held, clear_black())
-    var made : i64 = 1
+    var made: i64 = 1
     while (made < FIRST_ROOM * 2) {
         next := graph_color(g, "next", 8, 8, 0)
         one := graph_pass($Recorded, g, "step", nothing_drawn, ptr_to(nothing))
@@ -1937,7 +1937,7 @@ test "a graph takes more sub-graphs and inputs than it started with" {
     // that target, so every one of them is alive and the chain ends at the
     // window.
     var held := graph_color(g, "outer", 8, 8, 0)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < FIRST_ROOM * 2) {
         var child := graph_new(no_device())
         inner := graph_external_color(child, "target")
@@ -1977,7 +1977,7 @@ test "a graph takes more pool slots than it started with" {
     var writer := graph_pass($Recorded, g, "write", nothing_drawn,
         ptr_to(nothing))
     graph_writes_color(g, writer, held, clear_black())
-    var made : i64 = 1
+    var made: i64 = 1
     while (made < FIRST_ROOM * 2) {
         next := graph_transient_color(g, "next", 8 + made, 8, 0)
         one := graph_pass($Recorded, g, "step", nothing_drawn, ptr_to(nothing))
@@ -2008,7 +2008,7 @@ test "the first write of a resource clears it and the second loads it" {
     graph_writes_depth(g, second, shared)
     assert(graph_schedule(g))
     // Read the decision the run makes without a frame to draw into.
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < g.resource_count) {
         var held := g.resources
         held[i].written = false

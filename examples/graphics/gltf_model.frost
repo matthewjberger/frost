@@ -173,9 +173,9 @@ draw_scene :: fn(mut s: Scene, context: NodeContext) {
 
 // The camera and the light, as the bytes the shader reads them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
-    var values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
     var view_projection := camera_view_projection(eye, w, h)
-    var element : i64 = 0
+    var element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
@@ -210,7 +210,7 @@ make_pipeline :: fn(device: Device, format: u32,
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -226,7 +226,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -289,8 +289,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 
@@ -306,8 +306,8 @@ run :: fn(move app: App) -> i64 {
     queue := app_queue(app)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
-    var layouts : [2]BindGroupLayout = [frame_layout,
+        ShaderStage :: Vertex | ShaderStage :: Fragment)
+    var layouts: [2]BindGroupLayout = [frame_layout,
         render_world_layout(app.render)]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2

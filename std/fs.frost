@@ -38,7 +38,7 @@ path_bytes :: fn(path: str) -> ^u8 {
     length := str_len(path)
     block := heap_bytes(length + 1)
     var view := bytes_as($u8, block, length + 1)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < length) {
         view[i] = path[i]
         i = i + 1
@@ -69,7 +69,7 @@ fs_free :: fn(move result: ReadResult) {
 fs_write :: fn(path: str, text: str) -> bool {
     held := path_bytes(path)
     length := str_len(text)
-    var wrote : i64 = 0
+    var wrote: i64 = 0
     if (length == 0) {
         wrote = unsafe { frost_rt_file_write(ptr_cast($i8, held), held, 0) }
     } else {

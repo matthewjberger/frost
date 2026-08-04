@@ -188,9 +188,9 @@ draw_scene :: fn(mut s: Scene, context: NodeContext) {
 
 // The camera and the light, as the bytes the shader reads them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
-    var values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
     var view_projection := camera_view_projection(eye, w, h)
-    var element : i64 = 0
+    var element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
@@ -225,7 +225,7 @@ make_pipeline :: fn(device: Device, format: u32,
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -241,7 +241,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -304,8 +304,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = INSTANCES * 2
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 
@@ -332,22 +332,22 @@ run :: fn(move app: App) -> i64 {
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
-    var looks : [4]i64 = [0; 4]
+    var looks: [4]i64 = [0; 4]
     looks[0] = materials_add(app.materials, material_of(vec4(0.85, 0.3, 0.28, 1.0), 0.35, 0.0))
     looks[1] = materials_add(app.materials, material_of(vec4(0.3, 0.75, 0.45, 1.0), 0.6, 0.0))
     looks[2] = materials_add(app.materials, material_of(vec4(0.35, 0.5, 0.9, 1.0), 0.2, 0.0))
     looks[3] = materials_add(app.materials, material_of(vec4(0.9, 0.75, 0.3, 1.0), 0.45, 0.0))
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
+        ShaderStage :: Vertex | ShaderStage :: Fragment)
     // The second group is the renderer's own: every object and the visible
     // list, bound once rather than one binding per thing.
-    var layouts : [2]BindGroupLayout = [frame_layout,
+    var layouts: [2]BindGroupLayout = [frame_layout,
         render_world_layout(app.render)]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts =
-        ptr_to(layouts[0])
+    ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
 
@@ -361,13 +361,13 @@ run :: fn(move app: App) -> i64 {
                         ids.local_transform), spin), ids.drawn),
             ids.global_transform), ids.transform)
 
-    half : f32 = 2.5
-    var made : i64 = 0
+    half: f32 = 2.5
+    var made: i64 = 0
     while (made < INSTANCES) {
         row := made / GRID
         column := made - row * GRID
-        across : f32 = column
-        up : f32 = row
+        across: f32 = column
+        up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, entity,
             ids.local_transform, LocalTransform {
@@ -377,7 +377,7 @@ run :: fn(move app: App) -> i64 {
         // An axis that differs from one to the next, so the field does not read
         // as one object drawn thirty-six times.
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
-        speed : f32 = 0.4 + 0.09 * made
+        speed: f32 = 0.4 + 0.09 * made
         ecs_set($Spin, app.world, entity, spin,
             spinning(turning, speed, quat_identity()))
 

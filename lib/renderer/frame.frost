@@ -108,7 +108,7 @@ encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
     if (into.has_color) {
         descriptor.color_attachments_count = 1
         descriptor.color_attachments =
-            ptr_to(attachment)
+        ptr_to(attachment)
     }
     if (into.has_depth) {
         descriptor.depth_stencil_attachment = ptr_to(depth)

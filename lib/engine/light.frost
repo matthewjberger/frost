@@ -52,7 +52,7 @@ Light :: struct {
 // a screen shows, so a sun much brighter than this leaves a pale floor with no
 // shape in it.
 sun :: fn() -> Light {
-    Light { light_type = LightType::Directional,
+    Light { light_type = LightType :: Directional,
         color = vec3(1.0, 0.98, 0.94), intensity = 1.5, range = 0.0,
         inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
 }
@@ -64,7 +64,7 @@ sun :: fn() -> Light {
 LAMP_RANGE :: 10.0
 
 lamp :: fn(color: Vec3, intensity: f32) -> Light {
-    Light { light_type = LightType::Point, color = color,
+    Light { light_type = LightType :: Point, color = color,
         intensity = intensity, range = LAMP_RANGE,
         inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
 }
@@ -75,7 +75,7 @@ lamp :: fn(color: Vec3, intensity: f32) -> Light {
 SPOT_RANGE :: 25.0
 
 spot :: fn(color: Vec3, intensity: f32, inner: f32, outer: f32) -> Light {
-    Light { light_type = LightType::Spot, color = color,
+    Light { light_type = LightType :: Spot, color = color,
         intensity = intensity, range = SPOT_RANGE,
         inner_cone_angle = inner, outer_cone_angle = outer }
 }
@@ -128,11 +128,11 @@ gather_lights :: fn(mut world: World, ids: LightIds, mut out: []GpuLight,
     var count := written
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows) && count < slice_len(out)) {
             entity := rows[row]
             one := ecs_get($Light, world, entity, ids.light)
-            is_directional := one.light_type == LightType::Directional
+            is_directional := one.light_type == LightType :: Directional
             if (is_directional == wanted_directional) {
                 placed := ecs_get($GlobalTransform, world, entity,
                     ids.global_transform).matrix
@@ -170,8 +170,8 @@ facing_of :: fn(placed: Mat4) -> Vec4 {
 
 kind_of :: fn(held: LightType) -> u32 {
     match held {
-        case .Directional: LIGHT_DIRECTIONAL
-        case .Point: LIGHT_POINT
-        case .Spot: LIGHT_SPOT
+        case.Directional: LIGHT_DIRECTIONAL
+        case.Point: LIGHT_POINT
+        case.Spot: LIGHT_SPOT
     }
 }

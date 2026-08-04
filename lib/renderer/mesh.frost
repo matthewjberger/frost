@@ -81,7 +81,7 @@ mesh_cache_new :: fn(capacity: i64) -> MeshCache {
 }
 
 mesh_cache_free :: fn(mut cache: MeshCache) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index]) {
             mesh_free(cache.meshes[index])
@@ -212,9 +212,9 @@ mesh_cache_remove :: fn(mut cache: MeshCache, mut store: Geometry,
 // without a device: what it turns on is four numbers, and a rebuild that fires
 // on the wrong ones either thrashes or never reclaims anything.
 worth_rebuilding :: fn(cache: MeshCache, store: Geometry) -> bool {
-    var live_vertices : i64 = 0
-    var live_indices : i64 = 0
-    var index : i64 = 0
+    var live_vertices: i64 = 0
+    var live_indices: i64 = 0
+    var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index]) {
             live_vertices = live_vertices + slice_len(cache.meshes[index].vertices)
@@ -240,8 +240,8 @@ worth_rebuilding_counts :: fn(live_vertices: i64, live_indices: i64,
     if (room_bytes - used_bytes < MIN_RECLAIM_BYTES) {
         return false
     }
-    used : f32 = used_bytes
-    room : f32 = room_bytes
+    used: f32 = used_bytes
+    room: f32 = room_bytes
     used / room < SHRINK_THRESHOLD
 }
 
@@ -251,7 +251,7 @@ worth_rebuilding_counts :: fn(live_vertices: i64, live_indices: i64,
 rebuild :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
     queue: Queue) {
     geometry_reset(store)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index]) {
             cache.spans[index] = geometry_add(store, device, queue,
@@ -265,7 +265,7 @@ rebuild :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
 // Everything out at once, which is what changing level is. The buffers keep
 // their size, since what follows is a scene that will want them.
 mesh_cache_clear :: fn(mut cache: MeshCache, mut store: Geometry) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index]) {
             var gone := cache.meshes[index]
@@ -283,7 +283,7 @@ mesh_cache_clear :: fn(mut cache: MeshCache, mut store: Geometry) {
 // Which slot a name is in, or -1. A caller resolves once and keeps the number,
 // so nothing compares strings while drawing.
 mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index] && str_is_empty(cache.names[index]) == false
             && str_eq(cache.names[index], name)) {
@@ -355,7 +355,7 @@ cube_mesh :: fn() -> Mesh {
     var held := mesh_new(24, 36)
     var vertices := held.vertices
     var indices := held.indices
-    half : f32 = 0.5
+    half: f32 = 0.5
     low := -half
 
     quad(vertices, indices, 0, vec3(1.0, 0.0, 0.0),
@@ -393,32 +393,32 @@ sphere_mesh :: fn(radius: f32, rings: i64, segments: i64) -> Mesh {
     var vertices := held.vertices
     var indices := held.indices
 
-    var ring : i64 = 0
+    var ring: i64 = 0
     while (ring <= rings) {
-        tall : f32 = ring
-        total : f32 = rings
-        theta : f32 = 3.141592653589793 * (tall / total)
-        var segment : i64 = 0
+        tall: f32 = ring
+        total: f32 = rings
+        theta: f32 = 3.141592653589793 * (tall / total)
+        var segment: i64 = 0
         while (segment <= segments) {
-            around : f32 = segment
-            span : f32 = segments
-            phi : f32 = 6.283185307179586 * (around / span)
+            around: f32 = segment
+            span: f32 = segments
+            phi: f32 = 6.283185307179586 * (around / span)
             unit := vec3(cosf(phi) * sinf(theta), cosf(theta),
                 sinf(phi) * sinf(theta))
             // Longitude across and latitude down, which is the mapping that
             // makes the seam land where the duplicated column already is.
             vertices[ring * (segments + 1) + segment] =
-                Vertex { position = vec3_scale(unit, radius), normal = unit,
-                    texcoord = vec2(around / span, tall / total) }
+            Vertex { position = vec3_scale(unit, radius), normal = unit,
+                texcoord = vec2(around / span, tall / total) }
             segment = segment + 1
         }
         ring = ring + 1
     }
 
-    var written : i64 = 0
-    var row : i64 = 0
+    var written: i64 = 0
+    var row: i64 = 0
     while (row < rings) {
-        var column : i64 = 0
+        var column: i64 = 0
         while (column < segments) {
             first := cast($u32, row * (segments + 1) + column)
             next := first + cast($u32, segments + 1)
@@ -469,14 +469,14 @@ test "a cache holding nothing is not worth rebuilding" {
 // are left at zero rather than made to describe a shape.
 filler_mesh :: fn(vertices: i64, indices: i64, mark: f32) -> Mesh {
     var held := mesh_new(vertices, indices)
-    var at : i64 = 0
+    var at: i64 = 0
     while (at < indices) {
         held.indices[at] = cast($u32, at % vertices)
         at = at + 1
     }
-    var vertex : i64 = 0
+    var vertex: i64 = 0
     while (vertex < vertices) {
-        step : f32 = vertex
+        step: f32 = vertex
         // The mark and the position tell one mesh's vertices from another's
         // after a copy has moved both, which is what a readback checks.
         held.vertices[vertex] = Vertex { position = vec3(mark, step, 0.0),
@@ -525,14 +525,14 @@ test "a buffer that runs out grows, and what is in it comes with it" {
     var seen := heap_slice($Vertex, 64)
     assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
             64 * VERTEX_STRIDE, ptr_to(seen[0])))
-    var at : i64 = 0
+    var at: i64 = 0
     while (at < 24) {
-        step : f32 = at
+        step: f32 = at
         assert(seen[at].position.x == 7.0 && seen[at].position.y == step)
         at = at + 1
     }
     while (at < 64) {
-        step : f32 = at - 24
+        step: f32 = at - 24
         assert(seen[at].position.x == 9.0 && seen[at].position.y == step)
         at = at + 1
     }
@@ -579,9 +579,9 @@ test "a cache that loses most of what it held puts the rest back at the start" {
     var seen := heap_slice($Vertex, 24)
     assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
             24 * VERTEX_STRIDE, ptr_to(seen[0])))
-    var at : i64 = 0
+    var at: i64 = 0
     while (at < 24) {
-        step : f32 = at
+        step: f32 = at
         assert(seen[at].position.x == 1.0 && seen[at].position.y == step)
         at = at + 1
     }
@@ -602,7 +602,7 @@ test "a sphere's normals are unit and its seam is doubled" {
     var held := sphere_mesh(2.0, 4, 6)
     // Both ends of every ring, so a ring of six segments is seven vertices.
     assert(slice_len(held.vertices) == 5 * 7)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < slice_len(held.vertices)) {
         length := vec3_length(held.vertices[index].normal)
         assert(length > 0.999 && length < 1.001)

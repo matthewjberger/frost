@@ -36,7 +36,7 @@ LogConfig :: struct {
 }
 
 log_config :: fn() -> LogConfig {
-    LogConfig { directory = ".", rotation = LogRotation::Never }
+    LogConfig { directory = ".", rotation = LogRotation :: Never }
 }
 
 // An open log: where it is written and everything written to it so far.
@@ -55,11 +55,11 @@ log_path :: fn(mut held: Log) -> str { builder_str(held.path) }
 // holds, and an underscore wherever it held something else. A title is a window
 // caption and may hold anything; a path may not.
 log_file_name :: fn(mut out: Builder, title: str, config: LogConfig) {
-    var wrote : i64 = 0
-    var i : i64 = 0
+    var wrote: i64 = 0
+    var i: i64 = 0
     while (i < str_len(title)) {
         byte := title[i]
-        var kept : u8 = 95
+        var kept: u8 = 95
         if (byte >= 97 && byte <= 122) { kept = byte }
         if (byte >= 65 && byte <= 90) { kept = byte + 32 }
         if (byte >= 48 && byte <= 57) { kept = byte }
@@ -72,11 +72,11 @@ log_file_name :: fn(mut out: Builder, title: str, config: LogConfig) {
         builder_str_value(out, "app")
     }
     match config.rotation {
-        case .PerSession: {
+        case.PerSession: {
             builder_byte(out, 95)
             builder_int(out, frost_rt_wall_seconds())
         }
-        case .Never: { }
+        case.Never: {}
     }
     builder_str_value(out, ".log")
 }

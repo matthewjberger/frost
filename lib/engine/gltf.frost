@@ -178,7 +178,7 @@ gltf_node_matrix :: fn(node: GltfNode) -> Mat4 {
 
 gltf_free :: fn(move model: Gltf) {
     var held := vec_slice($GltfPrimitive, model.primitives)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < vec_len($GltfPrimitive, model.primitives)) {
         heap_release_slice($Vertex, held[index].vertices)
         heap_release_slice($u32, held[index].indices)
@@ -225,11 +225,11 @@ gltf_read :: fn(path: str) -> Gltf {
 
     // The chunks, walked in order. A chunk is a length, a kind and that many
     // bytes, padded out to four, and a file may carry kinds beyond these two.
-    var json_at : i64 = -1
-    var json_length : i64 = 0
-    var binary_at : i64 = -1
-    var binary_length : i64 = 0
-    var at : i64 = 12
+    var json_at: i64 = -1
+    var json_length: i64 = 0
+    var binary_at: i64 = -1
+    var binary_length: i64 = 0
+    var at: i64 = 12
     while (at + 8 <= str_len(bytes)) {
         length := read_u32(bytes, at)
         kind := read_u32(bytes, at + 4)
@@ -291,10 +291,10 @@ read_u32 :: fn(bytes: str, at: i64) -> i64 {
     if (at < 0 || at + 4 > str_len(bytes)) {
         return -1
     }
-    held : i64 = bytes[at]
-    second : i64 = bytes[at + 1]
-    third : i64 = bytes[at + 2]
-    fourth : i64 = bytes[at + 3]
+    held: i64 = bytes[at]
+    second: i64 = bytes[at + 1]
+    third: i64 = bytes[at + 2]
+    fourth: i64 = bytes[at + 3]
     held + second * 256 + third * 65536 + fourth * 16777216
 }
 
@@ -319,7 +319,7 @@ element_or :: fn(mut document: Json, array: i64, index: i64,
 read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
     materials := json_member(document, root, "materials")
     if (materials < 0) { return }
-    var index : i64 = 0
+    var index: i64 = 0
     // Walked by the chain rather than by `json_at` per element, since that
     // walks from the start every time and a file with a hundred materials
     // would pay for it a hundred times over.
@@ -345,7 +345,7 @@ read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
         held.alpha_mode = alpha_mode_of(document,
             json_member(document, node, "alphaMode"))
         held.double_sided = json_kind(document,
-            json_member(document, node, "doubleSided")) == JsonKind::True
+            json_member(document, node, "doubleSided")) == JsonKind :: True
         vec_push($Material, model.materials, held)
         index = index + 1
         node = json_next(document, node)
@@ -415,7 +415,7 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
         return
     }
     var claimed := heap_slice($bool, vec_len($GltfNode, model.nodes))
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < slice_len(claimed)) {
         claimed[index] = false
         index = index + 1
@@ -444,8 +444,8 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
 // first, and a file that writes a matrix rather than the three parts is a file
 // whose transform did not come apart into them cleanly to begin with.
 from_matrix :: fn(mut document: Json, matrix: i64, node: GltfNode) -> GltfNode {
-    var column : [16]f32 = [0.0; 16]
-    var index : i64 = 0
+    var column: [16]f32 = [0.0; 16]
+    var index: i64 = 0
     var element := json_at(document, matrix, 0)
     while (element >= 0 && index < 16) {
         column[index] = cast($f32, json_real(document, element))
@@ -472,7 +472,7 @@ read_meshes :: fn(mut document: Json, root: i64, mut model: Gltf,
     var mesh := json_at(document, meshes, 0)
     while (mesh >= 0) {
         first := vec_len($GltfPrimitive, model.primitives)
-        var count : i64 = 0
+        var count: i64 = 0
         var primitive := json_at(document,
             json_member(document, mesh, "primitives"), 0)
         while (primitive >= 0) {
@@ -509,7 +509,7 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
         json_member(document, attributes, "TEXCOORD_0"), binary_length)
 
     var vertices := heap_slice($Vertex, position.count)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < position.count) {
         var held := Vertex {
             position = read_vec3(binary, position, index),
@@ -735,7 +735,7 @@ test "a primitive with no indices is handed on in the order it was stored" {
     assert(slice_len(floor.vertices) == 6)
     assert(slice_len(floor.indices) == 6)
     order := floor.indices
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 6) {
         assert(cast($i64, order[index]) == index)
         index = index + 1
@@ -858,7 +858,7 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     // loaded into already hold other things.
     var meshes := heap_slice($i64, gltf_primitive_count(model))
     var materials := heap_slice($i64, gltf_material_count(model))
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < gltf_material_count(model)) {
         materials[index] = materials_add(registry, gltf_material_at(model,
                 index))
@@ -879,7 +879,7 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     // One entity above the file's own roots, so a caller moves the whole model
     // by moving one thing and a file with several roots is still one model.
     root := spawn_node_entity(world, ids, local_at(vec3(0.0, 0.0, 0.0)))
-    var at : i64 = 0
+    var at: i64 = 0
     while (at < gltf_root_count(model)) {
         spawn_node(world, model, gltf_root_at(model, at), root, meshes,
             materials, ids)
@@ -905,12 +905,12 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
 
     if (held.mesh >= 0) {
         first := gltf_mesh_first(model, held.mesh)
-        var part : i64 = 0
+        var part: i64 = 0
         while (part < gltf_mesh_span(model, held.mesh)) {
             drawn := gltf_primitive_at(model, first + part)
             // A material of -1 is a file that named none, and the default is
             // what the registry answers for a number it does not hold.
-            var wears : i64 = -1
+            var wears: i64 = -1
             if (drawn.material >= 0 && drawn.material < slice_len(materials)) {
                 wears = materials[drawn.material]
             }
@@ -926,7 +926,7 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
     }
 
     children := gltf_node_children(model, node)
-    var child : i64 = 0
+    var child: i64 = 0
     while (child < slice_len(children)) {
         spawn_node(world, model, children[child], entity, meshes, materials,
             ids)

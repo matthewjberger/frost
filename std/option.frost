@@ -8,14 +8,14 @@
 
 export Option, option_some, option_none, option_is_some, option_unwrap_or
 
-Option :: enum($T: Type) { None, Some { value: T } }
+Option :: enum ($T: Type) { None, Some { value: T } }
 
-option_some :: fn($T: Type, move value: $T) -> Option<T> {
-    Option::Some { value = value }
+option_some :: fn($T: Type, move value: $T) -> Option<T>{
+    Option :: Some { value = value }
 }
 
-option_none :: fn($T: Type) -> Option<T> {
-    Option::None
+option_none :: fn($T: Type) -> Option<T>{
+    Option :: None
 }
 
 // Held to values that are not resources: matching an option consumes it, so an
@@ -24,8 +24,8 @@ option_none :: fn($T: Type) -> Option<T> {
 // at the declaration rather than leaving a body that will not instantiate.
 option_is_some :: fn($T: Type, o: Option<T>) -> bool where !is_linear(T) {
     match o {
-        case .None: false
-        case .Some { value }: true
+        case.None: false
+        case.Some { value }: true
     }
 }
 
@@ -38,7 +38,7 @@ option_is_some :: fn($T: Type, o: Option<T>) -> bool where !is_linear(T) {
 option_unwrap_or :: fn($T: Type, o: Option<T>, move fallback: $T) -> $T
     where !is_linear(T) {
     match o {
-        case .None: fallback
-        case .Some { value }: value
+        case.None: fallback
+        case.Some { value }: value
     }
 }

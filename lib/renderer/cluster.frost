@@ -138,7 +138,7 @@ cluster_new :: fn(device: Device) -> Cluster {
     indices := storage_of(device, TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4)
     layout := build_layout(device)
     shader := cluster_module(device)
-    var groups : [1]BindGroupLayout = [layout]
+    var groups: [1]BindGroupLayout = [layout]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
@@ -226,15 +226,15 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     }
 
     inverse, ok := mat4_inverse(projection)
-    var undone : Mat4 = inverse
+    var undone: Mat4 = inverse
     if (ok == false) {
         undone = mat4_identity()
     }
     queue_write_buffer(queue, held.uniforms, 0, ptr_to(undone.m[0]), 64)
 
-    var sizes : [4]f32 = [0.0; 4]
-    wide : f32 = width
-    tall : f32 = height
+    var sizes: [4]f32 = [0.0; 4]
+    wide: f32 = width
+    tall: f32 = height
     sizes[0] = wide
     sizes[1] = tall
     // Where the slices start and end. The near one is the camera's own or half
@@ -251,14 +251,14 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     sizes[3] = far
     queue_write_buffer(queue, held.uniforms, 64, ptr_to(sizes[0]), 16)
 
-    var counts : [4]u32 = [CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, 0]
+    var counts: [4]u32 = [CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, 0]
     queue_write_buffer(queue, held.uniforms, 80, ptr_to(counts[0]), 16)
 
-    var tail : [4]f32 = [0.0; 4]
+    var tail: [4]f32 = [0.0; 4]
     tail[0] = wide / CLUSTER_GRID_X
     tail[1] = tall / CLUSTER_GRID_Y
     queue_write_buffer(queue, held.uniforms, 96, ptr_to(tail[0]), 8)
-    var totals : [2]u32 = [cast($u32, count), cast($u32, leading)]
+    var totals: [2]u32 = [cast($u32, count), cast($u32, leading)]
     queue_write_buffer(queue, held.uniforms, 104, ptr_to(totals[0]), 8)
 
     var held_view := view
@@ -492,14 +492,14 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 
 storage_of :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Storage | BufferUsage :: CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 uniform_of :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Uniform | BufferUsage :: CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
@@ -523,11 +523,11 @@ step_of :: fn(device: Device, shader: ShaderModule, layout: PipelineLayout,
 }
 
 build_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries : [6]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 6]
-    var slot : i64 = 0
+    var entries: [6]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 6]
+    var slot: i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage::Compute
+        entries[slot].visibility = ShaderStage :: Compute
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
         slot = slot + 1
     }
@@ -545,13 +545,13 @@ build_layout :: fn(device: Device) -> BindGroupLayout {
 build_group :: fn(device: Device, layout: BindGroupLayout, lights: Buffer,
     uniforms: Buffer, view: Buffer, bounds: Buffer, grid: Buffer,
     indices: Buffer) -> BindGroup {
-    var entries : [6]BindGroupEntry = [bind_group_entry_init(); 6]
-    var held : [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
-    var sizes : [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
+    var entries: [6]BindGroupEntry = [bind_group_entry_init(); 6]
+    var held: [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
+    var sizes: [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
         TOTAL_CLUSTERS * GRID_BYTES,
         TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
         LIGHT_BYTES * MAX_LIGHTS, 64]
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]

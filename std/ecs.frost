@@ -312,7 +312,7 @@ mask_word :: fn(index: i64) -> i64 {
 }
 
 mask_bit :: fn(index: i64) -> u64 {
-    one : u64 = 1
+    one: u64 = 1
     one << (index % 64)
 }
 
@@ -342,7 +342,7 @@ mask_has :: fn(m: Mask, index: i64) -> bool {
 
 mask_or :: fn(a: Mask, b: Mask) -> Mask {
     var out := a
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         out.words[i] = out.words[i] | b.words[i]
         i = i + 1
@@ -354,7 +354,7 @@ mask_or :: fn(a: Mask, b: Mask) -> Mask {
 // it is a straight loop over the words with nothing allocated and no call per
 // word.
 mask_covers :: fn(held: Mask, wanted: Mask) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         if ((held.words[i] & wanted.words[i]) != wanted.words[i]) {
             return false
@@ -367,7 +367,7 @@ mask_covers :: fn(held: Mask, wanted: Mask) -> bool {
 // No bit of `excluded` is on in `held`, which is what a `without` filter asks
 // of a whole table before any row is touched.
 mask_disjoint :: fn(held: Mask, excluded: Mask) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         if ((held.words[i] & excluded.words[i]) != 0) {
             return false
@@ -381,7 +381,7 @@ mask_disjoint :: fn(held: Mask, excluded: Mask) -> bool {
 // entity takes off at once.
 mask_without_mask :: fn(held: Mask, unwanted: Mask) -> Mask {
     var out := held
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         // No bitwise complement in the language, and none is needed: the bits
         // in common are all present in the word they are taken from, so the
@@ -393,7 +393,7 @@ mask_without_mask :: fn(held: Mask, unwanted: Mask) -> Mask {
 }
 
 mask_equal :: fn(a: Mask, b: Mask) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         if (a.words[i] != b.words[i]) {
             return false
@@ -404,7 +404,7 @@ mask_equal :: fn(a: Mask, b: Mask) -> bool {
 }
 
 mask_is_empty :: fn(m: Mask) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         if (m.words[i] != 0) {
             return false
@@ -418,8 +418,8 @@ mask_is_empty :: fn(m: Mask) -> bool {
 // table whose columns are in ascending index order.
 bits_below :: fn(m: Mask, index: i64) -> i64 {
     word := mask_word(index)
-    var counted : i64 = 0
-    var i : i64 = 0
+    var counted: i64 = 0
+    var i: i64 = 0
     while (i < word) {
         counted = counted + bits_in(m.words[i])
         i = i + 1
@@ -431,7 +431,7 @@ bits_below :: fn(m: Mask, index: i64) -> i64 {
 // is none left, so the loop runs once per bit that is set rather than 64 times.
 bits_in :: fn(held: u64) -> i64 {
     var rest := held
-    var counted : i64 = 0
+    var counted: i64 = 0
     while (rest != 0) {
         rest = rest & (rest - 1)
         counted = counted + 1
@@ -468,8 +468,8 @@ Table :: struct {
 // A whole mask mixed into one number, so a key that differs only in its fourth
 // word still lands somewhere else.
 mask_hash :: fn(m: Mask) -> i64 {
-    var h : i64 = 0
-    var i : i64 = 0
+    var h: i64 = 0
+    var i: i64 = 0
     while (i < MASK_WORDS) {
         h = wrap_add(wrap_mul(h, 1099511628211), m.words[i])
         i = i + 1
@@ -477,7 +477,7 @@ mask_hash :: fn(m: Mask) -> i64 {
     h
 }
 
-mask_keys :: Hashing<Mask> { hash = mask_hash, equal = mask_equal }
+mask_keys :: Hashing<Mask>{ hash = mask_hash, equal = mask_equal }
 
 // ---------------------------------------------------------------------------
 // The world
@@ -553,13 +553,13 @@ ecs_new :: fn() -> World {
 // what a program calls; this one is what a group calls, because a member is
 // reached through the group's storage and cannot be moved out of it.
 world_release :: fn(mut world: World) {
-    var t : i64 = 0
+    var t: i64 = 0
     while (t < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[t]
         table_release(table)
         t = t + 1
     }
-    var r : i64 = 0
+    var r: i64 = 0
     while (r < vec_len($Column, world.resources)) {
         ref resource := vec_slice($Column, world.resources)[r]
         column_free(resource)
@@ -654,7 +654,7 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
 // which index a type has.
 registered_index :: fn(wanted: i64, world: World) -> i64 {
     known := vec_slice($i64, world.registry.types)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < world.registry.count) {
         if (known[index] == wanted) {
             return index
@@ -668,7 +668,7 @@ registered_index :: fn(wanted: i64, world: World) -> i64 {
 // save file naming them both need, and the reverse of `ecs_component_name`.
 ecs_component_by_name :: fn(world: World, wanted: str) -> i64 {
     known := vec_slice($str, world.registry.names)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < world.registry.count) {
         if (str_eq(known[index], wanted)) {
             return index
@@ -740,7 +740,7 @@ table_for :: fn(mut world: World, mask: Mask) -> i64 {
     }
     var table := Table { mask = mask, entities = vec_new($Entity, 8),
         columns = vec_new($Column, 4) }
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(mask, index)) {
             vec_push($Column, table.columns,
@@ -759,8 +759,8 @@ table_for :: fn(mut world: World, mask: Mask) -> i64 {
 // ---------------------------------------------------------------------------
 
 ecs_spawn :: fn(mut world: World) -> Entity {
-    var id : i64 = 0
-    var generation : i64 = 0
+    var id: i64 = 0
+    var generation: i64 = 0
     free_count := vec_len($i64, world.free_ids)
     if (free_count > 0) {
         id = vec_get($i64, world.free_ids, free_count - 1)
@@ -785,7 +785,7 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.row = row
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
-    note_change(world, ChangeKind::Spawn, made, -1)
+    note_change(world, ChangeKind :: Spawn, made, -1)
     made
 }
 
@@ -809,10 +809,10 @@ ecs_spawn_with :: fn(mut world: World, mask: Mask) -> Entity {
     // Every component of a fresh row was added now. `migrate` already says so
     // for the ones it zeroed, and it zeroes all of them here, since the entity
     // came from the empty table holding nothing.
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(mask, index)) {
-            note_change(world, ChangeKind::Add, made, index)
+            note_change(world, ChangeKind :: Add, made, index)
         }
         index = index + 1
     }
@@ -843,10 +843,10 @@ table_swap_remove :: fn(mut world: World, table_index: i64, row: i64) {
     moved_id := vec_slice($Entity, table.entities)[last].id
     if (row != last) {
         vec_slice($Entity, table.entities)[row] =
-            vec_slice($Entity, table.entities)[last]
+        vec_slice($Entity, table.entities)[last]
     }
     table.entities.len = last
-    var c : i64 = 0
+    var c: i64 = 0
     while (c < vec_len($Column, table.columns)) {
         ref column := vec_slice($Column, table.columns)[c]
         column_swap_remove(column, row)
@@ -873,7 +873,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
-    note_change(world, ChangeKind::Despawn, entity, -1)
+    note_change(world, ChangeKind :: Despawn, entity, -1)
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +897,7 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: Mask) -> i64 {
     // The destination row is the same for every column, since a table's columns
     // are the same length.
     landed := vec_len($Entity, vec_slice($Table, world.tables)[to_index].entities)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(target_mask, index)) {
             to_position := column_position(target_mask, index)
@@ -947,7 +947,7 @@ ecs_add :: fn($T: Type, mut world: World, entity: Entity, component: i64,
     current := vec_slice($Table, world.tables)[slot.table].mask
     if (mask_has(current, component) == false) {
         migrate(world, entity, mask_with(current, component))
-        note_change(world, ChangeKind::Add, entity, component)
+        note_change(world, ChangeKind :: Add, entity, component)
     }
     ecs_set($T, world, entity, component, value)
     // A component the entity has just been given was added now, whatever the
@@ -970,7 +970,7 @@ ecs_remove :: fn(mut world: World, entity: Entity, component: i64) {
         return
     }
     migrate(world, entity, mask_without(current, component))
-    note_change(world, ChangeKind::Remove, entity, component)
+    note_change(world, ChangeKind :: Remove, entity, component)
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
@@ -1204,7 +1204,7 @@ query_row_passes :: fn(world: World, q: Query, row: i64) -> bool {
         return true
     }
     ref table := vec_slice($Table, world.tables)[q.table]
-    var component : i64 = 0
+    var component: i64 = 0
     while (component < world.registry.count) {
         if (mask_has(q.changed, component)) {
             position := column_position(table.mask, component)
@@ -1357,7 +1357,7 @@ ecs_resource_register :: fn($T: Type, mut world: World) -> i64 {
 // Where a type id sits among the resources, or -1.
 resource_index :: fn(wanted: i64, world: World) -> i64 {
     known := vec_slice($i64, world.resource_types)
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < vec_len($i64, world.resource_types)) {
         if (known[slot] == wanted) {
             return slot
@@ -1411,26 +1411,26 @@ ecs_resource_ref :: fn($T: Type, world: World, slot: i64) -> ref T {
 
 // Two systems, for the tests below. What they do is nothing: the question a
 // schedule answers is which of them is in it and in what order.
-runs_first :: fn(mut w: World) { }
-runs_second :: fn(mut w: World) { }
+runs_first :: fn(mut w: World) {}
+runs_second :: fn(mut w: World) {}
 
 test "a system is removed by the function it was registered with" {
     var held := schedule_new()
-    schedule_add(held, Stage::Update, runs_first)
-    schedule_add(held, Stage::Update, runs_second)
+    schedule_add(held, Stage :: Update, runs_first)
+    schedule_add(held, Stage :: Update, runs_second)
     assert(schedule_count(held) == 2)
     assert(schedule_remove(held, runs_first))
     assert(schedule_count(held) == 1)
     // The one left is the one that was not asked for, and it kept its stage.
     kept := vec_get($System, held.systems, 0)
     assert(kept.run == runs_second)
-    assert(kept.stage == Stage::Update)
+    assert(kept.stage == Stage :: Update)
     schedule_free(held)
 }
 
 test "removing a system that was never added changes nothing" {
     var held := schedule_new()
-    schedule_add(held, Stage::Update, runs_first)
+    schedule_add(held, Stage :: Update, runs_first)
     assert(schedule_remove(held, runs_second) == false)
     assert(schedule_count(held) == 1)
     schedule_free(held)
@@ -1438,16 +1438,16 @@ test "removing a system that was never added changes nothing" {
 
 test "the systems after the one removed keep their order" {
     var held := schedule_new()
-    schedule_add(held, Stage::First, runs_first)
-    schedule_add(held, Stage::Update, runs_second)
-    schedule_add(held, Stage::Last, runs_first)
+    schedule_add(held, Stage :: First, runs_first)
+    schedule_add(held, Stage :: Update, runs_second)
+    schedule_add(held, Stage :: Last, runs_first)
     assert(schedule_remove(held, runs_first))
     assert(schedule_count(held) == 2)
     // The first match went, so what is left is the second and the third in the
     // order they were written.
     var items := vec_slice($System, held.systems)
-    assert(items[0].stage == Stage::Update)
-    assert(items[1].stage == Stage::Last)
+    assert(items[0].stage == Stage :: Update)
+    assert(items[1].stage == Stage :: Last)
     schedule_free(held)
 }
 
@@ -1615,7 +1615,7 @@ events_trim :: fn(mut e: Events, upto: i64) {
     // Forward, because what is kept moves down: the source is always ahead of
     // the destination, so a run copied in order never writes over itself.
     moved := dropped * e.item_size
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < kept * e.item_size) {
         unsafe { e.data[index] = e.data[moved + index] }
         index = index + 1
@@ -1631,7 +1631,7 @@ readers_oldest :: fn(readers: []EventReader) -> i64 {
         return 0
     }
     var oldest := readers[0].seen
-    var index : i64 = 1
+    var index: i64 = 1
     while (index < slice_len(readers)) {
         if (readers[index].seen < oldest) {
             oldest = readers[index].seen
@@ -1697,7 +1697,7 @@ for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     while (query_next(world, q)) {
         rows_of($body, world, q,
             query_column($T, world, q, component_of($T, world))
-                for T in types)
+            for T in types)
     }
 }
 
@@ -1705,7 +1705,7 @@ for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 // worked out, as a compile-time list whose elements line up with the body's
 // parameters ahead of the row index.
 rows_of :: fn($body: Type, mut world: World, q: Query, cols: $...) {
-    var row : i64 = 0
+    var row: i64 = 0
     while (row < q.count) {
         if (query_row_passes(world, q, row)) {
             body(c for c in cols, row)
@@ -1726,10 +1726,10 @@ ecs_single :: fn(world: World, f: Filters, types: $...) -> Entity {
     }
     query_filter(q, f)
     var found := no_entity()
-    var seen : i64 = 0
+    var seen: i64 = 0
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             if (query_row_passes(world, q, row)) {
                 seen = seen + 1
@@ -1752,9 +1752,9 @@ ecs_count_matching :: fn(world: World, f: Filters, types: $...) -> i64 {
         query_with(q, component_of($T, world))
     }
     query_filter(q, f)
-    var total : i64 = 0
+    var total: i64 = 0
     while (query_next(world, q)) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             if (query_row_passes(world, q, row)) {
                 total = total + 1
@@ -1775,7 +1775,7 @@ ecs_count_matching :: fn(world: World, f: Filters, types: $...) -> i64 {
 // lose the pointer it has to be freed through. A `Vec` keeps the two apart.
 //
 // The caller owns what comes back and releases it with `vec_free`.
-ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity> {
+ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity>{
     total := ecs_count_matching(world, f, $T for T in types)
     var out := vec_new($Entity, total)
     if (total == 0) {
@@ -1788,7 +1788,7 @@ ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity> {
     query_filter(q, f)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             if (query_row_passes(world, q, row)) {
                 vec_push($Entity, out, rows[row])
@@ -1806,12 +1806,12 @@ ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity> {
 // Written as a gather and two index loops rather than as a cursor, since a pair
 // is two rows that may be in two different tables and no single walk is over
 // both. The caller owns what comes back and releases it with `vec_free`.
-ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair> {
+ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair>{
     var held := ecs_gather(world, f, $T for T in types)
     names := vec_slice($Entity, held)
     total := slice_len(names)
     var out := vec_new($EntityPair, total * (total - 1) / 2)
-    var first : i64 = 0
+    var first: i64 = 0
     while (first < total) {
         var second := first + 1
         while (second < total) {
@@ -1847,8 +1847,8 @@ EntityPair :: struct { a: Entity, b: Entity }
 ecs_compact :: fn(mut world: World) -> i64 {
     total := vec_len($Table, world.tables)
     var kept := vec_new($Table, total)
-    var dropped : i64 = 0
-    var index : i64 = 0
+    var dropped: i64 = 0
+    var index: i64 = 0
     while (index < total) {
         ref table := vec_slice($Table, world.tables)[index]
         if (index == 0 || vec_len($Entity, table.entities) > 0) {
@@ -1885,12 +1885,12 @@ table_move :: fn(mut held: Table) -> Table {
 rebuild_lookup :: fn(mut world: World) {
     map_free($Mask, $i64, world.lookup)
     world.lookup = map_new($Mask, $i64, vec_len($Table, world.tables) * 2 + 16)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[index]
         map_put($Mask, $i64, $mask_keys, world.lookup, table.mask, index)
         rows := vec_slice($Entity, table.entities)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             ref slot := vec_slice($EntitySlot, world.slots)[entity.id]
@@ -1905,7 +1905,7 @@ rebuild_lookup :: fn(mut world: World) {
 // Everything one table allocated. `world_release` frees them all in a loop; a
 // compaction frees only the ones it drops.
 table_release :: fn(mut held: Table) {
-    var c : i64 = 0
+    var c: i64 = 0
     while (c < vec_len($Column, held.columns)) {
         ref column := vec_slice($Column, held.columns)[c]
         column_free(column)
@@ -1993,23 +1993,23 @@ commands_free :: fn(move c: Commands) {
 // exist until the queue is applied.
 commands_spawn :: fn(mut c: Commands) {
     vec_push($Command, c.queued,
-        Command { kind = CommandKind::Spawn,
+        Command { kind = CommandKind :: Spawn,
             entity = Entity { id = 0, generation = 0 } })
 }
 
 commands_despawn :: fn(mut c: Commands, entity: Entity) {
     vec_push($Command, c.queued,
-        Command { kind = CommandKind::Despawn, entity = entity })
+        Command { kind = CommandKind :: Despawn, entity = entity })
 }
 
 // Run the queue in the order it was written and empty it.
 commands_apply :: fn(mut c: Commands, mut world: World) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($Command, c.queued)) {
         held := vec_get($Command, c.queued, i)
         kind := held.kind
         target := held.entity
-        if (kind == CommandKind::Spawn) {
+        if (kind == CommandKind :: Spawn) {
             ecs_spawn(world)
         } else {
             ecs_despawn(world, target)
@@ -2144,7 +2144,7 @@ hierarchy_detach :: fn(mut h: Hierarchy, child: Entity) {
 
 hierarchy_child_count :: fn(h: Hierarchy, parent: Entity) -> i64 {
     var walk := hierarchy_first_child(h, parent)
-    var counted : i64 = 0
+    var counted: i64 = 0
     while (is_no_entity(walk) == false) {
         counted = counted + 1
         walk = hierarchy_next_sibling(h, walk)
@@ -2209,15 +2209,15 @@ Stage :: enum {
 // rather than a system that quietly runs in the wrong one.
 stage_order :: fn(s: Stage) -> i64 {
     match s {
-        case .Startup: 0
-        case .First: 1
-        case .Update: 2
-        case .LateUpdate: 3
-        case .FrameStart: 4
-        case .FrameUpdate: 5
-        case .FramePostUpdate: 6
-        case .Render: 7
-        case .Last: 8
+        case.Startup: 0
+        case.First: 1
+        case.Update: 2
+        case.LateUpdate: 3
+        case.FrameStart: 4
+        case.FrameUpdate: 5
+        case.FramePostUpdate: 6
+        case.Render: 7
+        case.Last: 8
     }
 }
 
@@ -2259,8 +2259,8 @@ schedule_add :: fn(mut s: Schedule, stage: Stage, run: fn(mut World)) {
 // not reorder the rest: the systems after it move down by one.
 schedule_remove :: fn(mut s: Schedule, run: fn(mut World)) -> bool {
     held := vec_slice($System, s.systems)
-    var found : i64 = -1
-    var i : i64 = 0
+    var found: i64 = -1
+    var i: i64 = 0
     while (i < vec_len($System, s.systems)) {
         if (held[i].run == run) {
             found = i
@@ -2303,7 +2303,7 @@ schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
 
 // The systems added to `Stage::Startup`, which a frame does not run.
 schedule_start :: fn(mut s: Schedule, mut world: World, state: i64) {
-    startup := stage_order(Stage::Startup)
+    startup := stage_order(Stage :: Startup)
     run_stages(s, world, state, startup, startup)
 }
 
@@ -2312,7 +2312,7 @@ schedule_start :: fn(mut s: Schedule, mut world: World, state: i64) {
 // is added.
 highest_stage :: fn(s: Schedule) -> i64 {
     var highest := FIRST_FRAME_STAGE
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($System, s.systems)) {
         held := vec_get($System, s.systems, i)
         order := stage_order(held.stage)
@@ -2328,7 +2328,7 @@ run_stages :: fn(mut s: Schedule, mut world: World, state: i64, from: i64,
     to: i64) {
     var stage := from
     while (stage <= to) {
-        var k : i64 = 0
+        var k: i64 = 0
         while (k < vec_len($System, s.systems)) {
             system := vec_get($System, s.systems, k)
             if (stage_order(system.stage) == stage
@@ -2433,7 +2433,7 @@ ecs_mark_column :: fn(mut world: World, table_index: i64, component: i64) {
     position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     var changed := column_changed(column)
-    var row : i64 = 0
+    var row: i64 = 0
     while (row < column.count) {
         changed[row] = world.tick
         row = row + 1
@@ -2489,10 +2489,10 @@ ecs_remove_bundle :: fn(mut world: World, entity: Entity, types: $...) {
     }
     // What is leaving is noted before it leaves, since afterwards there is no
     // row to say it was ever there.
-    var component : i64 = 0
+    var component: i64 = 0
     while (component < world.registry.count) {
         if (mask_has(current, component) && mask_has(unwanted, component)) {
-            note_change(world, ChangeKind::Remove, entity, component)
+            note_change(world, ChangeKind :: Remove, entity, component)
         }
         component = component + 1
     }
@@ -2513,10 +2513,10 @@ ecs_has_bundle :: fn(world: World, entity: Entity, types: $...) -> bool {
 // Everything a world holds except what it registered, released. The registry
 // stays, because it is the schema a snapshot is read against.
 world_clear :: fn(mut world: World) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[index]
-        var held : i64 = 0
+        var held: i64 = 0
         while (held < vec_len($Column, table.columns)) {
             ref column := vec_slice($Column, table.columns)[held]
             column_free(column)
@@ -2656,13 +2656,13 @@ group_new :: fn() -> Group {
 }
 
 group_free :: fn(move g: Group) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < g.count) {
         ref member := vec_slice($World, g.members)[index]
         world_release(member)
         index = index + 1
     }
-    var held : i64 = 0
+    var held: i64 = 0
     while (held < vec_len($TagType, g.tags)) {
         ref marked := vec_slice($TagType, g.tags)[held]
         tag_release(marked.set)
@@ -2726,11 +2726,11 @@ group_register :: fn($T: Type, mut g: Group, member: i64) -> i64 {
 // when a system starts rather than once per entity.
 group_route :: fn($T: Type, g: Group) -> Route {
     wanted := type_id(T)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < g.count) {
         ref held := vec_slice($World, g.members)[index]
         known := vec_slice($i64, held.registry.types)
-        var component : i64 = 0
+        var component: i64 = 0
         while (component < held.registry.count) {
             if (known[component] == wanted) {
                 return Route { member = index, component = component }
@@ -2766,8 +2766,8 @@ group_log_clear :: fn(mut g: Group) {
 // something is set on the entity there, which is what lets an entity the
 // renderer knows about carry no game state at all.
 group_spawn :: fn(mut g: Group) -> Entity {
-    var id : i64 = 0
-    var generation : i64 = 0
+    var id: i64 = 0
+    var generation: i64 = 0
     free_count := vec_len($i64, g.free_ids)
     if (free_count > 0) {
         id = vec_get($i64, g.free_ids, free_count - 1)
@@ -2784,7 +2784,7 @@ group_spawn :: fn(mut g: Group) -> Entity {
     slot.alive = true
     g.live = g.live + 1
     made := Entity { id = id, generation = generation }
-    group_note(g, ChangeKind::Spawn, made)
+    group_note(g, ChangeKind :: Spawn, made)
     made
 }
 
@@ -2851,13 +2851,13 @@ group_despawn :: fn(mut g: Group, entity: Entity) -> bool {
     if (group_alive(g, entity) == false) {
         return false
     }
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < g.count) {
         ref member := vec_slice($World, g.members)[index]
         member_retire(member, entity)
         index = index + 1
     }
-    var held : i64 = 0
+    var held: i64 = 0
     while (held < vec_len($TagType, g.tags)) {
         ref marked := vec_slice($TagType, g.tags)[held]
         tag_remove(marked.set, entity)
@@ -2868,12 +2868,12 @@ group_despawn :: fn(mut g: Group, entity: Entity) -> bool {
     slot.generation = entity.generation + 1
     g.live = g.live - 1
     vec_push($i64, g.free_ids, entity.id)
-    group_note(g, ChangeKind::Despawn, entity)
+    group_note(g, ChangeKind :: Despawn, entity)
     true
 }
 
 group_despawn_entities :: fn(mut g: Group, entities: []Entity) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < slice_len(entities)) {
         group_despawn(g, entities[index])
         index = index + 1
@@ -2934,7 +2934,7 @@ group_remove :: fn($T: Type, mut g: Group, entity: Entity) {
 // migrates when one is added and nothing has to be declared up front.
 group_tag_type :: fn($T: Type, mut g: Group) -> i64 {
     wanted := type_id(T)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < vec_len($TagType, g.tags)) {
         if (vec_slice($TagType, g.tags)[index].key == wanted) {
             return index
@@ -2977,7 +2977,7 @@ TestHealth :: struct { points: i64 }
 
 test_integrate :: fn(mut p: []TestPosition, mut v: []TestVelocity,
     count: i64) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x
         p[i].y = p[i].y + v[i].y
@@ -3135,7 +3135,7 @@ test "a query visits the tables holding every component it asks for" {
     ecs_add($TestPosition, world, b, position,
         TestPosition { x = 100.0, y = 100.0 })
 
-    var seen : i64 = 0
+    var seen: i64 = 0
     var q := query_begin(world)
     query_with(q, position)
     query_with(q, velocity)
@@ -3145,8 +3145,8 @@ test "a query visits the tables holding every component it asks for" {
     assert(seen == 1)
 
     // And a query over the position alone finds both, in two tables.
-    var tables : i64 = 0
-    var total : i64 = 0
+    var tables: i64 = 0
+    var total: i64 = 0
     var all := query_begin(world)
     query_with(all, position)
     while (query_next(world, all)) {
@@ -3189,13 +3189,13 @@ test "the cursor form reaches the entity beside its components" {
     health := ecs_register($TestHealth, world)
     a := ecs_spawn(world)
     ecs_add($TestHealth, world, a, health, TestHealth { points = 7 })
-    var found : i64 = 0
+    var found: i64 = 0
     var q := query_begin(world)
     query_with(q, health)
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         var points := query_column($TestHealth, world, q, health)
-        var i : i64 = 0
+        var i: i64 = 0
         while (i < q.count) {
             if (entities[i].id == a.id) {
                 found = points[i].points
@@ -3221,7 +3221,7 @@ test "a tag marks an entity without moving it" {
     assert(tag_has(selected, a))
     assert(tag_has(selected, b) == false)
     // Both are still in the one table.
-    var tables : i64 = 0
+    var tables: i64 = 0
     var q := query_begin(world)
     query_with(q, position)
     while (query_next(world, q)) {
@@ -3367,13 +3367,13 @@ test "a query hands over the write times beside the components" {
     watermark := ecs_tick(world)
     ecs_set($TestHealth, world, b, health, TestHealth { points = 20 })
 
-    var touched : i64 = 0
+    var touched: i64 = 0
     var q := query_begin(world)
     query_with(q, health)
     while (query_next(world, q)) {
         stamps := query_changed(world, q, health)
         points := query_column($TestHealth, world, q, health)
-        var i : i64 = 0
+        var i: i64 = 0
         while (i < q.count) {
             if (stamps[i] >= watermark) {
                 touched = touched + points[i].points
@@ -3427,8 +3427,8 @@ test "two readers of one channel each see every event once" {
     assert(events_sent(channel) == 2)
 
     first := events_read($TestDamage, channel, renderer)
-    var total : i64 = 0
-    var i : i64 = 0
+    var total: i64 = 0
+    var i: i64 = 0
     while (i < slice_len(first)) {
         total = total + first[i].amount
         i = i + 1
@@ -3506,8 +3506,8 @@ test "a schedule runs its systems in stage order" {
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
     // Added last, run first: the stage decides, not the order they were added.
-    schedule_add(frame, Stage::Last, second_system)
-    schedule_add(frame, Stage::First, first_system)
+    schedule_add(frame, Stage :: Last, second_system)
+    schedule_add(frame, Stage :: First, first_system)
     assert(schedule_count(frame) == 2)
     schedule_run(frame, world, ANY_STATE)
     // first_system then second_system: (0 * 2 + 1) * 2.
@@ -3519,7 +3519,7 @@ test "a schedule runs its systems in stage order" {
 test "a system bound to a state runs only in that state" {
     var world := ecs_new()
     var frame := schedule_new()
-    schedule_add_in_state(frame, Stage::Update, 1, spawning_system)
+    schedule_add_in_state(frame, Stage :: Update, 1, spawning_system)
     schedule_run(frame, world, 0)
     assert(ecs_count(world) == 0)
     schedule_run(frame, world, 1)
@@ -3562,11 +3562,11 @@ test "a world asked to keep a log says what changed structurally" {
     ecs_despawn(world, a)
     held := ecs_log(world)
     assert(slice_len(held) == 4)
-    assert(held[0].kind == ChangeKind::Spawn)
-    assert(held[1].kind == ChangeKind::Add)
+    assert(held[0].kind == ChangeKind :: Spawn)
+    assert(held[1].kind == ChangeKind :: Add)
     assert(held[1].component == health)
-    assert(held[2].kind == ChangeKind::Remove)
-    assert(held[3].kind == ChangeKind::Despawn)
+    assert(held[2].kind == ChangeKind :: Remove)
+    assert(held[3].kind == ChangeKind :: Despawn)
     assert(held[3].entity.id == a.id)
     ecs_log_clear(world)
     assert(slice_len(ecs_log(world)) == 0)
@@ -3587,7 +3587,7 @@ test "a change made during a walk is queued and applied after it" {
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         points := query_column($TestHealth, world, q, health)
-        var i : i64 = 0
+        var i: i64 = 0
         while (i < q.count) {
             if (points[i].points == 0) {
                 commands_despawn(queued, entities[i])
@@ -3627,7 +3627,7 @@ test "a world full of components gives back every block it took" {
     position := ecs_register($TestPosition, world)
     velocity := ecs_register($TestVelocity, world)
     health := ecs_register($TestHealth, world)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 64) {
         e := ecs_spawn(world)
         ecs_add($TestPosition, world, e, position,
@@ -3656,7 +3656,7 @@ test "spawning and despawning in a loop leaks nothing" {
     ecs_add($TestHealth, world, first, health, TestHealth { points = 0 })
     ecs_despawn(world, first)
     settled := heap_live()
-    var round : i64 = 0
+    var round: i64 = 0
     while (round < 50) {
         e := ecs_spawn(world)
         ecs_add($TestHealth, world, e, health, TestHealth { points = round })
@@ -3679,7 +3679,7 @@ test "resources give back what they took" {
 test "a channel gives back what it took" {
     before := heap_live()
     var channel := events_new($TestDamage)
-    var sent : i64 = 0
+    var sent: i64 = 0
     while (sent < 100) {
         events_send($TestDamage, channel, TestDamage { amount = sent })
         sent = sent + 1
@@ -3693,7 +3693,7 @@ test "a tree gives back what it took" {
     var world := ecs_new()
     var tree := hierarchy_new()
     root := ecs_spawn(world)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 32) {
         child := ecs_spawn(world)
         hierarchy_attach(tree, child, root)
@@ -3707,7 +3707,7 @@ test "a tree gives back what it took" {
 test "a schedule, a tag and a command buffer give back what they took" {
     before := heap_live()
     var frame := schedule_new()
-    schedule_add(frame, Stage::Update, spawning_system)
+    schedule_add(frame, Stage :: Update, spawning_system)
     schedule_free(frame)
     var marks := tag_new()
     var world := ecs_new()
@@ -3787,14 +3787,14 @@ test "ids come back in the order they were freed" {
 test "many entities live at once" {
     var world := ecs_new()
     health := ecs_register($TestHealth, world)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 200) {
         e := ecs_spawn(world)
         ecs_add($TestHealth, world, e, health, TestHealth { points = made })
         made = made + 1
     }
     assert(ecs_count(world) == 200)
-    var seen : i64 = 0
+    var seen: i64 = 0
     var q := query_begin(world)
     query_with(q, health)
     while (query_next(world, q)) {
@@ -3825,7 +3825,7 @@ test "components are given their indices in the order they registered" {
 
 test "a component past the ceiling is refused rather than given an index" {
     var world := ecs_new()
-    var registered : i64 = 0
+    var registered: i64 = 0
     while (registered < MAX_COMPONENTS) {
         assert(ecs_register($TestHealth, world) >= 0)
         registered = registered + 1
@@ -3840,7 +3840,7 @@ test "a component past the ceiling is refused rather than given an index" {
 // column, moves an entity to its own table, and reads back.
 test "a component past the sixty-fourth still works" {
     var world := ecs_new()
-    var registered : i64 = 0
+    var registered: i64 = 0
     while (registered < 200) {
         ecs_register($TestHealth, world)
         registered = registered + 1
@@ -3855,7 +3855,7 @@ test "a component past the sixty-fourth still works" {
     // one.
     var q := query_begin(world)
     query_with(q, late)
-    var seen : i64 = 0
+    var seen: i64 = 0
     while (query_next(world, q)) {
         seen = seen + q.count
     }
@@ -3867,13 +3867,13 @@ test "a component past the sixty-fourth still works" {
 // column position both cross a word boundary.
 test "components in different mask words share a table" {
     var world := ecs_new()
-    var registered : i64 = 0
+    var registered: i64 = 0
     while (registered < 70) {
         ecs_register($TestHealth, world)
         registered = registered + 1
     }
     low := ecs_register($TestPosition, world)
-    var more : i64 = 0
+    var more: i64 = 0
     while (more < 60) {
         ecs_register($TestHealth, world)
         more = more + 1
@@ -3889,7 +3889,7 @@ test "components in different mask words share a table" {
     var q := query_begin(world)
     query_with(q, low)
     query_with(q, high)
-    var seen : i64 = 0
+    var seen: i64 = 0
     while (query_next(world, q)) {
         seen = seen + q.count
     }
@@ -4015,7 +4015,7 @@ test "the row a despawn moves keeps every one of its components" {
     a := ecs_spawn(world)
     b := ecs_spawn(world)
     c := ecs_spawn(world)
-    var which : i64 = 0
+    var which: i64 = 0
     ecs_add($TestPosition, world, a, position,
         TestPosition { x = 1.0, y = 1.0 })
     ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
@@ -4041,7 +4041,7 @@ test "the row a despawn moves keeps every one of its components" {
 test "a query over a world with nothing in it visits nothing" {
     var world := ecs_new()
     health := ecs_register($TestHealth, world)
-    var visits : i64 = 0
+    var visits: i64 = 0
     var q := query_begin(world)
     query_with(q, health)
     while (query_next(world, q)) {
@@ -4053,7 +4053,7 @@ test "a query over a world with nothing in it visits nothing" {
     a := ecs_spawn(world)
     ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
     ecs_despawn(world, a)
-    var again : i64 = 0
+    var again: i64 = 0
     var second := query_begin(world)
     query_with(second, health)
     while (query_next(world, second)) {
@@ -4066,13 +4066,13 @@ test "a query over a world with nothing in it visits nothing" {
 test "the entities a query hands over line up with its columns" {
     var world := ecs_new()
     health := ecs_register($TestHealth, world)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 8) {
         e := ecs_spawn(world)
         ecs_add($TestHealth, world, e, health, TestHealth { points = e.id })
         made = made + 1
     }
-    var checked : i64 = 0
+    var checked: i64 = 0
     var q := query_begin(world)
     query_with(q, health)
     while (query_next(world, q)) {
@@ -4082,7 +4082,7 @@ test "the entities a query hands over line up with its columns" {
         assert(slice_len(entities) == q.count)
         assert(slice_len(points) == q.count)
         assert(slice_len(stamps) == q.count)
-        var i : i64 = 0
+        var i: i64 = 0
         while (i < q.count) {
             // The component holds the id of the entity beside it, so a walk
             // that lost its place would show here.
@@ -4157,7 +4157,7 @@ test "a resource is written through its slice and read back whole" {
 
 test "a channel grows past what it was made with" {
     var channel := events_new($TestDamage)
-    var sent : i64 = 0
+    var sent: i64 = 0
     while (sent < 300) {
         events_send($TestDamage, channel, TestDamage { amount = sent })
         sent = sent + 1
@@ -4203,7 +4203,7 @@ test "clearing an empty channel leaves the sequence where it was" {
 test "a tag on a high id grows the marks to reach it" {
     var world := ecs_new()
     var marks := tag_new()
-    var made : i64 = 0
+    var made: i64 = 0
     var last := ecs_spawn(world)
     while (made < 100) {
         last = ecs_spawn(world)
@@ -4265,8 +4265,8 @@ test "a child in the middle of a parent's list comes out of it" {
     assert(hierarchy_child_count(tree, parent) == 2)
     // The two that are left are still reachable from the head.
     var walk := hierarchy_first_child(tree, parent)
-    var found_first : bool = false
-    var found_last : bool = false
+    var found_first: bool = false
+    var found_last: bool = false
     while (is_no_entity(walk) == false) {
         if (walk.id == first.id) { found_first = true }
         if (walk.id == last.id) { found_last = true }
@@ -4285,7 +4285,7 @@ test "a tree several deep is despawned to the root" {
     // A fresh handle rather than the name: binding a struct to a second name
     // moves it, and the root is wanted again at the end.
     var parent := Entity { id = root.id, generation = root.generation }
-    var depth : i64 = 0
+    var depth: i64 = 0
     while (depth < 8) {
         child := ecs_spawn(world)
         hierarchy_attach(tree, child, parent)
@@ -4331,9 +4331,9 @@ test "every stage runs, in the order the stages are written" {
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
     // Added back to front, so only the stage can put them right.
-    schedule_add(frame, Stage::Last, third_system)
-    schedule_add(frame, Stage::Update, second_system)
-    schedule_add(frame, Stage::First, first_system)
+    schedule_add(frame, Stage :: Last, third_system)
+    schedule_add(frame, Stage :: Update, second_system)
+    schedule_add(frame, Stage :: First, first_system)
     assert(schedule_count(frame) == 3)
     schedule_run(frame, world, ANY_STATE)
     // first: 0 * 2 + 1 = 1, second: 1 * 2 = 2, third: 2 * 3 = 6.
@@ -4345,7 +4345,7 @@ test "every stage runs, in the order the stages are written" {
 test "a system runs once per pass over its stage" {
     var world := ecs_new()
     var frame := schedule_new()
-    schedule_add(frame, Stage::Update, spawning_system)
+    schedule_add(frame, Stage :: Update, spawning_system)
     schedule_run(frame, world, ANY_STATE)
     assert(ecs_count(world) == 1)
     schedule_run(frame, world, ANY_STATE)
@@ -4392,7 +4392,7 @@ third_system :: fn(mut world: World) {
 TestFrozen :: struct { held: i64 }
 
 test_hold :: fn(mut p: []TestPosition, count: i64) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + 100.0
         i = i + 1
@@ -4401,7 +4401,7 @@ test_hold :: fn(mut p: []TestPosition, count: i64) {
 
 test_three :: fn(mut p: []TestPosition, v: []TestVelocity, h: []TestHealth,
     count: i64) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x + h[i].points
         i = i + 1
@@ -4728,11 +4728,11 @@ test "a walk of one member reads what another member holds" {
     transform := group_register($EngineTransform, g, engine)
     group_register($GameSpeed, g, game)
 
-    var made : [3]Entity = [no_entity(); 3]
-    var index : i64 = 0
+    var made: [3]Entity = [no_entity(); 3]
+    var index: i64 = 0
     while (index < 3) {
         entity := group_spawn(g)
-        held : f32 = index
+        held: f32 = index
         group_set($EngineTransform, g, entity,
             EngineTransform { x = held, y = 0.0 })
         group_set($GameSpeed, g, entity, GameSpeed { rate = held + 1.0 })
@@ -4742,14 +4742,14 @@ test "a walk of one member reads what another member holds" {
 
     // The engine's member drives, since the walk has to be over somebody's
     // tables, and the game's rate is read for each entity the walk names.
-    var total : f32 = 0.0
+    var total: f32 = 0.0
     ref world := group_members(g)[engine]
     var q := query_begin(world)
     query_with(q, transform)
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         placed := query_column($EngineTransform, world, q, transform)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             rate := group_get($GameSpeed, g, entities[row]).rate
             total = total + placed[row].x * rate
@@ -4771,10 +4771,10 @@ test "a join gathers first and writes after" {
     transform := group_register($EngineTransform, g, engine)
     group_register($GameHealth, g, game)
 
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 4) {
         entity := group_spawn(g)
-        held : f32 = index
+        held: f32 = index
         group_set($EngineTransform, g, entity,
             EngineTransform { x = held, y = 0.0 })
         index = index + 1
@@ -4790,7 +4790,7 @@ test "a join gathers first and writes after" {
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         placed := query_column($EngineTransform, world, q, transform)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             if (placed[row].x > 1.0) {
                 vec_push($Entity, gathered, entities[row])
@@ -4798,7 +4798,7 @@ test "a join gathers first and writes after" {
             row = row + 1
         }
     }
-    var taken : i64 = 0
+    var taken: i64 = 0
     while (taken < vec_len($Entity, gathered)) {
         entity := vec_get($Entity, gathered, taken)
         group_set($GameHealth, g, entity, GameHealth { points = 100 })
@@ -4893,13 +4893,13 @@ test "the group log records identities and the member log records rows" {
 
     identities := group_log(g)
     assert(slice_len(identities) == 1)
-    assert(identities[0].kind == ChangeKind::Spawn)
+    assert(identities[0].kind == ChangeKind :: Spawn)
 
     rows := ecs_log(member)
-    var added : i64 = 0
-    var held : i64 = 0
+    var added: i64 = 0
+    var held: i64 = 0
     while (held < slice_len(rows)) {
-        if (rows[held].kind == ChangeKind::Add
+        if (rows[held].kind == ChangeKind :: Add
             && rows[held].component == transform) {
             added = added + 1
         }
@@ -4946,7 +4946,7 @@ test "a group holds more than two members" {
 test "a raw walk leaves the write times alone" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 3) {
         entity := ecs_spawn(world)
         ecs_add($TestPosition, world, entity, position,
@@ -4962,19 +4962,19 @@ test "a raw walk leaves the write times alone" {
     query_with(q, position)
     while (query_next(world, q)) {
         var held := ecs_slice($TestPosition, world, q.table, position)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             held[row].x = 5.0
             row = row + 1
         }
     }
 
-    var seen : i64 = 0
+    var seen: i64 = 0
     var walk := query_begin(world)
     query_with(walk, position)
     query_filter(walk, filter_changed(no_filters(), position, mark))
     while (query_next(world, walk)) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < walk.count) {
             if (query_row_passes(world, walk, row)) {
                 seen = seen + 1
@@ -4991,8 +4991,8 @@ test "a raw walk leaves the write times alone" {
 test "a raw walk marks the rows it wrote" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
-    var held : [3]Entity = [no_entity(); 3]
-    var index : i64 = 0
+    var held: [3]Entity = [no_entity(); 3]
+    var index: i64 = 0
     while (index < 3) {
         entity := ecs_spawn(world)
         ecs_add($TestPosition, world, entity, position,
@@ -5007,12 +5007,12 @@ test "a raw walk marks the rows it wrote" {
     items[0].x = 9.0
     ecs_mark_changed(world, held[0], position)
 
-    var seen : i64 = 0
+    var seen: i64 = 0
     var walk := query_begin(world)
     query_with(walk, position)
     query_filter(walk, filter_changed(no_filters(), position, mark))
     while (query_next(world, walk)) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < walk.count) {
             if (query_row_passes(world, walk, row)) {
                 seen = seen + 1
@@ -5027,7 +5027,7 @@ test "a raw walk marks the rows it wrote" {
 test "a whole column is marked at once" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 4) {
         entity := ecs_spawn(world)
         ecs_add($TestPosition, world, entity, position,
@@ -5038,12 +5038,12 @@ test "a whole column is marked at once" {
     ecs_tick(world)
     ecs_mark_column(world, 1, position)
 
-    var seen : i64 = 0
+    var seen: i64 = 0
     var walk := query_begin(world)
     query_with(walk, position)
     query_filter(walk, filter_changed(no_filters(), position, mark))
     while (query_next(world, walk)) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < walk.count) {
             if (query_row_passes(world, walk, row)) {
                 seen = seen + 1
@@ -5155,7 +5155,7 @@ test "a gather names every row a walk would visit" {
     position := ecs_register($TestPosition, world)
     health := ecs_register($TestHealth, world)
 
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 5) {
         entity := ecs_spawn(world)
         ecs_add($TestPosition, world, entity, position,
@@ -5177,7 +5177,7 @@ test "a gather names every row a walk would visit" {
     assert(slice_len(held) == 5)
     // Every one of them is alive and distinct, which is what a second pass
     // over the gather relies on.
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < slice_len(held)) {
         assert(ecs_alive(world, held[index]))
         var other := index + 1
@@ -5196,7 +5196,7 @@ test "a gather names every row a walk would visit" {
 test "a pair walk names each pair once" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < 4) {
         entity := ecs_spawn(world)
         ecs_add($TestPosition, world, entity, position,
@@ -5208,7 +5208,7 @@ test "a pair walk names each pair once" {
     pairs := vec_slice($EntityPair, found)
     // Four things make six pairs, and neither ordering of one appears twice.
     assert(slice_len(pairs) == 6)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < slice_len(pairs)) {
         assert(pairs[index].a.id != pairs[index].b.id)
         var other := index + 1
@@ -5320,7 +5320,7 @@ test "a channel is read from a mark and trimmed to the slowest reader" {
     assert(slice_len(from_second) == 2)
     assert(from_second[0].points == 2)
 
-    var readers : [2]EventReader = [EventReader { seen = fast.seen },
+    var readers: [2]EventReader = [EventReader { seen = fast.seen },
         EventReader { seen = slow.seen }]
     assert(readers_oldest(readers) == 0)
 
@@ -5353,7 +5353,7 @@ test "a channel is read from a mark and trimmed to the slowest reader" {
 // the whole thing turns on.
 test "a partial trim keeps what is past the mark" {
     var channel := events_new($TestHealth)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 5) {
         events_send($TestHealth, channel, TestHealth { points = index })
         index = index + 1
@@ -5455,7 +5455,7 @@ test "a walk reads when a row arrived and when it changed" {
         added := query_added(world, q, position)
         assert(slice_len(changed) == q.count)
         assert(slice_len(added) == q.count)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < q.count) {
             // Written after the mark, and put there before it.
             assert(changed[row] > mark)
@@ -5471,18 +5471,18 @@ test "a walk reads when a row arrived and when it changed" {
 // Stages run in the order they are written down, and the order is a number so
 // a schedule can sort by it.
 test "the stages are ordered" {
-    assert(stage_order(Stage::Startup) < stage_order(Stage::First))
-    assert(stage_order(Stage::First) < stage_order(Stage::Update))
-    assert(stage_order(Stage::Update) < stage_order(Stage::LateUpdate))
-    assert(stage_order(Stage::LateUpdate) < stage_order(Stage::FrameStart))
-    assert(stage_order(Stage::FrameStart) < stage_order(Stage::FrameUpdate))
-    assert(stage_order(Stage::FrameUpdate)
-        < stage_order(Stage::FramePostUpdate))
-    assert(stage_order(Stage::FramePostUpdate) < stage_order(Stage::Render))
-    assert(stage_order(Stage::Render) < stage_order(Stage::Last))
+    assert(stage_order(Stage :: Startup) < stage_order(Stage :: First))
+    assert(stage_order(Stage :: First) < stage_order(Stage :: Update))
+    assert(stage_order(Stage :: Update) < stage_order(Stage :: LateUpdate))
+    assert(stage_order(Stage :: LateUpdate) < stage_order(Stage :: FrameStart))
+    assert(stage_order(Stage :: FrameStart) < stage_order(Stage :: FrameUpdate))
+    assert(stage_order(Stage :: FrameUpdate)
+        < stage_order(Stage :: FramePostUpdate))
+    assert(stage_order(Stage :: FramePostUpdate) < stage_order(Stage :: Render))
+    assert(stage_order(Stage :: Render) < stage_order(Stage :: Last))
     // A frame begins after `Startup`, which is what keeps a startup system out
     // of every frame that follows it.
-    assert(FIRST_FRAME_STAGE == stage_order(Stage::First))
+    assert(FIRST_FRAME_STAGE == stage_order(Stage :: First))
 }
 
 // A startup system runs once and no frame runs it again.
@@ -5490,8 +5490,8 @@ test "a startup system runs once and a frame does not" {
     var world := ecs_new()
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
-    schedule_add(frame, Stage::Startup, first_system)
-    schedule_add(frame, Stage::Update, second_system)
+    schedule_add(frame, Stage :: Startup, first_system)
+    schedule_add(frame, Stage :: Update, second_system)
 
     // `first_system` doubles and adds one, `second_system` doubles.
     schedule_start(frame, world, ANY_STATE)
@@ -5562,11 +5562,11 @@ test "a group removes, despawns a run, and clears its log" {
     assert(route_found(group_route($EngineTransform, g)))
     assert(route_found(group_route($GameSpeed, g)) == false)
 
-    var made : [3]Entity = [no_entity(); 3]
-    var index : i64 = 0
+    var made: [3]Entity = [no_entity(); 3]
+    var index: i64 = 0
     while (index < 3) {
         entity := group_spawn(g)
-        held : f32 = index
+        held: f32 = index
         group_set($EngineTransform, g, entity,
             EngineTransform { x = held, y = 0.0 })
         group_set($GameHealth, g, entity, GameHealth { points = index })
@@ -5582,7 +5582,7 @@ test "a group removes, despawns a run, and clears its log" {
     assert(group_alive(g, made[0]))
 
     group_log_enable(g, true)
-    var pair : [2]Entity = [made[1], made[2]]
+    var pair: [2]Entity = [made[1], made[2]]
     group_despawn_entities(g, pair)
     assert(group_alive(g, made[1]) == false)
     assert(group_alive(g, made[2]) == false)

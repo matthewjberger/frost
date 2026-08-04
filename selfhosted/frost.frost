@@ -72,7 +72,7 @@ run_assembling :: fn(raw: ^u8) {
 // telling the shell where to look.
 runnable :: fn(path: ^i8) -> ^i8 {
     length := cstr_len(path)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < length) {
         byte := unsafe { path[index] }
         if (byte == 47 || byte == 92) {
@@ -89,7 +89,7 @@ runnable :: fn(path: ^i8) -> ^i8 {
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
-    var executable : ^i8 = options.output
+    var executable: ^i8 = options.output
     if (cstr_len(executable) == 0) {
         executable = "a.out"
         if (frost_rt_is_windows() == 1) {
@@ -99,7 +99,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
 
     // Whether this build encodes its own output. What the encoder reads is
     // assembly, so the C backend still hands each unit to the toolchain.
-    assembles := options.backend == Backend::Asm
+    assembles := options.backend == Backend :: Asm
     // Grown to what each module turns out to need, so a build that hands its
     // units to the toolchain never grows any of it at all.
     var unit := assembly_of(object_format())
@@ -109,14 +109,14 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     // started so they can all be handed to the machine at once. The work is one
     // process per module and they share nothing, which is the whole reason this
     // is worth threading and the rest of the compiler is not.
-    var jobs : Arena<Assembling> = arena_make($Assembling, 4096)
-    var records : Arena<Assembling> = arena_make($Assembling, 4096)
+    var jobs: Arena<Assembling> = arena_make($Assembling, 4096)
+    var records: Arena<Assembling> = arena_make($Assembling, 4096)
 
-    var objects : ^i8 = ""
-    var index : i64 = 0
+    var objects: ^i8 = ""
+    var index: i64 = 0
     while (index < p.modules.count) {
-        var suffix : ^i8 = ".s"
-        if (options.backend == Backend::C) {
+        var suffix: ^i8 = ".s"
+        if (options.backend == Backend :: C) {
             suffix = ".c"
         }
         source := join_number(prefix, index, suffix)
@@ -131,7 +131,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_die()
         }
         p.emit_module = index
-        if (options.backend == Backend::C) {
+        if (options.backend == Backend :: C) {
             // Every unit carries the declarations, since a C unit cannot call
             // what it has not seen: the runtime's prototypes, every type, every
             // extern, and a prototype for every function and specialization in
@@ -145,7 +145,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         p.emit_module = -1
 
         var text := empty_source()
-        var sum : i64 = 0
+        var sum: i64 = 0
         if (assembles) {
             text = emit_memory_text()
             sum = text_checksum(text)
@@ -153,7 +153,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_emit_close()
             sum = file_checksum(source)
         }
-        var stale : bool = sum != stored_checksum(record)
+        var stale: bool = sum != stored_checksum(record)
         if (unsafe { frost_rt_file_exists(object) } == 0) {
             stale = true
         }
@@ -179,8 +179,8 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
 
     // All of them at once. One thread per run, since each is a process this one
     // only waits on.
-    var handles : Arena<Assembling> = arena_make($Assembling, 4096)
-    var started : i64 = 0
+    var handles: Arena<Assembling> = arena_make($Assembling, 4096)
+    var started: i64 = 0
     while (started < jobs.count) {
         // The address of the element itself, not of a copy of it: the thread
         // reads the job while this loop goes on to the next one, and a copy
@@ -192,13 +192,13 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         arena_push(handles, Assembling { command = "", status = handle })
         started = started + 1
     }
-    var waited : i64 = 0
+    var waited: i64 = 0
     while (waited < handles.count) {
         held := arena_at(handles, waited)
         unsafe { frost_rt_thread_join(held.status) }
         waited = waited + 1
     }
-    var checked : i64 = 0
+    var checked: i64 = 0
     while (checked < jobs.count) {
         job := arena_at(jobs, checked)
         if (job.status != 0) {
@@ -301,7 +301,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     // compiler entitled to assume neither ever happens is entitled to
     // miscompile the unit, and comparing this backend against the other one
     // would not show it, since both sides go through the same C compiler.
-    if (options.backend != Backend::Asm) {
+    if (options.backend != Backend :: Asm) {
         base = join_two(base, " -fwrapv -fno-strict-aliasing")
     }
     // What `--libs` named goes after the objects and ahead of the platform's
@@ -399,16 +399,16 @@ main :: fn() -> i64 {
     // followed by room for the names the compiler makes up. It is a slice, so
     // reading and writing it is a checked index everywhere below.
     var source := empty_source()
-    var modules : Arena<Module> = arena_make($Module, 4096)
-    var exports : Arena<Export> = arena_make($Export, 4096)
-    var import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
-    var renames : Arena<Rename> = arena_make($Rename, 4096)
+    var modules: Arena<Module> = arena_make($Module, 4096)
+    var exports: Arena<Export> = arena_make($Export, 4096)
+    var import_edges: Arena<ImportEdge> = arena_make($ImportEdge, 4096)
+    var renames: Arena<Rename> = arena_make($Rename, 4096)
     export_names := buffer_of(SYNTH_ROOM)
     if (cstr_len(input_path) != 0) {
         // One buffer holds the root file and everything it imports, so a name
         // is an offset into a single source no matter which file wrote it.
         buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
-        var scratch : Arena<Token> = arena_make($Token, 262144)
+        var scratch: Arena<Token> = arena_make($Token, 262144)
         // What the project declares, after anything the command line named and
         // before the standard library, which is the order the other compiler
         // assembles them in.
@@ -722,7 +722,7 @@ main :: fn() -> i64 {
     // argument tuple nothing had asked for: a sort taking a comparison calls a
     // swap that takes only the element type. Keep going until a round finds no
     // new tuple.
-    var known : i64 = -1
+    var known: i64 = -1
     while (known != parser.type_args.count) {
         known = parser.type_args.count
         collect_type_args(parser)
@@ -791,7 +791,7 @@ main :: fn() -> i64 {
         frost_rt_die()
     }
 
-    var executable : ^i8 = options.output
+    var executable: ^i8 = options.output
     if (options.link == 1 && cstr_len(executable) == 0) {
         executable = "a.out"
         if (frost_rt_is_windows() == 1) {
@@ -801,9 +801,9 @@ main :: fn() -> i64 {
 
     // The encoder is part of this compiler, so a build that ends in an object
     // reaches one without writing assembly for another program to read back.
-    if (options.backend == Backend::Asm
+    if (options.backend == Backend :: Asm
         && (options.object == 1 || options.link == 1)) {
-        var object : ^i8 = options.output
+        var object: ^i8 = options.output
         if (options.link == 1) {
             object = join_two(executable, ".o")
         }
@@ -817,9 +817,9 @@ main :: fn() -> i64 {
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
     // afterwards. Without -o and without --link it goes to standard output.
-    var emit_path : ^i8 = options.output
+    var emit_path: ^i8 = options.output
     if (options.link == 1) {
-        if (options.backend == Backend::Asm) {
+        if (options.backend == Backend :: Asm) {
             emit_path = join_two(executable, ".s")
         } else {
             emit_path = join_two(executable, ".c")
@@ -838,7 +838,7 @@ main :: fn() -> i64 {
         }
     }
 
-    if (options.backend == Backend::Asm) {
+    if (options.backend == Backend :: Asm) {
         emit_asm_program(parser, program)
     } else {
         emit_text("#include <stdio.h>\n")

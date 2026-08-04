@@ -39,7 +39,7 @@ Slab :: struct($T: Type, $N: usize) {
 // Every slot free, every generation back to zero. A slab is created with its
 // arrays written out and then reset, since construction cannot run code.
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < N) {
         s.generations[i] = 0
         s.free_list[i] = N - 1 - i
@@ -55,7 +55,7 @@ slab_full :: fn($T: Type, $N: usize, s: Slab<T, N>) -> bool {
 // The caller checks `slab_full` first. There is no in-band "no handle" value,
 // because a handle that means nothing is exactly the thing generations exist to
 // stop being readable.
-slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T>{
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -64,7 +64,7 @@ slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Han
 }
 
 slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool {
-    raw : i64 = handle
+    raw: i64 = handle
     s.generations[raw & 4294967295] == (raw >> 32)
 }
 
@@ -99,14 +99,14 @@ slab_slot :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
     if (slab_alive($T, $N, s, handle) == false) {
         return -1
     }
-    raw : i64 = handle
+    raw: i64 = handle
     raw & 4294967295
 }
 
 // Bumping the generation is what makes every outstanding handle to this slot
 // stale, so a later read through one aborts rather than seeing the next tenant.
 slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> bool {
-    raw : i64 = handle
+    raw: i64 = handle
     index := raw & 4294967295
     if (s.generations[index] != (raw >> 32)) { return false }
     s.generations[index] = s.generations[index] + 1
@@ -127,7 +127,7 @@ SlabThing :: struct { hp: i64 }
 // which is what keeps the boundary honest: the check happens here or the caller
 // is told there is nothing to walk.
 test "a slot stands in for a handle until the handle goes stale" {
-    var s : Slab<SlabThing, 2> = Slab {
+    var s: Slab<SlabThing, 2> = Slab {
         storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
         generations = [0, 0],
         free_list = [0, 0],
@@ -148,7 +148,7 @@ test "a slot stands in for a handle until the handle goes stale" {
 // generation rather than by two billion releases, which is the only way to reach
 // this in a test and is why the bound went unnoticed.
 test "a slot whose generation is spent is retired rather than reused" {
-    var s : Slab<SlabThing, 2> = Slab {
+    var s: Slab<SlabThing, 2> = Slab {
         storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
         generations = [0, 0],
         free_list = [0, 0],
@@ -157,7 +157,7 @@ test "a slot whose generation is spent is retired rather than reused" {
     slab_reset($SlabThing, $2, s)
 
     first := slab_insert($SlabThing, $2, s, SlabThing { hp = 7 })
-    raw : i64 = first
+    raw: i64 = first
     index := raw & 4294967295
     // One short of the bound: the release puts the slot back and the handle it
     // then hands out is one its own check accepts.
@@ -169,7 +169,7 @@ test "a slot whose generation is spent is retired rather than reused" {
 
     // And the release that takes it past: the slot does not come back, so the
     // slab has one fewer place rather than a handle that is stale on arrival.
-    raw_again : i64 = again
+    raw_again: i64 = again
     spent := raw_again & 4294967295
     s.generations[spent] = GENERATION_LIMIT
     before := s.free_count

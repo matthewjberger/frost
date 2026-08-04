@@ -235,7 +235,7 @@ heap_copy :: fn(destination: ^u8, source: ^u8, size: i64) {
 
 test "a range views the middle of a slice" {
     var held := heap_slice($i64, 8)
-    var fill : i64 = 0
+    var fill: i64 = 0
     while (fill < 8) {
         held[fill] = fill * 10
         fill = fill + 1
@@ -262,22 +262,22 @@ test "a span stops at the end of what it views" {
 // what says the spans covered it and did not overlap: an element two spans held
 // would be written twice and one no span held would keep its zero.
 test "chunks cover a slice exactly once" {
-    var counts : [5]i64 = [1, 2, 3, 4, 7]
-    var which : i64 = 0
+    var counts: [5]i64 = [1, 2, 3, 4, 7]
+    var which: i64 = 0
     while (which < 5) {
         count := counts[which]
         var held := heap_slice($i64, 10)
-        var clear : i64 = 0
+        var clear: i64 = 0
         while (clear < 10) {
             held[clear] = 0
             clear = clear + 1
         }
-        var index : i64 = 0
-        var seen : i64 = 0
+        var index: i64 = 0
+        var seen: i64 = 0
         while (index < count) {
             var span := slice_chunk($i64, held, count, index)
             seen = seen + slice_len(span)
-            var at : i64 = 0
+            var at: i64 = 0
             while (at < slice_len(span)) {
                 span[at] = span[at] + 1
                 at = at + 1
@@ -285,7 +285,7 @@ test "chunks cover a slice exactly once" {
             index = index + 1
         }
         assert(seen == 10)
-        var every : i64 = 0
+        var every: i64 = 0
         while (every < 10) {
             assert(held[every] == 1)
             every = every + 1

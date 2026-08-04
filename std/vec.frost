@@ -23,7 +23,7 @@ Vec :: linear struct($T: Type) {
 
 // An empty vector with room reserved up front, so a known-size fill does not
 // reallocate. A capacity of zero is allowed and grows on the first push.
-vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
+vec_new :: fn($T: Type, capacity: i64) -> Vec<T>{
     var room := capacity
     if (room < 1) { room = 1 }
     Vec { storage = heap_slice($T, room), len = 0, cap = room }
@@ -113,7 +113,7 @@ VecPoint :: struct { x: i64, y: i64 }
 test "a vector holds what is pushed into it, in order" {
     var v := vec_new($i64, 2)
     assert(vec_len($i64, v) == 0)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < 100) {
         vec_push($i64, v, i * 3)
         i = i + 1
@@ -166,7 +166,7 @@ test "a vector of structs is written through its slice" {
 test "a vector gives back every block it took, however far it grew" {
     before := heap_live()
     var v := vec_new($i64, 1)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < 500) {
         vec_push($i64, v, i)
         i = i + 1

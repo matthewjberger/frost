@@ -88,7 +88,7 @@ emit_frame_symbol :: fn(mut p: Parser) {
 // end, so the write went off the end of the block, and whether that was noticed
 // depended on where the allocator had put it.
 emit_asm_copy :: fn(size: i64) {
-    var moved : i64 = 0
+    var moved: i64 = 0
     while (size - moved >= 16) {
         asm_i("movups ", moved, "(%r11), %xmm0")
         asm_i("movups %xmm0, ", moved, "(%r10)")
@@ -121,7 +121,7 @@ emit_asm_copy :: fn(size: i64) {
 // `columns_new()`.
 emit_asm_zero :: fn(size: i64) {
     asm("xorq %rax, %rax")
-    var cleared : i64 = 0
+    var cleared: i64 = 0
     while (size - cleared >= 8) {
         asm_i("movq %rax, ", cleared, "(%r10)")
         cleared = cleared + 8
@@ -164,7 +164,7 @@ emit_asm_zero :: fn(size: i64) {
 
 // The entry for a name, made on first sight.
 asm_name_at :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_names.count) {
         entry := arena_at(p.asm_names, i)
         if (entry.name_len == len
@@ -238,7 +238,7 @@ asm_read :: fn(mut p: Parser, off: i64, len: i64) {
 // Whether the name is one the emitter has to read from its slot every time.
 // A name the scan never met is pinned, since the scan is what says otherwise.
 asm_pinned :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_names.count) {
         entry := arena_at(p.asm_names, i)
         if (entry.name_len == len
@@ -253,7 +253,7 @@ asm_pinned :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 // How many times the body asks for the name's value. 0 for a name the scan
 // never met, which together with `asm_pinned` leaves it alone.
 asm_reads_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_names.count) {
         entry := arena_at(p.asm_names, i)
         if (entry.name_len == len
@@ -273,7 +273,7 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind::Var) {
+    if (kind == NodeKind :: Var) {
         if (place) {
             asm_pin(p, node.val, node.c)
         } else {
@@ -284,42 +284,42 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
     // The address of something is that something as a place. `ptr_to` of a
     // borrow is the address the borrow carries, which is a value read, but the
     // name is handed out either way and pinning it costs one load.
-    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
+    if (kind == NodeKind :: AddrOf || kind == NodeKind :: Ref) {
         asm_scan_expr(p, node.a, true)
         return
     }
     // A field or an index reaches its base's storage. A pointer base holds the
     // address rather than being one, so reading it is a value read, but the
     // base counts as a place either way, which costs one load of a pointer.
-    if (kind == NodeKind::Field || kind == NodeKind::Index) {
+    if (kind == NodeKind :: Field || kind == NodeKind :: Index) {
         asm_scan_expr(p, node.a, true)
-        if (kind == NodeKind::Index) {
+        if (kind == NodeKind :: Index) {
             asm_scan_expr(p, node.b, false)
         }
         return
     }
-    if (kind == NodeKind::Deref || kind == NodeKind::Cast
-        || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
-        || kind == NodeKind::Assert) {
+    if (kind == NodeKind :: Deref || kind == NodeKind :: Cast
+        || kind == NodeKind :: PtrCast || kind == NodeKind :: SliceLen
+        || kind == NodeKind :: Assert) {
         asm_scan_expr(p, node.a, false)
         return
     }
-    if (kind == NodeKind::Bin || kind == NodeKind::SliceFrom) {
+    if (kind == NodeKind :: Bin || kind == NodeKind :: SliceFrom) {
         asm_scan_expr(p, node.a, false)
         asm_scan_expr(p, node.b, false)
         return
     }
-    if (kind == NodeKind::Call) {
+    if (kind == NodeKind :: Call) {
         asm_scan_args(p, node.a, node.val)
         return
     }
-    if (kind == NodeKind::CallPtr) {
+    if (kind == NodeKind :: CallPtr) {
         asm_scan_expr(p, node.a, false)
         asm_scan_args(p, node.b, -1)
         return
     }
     // Every initialiser of a literal, whichever kind of literal it is.
-    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
         var entry := node.a
         while (entry != (-1)) {
             enode := arena_at(p.arena, entry)
@@ -328,9 +328,9 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
         }
         return
     }
-    if (kind == NodeKind::Num || kind == NodeKind::StrLit
-        || kind == NodeKind::Float || kind == NodeKind::Sizeof
-        || kind == NodeKind::TypeVal) {
+    if (kind == NodeKind :: Num || kind == NodeKind :: StrLit
+        || kind == NodeKind :: Float || kind == NodeKind :: Sizeof
+        || kind == NodeKind :: TypeVal) {
         return
     }
     // A shape this walk does not read pins every name under it, which is what
@@ -341,7 +341,7 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
 // One call's arguments. A parameter that borrows what it is given takes the
 // address of its argument, so such an argument is a place however it is written.
 asm_scan_args :: fn(mut p: Parser, args: i64, fn_index: i64) {
-    var params : i64 = -1
+    var params: i64 = -1
     if (fn_index >= 0) {
         params = instance_params(p, fn_index, args)
         if (params == (-1)) {
@@ -349,15 +349,15 @@ asm_scan_args :: fn(mut p: Parser, args: i64, fn_index: i64) {
             params = sym.params
         }
     }
-    var index : i64 = 0
+    var index: i64 = 0
     var id := args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NodeKind::TypeVal) {
-            var borrows : bool = params < 0
+        if (vnode.kind != NodeKind :: TypeVal) {
+            var borrows: bool = params < 0
             if (params >= 0) {
                 borrows = nth_param_auto_borrows(p, params, index)
             }
@@ -373,13 +373,13 @@ asm_scan_args :: fn(mut p: Parser, args: i64, fn_index: i64) {
 // since the point is to cover a kind nothing here names.
 asm_scan_unknown :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
-    if (node.kind == NodeKind::Var) {
+    if (node.kind == NodeKind :: Var) {
         asm_pin(p, node.val, node.c)
         return
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < 4) {
-        var child : i64 = node.a
+        var child: i64 = node.a
         if (i == 1) { child = node.b }
         if (i == 2) { child = node.c }
         if (i == 3) { child = node.val }
@@ -389,7 +389,7 @@ asm_scan_unknown :: fn(mut p: Parser, id: i64) {
         // direction that matters: it can only pin more.
         if (child >= 0 && child < p.arena.count) {
             reached := arena_at(p.arena, child)
-            if (reached.kind == NodeKind::Var) {
+            if (reached.kind == NodeKind :: Var) {
                 asm_pin(p, reached.val, reached.c)
             }
         }
@@ -401,7 +401,7 @@ asm_scan_unknown :: fn(mut p: Parser, id: i64) {
 asm_scan_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind::Let) {
+    if (kind == NodeKind :: Let) {
         asm_scan_expr(p, node.a, false)
         // A name bound to an aggregate lives in memory whatever else is true of
         // it, since naming one answers with its address.
@@ -419,36 +419,36 @@ asm_scan_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind::Assign) {
+    if (kind == NodeKind :: Assign) {
         asm_scan_expr(p, node.b, false)
         // The left side of an assignment is a place. A bare name assigned to is
         // still a name a register could hold, so it is counted as written
         // rather than pinned; anything else reaches storage and pins what it
         // reaches.
         place := arena_at(p.arena, node.a)
-        if (place.kind == NodeKind::Var) {
+        if (place.kind == NodeKind :: Var) {
             asm_write(p, place.val, place.c)
         } else {
             asm_scan_expr(p, node.a, true)
         }
         return
     }
-    if (kind == NodeKind::Return) {
+    if (kind == NodeKind :: Return) {
         p.asm_returns = p.asm_returns + 1
         asm_scan_expr(p, node.a, false)
         return
     }
-    if (kind == NodeKind::ExprStmt) {
+    if (kind == NodeKind :: ExprStmt) {
         asm_scan_expr(p, node.a, false)
         return
     }
-    if (kind == NodeKind::If) {
+    if (kind == NodeKind :: If) {
         asm_scan_expr(p, node.a, false)
         asm_scan_block(p, node.b)
         asm_scan_block(p, node.val)
         return
     }
-    if (kind == NodeKind::While) {
+    if (kind == NodeKind :: While) {
         // The step, the condition and the body all run once a turn, so all
         // three count as being inside the loop.
         p.asm_loop_depth = p.asm_loop_depth + 1
@@ -458,7 +458,7 @@ asm_scan_stmt :: fn(mut p: Parser, id: i64) {
         p.asm_loop_depth = p.asm_loop_depth - 1
         return
     }
-    if (kind == NodeKind::Match) {
+    if (kind == NodeKind :: Match) {
         asm_scan_expr(p, node.a, false)
         var cid := node.b
         while (cid != (-1)) {
@@ -470,12 +470,12 @@ asm_scan_stmt :: fn(mut p: Parser, id: i64) {
     }
     // A `with` block names the provider it supplies, and a call inside takes
     // its address, so the name is a place for as long as the block lasts.
-    if (kind == NodeKind::With) {
+    if (kind == NodeKind :: With) {
         asm_pin(p, node.val, node.c)
         asm_scan_block(p, node.a)
         return
     }
-    if (kind == NodeKind::Break || kind == NodeKind::Continue) {
+    if (kind == NodeKind :: Break || kind == NodeKind :: Continue) {
         return
     }
     asm_scan_unknown(p, id)
@@ -569,11 +569,11 @@ asm_allocate :: fn(mut p: Parser) {
     // What a register costs, counted the way the gain is: one store entering
     // the function and one load at each exit, none of them inside a loop.
     cost := 1 + p.asm_returns
-    var taken : i64 = 0
+    var taken: i64 = 0
     while (taken < ASM_REGS_AVAILABLE) {
-        var best : i64 = -1
-        var best_gain : i64 = 0
-        var i : i64 = 0
+        var best: i64 = -1
+        var best_gain: i64 = 0
+        var i: i64 = 0
         while (i < p.asm_names.count) {
             entry := arena_at(p.asm_names, i)
             if (entry.pinned == 0 && entry.reg == 0 && entry.weight > cost
@@ -601,7 +601,7 @@ asm_reg_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     if (p.asm_saved == 0) {
         return 0
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_names.count) {
         entry := arena_at(p.asm_names, i)
         if (entry.name_len == len
@@ -616,7 +616,7 @@ asm_reg_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // The registers this function took, put where it keeps them, and read back. The
 // slots are one run, so the prologue and every exit walk the same ground.
 emit_asm_save_registers :: fn(mut p: Parser) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_saved) {
         emit_text("    movq ")
         emit_asm_saved_reg(i)
@@ -628,7 +628,7 @@ emit_asm_save_registers :: fn(mut p: Parser) {
 }
 
 emit_asm_restore_registers :: fn(mut p: Parser) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_saved) {
         emit_text("    movq ")
         frost_rt_emit_int(p.asm_save_base + 8 * i)
@@ -664,7 +664,7 @@ emit_asm_names :: fn(mut p: Parser) {
     if (p.asm_debug_names != 1) {
         return
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.asm_names.count) {
         entry := arena_at(p.asm_names, i)
         emit_text("# name ")
@@ -705,7 +705,7 @@ emit_label :: fn(name: str, id: i64) {
 // for the name and nothing more. The most recent binding wins, which is what
 // walking backwards answers with first.
 local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i : i64 = p.locals.count
+    var i: i64 = p.locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.locals, i)
@@ -731,8 +731,8 @@ emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
 emit_asm_load_into :: fn(mut p: Parser, ty: i64, slot: i64, base: str,
     wide: str, narrow: str) {
     size := scalar_size(ty)
-    var op : str = "movq "
-    var destination : str = wide
+    var op: str = "movq "
+    var destination: str = wide
     if (size == 1) {
         op = "movsbq "
         if (is_unsigned(ty)) { op = "movzbq " }
@@ -762,7 +762,7 @@ emit_asm_load_into :: fn(mut p: Parser, ty: i64, slot: i64, base: str,
 // the register, so a narrow field does not write over the one beside it.
 emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     size := scalar_size(ty)
-    var op : str = "movq %r11, "
+    var op: str = "movq %r11, "
     if (size == 1) {
         op = "movb %r11b, "
     } else if (size == 2) {
@@ -782,7 +782,7 @@ emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
 // above.
 emit_asm_store_rax_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     size := scalar_size(ty)
-    var op : str = "movq %rax, "
+    var op: str = "movq %rax, "
     if (size == 1) {
         op = "movb %al, "
     } else if (size == 2) {
@@ -886,7 +886,7 @@ emit_asm_coerce :: fn(mut p: Parser, value_in: i64, want: i64) {
     // its place would be, length and all, rather than as the name.
     var value := value_in
     named := arena_at(p.arena, value_in)
-    if (named.kind == NodeKind::Var
+    if (named.kind == NodeKind :: Var
         && local_exists(p, named.val, named.c) == false) {
         held := value_const_node(p, named.val, named.c)
         if (held >= 0) {
@@ -896,7 +896,7 @@ emit_asm_coerce :: fn(mut p: Parser, value_in: i64, want: i64) {
     have := type_of(p, value)
     if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)) {
         node := arena_at(p.arena, value)
-        if (node.kind == NodeKind::StrLit) {
+        if (node.kind == NodeKind :: StrLit) {
             slot := alloc_temp(p, 16)
             asm_i("movq %rax, ", slot, "(%rbp)")
             asm_i("movq $", literal_length(p.src, node.val, node.c), ", %r11")
@@ -926,7 +926,7 @@ emit_asm_float_binop :: fn(mut p: Parser, op: i64) {
         // ucomisd sets the flags the unsigned conditions read, so the below
         // and above forms are the ones that mean less and greater here.
         emit_asm_move("ucomisd", "%xmm1", "%xmm0")
-        var setcc : str = "setne"
+        var setcc: str = "setne"
         if (op == OP_LT) {
             setcc = "setb"
         } else if (op == OP_GT) {
@@ -951,7 +951,7 @@ emit_asm_float_binop :: fn(mut p: Parser, op: i64) {
 emit_asm_addr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind::Var) {
+    if (kind == NodeKind :: Var) {
         if (local_exists(p, node.val, node.c) == false) {
             // A struct constant has no storage of its own, so the address of
             // one is the address of the copy built here.
@@ -972,13 +972,13 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         asm_i("leaq ", local_slot(p, node.val, node.c), "(%rbp), %rax")
         return
     }
-    if (kind == NodeKind::Field) {
+    if (kind == NodeKind :: Field) {
         base := node.a
         // A columns element field `c[handle].field`: pick the field's column and
         // index it by the validated slot, one recognized shape (see the C
         // backend's twin).
         base_node := arena_at(p.arena, base)
-        if (base_node.kind == NodeKind::Index) {
+        if (base_node.kind == NodeKind :: Index) {
             cbase := base_node.a
             cindex := base_node.b
             cbase_ty := type_of(p, cbase)
@@ -1006,11 +1006,11 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind::Deref) {
+    if (kind == NodeKind :: Deref) {
         emit_asm_expr(p, node.a)
         return
     }
-    if (kind == NodeKind::Index) {
+    if (kind == NodeKind :: Index) {
         base := node.a
         base_ty := type_of(p, base)
         var through := base_ty
@@ -1025,18 +1025,18 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             emit_asm_slab_addr(p, base, base_ty, through, node.b)
             return
         }
-        var element : i64 = TY_I64
+        var element: i64 = TY_I64
         // An array and a slice bound the index. A raw pointer does not, which
         // is what makes reading through one a gated operation.
-        var checked : i64 = 0
-        var length_const : i64 = 0
-        var len_slot : i64 = 0
+        var checked: i64 = 0
+        var length_const: i64 = 0
+        var len_slot: i64 = 0
         // A literal, which is neither: its bytes are in the read-only section
         // and their address is what naming it produces, while how many there
         // are was counted at the source. So the address needs no dereference
         // and the bound is a number written here.
         base_node := arena_at(p.arena, constant_node(p, base))
-        if (base_node.kind == NodeKind::StrLit) {
+        if (base_node.kind == NodeKind :: StrLit) {
             element = TY_U8
             checked = 1
             length_const = literal_length(p.src, base_node.val, base_node.c)
@@ -1088,7 +1088,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     // A call answering with an aggregate leaves that value's address, which is
     // what reading a field of the answer needs, so `match f() { case .A: }`
     // reads the tag out of what the call answered with.
-    if (kind == NodeKind::Call || kind == NodeKind::CallPtr) {
+    if (kind == NodeKind :: Call || kind == NodeKind :: CallPtr) {
         emit_asm_expr(p, id)
         return
     }
@@ -1096,13 +1096,13 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     // its own, and that is what the address names. A caller that borrows an
     // argument does this whenever the argument is a literal rather than a
     // place, which an enum variant written at a call is.
-    if (kind == NodeKind::StructLit) {
+    if (kind == NodeKind :: StructLit) {
         emit_asm_struct_lit(p, id)
         return
     }
     // The same for an array written out where an address is wanted, which is
     // what a constant that is an array turns into wherever it is indexed.
-    if (kind == NodeKind::ArrayLit) {
+    if (kind == NodeKind :: ArrayLit) {
         emit_asm_array_lit(p, id)
         return
     }
@@ -1746,8 +1746,8 @@ classify_eightbyte :: fn(mut p: Parser, ty: i64, at: i64, word: i64) -> i64 {
     if (is_struct_ty(ty)) {
         def := arena_at(p.structs, struct_index_of(ty))
         var fid := def.field_head
-        var offset : i64 = 0
-        var answer : i64 = 0
+        var offset: i64 = 0
+        var answer: i64 = 0
         while (fid != (-1)) {
             field := arena_at(p.fields, fid)
             field_ty := field.ty
@@ -1769,8 +1769,8 @@ classify_eightbyte :: fn(mut p: Parser, ty: i64, at: i64, word: i64) -> i64 {
         element := array_element(p, ty)
         stride := type_size(p, element)
         count := array_length(p, ty)
-        var index : i64 = 0
-        var answer : i64 = 0
+        var index: i64 = 0
+        var answer: i64 = 0
         while (index < count) {
             one := classify_eightbyte(p, element, at + index * stride, word)
             if (one == 2) {
@@ -1875,10 +1875,10 @@ simple_operand_kind :: fn(mut p: Parser, id: i64) -> i64 {
     kind := node.kind
     // A number written as a bit of a flags type carries that type rather than
     // its own value, so it is not the plain literal this reads.
-    if (kind == NodeKind::Num && node.b == 0) {
+    if (kind == NodeKind :: Num && node.b == 0) {
         return SIMPLE_NUMBER
     }
-    if (kind != NodeKind::Var) {
+    if (kind != NodeKind :: Var) {
         return SIMPLE_NONE
     }
     off := node.val
@@ -1965,9 +1965,9 @@ emit_asm_take_ret_registers :: fn(mut p: Parser, ty: i64, slot: i64) {
         asm_i("movq %rax, ", slot, "(%rbp)")
         return
     }
-    var word : i64 = 0
-    var ints : i64 = 0
-    var floats : i64 = 0
+    var word: i64 = 0
+    var ints: i64 = 0
+    var floats: i64 = 0
     while (word * 8 < size) {
         at := slot + word * 8
         if (classify_eightbyte(p, ty, 0, word) == 1) {
@@ -2030,11 +2030,11 @@ emit_asm_arg_reg :: fn(mut p: Parser, index: i64) {
 emit_asm_expr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind::Num) {
+    if (kind == NodeKind :: Num) {
         asm_i("movq $", node.val, ", %rax")
         return
     }
-    if (kind == NodeKind::Var) {
+    if (kind == NodeKind :: Var) {
         off := node.val
         len := node.c
         if (is_const(p, off, len)) {
@@ -2079,7 +2079,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     // The literal's bits, assembled from the digits by the assembler, which
     // already knows how to read a decimal and this compiler does not need to.
-    if (kind == NodeKind::Float) {
+    if (kind == NodeKind :: Float) {
         asm_i("movq .Lflt", id, "(%rip), %rax")
         // Read at single precision. The digits were laid down as a double, so
         // narrowing is what leaves the number an `f32` holds, and the bits stay
@@ -2093,7 +2093,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind::Assert) {
+    if (kind == NodeKind :: Assert) {
         shadow := abi_shadow(p)
         emit_asm_expr(p, node.a)
         emit_text("    movq %rax, ")
@@ -2109,13 +2109,13 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm_i("addq $", shadow, ", %rsp")
         return
     }
-    if (kind == NodeKind::SliceLen) {
+    if (kind == NodeKind :: SliceLen) {
         inner := node.a
         // A literal has no length beside it, so its own is counted here. A name
         // standing for one is the literal, since a constant is written out
         // where it is used and there is nothing else there to read a length off.
         held := arena_at(p.arena, constant_node(p, inner))
-        if (held.kind == NodeKind::StrLit) {
+        if (held.kind == NodeKind :: StrLit) {
             asm_i("movq $", literal_length(p.src, held.val, held.c), ", %rax")
             return
         }
@@ -2136,7 +2136,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm("movq 8(%rax), %rax")
         return
     }
-    if (kind == NodeKind::ArrayLit) {
+    if (kind == NodeKind :: ArrayLit) {
         emit_asm_array_lit(p, id)
         return
     }
@@ -2144,7 +2144,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // is not an optimization. A guard like `is_array(t) && length_of(t) < 0`
     // reads a table only the guard says is safe to read, and evaluating both
     // sides makes that a bounds failure rather than a false.
-    if (kind == NodeKind::Bin && (node.val == OP_AND || node.val == OP_OR)) {
+    if (kind == NodeKind :: Bin && (node.val == OP_AND || node.val == OP_OR)) {
         done := new_label(p)
         emit_asm_expr(p, node.a)
         asm("cmpq $0, %rax")
@@ -2167,7 +2167,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_text(":\n")
         return
     }
-    if (kind == NodeKind::Bin) {
+    if (kind == NodeKind :: Bin) {
         lower_enum_compare(p, id)
         bin := arena_at(p.arena, id)
         op := bin.val
@@ -2230,11 +2230,11 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_arith_check(p, op, type_of(p, id), unsigned)
         return
     }
-    if (kind == NodeKind::Call) {
+    if (kind == NodeKind :: Call) {
         emit_asm_call(p, node.a, node.val)
         return
     }
-    if (kind == NodeKind::CallPtr) {
+    if (kind == NodeKind :: CallPtr) {
         // A call through a constant bundle's field is a call to the function
         // that field names, with nothing loaded and nothing dispatched.
         direct := bundle_field_fn(p, node.a)
@@ -2245,27 +2245,27 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_call_through(p, node.a, node.b)
         return
     }
-    if (kind == NodeKind::StrLit) {
+    if (kind == NodeKind :: StrLit) {
         asm_i("leaq .Lstr", id, "(%rip), %rax")
         return
     }
-    if (kind == NodeKind::Sizeof) {
+    if (kind == NodeKind :: Sizeof) {
         asm_i("movq $", type_size(p, node.val), ", %rax")
         return
     }
     // A conversion between numbers, which is the same widening and narrowing
     // an assignment does; it is written here so it can be asked for.
-    if (kind == NodeKind::Cast) {
+    if (kind == NodeKind :: Cast) {
         emit_asm_expr(p, node.a)
         emit_asm_convert(p, type_of(p, node.a), node.val)
         return
     }
     // A cast between pointers is a retype, so the value is already right.
-    if (kind == NodeKind::PtrCast) {
+    if (kind == NodeKind :: PtrCast) {
         emit_asm_expr(p, node.a)
         return
     }
-    if (kind == NodeKind::SliceFrom) {
+    if (kind == NodeKind :: SliceFrom) {
         slot := alloc_temp(p, 16)
         emit_asm_expr(p, node.a)
         asm_i("movq %rax, ", slot, "(%rbp)")
@@ -2275,12 +2275,12 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm_i("leaq ", slot, "(%rbp), %rax")
         return
     }
-    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
+    if (kind == NodeKind :: AddrOf || kind == NodeKind :: Ref) {
         // `ptr_to` of a name that is already an address, a `mut` aggregate
         // parameter or a `ref` binding, answers the address it carries, which
         // is a load of the slot rather than the slot's own address.
         inner_node := arena_at(p.arena, node.a)
-        if (kind == NodeKind::AddrOf && inner_node.kind == NodeKind::Var
+        if (kind == NodeKind :: AddrOf && inner_node.kind == NodeKind :: Var
             && is_borrow(type_of(p, node.a))) {
             emit_asm_expr(p, node.a)
             return
@@ -2290,7 +2290,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     // A struct is handled by its address, so reading one of these yields the
     // address and only a scalar is loaded.
-    if (kind == NodeKind::Field || kind == NodeKind::Deref || kind == NodeKind::Index) {
+    if (kind == NodeKind :: Field || kind == NodeKind :: Deref || kind == NodeKind :: Index) {
         emit_asm_addr(p, id)
         result := type_of(p, id)
         if (is_aggregate(result) == false) {
@@ -2298,7 +2298,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind::StructLit) {
+    if (kind == NodeKind :: StructLit) {
         emit_asm_struct_lit(p, id)
         return
     }
@@ -2313,7 +2313,7 @@ emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
     element := array_element(p, array_ty)
     stride := type_size(p, element)
     slot := alloc_temp(p, type_size(p, array_ty))
-    var at : i64 = 0
+    var at: i64 = 0
     var entry := node.a
     while (entry != (-1)) {
         enode := arena_at(p.arena, entry)
@@ -2408,15 +2408,15 @@ emit_asm_call_through :: fn(mut p: Parser, callee: i64, args: i64) {
 
     count := count_args(p, args)
     ret := proc_ret(p, callee_ty)
-    var sret : i64 = 0
-    var result_slot : i64 = 0
+    var sret: i64 = 0
+    var result_slot: i64 = 0
     if (is_aggregate(ret)) {
         sret = 1
         result_slot = alloc_temp(p, type_size(p, ret))
     }
     // Arguments are pushed last to first, so an argument that is itself a call
     // cannot disturb one already worked out.
-    var i : i64 = count - 1
+    var i: i64 = count - 1
     while (i >= 0) {
         argument := nth_value_arg(p, args, i)
         emit_asm_expr(p, argument)
@@ -2440,7 +2440,7 @@ emit_asm_call_through :: fn(mut p: Parser, callee: i64, args: i64) {
         emit_asm_arg_reg(p, 0)
         emit_text("\n")
     }
-    var r : i64 = 0
+    var r: i64 = 0
     while (r < count) {
         asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
         position := r + sret
@@ -2533,12 +2533,12 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     callee := arena_at(p.fns, fn_index)
     // The instance this call names, when the callee is generic, since the
     // symbol's list belongs to whichever instance was parsed last.
-    var params_of_call : i64 = instance_params(p, fn_index, args)
+    var params_of_call: i64 = instance_params(p, fn_index, args)
     // A call inside a template names its enclosing parameters rather than
     // types, so there is no instance to read and nothing here can be trusted
     // to say how an argument travels. That call is emitted again for each
     // instance, where there is.
-    var typed_params : bool = true
+    var typed_params: bool = true
     if (params_of_call == (-1)) {
         params_of_call = callee.params
         typed_params = generic_fn_of(p, fn_index) < 0
@@ -2547,11 +2547,11 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     value_count := count_value_args(p, args)
     count := value_count + capability
     ret := call_ret_type(p, args, fn_index)
-    var sret : i64 = 0
-    var result_slot : i64 = 0
+    var sret: i64 = 0
+    var result_slot: i64 = 0
     // An extern answering with a small struct hands it back in registers, so
     // there is no hidden pointer and no argument is pushed along by one.
-    var register_ret : i64 = 0
+    var register_ret: i64 = 0
     if (is_aggregate(ret)) {
         result_slot = alloc_temp(p, type_size(p, ret))
         if (callee.is_extern == 1 && call_is_indirect(p, fn_index) == false
@@ -2568,11 +2568,11 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // the stack the other path pushes them through is not needed. Every other
     // shape, and anything that has to be converted, borrowed, taken apart or
     // spilled, takes the path below.
-    var placed_directly : bool = capability == 0 && sret == 0
+    var placed_directly: bool = capability == 0 && sret == 0
         && register_ret == 0 && typed_params
         && value_count == count && value_count <= abi_arg_regs(p)
-    var kinds : Arena<LocalVar> = arena_make($LocalVar, 8)
-    var probe : i64 = 0
+    var kinds: Arena<LocalVar> = arena_make($LocalVar, 8)
+    var probe: i64 = 0
     while (probe < value_count && placed_directly) {
         argument := nth_value_arg(p, args, probe)
         kind := simple_arg_kind(p, argument)
@@ -2590,7 +2590,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     if (placed_directly) {
         shadow_only := abi_shadow(p)
         asm_i("subq $", shadow_only, ", %rsp")
-        var placing : i64 = 0
+        var placing: i64 = 0
         while (placing < value_count) {
             held := arena_at(kinds, placing)
             emit_asm_simple_into_arg(p, nth_value_arg(p, args, placing),
@@ -2604,14 +2604,14 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
 
     // Arguments are pushed last to first, so the capabilities, being last, go
     // first and land in the highest slots, the last one first.
-    var cap : i64 = capability
+    var cap: i64 = capability
     while (cap > 0) {
         cap = cap - 1
         emit_asm_capability(p, fn_index, cap)
         emit_asm_push()
     }
     generic := generic_fn_of(p, fn_index) >= 0
-    var i : i64 = value_count - 1
+    var i: i64 = value_count - 1
     while (i >= 0) {
         argument := nth_value_arg(p, args, i)
         // A parameter that borrows what it is given takes an address, and a
@@ -2658,8 +2658,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // larger than it needs costs nothing but stack.
     regs := abi_arg_regs(p)
     shadow := abi_shadow(p)
-    var total : i64 = sret
-    var counted : i64 = 0
+    var total: i64 = sret
+    var counted: i64 = 0
     while (counted < count) {
         want := -1
         if (counted < value_count && typed_params) {
@@ -2694,18 +2694,18 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // System V counts the two files separately, so an argument's register
     // depends on how many of its own kind came before it.
     sse_regs := abi_sse_regs(p)
-    var int_next : i64 = sret
-    var sse_next : i64 = 0
-    var spilled : i64 = 0
-    var position : i64 = sret
-    var r : i64 = 0
+    var int_next: i64 = sret
+    var sse_next: i64 = 0
+    var spilled: i64 = 0
+    var position: i64 = sret
+    var r: i64 = 0
     while (r < count) {
-        var want : i64 = -1
+        var want: i64 = -1
         if (r < value_count && typed_params) {
             want = value_param_type(p, params_of_call, r)
         }
-        var slots : i64 = 1
-        var kind : i64 = 0
+        var slots: i64 = 1
+        var kind: i64 = 0
         if (want >= 0) {
             slots = value_abi_slots(p, want)
             kind = value_abi_kind(p, want)
@@ -2713,9 +2713,9 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // The pushed cell holds the value for an ordinary argument and the
         // struct's address for a `value` one, so a slot of the second is read
         // through that address at its own eightbyte.
-        var slot : i64 = 0
+        var slot: i64 = 0
         while (slot < slots) {
-            var wants_sse : bool = false
+            var wants_sse: bool = false
             // An ordinary argument is asked about before it is read, so one
             // going to a register can be read straight into it. One taken
             // apart on the way goes through %r10 first, and so does one going
@@ -2755,8 +2755,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             // where it is read from.
             to_register := kind != 2
                 && ((wants_sse && sse_reg < sse_regs)
-                    || (wants_sse == false && int_reg < regs))
-            var direct : i64 = 0
+                || (wants_sse == false && int_reg < regs))
+            var direct: i64 = 0
             if (want < 0) {
                 if (to_register) {
                     direct = 1
@@ -2812,7 +2812,7 @@ emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
     // loaded into a scratch register the arguments do not use and called
     // through. The load comes after the arguments are in place so it does not
     // disturb them.
-    var indirect : i64 = 0
+    var indirect: i64 = 0
     if (call_is_indirect(p, fn_index)) {
         indirect = 1
     }
@@ -2866,7 +2866,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     emit_asm_loc(p, node.pos)
-    if (kind == NodeKind::Let) {
+    if (kind == NodeKind :: Let) {
         value := node.a
         annotation := node.b
         off := node.val
@@ -2914,14 +2914,14 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_store_rax_to(p, ty, slot, "(%rbp)")
         return
     }
-    if (kind == NodeKind::Assign) {
+    if (kind == NodeKind :: Assign) {
         place := node.a
         value := node.b
         // `c[h] = value`: scatter the element into the columns' per-field arrays
         // at the handle's slot, recognized before the ordinary place store since
         // the place is not one contiguous value.
         place_node := arena_at(p.arena, place)
-        if (place_node.kind == NodeKind::Index) {
+        if (place_node.kind == NodeKind :: Index) {
             cbase := place_node.a
             cindex := place_node.b
             cbase_ty := type_of(p, cbase)
@@ -2939,7 +2939,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         // Assigning to a name the function holds in a register is a move into
         // that register. There is no address to work out and nothing to keep
         // across working the value out, so the spill either side goes too.
-        if (place_node.kind == NodeKind::Var) {
+        if (place_node.kind == NodeKind :: Var) {
             into := asm_reg_of(p, place_node.val, place_node.c)
             if (into > 0) {
                 emit_asm_expr(p, value)
@@ -2975,11 +2975,11 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_store_to(p, place_ty, 0, "(%rax)")
         return
     }
-    if (kind == NodeKind::Return) {
+    if (kind == NodeKind :: Return) {
         emit_asm_return(p, node.a)
         return
     }
-    if (kind == NodeKind::If) {
+    if (kind == NodeKind :: If) {
         else_id := new_label(p)
         end_id := new_label(p)
         emit_asm_expr(p, node.a)
@@ -3004,7 +3004,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     // Both jump to a label of the loop being emitted, so a loop leaves its two
     // labels where a statement inside it can find them and puts back whatever
     // the loop around it left.
-    if (kind == NodeKind::Break) {
+    if (kind == NodeKind :: Break) {
         if (p.loop_end < 0) {
             report_where(p.modules, p.src, node.pos)
             report("`break` leaves a loop, and this is not inside one")
@@ -3015,7 +3015,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         return
     }
-    if (kind == NodeKind::Continue) {
+    if (kind == NodeKind :: Continue) {
         if (p.loop_top < 0) {
             report_where(p.modules, p.src, node.pos)
             report("`continue` goes round a loop again, and this is not inside one")
@@ -3026,7 +3026,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         return
     }
-    if (kind == NodeKind::While) {
+    if (kind == NodeKind :: While) {
         top_id := new_label(p)
         end_id := new_label(p)
         held_top := p.loop_top
@@ -3051,11 +3051,11 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         p.loop_end = held_end
         return
     }
-    if (kind == NodeKind::ExprStmt) {
+    if (kind == NodeKind :: ExprStmt) {
         emit_asm_expr(p, node.a)
         return
     }
-    if (kind == NodeKind::With) {
+    if (kind == NodeKind :: With) {
         mark := push_provider(p, node.val, node.c, 1)
         emit_asm_block(p, node.a)
         p.providers.count = mark
@@ -3063,7 +3063,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     }
     // A match is a chain of comparisons against the scrutinee, which is kept in
     // a temporary because each arm's body may clobber the registers.
-    if (kind == NodeKind::Match) {
+    if (kind == NodeKind :: Match) {
         scrutinee := node.a
         cases := node.b
         end_id := new_label(p)
@@ -3142,11 +3142,11 @@ emit_asm_function_body :: fn(mut p: Parser, body: i64) {
         kind := node.kind
         next_id := node.next
         if (next_id == (-1)) {
-            if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID) {
+            if (kind == NodeKind :: ExprStmt && type_of(p, node.a) != TY_VOID) {
                 emit_asm_return(p, node.a)
             } else {
                 emit_asm_stmt(p, id)
-                if (kind != NodeKind::Return) {
+                if (kind != NodeKind :: Return) {
                     asm("movq $0, %rax")
                     emit_asm_leave(p)
                 }
@@ -3230,7 +3230,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     // A struct result arrives as a hidden pointer ahead of the real arguments.
     regs := abi_arg_regs(p)
     shadow := abi_shadow(p)
-    var shift : i64 = 0
+    var shift: i64 = 0
     if (is_aggregate(ret)) {
         shift = 1
         p.sret_slot = alloc_temp(p, 8)
@@ -3245,11 +3245,11 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     // stack by the caller, above the saved frame pointer, the return address
     // and the shadow area.
     sse_regs := abi_sse_regs(p)
-    var int_next : i64 = shift
-    var sse_next : i64 = 0
-    var spilled : i64 = 0
+    var int_next: i64 = shift
+    var sse_next: i64 = 0
+    var spilled: i64 = 0
     var pid := params
-    var index : i64 = 0
+    var index: i64 = 0
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         off := pnode.val
@@ -3272,7 +3272,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         // passes one, so the pieces are put back into storage this function
         // owns and the parameter holds its address, which is the shape the body
         // already reads a borrowed struct through.
-        var want : i64 = -1
+        var want: i64 = -1
         if (param_node_by_value(p, pid)) {
             want = pointee(p, ptype)
         }
@@ -3281,9 +3281,9 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
             if (kind == 0) {
                 copy := alloc_temp(p, type_size(p, want))
                 total := value_abi_slots(p, want)
-                var k : i64 = 0
+                var k: i64 = 0
                 while (k < total) {
-                    var sse : bool = false
+                    var sse: bool = false
                     if (p.abi_windows == 0) {
                         sse = classify_eightbyte(p, want, 0, k) == 1
                     }
@@ -3445,7 +3445,7 @@ emit_asm_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64
     emit_text("mf_")
     frost_rt_emit_int(fn_index)
     emit_asm_mangled_arg(p, arg)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < xarg_count) {
         garg := arena_at(p.gargs, xarg_start + i)
         emit_asm_mangled_arg(p, garg.value)
@@ -3478,7 +3478,7 @@ emit_asm_test_main :: fn(mut p: Parser) {
     emit_text("main:\n")
     asm("pushq %rbp")
     asm("movq %rsp, %rbp")
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
         // Only the tests of the file that was named, the same rule the C
@@ -3545,13 +3545,13 @@ emit_asm_files :: fn(mut p: Parser) {
     if (p.debug_lines != 1) {
         return
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.modules.count) {
         entry := arena_at(p.modules, i)
         emit_text("    .file ")
         frost_rt_emit_int(i + 1)
         emit_text(" \"")
-        var k : i64 = 0
+        var k: i64 = 0
         length := cstr_len(entry.path)
         while (k < length) {
             byte := byte_at(entry.path, k)
@@ -3593,17 +3593,17 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)
+        if (kind == NodeKind :: Func && (node.c != 2 || p.testing == 1)
             && unit_owns(p, id)) {
             emit_asm_function(p, id)
         }
         id = next_id
     }
 
-    var gi : i64 = 0
+    var gi: i64 = 0
     while (gi < p.generic_fns.count) {
         if (unit_owns_generic(p, gi)) {
-            var ii : i64 = 0
+            var ii: i64 = 0
             while (ii < p.type_args.count) {
                 used := arena_at(p.type_args, ii)
                 arg := used.arg
@@ -3630,7 +3630,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     }
 
     asm(".data")
-    var ti : i64 = 0
+    var ti: i64 = 0
     while (ti < p.tests.count) {
         entry := arena_at(p.tests, ti)
         emit_text(".Ltest")
@@ -3646,13 +3646,13 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
 
 // Every string literal in the program, labelled by the node that holds it.
 emit_asm_strings :: fn(mut p: Parser) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         kind := node.kind
         off := node.val
         len := node.c
-        if (kind == NodeKind::StrLit && unit_holds(p, off)) {
+        if (kind == NodeKind :: StrLit && unit_holds(p, off)) {
             emit_text(".Lstr")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -3660,7 +3660,7 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_string_content(p.src, off, len)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Assert && unit_holds(p, node.pos)) {
+        if (kind == NodeKind :: Assert && unit_holds(p, node.pos)) {
             emit_text(".Lpos")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -3668,7 +3668,7 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_position(p.modules, p.src, node.pos)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Float && unit_holds(p, off)) {
+        if (kind == NodeKind :: Float && unit_holds(p, off)) {
             emit_text("    .align 8\n")
             emit_text(".Lflt")
             frost_rt_emit_int(i)
@@ -3687,7 +3687,7 @@ emit_asm_strings :: fn(mut p: Parser) {
 }
 
 count_params :: fn(mut p: Parser, head: i64) -> i64 {
-    var count : i64 = 0
+    var count: i64 = 0
     var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -3700,7 +3700,7 @@ count_params :: fn(mut p: Parser, head: i64) -> i64 {
 // A type argument is erased before runtime, so it is not counted against the
 // parameter list, which never has a node for a type parameter either.
 count_args :: fn(mut p: Parser, head: i64) -> i64 {
-    var count : i64 = 0
+    var count: i64 = 0
     var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -3708,7 +3708,7 @@ count_args :: fn(mut p: Parser, head: i64) -> i64 {
         next_id := node.next
         vnode := arena_at(p.arena, value)
         kind := vnode.kind
-        if (kind != NodeKind::TypeVal) {
+        if (kind != NodeKind :: TypeVal) {
             count = count + 1
         }
         id = next_id

@@ -17,15 +17,15 @@ Node :: struct { value: i64, next: i64 }
 
 push_front :: fn(mut p: Slab<Node, 16>, head: i64, value: i64) -> i64 {
     handle := slab_insert($Node, $16, p, Node { value = value, next = head })
-    raw : i64 = handle
+    raw: i64 = handle
     raw
 }
 
 sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
-    var total : i64 = 0
-    var current : i64 = head
+    var total: i64 = 0
+    var current: i64 = head
     while (current >= 0) {
-        link : Handle<Node> = current
+        link: Handle<Node> = current
         total = total + p[link].value
         current = p[link].next
     }
@@ -33,7 +33,7 @@ sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var p : Slab<Node, 16> = Slab {
+    var p: Slab<Node, 16> = Slab {
         storage = [Node { value = 0, next = 0 }; 16],
         generations = [0; 16],
         free_list = [0; 16],
@@ -41,14 +41,14 @@ main :: fn() -> i64 {
     }
     slab_reset($Node, $16, p)
 
-    var head : i64 = -1
+    var head: i64 = -1
     head = push_front(p, head, 10)
     head = push_front(p, head, 20)
     head = push_front(p, head, 30)
 
     print_int_line(sum_list(p, head)) // 60
 
-    front : Handle<Node> = head
+    front: Handle<Node> = head
     print_int_line(p[front].value) // 30, the most recent push
     0
 }

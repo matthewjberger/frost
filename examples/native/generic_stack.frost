@@ -16,7 +16,7 @@ depth :: fn(stack: Stack<$T>) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var numbers : Stack<i64> = Stack { items = [0, 0, 0, 0, 0, 0, 0, 0], count = 0 }
+    var numbers: Stack<i64> = Stack { items = [0, 0, 0, 0, 0, 0, 0, 0], count = 0 }
     push(numbers, 10)
     push(numbers, 20)
     push(numbers, 30)
