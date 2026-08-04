@@ -422,7 +422,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                     return
                 }
                 report_where(p.modules, p.src, off)
-                report("undefined variable '")
+                report("unknown variable '")
                 report_src(p.src, off, len)
                 report("'")
                 frost_rt_die()

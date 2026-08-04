@@ -1,0 +1,315 @@
+// What an editor asks a compiler: the symbols of a module, the declaration a
+// name resolves to, the fields of a struct, the type of a local. Every answer
+// is computed when asked, reads the tables the passes already build, and a
+// query run emits no program. The question arrives in FROST_QUERY, and the
+// answers go out through the report machinery, one line each, so they land on
+// stderr the way a diagnostic does and the emit stream stays empty.
+
+import "core.frost"
+import "imports.frost"
+import "names.frost"
+import "regions.frost"
+
+export run_query
+
+// The line an offset is on, counted within the module that holds it, the way
+// a diagnostic's header counts it.
+query_line :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return 0
+    }
+    entry := arena_at(modules, index)
+    mut line : i64 = 1
+    mut at := entry.start
+    while (at < offset) {
+        if (src[at] == CH_LF) {
+            line = line + 1
+        }
+        at = at + 1
+    }
+    line
+}
+
+// The start of the space-separated word at `index` in the question, or -1
+// where the question has no such word.
+query_word :: fn(question: ^i8, index: i64) -> i64 {
+    length := cstr_len(question)
+    mut at : i64 = 0
+    mut word : i64 = 0
+    while (at < length && byte_at(question, at) == CH_SPACE) {
+        at = at + 1
+    }
+    while (at < length) {
+        if (word == index) {
+            return at
+        }
+        while (at < length && byte_at(question, at) != CH_SPACE) {
+            at = at + 1
+        }
+        while (at < length && byte_at(question, at) == CH_SPACE) {
+            at = at + 1
+        }
+        word = word + 1
+    }
+    -1
+}
+
+query_word_len :: fn(question: ^i8, start: i64) -> i64 {
+    length := cstr_len(question)
+    mut at := start
+    while (at < length && byte_at(question, at) != CH_SPACE) {
+        at = at + 1
+    }
+    at - start
+}
+
+word_is :: fn(question: ^i8, start: i64, text: str) -> bool {
+    length := str_len(text)
+    if (query_word_len(question, start) != length) {
+        return false
+    }
+    mut k : i64 = 0
+    while (k < length) {
+        if (byte_at(question, start + k) != cast($i64, text[k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+word_names :: fn(question: ^i8, start: i64, src: str, off: i64,
+    len: i64) -> bool {
+    if (query_word_len(question, start) != len) {
+        return false
+    }
+    mut k : i64 = 0
+    while (k < len) {
+        if (byte_at(question, start + k) != cast($i64, src[off + k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// Every named top-level declaration, in source order. The tables are one per
+// kind, and a name's offset into the one source buffer is its source order,
+// so the smallest offset not yet written is always the next declaration.
+query_symbols :: fn(mut p: Parser) {
+    mut written : i64 = -1
+    mut going : bool = true
+    while (going) {
+        mut best_off : i64 = -1
+        mut best_len : i64 = 0
+        mut best_kind : i64 = 0
+        mut si : i64 = 0
+        while (si < p.structs.count) {
+            def := arena_at(p.structs, si)
+            if (def.declared == 1 && def.instance_id < 0
+                && def.name_off > written
+                && (best_off < 0 || def.name_off < best_off)) {
+                best_off = def.name_off
+                best_len = def.name_len
+                best_kind = 1
+                if (def.is_enum == 1) {
+                    best_kind = 2
+                }
+            }
+            si = si + 1
+        }
+        mut fi : i64 = 0
+        while (fi < p.fns.count) {
+            sym := arena_at(p.fns, fi)
+            if (sym.off > written
+                && (best_off < 0 || sym.off < best_off)) {
+                best_off = sym.off
+                best_len = sym.len
+                best_kind = 0
+                if (sym.is_extern == 1) {
+                    best_kind = 4
+                }
+            }
+            fi = fi + 1
+        }
+        mut ci : i64 = 0
+        while (ci < p.consts.count) {
+            held := arena_at(p.consts, ci)
+            if (held.name_off > written
+                && (best_off < 0 || held.name_off < best_off)) {
+                best_off = held.name_off
+                best_len = held.name_len
+                best_kind = 3
+            }
+            ci = ci + 1
+        }
+        mut vi : i64 = 0
+        while (vi < p.value_consts.count) {
+            held := arena_at(p.value_consts, vi)
+            if (held.name_off > written
+                && (best_off < 0 || held.name_off < best_off)) {
+                best_off = held.name_off
+                best_len = held.name_len
+                best_kind = 3
+            }
+            vi = vi + 1
+        }
+        if (best_off < 0) {
+            going = false
+        } else {
+            report_src(p.src, best_off, best_len)
+            report(" ")
+            if (best_kind == 0) {
+                report("fn")
+            }
+            if (best_kind == 1) {
+                report("struct")
+            }
+            if (best_kind == 2) {
+                report("enum")
+            }
+            if (best_kind == 3) {
+                report("const")
+            }
+            if (best_kind == 4) {
+                report("extern")
+            }
+            report(" ")
+            report_int(query_line(p.modules, p.src, best_off))
+            report("\n")
+            written = best_off
+        }
+    }
+}
+
+// The line the named declaration is on. The namespace is flat, so there is at
+// most one answer, whichever table holds it.
+query_definition :: fn(mut p: Parser, question: ^i8) {
+    name_at := query_word(question, 1)
+    if (name_at < 0) {
+        return
+    }
+    mut si : i64 = 0
+    while (si < p.structs.count) {
+        def := arena_at(p.structs, si)
+        if (def.declared == 1 && def.instance_id < 0
+            && word_names(question, name_at, p.src, def.name_off,
+                def.name_len)) {
+            report_int(query_line(p.modules, p.src, def.name_off))
+            report("\n")
+            return
+        }
+        si = si + 1
+    }
+    mut fi : i64 = 0
+    while (fi < p.fns.count) {
+        sym := arena_at(p.fns, fi)
+        if (word_names(question, name_at, p.src, sym.off, sym.len)) {
+            report_int(query_line(p.modules, p.src, sym.off))
+            report("\n")
+            return
+        }
+        fi = fi + 1
+    }
+    mut ci : i64 = 0
+    while (ci < p.consts.count) {
+        held := arena_at(p.consts, ci)
+        if (word_names(question, name_at, p.src, held.name_off,
+            held.name_len)) {
+            report_int(query_line(p.modules, p.src, held.name_off))
+            report("\n")
+            return
+        }
+        ci = ci + 1
+    }
+}
+
+// Each field of the named struct with the type it holds, one per line, the
+// order the declaration wrote them.
+query_fields :: fn(mut p: Parser, question: ^i8) {
+    name_at := query_word(question, 1)
+    if (name_at < 0) {
+        return
+    }
+    mut si : i64 = 0
+    while (si < p.structs.count) {
+        def := arena_at(p.structs, si)
+        if (def.declared == 1 && def.instance_id < 0 && def.is_enum == 0
+            && def.is_generic == 0
+            && word_names(question, name_at, p.src, def.name_off,
+                def.name_len)) {
+            mut fid := def.field_head
+            while (fid != (-1)) {
+                field := arena_at(p.fields, fid)
+                report_src(p.src, field.name_off, field.name_len)
+                report(" ")
+                report_type_name(p, field.ty)
+                report("\n")
+                fid = field.next
+            }
+            return
+        }
+        si = si + 1
+    }
+}
+
+// The type of a named local of a named function, with the line that declares
+// it, off the same walk the checks run: the local table is rebuilt for that
+// one function and read back.
+query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
+    fn_at := query_word(question, 1)
+    name_at := query_word(question, 2)
+    if (fn_at < 0 || name_at < 0) {
+        return
+    }
+    mut id := program
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (node.kind == NodeKind::Func) {
+            sym := arena_at(p.fns, node.val)
+            if (word_names(question, fn_at, p.src, sym.off, sym.len)) {
+                check_types_in(p, node.a, node.b, node.val, sym.ret_type)
+                mut li : i64 = 0
+                while (li < p.locals.count) {
+                    held := arena_at(p.locals, li)
+                    if (word_names(question, name_at, p.src, held.name_off,
+                        held.name_len)) {
+                        report_type_name(p, held.ty)
+                        report(" ")
+                        report_int(query_line(p.modules, p.src,
+                            held.name_off))
+                        report("\n")
+                        return
+                    }
+                    li = li + 1
+                }
+                return
+            }
+        }
+        id = next_id
+    }
+}
+
+run_query :: fn(mut p: Parser, program: i64, question: ^i8) {
+    verb := query_word(question, 0)
+    if (verb < 0) {
+        return
+    }
+    if (word_is(question, verb, "symbols")) {
+        query_symbols(p)
+        return
+    }
+    if (word_is(question, verb, "definition")) {
+        query_definition(p, question)
+        return
+    }
+    if (word_is(question, verb, "fields")) {
+        query_fields(p, question)
+        return
+    }
+    if (word_is(question, verb, "local")) {
+        query_local(p, program, question)
+    }
+}

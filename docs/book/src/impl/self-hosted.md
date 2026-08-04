@@ -88,6 +88,24 @@ Output. The bootstrap emits an object through Cranelift, portable C, or runs the
 IR directly. This one emits C or x86-64 assembly of its own, and encodes that
 assembly to an object itself, COFF or ELF as the target asks.
 
+## Faults are reported, then refused
+
+A fault no longer ends the compile at the point it is found. The runtime
+carries a recovery mark (`frost_rt_recover_run` arms one and runs a callback,
+`frost_rt_recover_escape` returns to the nearest mark): the parser arms one
+around each top-level declaration and each statement of a block, and the type
+and move walks arm one around each function, so one run reports every fault a
+file holds and the driver refuses the program once the whole file has had its
+say. With no mark armed an escape dies exactly as `frost_rt_die` does, which
+is what made replacing die with escape safe at every report site.
+
+The wording is the bootstrap's, byte for byte.
+`both_compilers_report_the_same_fault_lines` holds the two to the same
+faults, on the same lines, in the same words, and
+`self_hosted_answers_editor_queries` holds `FROST_QUERY` (symbols, a
+definition's line, a struct's fields, a local's type) to the answers the
+bootstrap's `src/query.rs` gives in its own tests.
+
 ## What the fixpoint cannot see
 
 Three stages agreeing byte for byte is the strongest check here, and it has one
