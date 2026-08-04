@@ -69,8 +69,7 @@ str_index_of :: fn(s: str, needle: str) -> i64 {
         var i: i64 = 0
         var same := true
         while (i < str_len(needle)) {
-            if (s[start + i] != needle[i]) { same = false i = str_len(needle) }
-            else { i = i + 1 }
+            if (s[start + i] != needle[i]) { same = false i = str_len(needle) } else { i = i + 1 }
         }
         if (same) { return start }
         start = start + 1

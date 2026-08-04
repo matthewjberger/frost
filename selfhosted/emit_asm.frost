@@ -1561,23 +1561,19 @@ emit_asm_binop_imm :: fn(op: i64, unsigned: bool, value: i64) {
         return
     }
     if (op == OP_LT) {
-        if (unsigned) { emit_asm_compare_imm("setb", value) }
-        else { emit_asm_compare_imm("setl", value) }
+        if (unsigned) { emit_asm_compare_imm("setb", value) } else { emit_asm_compare_imm("setl", value) }
         return
     }
     if (op == OP_GT) {
-        if (unsigned) { emit_asm_compare_imm("seta", value) }
-        else { emit_asm_compare_imm("setg", value) }
+        if (unsigned) { emit_asm_compare_imm("seta", value) } else { emit_asm_compare_imm("setg", value) }
         return
     }
     if (op == OP_LE) {
-        if (unsigned) { emit_asm_compare_imm("setbe", value) }
-        else { emit_asm_compare_imm("setle", value) }
+        if (unsigned) { emit_asm_compare_imm("setbe", value) } else { emit_asm_compare_imm("setle", value) }
         return
     }
     if (op == OP_GE) {
-        if (unsigned) { emit_asm_compare_imm("setae", value) }
-        else { emit_asm_compare_imm("setge", value) }
+        if (unsigned) { emit_asm_compare_imm("setae", value) } else { emit_asm_compare_imm("setge", value) }
         return
     }
     if (op == OP_EQ) {
