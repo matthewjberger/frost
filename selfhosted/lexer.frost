@@ -309,11 +309,20 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     // rather than four. It is a token now, skipped where a statement ends.
     if (c == CH_SEMI) { kind = TokenKind::Semi }
     if (kind == TokenKind::Eof) {
-        report("unexpected byte ")
-        frost_rt_error_int(c)
-        report(" at offset ")
-        frost_rt_error_int(i)
-        frost_rt_die()
+        // A byte that is no operator becomes a token of its own rather than
+        // the end of the compile. The parser refuses it where it stands, so
+        // the fault is reported with a line and everything after it is still
+        // read. A multi-byte character is taken whole, continuation bytes and
+        // all, so the report shows the character the file holds rather than
+        // its first byte.
+        mut span : i64 = 1
+        while (i + span < len
+            && byte_of(src, i + span, len) >= 128
+            && byte_of(src, i + span, len) < 192) {
+            span = span + 1
+        }
+        push_token(tokens, TokenKind::Illegal, i, span, 0)
+        return i + span
     }
     push_token(tokens, kind, i, 1, 0)
     i + 1

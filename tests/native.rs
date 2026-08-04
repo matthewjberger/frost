@@ -5663,7 +5663,8 @@ fn self_hosted_passes_a_struct_to_c_by_value() {
 // A byte that is no operator used to keep the "nothing matched" value, which is
 // the end-of-file token, so the parser stopped there and the compiler wrote an
 // empty program and reported success. One stray byte truncated a file in
-// silence.
+// silence. It is a token now, refused where it stands, so the report names
+// the character and the line it is on.
 #[test]
 fn self_hosted_rejects_a_stray_byte() {
     let source = "main :: fn() -> i64 {\n    print 7\u{a3}\n    0\n}\n";
@@ -5671,7 +5672,7 @@ fn self_hosted_rejects_a_stray_byte() {
         return;
     };
     assert!(
-        message.contains("unexpected byte"),
+        message.contains("expected a statement, found '\u{a3}'"),
         "expected the stray byte to be named, got:\n{message}"
     );
 }
@@ -5698,7 +5699,7 @@ fn self_hosted_rejects_a_stray_top_level_token() {
         return;
     };
     assert!(
-        message.contains("this is not the start of a declaration"),
+        message.contains("expected a declaration head"),
         "expected the parse to stop loudly, got:\n{message}"
     );
 }

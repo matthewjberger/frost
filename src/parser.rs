@@ -1,4 +1,4 @@
-﻿use crate::ast::{
+use crate::ast::{
     Ast, EnumVariant, ExprId, Expression, FlagBit, ImportRename, Literal,
     Module, MultiBinding, NamedExpr, Parameter, Pattern, PatternBinding,
     PatternId, Range32, ReturnKind, ReturnSignature, ReturnValue, Statement,
@@ -833,6 +833,32 @@ impl<'a> Parser<'a> {
             self.parse_export_line()?;
             return self.parse_statement();
         }
+        // A statement keyword at the top level heads no declaration, and
+        // letting its arm below take it turns the fault into whichever
+        // complaint the statement's own parse dies with, columns away from
+        // the word that is wrong.
+        if self.block_depth == 0
+            && matches!(
+                self.peek_nth(0),
+                Token::Return
+                    | Token::Print
+                    | Token::Defer
+                    | Token::For
+                    | Token::While
+                    | Token::With
+                    | Token::Break
+                    | Token::Continue
+                    | Token::Ref
+                    | Token::If
+                    | Token::Match
+                    | Token::Unsafe
+            )
+        {
+            let written = self.peek_nth(0).to_string();
+            return Err(self.here(format!(
+                "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
+            )));
+        }
         Ok(match self.peek_nth(0) {
             Token::EndOfFile => None,
             Token::Identifier(name)
@@ -964,14 +990,17 @@ impl<'a> Parser<'a> {
                 // A token no statement can start gets the dispatch's own
                 // answer, naming what could stand here, rather than whichever
                 // message the expression parser dies with after taking the
-                // token as the start of one.
+                // token as the start of one. At the top level nothing runs, so
+                // an expression is refused along with everything else: only a
+                // declaration can stand there.
+                if self.block_depth == 0 {
+                    let written = self.peek_nth(0).to_string();
+                    return Err(self.here(format!(
+                        "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
+                    )));
+                }
                 if !Self::can_begin_expression(self.peek_nth(0)) {
                     let written = self.peek_nth(0).to_string();
-                    if self.block_depth == 0 {
-                        return Err(self.here(format!(
-                            "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
-                        )));
-                    }
                     return Err(self.here(format!(
                         "expected a statement, found '{written}'"
                     )));
@@ -3506,7 +3535,19 @@ mod tests {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
-        parser.parse()
+        match parser.parse() {
+            Ok(module) => Ok(module),
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("expected a declaration head") =>
+            {
+                let mut statement_parser = Parser::new(&tokens);
+                statement_parser.block_depth = 1;
+                statement_parser.parse()
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn single_expression(input: &str) -> Result<(Module, ExprId)> {

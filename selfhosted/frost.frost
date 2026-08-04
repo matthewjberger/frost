@@ -684,6 +684,12 @@ main :: fn() -> i64 {
     // answered before anything is parsed.
     check_export_collisions(parser)
     program := parse_program(parser)
+    // The parser kept reading past its faults so every one of them is on
+    // stderr, and a program that faulted at all is still refused, here, once
+    // the whole file has had its say.
+    if (frost_rt_recover_failures() > 0) {
+        frost_rt_die()
+    }
     // Every `.Variant` an argument left unresolved, now that every signature is
     // parsed.
     resolve_variant_fixups(parser)

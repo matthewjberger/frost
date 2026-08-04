@@ -345,6 +345,16 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
         c = c + 1
     }
     finish := append_text(buffer, here, text)
+    // A byte-order mark at the head of this file would land mid-buffer, where
+    // the tokenizer's own head-of-file skip cannot see it. Blanked to spaces
+    // in place, so every offset after it stays where it was.
+    if (str_len(text) >= 3 && text[0] == 239 && text[1] == 187
+        && text[2] == 191) {
+        mut into := buffer
+        into[here] = CH_SPACE
+        into[here + 1] = CH_SPACE
+        into[here + 2] = CH_SPACE
+    }
     // The range is known only now, since everything this file imports went in
     // ahead of it. It is what tells a name which file wrote it.
     placed := arena_at(modules, mine)

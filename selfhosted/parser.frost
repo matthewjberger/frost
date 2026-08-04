@@ -68,11 +68,11 @@ splice_include :: fn(mut p: Parser, read: i64, write: i64) {
         || arena_at(p.tokens, read + 3).kind != TokenKind::Rparen) {
         report_where(p.modules, p.src, at)
         report("include_str takes one string literal naming a file, so the path is known while the program is being compiled")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     if (p.modules.count == 0) {
         report("include_str: there is no file for the path to be relative to")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     path_token := arena_at(p.tokens, read + 2)
     owner := arena_at(p.modules, module_at(p.modules, at))
@@ -82,7 +82,7 @@ splice_include :: fn(mut p: Parser, read: i64, write: i64) {
         report("include_str: cannot read '")
         report_cstr(full)
         report("'")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     raw := unsafe { frost_rt_read_file(full) }
     length := cstr_len(raw)
@@ -145,7 +145,7 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
     if (total < 0) {
         report_where(p.modules, p.src, cur_off(p))
         report("an array repeat count has to be a literal, a constant, or a value parameter of the generic it is written in")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     advance(p)
     total
@@ -240,7 +240,7 @@ split_format :: fn(mut p: Parser, literal: i64, arguments: i64) -> i64 {
             if (next_argument == (-1)) {
                 report_where(p.modules, p.src, at)
                 report("this format has more holes than there are values to put in them")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             held := next_argument
             next_argument = node_next(p, held)
@@ -257,7 +257,7 @@ split_format :: fn(mut p: Parser, literal: i64, arguments: i64) -> i64 {
         } else if (byte == CH_LBRACE) {
             report_where(p.modules, p.src, at)
             report("a hole in a format is written `{}`, and `{` on its own is written `{{`")
-            frost_rt_die()
+            frost_rt_recover_escape()
         } else {
             read = read + 1
         }
@@ -276,7 +276,7 @@ split_format :: fn(mut p: Parser, literal: i64, arguments: i64) -> i64 {
     if (next_argument != (-1)) {
         report_where(p.modules, p.src, at)
         report("this format has fewer holes than there are values to put in them")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     head
 }
@@ -572,7 +572,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 if (unbound_template(p) == false) {
                     report_where(p.modules, p.src, cur_off(p))
                     report("offset_of names a field of a type, which is what a `for` over `fields(T)` binds")
-                    frost_rt_die()
+                    frost_rt_recover_escape()
                 }
                 advance(p)
                 advance(p)
@@ -741,7 +741,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (cur(p) != TokenKind::Lbrace) {
             report_where(p.modules, p.src, offset)
             report("a generic type named here is the type of a literal, so it is followed by its fields in braces")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         advance(p)
         inits := parse_field_inits(p, struct_ty)
@@ -988,7 +988,7 @@ report_uninferable :: fn(mut p: Parser, offset: i64, length: i64) {
     report("' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '")
     report_src(p.src, offset, length)
     report("<i64> { ... }', or give the binding a declared type that names them")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
@@ -1034,7 +1034,7 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     if (p.result_ty == (-1)) {
         report_where(p.modules, p.src, cur_off(p))
         report("'?' needs a function that declares a failure set")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     name_off := synth_numbered(p, "__try", p.try_count)
     name_len := 5 + digits_in(p.try_count)
@@ -1215,13 +1215,13 @@ pack_element_at :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
     if (index_node.kind != NodeKind::Num) {
         report_where(p.modules, p.src, index_node.pos)
         report("a compile-time list is indexed by a literal, since which element it is has to be known here")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     at := index_node.val
     if (at < 0 || at >= p.pack_count) {
         report_where(p.modules, p.src, index_node.pos)
         report("this call gave the list fewer values than that")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len, at)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
@@ -1385,7 +1385,7 @@ splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
         report("'")
         report_src(p.src, list_off, list_len)
         report("' is not the compile-time list this function takes, and `for` in an argument list walks one")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     mut head := head_in
     mut tail := tail_in
@@ -2266,7 +2266,7 @@ parse_variant_case :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
             report("no enum has a variant '")
             report_src(p.src, variant_off, variant_len)
             report("'")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
     } else {
         entry := arena_at(p.variants, index)
@@ -2613,7 +2613,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         if (closed == 1) {
             report_where(p.modules, p.src, cur_off(p))
             report("this arm follows one that matches everything, so nothing reaches it")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         if (condition == (-1)) {
             // Matches whatever is left, so it is the chain's else and the last
@@ -2759,7 +2759,7 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
     }
     if (missing > 0) {
         report("; add the case or a `case _` for the rest")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
 }
 
@@ -2817,7 +2817,7 @@ parse_for_range :: fn(mut p: Parser, first_off: i64, item_off: i64,
     if (has_index == 1) {
         report_where(p.modules, p.src, first_off)
         report("a `for` over a range binds one name, which is the number")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     unique := p.arena.count
     end_off := synth_numbered(p, "__for_end", unique)
@@ -2865,6 +2865,21 @@ parse_for_range :: fn(mut p: Parser, first_off: i64, item_off: i64,
     set_next(p, bind_end, bind_at)
     set_next(p, bind_at, loop)
     bind_end
+}
+
+// The tokens an expression can open with. A statement that starts with
+// anything else is a fault said where it stands, rather than a name made of
+// whatever the token spells.
+can_begin_expression :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::Ident || kind == TokenKind::Str
+        || kind == TokenKind::Int || kind == TokenKind::Float
+        || kind == TokenKind::Bang || kind == TokenKind::Minus
+        || kind == TokenKind::Amp || kind == TokenKind::Dollar
+        || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse
+        || kind == TokenKind::Dot || kind == TokenKind::Lbrace
+        || kind == TokenKind::Lbracket || kind == TokenKind::Lparen
+        || kind == TokenKind::KwIf || kind == TokenKind::KwFn
+        || kind == TokenKind::KwMatch || kind == TokenKind::KwUnsafe
 }
 
 parse_stmt :: fn(mut p: Parser) -> i64 {
@@ -3025,7 +3040,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (head != (-1)) {
             report_where(p.modules, p.src, cur_off(p))
             report("a `print` with arguments starts with a format string, and this one does not")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         return made
     }
@@ -3042,7 +3057,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (p.block_depth != p.defer_depth) {
             report_where(p.modules, p.src, cur_off(p))
             report("a `defer` belongs at the top level of a body, since it runs where the function leaves rather than where this block does")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         advance(p)
         started := p.ti
@@ -3127,7 +3142,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (cur(p) != TokenKind::KwIn) {
             report_where(p.modules, p.src, cur_off(p))
             report("a `for` needs `in` between the name and what it walks")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         advance(p)
         // A `for` over a compile-time list is not a loop: the list has a length
@@ -3321,6 +3336,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // Otherwise the statement starts with a full expression. If `=` follows it is
     // an assignment to that place. Otherwise it is an expression statement (a
     // call). This is how `p.x = e`, `node^.next = e`, and `close(f)` are handled.
+    if (can_begin_expression(kind) == false) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("expected a statement, found '")
+        report_src(p.src, cur_off(p), cur_len(p))
+        report("'")
+        frost_rt_recover_escape()
+    }
     expr := parse_expr(p)
     if (cur(p) == TokenKind::Assign) {
         advance(p)
@@ -3407,7 +3429,55 @@ refuse_minus_continuation :: fn(mut p: Parser, at: i64) {
     report(" statement ends at the end of a line: write the whole expression on")
     report(" one line, or leave the '-' at the end of the line above where it")
     report(" says a subtraction is meant")
-    frost_rt_die()
+    frost_rt_recover_escape()
+}
+
+// One statement of a block, run with an escape armed so a fault ends the
+// statement rather than the declaration around it. The pending mark and the
+// block depth ride along, because an escape mid-statement leaves both where
+// the fault found them and the loop has to put them back.
+StmtTurn :: struct {
+    parser: ^u8,
+    mark: i64,
+    depth: i64,
+    statement: i64,
+}
+
+parse_stmt_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($StmtTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    parsed := unsafe { parse_stmt(parser^) }
+    statement := unsafe { flush_pending(parser^, turn^.mark, parsed) }
+    unsafe { turn^.statement = statement }
+}
+
+// After a fault inside a block, skip to the next token that begins a
+// statement, without crossing the token that closes the block. Always makes
+// progress, so recovery cannot loop.
+synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
+    if (cur(p) != terminator && cur(p) != TokenKind::Eof) {
+        advance(p)
+    }
+    while (cur(p) != terminator && cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Semi) {
+            return
+        }
+        if (kind == TokenKind::KwReturn || kind == TokenKind::KwIf
+            || kind == TokenKind::KwWhile || kind == TokenKind::KwFor
+            || kind == TokenKind::KwMatch || kind == TokenKind::KwDefer
+            || kind == TokenKind::KwBreak || kind == TokenKind::KwContinue
+            || kind == TokenKind::KwMut || kind == TokenKind::KwRef
+            || kind == TokenKind::KwWith || kind == TokenKind::KwPrint) {
+            return
+        }
+        if (kind == TokenKind::Ident
+            && (peek_kind(p, 1) == TokenKind::Coloneq
+                || peek_kind(p, 1) == TokenKind::Colon)) {
+            return
+        }
+        advance(p)
+    }
 }
 
 parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
@@ -3425,8 +3495,26 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         opened_with_minus := head != (-1) && cur(p) == TokenKind::Minus
         minus_at := cur_off(p)
         mark := p.pending.count
-        parsed := parse_stmt(p)
-        statement := flush_pending(p, mark, parsed)
+        mut turn := StmtTurn {
+            parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+            mark = mark,
+            depth = p.block_depth,
+            statement = -1
+        }
+        escaped := unsafe {
+            frost_rt_recover_run(parse_stmt_guarded,
+                ptr_cast($u8, ptr_to(turn)))
+        }
+        if (escaped == 1) {
+            p.pending.count = mark
+            p.block_depth = turn.depth
+            synchronize_statement(p, terminator)
+            while (cur(p) == TokenKind::Semi) {
+                advance(p)
+            }
+            continue
+        }
+        statement := turn.statement
         mut last := statement
         mut following := node_next(p, last)
         while (following != (-1)) {
@@ -3527,7 +3615,7 @@ unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
         }
         report_where(p.modules, p.src, cur_off(p))
         report("a `for` over `fields(T)` walks a struct, and this is not one")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     body_start := p.ti
     mut head : i64 = -1
@@ -3621,7 +3709,7 @@ check_defer_shadowing :: fn(mut p: Parser) {
             if (kind == TokenKind::Ident && bound_after(p, bound, off, len)) {
                 report_where(p.modules, p.src, off)
                 report("this name is bound again below the `defer` that mentions it, and a `defer` is copied to every exit, so the copy would read that binding rather than the one in scope here")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             t = t + 1
         }
@@ -3932,7 +4020,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             if (by_value == 1 && is_aggregate(ty) == false) {
                 report_where(p.modules, p.src, offset)
                 report("only an aggregate can be written 'value'; a scalar already goes to C by value")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             mut auto_borrow : i64 = 0
             if (is_pointer(ty) == false) {
@@ -4419,7 +4507,7 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
             report("' names no bit called '")
             report_src(p.src, variant_off, variant_len)
             report("'")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         return new_node(p, NodeKind::Num, 0, enum_ty + 1, value)
     }
@@ -4453,7 +4541,7 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
             report("' has no variant '")
             report_src(p.src, variant_off, variant_len)
             report("'")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
     } else {
         entry := arena_at(p.variants, index)
@@ -4547,7 +4635,7 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     if (is_struct_ty(struct_ty) == false) {
         report_where(p.modules, p.src, position)
         report("this literal takes its type from what the context expects, and there is no struct or enum type there")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     node.val = struct_ty
     node.b = 0
@@ -4561,7 +4649,7 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
             report("'.")
             report_src(p.src, name_off, name_len)
             report("' is not a variant of the type this context expects")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         entry := arena_at(p.variants, index)
         tag := entry.tag
@@ -4631,7 +4719,7 @@ resolve_variant_fixups :: fn(mut p: Parser) {
             if (resolve_multi_field(p, lit_id, target, argument) == false) {
                 report_where(p.modules, p.src, argument)
                 report("this binding names the values of a call whose signature is not a return type list")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
         } else {
             callee := arena_at(p.fns, target)
@@ -4795,7 +4883,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
     if (count < 2) {
         report_where(p.modules, p.src, cur_off(p))
         report("a return type list holds two or more types; write `-> T` for one")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     struct_name := synth_numbered(p, "__Multi", p.structs.count)
     index := arena_push(
@@ -4831,7 +4919,7 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
     if (p.multi_ty == (-1)) {
         report_where(p.modules, p.src, cur_off(p))
         report("this `return` lists several values and the function returns one")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     init := new_field_init(p, first, multi_field_name_off(p, 0),
         multi_field_name_len(p, 0))
@@ -4849,7 +4937,7 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
     if (count != p.multi_count) {
         report_where(p.modules, p.src, cur_off(p))
         report("this `return` lists a different number of values than the function returns")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     new_struct_lit(p, p.multi_ty, init)
 }
@@ -4970,7 +5058,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
             report("'")
             report_src(p.src, node.val, node.c)
             report("' is not a constant, so it cannot appear in a constant")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         return const_value(p, node.val, node.c)
     }
@@ -4990,7 +5078,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     }
     report_where(p.modules, p.src, node.pos)
     report("this is not a constant expression")
-    frost_rt_die()
+    frost_rt_recover_escape()
     0
 }
 
@@ -5031,7 +5119,7 @@ parse_flags :: fn(mut p: Parser) {
         report("'")
         report_src(p.src, name_offset, name_length)
         report("' is a set of bits, so it is written over an integer type")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     ty := distinct_type(repr, p.type_aliases.count)
     arena_push(
@@ -5050,7 +5138,7 @@ parse_flags :: fn(mut p: Parser) {
             report("a bit of '")
             report_src(p.src, name_offset, name_length)
             report("' is a number a C header wrote down, written as 'Video = 32'")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         record_flag_bit(p, ty, bit_off, bit_len, cur_val(p))
         advance(p)
@@ -5347,6 +5435,144 @@ parse_type_declarations :: fn(mut p: Parser) {
     }
 }
 
+// One declaration of the top-level loop, answering the item to append or -1
+// for a form that emits nothing here: a type or constant already read by the
+// pre-passes, or a generic recorded for monomorphization. Split out so the
+// loop can run it with an escape armed and a fault ends this declaration
+// rather than the compile.
+parse_one_declaration :: fn(mut p: Parser) -> i64 {
+    if ((cur(p) != TokenKind::Ident
+            || peek_kind(p, 1) != TokenKind::Coloncolon)
+        && cur(p) != TokenKind::KwTest) {
+        // A token no declaration can start, or a name with no `::` after it.
+        // Say so where it is written; the loop skips to the next head and
+        // keeps reading.
+        report_where(p.modules, p.src, cur_off(p))
+        report("expected a declaration head, `import`, `export`, or `test`,")
+        report(" found '")
+        report_src(p.src, cur_off(p), cur_len(p))
+        report("'")
+        frost_rt_recover_escape()
+    }
+    third := peek_kind(p, 2)
+    if (cur(p) == TokenKind::KwTest) {
+        return parse_test(p)
+    }
+    if (at_type_declaration(p)) {
+        // Already read, before any body was.
+        skip_declaration(p)
+        return -1
+    }
+    if (third == TokenKind::KwExtern || third == TokenKind::KwSafe) {
+        return parse_extern(p)
+    }
+    if (at_const_declaration(p)) {
+        // A constant, whose value is an integer expression: a literal, a
+        // parenthesized combination, or an earlier constant combined with
+        // another by an operator. A bare `Name :: OtherName` is left alone,
+        // so `Enum::Variant` is not read as a constant. Already read, with
+        // the other constants, before the types.
+        skip_declaration(p)
+        return -1
+    }
+    if (third == TokenKind::Ident
+        && (peek_kind(p, 3) == TokenKind::Lbrace
+            || peek_kind(p, 3) == TokenKind::Lt)) {
+        // A constant whose value is a struct. The brace, or the generic
+        // arguments before it, is what tells this from a bare
+        // `Name :: OtherName`.
+        parse_value_const(p)
+        return -1
+    }
+    if (third == TokenKind::Str || third == TokenKind::Float
+        || third == TokenKind::Lbracket
+        || (third == TokenKind::Minus
+            && peek_kind(p, 3) == TokenKind::Float)) {
+        // A constant whose value is a literal this compiler folds no
+        // arithmetic over. It is kept as the literal's node and written out
+        // again wherever the name is read, so it reaches each use the way a
+        // literal written there would, including the length a `str` or an
+        // array carries.
+        //
+        // A sign in front of a float belongs here rather than with the
+        // integer constants above, which fold to a number: the value stays
+        // the literal's node and the minus is part of the expression parsed
+        // into it. Without this a negative float constant was read as a
+        // declaration this compiler does not know.
+        parse_value_const(p)
+        return -1
+    }
+    if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
+        // Everything above is a form this compiler knows. Anything else
+        // would be read as a function and misparse into a crash far from
+        // here, so name it where it is written instead. A declaration the
+        // language has and this compiler has not yet reaches this.
+        report_where(p.modules, p.src, cur_off(p))
+        report("this declaration is not supported yet")
+        frost_rt_recover_escape()
+    }
+    // A function. Reset the type-parameter state, remember where it
+    // starts, and parse it. If it turned out to reference a type
+    // parameter it is a generic template, recorded for monomorphization
+    // and kept out of the emitted program list.
+    p.type_param_off = 0
+    p.type_param_len = 0
+    p.saw_type_param = 0
+    p.tparam_called = 0
+    p.bound_token = -1
+    p.decl_pack_off = 0
+    p.decl_pack_len = 0
+    p.decl_pack_fixed = 0
+    start := p.ti
+    item := parse_function(p)
+    if (p.saw_type_param == 1) {
+        node := arena_at(p.arena, item)
+        fn_index := node.val
+        tparam_off := p.type_param_off
+        tparam_len := p.type_param_len
+        record_generic_fn(p, fn_index, tparam_off, tparam_len,
+            p.tparam_is_value, p.tparam_called, p.xparam_start,
+            p.xparam_count, start, p.bound_token, p.decl_pack_off,
+            p.decl_pack_len, p.decl_pack_fixed)
+        return -1
+    }
+    item
+}
+
+// The parser and the answer of one recovered turn, handed through the raw
+// pointer the runtime's recovery runner takes, the way a thread body takes
+// its job.
+RecoverTurn :: struct {
+    parser: ^u8,
+    item: i64,
+}
+
+parse_declaration_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($RecoverTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    item := unsafe { parse_one_declaration(parser^) }
+    unsafe { turn^.item = item }
+}
+
+// After a fault, skip to the next token that begins a declaration: a name
+// followed by `::`, or a `test` block. Always makes progress, so recovery
+// cannot loop.
+synchronize_declaration :: fn(mut p: Parser) {
+    if (cur(p) != TokenKind::Eof) {
+        advance(p)
+    }
+    while (cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::KwTest) {
+            return
+        }
+        if (cur(p) == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Coloncolon) {
+            return
+        }
+        advance(p)
+    }
+}
+
 parse_program :: fn(mut p: Parser) -> i64 {
     predeclare_types(p)
     start := p.ti
@@ -5356,111 +5582,26 @@ parse_program :: fn(mut p: Parser) -> i64 {
     p.ti = start
     mut head : i64 = -1
     mut tail : i64 = -1
-    while (cur(p) == TokenKind::Ident || cur(p) == TokenKind::KwTest) {
-        third := peek_kind(p, 2)
-        if (cur(p) == TokenKind::KwTest) {
-            item := parse_test(p)
+    while (cur(p) != TokenKind::Eof) {
+        mut turn := RecoverTurn {
+            parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+            item = -1
+        }
+        escaped := unsafe {
+            frost_rt_recover_run(parse_declaration_guarded,
+                ptr_cast($u8, ptr_to(turn)))
+        }
+        if (escaped == 1) {
+            synchronize_declaration(p)
+        } else if (turn.item != (-1)) {
             if (head == (-1)) {
-                head = item
-                tail = item
+                head = turn.item
+                tail = turn.item
             } else {
-                set_next(p, tail, item)
-                tail = item
-            }
-        } else if (at_type_declaration(p)) {
-            // Already read, before any body was.
-            skip_declaration(p)
-        } else if (third == TokenKind::KwExtern || third == TokenKind::KwSafe) {
-            item := parse_extern(p)
-            if (head == (-1)) {
-                head = item
-                tail = item
-            } else {
-                set_next(p, tail, item)
-                tail = item
-            }
-        } else if (at_const_declaration(p)) {
-            // A constant, whose value is an integer expression: a literal, a
-            // parenthesized combination, or an earlier constant combined with
-            // another by an operator. A bare `Name :: OtherName` is left alone,
-            // so `Enum::Variant` is not read as a constant. Already read, with
-            // the other constants, before the types.
-            skip_declaration(p)
-        } else if (third == TokenKind::Ident
-            && (peek_kind(p, 3) == TokenKind::Lbrace
-                || peek_kind(p, 3) == TokenKind::Lt)) {
-            // A constant whose value is a struct. The brace, or the generic
-            // arguments before it, is what tells this from a bare
-            // `Name :: OtherName`.
-            parse_value_const(p)
-        } else if (third == TokenKind::Str || third == TokenKind::Float
-            || third == TokenKind::Lbracket
-            || (third == TokenKind::Minus
-                && peek_kind(p, 3) == TokenKind::Float)) {
-            // A constant whose value is a literal this compiler folds no
-            // arithmetic over. It is kept as the literal's node and written out
-            // again wherever the name is read, so it reaches each use the way a
-            // literal written there would, including the length a `str` or an
-            // array carries.
-            //
-            // A sign in front of a float belongs here rather than with the
-            // integer constants above, which fold to a number: the value stays
-            // the literal's node and the minus is part of the expression parsed
-            // into it. Without this a negative float constant was read as a
-            // declaration this compiler does not know.
-            parse_value_const(p)
-        } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
-            // Everything above is a form this compiler knows. Anything else
-            // would be read as a function and misparse into a crash far from
-            // here, so name it where it is written instead. A declaration the
-            // language has and this compiler has not yet reaches this.
-            report_where(p.modules, p.src, cur_off(p))
-            report("this declaration is not supported yet")
-            frost_rt_die()
-        } else {
-            // A function. Reset the type-parameter state, remember where it
-            // starts, and parse it. If it turned out to reference a type
-            // parameter it is a generic template, recorded for monomorphization
-            // and kept out of the emitted program list.
-            p.type_param_off = 0
-            p.type_param_len = 0
-            p.saw_type_param = 0
-            p.tparam_called = 0
-            p.bound_token = -1
-            p.decl_pack_off = 0
-            p.decl_pack_len = 0
-            p.decl_pack_fixed = 0
-            start := p.ti
-            item := parse_function(p)
-            if (p.saw_type_param == 1) {
-                node := arena_at(p.arena, item)
-                fn_index := node.val
-                tparam_off := p.type_param_off
-                tparam_len := p.type_param_len
-                record_generic_fn(p, fn_index, tparam_off, tparam_len,
-                    p.tparam_is_value, p.tparam_called, p.xparam_start,
-                    p.xparam_count, start, p.bound_token, p.decl_pack_off,
-                    p.decl_pack_len, p.decl_pack_fixed)
-            } else {
-                if (head == (-1)) {
-                    head = item
-                    tail = item
-                } else {
-                    set_next(p, tail, item)
-                    tail = item
-                }
+                set_next(p, tail, turn.item)
+                tail = turn.item
             }
         }
-    }
-    // The loop above stops at the first token that cannot begin a
-    // declaration. Stopping quietly emits whatever was read so far, so a
-    // file whose second declaration is named after a keyword compiles to an
-    // empty program and the mistake surfaces as a missing symbol at link
-    // time, or as nothing at all. Say where it stopped instead.
-    if (cur(p) != TokenKind::Eof) {
-        report_where(p.modules, p.src, cur_off(p))
-        report("this is not the start of a declaration")
-        frost_rt_die()
     }
     settle_linear_types(p)
     head
