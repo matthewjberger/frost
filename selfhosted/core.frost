@@ -1257,6 +1257,43 @@ Parser :: struct {
     // functions it calls give away.
     summaries: Arena<Summary>,
     summary_steps: Arena<SummaryStep>,
+    // What each function does with the runs its callers hold: which one its
+    // answer views, and which one it replaces. A container that fills asks the
+    // allocator for a wider block and gives the old one back, so a view taken
+    // before the growth names storage that is no longer the container's, and
+    // neither half of that is visible from the call. Both are field-granular:
+    // growing one run while a caller holds a view of another is ordinary, and
+    // the ECS does it on every frame.
+    run_views: Arena<Summary>,
+    run_replaces: Arena<Summary>,
+    run_steps: Arena<SummaryStep>,
+    // The function whose runs are being read, its parameter list, and whether
+    // it answers with a view at all.
+    runs_fn: i64,
+    runs_params: i64,
+    runs_answers_view: i64,
+    // The runs the locals of the body being read view, by name, so a binding
+    // taken from one call and handed to the answer carries what it names.
+    run_locals: Arena<LocalVar>,
+    // For the reporting walk: the run each binding views, as a place in this
+    // frame, and the bindings whose run has been replaced since they were taken.
+    // `slot` holds the place node either way.
+    view_runs: Arena<LocalVar>,
+    stale_views: Arena<LocalVar>,
+    // Scratch for the branch walks: what an arm left stale, held while the
+    // other arms are walked, then merged back so a view is stale after a branch
+    // if any arm replaced the run behind it.
+    stale_scratch: Arena<LocalVar>,
+    // How many times a run under a live view has been replaced. A loop body is
+    // walked twice only when this moved, since the second walk is what asks what
+    // the top of the loop reads on the turn after.
+    run_replacements: i64,
+    // Whether the field chain being pushed is still taking names. It stops at
+    // the first step that is not a field, since the run holding an element is
+    // what both sides of a call can name and the element itself is not.
+    run_chain_open: i64,
+    // Where the chain being pushed started, so its depth can be read off.
+    run_chain_start: i64,
     // Whether the move walk is working the summaries out rather than reporting.
     // The same walk does both, and a complaint made while the answers are still
     // settling is one made against a state that is not final.

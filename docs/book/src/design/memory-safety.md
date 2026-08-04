@@ -39,6 +39,12 @@ one decision plus a small number of local rules.
    rather than impossible, and the check is the same one the paragraph above
    describes.
 
+   A view of a container is held a third way, because the frame and the region
+   both stay alive while the storage moves: a container that fills replaces its
+   block and gives the old one back. Which run a call's answer views and which
+   run a call replaces are worked out for every function, so a view read after
+   the container behind it grew is refused where it is read.
+
    What makes that check work is asking against the type the context expects. A
    view is *formed* rather than copied wherever an array lands somewhere a view
    is wanted, and nothing about the expression says so: `data` reads the same in
@@ -165,6 +171,48 @@ or return it, so it cannot dangle past the pool operation.
 Enforced in `check_ownership` via `Type::contains_reference()` on declared
 struct and enum field types and on an `extern`'s return type, and in
 `check_frame_escapes` for what a Frost function answers with.
+
+### A view stays with the run it was taken of
+
+The rule above is about a borrow outliving the *frame* behind it. A view of a
+container has a second way to go wrong, which no scope can express: the frame
+lives, the container lives, and the block moves.
+
+```frost
+view := vec_slice($i64, v)
+vec_push($i64, v, 1)       // fills, so the block is replaced
+print view[0]              // refused: it names the old one
+```
+
+`vec_slice` answers with a view of `v.storage`, and `vec_push` writes a wider
+block into `v.storage` and gives the old one back. Neither half is visible from
+the call, so both are worked out once for the whole program and read at the call
+site: for every function, which run under a parameter its answer views, and
+which run under a parameter it replaces. Both are runs of *field* names, and a
+call reads them against the argument it was written with, so `vec_slice($T, v)`
+names `v.storage` here and `vec_push($T, v, x)` replaces it. A view whose run
+has been replaced is refused at the next use, whether that use reads it or
+writes through a `ref` into it.
+
+Field names rather than the parameter, because a container with more than one
+run grows one of them while a caller holds a view of another, and that is
+ordinary. `std/ecs.frost` does it on every frame: `group_spawn` grows `g.slots`
+while a `ref` into `g.members` is live. A summary that recorded only "parameter
+0 was written" cannot tell those apart and refuses the honest program.
+
+Rebinding is what clears it, which is what taking the view again after a push
+amounts to, and it is the fix the diagnostic asks for. A loop body is walked
+twice where a run under a live view was replaced, since a view read at the top of
+a loop is read after the turn before has already replaced it.
+
+The runs are settled to a fixpoint, since a wrapper views what the thing it
+forwards to views. The run of names is cut at four: a function that walks a
+recursive structure reaches `.next`, then `.next.next`, and a fixpoint over those
+never settles. Cutting widens what an entry names, which is the direction that
+refuses rather than the one that lets something through.
+
+Enforced in `check_ownership` (`settle_runs` and the view bookkeeping beside the
+move states), and in `settle_runs` in `selfhosted/regions.frost`.
 
 ## 2. Move checking, so no use-after-move
 
@@ -465,39 +513,28 @@ so nobody has to find out by reading the passes.
   question the frame check answers for borrows and does not yet answer for
   resources.
 
-- **A view outlives the block a container reallocates under it.**
-  `view := vec_slice($i64, v)` names storage `v` points at rather than storage
-  `v` holds, so the frame check traces it to `v`, and `v` is a parameter or a
-  local that is still alive. Both of those stay true while `vec_push` doubles
-  the block, and the view then names what the allocator has taken back:
+- **A run replaced by a write this frame cannot see.** A view is checked against
+  growth (see the guarantee above), and what carries the growth is a call: the
+  summary says which run a call replaces, and the call site marks every view of
+  that run stale. A function that grows a run of its *own* parameter and then
+  reads a view of it in the same body writes the block directly rather than
+  calling anything, and the summary walk records that write for the function's
+  callers without the body itself consulting it:
 
   ```frost
-  view := vec_slice($i64, v)
-  vec_push($i64, v, 1)       // may grow, which frees the old block
-  print view[0]              // reads it anyway, bounds-checked against it
+  grow_and_read :: fn(mut b: Bag, fresh: []i64) -> i64 {
+      view := bag_slice(b)
+      b.room = fresh          // replaces the run, in this frame
+      view[0]                 // not refused
+  }
   ```
 
-  The same holds for `ref e := vec_slice($T, v)[i]` across a push that grows.
-  This is safe code, and the read is checked against a length that describes
-  storage that has gone. It is the one memory-safety hole in the safe surface
-  that is known and open.
-
-  Half of this shape is checked. A view whose container is *consumed* is
-  refused, so `vec_free($i64, v)` followed by a read through a view of `v` is a
-  compile error naming both (`check_ownership` records, for each binding that
-  views a container, the place that container sits in, and asks what has become
-  of it at every use). Rebinding replaces what a name views, which is what
-  taking the view again after a push amounts to. What is left is growth rather
-  than release: a reallocation moves the block while the container it belongs to
-  is still perfectly alive, so nothing about the container's own state says the
-  view is stale.
-
-  Closing that needs a summary of which calls can move the block behind which
-  parameter, computed the way `kept` and `answer_sources` already are, and then
-  invalidation at every call carrying one. Until it exists the discipline is the
-  one `std/ecs.frost` follows: take the view again after anything that can move
-  the block, which is why the archetype moves re-take every `ref` after a push
-  rather than holding one across it.
+  A container's own growth is written this way once, inside the container, which
+  is why the shape exists at all: `vec_push` writes `v.storage` because passing
+  the borrow on to a helper would copy the header and lose the new block. Every
+  caller of it is checked. What is not is a body that both grows and reads.
+  Closing it needs the frame's own view of what a local place holds, and the
+  move walk runs before the locals are typed in both compilers.
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe

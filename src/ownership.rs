@@ -67,6 +67,7 @@ struct Program<'a> {
     param_types: &'a ParamTypes,
     field_types: &'a FieldTypes,
     summaries: &'a Summaries,
+    runs: &'a Runs,
 }
 
 /// Everything the move check reads about a program, gathered once so a
@@ -83,6 +84,7 @@ pub struct Specializations {
     field_types: FieldTypes,
     held: HashSet<String>,
     summaries: Summaries,
+    runs: Runs,
 }
 
 /// Gather them. A program with nothing to say about ownership still pays for
@@ -95,6 +97,7 @@ pub fn specializations(
     let param_types = collect_param_types(statements);
     let field_types = collect_field_types(statements);
     let held = linear_closure(linear, &field_types, statements);
+    let runs = settle_runs(statements, &field_types);
     let summaries = settle_summaries(
         statements,
         &Program {
@@ -103,6 +106,7 @@ pub fn specializations(
             param_types: &param_types,
             field_types: &field_types,
             summaries: &Summaries::new(),
+            runs: &runs,
         },
     );
     Specializations {
@@ -111,6 +115,7 @@ pub fn specializations(
         field_types,
         held,
         summaries,
+        runs,
     }
 }
 
@@ -127,6 +132,7 @@ impl Specializations {
                 param_types: &self.param_types,
                 field_types: &self.field_types,
                 summaries: &self.summaries,
+                runs: &self.runs,
             },
         )
     }
@@ -198,6 +204,7 @@ pub fn check_ownership_recovering(
     let param_types = collect_param_types(statements);
     let field_types = collect_field_types(statements);
     let held = linear_closure(linear, &field_types, statements);
+    let runs = settle_runs(statements, &field_types);
     let summaries = settle_summaries(
         statements,
         &Program {
@@ -206,6 +213,7 @@ pub fn check_ownership_recovering(
             param_types: &param_types,
             field_types: &field_types,
             summaries: &Summaries::new(),
+            runs: &runs,
         },
     );
     let program = Program {
@@ -214,6 +222,7 @@ pub fn check_ownership_recovering(
         param_types: &param_types,
         field_types: &field_types,
         summaries: &summaries,
+        runs: &runs,
     };
     let mut reports = crate::linear_instances::check_pooled_resources(
         statements,
@@ -570,6 +579,547 @@ fn summarize(params: &[Parameter], checker: &MoveChecker) -> Summary {
     found
 }
 
+/// Where a run of storage sits under a parameter: the parameter's index and the
+/// field names beneath it. An empty run of names is the parameter itself, which
+/// is what a function taking a `[]T` directly hands back a view of.
+type RunSummary = Vec<(usize, Vec<Step>)>;
+type RunSummaries = HashMap<String, RunSummary>;
+
+/// What every function does with the runs its callers hold: which one its answer
+/// views, and which one it replaces.
+///
+/// These are what make growth checkable. A container that fills asks the
+/// allocator for a wider block and gives the old one back, so a view taken
+/// before the growth names storage that is no longer the container's. The caller
+/// sees neither half: `vec_slice` looks like an ordinary answer and `vec_push`
+/// looks like an ordinary write. Both of these say which run is meant, so the
+/// two can be weighed against each other at the call.
+///
+/// Field-granular on purpose. A container that grows one run while a caller
+/// holds a view of another is doing nothing wrong, and the ECS does exactly that
+/// on every frame: `group_spawn` grows `g.slots` while a `ref` into `g.members`
+/// is live. A summary naming only the parameter cannot tell those apart and
+/// refuses the honest one.
+#[derive(Default)]
+struct Runs {
+    /// Which run a call's answer views, for a function that answers with one.
+    viewed: RunSummaries,
+    /// Which run a call can replace.
+    replaced: RunSummaries,
+}
+
+/// Whether the program builds anything that holds a run at all. Everything the
+/// run summaries do is about a view of a container outliving the block behind
+/// it, so a program with no container pays nothing for them.
+fn program_holds_runs(fields: &FieldTypes) -> bool {
+    fields.values().any(is_view_type)
+}
+
+/// Work out, for every function, which run its answer views and which run it
+/// replaces, until a round learns nothing new.
+///
+/// A round rather than a pass, for the reason the move summaries need one: what
+/// a wrapper views is what the thing it forwards to views, and what a wrapper
+/// replaces is what the thing it calls replaces. `vec_slice` answers with
+/// `slice_prefix($T, v.storage, v.len)`, so it is only once `slice_prefix` is
+/// known to answer with a view of its own parameter that `v.storage` is the run
+/// behind it. The tables only gain entries, so this settles.
+fn settle_runs(statements: &[Spanned<Statement>], fields: &FieldTypes) -> Runs {
+    let mut runs = Runs::default();
+    if !program_holds_runs(fields) {
+        return runs;
+    }
+    loop {
+        let mut grew = false;
+        for statement in statements {
+            let Statement::Constant(
+                name,
+                Expression::Function(parameters, signature, body)
+                | Expression::Proc(parameters, signature, body),
+            ) = &statement.node
+            else {
+                continue;
+            };
+            let answers_view = signature
+                .to_type()
+                .is_some_and(|result| is_view_type(&result));
+            let mut walk = RunWalk {
+                parameters: parameters
+                    .iter()
+                    .map(|one| one.name.clone())
+                    .collect(),
+                declared: parameters
+                    .iter()
+                    .filter_map(|one| {
+                        Some((one.name.clone(), one.type_annotation.clone()?))
+                    })
+                    .collect(),
+                fields,
+                runs: &runs,
+                answers_view,
+                locals: HashMap::new(),
+                views: HashMap::new(),
+                found_viewed: Vec::new(),
+                found_replaced: Vec::new(),
+            };
+            walk.walk_block(body);
+            walk.note_tail(body);
+            let viewed = walk.found_viewed.clone();
+            let replaced = walk.found_replaced.clone();
+            let parameters = walk.parameters.clone();
+            grew |=
+                record_runs(&mut runs.viewed, name, &parameters, &viewed, true);
+            grew |= record_runs(
+                &mut runs.replaced,
+                name,
+                &parameters,
+                &replaced,
+                false,
+            );
+        }
+        if !grew {
+            return runs;
+        }
+    }
+}
+
+/// File the places a walk found under the parameters they are rooted in,
+/// answering whether anything was new.
+///
+/// A place reaching through an element is cut back to the field above it. Which
+/// element is a number worked out while the program runs, so there is no place
+/// to hand a caller that means the one this body took, and the run holding it is
+/// what both sides can name. Cutting back widens the place, which is the
+/// direction that refuses rather than the one that lets something through.
+fn record_runs(
+    summaries: &mut RunSummaries,
+    name: &str,
+    parameters: &[String],
+    found: &[Vec<Step>],
+    allow_bare: bool,
+) -> bool {
+    let mut grew = false;
+    for path in found {
+        let path = without_borrow_derefs(path.clone());
+        let Some(Step::Named(root)) = path.first() else {
+            continue;
+        };
+        let Some(index) = parameters.iter().position(|one| one == root) else {
+            continue;
+        };
+        let under = nameable_prefix(&path);
+        if under.is_empty() && !allow_bare {
+            continue;
+        }
+        let held = summaries.entry(name.to_string()).or_default();
+        let described = describe_place(under);
+        let seen = held.iter().any(|(held_index, held_under)| {
+            *held_index == index && describe_place(held_under) == described
+        });
+        if !seen {
+            held.push((index, under.to_vec()));
+            grew = true;
+        }
+    }
+    grew
+}
+
+/// How many names deep a run summary reaches under a parameter.
+///
+/// A bound rather than a preference. A function that walks a recursive structure
+/// reaches `.next`, then `.next.next`, and a fixpoint over those never settles:
+/// each round the entry it learnt last round lets it learn a longer one.
+/// Cutting at a fixed depth makes the set of entries finite, and cutting widens
+/// what an entry names, which is the direction that refuses rather than the one
+/// that lets something through.
+///
+/// The self-hosted compiler holds the same bound, and the two must keep the same
+/// number or they refuse different programs.
+pub const RUN_STEPS: usize = 4;
+
+/// The run of names under a parameter that a summary can carry, cut at the first
+/// step it cannot name and at the depth it stops reaching.
+fn nameable_prefix(path: &[Step]) -> &[Step] {
+    let under = &path[1..];
+    let end = under
+        .iter()
+        .position(|step| !matches!(step, Step::Named(_)))
+        .unwrap_or(under.len());
+    &under[..end.min(RUN_STEPS)]
+}
+
+/// A place with the dereferences of borrows taken out of it.
+///
+/// The mode lowering writes a `^` for every mention of a `mut` parameter, so one
+/// side of a comparison can carry a step the other does not: `vec_slice` reads
+/// its container and names `v.storage`, and `vec_push` writes to its own and
+/// names `v^.storage`. A borrow deref names the storage it is written in front
+/// of, so dropping it leaves the place meaning what it meant and lets the two be
+/// weighed field against field. A raw dereference is not one of these and stays,
+/// since where it lands is exactly what nothing here knows.
+fn without_borrow_derefs(path: Vec<Step>) -> Vec<Step> {
+    path.into_iter()
+        .filter(|step| !matches!(step, Step::Deref(false)))
+        .collect()
+}
+
+/// One function's body, read for the runs it views and the runs it replaces.
+struct RunWalk<'a> {
+    parameters: Vec<String>,
+    declared: HashMap<String, Type>,
+    fields: &'a FieldTypes,
+    runs: &'a Runs,
+    /// Whether this function answers with a view at all. Only then is there
+    /// anything for the answer walk to record.
+    answers_view: bool,
+    locals: HashMap<String, Type>,
+    /// For each local, the runs it views. A local naming a place inside a
+    /// parameter is not one of these: what a summary says has to be a place the
+    /// caller can name too, and a local is nobody's but this frame's.
+    views: HashMap<String, Vec<Vec<Step>>>,
+    found_viewed: Vec<Vec<Step>>,
+    found_replaced: Vec<Vec<Step>>,
+}
+
+impl RunWalk<'_> {
+    /// The type of a place, as far as the parameter declarations, the local
+    /// bindings and the struct declarations give it.
+    fn place_type(&self, expression: &Expression) -> Option<Type> {
+        match expression {
+            // The borrow a parameter carries is left on, since the mode
+            // lowering writes a `^` for every mention of a `mut` parameter and
+            // that step is what this type answers for.
+            Expression::Identifier(name) => self
+                .declared
+                .get(name)
+                .or_else(|| self.locals.get(name))
+                .cloned(),
+            Expression::FieldAccess(base, field) => {
+                let held = through_borrow(self.place_type(base)?);
+                let (Type::Struct(owner) | Type::Enum(owner)) = held else {
+                    return None;
+                };
+                // The template as well as the name. A field table gathered over
+                // a generic's declaration is filed under `Vec`, and a parameter
+                // written `Vec<T>` names the instantiation.
+                self.fields
+                    .get(&(owner.clone(), field.clone()))
+                    .or_else(|| {
+                        self.fields.get(&(
+                            Type::template_of(&owner).to_string(),
+                            field.clone(),
+                        ))
+                    })
+                    .cloned()
+            }
+            Expression::Index(base, _) => {
+                match through_borrow(self.place_type(base)?) {
+                    Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
+                    _ => None,
+                }
+            }
+            Expression::Dereference(base) => match self.place_type(base)? {
+                Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+                    Some(*inner)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Where a place sits under this function's parameters, and nothing for a
+    /// place rooted anywhere else. What a summary says has to be a place the
+    /// caller can name too, and a local is nobody's but this frame's.
+    fn param_places(&self, expression: &Expression) -> Vec<Vec<Step>> {
+        match expression {
+            Expression::Identifier(name) => {
+                if self.parameters.iter().any(|one| one == name) {
+                    return vec![vec![Step::Named(name.clone())]];
+                }
+                Vec::new()
+            }
+            Expression::FieldAccess(base, field) => {
+                self.extend_places(base, Step::Named(format!(".{field}")))
+            }
+            Expression::Index(base, index) => {
+                let literal = match index.as_ref() {
+                    Expression::Literal(Literal::Integer(value)) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                };
+                self.extend_places(
+                    base,
+                    Step::Index(literal, format!("[{index}]")),
+                )
+            }
+            Expression::Dereference(base) => {
+                let raw = !matches!(
+                    self.place_type(base),
+                    Some(Type::Ref(_) | Type::RefMut(_))
+                );
+                self.extend_places(base, Step::Deref(raw))
+            }
+            Expression::Borrow(inner)
+            | Expression::BorrowMut(inner)
+            | Expression::AddressOf(inner) => self.param_places(inner),
+            Expression::Unsafe(body) => block_tail(body)
+                .map(|value| self.param_places(value))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn extend_places(&self, base: &Expression, step: Step) -> Vec<Vec<Step>> {
+        self.param_places(base)
+            .into_iter()
+            .map(|mut path| {
+                path.push(step.clone());
+                path
+            })
+            .collect()
+    }
+
+    /// The runs a value names the storage of. A field holding a view is one, an
+    /// element of a run belongs to that run, and a call answers with whichever
+    /// run its own summary says it does.
+    fn run_places(&self, expression: &Expression) -> Vec<Vec<Step>> {
+        match expression {
+            Expression::Identifier(name) => {
+                if self.parameters.iter().any(|one| one == name) {
+                    let held = self
+                        .declared
+                        .get(name)
+                        .cloned()
+                        .map(through_borrow)
+                        .is_some_and(|ty| is_view_type(&ty));
+                    if held {
+                        return vec![vec![Step::Named(name.clone())]];
+                    }
+                    return Vec::new();
+                }
+                self.views.get(name).cloned().unwrap_or_default()
+            }
+            Expression::FieldAccess(..) => match self.place_type(expression) {
+                Some(ty) if is_view_type(&ty) => self.param_places(expression),
+                _ => Vec::new(),
+            },
+            Expression::Index(base, _) => self.run_places(base),
+            Expression::Borrow(inner)
+            | Expression::BorrowMut(inner)
+            | Expression::AddressOf(inner)
+            | Expression::Dereference(inner)
+            | Expression::Try(inner) => self.run_places(inner),
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(name) = callee.as_ref() else {
+                    return Vec::new();
+                };
+                match self.runs.viewed.get(name) {
+                    Some(summary) => self.against(summary, arguments),
+                    // A run reached through something with no summary of its
+                    // own: the builtins that form a view, and the wrappers over
+                    // them that this walk cannot see into. What they are given
+                    // is what they can be naming, and nothing else is in reach.
+                    None if builtin_answers_a_view(name) => arguments
+                        .iter()
+                        .flat_map(|argument| self.run_places(argument))
+                        .collect(),
+                    None => Vec::new(),
+                }
+            }
+            Expression::Unsafe(body) => block_tail(body)
+                .map(|value| self.run_places(value))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A summary read against the arguments of one call: the place each named
+    /// argument sits in, with the summary's own names under it.
+    fn against(
+        &self,
+        summary: &RunSummary,
+        arguments: &[Expression],
+    ) -> Vec<Vec<Step>> {
+        let mut found = Vec::new();
+        for (index, under) in summary {
+            let Some(argument) = arguments.get(*index) else {
+                continue;
+            };
+            for mut path in self.param_places(argument) {
+                path.extend(under.iter().cloned());
+                found.push(path);
+            }
+        }
+        found
+    }
+
+    fn walk_block(&mut self, block: &Block) {
+        for statement in block {
+            self.walk_statement(&statement.node);
+        }
+    }
+
+    fn walk_statement(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                ..
+            } => {
+                self.walk_expression(value);
+                let held =
+                    type_annotation.clone().or_else(|| self.place_type(value));
+                match held {
+                    Some(ty) => {
+                        self.locals.insert(name.clone(), ty);
+                    }
+                    None => {
+                        self.locals.remove(name);
+                    }
+                }
+                let views = self.run_places(value);
+                self.views.insert(name.clone(), views);
+            }
+            Statement::Assignment(target, value) => {
+                self.walk_expression(value);
+                self.walk_expression(target);
+                // A write that puts a different run in a place is the growth
+                // this whole summary is about. Only a run: writing an element,
+                // or a length beside the run, leaves the storage where it was,
+                // and reading those as growth refuses every container that
+                // writes into what a caller is holding a `ref` into.
+                if self.place_type(target).is_some_and(|ty| is_view_type(&ty)) {
+                    let found = self.param_places(target);
+                    self.found_replaced.extend(found);
+                }
+            }
+            Statement::Return(value) => {
+                self.walk_expression(value);
+                self.note_answer(value);
+            }
+            Statement::Constant(_, value)
+            | Statement::LetMultiple(_, value)
+            | Statement::Expression(value)
+            | Statement::Print(value, _) => self.walk_expression(value),
+            Statement::While(condition, body) => {
+                self.walk_expression(condition);
+                self.walk_block(body);
+            }
+            Statement::For(_, _, sequence, body) => {
+                self.walk_expression(sequence);
+                self.walk_block(body);
+            }
+            Statement::With(_, body) => self.walk_block(body),
+            Statement::Defer(inner) => self.walk_statement(inner),
+            _ => {}
+        }
+    }
+
+    /// The calls inside a value, and the blocks they hold. A container grows
+    /// inside `if (v.len >= v.cap)`, and an `if` is an expression here, so a
+    /// walk that reads only statements misses the one assignment this is for.
+    fn walk_expression(&mut self, expression: &Expression) {
+        if let Expression::Call(callee, arguments) = expression
+            && let Expression::Identifier(name) = callee.as_ref()
+            && let Some(summary) = self.runs.replaced.get(name)
+        {
+            let found = self.against(summary, arguments);
+            self.found_replaced.extend(found);
+        }
+        match expression {
+            Expression::Unsafe(body) => self.walk_block(body),
+            Expression::If(condition, consequence, alternative) => {
+                self.walk_expression(condition);
+                self.walk_block(consequence);
+                if let Some(block) = alternative {
+                    self.walk_block(block);
+                }
+            }
+            Expression::Switch(scrutinee, cases) => {
+                self.walk_expression(scrutinee);
+                for case in cases {
+                    self.walk_block(&case.body);
+                }
+            }
+            _ => {
+                for inner in crate::regions::sub_expressions(expression) {
+                    self.walk_expression(inner);
+                }
+            }
+        }
+    }
+
+    /// What a body hands back, where it hands back a view. A branch in answer
+    /// position hands back whatever its arms do, so each arm's own last value is
+    /// an answer of its own.
+    fn note_answer(&mut self, value: &Expression) {
+        if !self.answers_view {
+            return;
+        }
+        match value {
+            Expression::If(_, consequence, alternative) => {
+                self.note_block_answer(consequence);
+                if let Some(block) = alternative {
+                    self.note_block_answer(block);
+                }
+            }
+            Expression::Switch(_, cases) => {
+                for case in cases {
+                    self.note_block_answer(&case.body);
+                }
+            }
+            _ => {
+                let found = self.run_places(value);
+                self.found_viewed.extend(found);
+            }
+        }
+    }
+
+    fn note_block_answer(&mut self, block: &Block) {
+        if let Some(value) = block_tail(block) {
+            self.note_answer(value);
+        }
+    }
+
+    /// The value a body falls out of its end with, which is an answer the same
+    /// as a `return` is. The emitters are what turn the last statement into a
+    /// return, so nothing before them has marked it as one.
+    fn note_tail(&mut self, body: &Block) {
+        self.note_block_answer(body);
+    }
+}
+
+/// The value a block falls out of its end with.
+fn block_tail(block: &Block) -> Option<&Expression> {
+    match &block.last()?.node {
+        Statement::Expression(value) => Some(value),
+        _ => None,
+    }
+}
+
+/// Through the borrow a parameter that reads an aggregate carries. The question
+/// everywhere here is about what it refers to.
+fn through_borrow(ty: Type) -> Type {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) => *inner,
+        other => other,
+    }
+}
+
+/// The builtins whose answer is a view of what they were given. These have no
+/// body to read a summary off, and the standard library reaches every run
+/// through one of them: `slice_prefix` is `slice_from($T, ptr_to(held[0]), n)`,
+/// and it is that chain that says the answer names `held`.
+///
+/// The self-hosted compiler parses all three into nodes of their own rather than
+/// into calls, so what is a name here is a shape there.
+fn builtin_answers_a_view(name: &str) -> bool {
+    matches!(name, "slice_from" | "ptr_to" | "ptr_cast")
+}
+
 fn check_function_moves(
     params: &[Parameter],
     body: &Block,
@@ -607,6 +1157,11 @@ fn run_function<'a>(
             .map(|parameter| parameter.name.clone())
             .collect(),
         views: HashMap::new(),
+        runs: program.runs,
+        view_runs: HashMap::new(),
+        view_borrows: HashSet::new(),
+        stale: HashMap::new(),
+        replacements: 0,
         in_defer: false,
         reports: Vec::new(),
         reported: HashSet::new(),
@@ -667,6 +1222,25 @@ struct MoveChecker<'a> {
     // has taken, and every read through it is bounds-checked against a length
     // that describes what used to be there.
     views: HashMap<String, (Vec<Step>, String)>,
+    /// What each function views and replaces, which is what makes growth
+    /// visible from a call site.
+    runs: &'a Runs,
+    /// The run each binding that views one names, written as a place in this
+    /// frame. `view := vec_slice($T, v)` names `v.storage`, and that is the run
+    /// a later `vec_push` gives back to the allocator.
+    view_runs: HashMap<String, Vec<Vec<Step>>>,
+    /// Which of those were taken by a borrow. `ref e := vec_slice($T, v)[i]`
+    /// binds one, and `e = 999` writes through it into the container rather
+    /// than binding the name to something else.
+    view_borrows: HashSet<String>,
+    /// The bindings whose run has been replaced since they were taken, and the
+    /// place that replaced it. Reading one is reading the block the allocator
+    /// has taken.
+    stale: HashMap<String, String>,
+    /// How many times a run under a live view has been replaced. A loop body is
+    /// walked twice only when this moved, since the second walk is what asks
+    /// what the top of the loop reads on the turn after.
+    replacements: usize,
     in_defer: bool,
     reports: Vec<String>,
     // The raw text of what has already been said. Past a move the state stays
@@ -803,6 +1377,135 @@ impl MoveChecker<'_> {
         }
     }
 
+    /// The runs a value views, written as places in this frame.
+    ///
+    /// `vec_slice($T, v)` views `v.storage`, and `ref e := vec_slice($T, v)[i]`
+    /// views the same run: a `ref` binding is a borrow of the place, so it holds
+    /// on to the storage rather than taking a copy out of it.
+    ///
+    /// Reaching an element or a field without a borrow in front of it is that
+    /// copy, and a copy is a value of its own from the moment it is made. The
+    /// ECS reads `vec_slice($EntitySlot, world.slots)[id].generation` into an
+    /// `i64` and pushes to the same container two lines later, and reading the
+    /// number as a view of the block it came out of refused that.
+    fn viewed_runs(&self, value: &Expression) -> Vec<Vec<Step>> {
+        match value {
+            Expression::Borrow(inner) | Expression::BorrowMut(inner) => {
+                self.run_behind(inner)
+            }
+            Expression::Call(..) => self.run_behind(value),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The run a place sits in, reaching through the borrows and the elements
+    /// in front of the call that formed the view.
+    fn run_behind(&self, value: &Expression) -> Vec<Vec<Step>> {
+        match value {
+            Expression::Borrow(inner)
+            | Expression::BorrowMut(inner)
+            | Expression::Index(inner, _)
+            | Expression::FieldAccess(inner, _) => self.run_behind(inner),
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(name) = callee.as_ref() else {
+                    return Vec::new();
+                };
+                let Some(summary) = self.runs.viewed.get(name) else {
+                    return Vec::new();
+                };
+                let mut found = Vec::new();
+                for (index, under) in summary {
+                    let Some(argument) = arguments.get(*index) else {
+                        continue;
+                    };
+                    let Some(path) = self.borrow_place(argument) else {
+                        continue;
+                    };
+                    let mut path = without_borrow_derefs(path);
+                    path.extend(under.iter().cloned());
+                    found.push(path);
+                }
+                found
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A run has been given back to the allocator and a different one put in its
+    /// place, so every view still naming it names storage that is no longer
+    /// this program's.
+    fn note_replaced(&mut self, place: &[Step]) {
+        let marked: Vec<String> = self
+            .view_runs
+            .iter()
+            .filter(|(name, runs)| {
+                !self.stale.contains_key(name.as_str())
+                    && runs.iter().any(|run| places_overlap(run, place))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        if marked.is_empty() {
+            return;
+        }
+        self.replacements += 1;
+        let blamed = describe_place(place);
+        for name in marked {
+            self.stale.insert(name, blamed.clone());
+        }
+    }
+
+    /// What a call replaces, read against the places the caller wrote. The
+    /// argument as written with the callee's names under it, which is the same
+    /// reading `apply_summary` makes of what a call consumes.
+    fn apply_replacements(
+        &mut self,
+        callee: &Expression,
+        arguments: &[Expression],
+    ) {
+        let Expression::Identifier(name) = callee else {
+            return;
+        };
+        let Some(summary) = self.runs.replaced.get(name).cloned() else {
+            return;
+        };
+        for (index, under) in summary {
+            let Some(argument) = arguments.get(index) else {
+                continue;
+            };
+            let Some(path) = self.borrow_place(argument) else {
+                continue;
+            };
+            let mut path = without_borrow_derefs(path);
+            path.extend(under);
+            self.note_replaced(&path);
+        }
+    }
+
+    /// A binding takes a view, or stops being one. Rebinding is what taking the
+    /// view again after a push amounts to, and it is what clears the staleness a
+    /// push left.
+    fn note_view_runs(&mut self, name: &str, value: &Expression) {
+        let runs = self.viewed_runs(value);
+        if runs.is_empty() {
+            self.view_runs.remove(name);
+            self.view_borrows.remove(name);
+        } else {
+            self.view_runs.insert(name.to_string(), runs);
+            if matches!(value, Expression::Borrow(_) | Expression::BorrowMut(_))
+            {
+                self.view_borrows.insert(name.to_string());
+            } else {
+                self.view_borrows.remove(name);
+            }
+        }
+        self.stale.remove(name);
+    }
+
+    /// Whether a binding names a run that has since been replaced.
+    fn views_replaced_run(&self, name: &str) -> Option<String> {
+        self.stale.get(name).cloned()
+    }
+
     /// Whether a binding that views a container is naming storage the container
     /// has since given away.
     fn views_gone_storage(&self, name: &str) -> Option<String> {
@@ -893,6 +1596,14 @@ impl MoveChecker<'_> {
             let root = root.clone();
             bail!(
                 "ownership: '{root}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+            );
+        }
+        if let Some(Step::Named(root)) = path.first()
+            && let Some(replaced) = self.views_replaced_run(root)
+        {
+            let root = root.clone();
+            bail!(
+                "ownership: '{root}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
             );
         }
         let key = self.place_key(path);
@@ -1068,6 +1779,7 @@ impl MoveChecker<'_> {
                         self.views.remove(name);
                     }
                 }
+                self.note_view_runs(name, value);
                 Ok(false)
             }
             Statement::Constant(
@@ -1083,6 +1795,27 @@ impl MoveChecker<'_> {
             }
             Statement::Assignment(target, value) => {
                 self.visit(value, true)?;
+                // Writing to a `ref` writes through it into the container, so
+                // it is a use of the run rather than a rebinding of the name,
+                // and a stale one lands in the block that was given back.
+                if let Expression::Identifier(name) = target
+                    && self.view_borrows.contains(name)
+                    && let Some(replaced) = self.views_replaced_run(name)
+                {
+                    bail!(
+                        "ownership: '{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to write. Take the view again after the growth"
+                    );
+                }
+                // A binding that is given a view again names the run it was
+                // just handed rather than the one it named before, which is what
+                // taking the view again after a push amounts to. A write that
+                // hands it no view is a write through it, and leaves what it
+                // views alone.
+                if let Expression::Identifier(name) = target
+                    && !self.viewed_runs(value).is_empty()
+                {
+                    self.note_view_runs(name, value);
+                }
                 // The target is written, not read. Putting a value into a place
                 // is what makes it hold one again, so a place given away and
                 // then assigned is live: `vec_free($Table, world.tables)`
@@ -1179,7 +1912,28 @@ impl MoveChecker<'_> {
 
     fn check_loop_body(&mut self, body: &Block) -> Result<()> {
         let before = self.states.clone();
+        let replacements = self.replacements;
         self.check_block(body);
+        // A second turn of the loop begins where the first one left off, so a
+        // view taken above the loop and read at the top of the body is read
+        // after the body has already replaced the run behind it. Walking once
+        // cannot see that, and walking a body that binds the view fresh every
+        // turn twice sees nothing wrong, since the binding clears what the last
+        // turn left.
+        //
+        // Only where a run under a live view was replaced. That is rare, and
+        // without the guard every nested loop in the program would be walked
+        // twice for each level of nesting.
+        if self.replacements != replacements {
+            let after = self.states.clone();
+            // The move states are put back first, so this walk says nothing
+            // about them the first one did not already say: a value the body
+            // binds fresh reads as moved from the state the first walk left, and
+            // that is the shape reported as a use after move.
+            self.states = before.clone();
+            self.check_block(body);
+            self.states = after;
+        }
         for name in before.keys() {
             let previous = before.get(name).copied().unwrap_or(MoveState::Live);
             if previous == MoveState::Live
@@ -1224,6 +1978,22 @@ impl MoveChecker<'_> {
         Ok((states, diverges))
     }
 
+    /// Every arm reads the views as they were before the branch, and after it a
+    /// view is stale if any arm replaced the run behind it. Growth on one path
+    /// is growth as far as the code below can tell.
+    fn merge_stale(
+        &mut self,
+        before: &HashMap<String, String>,
+        arms: Vec<HashMap<String, String>>,
+    ) {
+        self.stale = before.clone();
+        for arm in arms {
+            for (name, blamed) in arm {
+                self.stale.entry(name).or_insert(blamed);
+            }
+        }
+    }
+
     fn check_if(
         &mut self,
         condition: &Expression,
@@ -1232,15 +2002,20 @@ impl MoveChecker<'_> {
     ) -> Result<bool> {
         self.visit(condition, false)?;
         let before = self.states.clone();
+        let stale_before = self.stale.clone();
 
         let (then_states, then_diverges) = self.check_arm(consequence)?;
+        let then_stale =
+            std::mem::replace(&mut self.stale, stale_before.clone());
 
         self.states = before.clone();
         let (else_states, else_diverges) = match alternative {
             Some(block) => self.check_arm(block)?,
             None => (before.clone(), false),
         };
+        let else_stale = std::mem::take(&mut self.stale);
 
+        self.merge_stale(&stale_before, vec![then_stale, else_stale]);
         self.states = self.merge_arms(
             &before,
             &[(then_states, then_diverges), (else_states, else_diverges)],
@@ -1260,11 +2035,16 @@ impl MoveChecker<'_> {
             self.states.insert(name.clone(), MoveState::Moved);
         }
         let before = self.states.clone();
+        let stale_before = self.stale.clone();
         let mut arms = Vec::new();
+        let mut stale_arms = Vec::new();
         for case in cases {
             self.states = before.clone();
+            self.stale = stale_before.clone();
             arms.push(self.check_arm(&case.body)?);
+            stale_arms.push(std::mem::take(&mut self.stale));
         }
+        self.merge_stale(&stale_before, stale_arms);
         let all_diverge =
             !arms.is_empty() && arms.iter().all(|(_, diverges)| *diverges);
         self.states = self.merge_arms(&before, &arms);
@@ -1321,6 +2101,11 @@ impl MoveChecker<'_> {
                 if let Some(container) = self.views_gone_storage(name) {
                     bail!(
                         "ownership: '{name}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+                    );
+                }
+                if let Some(replaced) = self.views_replaced_run(name) {
+                    bail!(
+                        "ownership: '{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
                     );
                 }
                 match self.state_of(name) {
@@ -1452,6 +2237,7 @@ impl MoveChecker<'_> {
                 }
                 if known {
                     self.apply_summary(callee, arguments)?;
+                    self.apply_replacements(callee, arguments);
                 }
                 Ok(())
             }
@@ -1940,6 +2726,49 @@ mod tests {
         let linear = parser.linear_types().clone();
         crate::param_modes::lower_param_modes(&mut statements);
         check_ownership(&statements, &linear)
+    }
+
+    #[test]
+    fn a_view_read_after_its_run_was_replaced_is_rejected() {
+        let source = "\
+            Bag :: struct { room: []i64, len: i64 }\n\
+            bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+            bag_grow :: fn(mut b: Bag, fresh: []i64) { b.room = fresh }\n\
+            run :: fn(mut b: Bag, fresh: []i64) -> i64 {\n\
+                view := bag_slice(b)\n\
+                bag_grow(b, fresh)\n\
+                view[0]\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn a_view_taken_again_after_the_growth_is_allowed() {
+        let source = "\
+            Bag :: struct { room: []i64, len: i64 }\n\
+            bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+            bag_grow :: fn(mut b: Bag, fresh: []i64) { b.room = fresh }\n\
+            run :: fn(mut b: Bag, fresh: []i64) -> i64 {\n\
+                mut view := bag_slice(b)\n\
+                bag_grow(b, fresh)\n\
+                view = bag_slice(b)\n\
+                view[0]\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn growing_one_run_leaves_a_view_of_another_alone() {
+        let source = "\
+            Pair :: struct { left: []i64, right: []i64 }\n\
+            pair_right :: fn(p: Pair) -> []i64 { p.right }\n\
+            pair_grow :: fn(mut p: Pair, fresh: []i64) { p.left = fresh }\n\
+            run :: fn(mut p: Pair, fresh: []i64) -> i64 {\n\
+                view := pair_right(p)\n\
+                pair_grow(p, fresh)\n\
+                view[0]\n\
+            }";
+        assert!(check(source).is_ok());
     }
 
     #[test]

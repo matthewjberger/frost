@@ -174,6 +174,88 @@ main :: fn() -> i64 {\n\
     assert_eq!(output, "8\n");
 }
 
+// Growing one run while a caller holds a view of another is what a container
+// with more than one run does all the time, and it is the case that decides how
+// fine the run summaries have to be. The ECS is the program that does it: a
+// group grows its slots while a `ref` into its members is live, and a summary
+// naming only the parameter cannot tell the two apart.
+#[test]
+fn growing_one_run_leaves_a_view_of_another_alone() {
+    let source = "\
+import \"vec.frost\"\n\
+Pair :: linear struct { left: Vec<i64>, right: Vec<i64> }\n\
+pair_right :: fn(p: Pair) -> []i64 { vec_slice($i64, p.right) }\n\
+pair_grow :: fn(mut p: Pair, value: i64) { vec_push($i64, p.left, value) }\n\
+pair_free :: fn(move p: Pair) { vec_free($i64, p.left)  vec_free($i64, p.right) }\n\
+main :: fn() -> i64 {\n\
+\x20   mut pair : Pair = { left = vec_new($i64, 1), right = vec_new($i64, 1) }\n\
+\x20   vec_push($i64, pair.right, 7)\n\
+\x20   view := pair_right(pair)\n\
+\x20   pair_grow(pair, 1)\n\
+\x20   pair_grow(pair, 2)\n\
+\x20   print view[0]\n\
+\x20   pair_free(pair)\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("rungrain", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
+// The view taken again after the growth, which is what the refusal tells a
+// caller to do. Rebinding has to clear the staleness or the advice is no advice.
+#[test]
+fn a_view_taken_again_after_a_growth_reads_the_new_block() {
+    let source = "\
+import \"vec.frost\"\n\
+main :: fn() -> i64 {\n\
+\x20   mut v := vec_new($i64, 1)\n\
+\x20   vec_push($i64, v, 111)\n\
+\x20   mut view := vec_slice($i64, v)\n\
+\x20   mut count : i64 = 0\n\
+\x20   while (count < 8) {\n\
+\x20       vec_push($i64, v, count)\n\
+\x20       view = vec_slice($i64, v)\n\
+\x20       count = count + 1\n\
+\x20   }\n\
+\x20   print view[0]\n\
+\x20   vec_free($i64, v)\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("runretake", source) else {
+        return;
+    };
+    assert_eq!(output, "111\n");
+}
+
+// A number copied out of a container is a value of its own from the moment it is
+// made, so a push afterwards has nothing to say about it. Reading the copy as a
+// view of the block it came out of refused the ECS, which reads a generation out
+// of its slots and pushes to the same container two lines later.
+#[test]
+fn a_number_copied_out_of_a_container_survives_a_growth() {
+    let source = "\
+import \"vec.frost\"\n\
+main :: fn() -> i64 {\n\
+\x20   mut v := vec_new($i64, 1)\n\
+\x20   vec_push($i64, v, 111)\n\
+\x20   held := vec_slice($i64, v)[0]\n\
+\x20   mut count : i64 = 0\n\
+\x20   while (count < 8) {\n\
+\x20       vec_push($i64, v, count)\n\
+\x20       count = count + 1\n\
+\x20   }\n\
+\x20   print held\n\
+\x20   vec_free($i64, v)\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("runcopy", source) else {
+        return;
+    };
+    assert_eq!(output, "111\n");
+}
+
 #[test]
 fn ownership_errors_report_a_source_line() {
     let source = r#"
@@ -17083,6 +17165,58 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   held := sink_free($i64, s)\n\
          \x20   s.len + held\n}\n",
         "moved",
+    ),
+    // A view of a container, read after the container grew. `vec_push` asks the
+    // allocator for a wider block and gives the old one back, so the view names
+    // storage the allocator has taken, and every read through it is
+    // bounds-checked against a length describing what used to be there.
+    (
+        "a_view_read_after_its_container_grew",
+        "import \"vec.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 111)\n\
+         \x20   view := vec_slice($i64, v)\n\
+         \x20   vec_push($i64, v, 222)\n\
+         \x20   print view[0]\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   0\n}\n",
+        "has since replaced",
+    ),
+    // The growth inside a loop, which is where a container actually fills. The
+    // read is above the push, so one walk of the body sees nothing wrong: what
+    // is stale is what the turn before left behind.
+    (
+        "a_view_read_at_the_top_of_a_growing_loop",
+        "import \"vec.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 111)\n\
+         \x20   view := vec_slice($i64, v)\n\
+         \x20   mut count : i64 = 0\n\
+         \x20   while (count < 8) {\n\
+         \x20       print view[0]\n\
+         \x20       vec_push($i64, v, count)\n\
+         \x20       count = count + 1\n\
+         \x20   }\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   0\n}\n",
+        "has since replaced",
+    ),
+    // A `ref` into a container is a view of the same run, so the write through
+    // it after a growth lands in the block that was given back.
+    (
+        "a_ref_element_written_after_its_container_grew",
+        "import \"vec.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 111)\n\
+         \x20   ref held := vec_slice($i64, v)[0]\n\
+         \x20   vec_push($i64, v, 222)\n\
+         \x20   held = 999\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   0\n}\n",
+        "has since replaced",
     ),
     // The same question asked of an arena rather than of a frame. A `[]T`
     // carved out of one names the arena's storage exactly as a `^T` does, and

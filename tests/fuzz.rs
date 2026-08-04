@@ -526,6 +526,112 @@ fn both_compilers_agree_about_what_escapes() {
     let _ = std::fs::remove_file(&hosted);
 }
 
+// The same question asked of growth rather than of escape. A container that
+// fills asks the allocator for a wider block and gives the old one back, so a
+// view taken before that names storage the allocator has taken.
+//
+// The honest half grows a container nobody is looking at. Everything else about
+// the program is the same, so a compiler that refuses it is reading the
+// container rather than the run, and that granularity is the whole difficulty:
+// the ECS grows one run of a group while a borrow into another is live.
+const GROWTH_KINDS: usize = 3;
+const GROWTH_POSITIONS: usize = 4;
+
+fn growth_case(
+    rng: &mut Rng,
+    kind: usize,
+    position: usize,
+    honest: bool,
+) -> String {
+    let head = "import \"vec.frost\"\n\
+        wrap :: fn(w: Vec<i64>) -> []i64 { vec_slice($i64, w) }\n\
+        grow :: fn(mut w: Vec<i64>, value: i64) { vec_push($i64, w, value) }\n";
+    let grown = if honest { "other" } else { "v" };
+    // How the view is taken, and what reads it afterwards. The `ref` writes
+    // through the borrow, which lands in the freed block rather than reading it.
+    let (take, read) = match kind {
+        0 => ("view := vec_slice($i64, v)", "print view[0]"),
+        1 => ("ref held := vec_slice($i64, v)[0]", "held = 999"),
+        _ => ("view := wrap(v)", "print view[0]"),
+    };
+    let push = match position {
+        0 => format!("    vec_push($i64, {grown}, 7)\n"),
+        1 => format!(
+            "    mut step : i64 = 0\n\
+             \x20   while (step < {}) {{ vec_push($i64, {grown}, step)  step = step + 1 }}\n",
+            rng.below(3) + 1
+        ),
+        2 => format!(
+            "    if ({} > 0) {{ vec_push($i64, {grown}, 7) }}\n",
+            rng.below(2)
+        ),
+        _ => format!("    grow({grown}, 7)\n"),
+    };
+    format!(
+        "{head}main :: fn() -> i64 {{\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   mut other := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 11)\n\
+         \x20   vec_push($i64, other, 22)\n\
+         \x20   {take}\n\
+         {push}\
+         \x20   {read}\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   vec_free($i64, other)\n\
+         \x20   0\n\
+         }}\n"
+    )
+}
+
+#[test]
+fn both_compilers_agree_about_what_growth_invalidates() {
+    let Some(hosted) = build_self_hosted_compiler("growth") else {
+        return;
+    };
+    let seeds: u64 = std::env::var("FROST_FUZZ_SEEDS")
+        .ok()
+        .and_then(|held| held.parse().ok())
+        .unwrap_or(4);
+    for seed in 0..seeds {
+        for kind in 0..GROWTH_KINDS {
+            for position in 0..GROWTH_POSITIONS {
+                for honest in [false, true] {
+                    let mut rng =
+                        Rng::new(seed * 1_000 + (kind * 10 + position) as u64);
+                    let source = growth_case(&mut rng, kind, position, honest);
+                    let name = format!("g{seed}_{kind}_{position}_{honest}");
+                    let boot = builds(
+                        Path::new(env!("CARGO_BIN_EXE_frost")),
+                        &format!("b{name}"),
+                        &source,
+                        false,
+                    );
+                    let self_hosted =
+                        builds(&hosted, &format!("h{name}"), &source, true);
+                    assert_eq!(
+                        boot, self_hosted,
+                        "the two compilers disagree about this program \
+                         (bootstrap built it: {boot}):\n{source}"
+                    );
+                    assert_eq!(
+                        boot,
+                        honest,
+                        "a view read after {} grew was {} (expected the \
+                         opposite):\n{source}",
+                        if honest {
+                            "another container"
+                        } else {
+                            "the container behind it"
+                        },
+                        if boot { "built" } else { "refused" }
+                    );
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&hosted);
+}
+
 // The generator is where coverage is claimed, and a claim about a generator is
 // worth nothing until something reads what it wrote. The last widening was
 // wasted for exactly this reason: it emitted negative literals from the day it
