@@ -364,6 +364,16 @@ assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
     0
 }
 
+// Whether the assembly backend writes what its scan found about each name into
+// the emitted text. An environment variable rather than an option, because what
+// it produces is for reading rather than for assembling.
+asm_debug_names_wanted :: fn() -> i64 {
+    if (cstr_len(unsafe { frost_rt_getenv("FROST_ASM_NAMES") }) != 0) {
+        return 1
+    }
+    0
+}
+
 main :: fn() -> i64 {
     options := options_from_command_line()
     if (options.help == 1) {
@@ -510,6 +520,7 @@ main :: fn() -> i64 {
         fields = arena_make($StructField, 8192),
         locals = arena_make($LocalVar, 4096),
         spill_slots = arena_make($LocalVar, 256),
+        asm_names = arena_make($AsmName, 256),
         spill_depth = 0,
         consts = arena_make($ConstDef, 4096),
         value_consts = arena_make($ConstDef, 4096),
@@ -664,6 +675,7 @@ main :: fn() -> i64 {
         testing = options.testing,
         audit_unsafe = options.audit_unsafe,
         debug_lines = options.debug_lines,
+        asm_debug_names = asm_debug_names_wanted(),
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
     }

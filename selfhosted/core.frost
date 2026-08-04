@@ -10,7 +10,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LOWER_B, CH_LOWER_E, CH_LOWER_F, CH_LOWER_X, CH_UPPER_B, CH_UPPER_E,
     CH_UPPER_F, CH_UPPER_X,
     Cap, Provider, FlagBit, Indirect,
-    AnswerMask, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
+    AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     LocalVar, Module,
     Rename,
     MonoNode,
@@ -908,6 +908,18 @@ TypeArg :: struct {
 // what a body shape the walk cannot read answers with.
 AnswerMask :: struct { mask: i64 }
 
+// One name a function binds, as the assembly backend's scan reads it before
+// anything is emitted. `reads` counts the places the body asks for the name's
+// value and nothing more; `pinned` says something reaches the name's storage by
+// a route a register cannot follow, so the name is loaded from its slot every
+// time and stored to its slot every time.
+AsmName :: struct {
+    name_off: i64,
+    name_len: i64,
+    reads: i64,
+    pinned: i64,
+}
+
 LocalVar :: struct {
     name_off: i64,
     name_len: i64,
@@ -1130,6 +1142,9 @@ Parser :: struct {
     // that depth, so a deeply nested expression costs slots and a wide one
     // costs none. `slot` is the offset; the rest of the record is unused.
     spill_slots: Arena<LocalVar>,
+    // What the assembly backend's scan found about the function being emitted:
+    // one entry per name it binds, rebuilt per function.
+    asm_names: Arena<AsmName>,
     // How many of them are in use where emission has reached.
     spill_depth: i64,
     // Which module is being emitted, or -1 for the whole program in one unit.
@@ -1445,6 +1460,10 @@ Parser :: struct {
     // since the paths in it are absolute and a build that carries them is not
     // the same bytes on another machine.
     debug_lines: i64,
+    // Whether the assembly backend writes what its scan found about each name
+    // into the emitted text as comments. FROST_ASM_NAMES asks for it, and
+    // nothing but reading the sets against a function wants it.
+    asm_debug_names: i64,
     // A memo of each node's derived type, read by type_of. It is filled only
     // while emitting, where a node's type is fixed and asked for repeatedly.
     // type_cache_on gates it so the checks, which ask under generic bindings
