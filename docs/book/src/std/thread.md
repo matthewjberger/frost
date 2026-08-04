@@ -35,7 +35,7 @@ worker :: fn(raw: ^u8) {
     start := unsafe { w^.start }
     count := unsafe { w^.count }
     cell := unsafe { w^.total }
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         atomic_add(cell, start + i)
         i = i + 1
@@ -43,9 +43,9 @@ worker :: fn(raw: ^u8) {
 }
 
 main :: fn() -> i64 {
-    mut total : i64 = 0
-    mut w1 := Work { start = 0, count = 500, total = ptr_to(total) }
-    mut w2 := Work { start = 500, count = 500, total = ptr_to(total) }
+    var total : i64 = 0
+    var w1 := Work { start = 0, count = 500, total = ptr_to(total) }
+    var w2 := Work { start = 500, count = 500, total = ptr_to(total) }
     t1 := spawn(worker, unsafe { ptr_cast($u8, ptr_to(w1)) })
     t2 := spawn(worker, unsafe { ptr_cast($u8, ptr_to(w2)) })
     join(t1)

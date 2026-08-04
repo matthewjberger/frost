@@ -24,7 +24,7 @@ Statement =
     | "import" STRING ImportRenames? ";"?
     | ExportLine
     | TestBlock
-    | "mut" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
+    | "var" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
     | "ref" IDENT ":=" Expr ";"?             // bind a borrow of a place (5.1)
     | MultiNames ":=" Expr ";"?              // several values from one call
     | IDENT ":=" Expr ";"?
@@ -35,7 +35,7 @@ Statement =
 
 ```
 MultiNames = MultiName ( "," MultiName )+
-MultiName  = "mut"? IDENT
+MultiName  = "var"? IDENT
 
 ImportRenames = "(" IDENT "as" IDENT ( "," IDENT "as" IDENT )* ","? ")"
 ExportLine    = "export" IDENT ( "," IDENT )*
@@ -51,10 +51,11 @@ same line as the import path.
 A name followed by a comma at statement position is a list binding and nothing
 else, which is what tells the two `:=` forms apart.
 
-The `mut` / `:=` / `: =` / `::` forms are selected by the token after the
+The `var` / `:=` / `: =` / `::` forms are selected by the token after the
 identifier. These are `:=` (inferred binding), `:` then a non-`:` (typed
 binding), and `::` (constant). The last alternative covers expression statements
-and assignments to a place.
+and assignments to a place. `mut` never opens a statement: it is the parameter
+mode, and a local that is reassigned is declared with `var`.
 
 ## 13.2 Constants and items
 

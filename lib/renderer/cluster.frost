@@ -138,8 +138,8 @@ cluster_new :: fn(device: Device) -> Cluster {
     indices := storage_of(device, TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4)
     layout := build_layout(device)
     shader := cluster_module(device)
-    mut groups : [1]BindGroupLayout = [layout]
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    var groups : [1]BindGroupLayout = [layout]
+    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
     made := device_create_pipeline_layout(device,
@@ -208,7 +208,7 @@ give_back :: fn(held: Buffer) {
 cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     total: i64, directional: i64, projection: Mat4, view: Mat4,
     width: i64, height: i64, z_near: f32, z_far: f32) {
-    mut count := total
+    var count := total
     if (count > MAX_LIGHTS) {
         count = MAX_LIGHTS
     }
@@ -216,7 +216,7 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     // difference of the two to find how many local ones there are, in unsigned
     // arithmetic, so a directional count past the total would wrap to four
     // billion and walk the whole buffer.
-    mut leading := directional
+    var leading := directional
     if (leading > count) {
         leading = count
     }
@@ -226,24 +226,24 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     }
 
     inverse, ok := mat4_inverse(projection)
-    mut undone : Mat4 = inverse
+    var undone : Mat4 = inverse
     if (ok == false) {
         undone = mat4_identity()
     }
     queue_write_buffer(queue, held.uniforms, 0, ptr_to(undone.m[0]), 64)
 
-    mut sizes : [4]f32 = [0.0; 4]
+    var sizes : [4]f32 = [0.0; 4]
     wide : f32 = width
     tall : f32 = height
     sizes[0] = wide
     sizes[1] = tall
     // Where the slices start and end. The near one is the camera's own or half
     // a metre, whichever is further out.
-    mut near := z_near
+    var near := z_near
     if (near < CLUSTER_SLICE_NEAR) {
         near = CLUSTER_SLICE_NEAR
     }
-    mut far := z_far
+    var far := z_far
     if (far <= 0.0) {
         far = CLUSTER_FAR_FALLBACK
     }
@@ -251,17 +251,17 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
     sizes[3] = far
     queue_write_buffer(queue, held.uniforms, 64, ptr_to(sizes[0]), 16)
 
-    mut counts : [4]u32 = [CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, 0]
+    var counts : [4]u32 = [CLUSTER_GRID_X, CLUSTER_GRID_Y, CLUSTER_GRID_Z, 0]
     queue_write_buffer(queue, held.uniforms, 80, ptr_to(counts[0]), 16)
 
-    mut tail : [4]f32 = [0.0; 4]
+    var tail : [4]f32 = [0.0; 4]
     tail[0] = wide / CLUSTER_GRID_X
     tail[1] = tall / CLUSTER_GRID_Y
     queue_write_buffer(queue, held.uniforms, 96, ptr_to(tail[0]), 8)
-    mut totals : [2]u32 = [cast($u32, count), cast($u32, leading)]
+    var totals : [2]u32 = [cast($u32, count), cast($u32, leading)]
     queue_write_buffer(queue, held.uniforms, 104, ptr_to(totals[0]), 8)
 
-    mut held_view := view
+    var held_view := view
     queue_write_buffer(queue, held.view, 0, ptr_to(held_view.m[0]), 64)
 }
 
@@ -283,7 +283,7 @@ cluster_record :: fn(mut s: Cluster, encoder: CommandEncoder) {
 // rounds up to two groups and the threads past the end return.
 step :: fn(mut s: Cluster, encoder: CommandEncoder,
     pipeline: ComputePipeline) {
-    mut descriptor := compute_pass_descriptor_init()
+    var descriptor := compute_pass_descriptor_init()
     pass := command_encoder_begin_compute_pass(encoder, ptr_to(descriptor))
     compute_pass_encoder_set_pipeline(pass, pipeline)
     compute_pass_encoder_set_bind_group(pass, 0, s.group, 0, no_pointer())
@@ -491,31 +491,31 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 "
 
 storage_of :: fn(device: Device, size: i64) -> Buffer {
-    mut descriptor := buffer_descriptor_init()
+    var descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 uniform_of :: fn(device: Device, size: i64) -> Buffer {
-    mut descriptor := buffer_descriptor_init()
+    var descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 cluster_module :: fn(device: Device) -> ShaderModule {
-    mut wgsl := shader_source_WGSL_init()
+    var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
-    mut module_descriptor := shader_module_descriptor_init()
+    var module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     device_create_shader_module(device, ptr_to(module_descriptor))
 }
 
 step_of :: fn(device: Device, shader: ShaderModule, layout: PipelineLayout,
     entry_point: StringView) -> ComputePipeline {
-    mut descriptor := compute_pipeline_descriptor_init()
+    var descriptor := compute_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.compute.module = shader
     descriptor.compute.entry_point = entry_point
@@ -523,8 +523,8 @@ step_of :: fn(device: Device, shader: ShaderModule, layout: PipelineLayout,
 }
 
 build_layout :: fn(device: Device) -> BindGroupLayout {
-    mut entries : [6]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 6]
-    mut slot : i64 = 0
+    var entries : [6]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 6]
+    var slot : i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].visibility = ShaderStage::Compute
@@ -536,7 +536,7 @@ build_layout :: fn(device: Device) -> BindGroupLayout {
     entries[4].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
     entries[5].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     entries[5].buffer.min_binding_size = 64
-    mut descriptor := bind_group_layout_descriptor_init()
+    var descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 6
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
@@ -545,20 +545,20 @@ build_layout :: fn(device: Device) -> BindGroupLayout {
 build_group :: fn(device: Device, layout: BindGroupLayout, lights: Buffer,
     uniforms: Buffer, view: Buffer, bounds: Buffer, grid: Buffer,
     indices: Buffer) -> BindGroup {
-    mut entries : [6]BindGroupEntry = [bind_group_entry_init(); 6]
-    mut held : [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
-    mut sizes : [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
+    var entries : [6]BindGroupEntry = [bind_group_entry_init(); 6]
+    var held : [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
+    var sizes : [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
         TOTAL_CLUSTERS * GRID_BYTES,
         TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
         LIGHT_BYTES * MAX_LIGHTS, 64]
-    mut slot : i64 = 0
+    var slot : i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]
         entries[slot].size = sizes[slot]
         slot = slot + 1
     }
-    mut descriptor := bind_group_descriptor_init()
+    var descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 6
     descriptor.entries = ptr_to(entries[0])

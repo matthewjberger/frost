@@ -132,7 +132,7 @@ Builder :: struct { bytes: Vec<u8> }
 | `builder_clear(mut b)` | Forgets the bytes, keeps the storage |
 
 ```frost
-mut out := builder_new(256)
+var out := builder_new(256)
 builder_str_value(out, "frames: ")
 builder_int(out, count)
 builder_byte(out, 10)

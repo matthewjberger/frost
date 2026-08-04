@@ -34,7 +34,7 @@ hgen :: fn(handle: i64) -> i64 {
 }
 
 slab_reset :: fn(mut p: Slab) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < 4) {
         p.generations[i] = 0
         p.free_list[i] = 3 - i
@@ -73,7 +73,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab = Slab {
+    var world : Slab = Slab {
         storage = [
             Entity { hp = 0, mana = 0 },
             Entity { hp = 0, mana = 0 },
@@ -94,7 +94,7 @@ main :: fn() -> i64 {
     b := slab_read(world, foe)
     print_int_line(b.hp)
 
-    mut updated := slab_read(world, hero)
+    var updated := slab_read(world, hero)
     updated.hp = 75
     slab_write(world, hero, updated)
     c := slab_read(world, hero)

@@ -4,8 +4,8 @@
 import "io.frost"
 
 sum_to :: fn(n: i64) -> i64 {
-    mut total : i64 = 0
-    mut i : i64 = 1
+    var total : i64 = 0
+    var i : i64 = 1
     while (i <= n) {
         total = total + i
         i = i + 1
@@ -23,7 +23,7 @@ classify :: fn(n: i64) -> i64 {
 main :: fn() -> i64 {
     print_int_line(sum_to(10))
     print_int_line(sum_to(100))
-    mut i : i64 = 1
+    var i : i64 = 1
     while (i <= 15) {
         print_int_line(classify(i))
         i = i + 1

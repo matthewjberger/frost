@@ -42,9 +42,9 @@ fn grammar_accepts_specified_constructs() {
         // An enum takes type parameters the same way a struct does.
         "Option :: enum($T: Type) { None, Some { value: T } }",
         "Either :: enum($L: Type, $R: Type) { Left { v: L }, Right { v: R } }",
-        "main :: fn() -> i64 {\n x := 5\n mut y : i64 = 0\n y = y + 1\n 0\n }",
+        "main :: fn() -> i64 {\n x := 5\n var y : i64 = 0\n y = y + 1\n 0\n }",
         "cond :: fn() -> i64 { if (1 < 2) { 1 } else { 0 } }",
-        "loop :: fn() -> i64 {\n mut i : i64 = 0\n while (i < 3) { i = i + 1 }\n i\n }",
+        "loop :: fn() -> i64 {\n var i : i64 = 0\n while (i < 3) { i = i + 1 }\n i\n }",
         "counted :: fn() { for i in 0..10 { } }",
         "area :: fn(s: i64) -> i64 {\n match s {\n case 0: 1\n case _: 0\n }\n }",
         "shape :: fn(s: i64) -> i64 {\n match s {\n case .Circle { r }: r\n case .Rect { w, h }: w\n case _: 0\n }\n }",

@@ -24,7 +24,7 @@ Vec :: linear struct($T: Type) {
 // An empty vector with room reserved up front, so a known-size fill does not
 // reallocate. A capacity of zero is allowed and grows on the first push.
 vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
-    mut room := capacity
+    var room := capacity
     if (room < 1) { room = 1 }
     Vec { storage = heap_slice($T, room), len = 0, cap = room }
 }
@@ -61,12 +61,12 @@ vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     // parameter copies the header, so the new storage would be written to the
     // copy and lost.
     if (v.len >= v.cap) {
-        mut room := v.cap * 2
+        var room := v.cap * 2
         if (room < 1) { room = 1 }
         v.storage = heap_grow_slice($T, v.storage, room)
         v.cap = room
     }
-    mut held := v.storage
+    var held := v.storage
     held[v.len] = value
     v.len = v.len + 1
 }
@@ -88,7 +88,7 @@ vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T where !is_linear(T) {
 // for either.
 vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T)
     where !is_linear(T) {
-    mut held := v.storage
+    var held := v.storage
     held[index] = value
 }
 
@@ -111,9 +111,9 @@ vec_truncate :: fn($T: Type, mut v: Vec<T>, length: i64) where !is_linear(T) {
 VecPoint :: struct { x: i64, y: i64 }
 
 test "a vector holds what is pushed into it, in order" {
-    mut v := vec_new($i64, 2)
+    var v := vec_new($i64, 2)
     assert(vec_len($i64, v) == 0)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < 100) {
         vec_push($i64, v, i * 3)
         i = i + 1
@@ -129,7 +129,7 @@ test "a vector holds what is pushed into it, in order" {
 }
 
 test "the slice a vector hands out is as long as the vector, not the block" {
-    mut v := vec_new($i64, 64)
+    var v := vec_new($i64, 64)
     vec_push($i64, v, 1)
     vec_push($i64, v, 2)
     // The room is 64 and the elements are two, and a caller sees the two.
@@ -138,7 +138,7 @@ test "the slice a vector hands out is as long as the vector, not the block" {
 }
 
 test "clearing keeps the storage and forgets the elements" {
-    mut v := vec_new($i64, 4)
+    var v := vec_new($i64, 4)
     vec_push($i64, v, 1)
     vec_push($i64, v, 2)
     settled := heap_live()
@@ -153,10 +153,10 @@ test "clearing keeps the storage and forgets the elements" {
 }
 
 test "a vector of structs is written through its slice" {
-    mut v := vec_new($VecPoint, 2)
+    var v := vec_new($VecPoint, 2)
     vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
     vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
-    mut held := vec_slice($VecPoint, v)
+    var held := vec_slice($VecPoint, v)
     held[1].x = 30
     assert(vec_get($VecPoint, v, 1).x == 30)
     assert(vec_get($VecPoint, v, 0).y == 2)
@@ -165,8 +165,8 @@ test "a vector of structs is written through its slice" {
 
 test "a vector gives back every block it took, however far it grew" {
     before := heap_live()
-    mut v := vec_new($i64, 1)
-    mut i : i64 = 0
+    var v := vec_new($i64, 1)
+    var i : i64 = 0
     while (i < 500) {
         vec_push($i64, v, i)
         i = i + 1

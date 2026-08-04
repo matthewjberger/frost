@@ -24,7 +24,7 @@ delta :: fn(k: Kind) -> i64 {
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = Slab {
+    var world : Slab<Entity, 16> = Slab {
         storage = [Entity { hp = 0, kind = Kind::Player }; 16],
         generations = [0; 16],
         free_list = [0; 16],

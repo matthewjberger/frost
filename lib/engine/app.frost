@@ -165,7 +165,7 @@ App :: linear struct {
 }
 
 app_open :: fn(config: AppConfig) -> App ! AppError {
-    mut p := platform_open(config.title, config.width, config.height)
+    var p := platform_open(config.title, config.width, config.height)
     if (platform_ok(p) == false) {
         // Read before the close, because the close is what makes it
         // unreadable.
@@ -173,7 +173,7 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         platform_close(p)
         return AppError { why = AppFault::NoWindow, said = said }
     }
-    mut r := renderer_open(platform_window(p), config.width, config.height)
+    var r := renderer_open(platform_window(p), config.width, config.height)
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)
@@ -181,7 +181,7 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
             said = "no adapter or no device that answers to this surface" }
     }
     device := renderer_device(r)
-    mut app := App {
+    var app := App {
         platform = p,
         renderer = r,
         world = ecs_new(),
@@ -267,7 +267,7 @@ app_install_if_absent :: fn(mut app: App, build: fn(mut App)) {
 
 already_installed :: fn(app: App, build: fn(mut App)) -> bool {
     held := vec_slice($Installed, app.installed)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($Installed, app.installed)) {
         if (held[i].build == build) {
             return true
@@ -318,7 +318,7 @@ plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
 // Which member of the group this name is, or -1 where the group has none.
 group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
     held := vec_slice($GroupMember, group.members)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($GroupMember, group.members)) {
         if (held[i].named == named) {
             return i
@@ -338,7 +338,7 @@ plugin_group_set :: fn(mut group: PluginGroup, named: fn(mut App),
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
         frost_rt_die()
     }
-    mut held := vec_slice($GroupMember, group.members)
+    var held := vec_slice($GroupMember, group.members)
     held[at].build = build
 }
 
@@ -351,7 +351,7 @@ plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
         frost_rt_die()
     }
-    mut held := vec_slice($GroupMember, group.members)
+    var held := vec_slice($GroupMember, group.members)
     held[at].enabled = false
 }
 
@@ -359,7 +359,7 @@ plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
 // toward the same once-per-plugin rule everything else does, so a group holding
 // what a program already installed stops rather than installing it twice.
 app_install_group :: fn(mut app: App, move group: PluginGroup) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($GroupMember, group.members)) {
         held := vec_get($GroupMember, group.members, i)
         if (held.enabled) {
@@ -379,7 +379,7 @@ app_install_group :: fn(mut app: App, move group: PluginGroup) {
 // above: a program that drives its own camera or wants that key for a menu
 // installs neither.
 default_plugins :: fn() -> PluginGroup {
-    mut group := plugin_group_new()
+    var group := plugin_group_new()
     plugin_group_add(group, log_plugin)
     group
 }
@@ -428,7 +428,7 @@ app_configure_graph :: fn($Ctx: Type, mut app: App,
 configure_graph :: fn(mut app: App) -> bool {
     device := renderer_device(app.renderer)
     format := renderer_format(app.renderer)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($GraphConfig, app.graph_configs)) {
         held := vec_get($GraphConfig, app.graph_configs, i)
         held.hook(held.state, app.renderer.graph, device, format)
@@ -462,7 +462,7 @@ app_update_graph :: fn($Ctx: Type, mut app: App,
 // The hooks, in the order they were added, before the frame is filled. What
 // runs this frame is settled first and what goes in it second.
 update_graph :: fn(mut app: App) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($UpdateGraph, app.update_graph)) {
         held := vec_get($UpdateGraph, app.update_graph, i)
         held.hook(held.state, app.renderer.graph, app.world)
@@ -610,7 +610,7 @@ settle_state :: fn(mut app: App) {
 }
 
 run_hooks :: fn(held: Vec<StateHook>, mut world: World, state: i64) {
-    mut index : i64 = 0
+    var index : i64 = 0
     while (index < vec_len($StateHook, held)) {
         one := vec_get($StateHook, held, index)
         if (one.state == state) {
@@ -783,7 +783,7 @@ runs_nothing :: fn(mut app: App) { }
 // The hooks, in the order they were added. Each is handed the App and the state
 // it was registered with.
 before_render :: fn(mut app: App) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < vec_len($BeforeRender, app.before_render)) {
         held := vec_get($BeforeRender, app.before_render, i)
         held.hook(held.state, app)
@@ -807,7 +807,7 @@ app_extract :: fn(mut app: App, ids: ObjectIds, view_projection: Mat4) {
 // handed over. A frame that could not be acquired records nothing and is still
 // ended, because the handles it took are counted whether it drew or not.
 app_draw :: fn(mut app: App) {
-    mut f := renderer_begin(app.renderer)
+    var f := renderer_begin(app.renderer)
     if (frame_ok(f)) {
         graph_run(app.renderer.graph, f)
     }
@@ -850,7 +850,7 @@ adds_nothing_either :: fn(mut app: App) { }
 stands_in :: fn(mut app: App) { }
 
 test "a group keeps its members in the order they were added" {
-    mut group := plugin_group_new()
+    var group := plugin_group_new()
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
     held := vec_slice($GroupMember, group.members)
@@ -860,7 +860,7 @@ test "a group keeps its members in the order they were added" {
 }
 
 test "a member set another way keeps its place and its name" {
-    mut group := plugin_group_new()
+    var group := plugin_group_new()
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
     plugin_group_set(group, adds_nothing, stands_in)
@@ -874,7 +874,7 @@ test "a member set another way keeps its place and its name" {
 }
 
 test "a disabled member stays in the group and is not installed" {
-    mut group := plugin_group_new()
+    var group := plugin_group_new()
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
     plugin_group_disable(group, adds_nothing)
@@ -887,14 +887,14 @@ test "a disabled member stays in the group and is not installed" {
 }
 
 test "a group answers with nothing for a member it does not hold" {
-    mut group := plugin_group_new()
+    var group := plugin_group_new()
     plugin_group_add(group, adds_nothing)
     assert(group_index(group, adds_nothing_either) == (-1))
     plugin_group_free(group)
 }
 
 test "the standard group holds the log plugin" {
-    mut group := default_plugins()
+    var group := default_plugins()
     assert(group_index(group, log_plugin) == 0)
     plugin_group_free(group)
 }

@@ -125,29 +125,29 @@ main :: fn() -> i64 {
     instance := create_instance(null_handle())
 
     // The surface, chained off the platform window handle.
-    mut source := surface_source_windows_HWND_init()
+    var source := surface_source_windows_HWND_init()
     source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
     source.hwnd = hwnd
 
-    mut surface_descriptor := surface_descriptor_init()
+    var surface_descriptor := surface_descriptor_init()
     surface_descriptor.next_in_chain = ptr_to(source)
     surface := instance_create_surface(instance, ptr_to(surface_descriptor))
     if (hwnd == null_handle()) { return 23 }
 
     // The adapter.
-    mut adapter_slot : AdapterSlot =
+    var adapter_slot : AdapterSlot =
         AdapterSlot { handle = no_adapter(), ready = 0 }
-    mut adapter_info := request_adapter_callback_info_of($AdapterSlot,
+    var adapter_info := request_adapter_callback_info_of($AdapterSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_adapter, ptr_to(adapter_slot))
     // The adapter has to be chosen knowing which surface it will draw to, or
     // it may be one this surface cannot use, and the surface only says so when
     // it is asked for its capabilities.
-    mut adapter_options := request_adapter_options_init()
+    var adapter_options := request_adapter_options_init()
     adapter_options.feature_level = FEATURE_LEVEL_CORE
     adapter_options.compatible_surface = surface
     instance_request_adapter(instance, ptr_to(adapter_options),
             ptr_to(adapter_info))
-    mut adapter_spins : i64 = 0
+    var adapter_spins : i64 = 0
     while (adapter_slot.ready == 0 && adapter_spins < 2000000) {
         instance_process_events(instance)
         adapter_spins = adapter_spins + 1
@@ -157,13 +157,13 @@ main :: fn() -> i64 {
     if (adapter == null_handle()) { return 24 }
 
     // The device.
-    mut device_slot : DeviceSlot =
+    var device_slot : DeviceSlot =
         DeviceSlot { handle = no_device(), ready = 0 }
-    mut device_info := request_device_callback_info_of($DeviceSlot,
+    var device_info := request_device_callback_info_of($DeviceSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_device, ptr_to(device_slot))
     adapter_request_device(adapter,
             null_handle(), ptr_to(device_info))
-    mut device_spins : i64 = 0
+    var device_spins : i64 = 0
     while (device_slot.ready == 0 && device_spins < 2000000) {
         instance_process_events(instance)
         device_spins = device_spins + 1
@@ -176,13 +176,13 @@ main :: fn() -> i64 {
     // The swapchain. The format comes from the surface rather than from a
     // guess, because which formats a surface accepts is a property of the
     // driver and the window, not of the API.
-    mut capabilities := surface_capabilities_init()
+    var capabilities := surface_capabilities_init()
     capability_status := surface_get_capabilities(surface, adapter, ptr_to(capabilities))
     if (capability_status != 1) { return 30 }
     if (capabilities.formats_count == 0) { return 31 }
     surface_format := surface_format_at(capabilities, 0)
 
-    mut configuration := surface_configuration_init()
+    var configuration := surface_configuration_init()
     configuration.device = device
     configuration.format = surface_format
     configuration.usage = TextureUsage::RenderAttachment
@@ -192,18 +192,18 @@ main :: fn() -> i64 {
     surface_configure(surface, ptr_to(configuration))
 
     // The shader, chained off the module descriptor as WGSL source.
-    mut wgsl := shader_source_WGSL_init()
+    var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
 
-    mut module_descriptor := shader_module_descriptor_init()
+    var module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
     // The three vertices, written once into a buffer the GPU reads. The
     // positions are what a Vec4 holds, so the bytes handed over are the bytes
     // Frost laid out.
-    mut vertices : [VERTEX_COUNT]Vertex = [
+    var vertices : [VERTEX_COUNT]Vertex = [
         Vertex {
             position = vec4(-1.0, -1.0, 0.0, 1.0),
             colour = vec4(1.0, 0.2, 0.2, 1.0),
@@ -218,7 +218,7 @@ main :: fn() -> i64 {
         },
     ]
 
-    mut vertex_buffer_descriptor := buffer_descriptor_init()
+    var vertex_buffer_descriptor := buffer_descriptor_init()
     vertex_buffer_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
     vertex_buffer_descriptor.size = VERTEX_BYTES
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
@@ -226,7 +226,7 @@ main :: fn() -> i64 {
             ptr_to(vertices[0]), VERTEX_BYTES)
 
     // The uniform holding the matrix, rewritten every frame.
-    mut uniform_buffer_descriptor := buffer_descriptor_init()
+    var uniform_buffer_descriptor := buffer_descriptor_init()
     uniform_buffer_descriptor.usage =
         BufferUsage::Uniform | BufferUsage::CopyDst
     uniform_buffer_descriptor.size = UNIFORM_BYTES
@@ -234,36 +234,36 @@ main :: fn() -> i64 {
 
     // What the shader may reach, and what it reaches there. The layout is the
     // promise, the group is the binding that keeps it.
-    mut layout_entry := bind_group_layout_entry_init()
+    var layout_entry := bind_group_layout_entry_init()
     layout_entry.binding = 0
     layout_entry.visibility = ShaderStage::Vertex
     layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     layout_entry.buffer.min_binding_size = UNIFORM_BYTES
 
-    mut group_layout_descriptor := bind_group_layout_descriptor_init()
+    var group_layout_descriptor := bind_group_layout_descriptor_init()
     group_layout_descriptor.entries_count = 1
     group_layout_descriptor.entries = ptr_to(layout_entry)
     group_layout := device_create_bind_group_layout(device, ptr_to(group_layout_descriptor))
 
-    mut group_entry := bind_group_entry_init()
+    var group_entry := bind_group_entry_init()
     group_entry.binding = 0
     group_entry.buffer = uniform_buffer
     group_entry.size = UNIFORM_BYTES
 
-    mut group_descriptor := bind_group_descriptor_init()
+    var group_descriptor := bind_group_descriptor_init()
     group_descriptor.layout = group_layout
     group_descriptor.entries_count = 1
     group_descriptor.entries = ptr_to(group_entry)
     bind_group := device_create_bind_group(device, ptr_to(group_descriptor))
 
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(group_layout)
     pipeline_layout := device_create_pipeline_layout(device,
             ptr_to(pipeline_layout_descriptor))
 
     // How the vertex buffer's bytes reach the shader's two inputs.
-    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X4
     attributes[0].offset = 0
     attributes[0].shader_location = 0
@@ -271,22 +271,22 @@ main :: fn() -> i64 {
     attributes[1].offset = 16
     attributes[1].shader_location = 1
 
-    mut buffer_layout := vertex_buffer_layout_init()
+    var buffer_layout := vertex_buffer_layout_init()
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
 
     // The pipeline.
-    mut target := color_target_state_init()
+    var target := color_target_state_init()
     target.format = surface_format
 
-    mut fragment := fragment_state_init()
+    var fragment := fragment_state_init()
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
     fragment.targets = ptr_to(target)
-    mut pipeline_descriptor := render_pipeline_descriptor_init()
+    var pipeline_descriptor := render_pipeline_descriptor_init()
     pipeline_descriptor.layout = pipeline_layout
     pipeline_descriptor.vertex.module = shader
     pipeline_descriptor.vertex.entry_point =
@@ -316,16 +316,16 @@ main :: fn() -> i64 {
     view_projection := mat4_mul(projection, view)
     started := sdl_ticks()
 
-    mut running : bool = true
+    var running : bool = true
     while (running) {
-        mut event := event_new()
+        var event := event_new()
         while (poll_event(event)) {
             if (event_kind(event) == EventKind::Quit) {
                 running = false
             }
         }
 
-        mut frame := surface_texture_init()
+        var frame := surface_texture_init()
         surface_get_current_texture(surface, ptr_to(frame))
         // A surface goes stale when the window changes under it. Skipping the
         // frame is not enough, because nothing would ever make it fresh again
@@ -344,21 +344,21 @@ main :: fn() -> i64 {
             elapsed := (sdl_ticks() - started) % 100000
             milliseconds : f32 = elapsed
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
-            mut mvp := mat4_mul(view_projection, model)
+            var mvp := mat4_mul(view_projection, model)
             queue_write_buffer(queue, uniform_buffer, 0,
                 ptr_to(mvp.m[0]), UNIFORM_BYTES)
 
             texture_view := texture_create_view(frame.texture, null_handle())
             encoder := device_create_command_encoder(device, null_handle())
 
-            mut attachment := render_pass_color_attachment_init()
+            var attachment := render_pass_color_attachment_init()
             attachment.view = texture_view
             attachment.load_op = LOAD_OP_CLEAR
             attachment.store_op = STORE_OP_STORE
             attachment.clear_value =
                 Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
 
-            mut pass_descriptor := render_pass_descriptor_init()
+            var pass_descriptor := render_pass_descriptor_init()
             pass_descriptor.color_attachments_count = 1
             pass_descriptor.color_attachments =
                 ptr_to(attachment)
@@ -372,7 +372,7 @@ main :: fn() -> i64 {
             render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
             render_pass_encoder_end(pass)
 
-            mut command := command_encoder_finish(encoder, null_handle())
+            var command := command_encoder_finish(encoder, null_handle())
             queue_submit(queue, 1, ptr_to(command))
             surface_present(surface)
         }

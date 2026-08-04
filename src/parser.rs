@@ -800,6 +800,7 @@ impl<'a> Parser<'a> {
     fn at_block_statement_boundary(&self) -> bool {
         match self.peek_nth(0) {
             Token::Mut
+            | Token::Var
             | Token::Return
             | Token::Defer
             | Token::For
@@ -895,13 +896,22 @@ impl<'a> Parser<'a> {
             }
             Token::Import => Some(self.parse_import_statement()?),
             Token::Ref => Some(self.parse_ref_declaration()?),
-            Token::Mut
+            Token::Var
                 if matches!(self.peek_nth(1), Token::Identifier(_))
                     && matches!(self.peek_nth(2), Token::Comma) =>
             {
                 Some(self.parse_multiple_declaration()?)
             }
-            Token::Mut => Some(self.parse_mutable_declaration()?),
+            Token::Var => Some(self.parse_mutable_declaration()?),
+            // `mut` is one thing, the parameter mode. It used to declare an
+            // assignable local as well, and the two meanings shared nothing
+            // but the spelling, so the local form is `var` and this refusal
+            // is what a reader migrating old code meets.
+            Token::Mut => {
+                return Err(self.here(
+                    "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`".to_string(),
+                ));
+            }
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::Comma) =>
             {
@@ -1168,14 +1178,19 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    // `quotient, remainder := divide(a, b)`, and `mut` in front of any name
+    // `quotient, remainder := divide(a, b)`, and `var` in front of any name
     // that the body goes on to write. The list is names, not patterns, since
     // what it takes apart is a return type list rather than a value.
     fn parse_multiple_declaration(&mut self) -> Result<StmtId> {
         let start = self.mark();
         let mut bindings = Vec::new();
         loop {
-            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
+            if matches!(self.peek_nth(0), Token::Mut) {
+                return Err(self.here(
+                    "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`".to_string(),
+                ));
+            }
+            let mutable = if matches!(self.peek_nth(0), Token::Var) {
                 self.read_token();
                 true
             } else {
@@ -1218,7 +1233,7 @@ impl<'a> Parser<'a> {
         } else if matches!(self.peek_nth(1), Token::Colon) {
             self.parse_typed_declaration(true)
         } else {
-            bail!("Expected ':=' or ': type =' after 'mut identifier'")
+            bail!("Expected ':=' or ': type =' after 'var identifier'")
         }
     }
 
@@ -4565,7 +4580,7 @@ mod tests {
 
     #[test]
     fn mutable_declaration() -> Result<()> {
-        let module = parse_module("mut x := 5")?;
+        let module = parse_module("var x := 5")?;
         assert_eq!(module.roots.len(), 1);
         match module.ast.stmt(module.roots[0]) {
             Statement::Let {
@@ -4586,7 +4601,7 @@ mod tests {
 
     #[test]
     fn mutable_typed_declaration() -> Result<()> {
-        let module = parse_module("mut x : i64 = 42")?;
+        let module = parse_module("var x : i64 = 42")?;
         assert_eq!(module.roots.len(), 1);
         match module.ast.stmt(module.roots[0]) {
             Statement::Let {
@@ -4620,7 +4635,7 @@ mod tests {
 
     #[test]
     fn mutable_ast_display() -> Result<()> {
-        let output = "mut myVar := anotherVar;";
+        let output = "var myVar := anotherVar;";
         let mut ast = Ast::default();
         let another = ast.intern("anotherVar");
         let value =
@@ -4641,7 +4656,7 @@ mod tests {
 
     #[test]
     fn mutable_typed_ast_display() -> Result<()> {
-        let output = "mut x : i64 = 5;";
+        let output = "var x : i64 = 5;";
         let mut ast = Ast::default();
         let value = ast.push_expr(
             Expression::Literal(Literal::Integer(5)),
@@ -5209,7 +5224,7 @@ mod tests {
 
     #[test]
     fn multiple_returns_bind_by_name() -> Result<()> {
-        let module = parse_module("quotient, mut remainder := divide(7, 2)")?;
+        let module = parse_module("quotient, var remainder := divide(7, 2)")?;
         assert_eq!(module.roots.len(), 1);
         let ast = &module.ast;
         if let Statement::LetMultiple(bindings, _) = ast.stmt(module.roots[0]) {

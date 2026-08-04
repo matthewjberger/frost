@@ -76,7 +76,7 @@ material_default :: fn() -> Material {
 // a field that arrives later does not have to be spelled at every call that
 // does not care about it.
 material_of :: fn(base_color: Vec4, roughness: f32, metallic: f32) -> Material {
-    mut out := material_default()
+    var out := material_default()
     out.base_color = base_color
     out.roughness = roughness
     out.metallic = metallic
@@ -87,7 +87,7 @@ material_of :: fn(base_color: Vec4, roughness: f32, metallic: f32) -> Material {
 // class it is drawn in, which is which pipeline, which is where in the frame it
 // lands.
 material_blended :: fn(held: Material) -> Material {
-    mut out := held
+    var out := held
     out.alpha_mode = ALPHA_BLEND
     out
 }
@@ -96,14 +96,14 @@ material_blended :: fn(held: Material) -> Material {
 // this rather than blended: it needs no ordering against anything, so it stays
 // in the opaque pass and writes depth like anything else.
 material_cut_out :: fn(held: Material, cutoff: f32) -> Material {
-    mut out := held
+    var out := held
     out.alpha_mode = ALPHA_MASK
     out.alpha_cutoff = cutoff
     out
 }
 
 material_two_sided :: fn(held: Material) -> Material {
-    mut out := held
+    var out := held
     out.double_sided = true
     out
 }
@@ -153,7 +153,7 @@ material_surface :: fn(held: Material) -> Vec4 {
 // from the two fields above rather than stored beside them, so a material
 // cannot say one thing in its mode and another in its flags.
 material_flags :: fn(held: Material) -> u32 {
-    mut bits : u32 = 0
+    var bits : u32 = 0
     if (held.alpha_mode == ALPHA_BLEND) {
         bits = bits | FLAG_TRANSPARENT
     }

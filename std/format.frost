@@ -67,16 +67,16 @@ builder_uint :: fn(mut b: Builder, value: i64) {
         vec_push($u8, b.bytes, 48)
         return
     }
-    mut digits : [20]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    var digits : [20]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    mut count : i64 = 0
-    mut left := value
+    var count : i64 = 0
+    var left := value
     while (left > 0) {
         digits[count] = cast($u8, 48 + left % 10)
         left = left / 10
         count = count + 1
     }
-    mut i := count - 1
+    var i := count - 1
     while (i >= 0) {
         vec_push($u8, b.bytes, digits[i])
         i = i - 1

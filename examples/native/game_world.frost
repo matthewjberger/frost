@@ -18,7 +18,7 @@ Threat :: struct { level: i64 }
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    mut world := ecs_new()
+    var world := ecs_new()
     health := ecs_register($Health, world)
     threat := ecs_register($Threat, world)
 
@@ -35,12 +35,12 @@ main :: fn() -> i64 {
 
     // One pass over the threat column of every table that carries one. The
     // hero has no threat, so no table holding it is visited for him.
-    mut total : i64 = 0
-    mut walk := query_begin(world)
+    var total : i64 = 0
+    var walk := query_begin(world)
     query_with(walk, threat)
     while (query_next(world, walk)) {
         levels := query_column($Threat, world, walk, threat)
-        mut i : i64 = 0
+        var i : i64 = 0
         while (i < walk.count) {
             total = total + levels[i].level
             i = i + 1

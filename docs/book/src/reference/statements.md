@@ -5,7 +5,7 @@ value is its trailing expression (or `void`).
 
 - Expression statement, an expression evaluated for effect.
 - Binding, the forms in 5.1.
-- Assignment, `Place = Expr`, where `Place` is a `mut` local, a field, an
+- Assignment, `Place = Expr`, where `Place` is a `var` local, a field, an
   index, or a dereference.
 - `return`, `return`, `return Expr`, or `return Expr ( "," Expr )+` in a
   function whose signature is a return type list (5.2a).

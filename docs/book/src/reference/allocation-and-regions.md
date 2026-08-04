@@ -114,8 +114,8 @@ it.
 
 ```frost
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut result : i64 = 0
+    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var result : i64 = 0
     with arena {
         result = forward()
     }
@@ -166,8 +166,8 @@ scope.
 
 ```frost
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut escaped : ^i64 = ptr_to(arena.offset)
+    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var escaped : ^i64 = ptr_to(arena.offset)
     with arena {
         escaped = alloc_int(arena)     // error: escapes its region
     }

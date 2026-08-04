@@ -35,7 +35,7 @@ main :: fn() -> i64 {
     print_str("dot = ")
     print_int_line(dot(a, b))
 
-    mut c := a
+    var c := a
     scale(c, 10)
     print_str("scaled.x = ")
     print_int_line(c.x)

@@ -69,13 +69,13 @@ drawn_in_layer :: fn(global_transform: i64, transform: i64, drawn: i64,
 // reads `GlobalTransform` without ever naming a renderer type.
 scene_sync :: fn(mut world: World, mut render: RenderWorld,
     registry: Materials, cache: MeshCache, ids: ObjectIds) {
-    mut q := query_begin(world)
+    var q := query_begin(world)
     query_with(q, ids.global_transform)
     query_with(q, ids.transform)
     query_with(q, ids.drawn)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        mut row : i64 = 0
+        var row : i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             shown := ecs_get($Drawn, world, entity, ids.drawn)

@@ -101,7 +101,7 @@
         },
         {
           "comment": "name := expr, a local binding",
-          "match": "\\b(mut\\s+)?([a-z_][A-Za-z0-9_]*)\\s*(:=)",
+          "match": "\\b(var\\s+)?([a-z_][A-Za-z0-9_]*)\\s*(:=)",
           "captures": {
             "1": { "name": "storage.modifier.frost" },
             "2": { "name": "variable.other.frost" },
@@ -181,7 +181,7 @@
         },
         {
           "name": "storage.modifier.frost",
-          "match": "\\b(mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where)\\b"
+          "match": "\\b(mut|var|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where)\\b"
         },
         {
           "comment": "the by-value parameter mode on an extern fn. Only before a parameter name, since `value` is an ordinary name everywhere else",
@@ -234,7 +234,7 @@
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "function-calls": {
-      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|flags|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|flags|type|mut|var|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
       "captures": {
         "1": { "name": "entity.name.function.frost" }
       }

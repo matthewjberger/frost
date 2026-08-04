@@ -8418,7 +8418,7 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         let Some(Type::Struct(name)) = expected else {
             bail!(
-                "columns_new() needs a columns type from its context, e.g. `mut c : columns<T, N> = columns_new()`"
+                "columns_new() needs a columns type from its context, e.g. `var c : columns<T, N> = columns_new()`"
             );
         };
         if !name.starts_with("columns<") {

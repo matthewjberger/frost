@@ -39,7 +39,7 @@ Slab :: struct($T: Type, $N: usize) {
 // Every slot free, every generation back to zero. A slab is created with its
 // arrays written out and then reset, since construction cannot run code.
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) {
         s.generations[i] = 0
         s.free_list[i] = N - 1 - i
@@ -127,7 +127,7 @@ SlabThing :: struct { hp: i64 }
 // which is what keeps the boundary honest: the check happens here or the caller
 // is told there is nothing to walk.
 test "a slot stands in for a handle until the handle goes stale" {
-    mut s : Slab<SlabThing, 2> = Slab {
+    var s : Slab<SlabThing, 2> = Slab {
         storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
         generations = [0, 0],
         free_list = [0, 0],
@@ -148,7 +148,7 @@ test "a slot stands in for a handle until the handle goes stale" {
 // generation rather than by two billion releases, which is the only way to reach
 // this in a test and is why the bound went unnoticed.
 test "a slot whose generation is spent is retired rather than reused" {
-    mut s : Slab<SlabThing, 2> = Slab {
+    var s : Slab<SlabThing, 2> = Slab {
         storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
         generations = [0, 0],
         free_list = [0, 0],

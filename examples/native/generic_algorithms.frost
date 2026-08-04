@@ -20,8 +20,8 @@ main :: fn() -> i64 {
     print_int_line(clamp(15, 0, 10))
     print_int_line(clamp(-5, 0, 10))
 
-    mut a : i64 = 100
-    mut b : i64 = 200
+    var a : i64 = 100
+    var b : i64 = 200
     swap(a, b)
     print_int_line(a)
 

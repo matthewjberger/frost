@@ -72,7 +72,7 @@ run_assembling :: fn(raw: ^u8) {
 // telling the shell where to look.
 runnable :: fn(path: ^i8) -> ^i8 {
     length := cstr_len(path)
-    mut index : i64 = 0
+    var index : i64 = 0
     while (index < length) {
         byte := unsafe { path[index] }
         if (byte == 47 || byte == 92) {
@@ -89,7 +89,7 @@ runnable :: fn(path: ^i8) -> ^i8 {
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
-    mut executable : ^i8 = options.output
+    var executable : ^i8 = options.output
     if (cstr_len(executable) == 0) {
         executable = "a.out"
         if (frost_rt_is_windows() == 1) {
@@ -102,20 +102,20 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     assembles := options.backend == Backend::Asm
     // Grown to what each module turns out to need, so a build that hands its
     // units to the toolchain never grows any of it at all.
-    mut unit := assembly_of(object_format())
-    mut blob := object_blob()
+    var unit := assembly_of(object_format())
+    var blob := object_blob()
 
     // Every assembler run this build needs, gathered before any of them is
     // started so they can all be handed to the machine at once. The work is one
     // process per module and they share nothing, which is the whole reason this
     // is worth threading and the rest of the compiler is not.
-    mut jobs : Arena<Assembling> = arena_make($Assembling, 4096)
-    mut records : Arena<Assembling> = arena_make($Assembling, 4096)
+    var jobs : Arena<Assembling> = arena_make($Assembling, 4096)
+    var records : Arena<Assembling> = arena_make($Assembling, 4096)
 
-    mut objects : ^i8 = ""
-    mut index : i64 = 0
+    var objects : ^i8 = ""
+    var index : i64 = 0
     while (index < p.modules.count) {
-        mut suffix : ^i8 = ".s"
+        var suffix : ^i8 = ".s"
         if (options.backend == Backend::C) {
             suffix = ".c"
         }
@@ -144,8 +144,8 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         }
         p.emit_module = -1
 
-        mut text := empty_source()
-        mut sum : i64 = 0
+        var text := empty_source()
+        var sum : i64 = 0
         if (assembles) {
             text = emit_memory_text()
             sum = text_checksum(text)
@@ -153,7 +153,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_emit_close()
             sum = file_checksum(source)
         }
-        mut stale : bool = sum != stored_checksum(record)
+        var stale : bool = sum != stored_checksum(record)
         if (unsafe { frost_rt_file_exists(object) } == 0) {
             stale = true
         }
@@ -179,8 +179,8 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
 
     // All of them at once. One thread per run, since each is a process this one
     // only waits on.
-    mut handles : Arena<Assembling> = arena_make($Assembling, 4096)
-    mut started : i64 = 0
+    var handles : Arena<Assembling> = arena_make($Assembling, 4096)
+    var started : i64 = 0
     while (started < jobs.count) {
         // The address of the element itself, not of a copy of it: the thread
         // reads the job while this loop goes on to the next one, and a copy
@@ -192,13 +192,13 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         arena_push(handles, Assembling { command = "", status = handle })
         started = started + 1
     }
-    mut waited : i64 = 0
+    var waited : i64 = 0
     while (waited < handles.count) {
         held := arena_at(handles, waited)
         unsafe { frost_rt_thread_join(held.status) }
         waited = waited + 1
     }
-    mut checked : i64 = 0
+    var checked : i64 = 0
     while (checked < jobs.count) {
         job := arena_at(jobs, checked)
         if (job.status != 0) {
@@ -213,7 +213,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     }
 
     runtime_object := cached_runtime_object()
-    mut command := join_two(
+    var command := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), objects), " "),
                 runtime_object),
@@ -273,8 +273,8 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
     emit_to_memory()
     emit_asm_program(p, program)
     text := emit_memory_text()
-    mut unit := assembly_of(object_format())
-    mut object := object_blob()
+    var unit := assembly_of(object_format())
+    var object := object_blob()
     assemble_into(unit, text)
     write_object(unit, object, output)
 }
@@ -290,7 +290,7 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
 // that is not the working directory.
 link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     extra := join_two(" ", cached_runtime_object())
-    mut base := join_two(
+    var base := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), " "), unit), extra),
             " -o "),
@@ -307,7 +307,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     // What `--libs` named goes after the objects and ahead of the platform's
     // own libraries, which is the order a linker resolves in: a named library
     // that reaches libm has to be seen before libm is.
-    mut command := join_two(base, options.libs)
+    var command := join_two(base, options.libs)
     // A program that reaches the C math functions (std/math.frost's sqrtf and
     // the rest) needs libm where the platform keeps it out of the C runtime,
     // which is Linux and the BSDs. Windows keeps them in the CRT, so the flag
@@ -357,8 +357,8 @@ assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
         report("\n")
         frost_rt_die()
     }
-    mut unit := assembly_of(object_format())
-    mut object := object_blob()
+    var unit := assembly_of(object_format())
+    var object := object_blob()
     assemble_into(unit, cstr_slice(raw))
     write_object(unit, object, output)
     0
@@ -388,17 +388,17 @@ main :: fn() -> i64 {
     // The whole program's text: the source of every module laid end to end,
     // followed by room for the names the compiler makes up. It is a slice, so
     // reading and writing it is a checked index everywhere below.
-    mut source := empty_source()
-    mut modules : Arena<Module> = arena_make($Module, 4096)
-    mut exports : Arena<Export> = arena_make($Export, 4096)
-    mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
-    mut renames : Arena<Rename> = arena_make($Rename, 4096)
+    var source := empty_source()
+    var modules : Arena<Module> = arena_make($Module, 4096)
+    var exports : Arena<Export> = arena_make($Export, 4096)
+    var import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
+    var renames : Arena<Rename> = arena_make($Rename, 4096)
     export_names := buffer_of(SYNTH_ROOM)
     if (cstr_len(input_path) != 0) {
         // One buffer holds the root file and everything it imports, so a name
         // is an offset into a single source no matter which file wrote it.
         buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
-        mut scratch : Arena<Token> = arena_make($Token, 262144)
+        var scratch : Arena<Token> = arena_make($Token, 262144)
         // What the project declares, after anything the command line named and
         // before the standard library, which is the order the other compiler
         // assembles them in.
@@ -442,7 +442,7 @@ main :: fn() -> i64 {
         }
 
         classify :: fn(n: i64) -> i64 {
-            mut result : i64 = 0
+            var result : i64 = 0
             match n {
                 case 0: result = 100
                 case 1: result = 200
@@ -466,8 +466,8 @@ main :: fn() -> i64 {
         main :: fn() -> i64 {
             print_int_line(fib(10))
             print_int_line(fact(5))
-            mut sum : i64 = 0
-            mut index : i64 = 1
+            var sum : i64 = 0
+            var index : i64 = 1
             while (index <= 10) { sum = sum + index  index = index + 1 }
             print_int_line(sum)
             p := Point { x = 3, y = 4 }
@@ -500,7 +500,7 @@ main :: fn() -> i64 {
         source = source_with_room(source)
     }
 
-    mut parser := Parser {
+    var parser := Parser {
         src = source,
         tokens = arena_make($Token, 262144),
         ti = 0,
@@ -706,7 +706,7 @@ main :: fn() -> i64 {
     // argument tuple nothing had asked for: a sort taking a comparison calls a
     // swap that takes only the element type. Keep going until a round finds no
     // new tuple.
-    mut known : i64 = -1
+    var known : i64 = -1
     while (known != parser.type_args.count) {
         known = parser.type_args.count
         collect_type_args(parser)
@@ -775,7 +775,7 @@ main :: fn() -> i64 {
         frost_rt_die()
     }
 
-    mut executable : ^i8 = options.output
+    var executable : ^i8 = options.output
     if (options.link == 1 && cstr_len(executable) == 0) {
         executable = "a.out"
         if (frost_rt_is_windows() == 1) {
@@ -787,7 +787,7 @@ main :: fn() -> i64 {
     // reaches one without writing assembly for another program to read back.
     if (options.backend == Backend::Asm
         && (options.object == 1 || options.link == 1)) {
-        mut object : ^i8 = options.output
+        var object : ^i8 = options.output
         if (options.link == 1) {
             object = join_two(executable, ".o")
         }
@@ -801,7 +801,7 @@ main :: fn() -> i64 {
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
     // afterwards. Without -o and without --link it goes to standard output.
-    mut emit_path : ^i8 = options.output
+    var emit_path : ^i8 = options.output
     if (options.link == 1) {
         if (options.backend == Backend::Asm) {
             emit_path = join_two(executable, ".s")

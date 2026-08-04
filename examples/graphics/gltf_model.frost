@@ -173,9 +173,9 @@ draw_scene :: fn(mut s: Scene, context: NodeContext) {
 
 // The camera and the light, as the bytes the shader reads them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
-    mut values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
-    mut view_projection := camera_view_projection(eye, w, h)
-    mut element : i64 = 0
+    var values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    var view_projection := camera_view_projection(eye, w, h)
+    var element : i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
@@ -203,14 +203,14 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
 
 make_pipeline :: fn(device: Device, format: u32,
     layout: PipelineLayout) -> RenderPipeline {
-    mut wgsl := shader_source_WGSL_init()
+    var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
-    mut module_descriptor := shader_module_descriptor_init()
+    var module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -218,28 +218,28 @@ make_pipeline :: fn(device: Device, format: u32,
     attributes[1].offset = NORMAL_OFFSET
     attributes[1].shader_location = 1
 
-    mut buffer_layout := vertex_buffer_layout_init()
+    var buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
 
-    mut target := color_target_state_init()
+    var target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
 
-    mut fragment := fragment_state_init()
+    var fragment := fragment_state_init()
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
     fragment.targets = ptr_to(target)
 
-    mut depth := depth_stencil_state_init()
+    var depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     depth.depth_compare = COMPARE_FUNCTION_GREATER
 
-    mut descriptor := render_pipeline_descriptor_init()
+    var descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
@@ -284,7 +284,7 @@ before_frame :: fn(mut s: Scene, mut app: App) {
 }
 
 main :: fn() -> i64 {
-    mut config := app_config("Frost glTF", WIDTH, HEIGHT)
+    var config := app_config("Frost glTF", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
@@ -307,9 +307,9 @@ run :: fn(move app: App) -> i64 {
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment)
-    mut layouts : [2]BindGroupLayout = [frame_layout,
+    var layouts : [2]BindGroupLayout = [frame_layout,
         render_world_layout(app.render)]
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(device,
@@ -323,7 +323,7 @@ run :: fn(move app: App) -> i64 {
 
     // The whole of what this demo has to say about what is drawn. The path is
     // from the root of the checkout, which is where `just gltf` runs it.
-    mut held := gltf_read(MODEL)
+    var held := gltf_read(MODEL)
     loaded := gltf_ok(held)
     root := gltf_spawn(app.world, held, app.store, device, queue, app.materials,
         app.meshes, ids)
@@ -341,7 +341,7 @@ run :: fn(move app: App) -> i64 {
             spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity()))
     }
 
-    mut scene := Scene {
+    var scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
         steps = render_world_batch_pipelines(device,
             render_world_batch_layout(app.render)),
@@ -350,7 +350,7 @@ run :: fn(move app: App) -> i64 {
         store = ptr_to(app.store),
         frame_uniform = frame_uniform,
     }
-    mut eye := camera_default()
+    var eye := camera_default()
     eye.position = vec3(0.0, 2.0, 7.0)
     eye.pitch = -0.2
     app_camera_set(app, eye)

@@ -70,7 +70,7 @@ template_plugin :: fn(mut app: App) {
 tick :: fn(mut world: World) {
     step := input_delta_seconds(
         ecs_resource($Input, world, resource_of($Input, world)))
-    mut state := ecs_resource($TemplateState, world,
+    var state := ecs_resource($TemplateState, world,
         resource_of($TemplateState, world))
     state.frames = state.frames + 1
     state.elapsed = state.elapsed + step
@@ -79,18 +79,18 @@ tick :: fn(mut world: World) {
 
     spin := component_of($Spin, world)
     local := component_of($LocalTransform, world)
-    mut q := query_begin(world)
+    var q := query_begin(world)
     query_with(q, spin)
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        mut row : i64 = 0
+        var row : i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
-            mut turn := ecs_get($Spin, world, entity, spin)
+            var turn := ecs_get($Spin, world, entity, spin)
             turn.angle = turn.angle + turn.speed * step
             ecs_set($Spin, world, entity, spin, turn)
-            mut place := ecs_get($LocalTransform, world, entity, local)
+            var place := ecs_get($LocalTransform, world, entity, local)
             place.rotation = quat_from_axis_angle(turn.axis, turn.angle)
             ecs_set($LocalTransform, world, entity, local, place)
             row = row + 1
@@ -99,7 +99,7 @@ tick :: fn(mut world: World) {
 }
 
 main :: fn() -> i64 {
-    mut config := app_config("Frost template", WIDTH, HEIGHT)
+    var config := app_config("Frost template", WIDTH, HEIGHT)
     config.drawn = DRAWN
     match app_open(config) {
         case .Ok { value }: run(value)
@@ -175,7 +175,7 @@ run :: fn(move app: App) -> i64 {
     ecs_set($Light, app.world, lamp_holder, lights.light,
         lamp(vec3(1.0, 0.7, 0.4), 10.0))
 
-    mut eye := camera_default()
+    var eye := camera_default()
     eye.position = vec3(0.0, 1.2, 5.0)
     eye.pitch = -0.15
     app_camera_set(app, eye)

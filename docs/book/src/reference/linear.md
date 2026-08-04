@@ -72,7 +72,7 @@ Its arguments are read where it runs, not where it was written, so a variable
 reassigned after the `defer` changes what the deferred statement is given:
 
 ```frost
-mut f : i64 = 1
+var f : i64 = 1
 defer close(f)
 f = 2               // closes 2
 ```

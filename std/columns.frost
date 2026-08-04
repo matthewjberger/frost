@@ -22,7 +22,7 @@ export columns_reset, columns_full, columns_insert, columns_alive,
 // Every slot free, every generation back to zero. Built with `columns_new()`
 // and then reset, since construction cannot run code.
 columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) {
         c.generations[i] = 0
         c.free_list[i] = N - 1 - i

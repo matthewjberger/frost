@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn ir_rejects_consumption_inside_a_loop() {
         let source = format!(
-            "{PRELUDE}run :: fn() {{ f := open()  mut i : i64 = 0  while (i < 3) {{ close(f)  i = i + 1 }} }}"
+            "{PRELUDE}run :: fn() {{ f := open()  var i : i64 = 0  while (i < 3) {{ close(f)  i = i + 1 }} }}"
         );
         assert!(check(&source).is_err());
     }
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn ir_rejects_a_linear_left_unconsumed_by_a_break() {
         let source = format!(
-            "{PRELUDE}run :: fn() {{ f := open()  mut i : i64 = 0  while (i < 3) {{ break  close(f) }} }}"
+            "{PRELUDE}run :: fn() {{ f := open()  var i : i64 = 0  while (i < 3) {{ break  close(f) }} }}"
         );
         assert!(check(&source).is_err());
     }
