@@ -28,6 +28,7 @@ mod multi_returns;
 mod ownership;
 mod param_modes;
 mod parser;
+mod query;
 mod regions;
 mod source_map;
 mod types;
@@ -39,7 +40,7 @@ pub use self::{
     imports::*, interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*,
     ir_interp::*, ir_ownership::*, ir_typecheck::*, layers::Layer, lexer::*,
     manifest::*, multi_returns::*, ownership::*, param_modes::*, parser::*,
-    regions::*, types::*, unsafety::*,
+    query::*, regions::*, types::*, unsafety::*,
 };
 
 use std::fmt::Display;
