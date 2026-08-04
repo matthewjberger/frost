@@ -377,8 +377,127 @@ fn run_self_hosted(
 // bugs this session found were all one compiler refusing what the other built,
 // and a divergence is a bug in whichever is behind rather than a difference to
 // document.
-const VIEW_KINDS: usize = 3;
-const ESCAPE_POSITIONS: usize = 6;
+const VIEW_KINDS: usize = 7;
+const ESCAPE_POSITIONS: usize = 7;
+
+/// The kind whose view is a `ref`, which reaches only one position.
+const REF_KIND: usize = 6;
+
+/// How many positions a kind can be written in.
+///
+/// A `ref T` is the one view a program may not store anywhere, so the only
+/// position it reaches is the answer itself. A struct field holding one is
+/// refused for being a stored borrow before the escape is even asked about, and
+/// a cell refused on both halves says nothing about which rule answered.
+fn positions_for(kind: usize) -> usize {
+    match kind {
+        REF_KIND => 1,
+        _ => ESCAPE_POSITIONS,
+    }
+}
+
+/// What one view kind is written as: the module its storage needs, the type the
+/// view has, the local it names in the violating form, the expression that view
+/// is, and the parameter and expression the honest form uses instead.
+struct ViewKind {
+    import: &'static str,
+    held_type: &'static str,
+    storage: &'static str,
+    view: &'static str,
+    parameter: &'static str,
+    honest: &'static str,
+}
+
+fn view_kind(kind: usize) -> ViewKind {
+    match kind {
+        0 => ViewKind {
+            import: "mem.frost",
+            held_type: "[]i64",
+            storage: "data : [4]i64 = [11, 22, 33, 44]",
+            view: "data",
+            parameter: "mut source: [4]i64",
+            honest: "source",
+        },
+        1 => ViewKind {
+            import: "mem.frost",
+            held_type: "^i64",
+            storage: "mut cell : i64 = 5",
+            view: "ptr_to(cell)",
+            parameter: "mut source: i64",
+            honest: "ptr_to(source)",
+        },
+        2 => ViewKind {
+            import: "mem.frost",
+            held_type: "[]i64",
+            storage: "data : [4]i64 = [11, 22, 33, 44]",
+            view: "slice_range($i64, data, 0, 2)",
+            parameter: "mut source: [4]i64",
+            honest: "slice_range($i64, source, 0, 2)",
+        },
+        // A `str` is a `[]u8`, so it names storage the way a slice does and
+        // leaves a frame the same way. The bootstrap would not build the honest
+        // half of this until an array of bytes was allowed to become one.
+        3 => ViewKind {
+            import: "mem.frost",
+            held_type: "str",
+            storage: "data : [4]u8 = [104, 105, 33, 0]",
+            view: "data",
+            parameter: "mut source: [4]u8",
+            honest: "source",
+        },
+        // The two container shapes in `std` that reach storage by a route the
+        // plain array cells never take: a slab's fixed run, and one column of a
+        // struct of arrays.
+        4 => ViewKind {
+            import: "slab.frost",
+            held_type: "[]i64",
+            storage: "mut bag : Slab<i64, 4> = { storage = [0; 4], generations = [0; 4], free_list = [0; 4], free_count = 0 }",
+            view: "bag.storage",
+            parameter: "mut source: Slab<i64, 4>",
+            honest: "source.storage",
+        },
+        5 => ViewKind {
+            import: "columns.frost",
+            held_type: "[]i64",
+            storage: "mut bag : columns<Pt, 4> = columns_new()",
+            view: "bag.x",
+            parameter: "mut source: columns<Pt, 4>",
+            honest: "source.x",
+        },
+        _ => ViewKind {
+            import: "mem.frost",
+            held_type: "ref i64",
+            storage: "mut data : [4]i64 = [11, 22, 33, 44]",
+            view: "data[0]",
+            parameter: "mut source: [4]i64",
+            honest: "source[0]",
+        },
+    }
+}
+
+/// The declarations a case needs before its `escape`.
+///
+/// The wrappers are left out for a `ref`, since a struct field may not hold one
+/// at all and the declaration alone would be refused before the escape it is
+/// asking about. That kind only reaches the answer position, which uses none of
+/// them.
+fn safety_head(kind: usize, held_type: &str) -> String {
+    let import = view_kind(kind).import;
+    let mut head = format!("import \"{import}\"\n");
+    if kind == 5 {
+        head.push_str("Pt :: struct { x: i64, y: i64 }\n");
+    }
+    if kind == REF_KIND {
+        return head;
+    }
+    head.push_str(&format!(
+        "Holder :: struct {{ view: {held_type} }}\n\
+         Outer :: struct {{ inner: Holder }}\n\
+         Payload :: enum {{ Empty, Full {{ view: {held_type} }} }}\n\
+         keep :: fn(mut h: Holder, held: {held_type}) {{ h.view = held }}\n"
+    ));
+    head
+}
 
 /// One program from the grid. `honest` swaps the storage the view names from a
 /// local, which dies at the return, to a `mut` parameter, which is the caller's
@@ -391,32 +510,15 @@ fn safety_case(
     position: usize,
     honest: bool,
 ) -> String {
-    let (held_type, storage, view) = match kind {
-        0 => ("[]i64", "data : [4]i64 = [11, 22, 33, 44]", "data"),
-        1 => ("^i64", "mut cell : i64 = 5", "ptr_to(cell)"),
-        _ => (
-            "[]i64",
-            "data : [4]i64 = [11, 22, 33, 44]",
-            "slice_range($i64, data, 0, 2)",
-        ),
-    };
+    let held = view_kind(kind);
+    let held_type = held.held_type;
+    let parameter = held.parameter;
     // The honest form names the parameter instead, so nothing the call answers
     // with points into the frame that is about to go.
     let (declare, source) = if honest {
-        (
-            String::new(),
-            match kind {
-                1 => "ptr_to(source)".to_string(),
-                2 => "slice_range($i64, source, 0, 2)".to_string(),
-                _ => "source".to_string(),
-            },
-        )
+        (String::new(), held.honest.to_string())
     } else {
-        (format!("    {storage}\n"), view.to_string())
-    };
-    let parameter = match kind {
-        1 => "mut source: i64",
-        _ => "mut source: [4]i64",
+        (format!("    {}\n", held.storage), held.view.to_string())
     };
     // Noise around the escape, so the walk meets it at a depth it did not pick.
     let noise = match rng.below(3) {
@@ -430,11 +532,7 @@ fn safety_case(
             rng.below(4) + 1
         ),
     };
-    let head = "import \"mem.frost\"\n\
-        Holder :: struct { view: HELD }\n\
-        Outer :: struct { inner: Holder }\n\
-        keep :: fn(mut h: Holder, held: HELD) { h.view = held }\n"
-        .replace("HELD", held_type);
+    let head = safety_head(kind, held_type);
     let body = match position {
         0 => format!(
             "escape :: fn({parameter}) -> {held_type} {{\n{declare}{noise}    {source}\n}}\n"
@@ -451,8 +549,13 @@ fn safety_case(
         4 => format!(
             "escape :: fn({parameter}, mut sink: Holder) {{\n{declare}{noise}    keep(sink, {source})\n}}\n"
         ),
-        _ => format!(
+        5 => format!(
             "escape :: fn({parameter}) -> (held: {held_type}, count: i64) {{\n{declare}{noise}    return {{ held = {source}, count = 1 }}\n}}\n"
+        ),
+        // A variant's payload is held by the enum exactly as a field is held by
+        // a struct, so a view put into one leaves the call the same way.
+        _ => format!(
+            "escape :: fn({parameter}) -> Payload {{\n{declare}{noise}    Payload::Full {{ view = {source} }}\n}}\n"
         ),
     };
     format!("{head}{body}main :: fn() -> i64 {{\n    0\n}}\n")
@@ -487,13 +590,17 @@ fn both_compilers_agree_about_what_escapes() {
     let Some(hosted) = build_self_hosted_compiler("safety") else {
         return;
     };
+    // Fewer seeds than the oracle above, because the grid itself is what covers
+    // the shapes and a seed only varies the noise around them. Every cell builds
+    // two programs through two compilers, so the count is what keeps the suite
+    // usable; `FROST_FUZZ_SEEDS` turns it up for hunting.
     let seeds: u64 = std::env::var("FROST_FUZZ_SEEDS")
         .ok()
         .and_then(|held| held.parse().ok())
-        .unwrap_or(4);
+        .unwrap_or(2);
     for seed in 0..seeds {
         for kind in 0..VIEW_KINDS {
-            for position in 0..ESCAPE_POSITIONS {
+            for position in 0..positions_for(kind) {
                 for honest in [false, true] {
                     let mut rng =
                         Rng::new(seed * 1_000 + (kind * 10 + position) as u64);
@@ -534,7 +641,7 @@ fn both_compilers_agree_about_what_escapes() {
 // the program is the same, so a compiler that refuses it is reading the
 // container rather than the run, and that granularity is the whole difficulty:
 // the ECS grows one run of a group while a borrow into another is live.
-const GROWTH_KINDS: usize = 3;
+const GROWTH_KINDS: usize = 4;
 const GROWTH_POSITIONS: usize = 4;
 
 fn growth_case(
@@ -543,41 +650,50 @@ fn growth_case(
     position: usize,
     honest: bool,
 ) -> String {
-    let head = "import \"vec.frost\"\n\
-        wrap :: fn(w: Vec<i64>) -> []i64 { vec_slice($i64, w) }\n\
-        grow :: fn(mut w: Vec<i64>, value: i64) { vec_push($i64, w, value) }\n";
+    // The last kind views the run as a `str`, which is a `[]u8`, so the
+    // container it grows holds bytes and everything written against it follows.
+    let element = if kind == 3 { "u8" } else { "i64" };
+    let head = format!(
+        "import \"vec.frost\"\n\
+         wrap :: fn(w: Vec<{element}>) -> []{element} {{ vec_slice(${element}, w) }}\n\
+         grow :: fn(mut w: Vec<{element}>, value: {element}) {{ vec_push(${element}, w, value) }}\n"
+    );
     let grown = if honest { "other" } else { "v" };
     // How the view is taken, and what reads it afterwards. The `ref` writes
     // through the borrow, which lands in the freed block rather than reading it.
     let (take, read) = match kind {
-        0 => ("view := vec_slice($i64, v)", "print view[0]"),
-        1 => ("ref held := vec_slice($i64, v)[0]", "held = 999"),
-        _ => ("view := wrap(v)", "print view[0]"),
+        0 => ("view := vec_slice($i64, v)".to_string(), "print view[0]"),
+        1 => ("ref held := vec_slice($i64, v)[0]".to_string(), "held = 99"),
+        2 => ("view := wrap(v)".to_string(), "print view[0]"),
+        _ => (
+            "held : str = vec_slice($u8, v)".to_string(),
+            "print str_len(held)",
+        ),
     };
     let push = match position {
-        0 => format!("    vec_push($i64, {grown}, 7)\n"),
+        0 => format!("    vec_push(${element}, {grown}, 7)\n"),
         1 => format!(
-            "    mut step : i64 = 0\n\
-             \x20   while (step < {}) {{ vec_push($i64, {grown}, step)  step = step + 1 }}\n",
+            "    mut step : {element} = 0\n\
+             \x20   while (step < {}) {{ vec_push(${element}, {grown}, step)  step = step + 1 }}\n",
             rng.below(3) + 1
         ),
         2 => format!(
-            "    if ({} > 0) {{ vec_push($i64, {grown}, 7) }}\n",
+            "    if ({} > 0) {{ vec_push(${element}, {grown}, 7) }}\n",
             rng.below(2)
         ),
         _ => format!("    grow({grown}, 7)\n"),
     };
     format!(
         "{head}main :: fn() -> i64 {{\n\
-         \x20   mut v := vec_new($i64, 1)\n\
-         \x20   mut other := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 11)\n\
-         \x20   vec_push($i64, other, 22)\n\
+         \x20   mut v := vec_new(${element}, 1)\n\
+         \x20   mut other := vec_new(${element}, 1)\n\
+         \x20   vec_push(${element}, v, 11)\n\
+         \x20   vec_push(${element}, other, 22)\n\
          \x20   {take}\n\
          {push}\
          \x20   {read}\n\
-         \x20   vec_free($i64, v)\n\
-         \x20   vec_free($i64, other)\n\
+         \x20   vec_free(${element}, v)\n\
+         \x20   vec_free(${element}, other)\n\
          \x20   0\n\
          }}\n"
     )
@@ -591,7 +707,7 @@ fn both_compilers_agree_about_what_growth_invalidates() {
     let seeds: u64 = std::env::var("FROST_FUZZ_SEEDS")
         .ok()
         .and_then(|held| held.parse().ok())
-        .unwrap_or(4);
+        .unwrap_or(2);
     for seed in 0..seeds {
         for kind in 0..GROWTH_KINDS {
             for position in 0..GROWTH_POSITIONS {

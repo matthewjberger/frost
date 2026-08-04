@@ -256,6 +256,31 @@ main :: fn() -> i64 {\n\
     assert_eq!(output, "111\n");
 }
 
+// A view forwarded through a wrapper and read before anything moves the run.
+// The rule that refuses the stale form has to leave this one alone, or every
+// accessor written over a container becomes unusable.
+#[test]
+fn a_view_through_a_wrapper_reads_before_the_growth() {
+    let source = "\
+import \"vec.frost\"\n\
+passthrough :: fn(s: []i64) -> []i64 { s }\n\
+main :: fn() -> i64 {\n\
+\x20   mut v := vec_new($i64, 1)\n\
+\x20   vec_push($i64, v, 111)\n\
+\x20   view := passthrough(vec_slice($i64, v))\n\
+\x20   print view[0]\n\
+\x20   vec_push($i64, v, 222)\n\
+\x20   again := passthrough(vec_slice($i64, v))\n\
+\x20   print again[1]\n\
+\x20   vec_free($i64, v)\n\
+\x20   0\n\
+}\n";
+    let Some(output) = compile_and_run_unaudited("wrapview", source) else {
+        return;
+    };
+    assert_eq!(output, "111\n222\n");
+}
+
 #[test]
 fn ownership_errors_report_a_source_line() {
     let source = r#"
@@ -17218,6 +17243,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "has since replaced",
     ),
+    // The same view, reached through a wrapper. Nothing here holds the
+    // container: `passthrough` is handed a view and answers with it, so no
+    // parameter of that call names the run, and reading the argument as a place
+    // of its own loses `v` entirely. The lowering hoists the inner call into a
+    // temporary, so what the walk meets is a name rather than the call that
+    // made it, and a binding that views a run has to stand for that run.
+    (
+        "a_view_through_a_wrapper_read_after_a_growth",
+        "import \"vec.frost\"\n\
+         passthrough :: fn(s: []i64) -> []i64 { s }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 111)\n\
+         \x20   view := passthrough(vec_slice($i64, v))\n\
+         \x20   vec_push($i64, v, 222)\n\
+         \x20   print view[0]\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   0\n}\n",
+        "has since replaced",
+    ),
+    (
+        "a_view_through_a_wrapper_read_after_a_release",
+        "import \"vec.frost\"\n\
+         passthrough :: fn(s: []i64) -> []i64 { s }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push($i64, v, 111)\n\
+         \x20   view := passthrough(vec_slice($i64, v))\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   print view[0]\n\
+         \x20   0\n}\n",
+        "which has been given away",
+    ),
     // The same question asked of an arena rather than of a frame. A `[]T`
     // carved out of one names the arena's storage exactly as a `^T` does, and
     // reading only the pointer let the slice beside it leave the block.
@@ -20633,6 +20691,39 @@ main :: fn() -> i64 {
          \x20   print got.x + got.y\n\
          \x20   0\n}\n",
         "7\n",
+    ),
+    // An index whose base is itself an index. The bootstrap read the type of a
+    // place through names, dereferences and fields but not through elements, so
+    // `pair[0]` typed as nothing, fell past the slice path to the array one, and
+    // was refused for not naming an array. The self-hosted compiler built the
+    // same program and printed the right number, which is what said what the
+    // answer was.
+    //
+    // Every base a chain can stand on, since the fix is one arm and each of
+    // these reaches it differently: an array of slices, an array of strings, an
+    // array reached through a field, a slice a call answered with, and an array
+    // of arrays, which is the one shape that already worked.
+    (
+        "an_index_whose_base_is_an_index",
+        "import \"vec.frost\"\n\
+         Holder :: struct { rows: [2][]i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [2]i64 = [1, 2]\n\
+         \x20   b : [2]i64 = [3, 4]\n\
+         \x20   pair : [2][]i64 = [a, b]\n\
+         \x20   print pair[1][0]\n\
+         \x20   texts : [2]str = [\"ab\", \"cd\"]\n\
+         \x20   print texts[1][0]\n\
+         \x20   held : Holder = { rows = pair }\n\
+         \x20   print held.rows[0][1]\n\
+         \x20   mut v := vec_new($i64, 2)\n\
+         \x20   vec_push($i64, v, 55)\n\
+         \x20   print vec_slice($i64, v)[0]\n\
+         \x20   vec_free($i64, v)\n\
+         \x20   mut grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
+         \x20   print grid[1][1]\n\
+         \x20   0\n}\n",
+        "3\n99\n2\n55\n10\n",
     ),
 ];
 
