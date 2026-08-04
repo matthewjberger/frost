@@ -153,7 +153,7 @@ material_surface :: fn(held: Material) -> Vec4 {
 // from the two fields above rather than stored beside them, so a material
 // cannot say one thing in its mode and another in its flags.
 material_flags :: fn(held: Material) -> u32 {
-    var bits : u32 = 0
+    var bits: u32 = 0
     if (held.alpha_mode == ALPHA_BLEND) {
         bits = bits | FLAG_TRANSPARENT
     }

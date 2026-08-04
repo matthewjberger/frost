@@ -40,7 +40,7 @@ bump_once :: fn(context: ^u8) {
 
 bump_many :: fn(context: ^u8) {
     cell := unsafe { ptr_cast($i64, context) }
-    var left : i64 = 0
+    var left: i64 = 0
     while (left < 1000) {
         atomic_add(cell, 1)
         left = left + 1
@@ -48,7 +48,7 @@ bump_many :: fn(context: ^u8) {
 }
 
 test "a thread runs its body and a join waits for it" {
-    var cell : i64 = 0
+    var cell: i64 = 0
     handle := spawn(bump_once, unsafe { ptr_cast($u8, ptr_to(cell)) })
     join(handle)
     assert(cell == 1)
@@ -57,15 +57,15 @@ test "a thread runs its body and a join waits for it" {
 // Four threads adding to one word a thousand times each. Without the atomic
 // this loses adds, so the count is what says the operation is one.
 test "concurrent adds to one cell lose nothing" {
-    var cell : i64 = 0
-    var handles : [4]i64 = [0, 0, 0, 0]
-    var spawned : i64 = 0
+    var cell: i64 = 0
+    var handles: [4]i64 = [0, 0, 0, 0]
+    var spawned: i64 = 0
     while (spawned < 4) {
         handles[spawned] = spawn(bump_many,
             unsafe { ptr_cast($u8, ptr_to(cell)) })
         spawned = spawned + 1
     }
-    var joined : i64 = 0
+    var joined: i64 = 0
     while (joined < 4) {
         join(handles[joined])
         joined = joined + 1
@@ -76,7 +76,7 @@ test "concurrent adds to one cell lose nothing" {
 // What the add answers is the value before it, so a thread can tell which of
 // them it was without a second read that another could land between.
 test "an atomic add answers the value it found" {
-    var cell : i64 = 7
+    var cell: i64 = 7
     before := atomic_add(ptr_to(cell), 5)
     assert(before == 7)
     assert(cell == 12)

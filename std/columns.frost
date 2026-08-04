@@ -22,7 +22,7 @@ export columns_reset, columns_full, columns_insert, columns_alive,
 // Every slot free, every generation back to zero. Built with `columns_new()`
 // and then reset, since construction cannot run code.
 columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < N) {
         c.generations[i] = 0
         c.free_list[i] = N - 1 - i
@@ -38,17 +38,17 @@ columns_full :: fn($T: Type, $N: usize, c: columns<T, N>) -> bool {
 // The caller checks `columns_full` first. The element is scattered into the
 // columns at the free slot. The handle carries that slot's current generation.
 columns_insert :: fn($T: Type, $N: usize, mut c: columns<T, N>, move value: $T)
-    -> Handle<T> {
+    -> Handle<T>{
     c.free_count = c.free_count - 1
     index := c.free_list[c.free_count]
-    handle : Handle<T> = (c.generations[index] << 32) | index
+    handle: Handle<T> = (c.generations[index] << 32) | index
     c[handle] = value
     handle
 }
 
 columns_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>)
     -> bool {
-    raw : i64 = handle
+    raw: i64 = handle
     c.generations[raw & 4294967295] == (raw >> 32)
 }
 
@@ -57,7 +57,7 @@ columns_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>)
 // tenant.
 columns_release :: fn($T: Type, $N: usize, mut c: columns<T, N>,
     handle: Handle<T>) -> bool {
-    raw : i64 = handle
+    raw: i64 = handle
     index := raw & 4294967295
     if (c.generations[index] != (raw >> 32)) {
         return false

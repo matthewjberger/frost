@@ -144,8 +144,8 @@ report_int :: fn(value: i64) {
         report("-")
         held = -held
     }
-    var digits : [24]u8 = [0; 24]
-    var count : i64 = 0
+    var digits: [24]u8 = [0; 24]
+    var count: i64 = 0
     while (held > 0) {
         digits[count] = cast($u8, 48 + (held % 10))
         held = held / 10
@@ -975,7 +975,7 @@ Arena :: struct($T: Type) {
     count: i64,
 }
 
-arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
+arena_make :: fn($T: Type, cap: i64) -> Arena<T>{
     // `frost_rt_alloc` is a `safe extern`: it hands back memory or does not
     // return, so it cannot corrupt any. Reading those bytes as a `T` is the
     // unchecked part, and that is all the block below vouches for.
@@ -1051,7 +1051,7 @@ empty_source :: fn() -> str {
 // The buffer is longer than its text: the room past the terminator is where the
 // names the compiler makes up go.
 source_end :: fn(text: str) -> i64 {
-    var at : i64 = 0
+    var at: i64 = 0
     while (at < str_len(text) && text[at] != 0) {
         at = at + 1
     }
@@ -1100,7 +1100,7 @@ path_under :: fn(path: ^i8, directory: ^i8) -> bool {
     if (length == 0 || cstr_len(path) < length) {
         return false
     }
-    var k : i64 = 0
+    var k: i64 = 0
     while (k < length) {
         if (byte_at(path, k) != byte_at(directory, k)) {
             return false
@@ -1117,9 +1117,9 @@ path_under :: fn(path: ^i8, directory: ^i8) -> bool {
 // layer containing it wins, so a layer declared inside another is the answer
 // for the files under it.
 layer_of :: fn(path: ^i8, mut layers: Arena<Layer>) -> i64 {
-    var best : i64 = -1
-    var deepest : i64 = -1
-    var i : i64 = 0
+    var best: i64 = -1
+    var deepest: i64 = -1
+    var i: i64 = 0
     while (i < layers.count) {
         held := arena_at(layers, i)
         if (path_under(path, held.path)) {
@@ -1513,7 +1513,7 @@ cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
     if (la != lb) {
         return false
     }
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < la) {
         if (byte_at(a, i) != byte_at(b, i)) {
             return false

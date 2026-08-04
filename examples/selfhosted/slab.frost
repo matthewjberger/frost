@@ -21,7 +21,7 @@ Slab :: struct {
 }
 
 reset :: fn(mut s: Slab) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < 4) {
         s.generations[i] = 0
         s.free_list[i] = 3 - i
@@ -30,7 +30,7 @@ reset :: fn(mut s: Slab) {
     s.free_count = 4
 }
 
-insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {
+insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity>{
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -39,7 +39,7 @@ insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {
 }
 
 main :: fn() -> i64 {
-    var world : Slab = Slab {
+    var world: Slab = Slab {
         storage = [
             Entity { hp = 0, mana = 0 },
             Entity { hp = 0, mana = 0 },

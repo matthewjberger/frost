@@ -218,7 +218,7 @@ declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
 
 // The state a pass was pointed at, read the way a run is.
 scene_at :: fn(held: ^Scene) -> ref Scene {
-    span : []Scene = unsafe { slice_from($Scene, held, 1) }
+    span: []Scene = unsafe { slice_from($Scene, held, 1) }
     ref result := span[0]
     result
 }
@@ -241,7 +241,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     // Where the surface faces is read and where it reads an image is not, so
     // two of the three the mesh carries are described here.
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -257,7 +257,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -294,8 +294,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = INSTANCES
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 
@@ -319,7 +319,7 @@ run :: fn(move app: App) -> i64 {
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
-    var looks : [INSTANCES]i64 = [0; INSTANCES]
+    var looks: [INSTANCES]i64 = [0; INSTANCES]
     looks[0] = materials_add(app.materials, material_of(vec4(1.0, 0.35, 0.35, 1.0), 0.5, 0.0))
     looks[1] = materials_add(app.materials, material_of(vec4(0.35, 1.0, 0.45, 1.0), 0.5, 0.0))
     looks[2] = materials_add(app.materials, material_of(vec4(0.45, 0.55, 1.0, 1.0), 0.5, 0.0))
@@ -333,8 +333,8 @@ run :: fn(move app: App) -> i64 {
     var far_render := render_world_new(device, INSTANCES, MAX_MESHES, MAX_LOOKS)
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
-    var layouts : [2]BindGroupLayout = [frame_layout,
+        ShaderStage :: Vertex | ShaderStage :: Fragment)
+    var layouts: [2]BindGroupLayout = [frame_layout,
         render_world_layout(app.render)]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
@@ -352,12 +352,12 @@ run :: fn(move app: App) -> i64 {
                         ids.local_transform), spin), ids.drawn),
             ids.global_transform), ids.transform)
 
-    var spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
-    var depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
-    var rates : [INSTANCES]f32 = [1.0, -1.4, 0.7, -0.5]
-    var layers : [INSTANCES]i64 = [NEAR, NEAR, FAR, FAR]
+    var spread: [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
+    var depths: [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
+    var rates: [INSTANCES]f32 = [1.0, -1.4, 0.7, -0.5]
+    var layers: [INSTANCES]i64 = [NEAR, NEAR, FAR, FAR]
 
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < INSTANCES) {
         // Straight into the archetype it belongs in, rather than spawning bare
         // and migrating once per component.

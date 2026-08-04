@@ -35,7 +35,7 @@ spinning :: fn(axis: Vec3, speed: f32, rest: Quat) -> Spin {
 // with a transform.
 spin_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
-    app_add_system(app, Stage::FrameUpdate, turn_things)
+    app_add_system(app, Stage :: FrameUpdate, turn_things)
 }
 
 // Every turn advanced by the frame's step, and written where a rotation lives.
@@ -49,7 +49,7 @@ turn_things :: fn(mut world: World) {
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             var turn := ecs_get($Spin, world, entity, spin)

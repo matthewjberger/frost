@@ -88,7 +88,7 @@ Geometry :: struct {
 
 // The buffers a pass was pointed at, read the way a run is.
 geometry_at :: fn(held: ^Geometry) -> ref Geometry {
-    span : []Geometry = unsafe { slice_from($Geometry, held, 1) }
+    span: []Geometry = unsafe { slice_from($Geometry, held, 1) }
     ref result := span[0]
     result
 }
@@ -99,13 +99,13 @@ geometry_new :: fn(device: Device, vertex_room: i64,
     // Copied from as well as into: growing one is a copy on the device from the
     // old buffer to the new, and a buffer that cannot be read from would have to
     // make the trip through the CPU instead.
-    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
-        | BufferUsage::CopySrc
+    vertex_descriptor.usage = BufferUsage :: Vertex | BufferUsage :: CopyDst
+        | BufferUsage :: CopySrc
     vertex_descriptor.size = vertex_room * VERTEX_STRIDE
 
     var index_descriptor := buffer_descriptor_init()
-    index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
-        | BufferUsage::CopySrc
+    index_descriptor.usage = BufferUsage :: Index | BufferUsage :: CopyDst
+        | BufferUsage :: CopySrc
     index_descriptor.size = index_room * INDEX_BYTES
 
     Geometry {
@@ -152,8 +152,8 @@ geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
     }
     // Measured here rather than asked of the caller, since the vertices are in
     // hand and nothing else knows the shape.
-    var radius : f32 = 0.0
-    var at : i64 = 0
+    var radius: f32 = 0.0
+    var at: i64 = 0
     while (at < added) {
         reach := vec3_length(vertices[at].position)
         if (reach > radius) {
@@ -224,7 +224,7 @@ geometry_shrink :: fn(mut store: Geometry, device: Device, queue: Queue) {
 
 // Room for this many, with the growth factor applied.
 grown :: fn(needed: i64) -> i64 {
-    held : f32 = needed
+    held: f32 = needed
     scaled := cast($i64, held * GROWTH_FACTOR)
     if (scaled < needed) {
         return needed
@@ -248,8 +248,8 @@ grow_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
 replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
-        | BufferUsage::CopySrc
+    descriptor.usage = BufferUsage :: Vertex | BufferUsage :: CopyDst
+        | BufferUsage :: CopySrc
     descriptor.size = room * VERTEX_STRIDE
     made := device_create_buffer(device, ptr_to(descriptor))
     carry_over(store.vertices, made, device, queue,
@@ -262,8 +262,8 @@ replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
 replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
-        | BufferUsage::CopySrc
+    descriptor.usage = BufferUsage :: Index | BufferUsage :: CopyDst
+        | BufferUsage :: CopySrc
     descriptor.size = room * INDEX_BYTES
     made := device_create_buffer(device, ptr_to(descriptor))
     carry_over(store.indices, made, device, queue,

@@ -26,7 +26,7 @@ Slab :: struct($T: Type, $N: usize) {
 }
 
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < N) {
         s.generations[i] = 0
         s.free_list[i] = N - 1 - i
@@ -35,7 +35,7 @@ slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     s.free_count = N
 }
 
-slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T>{
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -44,7 +44,7 @@ slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Han
 }
 
 slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool {
-    raw : i64 = handle
+    raw: i64 = handle
     s.generations[raw & 4294967295] == (raw >> 32)
 }
 
@@ -55,7 +55,7 @@ slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool 
 // 32 bits, so a slot released two billion times has to be retired rather than
 // reused; `std/slab.frost` does that and is the one to reach for.
 slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) {
-    raw : i64 = handle
+    raw: i64 = handle
     index := raw & 4294967295
     s.generations[index] = s.generations[index] + 1
     s.free_list[s.free_count] = index
@@ -65,7 +65,7 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) {
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 4> = Slab {
+    var world: Slab<Entity, 4> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 4],
         generations = [0; 4],
         free_list = [0; 4],

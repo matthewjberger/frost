@@ -106,8 +106,8 @@ main :: fn() -> i64 {
     config.meshes = MESHES
     config.materials = LOOKS
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 
@@ -155,9 +155,9 @@ run :: fn(move app: App) -> i64 {
 
     // The ring, drawn as the sphere, so removing that mesh is visible as these
     // going and nothing else going.
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < RING) {
-        turn : f32 = made
+        turn: f32 = made
         angle := turn * 6.283185307179586 / RING
         held := ecs_spawn_with(app.world, still)
         place(app, held, ids,
@@ -173,9 +173,9 @@ run :: fn(move app: App) -> i64 {
     // Four lamps that stop. Where they stop is what the grid is for: a box of
     // the grid more than six units from all four holds none of them, and a
     // fragment in it walks no local lights at all.
-    var lamp_index : i64 = 0
+    var lamp_index: i64 = 0
     while (lamp_index < LAMPS) {
-        which : f32 = lamp_index
+        which: f32 = lamp_index
         angle := which * 6.283185307179586 / LAMPS
         held := ecs_spawn_with(app.world, lighting)
         aim(app, held, ids,
@@ -216,8 +216,8 @@ lamp_colour :: fn(index: i64) -> Vec3 {
 swarm_plugin :: fn(mut app: App) {
     component_for($Orbit, app.world)
     app_insert_state(app, RUNNING)
-    app_add_system_in_state(app, Stage::FrameUpdate, RUNNING, turn_the_swarm)
-    app_add_system(app, Stage::FrameUpdate, watch_the_keys)
+    app_add_system_in_state(app, Stage :: FrameUpdate, RUNNING, turn_the_swarm)
+    app_add_system(app, Stage :: FrameUpdate, watch_the_keys)
 }
 
 // Every circling thing, moved along its circle. One system over the whole swarm,
@@ -232,7 +232,7 @@ turn_the_swarm :: fn(mut world: World) {
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             one := ecs_get($Orbit, world, entity, orbit)
@@ -313,7 +313,7 @@ thin_the_swarm :: fn(mut world: World) {
     }
     var circling := ecs_gather(world, no_filters(), $Orbit)
     going := vec_len($Entity, circling) / 2
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < going) {
         ecs_despawn(world, vec_get($Entity, circling, index))
         index = index + 1
@@ -339,12 +339,12 @@ grow_the_swarm :: fn(mut world: World) {
 // same mesh and the same material, so all of them land in one batch.
 spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
     kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
-    var made : i64 = 0
+    var made: i64 = 0
     while (made < count) {
-        which : f32 = made
+        which: f32 = made
         held := ecs_spawn_with(world, kit.drawn_mask)
         ring := made - (made / 16) * 16
-        band : f32 = ring
+        band: f32 = ring
         ecs_set($Orbit, world, held, kit.orbit, Orbit {
                 radius = 3.0 + band * 0.55,
                 speed = 0.35 + band * 0.03,

@@ -224,7 +224,7 @@ render_world_batch_group :: fn(held: RenderWorld) -> BindGroup {
 // frame and the run is filled every frame after, so it names the App's rather
 // than holding one, and this is where that name is read.
 render_world_at :: fn(held: ^RenderWorld) -> ref RenderWorld {
-    span : []RenderWorld = unsafe { slice_from($RenderWorld, held, 1) }
+    span: []RenderWorld = unsafe { slice_from($RenderWorld, held, 1) }
     ref result := span[0]
     result
 }
@@ -254,7 +254,7 @@ render_world_batch_pipelines :: fn(device: Device,
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var groups : [1]BindGroupLayout = [layout]
+    var groups: [1]BindGroupLayout = [layout]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
@@ -381,8 +381,8 @@ render_world_new :: fn(device: Device, room: i64, meshes: i64,
     // Both indirect and storage: the compute passes write it and the draws read
     // their arguments from it.
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Indirect | BufferUsage::Storage
-        | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Indirect | BufferUsage :: Storage
+        | BufferUsage :: CopyDst
     descriptor.size = total_slots * INDIRECT_BYTES
     indirect_buffer := device_create_buffer(device, ptr_to(descriptor))
 
@@ -463,7 +463,7 @@ render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, mesh: i64,
     }
     var places := held.transforms
     places[held.count] = matrix
-    var overlay : u32 = 0
+    var overlay: u32 = 0
     if (layer == OVERLAY_LAYER) {
         overlay = 1
     }
@@ -490,8 +490,8 @@ render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, mesh: i64,
 render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
     view_projection: Mat4, registry: Materials, cache: MeshCache) {
     planes := mat4_frustum_planes(view_projection)
-    var given : [32]f32 = [0.0; 32]
-    var plane : i64 = 0
+    var given: [32]f32 = [0.0; 32]
+    var plane: i64 = 0
     while (plane < CULL_PLANES) {
         given[plane * 4] = planes[plane].x
         given[plane * 4 + 1] = planes[plane].y
@@ -499,7 +499,7 @@ render_world_upload :: fn(mut held: RenderWorld, queue: Queue,
         given[plane * 4 + 3] = planes[plane].w
         plane = plane + 1
     }
-    var counts : [8]u32 = [cast($u32, held.count), cast($u32, held.mesh_room),
+    var counts: [8]u32 = [cast($u32, held.count), cast($u32, held.mesh_room),
         cast($u32, held.material_room), cast($u32, held.batches_per_class),
         cast($u32, held.batches_per_class * NUM_DRAW_LANES), 0, 0, 0]
     queue_write_buffer(queue, held.params_buffer, 0, ptr_to(given[0]),
@@ -534,7 +534,7 @@ upload_meshes :: fn(mut held: RenderWorld, queue: Queue, cache: MeshCache) {
     }
     var table := heap_slice($u32, written * MESH_GEO_WORDS)
     var reals := float_view(table)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < written) {
         span := mesh_cache_at(cache, index)
         at := index * MESH_GEO_WORDS
@@ -564,7 +564,7 @@ upload_materials :: fn(mut held: RenderWorld, queue: Queue,
     }
     var table := heap_slice($u32, written * 8)
     var reals := float_view(table)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < written) {
         one := materials_at(registry, index)
         at := index * 8
@@ -622,7 +622,7 @@ render_world_dispatch_dense :: fn(held: RenderWorld) -> u32 {
 // it wears is later made two-sided or blended. A program with a pipeline per
 // class calls the one below instead, once each.
 render_world_draw_all :: fn(pass: RenderPassEncoder, held: RenderWorld) {
-    var class : i64 = 0
+    var class: i64 = 0
     while (class < NUM_DRAW_CLASSES) {
         render_world_draw_class(pass, held, class)
         class = class + 1
@@ -657,7 +657,7 @@ render_world_draw_prepass :: fn(pass: RenderPassEncoder, held: RenderWorld,
 // else about the design changes.
 draw_lane :: fn(pass: RenderPassEncoder, held: RenderWorld, lane: i64) {
     base := lane * held.batches_per_class
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < held.batches_per_class) {
         render_pass_encoder_draw_indexed_indirect(pass, held.indirect_buffer,
             (base + slot) * INDIRECT_BYTES)
@@ -1016,14 +1016,14 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 
 storage_buffer :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Storage | BufferUsage :: CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 small_uniform :: fn(device: Device, size: i64) -> Buffer {
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: Uniform | BufferUsage :: CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
@@ -1031,11 +1031,11 @@ small_uniform :: fn(device: Device, size: i64) -> Buffer {
 // What a drawing pass reads: the objects, which of them survived, where they
 // are, and what they are made of.
 scene_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries : [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
-    var slot : i64 = 0
+    var entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage::Vertex | ShaderStage::Fragment
+        entries[slot].visibility = ShaderStage :: Vertex | ShaderStage :: Fragment
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
         slot = slot + 1
     }
@@ -1049,7 +1049,7 @@ scene_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
     visible: Buffer, transforms: Buffer, materials: Buffer, object_bytes: i64,
     visible_bytes: i64, transform_bytes: i64,
     material_bytes: i64) -> BindGroup {
-    var entries : [4]BindGroupEntry = [bind_group_entry_init(); 4]
+    var entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
     entries[0].binding = 0
     entries[0].buffer = objects
     entries[0].size = object_bytes
@@ -1073,11 +1073,11 @@ scene_group :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
 // are steps over one set of tables, and a step binding a subset would be a
 // second place the shapes are written down.
 batch_layout_of :: fn(device: Device) -> BindGroupLayout {
-    var entries : [11]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 11]
-    var slot : i64 = 0
+    var entries: [11]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 11]
+    var slot: i64 = 0
     while (slot < 11) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage::Compute
+        entries[slot].visibility = ShaderStage :: Compute
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_STORAGE
         slot = slot + 1
     }
@@ -1098,15 +1098,15 @@ batch_group_of :: fn(device: Device, layout: BindGroupLayout, objects: Buffer,
     descs: Buffer, keys: Buffer, meta: Buffer, draws: Buffer, visible: Buffer,
     params: Buffer, room: i64, meshes: i64, material_count: i64,
     total_slots: i64) -> BindGroup {
-    var entries : [11]BindGroupEntry = [bind_group_entry_init(); 11]
-    var sizes : [11]i64 = [room * OBJECT_BYTES, room * TRANSFORM_BYTES,
+    var entries: [11]BindGroupEntry = [bind_group_entry_init(); 11]
+    var sizes: [11]i64 = [room * OBJECT_BYTES, room * TRANSFORM_BYTES,
         material_count * MATERIAL_BYTES, meshes * MESH_GEO_BYTES,
         NUM_DRAW_LANES * meshes * material_count * 4, total_slots * 8,
         total_slots * 16, NUM_DRAW_LANES * 4,
         total_slots * INDIRECT_BYTES, room * 4, PARAMS_BYTES]
-    var held : [11]Buffer = [objects, transforms, materials, mesh_geo, dense,
+    var held: [11]Buffer = [objects, transforms, materials, mesh_geo, dense,
         descs, keys, meta, draws, visible, params]
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < 11) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]

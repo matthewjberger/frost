@@ -61,7 +61,7 @@ template_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
     app_insert_resource($TemplateState, app,
         TemplateState { frames = 0, elapsed = 0.0 })
-    app_add_system(app, Stage::FrameUpdate, tick)
+    app_add_system(app, Stage :: FrameUpdate, tick)
 }
 
 // Once a frame: the counters advance, and everything wearing a `Spin` turns.
@@ -84,7 +84,7 @@ tick :: fn(mut world: World) {
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             var turn := ecs_get($Spin, world, entity, spin)
@@ -102,8 +102,8 @@ main :: fn() -> i64 {
     var config := app_config("Frost template", WIDTH, HEIGHT)
     config.drawn = DRAWN
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case.Ok { value }: run(value)
+        case.Err { error }: app_failed(error)
     }
 }
 

@@ -67,7 +67,7 @@ vec2_dot :: inline fn(a: Vec2, b: Vec2) -> f32 { a.x * b.x + a.y * b.y }
 vec2_length :: fn(a: Vec2) -> f32 { sqrtf(vec2_dot(a, a)) }
 vec2_normalize :: fn(a: Vec2) -> Vec2 {
     length := vec2_length(a)
-    var inv : f32 = 0.0
+    var inv: f32 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec2_scale(a, inv)
 }
@@ -104,7 +104,7 @@ vec3_length :: fn(a: Vec3) -> f32 { sqrtf(vec3_dot(a, a)) }
 vec3_distance :: fn(a: Vec3, b: Vec3) -> f32 { vec3_length(vec3_sub(a, b)) }
 vec3_normalize :: fn(a: Vec3) -> Vec3 {
     length := vec3_length(a)
-    var inv : f32 = 0.0
+    var inv: f32 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec3_scale(a, inv)
 }
@@ -156,12 +156,12 @@ mat4_identity :: fn() -> Mat4 {
 // then by `a`.
 mat4_mul :: fn(a: Mat4, b: Mat4) -> Mat4 {
     var out := mat4_zero()
-    var col : i64 = 0
+    var col: i64 = 0
     while (col < 4) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < 4) {
-            var sum : f32 = 0.0
-            var k : i64 = 0
+            var sum: f32 = 0.0
+            var k: i64 = 0
             while (k < 4) {
                 sum = sum + a.m[k * 4 + row] * b.m[col * 4 + k]
                 k = k + 1
@@ -317,9 +317,9 @@ mat4_ortho :: fn(left: f32, right: f32, bottom: f32, top: f32,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -2.0 / (far - near)
-    out.m[12] = -(right + left) / (right - left)
-    out.m[13] = -(top + bottom) / (top - bottom)
-    out.m[14] = -(far + near) / (far - near)
+    out.m[12] = - (right + left) / (right - left)
+    out.m[13] = - (top + bottom) / (top - bottom)
+    out.m[14] = - (far + near) / (far - near)
     out
 }
 
@@ -333,8 +333,8 @@ mat4_ortho_zo :: fn(left: f32, right: f32, bottom: f32, top: f32,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -1.0 / (far - near)
-    out.m[12] = -(right + left) / (right - left)
-    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[12] = - (right + left) / (right - left)
+    out.m[13] = - (top + bottom) / (top - bottom)
     out.m[14] = -near / (far - near)
     out
 }
@@ -349,8 +349,8 @@ mat4_ortho_reverse_z :: fn(left: f32, right: f32, bottom: f32, top: f32,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = 1.0 / (far - near)
-    out.m[12] = -(right + left) / (right - left)
-    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[12] = - (right + left) / (right - left)
+    out.m[13] = - (top + bottom) / (top - bottom)
     out.m[14] = far / (far - near)
     out
 }
@@ -395,8 +395,8 @@ mat4_inverse :: fn(m: Mat4) -> (inverse: Mat4, ok: bool) {
     if (determinant == 0.0) {
         return { inverse = mat4_identity(), ok = false }
     }
-    scale : f32 = 1.0 / determinant
-    var element : i64 = 0
+    scale: f32 = 1.0 / determinant
+    var element: i64 = 0
     while (element < 16) {
         out.m[element] = out.m[element] * scale
         element = element + 1
@@ -446,7 +446,7 @@ mat4_look_at :: fn(eye: Vec3, center: Vec3, up: Vec3) -> Mat4 {
 // direction at all, which `plane_of` answers with zeroes; a zero plane holds
 // every point, which is what a frustum with nothing behind it means.
 mat4_frustum_planes :: fn(m: Mat4) -> [6]Vec4 {
-    var planes : [6]Vec4 = [vec4(0.0, 0.0, 0.0, 0.0); 6]
+    var planes: [6]Vec4 = [vec4(0.0, 0.0, 0.0, 0.0); 6]
     planes[0] = plane_of(m.m[3] + m.m[0], m.m[7] + m.m[4], m.m[11] + m.m[8],
         m.m[15] + m.m[12])
     planes[1] = plane_of(m.m[3] - m.m[0], m.m[7] - m.m[4], m.m[11] - m.m[8],
@@ -497,7 +497,7 @@ quat_length :: fn(a: Quat) -> f32 {
 }
 quat_normalize :: fn(a: Quat) -> Quat {
     length := quat_length(a)
-    var inv : f32 = 0.0
+    var inv: f32 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     Quat { x = a.x * inv, y = a.y * inv, z = a.z * inv, w = a.w * inv }
 }
@@ -508,7 +508,7 @@ quat_conjugate :: fn(a: Quat) -> Quat {
 // Rotate a vector by a quaternion: q * (v, 0) * conjugate(q), the scalar part
 // of which is zero, so the vector part is the answer.
 quat_rotate_vec3 :: fn(q: Quat, v: Vec3) -> Vec3 {
-    as_quat : Quat = Quat { x = v.x, y = v.y, z = v.z, w = 0.0 }
+    as_quat: Quat = Quat { x = v.x, y = v.y, z = v.z, w = 0.0 }
     rotated := quat_mul(quat_mul(q, as_quat), quat_conjugate(q))
     Vec3 { x = rotated.x, y = rotated.y, z = rotated.z }
 }
@@ -763,11 +763,11 @@ test "depth falls the whole way between the planes, and never rises" {
     projection := mat4_perspective_reverse_z(radians(90.0), 1.0, 1.0, 101.0)
     // Halfway out is nowhere near halfway in depth, which is the point of the
     // arrangement: what a float can tell apart is spent on the far half.
-    var last : f32 = 2.0
-    var step : i64 = 0
+    var last: f32 = 2.0
+    var step: i64 = 0
     while (step <= 10) {
-        walked : f32 = step
-        distance : f32 = 1.0 + walked * 10.0
+        walked: f32 = step
+        distance: f32 = 1.0 + walked * 10.0
         at := mat4_mul_vec4(projection, vec4(0.0, 0.0, -distance, 1.0))
         depth := at.z / at.w
         assert(depth < last)
@@ -823,7 +823,7 @@ test "the inverse undoes what a matrix did" {
     // digits: what survives is the size of the point, not a fixed number of
     // decimal places.
     both := mat4_mul(made, undone)
-    var element : i64 = 0
+    var element: i64 = 0
     while (element < 16) {
         wanted := mat4_identity().m[element]
         assert(both.m[element] > wanted - 0.0001
@@ -856,7 +856,7 @@ test "a matrix that flattens space has no inverse and says so" {
     assert(ok == false)
     // The identity rather than a run of infinities, so a caller that ignored
     // the answer gets a picture it can see is wrong.
-    held : Mat4 = undone
+    held: Mat4 = undone
     assert(near(held.m[0], 1.0))
     assert(near(held.m[5], 1.0))
 }
@@ -1045,7 +1045,7 @@ test "a frustum with no far plane holds whatever is in front of it" {
 // pass asks. Here so the test above says what it means; a program asks this of
 // the GPU rather than of the CPU.
 inside :: fn(planes: [6]Vec4, centre: Vec3, radius: f32) -> bool {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < 6) {
         held := planes[index]
         reach := held.x * centre.x + held.y * centre.y + held.z * centre.z

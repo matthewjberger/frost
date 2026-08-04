@@ -65,7 +65,7 @@ vec2d_dot :: inline fn(a: Vec2d, b: Vec2d) -> f64 { a.x * b.x + a.y * b.y }
 vec2d_length :: fn(a: Vec2d) -> f64 { sqrt(vec2d_dot(a, a)) }
 vec2d_normalize :: fn(a: Vec2d) -> Vec2d {
     length := vec2d_length(a)
-    var inv : f64 = 0.0
+    var inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec2d_scale(a, inv)
 }
@@ -102,7 +102,7 @@ vec3d_length :: fn(a: Vec3d) -> f64 { sqrt(vec3d_dot(a, a)) }
 vec3d_distance :: fn(a: Vec3d, b: Vec3d) -> f64 { vec3d_length(vec3d_sub(a, b)) }
 vec3d_normalize :: fn(a: Vec3d) -> Vec3d {
     length := vec3d_length(a)
-    var inv : f64 = 0.0
+    var inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec3d_scale(a, inv)
 }
@@ -154,12 +154,12 @@ mat4d_identity :: fn() -> Mat4d {
 // then by `a`.
 mat4d_mul :: fn(a: Mat4d, b: Mat4d) -> Mat4d {
     var out := mat4d_zero()
-    var col : i64 = 0
+    var col: i64 = 0
     while (col < 4) {
-        var row : i64 = 0
+        var row: i64 = 0
         while (row < 4) {
-            var sum : f64 = 0.0
-            var k : i64 = 0
+            var sum: f64 = 0.0
+            var k: i64 = 0
             while (k < 4) {
                 sum = sum + a.m[k * 4 + row] * b.m[col * 4 + k]
                 k = k + 1
@@ -272,9 +272,9 @@ mat4d_ortho :: fn(left: f64, right: f64, bottom: f64, top: f64,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -2.0 / (far - near)
-    out.m[12] = -(right + left) / (right - left)
-    out.m[13] = -(top + bottom) / (top - bottom)
-    out.m[14] = -(far + near) / (far - near)
+    out.m[12] = - (right + left) / (right - left)
+    out.m[13] = - (top + bottom) / (top - bottom)
+    out.m[14] = - (far + near) / (far - near)
     out
 }
 
@@ -288,8 +288,8 @@ mat4d_ortho_zo :: fn(left: f64, right: f64, bottom: f64, top: f64,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -1.0 / (far - near)
-    out.m[12] = -(right + left) / (right - left)
-    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[12] = - (right + left) / (right - left)
+    out.m[13] = - (top + bottom) / (top - bottom)
     out.m[14] = -near / (far - near)
     out
 }
@@ -341,7 +341,7 @@ quatd_length :: fn(a: Quatd) -> f64 {
 }
 quatd_normalize :: fn(a: Quatd) -> Quatd {
     length := quatd_length(a)
-    var inv : f64 = 0.0
+    var inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     Quatd { x = a.x * inv, y = a.y * inv, z = a.z * inv, w = a.w * inv }
 }
@@ -352,7 +352,7 @@ quatd_conjugate :: fn(a: Quatd) -> Quatd {
 // Rotate a vector by a quaternion: q * (v, 0) * conjugate(q), the scalar part
 // of which is zero, so the vector part is the answer.
 quatd_rotate_vec3d :: fn(q: Quatd, v: Vec3d) -> Vec3d {
-    as_quat : Quatd = Quatd { x = v.x, y = v.y, z = v.z, w = 0.0 }
+    as_quat: Quatd = Quatd { x = v.x, y = v.y, z = v.z, w = 0.0 }
     rotated := quatd_mul(quatd_mul(q, as_quat), quatd_conjugate(q))
     Vec3d { x = rotated.x, y = rotated.y, z = rotated.z }
 }

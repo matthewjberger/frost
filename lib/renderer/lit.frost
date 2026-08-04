@@ -89,12 +89,12 @@ Lit :: struct {
 lit_new :: fn(device: Device, format: u32, scene_layout: BindGroupLayout,
     batch_layout: BindGroupLayout) -> Lit {
     frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
+        ShaderStage :: Vertex | ShaderStage :: Fragment)
     frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
 
     light_layout := lights_layout(device)
 
-    var layouts : [3]BindGroupLayout = [frame_layout, scene_layout,
+    var layouts: [3]BindGroupLayout = [frame_layout, scene_layout,
         light_layout]
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = 3
@@ -264,8 +264,8 @@ lit_write_lights :: fn(mut s: Lit, queue: Queue, held: []GpuLight, total: i64,
 // The camera and the ambient term, as the bytes the shader reads them as.
 lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
     view: Mat4, eye: Vec3, ambient: Vec3, total: i64, directional: i64) {
-    var values : [44]f32 = [0.0; 44]
-    var element : i64 = 0
+    var values: [44]f32 = [0.0; 44]
+    var element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         values[element + 16] = view.m[element]
@@ -283,7 +283,7 @@ lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
     // are directional. Four unsigned numbers to the shader and four floats
     // here, written through the same bytes since what the buffer holds is
     // bytes.
-    var counts : [4]u32 = [cast($u32, total), cast($u32, directional), 0, 0]
+    var counts: [4]u32 = [cast($u32, total), cast($u32, directional), 0, 0]
     queue_write_buffer(queue, s.frame_uniform, 0, ptr_to(values[0]), 160)
     queue_write_buffer(queue, s.frame_uniform, 160, ptr_to(counts[0]), 16)
 }
@@ -293,11 +293,11 @@ lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
 // was built with. The three runs are storage bindings because how many there
 // are is a number rather than a shape.
 lights_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries : [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
-    var slot : i64 = 0
+    var entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage::Fragment
+        entries[slot].visibility = ShaderStage :: Fragment
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
         slot = slot + 1
     }
@@ -311,13 +311,13 @@ lights_layout :: fn(device: Device) -> BindGroupLayout {
 
 lights_group :: fn(device: Device, layout: BindGroupLayout,
     grid: Cluster) -> BindGroup {
-    var entries : [4]BindGroupEntry = [bind_group_entry_init(); 4]
-    var held : [4]Buffer = [cluster_lights_buffer(grid),
+    var entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
+    var held: [4]Buffer = [cluster_lights_buffer(grid),
         cluster_grid_buffer(grid), cluster_indices_buffer(grid),
         cluster_uniform_buffer(grid)]
-    var sizes : [4]i64 = [LIGHT_BYTES * MAX_LIGHTS, TOTAL_CLUSTERS * 8,
+    var sizes: [4]i64 = [LIGHT_BYTES * MAX_LIGHTS, TOTAL_CLUSTERS * 8,
         TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4, CLUSTER_UNIFORM_BYTES]
-    var slot : i64 = 0
+    var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]
@@ -352,7 +352,7 @@ lit_module :: fn(device: Device) -> ShaderModule {
 make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     layout: PipelineLayout, cull_mode: u32, blended: bool,
     compare: u32) -> RenderPipeline {
-    var attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -379,7 +379,7 @@ make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask::All
+    target.write_mask = ColorWriteMask :: All
     if (blended) {
         target.blend = ptr_to(blend)
     }
@@ -421,7 +421,7 @@ make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
 // Reverse-Z, so the nearer fragment is the greater one and this keeps it.
 make_depth_pipeline :: fn(device: Device, shader: ShaderModule,
     layout: PipelineLayout) -> RenderPipeline {
-    var attributes : [1]VertexAttribute = [vertex_attribute_init(); 1]
+    var attributes: [1]VertexAttribute = [vertex_attribute_init(); 1]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0

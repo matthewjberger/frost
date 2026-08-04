@@ -72,9 +72,9 @@ channel :: fn(value: f32) -> u8 {
 }
 
 image_fill :: fn(mut held: Image, colour: Vec4) {
-    var y : i64 = 0
+    var y: i64 = 0
     while (y < held.height) {
-        var x : i64 = 0
+        var x: i64 = 0
         while (x < held.width) {
             image_set(held, x, y, colour)
             x = x + 1
@@ -85,9 +85,9 @@ image_fill :: fn(mut held: Image, colour: Vec4) {
 
 // Squares of two colours, `size` texels a side.
 image_checker :: fn(mut held: Image, size: i64, first: Vec4, second: Vec4) {
-    var y : i64 = 0
+    var y: i64 = 0
     while (y < held.height) {
-        var x : i64 = 0
+        var x: i64 = 0
         while (x < held.width) {
             cell := x / size + y / size
             var colour := first
@@ -107,14 +107,14 @@ image_checker :: fn(mut held: Image, size: i64, first: Vec4, second: Vec4) {
 image_bricks :: fn(mut held: Image, brick: Vec4, mortar: Vec4) {
     course := held.height / 8
     length := held.width / 4
-    var y : i64 = 0
+    var y: i64 = 0
     while (y < held.height) {
         row := y / course
-        var shift : i64 = 0
+        var shift: i64 = 0
         if (row - (row / 2) * 2 == 1) {
             shift = length / 2
         }
-        var x : i64 = 0
+        var x: i64 = 0
         while (x < held.width) {
             along := (x + shift) - ((x + shift) / length) * length
             down := y - row * course
@@ -134,12 +134,12 @@ image_bricks :: fn(mut held: Image, brick: Vec4, mortar: Vec4) {
 image_rings :: fn(mut held: Image, first: Vec4, second: Vec4) {
     middle_x := held.width / 2
     middle_y := held.height / 2
-    var y : i64 = 0
+    var y: i64 = 0
     while (y < held.height) {
-        var x : i64 = 0
+        var x: i64 = 0
         while (x < held.width) {
-            across : f32 = x - middle_x
-            down : f32 = y - middle_y
+            across: f32 = x - middle_x
+            down: f32 = y - middle_y
             away := sqrtf(across * across + down * down)
             band := cast($i64, away / 6.0)
             var colour := first
@@ -158,18 +158,18 @@ image_rings :: fn(mut held: Image, first: Vec4, second: Vec4) {
 // it is the whole reason to draw it.
 image_corner_marks :: fn(mut held: Image, colour: Vec4) {
     size := held.width / 8
-    var y : i64 = 0
+    var y: i64 = 0
     while (y < size) {
-        var x : i64 = 0
+        var x: i64 = 0
         while (x < size) {
             image_set(held, x, y, colour)
             x = x + 1
         }
         y = y + 1
     }
-    var down : i64 = 0
+    var down: i64 = 0
     while (down < held.height) {
-        var across : i64 = 0
+        var across: i64 = 0
         while (across < 2) {
             image_set(held, across, down, colour)
             across = across + 1
@@ -208,7 +208,7 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     // takes the address of one, and a value that moved into a field is no
     // longer here to take the address of.
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
+    descriptor.usage = TextureUsage :: TextureBinding | TextureUsage :: CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(held.width, held.height)
     descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
@@ -274,8 +274,8 @@ texture_free :: fn(held: Texture2D) {
 texture_render_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage::RenderAttachment
-        | TextureUsage::TextureBinding
+    descriptor.usage = TextureUsage :: RenderAttachment
+        | TextureUsage :: TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(width, height)
     descriptor.format = format
@@ -314,8 +314,8 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
 texture_depth_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage::RenderAttachment
-        | TextureUsage::TextureBinding
+    descriptor.usage = TextureUsage :: RenderAttachment
+        | TextureUsage :: TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(width, height)
     descriptor.format = format
@@ -378,7 +378,7 @@ comparison_sampler :: fn(device: Device) -> Sampler {
 texture_array_new :: fn(device: Device, width: i64, height: i64,
     layers: i64) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
+    descriptor.usage = TextureUsage :: TextureBinding | TextureUsage :: CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = layered_extent(width, height, layers)
     descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM

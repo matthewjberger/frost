@@ -171,13 +171,13 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         // unreadable.
         said := platform_error()
         platform_close(p)
-        return AppError { why = AppFault::NoWindow, said = said }
+        return AppError { why = AppFault :: NoWindow, said = said }
     }
     var r := renderer_open(platform_window(p), config.width, config.height)
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)
-        return AppError { why = AppFault::NoDevice,
+        return AppError { why = AppFault :: NoDevice,
             said = "no adapter or no device that answers to this surface" }
     }
     device := renderer_device(r)
@@ -218,19 +218,19 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
 // a particular one does.
 engine_plugin :: fn(mut app: App) {
     world_prepare(app.world)
-    app_add_system(app, Stage::FramePostUpdate, place_things)
+    app_add_system(app, Stage :: FramePostUpdate, place_things)
 }
 
 // The camera moved by what was held. A program driving the camera itself
 // installs everything else and leaves this out.
 camera_controller_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage::FrameUpdate, move_camera)
+    app_add_system(app, Stage :: FrameUpdate, move_camera)
 }
 
 // Escape closes the window. Installed by a demo rather than built into the
 // poll, so a program that wants that key for a menu simply does not install it.
 exit_on_escape_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage::FrameUpdate, exit_on_escape)
+    app_add_system(app, Stage :: FrameUpdate, exit_on_escape)
 }
 
 // One plugin, built into this App.
@@ -267,7 +267,7 @@ app_install_if_absent :: fn(mut app: App, build: fn(mut App)) {
 
 already_installed :: fn(app: App, build: fn(mut App)) -> bool {
     held := vec_slice($Installed, app.installed)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($Installed, app.installed)) {
         if (held[i].build == build) {
             return true
@@ -318,7 +318,7 @@ plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
 // Which member of the group this name is, or -1 where the group has none.
 group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
     held := vec_slice($GroupMember, group.members)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($GroupMember, group.members)) {
         if (held[i].named == named) {
             return i
@@ -359,7 +359,7 @@ plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
 // toward the same once-per-plugin rule everything else does, so a group holding
 // what a program already installed stops rather than installing it twice.
 app_install_group :: fn(mut app: App, move group: PluginGroup) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($GroupMember, group.members)) {
         held := vec_get($GroupMember, group.members, i)
         if (held.enabled) {
@@ -428,7 +428,7 @@ app_configure_graph :: fn($Ctx: Type, mut app: App,
 configure_graph :: fn(mut app: App) -> bool {
     device := renderer_device(app.renderer)
     format := renderer_format(app.renderer)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($GraphConfig, app.graph_configs)) {
         held := vec_get($GraphConfig, app.graph_configs, i)
         held.hook(held.state, app.renderer.graph, device, format)
@@ -462,7 +462,7 @@ app_update_graph :: fn($Ctx: Type, mut app: App,
 // The hooks, in the order they were added, before the frame is filled. What
 // runs this frame is settled first and what goes in it second.
 update_graph :: fn(mut app: App) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($UpdateGraph, app.update_graph)) {
         held := vec_get($UpdateGraph, app.update_graph, i)
         held.hook(held.state, app.renderer.graph, app.world)
@@ -610,7 +610,7 @@ settle_state :: fn(mut app: App) {
 }
 
 run_hooks :: fn(held: Vec<StateHook>, mut world: World, state: i64) {
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < vec_len($StateHook, held)) {
         one := vec_get($StateHook, held, index)
         if (one.state == state) {
@@ -653,11 +653,11 @@ app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
 app_failed :: fn(held: AppError) -> i64 {
     print_str_line(held.said)
     match held.why {
-        case .NoWindow: {
+        case.NoWindow: {
             print_str_line("no window")
             1
         }
-        case .NoDevice: {
+        case.NoDevice: {
             print_str_line("no device")
             2
         }
@@ -778,12 +778,12 @@ app_set_runner_if_unset :: fn(mut app: App, runner: fn(mut App)) {
     app.has_runner = true
 }
 
-runs_nothing :: fn(mut app: App) { }
+runs_nothing :: fn(mut app: App) {}
 
 // The hooks, in the order they were added. Each is handed the App and the state
 // it was registered with.
 before_render :: fn(mut app: App) {
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < vec_len($BeforeRender, app.before_render)) {
         held := vec_get($BeforeRender, app.before_render, i)
         held.hook(held.state, app)
@@ -845,9 +845,9 @@ app_view :: fn(app: App) -> Mat4 {
 
 // Three plugins that register nothing, for the tests below. What a group holds
 // is functions, so which one is which is the only thing these have to be.
-adds_nothing :: fn(mut app: App) { }
-adds_nothing_either :: fn(mut app: App) { }
-stands_in :: fn(mut app: App) { }
+adds_nothing :: fn(mut app: App) {}
+adds_nothing_either :: fn(mut app: App) {}
+stands_in :: fn(mut app: App) {}
 
 test "a group keeps its members in the order they were added" {
     var group := plugin_group_new()

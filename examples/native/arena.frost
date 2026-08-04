@@ -41,7 +41,7 @@ alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    var arena : Arena<256> = Arena {
+    var arena: Arena<256> = Arena {
         data = [0; 256],
         offset = 0,
     }
@@ -49,12 +49,12 @@ main :: fn() -> i64 {
     // Reaching through a raw pointer is what the gate is for, so these blocks
     // carry the writes through one and nothing else. The allocation itself is
     // an ordinary call.
-    p : ^Point = alloc_point(arena)
+    p: ^Point = alloc_point(arena)
     unsafe {
         p^.x = 3
         p^.y = 4
     }
-    q : ^i64 = alloc_int(arena)
+    q: ^i64 = alloc_int(arena)
     unsafe { q^ = 99 }
 
     print_int_line(unsafe { p^.x }) // 3
@@ -65,7 +65,7 @@ main :: fn() -> i64 {
     // Roll back to the start and reuse the same bytes.
     saved := arena_mark(arena)
     arena_reset(arena, 0)
-    r : ^i64 = alloc_int(arena)
+    r: ^i64 = alloc_int(arena)
     unsafe { r^ = 7 }
     print_int_line(unsafe { r^ }) // 7
     print_int_line(arena.offset) // 8, the buffer was reclaimed

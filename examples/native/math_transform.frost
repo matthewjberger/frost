@@ -13,7 +13,7 @@ import "math.frost"
 // A float scaled by a thousand and truncated to an integer, so a fractional
 // value prints without the compiler needing a float formatter.
 milli :: fn(x: f32) -> i64 {
-    scaled : i64 = cast($i64, x * 1000.0)
+    scaled: i64 = cast($i64, x * 1000.0)
     scaled
 }
 

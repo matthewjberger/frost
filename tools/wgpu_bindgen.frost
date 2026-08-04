@@ -27,8 +27,8 @@ append_pascal :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var index : i64 = 0
-    var upper : i64 = 1
+    var index: i64 = 0
+    var upper: i64 = 1
     while (index < length) {
         byte := source[off + index]
         if (byte == 95) {
@@ -49,7 +49,7 @@ append_screaming :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < length) {
         byte := source[off + index]
         if (byte >= 97 && byte <= 122) {
@@ -65,7 +65,7 @@ append_snake :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < length) {
         builder_byte(out, source[off + index])
         index = index + 1
@@ -213,15 +213,15 @@ append_after_dot :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var start : i64 = 0
-    var index : i64 = 0
+    var start: i64 = 0
+    var index: i64 = 0
     while (index < length) {
         if (source[off + index] == 46) {
             start = index + 1
         }
         index = index + 1
     }
-    var upper : i64 = 1
+    var upper: i64 = 1
     index = start
     while (index < length) {
         byte := source[off + index]
@@ -353,7 +353,7 @@ emit_constants :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     constants := json_member(document, root, "constants")
     total := json_count(document, constants)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, constants, index)
         name := json_member(document, each, "name")
@@ -400,15 +400,15 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
     given := json_member(document, held, "default")
 
     if (given >= 0) {
-        if (json_kind(document, given) == JsonKind::Number) {
+        if (json_kind(document, given) == JsonKind :: Number) {
             builder_int(out, json_number(document, given))
             return
         }
-        if (json_kind(document, given) == JsonKind::True) {
+        if (json_kind(document, given) == JsonKind :: True) {
             builder_int(out, 1)
             return
         }
-        if (json_kind(document, given) == JsonKind::False) {
+        if (json_kind(document, given) == JsonKind :: False) {
             builder_int(out, 0)
             return
         }
@@ -485,8 +485,8 @@ append_after_dot_screaming :: fn(mut out: Builder, mut document: Json,
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var start : i64 = 0
-    var index : i64 = 0
+    var start: i64 = 0
+    var index: i64 = 0
     while (index < length) {
         if (source[off + index] == 46) {
             start = index + 1
@@ -510,8 +510,8 @@ append_after_dot_snake :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
-    var start : i64 = 0
-    var index : i64 = 0
+    var start: i64 = 0
+    var index: i64 = 0
     while (index < length) {
         if (source[off + index] == 46) {
             start = index + 1
@@ -530,7 +530,7 @@ emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
     root: i64) -> i64 {
     structs := json_member(document, root, "structs")
     total := json_count(document, structs)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, structs, index)
         name := json_member(document, each, "name")
@@ -554,7 +554,7 @@ emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
         }
         members := json_member(document, each, "members")
         count := json_count(document, members)
-        var member : i64 = 0
+        var member: i64 = 0
         while (member < count) {
             held := json_at(document, members, member)
             member_name := json_member(document, held, "name")
@@ -581,13 +581,13 @@ emit_enums :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     enums := json_member(document, root, "enums")
     total := json_count(document, enums)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, enums, index)
         name := json_member(document, each, "name")
         entries := json_member(document, each, "entries")
         count := json_count(document, entries)
-        var entry : i64 = 0
+        var entry: i64 = 0
         while (entry < count) {
             value := json_at(document, entries, entry)
             if (json_is_null(document, value) == false) {
@@ -620,7 +620,7 @@ text_same :: fn(mut document: Json, left: i64, right: i64) -> bool {
     left_off := json_text_off(document, left)
     right_off := json_text_off(document, right)
     source := document.source
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < left_len) {
         if (source[left_off + index] != source[right_off + index]) {
             return false
@@ -643,8 +643,8 @@ bitflag_value :: fn(mut document: Json, entries: i64, wanted: i64) -> i64 {
     entry := json_at(document, entries, wanted)
     combination := json_member(document, entry, "value_combination")
     if (combination >= 0) {
-        var total : i64 = 0
-        var piece : i64 = 0
+        var total: i64 = 0
+        var piece: i64 = 0
         pieces := json_count(document, combination)
         while (piece < pieces) {
             named := json_at(document, combination, piece)
@@ -653,8 +653,8 @@ bitflag_value :: fn(mut document: Json, entries: i64, wanted: i64) -> i64 {
         }
         return total
     }
-    var bit : i64 = 0
-    var index : i64 = 1
+    var bit: i64 = 0
+    var index: i64 = 1
     while (index < wanted) {
         each := json_at(document, entries, index)
         if (json_member(document, each, "value_combination") < 0) {
@@ -667,7 +667,7 @@ bitflag_value :: fn(mut document: Json, entries: i64, wanted: i64) -> i64 {
 
 named_value :: fn(mut document: Json, entries: i64, name: i64) -> i64 {
     total := json_count(document, entries)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, entries, index)
         if (text_same(document, json_member(document, each, "name"), name)) {
@@ -686,7 +686,7 @@ emit_bitflags :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     flags := json_member(document, root, "bitflags")
     total := json_count(document, flags)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, flags, index)
         name := json_member(document, each, "name")
@@ -697,7 +697,7 @@ emit_bitflags :: fn(mut out: Builder, mut names: Builder,
         builder_str_value(names, ", ")
         builder_str_value(out, " :: flags u64 {
 ")
-        var entry : i64 = 0
+        var entry: i64 = 0
         while (entry < count) {
             value := json_at(document, entries, entry)
             entry_name := json_member(document, value, "name")
@@ -718,8 +718,8 @@ emit_bitflags :: fn(mut out: Builder, mut names: Builder,
 }
 
 shift_left :: fn(places: i64) -> i64 {
-    var value : i64 = 1
-    var count : i64 = 0
+    var value: i64 = 1
+    var count: i64 = 0
     while (count < places) {
         value = value * 2
         count = count + 1
@@ -731,7 +731,7 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     structs := json_member(document, root, "structs")
     total := json_count(document, structs)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, structs, index)
         name := json_member(document, each, "name")
@@ -752,7 +752,7 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
         }
         members := json_member(document, each, "members")
         count := json_count(document, members)
-        var member : i64 = 0
+        var member: i64 = 0
         while (member < count) {
             held := json_at(document, members, member)
             member_name := json_member(document, held, "name")
@@ -790,7 +790,7 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     callbacks := json_member(document, root, "callbacks")
     total := json_count(document, callbacks)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, callbacks, index)
         name := json_member(document, each, "name")
@@ -808,7 +808,7 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
 
         args := json_member(document, each, "args")
         count := json_count(document, args)
-        var arg : i64 = 0
+        var arg: i64 = 0
         while (arg < count) {
             held := json_at(document, args, arg)
             kind := json_member(document, held, "type")
@@ -840,7 +840,7 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         append_snake(out, document, name)
         builder_str_value(out, "_callback_info_of :: fn($Ctx: Type, mode: u32,
     callback: fn(")
-        var typed : i64 = 0
+        var typed: i64 = 0
         while (typed < count) {
             held := json_at(document, args, typed)
             append_value_mode(out, document, held)
@@ -857,7 +857,7 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         next_in_chain = null_handle(),
         mode = mode,
         callback = unsafe { ptr_cast($fn(")
-        var erased : i64 = 0
+        var erased: i64 = 0
         while (erased < count) {
             held := json_at(document, args, erased)
             append_value_mode(out, document, held)
@@ -885,7 +885,7 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
 // argument is a pointer and a count, so it takes two.
 append_args_declared :: fn(mut out: Builder, mut document: Json, args: i64) {
     count := json_count(document, args)
-    var arg : i64 = 0
+    var arg: i64 = 0
     while (arg < count) {
         each := json_at(document, args, arg)
         arg_name := json_member(document, each, "name")
@@ -907,7 +907,7 @@ append_args_declared :: fn(mut out: Builder, mut document: Json, args: i64) {
 // The same parameters as the arguments of a call, which is the names alone.
 append_args_forwarded :: fn(mut out: Builder, mut document: Json, args: i64) {
     count := json_count(document, args)
-    var arg : i64 = 0
+    var arg: i64 = 0
     while (arg < count) {
         each := json_at(document, args, arg)
         arg_name := json_member(document, each, "name")
@@ -933,7 +933,7 @@ emit_handles :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     objects := json_member(document, root, "objects")
     total := json_count(document, objects)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         object := json_at(document, objects, index)
         name := json_member(document, object, "name")
@@ -1005,7 +1005,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     functions := json_member(document, root, "functions")
     total := json_count(document, functions)
-    var index : i64 = 0
+    var index: i64 = 0
     while (index < total) {
         each := json_at(document, functions, index)
         name := json_member(document, each, "name")
@@ -1018,7 +1018,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
         builder_str_value(out, "wgpu")
         append_pascal(out, document, name)
         builder_str_value(out, " :: extern fn(")
-        var arg : i64 = 0
+        var arg: i64 = 0
         while (arg < count) {
             held := json_at(document, args, arg)
             if (arg > 0) {
@@ -1043,7 +1043,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
         append_snake(names, document, name)
         builder_str_value(names, ", ")
         builder_str_value(out, " :: fn(")
-        var declared : i64 = 0
+        var declared: i64 = 0
         while (declared < count) {
             held := json_at(document, args, declared)
             if (declared > 0) {
@@ -1064,7 +1064,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
     unsafe { wgpu")
         append_pascal(out, document, name)
         builder_byte(out, 40)
-        var forwarded : i64 = 0
+        var forwarded: i64 = 0
         while (forwarded < count) {
             held := json_at(document, args, forwarded)
             if (forwarded > 0) {
@@ -1085,14 +1085,14 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     objects := json_member(document, root, "objects")
     total := json_count(document, objects)
-    var emitted : i64 = 0
-    var index : i64 = 0
+    var emitted: i64 = 0
+    var index: i64 = 0
     while (index < total) {
         object := json_at(document, objects, index)
         object_name := json_member(document, object, "name")
         methods := json_member(document, object, "methods")
         count := json_count(document, methods)
-        var method : i64 = 0
+        var method: i64 = 0
         while (method < count) {
             held := json_at(document, methods, method)
             method_name := json_member(document, held, "name")
@@ -1151,7 +1151,7 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             // here rather than at whichever call happened to be next.
             hands_back_handle := returns >= 0
                 && type_starts(document, json_member(document, returns, "type"),
-                    "object.")
+                "object.")
             if (hands_back_handle) {
                 builder_str_value(out, " {
     held := unsafe { wgpu")

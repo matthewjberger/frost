@@ -41,7 +41,7 @@ gpu_instance :: fn(held: Gpu) -> Instance { held.instance }
 // answers a request when it is ready and not before, and there is no thread to
 // wait on, so the pump is the wait.
 gpu_wait :: fn(instance: Instance, mut ready: i64, limit: i64) -> bool {
-    var spins : i64 = 0
+    var spins: i64 = 0
     while (ready == 0 && spins < limit) {
         instance_process_events(instance)
         spins = spins + 1
@@ -95,7 +95,7 @@ gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
     // that number is how a batch finds its own slice of the list a compute pass
     // wrote. Asked for rather than assumed: a device without it fails here,
     // where the reason is one line, rather than inside a draw call.
-    var wanted : [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
+    var wanted: [1]u32 = [FEATURE_NAME_INDIRECT_FIRST_INSTANCE]
     // The passes that decide what is drawn read and write ten tables between
     // them, and the guaranteed floor is eight. Everything else is left at
     // whatever the device offers: a limit asked for is a limit the device has
@@ -145,7 +145,7 @@ gpu_read_buffer :: fn(held: Gpu, from: Buffer, offset: i64, bytes: i64,
         return false
     }
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::MapRead | BufferUsage::CopyDst
+    descriptor.usage = BufferUsage :: MapRead | BufferUsage :: CopyDst
     descriptor.size = bytes
     staging := device_create_buffer(held.device, ptr_to(descriptor))
 
@@ -160,7 +160,7 @@ gpu_read_buffer :: fn(held: Gpu, from: Buffer, offset: i64, bytes: i64,
     var slot := MapSlot { status = 0, ready = 0 }
     var info := buffer_map_callback_info_of($MapSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS, took_map, ptr_to(slot))
-    buffer_map_async(staging, MapMode::Read, 0, cast($u64, bytes),
+    buffer_map_async(staging, MapMode :: Read, 0, cast($u64, bytes),
         unsafe { ptr_cast($u8, ptr_to(info)) })
     var answered := gpu_wait(held.instance, slot.ready, 2000000)
     if (answered && slot.status == MAP_ASYNC_STATUS_SUCCESS) {

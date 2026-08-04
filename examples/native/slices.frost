@@ -7,8 +7,8 @@
 import "io.frost"
 
 sum :: fn(numbers: []i64) -> i64 {
-    var total : i64 = 0
-    var i : i64 = 0
+    var total: i64 = 0
+    var i: i64 = 0
     while (i < slice_len(numbers)) {
         total = total + numbers[i]
         i = i + 1
@@ -18,7 +18,7 @@ sum :: fn(numbers: []i64) -> i64 {
 
 largest :: fn(numbers: []i64) -> i64 {
     var best := numbers[0]
-    var i : i64 = 1
+    var i: i64 = 1
     while (i < slice_len(numbers)) {
         if (numbers[i] > best) { best = numbers[i] }
         i = i + 1
@@ -28,7 +28,7 @@ largest :: fn(numbers: []i64) -> i64 {
 
 main :: fn() -> i64 {
     scores := [40, 10, 90, 30, 70]
-    view : []i64 = scores
+    view: []i64 = scores
 
     print_int_line(slice_len(view)) // 5
     print_int_line(sum(view)) // 240

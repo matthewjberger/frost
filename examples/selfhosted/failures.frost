@@ -15,24 +15,24 @@ digit_of :: fn(c: i64) -> i64 ! ParseError {
 }
 
 two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
-    tens := digit_of(high)?
-    ones := digit_of(low)?
+    tens := digit_of(high) ?
+    ones := digit_of(low) ?
     tens * 10 + ones
 }
 
 // Which side came back: 0 for a value, 1 for a failure.
 side :: fn(high: i64, low: i64) -> i64 {
     match two_digits(high, low) {
-        case .Ok { value }: 0
-        case .Err { error }: 1
+        case.Ok { value }: 0
+        case.Err { error }: 1
     }
 }
 
 // The number when it parsed, or the byte that stopped it when it did not.
 payload :: fn(high: i64, low: i64) -> i64 {
     match two_digits(high, low) {
-        case .Ok { value }: value
-        case .Err { error }: error.at
+        case.Ok { value }: value
+        case.Err { error }: error.at
     }
 }
 

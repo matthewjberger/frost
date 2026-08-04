@@ -104,19 +104,19 @@ event_number :: fn(e: Event) -> u32 {
 
 event_kind :: fn(e: Event) -> EventKind {
     held := event_number(e)
-    if (held == 256) { return EventKind::Quit }
+    if (held == 256) { return EventKind :: Quit }
     // 518 is a resize. 519 is `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`, a
     // different event, and it was what this asked for until the header was read
     // rather than remembered.
-    if (held == 518) { return EventKind::WindowResized }
-    if (held == 528) { return EventKind::WindowClosed }
-    if (held == 768) { return EventKind::KeyDown }
-    if (held == 769) { return EventKind::KeyUp }
-    if (held == 1024) { return EventKind::MouseMotion }
-    if (held == 1025) { return EventKind::MouseButtonDown }
-    if (held == 1026) { return EventKind::MouseButtonUp }
-    if (held == 1027) { return EventKind::MouseWheel }
-    EventKind::Other
+    if (held == 518) { return EventKind :: WindowResized }
+    if (held == 528) { return EventKind :: WindowClosed }
+    if (held == 768) { return EventKind :: KeyDown }
+    if (held == 769) { return EventKind :: KeyUp }
+    if (held == 1024) { return EventKind :: MouseMotion }
+    if (held == 1025) { return EventKind :: MouseButtonDown }
+    if (held == 1026) { return EventKind :: MouseButtonUp }
+    if (held == 1027) { return EventKind :: MouseWheel }
+    EventKind :: Other
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ c_string :: fn(text: str) -> ^u8 {
     length := str_len(text)
     block := heap_bytes(length + 1)
     var view := bytes_as($u8, block, length + 1)
-    var i : i64 = 0
+    var i: i64 = 0
     while (i < length) {
         view[i] = text[i]
         i = i + 1
@@ -210,8 +210,8 @@ sdl_delay :: fn(milliseconds: u32) {
 // What SDL says went wrong, as text. SDL owns the bytes and they last until the
 // next call into it, so this is a view rather than a copy.
 sdl_error :: fn() -> str {
-    raw : ^i8 = unsafe { SDL_GetError() }
-    var length : i64 = 0
+    raw: ^i8 = unsafe { SDL_GetError() }
+    var length: i64 = 0
     while (unsafe { raw[length] } != 0) {
         length = length + 1
     }
