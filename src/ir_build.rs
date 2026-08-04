@@ -3626,6 +3626,22 @@ fn aggregate_name(ty: &Type) -> Option<&str> {
     }
 }
 
+/// The element a target wants a slice of, where it wants one.
+///
+/// A `str` is a `[]u8`, so an array of bytes reaching one becomes a slice of
+/// itself exactly as an array of anything else does. Every site that built a
+/// slice for a target read `Type::Slice` alone, so `data : str = data` was
+/// refused, and so was handing a `[4]u8` to a `str` parameter, while the same
+/// value reached a `str` in two steps through a `[]u8`. The self-hosted compiler
+/// holds the two as one type and builds all of them.
+fn slice_element_wanted(target: &Type) -> Option<Type> {
+    match target {
+        Type::Slice(element) => Some((**element).clone()),
+        Type::Str => Some(Type::U8),
+        _ => None,
+    }
+}
+
 fn needs_memory(ty: &Type) -> bool {
     matches!(
         ty,
@@ -6097,9 +6113,9 @@ impl<'a> FunctionLowering<'a> {
                     // the whole of itself first. Without this the callee is
                     // handed the array's own address and reads its first two
                     // elements as a pointer and a length.
-                    if let (Type::Slice(element), Type::Array(held, count)) =
-                        (target, &value_type)
-                        && held == element
+                    if let (Some(element), Type::Array(held, count)) =
+                        (slice_element_wanted(target), &value_type)
+                        && **held == element
                     {
                         let IrOperand::Local(local) = operand else {
                             bail!(
@@ -6108,7 +6124,7 @@ impl<'a> FunctionLowering<'a> {
                         };
                         let base = self.address_of_local(local, &value_type);
                         let slice = self
-                            .build_slice_from_address(base, element, *count);
+                            .build_slice_from_address(base, &element, *count);
                         let IrOperand::Local(view) = slice else {
                             bail!("slice construction did not yield a place");
                         };
@@ -6427,10 +6443,10 @@ impl<'a> FunctionLowering<'a> {
         }
         // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice
         // view and hand over its address, rather than the array's.
-        if let Type::Slice(element) = target
+        if let Some(element) = slice_element_wanted(target)
             && let Some(Type::Array(array_element, count)) =
                 self.probe_type(argument)
-            && array_element == *element
+            && *array_element == element
         {
             // Any array place, not only a bare variable: a struct field (such as
             // a columns column `c.x`), an index, a deref. `probe_type` reads the
@@ -6438,7 +6454,7 @@ impl<'a> FunctionLowering<'a> {
             // carries the right base and length instead of collapsing to a bare
             // pointer.
             let (base, _) = self.place_address(argument)?;
-            let slice = self.build_slice_from_address(base, element, count);
+            let slice = self.build_slice_from_address(base, &element, count);
             let IrOperand::Local(slice_local) = slice else {
                 bail!("slice construction did not yield a place");
             };
@@ -6771,6 +6787,25 @@ impl<'a> FunctionLowering<'a> {
                 .map(|local| self.type_of_local(local)),
             Expression::Dereference(inner) => {
                 deref_target(&self.probe_type(inner)?).ok()
+            }
+            // An element of an array, a slice or a raw pointer. Without this an
+            // index whose base is itself an index answered nothing, so
+            // `pair[0][0]` where `pair` is `[2][]i64` fell past the slice path
+            // to the array one and was refused for not naming an array. The
+            // self-hosted compiler builds that program and prints the right
+            // number, which is what says what the answer is rather than whether
+            // there should be one.
+            Expression::Index(base, _) => {
+                let held = match self.probe_type(base)? {
+                    Type::Ref(inner) | Type::RefMut(inner) => *inner,
+                    other => other,
+                };
+                match held {
+                    Type::Array(element, _)
+                    | Type::Slice(element)
+                    | Type::Ptr(element) => Some(*element),
+                    _ => None,
+                }
             }
             Expression::FieldAccess(base, field) => {
                 let base_type = self.probe_type(base)?;
@@ -9046,9 +9081,9 @@ impl<'a> FunctionLowering<'a> {
         if from == to || matches!(to, Type::Void | Type::Unknown) {
             return Ok(operand);
         }
-        if let (Type::Array(from_element, count), Type::Slice(to_element)) =
-            (from, to)
-            && from_element == to_element
+        if let (Type::Array(from_element, count), Some(to_element)) =
+            (from, &slice_element_wanted(to))
+            && from_element.as_ref() == to_element
             && let IrOperand::Local(array_local) = operand
         {
             self.mark_in_memory(array_local);

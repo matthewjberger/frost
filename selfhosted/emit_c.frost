@@ -699,13 +699,26 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::ArrayLit) {
+        held := type_of(p, id)
         emit_text("(")
-        emit_ctype(p, type_of(p, id))
+        emit_ctype(p, held)
         emit_text("){{")
+        // Each element written as the element type wants it. A string literal
+        // is a `char*` on its own and a pointer beside a length where a `str` is
+        // wanted, so `[2]str` initialized from literals emitted the bare
+        // pointers into a struct of two fields and the C compiler refused it.
+        mut want : i64 = -1
+        if (is_array_ty(held)) {
+            want = array_element(p, held)
+        }
         mut element := node.a
         while (element != (-1)) {
             enode := arena_at(p.arena, element)
-            emit_expr(p, enode.a)
+            if (want >= 0) {
+                emit_coerced(p, enode.a, want)
+            } else {
+                emit_expr(p, enode.a)
+            }
             element = enode.next
             if (element != (-1)) {
                 emit_text(", ")

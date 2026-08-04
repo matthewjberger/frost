@@ -947,7 +947,15 @@ impl RunWalk<'_> {
             let Some(argument) = arguments.get(*index) else {
                 continue;
             };
-            for mut path in self.param_places(argument) {
+            // The place the argument sits in, or, where it is a local holding a
+            // view or a call of its own, the run it names. The lowering hoists a
+            // nested call into a temporary, so a view forwarded to a wrapper
+            // reaches here as a name rather than as the call that made it.
+            let mut bases = self.param_places(argument);
+            if bases.is_empty() {
+                bases = self.run_places(argument);
+            }
+            for mut path in bases {
                 path.extend(under.iter().cloned());
                 found.push(path);
             }
@@ -1418,12 +1426,10 @@ impl MoveChecker<'_> {
                     let Some(argument) = arguments.get(*index) else {
                         continue;
                     };
-                    let Some(path) = self.borrow_place(argument) else {
-                        continue;
-                    };
-                    let mut path = without_borrow_derefs(path);
-                    path.extend(under.iter().cloned());
-                    found.push(path);
+                    for mut path in self.argument_bases(argument) {
+                        path.extend(under.iter().cloned());
+                        found.push(path);
+                    }
                 }
                 found
             }
@@ -1431,16 +1437,46 @@ impl MoveChecker<'_> {
         }
     }
 
+    /// The places an argument can be naming: the place it is, or, where it is a
+    /// call of its own, the runs that call answers with.
+    ///
+    /// `passthrough(vec_slice($T, v))` hands on the run `vec_slice` named, and
+    /// asking only for a place gave up there and tracked nothing, so a view
+    /// taken through one wrapper was invisible to both the growth rule and the
+    /// container-release one.
+    fn argument_bases(&self, argument: &Expression) -> Vec<Vec<Step>> {
+        // A binding that views a run stands for that run rather than for
+        // storage of its own. `held := vec_slice($T, v)` handed to a wrapper is
+        // the run inside `v`, and reading `held` as a place loses it.
+        if let Expression::Identifier(name) = argument
+            && let Some(runs) = self.view_runs.get(name)
+            && !runs.is_empty()
+        {
+            return runs.clone();
+        }
+        match self.borrow_place(argument) {
+            Some(path) => vec![without_borrow_derefs(path)],
+            None => self.run_behind(argument),
+        }
+    }
+
     /// A run has been given back to the allocator and a different one put in its
-    /// place, so every view still naming it names storage that is no longer
-    /// this program's.
+    /// place, so every view still naming it names storage that is no longer this
+    /// program's.
+    ///
+    /// The replaced place has to be the run itself or something the run hangs
+    /// off, never something inside it. `ecs_add` grows a run within a `World`
+    /// that a `ref` into `g.members` is pointing at, and the block that moved is
+    /// inside an element of the viewed run rather than the run: the `[]World`
+    /// still has the pointer and the length it had. Reading those as one refused
+    /// the ECS and every program built on it.
     fn note_replaced(&mut self, place: &[Step]) {
         let marked: Vec<String> = self
             .view_runs
             .iter()
             .filter(|(name, runs)| {
                 !self.stale.contains_key(name.as_str())
-                    && runs.iter().any(|run| places_overlap(run, place))
+                    && runs.iter().any(|run| place_maybe_within(run, place))
             })
             .map(|(name, _)| name.clone())
             .collect();
@@ -1472,12 +1508,10 @@ impl MoveChecker<'_> {
             let Some(argument) = arguments.get(index) else {
                 continue;
             };
-            let Some(path) = self.borrow_place(argument) else {
-                continue;
-            };
-            let mut path = without_borrow_derefs(path);
-            path.extend(under);
-            self.note_replaced(&path);
+            for mut path in self.argument_bases(argument) {
+                path.extend(under.iter().cloned());
+                self.note_replaced(&path);
+            }
         }
     }
 
@@ -1508,12 +1542,27 @@ impl MoveChecker<'_> {
 
     /// Whether a binding that views a container is naming storage the container
     /// has since given away.
+    ///
+    /// Two tables answer for it. The container walk names what the call was
+    /// handed, and the run summaries name the field under it, which is narrower
+    /// and reaches a view taken through a wrapper: `passthrough(vec_slice($T, v))`
+    /// hands the call a view rather than the container, so no parameter of it
+    /// holds the run and the container walk has nothing to say. Giving the
+    /// container away is the same mistake whichever of the two found the view.
     fn views_gone_storage(&self, name: &str) -> Option<String> {
-        let (path, key) = self.views.get(name)?;
-        match self.state_of_place(path, key).0 {
-            MoveState::Live => None,
-            _ => Some(key.clone()),
+        if let Some((path, key)) = self.views.get(name)
+            && self.state_of_place(path, key).0 != MoveState::Live
+        {
+            return Some(key.clone());
         }
+        for run in self.view_runs.get(name)? {
+            let key = describe_place(run);
+            let (state, blamed) = self.state_of_place(run, &key);
+            if state != MoveState::Live {
+                return Some(blamed);
+            }
+        }
+        None
     }
 
     fn place_key(&mut self, path: &[Step]) -> String {

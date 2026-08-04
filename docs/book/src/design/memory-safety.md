@@ -205,6 +205,13 @@ amounts to, and it is the fix the diagnostic asks for. A loop body is walked
 twice where a run under a live view was replaced, since a view read at the top of
 a loop is read after the turn before has already replaced it.
 
+The run that was replaced has to be the one a view names, or one it hangs off,
+never one inside it. A container of containers grows an inner run constantly:
+`ecs_add` grows a run within a `World` that a `ref` into `g.members` points at,
+and the `[]World` still holds the pointer and the length it held. A binding that
+views a run stands for that run wherever it is handed on, so a view forwarded
+through an accessor is followed rather than lost.
+
 The runs are settled to a fixpoint, since a wrapper views what the thing it
 forwards to views. The run of names is cut at four: a function that walks a
 recursive structure reaches `.next`, then `.next.next`, and a fixpoint over those
