@@ -1,12 +1,10 @@
 // What `frost fmt` writes.
 //
-// A conservative normalizer, not a rewrapper. Which line a token is on is
-// meaning in this language: a `+` at a line break continues the expression above
-// it and a leading `-` opens a new statement, so a formatter that moved a token
-// to another line would change what the program says. Nothing here joins or
-// splits a line. What it settles is the space inside a line, the indentation in
-// front of it, how many blank lines may sit between two of them, and that the
-// file ends with a newline.
+// Which line a token is on is meaning in this language: a `+` at a line break
+// continues the expression above it and a leading `-` opens a new statement. So
+// an expression is never rewrapped. What is settled is the space inside a line,
+// the indentation in front of it, how many blank lines may sit between two of
+// them, the brace that opens a block, and the newline a file ends with.
 //
 // The token stream drops whitespace and comments, and nothing is lost by that:
 // the lexer records where every token starts and stops, so the gaps between one
@@ -147,8 +145,7 @@ fn nesting(token: &Token) -> i32 {
 /// Three spellings carry two jobs each, and which job decides the spacing.
 /// `Arena<64>` holds the tokens of `a < b > c`; `^` is a pointer type in front
 /// of a type and a read behind a value; `[N]u8` is a type where `xs[i]` is an
-/// index. Each is settled once here, over the token stream, so the rules below
-/// ask a question with an answer instead of guessing from a pair.
+/// index. Each is settled once here, over the token stream.
 #[derive(Clone, Copy, PartialEq)]
 enum Role {
     Plain,
@@ -168,7 +165,7 @@ enum Role {
     Declares,
 }
 
-/// Whether a token can end a value, which is what tells a read from a type and a
+/// Whether a token can end a value, which separates a read from a type and a
 /// subtraction from a negation.
 fn ends_a_value(token: Option<&Token>) -> bool {
     matches!(
@@ -466,9 +463,7 @@ fn continues_a_line(token: &Token) -> bool {
 
 /// The one rendering of a source.
 ///
-/// Answers the source unchanged when the lexer cannot get through it, since a
-/// formatter that cannot read a file has nothing to say about it and writing a
-/// guess over it would lose the file.
+/// Answers the source unchanged when the lexer cannot get through it.
 pub fn format(source: &str) -> String {
     let Some((tokens, held)) = extents(source) else {
         return source.to_string();
@@ -499,7 +494,7 @@ pub fn format(source: &str) -> String {
     // What the author indented each line by, indexed by line number. A blank
     // line and a comment line hold no token, so the line a token sits on is
     // found from its offset rather than counted off as tokens are written.
-    // Which tokens are the first on their line, which is what tells a
+    // Which tokens are the first on their line, which separates a
     // declaration's `::` from a variant's.
     let mut opens_line = Vec::with_capacity(held.len());
     let mut brace_depth = Vec::with_capacity(held.len());
@@ -539,9 +534,28 @@ pub fn format(source: &str) -> String {
             braces
         };
 
+        // A brace that opens a block sits at the end of the line that says what
+        // the block is for, and an `else` sits beside the brace that closes the
+        // arm above it. A comment in between keeps its own line, so the join
+        // only happens across whitespace.
+        let joins_the_line_above = index > 0
+            && !gap.contains("//")
+            && match token {
+                Token::LeftBrace => !matches!(
+                    tokens[index - 1],
+                    Token::LeftBrace
+                        | Token::RightBrace
+                        | Token::Semicolon
+                        | Token::Comma
+                ),
+                Token::Else => matches!(tokens[index - 1], Token::RightBrace),
+                _ => false,
+            };
+
         let mut breaks = 0usize;
         for piece in trivia_in(gap) {
             match piece {
+                Trivia::Break if joins_the_line_above => {}
                 Trivia::Break => {
                     // Trailing space is never written, so a break is a break
                     // whatever came before it on the line.
@@ -572,7 +586,9 @@ pub fn format(source: &str) -> String {
             }
         }
 
-        if at_line_start {
+        if joins_the_line_above {
+            out.push(' ');
+        } else if at_line_start {
             // One level per enclosing brace, one more for an expression still
             // inside a bracket, and one more for a line that continues the one
             // above with no bracket holding it open.
@@ -598,9 +614,9 @@ pub fn format(source: &str) -> String {
                 // Inside a block a statement opens with a name as often as not,
                 // so there it is the operators that say a line runs on.
                 if open_braces == 0 {
-                    // A brace closing a declaration ends it rather than running
-                    // it on.
-                    let closes = matches!(token, Token::RightBrace);
+                    // A brace is a block, not a line running on.
+                    let closes =
+                        matches!(token, Token::RightBrace | Token::LeftBrace);
                     i32::from(
                         !closes
                             && !opens_a_declaration(
@@ -754,8 +770,7 @@ mod tests {
     }
 
     // `Point :: struct` declares and `NodeKind::Var` names one of the names
-    // declared under a type. The space is what tells them apart, so a formatter
-    // that spaced both would rewrite every variant in the tree.
+    // declared under a type. The space separates them.
     #[test]
     fn a_declaration_is_spaced_and_a_variant_is_tight() {
         let source = "Kind :: enum { Var }
@@ -765,6 +780,50 @@ main :: fn() -> i64 {
 }
 ";
         assert_eq!(format(source), source);
+    }
+
+    // A brace opening a block sits at the end of the line that says what the
+    // block is for, and an `else` sits beside the brace closing the arm above.
+    #[test]
+    fn a_brace_joins_the_line_it_opens_a_block_for() {
+        let source = "main :: fn() -> i64
+{
+    if (1 > 0)
+    {
+        1
+    }
+    else
+    {
+        0
+    }
+}
+";
+        assert_eq!(
+            format(source),
+            "main :: fn() -> i64 {
+    if (1 > 0) {
+        1
+    } else {
+        0
+    }
+}
+"
+        );
+    }
+
+    #[test]
+    fn a_comment_keeps_a_brace_on_its_own_line() {
+        let source = "main :: fn() -> i64
+// why
+{
+    0
+}
+";
+        assert!(format(source).contains(
+            "// why
+{
+"
+        ));
     }
 
     #[test]
