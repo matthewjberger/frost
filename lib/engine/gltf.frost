@@ -177,8 +177,8 @@ gltf_node_matrix :: fn(node: GltfNode) -> Mat4 {
 }
 
 gltf_free :: fn(move model: Gltf) {
-    mut held := vec_slice($GltfPrimitive, model.primitives)
-    mut index : i64 = 0
+    var held := vec_slice($GltfPrimitive, model.primitives)
+    var index : i64 = 0
     while (index < vec_len($GltfPrimitive, model.primitives)) {
         heap_release_slice($Vertex, held[index].vertices)
         heap_release_slice($u32, held[index].indices)
@@ -205,7 +205,7 @@ empty_gltf :: fn(ok: bool) -> Gltf {
 }
 
 gltf_read :: fn(path: str) -> Gltf {
-    mut file := fs_read(path)
+    var file := fs_read(path)
     if (file.ok == false) {
         print_str_line("gltf: cannot read the file")
         fs_free(file)
@@ -225,11 +225,11 @@ gltf_read :: fn(path: str) -> Gltf {
 
     // The chunks, walked in order. A chunk is a length, a kind and that many
     // bytes, padded out to four, and a file may carry kinds beyond these two.
-    mut json_at : i64 = -1
-    mut json_length : i64 = 0
-    mut binary_at : i64 = -1
-    mut binary_length : i64 = 0
-    mut at : i64 = 12
+    var json_at : i64 = -1
+    var json_length : i64 = 0
+    var binary_at : i64 = -1
+    var binary_length : i64 = 0
+    var at : i64 = 12
     while (at + 8 <= str_len(bytes)) {
         length := read_u32(bytes, at)
         kind := read_u32(bytes, at + 4)
@@ -255,7 +255,7 @@ gltf_read :: fn(path: str) -> Gltf {
         return empty_gltf(false)
     }
 
-    mut document := json_parse(str_slice(bytes, json_at, json_length))
+    var document := json_parse(str_slice(bytes, json_at, json_length))
     root := json_root(document)
     if (root < 0) {
         print_str_line("gltf: the JSON chunk does not parse")
@@ -264,7 +264,7 @@ gltf_read :: fn(path: str) -> Gltf {
         return empty_gltf(false)
     }
 
-    mut model := empty_gltf(true)
+    var model := empty_gltf(true)
     // Where the binary chunk starts, as a pointer, since every accessor is an
     // offset from there. The bounds every read is checked against are its own
     // length, so nothing reaches outside the chunk the file declared.
@@ -319,15 +319,15 @@ element_or :: fn(mut document: Json, array: i64, index: i64,
 read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
     materials := json_member(document, root, "materials")
     if (materials < 0) { return }
-    mut index : i64 = 0
+    var index : i64 = 0
     // Walked by the chain rather than by `json_at` per element, since that
     // walks from the start every time and a file with a hundred materials
     // would pay for it a hundred times over.
-    mut node := json_at(document, materials, 0)
+    var node := json_at(document, materials, 0)
     while (node >= 0) {
         pbr := json_member(document, node, "pbrMetallicRoughness")
         colour := json_member(document, pbr, "baseColorFactor")
-        mut held := material_of(
+        var held := material_of(
             vec4(element_or(document, colour, 0, 1.0),
                 element_or(document, colour, 1, 1.0),
                 element_or(document, colour, 2, 1.0),
@@ -362,12 +362,12 @@ alpha_mode_of :: fn(mut document: Json, node: i64) -> i64 {
 
 read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
     nodes := json_member(document, root, "nodes")
-    mut node := json_at(document, nodes, 0)
+    var node := json_at(document, nodes, 0)
     while (node >= 0) {
         translation := json_member(document, node, "translation")
         rotation := json_member(document, node, "rotation")
         scale := json_member(document, node, "scale")
-        mut held := GltfNode {
+        var held := GltfNode {
             mesh = number_or(document, json_member(document, node, "mesh"), -1),
             child_first = vec_len($i64, model.children),
             child_count = 0,
@@ -390,7 +390,7 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
         if (matrix >= 0) {
             held = from_matrix(document, matrix, held)
         }
-        mut child := json_at(document, json_member(document, node, "children"),
+        var child := json_at(document, json_member(document, node, "children"),
             0)
         while (child >= 0) {
             vec_push($i64, model.children, json_number(document, child))
@@ -414,8 +414,8 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
         }
         return
     }
-    mut claimed := heap_slice($bool, vec_len($GltfNode, model.nodes))
-    mut index : i64 = 0
+    var claimed := heap_slice($bool, vec_len($GltfNode, model.nodes))
+    var index : i64 = 0
     while (index < slice_len(claimed)) {
         claimed[index] = false
         index = index + 1
@@ -444,9 +444,9 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
 // first, and a file that writes a matrix rather than the three parts is a file
 // whose transform did not come apart into them cleanly to begin with.
 from_matrix :: fn(mut document: Json, matrix: i64, node: GltfNode) -> GltfNode {
-    mut column : [16]f32 = [0.0; 16]
-    mut index : i64 = 0
-    mut element := json_at(document, matrix, 0)
+    var column : [16]f32 = [0.0; 16]
+    var index : i64 = 0
+    var element := json_at(document, matrix, 0)
     while (element >= 0 && index < 16) {
         column[index] = cast($f32, json_real(document, element))
         index = index + 1
@@ -469,11 +469,11 @@ from_matrix :: fn(mut document: Json, matrix: i64, node: GltfNode) -> GltfNode {
 read_meshes :: fn(mut document: Json, root: i64, mut model: Gltf,
     binary: ^u8, binary_length: i64) {
     meshes := json_member(document, root, "meshes")
-    mut mesh := json_at(document, meshes, 0)
+    var mesh := json_at(document, meshes, 0)
     while (mesh >= 0) {
         first := vec_len($GltfPrimitive, model.primitives)
-        mut count : i64 = 0
-        mut primitive := json_at(document,
+        var count : i64 = 0
+        var primitive := json_at(document,
             json_member(document, mesh, "primitives"), 0)
         while (primitive >= 0) {
             if (read_primitive(document, primitive, model, binary,
@@ -508,10 +508,10 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
     texcoord := accessor_of(document, root_of(document),
         json_member(document, attributes, "TEXCOORD_0"), binary_length)
 
-    mut vertices := heap_slice($Vertex, position.count)
-    mut index : i64 = 0
+    var vertices := heap_slice($Vertex, position.count)
+    var index : i64 = 0
     while (index < position.count) {
-        mut held := Vertex {
+        var held := Vertex {
             position = read_vec3(binary, position, index),
             normal = vec3(0.0, 1.0, 0.0),
             texcoord = vec2(0.0, 0.0),
@@ -533,11 +533,11 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
     // second stand would leave the first behind on every primitive read.
     indices := accessor_of(document, root_of(document),
         json_member(document, primitive, "indices"), binary_length)
-    mut ordered := position.count
+    var ordered := position.count
     if (indices.ok) {
         ordered = indices.count
     }
-    mut order := heap_slice($u32, ordered)
+    var order := heap_slice($u32, ordered)
     index = 0
     while (index < ordered) {
         if (indices.ok) {
@@ -686,7 +686,7 @@ read_integer :: fn(binary: ^u8, held: Accessor, index: i64) -> i64 {
 FIXTURE :: "lib/engine/assets/shapes.glb"
 
 test "a binary glTF file reads as meshes, materials and nodes" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     assert(gltf_ok(model))
     assert(gltf_mesh_count(model) == 3)
     assert(gltf_primitive_count(model) == 3)
@@ -696,7 +696,7 @@ test "a binary glTF file reads as meshes, materials and nodes" {
 }
 
 test "a primitive holds the vertices the file stored" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     cube := gltf_primitive_at(model, gltf_mesh_first(model, 0))
     assert(slice_len(cube.vertices) == 24)
     held := cube.vertices
@@ -710,7 +710,7 @@ test "a primitive holds the vertices the file stored" {
 }
 
 test "indices are read at whatever width they were stored" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     // Unsigned short.
     cube := gltf_primitive_at(model, gltf_mesh_first(model, 0))
     assert(slice_len(cube.indices) == 36)
@@ -730,12 +730,12 @@ test "indices are read at whatever width they were stored" {
 }
 
 test "a primitive with no indices is handed on in the order it was stored" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     floor := gltf_primitive_at(model, gltf_mesh_first(model, 2))
     assert(slice_len(floor.vertices) == 6)
     assert(slice_len(floor.indices) == 6)
     order := floor.indices
-    mut index : i64 = 0
+    var index : i64 = 0
     while (index < 6) {
         assert(cast($i64, order[index]) == index)
         index = index + 1
@@ -744,7 +744,7 @@ test "a primitive with no indices is handed on in the order it was stored" {
 }
 
 test "an attribute the file leaves out falls back rather than reading rubbish" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     floor := gltf_primitive_at(model, gltf_mesh_first(model, 2))
     held := floor.vertices
     assert(held[0].position.x == -2.0)
@@ -760,7 +760,7 @@ test "an attribute the file leaves out falls back rather than reading rubbish" {
 }
 
 test "a material is the colour and the two numbers the file gave it" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     first := gltf_material_at(model, 0)
     assert(first.base_color.x == 0.85)
     assert(first.base_color.w == 1.0)
@@ -773,7 +773,7 @@ test "a material is the colour and the two numbers the file gave it" {
 }
 
 test "a node carries where it sits and what hangs off it" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     root := gltf_node_at(model, 0)
     assert(root.mesh == -1)
     assert(root.translation.y == 0.25)
@@ -792,7 +792,7 @@ test "a node carries where it sits and what hangs off it" {
 }
 
 test "a node that gives a whole matrix is read as where it sits and how big" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     held := gltf_node_at(model, 2)
     assert(held.mesh == 1)
     assert(held.translation.x == 1.5)
@@ -804,7 +804,7 @@ test "a node that gives a whole matrix is read as where it sits and how big" {
 }
 
 test "the roots are the ones the scene named" {
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     assert(gltf_root_count(model) == 2)
     assert(gltf_root_at(model, 0) == 0)
     assert(gltf_root_at(model, 1) == 3)
@@ -813,20 +813,20 @@ test "the roots are the ones the scene named" {
 
 test "reading a file leaves nothing behind" {
     before := heap_live()
-    mut model := gltf_read(FIXTURE)
+    var model := gltf_read(FIXTURE)
     assert(gltf_ok(model))
     gltf_free(model)
     assert(heap_live() == before)
 }
 
 test "a file that is not one is refused rather than read" {
-    mut missing := gltf_read("lib/engine/assets/no-such-file.glb")
+    var missing := gltf_read("lib/engine/assets/no-such-file.glb")
     assert(gltf_ok(missing) == false)
     assert(gltf_mesh_count(missing) == 0)
     gltf_free(missing)
     // The generator itself is text, so this is a file that is there and is not
     // a glb, which is the other way a read fails.
-    mut wrong := gltf_read("lib/engine/assets/generate.py")
+    var wrong := gltf_read("lib/engine/assets/generate.py")
     assert(gltf_ok(wrong) == false)
     gltf_free(wrong)
 }
@@ -856,9 +856,9 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     // Where each of the file's own numbers ended up in the caller's tables. A
     // file names its meshes and materials from zero and the tables it is being
     // loaded into already hold other things.
-    mut meshes := heap_slice($i64, gltf_primitive_count(model))
-    mut materials := heap_slice($i64, gltf_material_count(model))
-    mut index : i64 = 0
+    var meshes := heap_slice($i64, gltf_primitive_count(model))
+    var materials := heap_slice($i64, gltf_material_count(model))
+    var index : i64 = 0
     while (index < gltf_material_count(model)) {
         materials[index] = materials_add(registry, gltf_material_at(model,
             index))
@@ -879,7 +879,7 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     // One entity above the file's own roots, so a caller moves the whole model
     // by moving one thing and a file with several roots is still one model.
     root := spawn_node_entity(world, ids, local_at(vec3(0.0, 0.0, 0.0)))
-    mut at : i64 = 0
+    var at : i64 = 0
     while (at < gltf_root_count(model)) {
         spawn_node(world, model, gltf_root_at(model, at), root, meshes,
             materials, ids)
@@ -905,12 +905,12 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
 
     if (held.mesh >= 0) {
         first := gltf_mesh_first(model, held.mesh)
-        mut part : i64 = 0
+        var part : i64 = 0
         while (part < gltf_mesh_span(model, held.mesh)) {
             drawn := gltf_primitive_at(model, first + part)
             // A material of -1 is a file that named none, and the default is
             // what the registry answers for a number it does not hold.
-            mut wears : i64 = -1
+            var wears : i64 = -1
             if (drawn.material >= 0 && drawn.material < slice_len(materials)) {
                 wears = materials[drawn.material]
             }
@@ -919,14 +919,14 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
             piece := spawn_drawn(world, ids, Drawn {
                 mesh = meshes[first + part], material = wears,
                 layer = ONE_LAYER })
-            mut under := world_tree(world)
+            var under := world_tree(world)
             hierarchy_attach(under, piece, entity)
             part = part + 1
         }
     }
 
     children := gltf_node_children(model, node)
-    mut child : i64 = 0
+    var child : i64 = 0
     while (child < slice_len(children)) {
         spawn_node(world, model, children[child], entity, meshes, materials,
             ids)

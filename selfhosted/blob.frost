@@ -54,7 +54,7 @@ blob_word64 :: fn(mut b: Blob, value: i64) {
 }
 
 blob_zeros :: fn(mut b: Blob, count: i64) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         blob_byte(b, 0)
         i = i + 1
@@ -63,7 +63,7 @@ blob_zeros :: fn(mut b: Blob, count: i64) {
 
 // A fixed-width name field, padded with zeros.
 blob_name :: fn(mut b: Blob, name: str, width: i64) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < width) {
         if (i < str_len(name)) {
             blob_byte(b, name[i])
@@ -76,7 +76,7 @@ blob_name :: fn(mut b: Blob, name: str, width: i64) {
 
 // A run of the assembled bytes, copied across.
 blob_copy :: fn(mut b: Blob, source: str, count: i64) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         blob_byte(b, source[i])
         i = i + 1
@@ -86,7 +86,7 @@ blob_copy :: fn(mut b: Blob, source: str, count: i64) {
 // A run out of the middle of another blob, which is how a section built off to
 // one side lands in the object at the place the layout gave it.
 blob_range :: fn(mut b: Blob, source: Blob, at: i64, count: i64) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         blob_byte(b, source.bytes[at + i])
         i = i + 1
@@ -95,7 +95,7 @@ blob_range :: fn(mut b: Blob, source: Blob, at: i64, count: i64) {
 
 // What was built, written where it was asked for.
 blob_write :: fn(mut b: Blob, path: ^i8) {
-    mut opened : i64 = 0
+    var opened : i64 = 0
     unsafe {
         opened = frost_rt_emit_open(path)
     }

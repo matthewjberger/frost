@@ -56,7 +56,7 @@ Renderer :: struct {
 // brought up answers false to `renderer_ok`, and a caller checks that before
 // beginning a frame rather than drawing into nothing.
 renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
-    mut r := Renderer {
+    var r := Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
@@ -74,10 +74,10 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     if (hwnd == no_pointer()) {
         return r
     }
-    mut source := surface_source_windows_HWND_init()
+    var source := surface_source_windows_HWND_init()
     source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
     source.hwnd = hwnd
-    mut descriptor := surface_descriptor_init()
+    var descriptor := surface_descriptor_init()
     descriptor.next_in_chain = ptr_to(source)
     r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
 
@@ -94,7 +94,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
 
     // The format the surface accepts, asked rather than assumed: which ones it
     // takes belongs to the driver and the window, not to the API.
-    mut capabilities := surface_capabilities_init()
+    var capabilities := surface_capabilities_init()
     if (surface_get_capabilities(r.surface, r.adapter, ptr_to(capabilities)) != 1) {
         return r
     }
@@ -174,7 +174,7 @@ release_acquired :: fn(mut f: Frame) {
 // is still held, and every acquire that is never released holds one: that is
 // what made a resize answer `Invalid surface` and take the program with it.
 renderer_begin :: fn(mut r: Renderer) -> Frame {
-    mut f := Frame {
+    var f := Frame {
         texture = surface_texture_init(),
         view = no_texture_view(),
         encoder = no_command_encoder(),
@@ -207,7 +207,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) {
     if (f.ready == false) {
         return
     }
-    mut command := command_encoder_finish(f.encoder, no_pointer())
+    var command := command_encoder_finish(f.encoder, no_pointer())
     queue_submit(r.queue, 1, ptr_to(command))
     surface_present(r.surface)
     command_buffer_release(command)
@@ -228,7 +228,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) {
 // handles it gives back are the ones that name nothing, which is exactly what
 // the failed half of an open leaves behind.
 test "a renderer that never opened is closed without touching a handle" {
-    mut r := Renderer {
+    var r := Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),

@@ -89,7 +89,7 @@ frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
 // attaches, so it needs this without a `Frame` in reach.
 encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
     clear: Color, depth_load: u32) -> RenderPassEncoder {
-    mut attachment := render_pass_color_attachment_init()
+    var attachment := render_pass_color_attachment_init()
     attachment.view = into.color
     attachment.load_op = load
     attachment.store_op = STORE_OP_STORE
@@ -97,13 +97,13 @@ encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
 
     // Nearer is greater, so the buffer starts at the far plane, which is zero,
     // and every fragment that passes is closer than what was already there.
-    mut depth := render_pass_depth_stencil_attachment_init()
+    var depth := render_pass_depth_stencil_attachment_init()
     depth.view = into.depth
     depth.depth_load_op = depth_load
     depth.depth_store_op = STORE_OP_STORE
     depth.depth_clear_value = 0.0
 
-    mut descriptor := render_pass_descriptor_init()
+    var descriptor := render_pass_descriptor_init()
     descriptor.color_attachments_count = 0
     if (into.has_color) {
         descriptor.color_attachments_count = 1

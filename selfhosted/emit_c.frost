@@ -54,7 +54,7 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
     gens_ty := slab_field_type(p, cthrough, "generations")
     count := array_length(p, gens_ty)
     def := arena_at(p.structs, struct_index_of(cthrough))
-    mut fid := def.field_head
+    var fid := def.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         field_off := field.name_off
@@ -110,7 +110,7 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
     // A constant whose value is a literal stands for that literal here, so a
     // text constant reaching a `str` is coerced the way the literal written in
     // its place would be, length and all, rather than as the name.
-    mut value := value_in
+    var value := value_in
     named := arena_at(p.arena, value)
     if (named.kind == NodeKind::Var
         && local_exists(p, named.val, named.c) == false) {
@@ -326,8 +326,8 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
     emit_text("(struct ")
     emit_struct_name(p, struct_index_of(struct_ty))
     emit_text("){ ")
-    mut id := inits
-    mut first : bool = true
+    var id := inits
+    var first : bool = true
     while (id != (-1)) {
         if (first == false) {
             emit_text(", ")
@@ -511,7 +511,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             cbase := base_node.a
             cindex := base_node.b
             cbase_ty := type_of(p, cbase)
-            mut cthrough := cbase_ty
+            var cthrough := cbase_ty
             if (is_pointer(cthrough)) {
                 cthrough = pointee(p, cthrough)
             }
@@ -566,7 +566,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         base := node.a
         index := node.b
         base_ty := type_of(p, base)
-        mut through := base_ty
+        var through := base_ty
         if (is_pointer(through)) {
             through = pointee(p, through)
         }
@@ -679,8 +679,8 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             frost_rt_emit_int(literal_length(p.src, held.val, held.c))
             return
         }
-        mut inner_ty := type_of(p, inner)
-        mut through : bool = false
+        var inner_ty := type_of(p, inner)
+        var through : bool = false
         if (is_pointer(inner_ty)) {
             inner_ty = pointee(p, inner_ty)
             through = true
@@ -707,11 +707,11 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // is a `char*` on its own and a pointer beside a length where a `str` is
         // wanted, so `[2]str` initialized from literals emitted the bare
         // pointers into a struct of two fields and the C compiler refused it.
-        mut want : i64 = -1
+        var want : i64 = -1
         if (is_array_ty(held)) {
             want = array_element(p, held)
         }
-        mut element := node.a
+        var element := node.a
         while (element != (-1)) {
             enode := arena_at(p.arena, element)
             if (want >= 0) {
@@ -946,7 +946,7 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
     // not match the definition it is calling.
     emit_ctype(p, ret)
     emit_text("(*)(")
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         if (i > 0) {
             emit_text(", ")
@@ -968,9 +968,9 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
         emit_local_name(p, off, len)
     }
     emit_text("))(")
-    mut id := args
-    mut first : bool = true
-    mut at : i64 = 0
+    var id := args
+    var first : bool = true
+    var at : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         if (first == false) {
@@ -980,7 +980,7 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
         // call's parameter list does: a mode borrow is a pointer there, so a
         // value handed to one has its address taken. Without this a `mut`
         // parameter of a function pointer was handed the struct itself.
-        mut param_ty : i64 = -1
+        var param_ty : i64 = -1
         if (at < count) {
             param_ty = proc_param_at(p, callee_ty, at)
         }
@@ -1003,17 +1003,17 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
 // Emit call arguments, skipping type-value arguments (they are erased since a
 // type parameter is not a runtime value).
 emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
-    mut id := head
-    mut first : bool = true
+    var id := head
+    var first : bool = true
     sym := arena_at(p.fns, fn_index)
     // The instance this call names, when the callee is generic, since the
     // symbol's list belongs to whichever instance was parsed last.
-    mut param : i64 = instance_params(p, fn_index, head)
+    var param : i64 = instance_params(p, fn_index, head)
     // Whether that answered. When it did, the list is this call's own instance
     // and says exactly how each argument is passed. When it did not, the
     // symbol's list is whichever instance was parsed last, which is right only
     // in a program that uses the generic once.
-    mut param_from_instance : i64 = 1
+    var param_from_instance : i64 = 1
     if (param == (-1)) {
         param = sym.params
         param_from_instance = 0
@@ -1031,11 +1031,11 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // Auto-borrow: an argument passed to a mode-borrow (pointer)
             // parameter has its address taken here, unless it is already a
             // pointer (a borrow forwarded onward).
-            mut borrow : i64 = 0
-            mut param_next : i64 = -1
-            mut have_param : i64 = 0
-            mut param_ty : i64 = -1
-            mut param_auto : i64 = 0
+            var borrow : i64 = 0
+            var param_next : i64 = -1
+            var have_param : i64 = 0
+            var param_ty : i64 = -1
+            var param_auto : i64 = 0
             if (param != (-1)) {
                 pnode := arena_at(p.arena, param)
                 param_auto = pnode.a
@@ -1081,7 +1081,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // bytes, the parameter wants the slice built from it, and an
             // aggregate travels by address. `map_put($str, ..., "ada", 36)` is
             // this, and without it C is handed the bytes where a slice belongs.
-            mut want_ty := param_ty
+            var want_ty := param_ty
             if (is_pointer(want_ty)) {
                 want_ty = pointee(p, want_ty)
             }
@@ -1143,7 +1143,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     }
     // The capabilities are the last arguments, supplied by the caller's
     // context rather than written at the call, one per source the callee draws.
-    mut cap : i64 = 0
+    var cap : i64 = 0
     while (cap < cap_count_of(p, fn_index)) {
         if (first == false || cap > 0) {
             emit_text(", ")
@@ -1161,7 +1161,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         annotation := node.b
         off := node.val
         len := node.c
-        mut ty := annotation
+        var ty := annotation
         if (annotation == (-1)) {
             ty = binding_type(p, value)
         }
@@ -1193,7 +1193,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             cbase := place_node.a
             cindex := place_node.b
             cbase_ty := type_of(p, cbase)
-            mut cthrough := cbase_ty
+            var cthrough := cbase_ty
             if (is_pointer(cthrough)) {
                 cthrough = pointee(p, cthrough)
             }
@@ -1231,7 +1231,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("switch (")
         emit_expr(p, scrutinee)
         emit_text(") {\n")
-        mut cid := cases
+        var cid := cases
         while (cid != (-1)) {
             cnode := arena_at(p.arena, cid)
             is_default := cnode.c
@@ -1349,7 +1349,7 @@ emit_capability_argument :: fn(mut p: Parser, fn_index: i64, index: i64) {
 }
 
 emit_list :: fn(mut p: Parser, head: i64) {
-    mut id := head
+    var id := head
     while (id != (-1)) {
         emit_stmt(p, id)
         node := arena_at(p.arena, id)
@@ -1362,16 +1362,16 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
         emit_text("void")
         return
     }
-    mut id := head
-    mut first : bool = true
-    mut index : i64 = 0
+    var id := head
+    var first : bool = true
+    var index : i64 = 0
     while (id != (-1)) {
         if (first == false) {
             emit_text(", ")
         }
         first = false
         node := arena_at(p.arena, id)
-        mut ty := node.b
+        var ty := node.b
         off := node.val
         len := node.c
         next_id := node.next
@@ -1396,7 +1396,7 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
 }
 
 record_params :: fn(mut p: Parser, head: i64) {
-    mut id := head
+    var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         ty := node.b
@@ -1420,7 +1420,7 @@ emit_inline_qualifier :: fn(mut p: Parser, fn_index: i64) {
 }
 
 emit_prototypes :: fn(mut p: Parser, head: i64) {
-    mut id := head
+    var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
@@ -1450,7 +1450,7 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
 }
 
 emit_extern_prototypes :: fn(mut p: Parser, head: i64) {
-    mut id := head
+    var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
@@ -1481,7 +1481,7 @@ emit_extern_prototypes :: fn(mut p: Parser, head: i64) {
 // `T* data` is such a pointer, which is what lets a slice struct be defined
 // before the user struct that embeds it.
 emit_type_forward_decls :: fn(mut p: Parser) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.structs.count) {
         def := arena_at(p.structs, i)
         if (def.is_generic == 0) {
@@ -1532,7 +1532,7 @@ emit_array_ordered :: fn(mut p: Parser, i: i64) {
     // whose element is the type parameter itself, an artifact of parsing the
     // template. It is never named in the emitted program, which uses the
     // concrete per-instance arrays, so it is not defined here.
-    mut bare := element
+    var bare := element
     while (is_pointer(bare)) {
         bare = pointee(p, bare)
     }
@@ -1566,7 +1566,7 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
     }
     def.emitted = 1
     field_head := def.field_head
-    mut fid := field_head
+    var fid := field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         dep := field.ty
@@ -1583,8 +1583,8 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
     // still reached by the flat name it was declared under. C11 makes a member
     // of an anonymous struct or union a member of what contains it, which is
     // what lets `.Circle_radius` name it both here and at an initializer.
-    mut opened : i64 = 0
-    mut carried : i64 = -1
+    var opened : i64 = 0
+    var carried : i64 = -1
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         fty := field.ty
@@ -1627,7 +1627,7 @@ emit_type_defs :: fn(mut p: Parser) {
     // so the mark that says "already written" is cleared at the start of each
     // one. Every unit carries every definition, since a C unit cannot use a
     // type it has not seen.
-    mut cleared : i64 = 0
+    var cleared : i64 = 0
     while (cleared < p.structs.count) {
         def := arena_at(p.structs, cleared)
         def.emitted = 0
@@ -1639,7 +1639,7 @@ emit_type_defs :: fn(mut p: Parser) {
         held.emitted = 0
         cleared = cleared + 1
     }
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.structs.count) {
         emit_struct_ordered(p, i)
         i = i + 1
@@ -1682,7 +1682,7 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
         emit_fallthrough_return(p)
         return
     }
-    mut id := body
+    var id := body
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
@@ -1755,8 +1755,8 @@ emit_function :: fn(mut p: Parser, id: i64) {
 // itself carries a suffix in the signature and this binds the name the body
 // uses. The struct is the callee's own copy, which is what by value means.
 emit_value_param_bindings :: fn(mut p: Parser, params: i64) {
-    mut id := params
-    mut index : i64 = 0
+    var id := params
+    var index : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         off := node.val
@@ -1801,7 +1801,7 @@ emit_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     emit_text("mf_")
     frost_rt_emit_int(fn_index)
     emit_mangled_arg(p, arg)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < xarg_count) {
         garg := arena_at(p.gargs, xarg_start + i)
         emit_mangled_arg(p, garg.value)
@@ -1940,9 +1940,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
     emit_extern_prototypes(p, head)
 
     // Prototypes for each monomorphization, so they may be called before defined.
-    mut gi : i64 = 0
+    var gi : i64 = 0
     while (gi < p.generic_fns.count) {
-        mut ii : i64 = 0
+        var ii : i64 = 0
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg
@@ -1969,7 +1969,7 @@ emit_program :: fn(mut p: Parser, head: i64) {
     gi = 0
     while (gi < p.generic_fns.count) {
         if (unit_owns_generic(p, gi)) {
-            mut ii : i64 = 0
+            var ii : i64 = 0
             while (ii < p.type_args.count) {
                 used := arena_at(p.type_args, ii)
                 arg := used.arg
@@ -1989,7 +1989,7 @@ emit_program :: fn(mut p: Parser, head: i64) {
         gi = gi + 1
     }
 
-    mut id := head
+    var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
@@ -2016,7 +2016,7 @@ emit_test_main :: fn(mut p: Parser) {
     emit_text("void frost_rt_test_run(const char*, void(*)(void));\n")
     emit_text("int64_t frost_rt_test_summary(void);\n")
     emit_text("int main(void) {\n")
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
         // Only the tests of the file that was named. A module's own tests are

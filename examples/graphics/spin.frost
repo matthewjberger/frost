@@ -44,18 +44,18 @@ turn_things :: fn(mut world: World) {
     local := component_of($LocalTransform, world)
     step := input_delta_seconds(
         ecs_resource($Input, world, resource_of($Input, world)))
-    mut q := query_begin(world)
+    var q := query_begin(world)
     query_with(q, spin)
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        mut row : i64 = 0
+        var row : i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
-            mut turn := ecs_get($Spin, world, entity, spin)
+            var turn := ecs_get($Spin, world, entity, spin)
             turn.angle = turn.angle + turn.speed * step
             ecs_set($Spin, world, entity, spin, turn)
-            mut place := ecs_get($LocalTransform, world, entity, local)
+            var place := ecs_get($LocalTransform, world, entity, local)
             place.rotation = quat_mul(turn.rest,
                 quat_from_axis_angle(turn.axis, turn.angle))
             ecs_set($LocalTransform, world, entity, local, place)

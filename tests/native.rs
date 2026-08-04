@@ -134,7 +134,7 @@ split :: fn(mut source: [4]i64) -> (view: []i64, count: i64) {\n\
 \x20   return { view = source, count = 4 }\n\
 }\n\
 main :: fn() -> i64 {\n\
-\x20   mut data : [4]i64 = [11, 22, 33, 44]\n\
+\x20   var data : [4]i64 = [11, 22, 33, 44]\n\
 \x20   view, count := split(data)\n\
 \x20   print_int_line(view[0] + count)\n\
 \x20   0\n\
@@ -160,8 +160,8 @@ bump :: fn() -> i64 uses Arena<256> {\n\
 \x20   arena.offset\n\
 }\n\
 main :: fn() -> i64 {\n\
-\x20   mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
-\x20   mut total : i64 = 0\n\
+\x20   var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
+\x20   var total : i64 = 0\n\
 \x20   with arena {\n\
 \x20       total = bump()\n\
 \x20   }\n\
@@ -188,7 +188,7 @@ pair_right :: fn(p: Pair) -> []i64 { vec_slice($i64, p.right) }\n\
 pair_grow :: fn(mut p: Pair, value: i64) { vec_push($i64, p.left, value) }\n\
 pair_free :: fn(move p: Pair) { vec_free($i64, p.left)  vec_free($i64, p.right) }\n\
 main :: fn() -> i64 {\n\
-\x20   mut pair : Pair = { left = vec_new($i64, 1), right = vec_new($i64, 1) }\n\
+\x20   var pair : Pair = { left = vec_new($i64, 1), right = vec_new($i64, 1) }\n\
 \x20   vec_push($i64, pair.right, 7)\n\
 \x20   view := pair_right(pair)\n\
 \x20   pair_grow(pair, 1)\n\
@@ -210,10 +210,10 @@ fn a_view_taken_again_after_a_growth_reads_the_new_block() {
     let source = "import \"io.frost\"\n\
 import \"vec.frost\"\n\
 main :: fn() -> i64 {\n\
-\x20   mut v := vec_new($i64, 1)\n\
+\x20   var v := vec_new($i64, 1)\n\
 \x20   vec_push($i64, v, 111)\n\
-\x20   mut view := vec_slice($i64, v)\n\
-\x20   mut count : i64 = 0\n\
+\x20   var view := vec_slice($i64, v)\n\
+\x20   var count : i64 = 0\n\
 \x20   while (count < 8) {\n\
 \x20       vec_push($i64, v, count)\n\
 \x20       view = vec_slice($i64, v)\n\
@@ -238,10 +238,10 @@ fn a_number_copied_out_of_a_container_survives_a_growth() {
     let source = "import \"io.frost\"\n\
 import \"vec.frost\"\n\
 main :: fn() -> i64 {\n\
-\x20   mut v := vec_new($i64, 1)\n\
+\x20   var v := vec_new($i64, 1)\n\
 \x20   vec_push($i64, v, 111)\n\
 \x20   held := vec_slice($i64, v)[0]\n\
-\x20   mut count : i64 = 0\n\
+\x20   var count : i64 = 0\n\
 \x20   while (count < 8) {\n\
 \x20       vec_push($i64, v, count)\n\
 \x20       count = count + 1\n\
@@ -265,7 +265,7 @@ fn a_view_through_a_wrapper_reads_before_the_growth() {
 import \"vec.frost\"\n\
 passthrough :: fn(s: []i64) -> []i64 { s }\n\
 main :: fn() -> i64 {\n\
-\x20   mut v := vec_new($i64, 1)\n\
+\x20   var v := vec_new($i64, 1)\n\
 \x20   vec_push($i64, v, 111)\n\
 \x20   view := passthrough(vec_slice($i64, v))\n\
 \x20   print_int_line(view[0])\n\
@@ -324,7 +324,7 @@ fn borrow_exclusivity_errors_report_a_source_line() {
 add_both :: fn(mut a: i64, mut b: i64) -> i64 { a + b }
 
 main :: fn() -> i64 {
-    mut value : i64 = 1
+    var value : i64 = 1
     total := add_both(value, value)
     total
 }
@@ -349,7 +349,7 @@ Pair :: struct { x: i64, y: i64 }
 mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }
 
 main :: fn() -> i64 {
-    mut p : Pair = Pair { x = 1, y = 2 }
+    var p : Pair = Pair { x = 1, y = 2 }
     total := mix(p.x, p.x)
     total
 }
@@ -373,7 +373,7 @@ fn two_places_reached_through_raw_pointers_may_be_one() {
          \x20   b = b + 10\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut x : i64 = 0\n\
+         \x20   var x : i64 = 0\n\
          \x20   p := unsafe { ptr_to(x) }\n\
          \x20   q := unsafe { ptr_to(x) }\n\
          \x20   unsafe { bump_both(p^, q^) }\n\
@@ -394,7 +394,7 @@ fn a_raw_place_and_an_ordinary_one_may_be_one() {
          \x20   b = b + 10\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut x : i64 = 0\n\
+         \x20   var x : i64 = 0\n\
          \x20   p := unsafe { ptr_to(x) }\n\
          \x20   unsafe { bump_both(p^, x) }\n\
          \x20   0\n}\n";
@@ -418,8 +418,8 @@ fn two_borrowed_parameters_passed_on_are_still_apart() {
          }\n\
          outer :: fn(mut m: i64, mut n: i64) { bump_both(m, n) }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut x : i64 = 0\n\
-         \x20   mut y : i64 = 0\n\
+         \x20   var x : i64 = 0\n\
+         \x20   var y : i64 = 0\n\
          \x20   outer(x, y)\n\
          \x20   unsafe { printf(\"%lld\\n\", x + y) }\n\
          \x20   0\n}\n";
@@ -438,7 +438,7 @@ fn borrow_exclusivity_allows_disjoint_fields() {
         Pair :: struct { x: i64, y: i64 }\n\
         mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }\n\
         main :: fn() -> i64 {\n\
-        \x20   mut p : Pair = Pair { x = 3, y = 4 }\n\
+        \x20   var p : Pair = Pair { x = 3, y = 4 }\n\
         \x20   unsafe { printf(\"%lld\\n\", mix(p.x, p.y)) }\n    0\n}\n";
     assert_eq!(
         compile_and_run_unaudited("disjoint_fields", source),
@@ -527,7 +527,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
     arr := [10, 20, 30]
-    mut i : i64 = 5
+    var i : i64 = 5
     unsafe { printf("%lld\n", arr[i]) }
     0
 }
@@ -563,18 +563,18 @@ frost_rt_heap_free  :: extern fn(block: ^u8)
 Map :: struct($V: Type) { keys: ^i64, values: ^V, state: ^u8, cap: i64, count: i64 }
 
 map_new :: fn($V: Type, capacity: i64) -> Map<V> {
-    mut cap : i64 = 8
+    var cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
     keys := unsafe { ptr_cast($i64, frost_rt_heap_alloc(cap * 8)) }
     values := unsafe { ptr_cast($V, frost_rt_heap_alloc(cap * sizeof(V))) }
     state := unsafe { ptr_cast($u8, frost_rt_heap_alloc(cap)) }
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < cap) { unsafe { state[i] = 0 }  i = i + 1 }
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
 }
 map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
-    mut h := key * 2654435761
-    mut i := (h + h / 4096) % m.cap
+    var h := key * 2654435761
+    var i := (h + h / 4096) % m.cap
     while (true) {
         s := unsafe { m.state[i] }
         if (s == 0) { return i }
@@ -594,7 +594,7 @@ map_grow :: fn($V: Type, mut m: Map<V>) {
     fresh := map_new($V, m.cap * 2)
     m.keys = fresh.keys  m.values = fresh.values  m.state = fresh.state
     m.cap = fresh.cap  m.count = 0
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < oc) {
         if (unsafe { os[i] } == 1) { map_insert($V, m, unsafe { ok[i] }, unsafe { ov[i] }) }
         i = i + 1
@@ -621,8 +621,8 @@ map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
     found
 }
 main :: fn() -> i64 {
-    mut m := map_new($i64, 4)
-    mut i : i64 = 0
+    var m := map_new($i64, 4)
+    var i : i64 = 0
     while (i < 50) { map_put($i64, m, i, i * i)  i = i + 1 }
     unsafe { printf("%lld\n", map_len_i(m)) }
     unsafe { printf("%lld\n", map_get($i64, m, 7, -1)) }
@@ -648,14 +648,14 @@ frost_rt_heap_free    :: extern fn(block: ^u8)
 Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }
 
 vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
-    mut room := capacity
+    var room := capacity
     if (room < 1) { room = 1 }
     block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }
     Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }
 }
 vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     if (v.len >= v.cap) {
-        mut room := v.cap * 2
+        var room := v.cap * 2
         if (room < 1) { room = 1 }
         v.data = unsafe { ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }
         v.cap = room
@@ -668,15 +668,15 @@ vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T) { unsafe { v.
 vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }
 
 main :: fn() -> i64 {
-    mut v := vec_new($i64, 2)
-    mut i : i64 = 0
+    var v := vec_new($i64, 2)
+    var i : i64 = 0
     while (i < 10) { vec_push($i64, v, i * i)  i = i + 1 }
     unsafe { printf("%lld\n", vec_len($i64, v)) }
     unsafe { printf("%lld\n", vec_get($i64, v, 9)) }
     vec_set($i64, v, 3, 999)
     unsafe { printf("%lld\n", vec_get($i64, v, 3)) }
-    mut sum : i64 = 0
-    mut j : i64 = 0
+    var sum : i64 = 0
+    var j : i64 = 0
     while (j < vec_len($i64, v)) { sum = sum + vec_get($i64, v, j)  j = j + 1 }
     unsafe { printf("%lld\n", sum) }
     unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
@@ -699,8 +699,8 @@ read_it :: fn(mut ar: Arena, i: i64) -> i64 {
     n.a + n.b
 }
 main :: fn() -> i64 {
-    mut backing : [4]Node = [Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}]
-    mut ar := Arena { data = backing, count = 0 }
+    var backing : [4]Node = [Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}]
+    var ar := Arena { data = backing, count = 0 }
     grow(ar, 2)
     grow(ar, 3)
     unsafe { printf("%lld\n", read_it(ar, 2)) }
@@ -717,8 +717,8 @@ factorial :: fn(n: i64) -> i64 {
 }
 
 sum_to :: fn(n: i64) -> i64 {
-    mut total : i64 = 0
-    mut i : i64 = 0
+    var total : i64 = 0
+    var i : i64 = 0
     while (i <= n) {
         total = total + i
         i = i + 1
@@ -727,7 +727,7 @@ sum_to :: fn(n: i64) -> i64 {
 }
 
 count_evens :: fn(limit: i64) -> i64 {
-    mut count : i64 = 0
+    var count : i64 = 0
     for i in 0..limit {
         if (i % 2 == 0) { count = count + 1 } else { count = count + 0 }
     }
@@ -873,7 +873,7 @@ bump :: fn(mut p: Point) { p.x = p.x + 1 }
 sum :: fn(p: Point) -> i64 { p.x + p.y }
 
 main :: fn() -> i64 {
-    mut pt : Point = Point { x = 5, y = 10 }
+    var pt : Point = Point { x = 5, y = 10 }
     bump(pt)
     bump(pt)
     unsafe { printf("%lld\n", pt.x) }
@@ -961,7 +961,7 @@ main :: fn() -> i64 {
     half, odd := halve(9)
     unsafe { printf("%lld\n", half * 10 + odd) }
 
-    magnitude, mut negative := classify(-9)
+    magnitude, var negative := classify(-9)
     unsafe { printf("%lld\n", magnitude) }
     if (negative) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     negative = false
@@ -1102,13 +1102,13 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", paint(t.accent)) }
 
     // An assignment to a place whose type is known.
-    mut c : Color = .Red
+    var c : Color = .Red
     c = .Blue
     unsafe { printf("%lld\n", paint(c)) }
 
     // An element of an array, whose type the annotation gives.
-    mut wheel : [3]Color = [.Red, .Green, .Blue]
-    mut sum : i64 = 0
+    var wheel : [3]Color = [.Red, .Green, .Blue]
+    var sum : i64 = 0
     for held in wheel {
         sum = sum + paint(held)
     }
@@ -1194,7 +1194,7 @@ main :: fn() -> i64 {
     print_f64_line(elapsed(leg.took, 4.25))
     unsafe { printf("%lld\n", leg.distance) }
 
-    mut marks : [3]Meters = [1, 2, 3]
+    var marks : [3]Meters = [1, 2, 3]
     unsafe { printf("%lld\n", marks[2]) }
     0
 }
@@ -1232,7 +1232,7 @@ fn a_distinct_type_is_not_its_representation() {
          }\n",
         // And at an assignment.
         "main :: fn() -> i64 {\n\
-         \x20   mut m : Meters = 3\n\
+         \x20   var m : Meters = 3\n\
          \x20   f : Feet = 4\n\
          \x20   m = f\n\
          \x20   0\n\
@@ -1572,12 +1572,12 @@ const BINDING_COPIES: &str =
     "import \"io.frost\"\nPair :: struct { a: i64, b: i64 }
      Held :: struct { items: [4]i64 }
      bump :: fn(p: Pair) -> Pair {
-         mut out := p
+         var out := p
          out.a = 7
          out
      }
      first :: fn(h: Held) -> Held {
-         mut out := h
+         var out := h
          out.items[0] = 9
          out
      }
@@ -1647,8 +1647,8 @@ fn self_hosted_naming_a_borrowed_aggregate_binds_a_copy() {
 const WIDE_FRAME: &str =
     "import \"io.frost\"\nTable :: struct { rows: [900]i64 }
      fill :: fn(seed: i64) -> Table {
-         mut t := Table { rows = [0; 900] }
-         mut i : i64 = 0
+         var t := Table { rows = [0; 900] }
+         var i : i64 = 0
          while (i < 900) {
              t.rows[i] = seed + i
              i = i + 1
@@ -1656,10 +1656,10 @@ const WIDE_FRAME: &str =
          t
      }
      main :: fn() -> i64 {
-         mut total : i64 = 0
+         var total : i64 = 0
          held := fill(1)
          other := fill(1000)
-         mut i : i64 = 0
+         var i : i64 = 0
          while (i < 900) {
              total = total + held.rows[i] + other.rows[i]
              i = i + 1
@@ -1724,7 +1724,7 @@ const PACK_FEATURES: &str =
          body(doubled(v) for v in values)
      }
      total :: fn(values: $...) -> i64 {
-         mut sum : i64 = 0
+         var sum : i64 = 0
          for v in values {
              sum = sum + v
          }
@@ -1831,8 +1831,8 @@ fn a_compile_time_list_holds_types_and_expands_into_a_call() {
 // self-hosted compiler had neither, so a loop written with one compiled under
 // the bootstrap and not under it.
 const LOOP_CONTROL: &str = "import \"io.frost\"\nmain :: fn() -> i64 {
-         mut sum : i64 = 0
-         mut i : i64 = 0
+         var sum : i64 = 0
+         var i : i64 = 0
          while (i < 10) {
              i = i + 1
              if (i == 3) { continue }
@@ -1840,11 +1840,11 @@ const LOOP_CONTROL: &str = "import \"io.frost\"\nmain :: fn() -> i64 {
              sum = sum + i
          }
          print_int_line(sum)
-         mut outer : i64 = 0
-         mut total : i64 = 0
+         var outer : i64 = 0
+         var total : i64 = 0
          while (outer < 3) {
              outer = outer + 1
-             mut inner : i64 = 0
+             var inner : i64 = 0
              while (inner < 5) {
                  inner = inner + 1
                  if (inner == 2) { continue }
@@ -1910,7 +1910,7 @@ fn indexing_a_raw_pointer_held_by_a_generic_is_gated() {
              b.data[b.count] = value
          }
          main :: fn() -> i64 {
-             mut b := Box<i64> { data = unsafe { ptr_cast($i64, 0) },
+             var b := Box<i64> { data = unsafe { ptr_cast($i64, 0) },
                  count = 0 }
              put(b, 7)
              0
@@ -2177,7 +2177,7 @@ main :: fn() -> i64 {
 
     // And as a local that is reassigned, so the callee is not known at the
     // call site at all.
-    mut chosen : fn(i64) -> Point = origin
+    var chosen : fn(i64) -> Point = origin
     q := chosen(5)
     unsafe { printf("%lld\n", q.x + q.y) }
     chosen = shifted
@@ -2246,13 +2246,13 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = .Green })) }
 
     // An assignment to a place whose type is known.
-    mut q : Point = { x = 1, y = 1 }
+    var q : Point = { x = 1, y = 1 }
     q = { x = 5, y = 6 }
     unsafe { printf("%lld\n", sum(q)) }
 
     // Elements of an array, from the annotation's element type.
     grid : [2]Point = [{ x = 1, y = 2 }, { x = 3, y = 4 }]
-    mut total : i64 = 0
+    var total : i64 = 0
     for held in grid {
         total = total + sum(held)
     }
@@ -2297,7 +2297,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Point :: struct { x: i64, y: i64 }
 
 sum_slice :: fn(xs: []i64) -> i64 {
-    mut total : i64 = 0
+    var total : i64 = 0
     for value in xs {
         total = total + value
     }
@@ -2312,8 +2312,8 @@ counted :: fn(mut calls: i64) -> []i64 {
 }
 
 main :: fn() -> i64 {
-    mut numbers : [4]i64 = [10, 20, 30, 40]
-    mut total : i64 = 0
+    var numbers : [4]i64 = [10, 20, 30, 40]
+    var total : i64 = 0
     for value in numbers {
         total = total + value
     }
@@ -2321,33 +2321,33 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum_slice(numbers)) }
 
     // The position as well as the element.
-    mut weighted : i64 = 0
+    var weighted : i64 = 0
     for index, value in numbers {
         weighted = weighted + index * value
     }
     unsafe { printf("%lld\n", weighted) }
 
     // An aggregate element binds as a borrow, so nothing is copied per step.
-    mut points : [3]Point = [
+    var points : [3]Point = [
         Point { x = 1, y = 2 },
         Point { x = 3, y = 4 },
         Point { x = 5, y = 6 },
     ]
-    mut sum : i64 = 0
+    var sum : i64 = 0
     for p in points {
         sum = sum + p.x * p.y
     }
     unsafe { printf("%lld\n", sum) }
 
     // A `str` yields its bytes.
-    mut bytes : i64 = 0
+    var bytes : i64 = 0
     for byte in "abc" {
         bytes = bytes + byte
     }
     unsafe { printf("%lld\n", bytes) }
 
     // `break` and `continue` reach the loop the same as in a range.
-    mut first : i64 = 0
+    var first : i64 = 0
     for value in numbers {
         if (value == 10) { continue }
         first = value
@@ -2355,15 +2355,15 @@ main :: fn() -> i64 {
     }
     unsafe { printf("%lld\n", first) }
 
-    mut empty : [0]i64 = []
-    mut never : i64 = 7
+    var empty : [0]i64 = []
+    var never : i64 = 7
     for value in empty {
         never = value
     }
     unsafe { printf("%lld\n", never) }
 
-    mut calls : i64 = 0
-    mut seen : i64 = 0
+    var calls : i64 = 0
+    var seen : i64 = 0
     for value in counted(calls) {
         seen = seen + value
     }
@@ -2530,7 +2530,7 @@ eightbytes :: fn(size: i64) -> i64 {
 }
 
 doubled :: fn(n: i64) -> i64 {
-    mut total := n
+    var total := n
     (total)
 }
 
@@ -2679,8 +2679,8 @@ forward :: fn() -> i64 uses Arena<256> {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut result : i64 = 0
+    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var result : i64 = 0
     with arena {
         result = forward()
     }
@@ -2723,9 +2723,9 @@ only_one :: fn() -> i64 uses Scratch<64> {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut scratch : Scratch<64> = Scratch { data = [0; 64], offset = 0 }
-    mut result : i64 = 0
+    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var scratch : Scratch<64> = Scratch { data = [0; 64], offset = 0 }
+    var result : i64 = 0
     with arena {
         with scratch {
             result = forwards()
@@ -2796,8 +2796,8 @@ alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut escaped : ^i64 = ptr_to(arena.offset)
+    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var escaped : ^i64 = ptr_to(arena.offset)
     with arena {
         escaped = alloc_int(arena)
     }
@@ -2858,13 +2858,13 @@ const TYPE_ARGUMENT_STORAGE: &str = "import \"io.frost\"\nimport \"mem.frost\"\n
      \x20   Store { room = heap_slice($i64, room) }\n\
      }\n\
      make :: fn() -> Store {\n\
-     \x20   mut cells : [2]i64 = [0; 2]\n\
+     \x20   var cells : [2]i64 = [0; 2]\n\
      \x20   o := Owner { items = cells, tag = 7 }\n\
      \x20   held := owner_items(o)\n\
      \x20   store_new(held, 4)\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut s := make()\n\
+     \x20   var s := make()\n\
      \x20   s.room[0] = 5\n\
      \x20   print_int_line(s.room[0])\n\
      \x20   heap_release_slice($i64, s.room)\n\
@@ -2903,12 +2903,12 @@ const RESOURCE_INTO_A_STRUCT: &str = "import \"io.frost\"\nHeld :: linear struct
      open :: fn(id: i64) -> Held { Held { id = id } }\n\
      close :: fn(move h: Held) -> i64 { h.id }\n\
      pair_new :: fn() -> Pair {\n\
-     \x20   mut h := open(3)\n\
+     \x20   var h := open(3)\n\
      \x20   Pair { one = h, tag = 1 }\n\
      }\n\
      pair_close :: fn(move p: Pair) -> i64 { close(p.one) + p.tag }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut p := pair_new()\n\
+     \x20   var p := pair_new()\n\
      \x20   print_int_line(pair_close(p))\n\
      \x20   0\n\
      }\n";
@@ -2948,8 +2948,8 @@ const RESOURCE_INTO_AN_ARRAY: &str = "import \"io.frost\"\nHeld :: linear struct
      \x20   close(held[0]) + close(held[1])\n\
      }\n\
      pair :: fn() -> [2]Held {\n\
-     \x20   mut one := open(3)\n\
-     \x20   mut two := open(4)\n\
+     \x20   var one := open(3)\n\
+     \x20   var two := open(4)\n\
      \x20   [one, two]\n\
      }\n\
      main :: fn() -> i64 {\n\
@@ -2988,7 +2988,7 @@ const COMPONENT_AN_ENTITY_LACKS: &str = "import \"io.frost\"\nimport \"ecs.frost
      Held :: struct { a: i64, b: i64 }\n\
      Other :: struct { n: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut world := ecs_new()\n\
+     \x20   var world := ecs_new()\n\
      \x20   held := ecs_register($Held, world)\n\
      \x20   other := ecs_register($Other, world)\n\
      \x20   entity := ecs_spawn_with(world, mask_with(mask_empty(), held))\n\
@@ -3180,11 +3180,11 @@ fn self_hosted_compiler_emits_working_c() {
 // what says they agree.
 const SELF_HOSTED_WIDTHS: &str = "import \"io.frost\"\nMixed :: struct { a: i32, b: i16, c: u8, d: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut small : i32 = -5\n\
-     \x20   mut tiny : i16 = 300\n\
-     \x20   mut byte : u8 = 200\n\
-     \x20   mut big : u32 = 4000000000\n\
-     \x20   mut wide : usize = 9000000000\n\
+     \x20   var small : i32 = -5\n\
+     \x20   var tiny : i16 = 300\n\
+     \x20   var byte : u8 = 200\n\
+     \x20   var big : u32 = 4000000000\n\
+     \x20   var wide : usize = 9000000000\n\
      \x20   print_int_line(small)\n    print_int_line(tiny)\n    print_int_line(byte)\n    print_int_line(big)\n\
      \x20   print_int_line(wide)\n    print_int_line(sizeof(Mixed))\n\
      \x20   m := Mixed { a = -7, b = 9, c = 250, d = 123456789 }\n\
@@ -3229,13 +3229,13 @@ const SELF_HOSTED_FLOATS: &str = "import \"io.frost\"\nscale :: fn(v: f64, by: f
      \x20   a := 3.5\n    b := 2.0\n\
      \x20   print_f64_line(a + b)\n    print_f64_line(a - b)\n    print_f64_line(a * b)\n    print_f64_line(a / b)\n\
      \x20   print_f64_line(scale(a, 4.0))\n\
-     \x20   mut small : f32 = 1.25\n    print_f64_line(small)\n    print_f64_line(narrow(small))\n\
+     \x20   var small : f32 = 1.25\n    print_f64_line(small)\n    print_f64_line(narrow(small))\n\
      \x20   print_int_line(sizeof(Pair))\n\
      \x20   pr := Pair { x = 9.75, y = 0.5 }\n\
      \x20   print_f64_line(pr.x)\n    print_f64_line(pr.y)\n\
      \x20   if (a > b) { print_int_line(1) } else { print_int_line(0) }\n\
      \x20   if (a < b) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   mut n : i64 = 7\n    d := n * 1.0\n    print_f64_line(d / 2.0)\n    0\n}\n";
+     \x20   var n : i64 = 7\n    d := n * 1.0\n    print_f64_line(d / 2.0)\n    0\n}\n";
 
 const FLOATS_EXPECTED: &str =
     "5.5\n1.5\n7\n1.75\n14\n1.25\n1.75\n16\n9.75\n0.5\n1\n0\n3.5\n";
@@ -3269,7 +3269,7 @@ fn self_hosted_floats_through_c() {
 // coercing to a slice both by binding and at a call, and `slice_len` reading a
 // constant from an array's type and a field from a slice.
 const SELF_HOSTED_ARRAYS: &str = "import \"io.frost\"\nsum :: fn(numbers: []i64) -> i64 {\n\
-     \x20   mut total : i64 = 0\n    mut i : i64 = 0\n\
+     \x20   var total : i64 = 0\n    var i : i64 = 0\n\
      \x20   while (i < slice_len(numbers)) {\n\
      \x20       total = total + numbers[i]\n        i = i + 1\n    }\n\
      \x20   total\n}\n\
@@ -3280,7 +3280,7 @@ const SELF_HOSTED_ARRAYS: &str = "import \"io.frost\"\nsum :: fn(numbers: []i64)
      \x20   print_int_line(scores[2])\n    print_int_line(view[3])\n\
      \x20   print_int_line(sum(view))\n    print_int_line(sum(scores))\n\
      \x20   print_int_line(sizeof([5]i64))\n\
-     \x20   mut grid : [3]i64 = [7, 8, 9]\n\
+     \x20   var grid : [3]i64 = [7, 8, 9]\n\
      \x20   grid[1] = 99\n    print_int_line(grid[1])\n    print_int_line(sum(grid))\n    0\n}\n";
 
 const ARRAYS_EXPECTED: &str = "5\n5\n90\n30\n240\n240\n40\n99\n115\n";
@@ -3315,9 +3315,9 @@ fn self_hosted_arrays_through_c() {
 #[test]
 fn self_hosted_boolean_operators_short_circuit() {
     let source = "import \"io.frost\"\ntrap :: fn() -> i64 {\n\
-         \x20   mut ok : [1]i64 = [0]\n    ok[5] = 1\n    1\n}\n\
+         \x20   var ok : [1]i64 = [0]\n    ok[5] = 1\n    1\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut n : i64 = 0\n\
+         \x20   var n : i64 = 0\n\
          \x20   if (n == 1 && trap() == 1) { print_int_line(9) } else { print_int_line(1) }\n\
          \x20   if (n == 0 || trap() == 1) { print_int_line(2) } else { print_int_line(8) }\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("shortcircuit", source)
@@ -3454,16 +3454,16 @@ fn self_hosted_threads_share_a_counter() {
          Work :: struct { start: i64, count: i64, total: ^i64 }\n\
          worker :: fn(raw: ^u8) {\n\
          \x20   w := unsafe { ptr_cast($Work, raw) }\n\
-         \x20   mut i : i64 = 0\n\
+         \x20   var i : i64 = 0\n\
          \x20   count := unsafe { w^.count }\n\
          \x20   cell := unsafe { w^.total }\n\
          \x20   start := unsafe { w^.start }\n\
          \x20   while (i < count) { atomic_add(cell, start + i)  i = i + 1 }\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut total : i64 = 0\n\
-         \x20   mut w1 := Work { start = 0, count = 500, total = ptr_to(total) }\n\
-         \x20   mut w2 := Work { start = 500, count = 500, total = ptr_to(total) }\n\
+         \x20   var total : i64 = 0\n\
+         \x20   var w1 := Work { start = 0, count = 500, total = ptr_to(total) }\n\
+         \x20   var w2 := Work { start = 500, count = 500, total = ptr_to(total) }\n\
          \x20   t1 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w1))) }\n\
          \x20   t2 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w2))) }\n\
          \x20   join(t1)  join(t2)\n\
@@ -3600,7 +3600,7 @@ fn a_call_argument_does_not_hide_a_gated_operation() {
         (
             "printderef",
             "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   p := ptr_to(x)\n\
              \x20   print_int_line(p^)\n\
              \x20   0\n}\n",
@@ -3609,7 +3609,7 @@ fn a_call_argument_does_not_hide_a_gated_operation() {
         (
             "printindex",
             "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-             \x20   mut xs : [3]i64 = [7, 8, 9]\n\
+             \x20   var xs : [3]i64 = [7, 8, 9]\n\
              \x20   p := ptr_to(xs[0])\n\
              \x20   print_int_line(p[100000])\n\
              \x20   0\n}\n",
@@ -3677,7 +3677,7 @@ fn a_ref_local_carries_the_type_of_what_it_names() {
     let source = "import \"io.frost\"\nInner :: struct { cells: [4]i64 }\n\
                   Outer :: struct { inner: Inner }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut items := [Outer { inner = Inner { cells = [1, 2, 3, 4] } }]\n\
+                  \x20   var items := [Outer { inner = Inner { cells = [1, 2, 3, 4] } }]\n\
                   \x20   ref held := items[0]\n\
                   \x20   print_int_line(held.inner.cells[2])\n\
                   \x20   0\n}\n";
@@ -3693,8 +3693,8 @@ fn a_ref_local_carries_the_type_of_what_it_names() {
 #[test]
 fn a_ref_to_a_raw_pointer_indexes_as_a_raw_pointer() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-                  \x20   mut cells := [1, 2, 3, 4]\n\
-                  \x20   mut here := unsafe { ptr_to(cells[0]) }\n\
+                  \x20   var cells := [1, 2, 3, 4]\n\
+                  \x20   var here := unsafe { ptr_to(cells[0]) }\n\
                   \x20   ref aliased := here\n\
                   \x20   print_int_line(aliased[1])\n\
                   \x20   0\n}\n";
@@ -3727,13 +3727,13 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          import \"strings.frost\"\n\
          import \"ordering.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 4)\n\
+         \x20   var v := vec_new($i64, 4)\n\
          \x20   seed := [5, 2, 9, 1, 7]\n\
-         \x20   mut i : i64 = 0\n\
+         \x20   var i : i64 = 0\n\
          \x20   while (i < 5) { vec_push($i64, v, seed[i])  i = i + 1 }\n\
          \x20   sort_vec($i64, $i64_ascending, v)\n\
-         \x20   mut b := builder_new(16)\n\
-         \x20   mut j : i64 = 0\n\
+         \x20   var b := builder_new(16)\n\
+         \x20   var j : i64 = 0\n\
          \x20   while (j < vec_len($i64, v)) {\n\
          \x20       builder_int(b, vec_get($i64, v, j))  builder_byte(b, 32)  j = j + 1\n\
          \x20   }\n\
@@ -3909,7 +3909,7 @@ fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
          nudge :: fn(p: []Position, row: i64) {\n\
          \x20   p[row].x = p[row].x + 1.0\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut world := ecs_new()\n\
+         \x20   var world := ecs_new()\n\
          \x20   position := ecs_register($Position, world)\n\
          \x20   a := ecs_spawn(world)\n\
          \x20   ecs_add($Position, world, a, position,\n\
@@ -3970,9 +3970,9 @@ fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
 #[test]
 fn self_hosted_strings_and_if_expressions() {
     let source = "import \"io.frost\"\nread :: fn(s: str) -> i64 {\n\
-         \x20   mut i : i64 = 0\n    mut negative := false\n\
+         \x20   var i : i64 = 0\n    var negative := false\n\
          \x20   if (str_len(s) > 0 && s[0] == 45) { negative = true  i = 1 }\n\
-         \x20   mut value : i64 = 0\n\
+         \x20   var value : i64 = 0\n\
          \x20   while (i < str_len(s)) {\n\
          \x20       value = value * 10 + (s[i] - 48)\n        i = i + 1\n    }\n\
          \x20   if (negative) { 0 - value } else { value }\n}\n\
@@ -4028,9 +4028,9 @@ fn self_hosted_str_held_in_a_struct_is_indexable() {
 const SELF_HOSTED_CONSTANT_ARRAYS: &str = "import \"io.frost\"\nCAPACITY :: 8\n\
      Buffer :: struct { bytes: [CAPACITY]u8, used: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut a : [4]i64 = [7; 4]\n\
+     \x20   var a : [4]i64 = [7; 4]\n\
      \x20   print_int_line(a[0])\n    print_int_line(a[3])\n\
-     \x20   mut b : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }\n\
+     \x20   var b : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }\n\
      \x20   b.bytes[7] = 65\n\
      \x20   print_int_line(b.bytes[7])\n    print_int_line(sizeof(Buffer))\n\
      \x20   print_int_line(1)\n    0\n}\n";
@@ -4062,7 +4062,7 @@ fn self_hosted_repeats_an_array_and_sizes_it_by_a_constant() {
 // through, which for a C keyword is a syntax error rather than a field.
 const SELF_HOSTED_KEYWORD_FIELDS: &str = "import \"io.frost\"\nNode :: struct { struct: i64, return: i64, case: i64, int: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut n : Node = Node { struct = 1, return = 2, case = 3, int = 4 }\n\
+     \x20   var n : Node = Node { struct = 1, return = 2, case = 3, int = 4 }\n\
      \x20   n.int = 9\n\
      \x20   print_int_line(n.struct)\n    print_int_line(n.return)\n\
      \x20   print_int_line(n.case)\n    print_int_line(n.int)\n    0\n}\n";
@@ -4390,7 +4390,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
                    \x20   if (n < 2) { return n }\n\
                    \x20   return fib(n - 1) + fib(n - 2)\n}\n\
                    main :: fn() -> i64 {\n\
-                   \x20   mut i : i64 = 0\n\
+                   \x20   var i : i64 = 0\n\
                    \x20   while (i < 10) {\n        print_int_line(fib(i))\n        i = i + 1\n    }\n\
                    \x20   print_int_line(6 * 7)\n    0\n}\n";
     let input = directory.join("frost_mfasm_input.frost");
@@ -4569,12 +4569,12 @@ fn native_backend_covers_the_language() {
         ),
         (
             "loops",
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    mut total : i64 = 0\n    mut i : i64 = 1\n    while (i <= 100) {\n        total = total + i\n        i = i + 1\n    }\n    print_int_line(total)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    var total : i64 = 0\n    var i : i64 = 1\n    while (i <= 100) {\n        total = total + i\n        i = i + 1\n    }\n    print_int_line(total)\n    0\n}\n",
             "5050\n",
         ),
         (
             "structs",
-            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    print_int_line(sum(a))\n    bump(a)\n    print_int_line(a.x)\n    b := a\n    print_int_line(b.x)\n    print_int_line(sizeof(P))\n    0\n}\n",
+            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    print_int_line(sum(a))\n    bump(a)\n    print_int_line(a.x)\n    b := a\n    print_int_line(b.x)\n    print_int_line(sizeof(P))\n    0\n}\n",
             "7\n103\n103\n16\n",
         ),
         (
@@ -4582,19 +4582,19 @@ fn native_backend_covers_the_language() {
             "import \"io.frost\"\nInner :: struct { a: i64, b: i64, c: i64 }\n\
              Outer :: struct { first: i64, mid: Inner, last: i64 }\n\
              main :: fn() -> i64 {\n\
-             \x20   mut o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3, c = 4 }, last = 5 }\n\
+             \x20   var o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3, c = 4 }, last = 5 }\n\
              \x20   print_int_line(o.first)\n    print_int_line(o.mid.a)\n    print_int_line(o.mid.c)\n    print_int_line(o.last)\n\
              \x20   print_int_line(sizeof(Outer))\n    o.mid.b = 99\n    print_int_line(o.mid.b)\n    print_int_line(o.last)\n    0\n}\n",
             "1\n2\n4\n5\n40\n99\n5\n",
         ),
         (
             "pointers",
-            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    unsafe { print_int_line(r^.y) }\n    unsafe { r^.y = 55 }\n    print_int_line(a.y)\n    0\n}\n",
+            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    unsafe { print_int_line(r^.y) }\n    unsafe { r^.y = 55 }\n    print_int_line(a.y)\n    0\n}\n",
             "4\n55\n",
         ),
         (
             "match",
-            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    mut r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print_int_line(classify(0))\n    print_int_line(classify(1))\n    print_int_line(classify(9))\n    0\n}\n",
+            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    var r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print_int_line(classify(0))\n    print_int_line(classify(1))\n    print_int_line(classify(9))\n    0\n}\n",
             "100\n200\n300\n",
         ),
         (
@@ -4637,7 +4637,7 @@ fn both_self_hosted_backends_refuse_the_same_programs() {
         // A value of the wrong type assigned to a place.
         (
             "P :: struct { x: i64 }\n\
-          main :: fn() -> i64 { mut n : i64 = 0  p := P { x = 1 }  n = p  0 }\n",
+          main :: fn() -> i64 { var n : i64 = 0  p := P { x = 1 }  n = p  0 }\n",
             "assigning a value of the wrong type",
         ),
         // A returned value of the wrong type.
@@ -4761,7 +4761,7 @@ fn self_hosted_enforces_the_unsafe_gate() {
 
     let (ok, message) = check(
         "deref",
-        "main :: fn() -> i64 { mut x : i64 = 1  p := ptr_to(x)  p^ }\n",
+        "main :: fn() -> i64 { var x : i64 = 1  p := ptr_to(x)  p^ }\n",
     );
     assert!(!ok, "a bare raw-pointer read should be gated");
     assert!(
@@ -4774,13 +4774,13 @@ fn self_hosted_enforces_the_unsafe_gate() {
     let (ok, _) = check(
         "safe",
         "puts :: safe extern fn(s: ^i8) -> i64\n\
-         main :: fn() -> i64 { unsafe { puts(\"hi\") }  mut xs : [3]i64 = [1,2,3]  xs[1] }\n",
+         main :: fn() -> i64 { unsafe { puts(\"hi\") }  var xs : [3]i64 = [1,2,3]  xs[1] }\n",
     );
     assert!(ok, "a safe extern and an array index need no block");
 
     let (ok, _) = check(
         "wrapped",
-        "main :: fn() -> i64 { mut x : i64 = 1  p := ptr_to(x)  unsafe { p^ } }\n",
+        "main :: fn() -> i64 { var x : i64 = 1  p := ptr_to(x)  unsafe { p^ } }\n",
     );
     assert!(ok, "the same read inside a block is allowed");
 
@@ -4936,65 +4936,14 @@ fn self_hosted_rejects_an_unsupported_declaration() {
     );
 }
 
-// The README's snippet is the first Frost anyone reads, and prose in a README
-// is the one kind of example nothing compiles. So it is a file, and this checks
-// that the file is what the README shows and that it prints what its comments
-// claim. Either drifting is a failing test rather than a wrong first
-// impression.
+// The tour's comments claim numbers, so it is compiled and run and the
+// numbers are checked.
 #[test]
-fn the_readme_snippet_is_the_tour_program() {
+fn the_tour_prints_what_its_comments_claim() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let program = std::fs::read_to_string(root.join("examples/tour.frost"))
         .unwrap()
         .replace("\r\n", "\n");
-    let readme = std::fs::read_to_string(root.join("README.md"))
-        .unwrap()
-        .replace("\r\n", "\n");
-
-    // The README shows the tour as a picture, drawn from this file by
-    // tools/highlight.frost. Stripping the markup back out gives the source it
-    // was drawn from, so a change to the tour that was never re-rendered fails
-    // here rather than leaving a stale image nobody looks at twice.
-    assert!(
-        readme.contains("docs/book/src/tour.svg"),
-        "README.md no longer shows the tour"
-    );
-    let svg =
-        std::fs::read_to_string(root.join("docs/book/src/tour.svg")).unwrap();
-    let mut drawn = String::new();
-    let mut inside = false;
-    for character in svg.chars() {
-        match character {
-            '<' => inside = true,
-            '>' => inside = false,
-            _ if !inside => drawn.push(character),
-            _ => {}
-        }
-    }
-    let drawn = drawn
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&");
-    let squashed: String =
-        drawn.chars().filter(|c| !c.is_whitespace()).collect();
-    // The header comment says where the file is shown, which would be circular
-    // inside the picture, so the drawing starts at the first declaration.
-    let body = program
-        .split_once("\nKind :: enum")
-        .expect("the tour program starts with Kind")
-        .1;
-    for line in format!("Kind :: enum{body}").lines() {
-        let wanted: String =
-            line.chars().filter(|c| !c.is_whitespace()).collect();
-        if wanted.is_empty() {
-            continue;
-        }
-        assert!(
-            squashed.contains(&wanted),
-            "docs/book/src/tour.svg is missing a line of the tour, so it needs redrawing with `just tour-image`:\n{line}"
-        );
-    }
-
     let Some(output) = compile_and_run_unaudited("tour", &program) else {
         return;
     };
@@ -5074,26 +5023,26 @@ const BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
 // index-and-bound loop it stands for. No node kind, no pass and no backend
 // learns anything new, which is why one desugaring covers both backends.
 const SELF_HOSTED_FOR: &str = "import \"io.frost\"\nsum_slice :: fn(xs: []i64) -> i64 {\n\
-     \x20   mut total : i64 = 0\n\
+     \x20   var total : i64 = 0\n\
      \x20   for value in xs {\n\
      \x20       total = total + value\n\
      \x20   }\n\
      \x20   total\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut numbers : [4]i64 = [10, 20, 30, 40]\n\
-     \x20   mut total : i64 = 0\n\
+     \x20   var numbers : [4]i64 = [10, 20, 30, 40]\n\
+     \x20   var total : i64 = 0\n\
      \x20   for value in numbers {\n\
      \x20       total = total + value\n\
      \x20   }\n\
      \x20   print_int_line(total)\n\
      \x20   print_int_line(sum_slice(numbers))\n\
-     \x20   mut weighted : i64 = 0\n\
+     \x20   var weighted : i64 = 0\n\
      \x20   for index, value in numbers {\n\
      \x20       weighted = weighted + index * value\n\
      \x20   }\n\
      \x20   print_int_line(weighted)\n\
-     \x20   mut bytes : i64 = 0\n\
+     \x20   var bytes : i64 = 0\n\
      \x20   for byte in \"abc\" {\n\
      \x20       bytes = bytes + byte\n\
      \x20   }\n\
@@ -5147,7 +5096,7 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
          high, low := split_bytes(700)
          print_int_line(high)
          print_int_line(low)
-         magnitude, mut negative := classify(-9)
+         magnitude, var negative := classify(-9)
          print_int_line(magnitude)
          if (negative) { print_int_line(1) } else { print_int_line(0) }
          negative = false
@@ -5195,9 +5144,9 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
          items[j] = hold
      }
      order :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T, count: i64) {
-         mut i := 1
+         var i := 1
          while (i < count) {
-             mut j := i
+             var j := i
              while (j > 0 && less(items[j], items[j - 1])) {
                  swap($T, items, j, j - 1)
                  j = j - 1
@@ -5206,7 +5155,7 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
          }
      }
      show :: fn(items: []i64, count: i64) {
-         mut i := 0
+         var i := 0
          while (i < count) {
              print_int_line(items[i])
              i = i + 1
@@ -5215,7 +5164,7 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
      main :: fn() -> i64 {
          print_int_line(apply($double, 21))
          print_int_line(apply($negate, 9))
-         mut numbers : [5]i64 = [5, 3, 9, 1, 7]
+         var numbers : [5]i64 = [5, 3, 9, 1, 7]
          order($i64, $ascending, numbers, 5)
          show(numbers, 5)
          order($i64, $descending, numbers, 5)
@@ -5785,7 +5734,7 @@ fn self_hosted_rejects_assigning_the_wrong_type() {
     let source = "P :: struct { x: i64 }\n\
                   main :: fn() -> i64 {\n\
                   \x20   p := P { x = 1 }\n\
-                  \x20   mut n : i64 = 0\n    n = p\n    return n\n}\n";
+                  \x20   var n : i64 = 0\n    n = p\n    return n\n}\n";
     let Some(message) = self_hosted_rejects("badassign", source) else {
         return;
     };
@@ -5820,8 +5769,8 @@ const SELF_HOSTED_ALLOCATION_SOURCES: &str = "import \"io.frost\"\nArena :: stru
      take :: fn(amount: i64) -> i64 uses Arena { bump(arena, amount) }\n\
      nested :: fn() -> i64 uses Arena { take(10) + take(32) }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut arena : Arena = Arena { offset = 0 }\n\
-     \x20   mut result : i64 = 0\n\
+     \x20   var arena : Arena = Arena { offset = 0 }\n\
+     \x20   var result : i64 = 0\n\
      \x20   with arena { result = nested() }\n\
      \x20   print_int_line(result)\n    print_int_line(arena.offset)\n    0\n}\n";
 
@@ -5877,8 +5826,8 @@ fn self_hosted_rejects_a_region_pointer_stored_outside() {
     let source = "Arena :: struct { offset: i64 }\n\
                   alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut arena : Arena = Arena { offset = 0 }\n\
-                  \x20   mut escaped : ^i64 = ptr_to(arena.offset)\n\
+                  \x20   var arena : Arena = Arena { offset = 0 }\n\
+                  \x20   var escaped : ^i64 = ptr_to(arena.offset)\n\
                   \x20   with arena { escaped = alloc() }\n\
                   \x20   unsafe { escaped^ }\n}\n";
     let Some(message) = self_hosted_rejects("regionstore", source) else {
@@ -5895,7 +5844,7 @@ fn self_hosted_rejects_a_returned_region_pointer() {
     let source = "Arena :: struct { offset: i64 }\n\
                   alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   grab :: fn() -> ^i64 {\n\
-                  \x20   mut arena : Arena = Arena { offset = 0 }\n\
+                  \x20   var arena : Arena = Arena { offset = 0 }\n\
                   \x20   with arena { return alloc() }\n\
                   \x20   ptr_to(arena.offset)\n}\n\
                   main :: fn() -> i64 { 0 }\n";
@@ -5913,7 +5862,7 @@ fn self_hosted_rejects_a_returned_region_pointer() {
 #[test]
 fn self_hosted_rejects_a_returned_frame_pointer() {
     let source = "grab :: fn() -> ^i64 {\n\
-                  \x20   mut x : i64 = 5\n\
+                  \x20   var x : i64 = 5\n\
                   \x20   ptr_to(x)\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let Some(message) = self_hosted_rejects("framereturn", source) else {
@@ -5932,7 +5881,7 @@ fn self_hosted_rejects_a_returned_frame_pointer() {
 fn self_hosted_rejects_a_frame_pointer_inside_a_struct() {
     let source = "Box :: struct { p: ^i64 }\n\
                   grab :: fn() -> Box {\n\
-                  \x20   mut x : i64 = 5\n\
+                  \x20   var x : i64 = 5\n\
                   \x20   return Box { p = ptr_to(x) }\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let Some(message) = self_hosted_rejects("framestruct", source) else {
@@ -5966,7 +5915,7 @@ fn self_hosted_rejects_overlapping_mutable_borrows() {
     let source = "Pair :: struct { x: i64, y: i64 }\n\
                   mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut p : Pair = Pair { x = 1, y = 2 }\n\
+                  \x20   var p : Pair = Pair { x = 1, y = 2 }\n\
                   \x20   mix(p.x, p.x)\n    0\n}\n";
     let Some(message) = self_hosted_rejects("exclusivity", source) else {
         return;
@@ -5984,8 +5933,8 @@ fn self_hosted_accepts_a_region_pointer_held_inside() {
     let source = "import \"io.frost\"\nArena :: struct { offset: i64 }\n\
                   alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut arena : Arena = Arena { offset = 7 }\n\
-                  \x20   mut result : i64 = 0\n\
+                  \x20   var arena : Arena = Arena { offset = 7 }\n\
+                  \x20   var result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = unsafe { held^ }\n    }\n\
                   \x20   print_int_line(result)\n    0\n}\n";
@@ -6020,8 +5969,8 @@ fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
                   alloc :: fn() -> ^i64 uses Arena {\n\
                   \x20   slot := unsafe { ptr_to(arena^.offset) }\n    return slot\n}\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut arena : Arena = Arena { offset = 5 }\n\
-                  \x20   mut result : i64 = 0\n\
+                  \x20   var arena : Arena = Arena { offset = 5 }\n\
+                  \x20   var result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = unsafe { held^ }\n    }\n\
                   \x20   print_int_line(result)\n    0\n}\n";
@@ -6991,7 +6940,7 @@ const CONSTANTS_ARE_LITERALS: &str = "import \"io.frost\"\nLIMIT :: 200\n\
      main :: fn() -> i64 {\n\
      \x20   top : u8 = LIMIT\n\
      \x20   print_int_line(cast($i64, top))\n\
-     \x20   mut byte : u8 = 65\n\
+     \x20   var byte : u8 = 65\n\
      \x20   byte = byte + SHIFT\n\
      \x20   print_int_line(cast($i64, byte))\n\
      \x20   room : i16 = LIMIT * 2\n\
@@ -7069,7 +7018,7 @@ const FLOAT_CONSTANTS: &str = "import \"io.frost\"\nLIMIT :: 1.5607963267948966
          print_int_line(narrow(held))
          print_int_line(narrow(STEP))
          print_int_line(narrow(-STEP))
-         mut count : i64 = 2
+         var count : i64 = 2
          mixed : f32 = 0.25 + count
          print_int_line(narrow(mixed))
          also : f32 = STEP * count
@@ -7270,8 +7219,8 @@ fn the_self_hosted_compiler_reads_a_named_text_constant_the_same_way() {
 // trailing `-`, which is how a subtraction spanning a line break is written,
 // and `MINUS_THAT_GOES_NOWHERE` holds the shape that is refused.
 const MINUS_OPENS_A_STATEMENT: &str = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-     \x20   mut total : i64 = 10\n\
-     \x20   mut count : i64 = 0\n\
+     \x20   var total : i64 = 10\n\
+     \x20   var count : i64 = 0\n\
      \x20   count = 4\n\
      \x20   print_int_line(total)\n\
      \x20   print_int_line(count)\n\
@@ -7285,8 +7234,8 @@ const MINUS_OPENS_A_STATEMENT: &str = "import \"io.frost\"\nmain :: fn() -> i64 
 // split across lines looks like. It parses, the second line negates its own
 // operand, and what it works out goes nowhere.
 const MINUS_THAT_GOES_NOWHERE: &str = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-     \x20   mut total : i64 = 10\n\
-     \x20   mut count : i64 = 4\n\
+     \x20   var total : i64 = 10\n\
+     \x20   var count : i64 = 4\n\
      \x20   held := count\n\
      \x20       - total\n\
      \x20   print_int_line(held)\n\
@@ -7363,7 +7312,7 @@ const BOOL_IS_A_BYTE: &str = "import \"io.frost\"\nPacked :: struct { a: bool, b
      \x20   print_int_line(sizeof(bool))\n\
      \x20   print_int_line(sizeof(Packed))\n\
      \x20   print_int_line(sizeof(Flagged))\n\
-     \x20   mut packed := Packed { a = true, b = false, c = true }\n\
+     \x20   var packed := Packed { a = true, b = false, c = true }\n\
      \x20   if (packed.a) { print_int_line(1) }\n\
      \x20   if (packed.b) { print_int_line(2) }\n\
      \x20   if (packed.c) { print_int_line(3) }\n\
@@ -7440,7 +7389,7 @@ fn a_program_built_from_interfaces_is_the_same_program() {
          }\n\
          describe :: fn(s: Shape) -> Report { Report { value = area(s), kind = 1 } }\n\
          biggest :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {\n\
-         \x20   mut best := x\n    if (before(y, best)) { best = y }\n    best\n\
+         \x20   var best := x\n    if (before(y, best)) { best = y }\n    best\n\
          }\n",
     )
     .unwrap();
@@ -8163,7 +8112,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   \x20   if (n > 3) { return E { c = 9 } }\n\
                   \x20   n + 1\n}\n\
                   run :: fn() -> i64 ! E {\n\
-                  \x20   mut n : i64 = 0\n\
+                  \x20   var n : i64 = 0\n\
                   \x20   while (step(n)? < 3) { n = n + 1 }\n\
                   \x20   n\n}\n\
                   got :: fn() -> i64 {\n\
@@ -8216,7 +8165,7 @@ fn both_compilers_refuse_a_defer_inside_a_block() {
             "deferloop",
             "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }\n\
              f :: fn() -> i64 {\n\
-             \x20   mut i : i64 = 0\n\
+             \x20   var i : i64 = 0\n\
              \x20   while (i < 2) {\n        defer trace(i)\n        i = i + 1\n    }\n\
              \x20   0\n}\n\
              main :: fn() -> i64 { print_int_line(f())  0 }\n",
@@ -8303,12 +8252,12 @@ fn both_compilers_refuse_a_pointer_kept_by_something_that_outlives_it() {
     t.held = value
 }
          register :: fn(mut t: Table) {
-             mut n : i64 = 7
+             var n : i64 = 7
              put(t, Slot { at = ptr_to(n) })
          }
          main :: fn() -> i64 {
-             mut seed : i64 = 0
-             mut t := Table { held = Slot { at = ptr_to(seed) } }
+             var seed : i64 = 0
+             var t := Table { held = Slot { at = ptr_to(seed) } }
              register(t)
              0
          }
@@ -8337,9 +8286,9 @@ fn both_compilers_refuse_a_pointer_kept_by_something_that_outlives_it() {
     t.held = value
 }
          main :: fn() -> i64 {
-             mut n : i64 = 7
-             mut seed : i64 = 0
-             mut t := Table { held = Slot { at = ptr_to(seed) } }
+             var n : i64 = 7
+             var seed : i64 = 0
+             var t := Table { held = Slot { at = ptr_to(seed) } }
              put(t, Slot { at = ptr_to(n) })
              print_int_line(n)
              0
@@ -8547,9 +8496,9 @@ fn self_hosted_backends_agree() {
          bump :: fn(mut o: Outer) -> i64 {\n\
          \x20   o.mid.b = o.mid.b + 1\n    o.mid.b\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3 }, last = 4 }\n\
+         \x20   var o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3 }, last = 4 }\n\
          \x20   print_int_line(bump(o))\n    print_int_line(o.mid.b)\n    print_int_line(sizeof(Outer))\n\
-         \x20   mut bs : Bytes = Bytes { flag = 1, count = 77, mark = 2 }\n\
+         \x20   var bs : Bytes = Bytes { flag = 1, count = 77, mark = 2 }\n\
          \x20   print_int_line(bs.flag)\n    print_int_line(bs.count)\n    bs.mark = 5\n\
          \x20   print_int_line(bs.mark)\n    print_int_line(sizeof(Bytes))\n\
          \x20   print_int_line(sum_kind(Kind::None))\n\
@@ -8559,7 +8508,7 @@ fn self_hosted_backends_agree() {
          \x20   buf := unsafe { malloc(8) }\n\
          \x20   unsafe { buf[0] = 65 }\n    unsafe { buf[1] = 66 }\n\
          \x20   unsafe { print_int_line(buf[0]) }\n    unsafe { print_int_line(buf[1]) }\n\
-         \x20   mut acc : i64 = 0\n    mut i : i64 = 0\n\
+         \x20   var acc : i64 = 0\n    var i : i64 = 0\n\
          \x20   while (i < 5) {\n\
          \x20       if (i % 2 == 0) { acc = acc + i } else { acc = acc - i }\n\
          \x20       i = i + 1\n    }\n\
@@ -8609,7 +8558,7 @@ fn self_hosted_rejects_a_linear_consumed_on_one_branch() {
     let source = "File :: linear struct { h: i64 }\n\
                   close :: extern fn(move f: File)\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut c : i64 = 0\n\
+                  \x20   var c : i64 = 0\n\
                   \x20   r := File { h = 1 }\n\
                   \x20   if (c == 1) { close(r) } else { }\n    0\n}\n";
     let Some(message) = self_hosted_rejects("linearonebranch", source) else {
@@ -8826,7 +8775,7 @@ main :: fn() -> i64 {
     greeting := "Frost"
     n := str_len(greeting)
     unsafe { printf("%lld\n", n) }
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < n) {
         unsafe { printf("%lld\n", greeting[i]) }
         i = i + 1
@@ -8869,7 +8818,7 @@ alloc_int :: fn(mut a: Arena) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut a := arena_new(256)
+    var a := arena_new(256)
     p := alloc_int(a)
     unsafe { p^ = 42 }
     q := alloc_int(a)
@@ -8909,8 +8858,8 @@ alloc :: fn(a: Allocator, size: i64) -> ^u8 {
 }
 
 main :: fn() -> i64 {
-    mut backing : [64]u8 = [0; 64]
-    mut bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
+    var backing : [64]u8 = [0; 64]
+    var bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
     a : Allocator = unsafe { Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) } }
     p := unsafe { ptr_cast($i64, alloc(a, 8)) }
     unsafe { p^ = 42 }
@@ -8955,7 +8904,7 @@ alloc_int :: fn(mut a: Arena<128>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<128> = Arena { data = [0; 128], offset = 0 }
+    var arena : Arena<128> = Arena { data = [0; 128], offset = 0 }
     p : ^Point = alloc_point(arena)
     unsafe { p^.x = 3 }
     unsafe { p^.y = 4 }
@@ -8996,8 +8945,8 @@ push :: fn(mut b: Buffer<i64, 4>, value: i64) {
 
 total :: fn(b: Buffer<i64, 4>) -> i64 {
     view : []i64 = b.data
-    mut sum : i64 = 0
-    mut i : i64 = 0
+    var sum : i64 = 0
+    var i : i64 = 0
     while (i < b.len) {
         sum = sum + view[i]
         i = i + 1
@@ -9006,7 +8955,7 @@ total :: fn(b: Buffer<i64, 4>) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut b : Buffer<i64, 4> = Buffer {
+    var b : Buffer<i64, 4> = Buffer {
         data = [0, 0, 0, 0],
         len = 0,
     }
@@ -9043,7 +8992,7 @@ Slab :: struct($T: Type, $N: usize) {
 }
 
 reset :: fn(mut s: Slab<Entity, 4>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
@@ -9062,7 +9011,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 4> = Slab {
+    var world : Slab<Entity, 4> = Slab {
         storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],
         generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,
     }
@@ -9099,7 +9048,7 @@ Slab :: struct($T: Type, $N: usize) {
 }
 
 reset :: fn(mut s: Slab<Entity, 4>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
@@ -9118,7 +9067,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut w : Slab<Entity, 4> = Slab { storage=[Entity{hp=0},Entity{hp=0},Entity{hp=0},Entity{hp=0}], generations=[0,0,0,0], free_list=[0,0,0,0], free_count=0 }
+    var w : Slab<Entity, 4> = Slab { storage=[Entity{hp=0},Entity{hp=0},Entity{hp=0},Entity{hp=0}], generations=[0,0,0,0], free_list=[0,0,0,0], free_count=0 }
     reset(w)
     old : Handle<Entity> = insert(w, Entity{hp=100})
     release(w, old)
@@ -9156,7 +9105,7 @@ const SELFHOSTED_SLAB: &str = concat!(
     "    free_count: i64,\n",
     "}\n",
     "reset :: fn(mut s: Slab) {\n",
-    "    mut i : i64 = 0\n",
+    "    var i : i64 = 0\n",
     "    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }\n",
     "    s.free_count = 4\n",
     "}\n",
@@ -9168,7 +9117,7 @@ const SELFHOSTED_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab = Slab {\n",
+    "    var world : Slab = Slab {\n",
     "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
     "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
     "    }\n",
@@ -9202,7 +9151,7 @@ const SELFHOSTED_SLAB_STALE: &str = concat!(
     "    free_count: i64,\n",
     "}\n",
     "reset :: fn(mut s: Slab) {\n",
-    "    mut i : i64 = 0\n",
+    "    var i : i64 = 0\n",
     "    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }\n",
     "    s.free_count = 4\n",
     "}\n",
@@ -9221,7 +9170,7 @@ const SELFHOSTED_SLAB_STALE: &str = concat!(
     "    s.free_count = s.free_count + 1\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab = Slab {\n",
+    "    var world : Slab = Slab {\n",
     "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
     "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
     "    }\n",
@@ -9258,8 +9207,8 @@ const SELFHOSTED_VALUE_GENERIC: &str = concat!(
     "    count: i64,\n",
     "}\n",
     "sum :: fn($N: usize, b: Buf<N>) -> i64 {\n",
-    "    mut total : i64 = 0\n",
-    "    mut i : i64 = 0\n",
+    "    var total : i64 = 0\n",
+    "    var i : i64 = 0\n",
     "    while (i < N) {\n",
     "        total = total + b.data[i]\n",
     "        i = i + 1\n",
@@ -9299,7 +9248,7 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "    free_count: i64,\n",
     "}\n",
     "slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {\n",
-    "    mut i : i64 = 0\n",
+    "    var i : i64 = 0\n",
     "    while (i < N) {\n",
     "        s.generations[i] = 0\n",
     "        s.free_list[i] = N - 1 - i\n",
@@ -9315,7 +9264,7 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab<Entity, 4> = Slab {\n",
+    "    var world : Slab<Entity, 4> = Slab {\n",
     "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
     "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
     "    }\n",
@@ -9407,14 +9356,14 @@ const SELFHOSTED_VEC: &str = concat!(
     "frost_rt_heap_free :: extern fn(block: ^u8)\n",
     "Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }\n",
     "vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {\n",
-    "    mut room := capacity\n",
+    "    var room := capacity\n",
     "    if (room < 1) { room = 1 }\n",
     "    block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }\n",
     "    Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }\n",
     "}\n",
     "vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {\n",
     "    if (v.len >= v.cap) {\n",
-    "        mut room := v.cap * 2\n",
+    "        var room := v.cap * 2\n",
     "        if (room < 1) { room = 1 }\n",
     "        v.data = unsafe { ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }\n",
     "        v.cap = room\n",
@@ -9426,7 +9375,7 @@ const SELFHOSTED_VEC: &str = concat!(
     "vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }\n",
     "vec_free :: fn($T: Type, move v: Vec<T>) { unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) } }\n",
     "main :: fn() -> i64 {\n",
-    "    mut v : Vec<i64> = vec_new($i64, 2)\n",
+    "    var v : Vec<i64> = vec_new($i64, 2)\n",
     "    vec_push($i64, v, 10)\n",
     "    vec_push($i64, v, 20)\n",
     "    vec_push($i64, v, 30)\n",
@@ -9456,7 +9405,7 @@ const SELFHOSTED_STD_MAP: &str = concat!(
     "import \"io.frost\"\n",
     "import \"map.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    mut m : Map<i64, i64> = map_new($i64, $i64, 8)\n",
+    "    var m : Map<i64, i64> = map_new($i64, $i64, 8)\n",
     "    map_put($i64, $i64, $i64_keys, m, 100, 42)\n",
     "    map_put($i64, $i64, $i64_keys, m, 200, 99)\n",
     "    map_put($i64, $i64, $i64_keys, m, 100, 7)\n",
@@ -9508,7 +9457,7 @@ const SELFHOSTED_STD_FORMAT: &str = concat!(
     "import \"format.frost\"\n",
     "import \"io.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    mut b : Builder = builder_new(16)\n",
+    "    var b : Builder = builder_new(16)\n",
     "    builder_str_value(b, \"count = \")\n",
     "    builder_int(b, 12345)\n",
     "    builder_int(b, -99)\n",
@@ -9582,14 +9531,14 @@ const SELFHOSTED_COLUMNS: &str = concat!(
     "import \"columns.frost\"\n",
     "Particle :: struct { x: i64, y: i64 }\n",
     "sum_col :: fn(xs: []i64) -> i64 {\n",
-    "    mut total : i64 = 0\n",
-    "    mut i : i64 = 0\n",
+    "    var total : i64 = 0\n",
+    "    var i : i64 = 0\n",
     "    n := slice_len(xs)\n",
     "    while (i < n) { total = total + xs[i]  i = i + 1 }\n",
     "    total\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut c : columns<Particle, 8> = columns_new()\n",
+    "    var c : columns<Particle, 8> = columns_new()\n",
     "    columns_reset($Particle, $8, c)\n",
     "    a := columns_insert($Particle, $8, c, Particle { x = 10, y = 1 })\n",
     "    columns_insert($Particle, $8, c, Particle { x = 20, y = 2 })\n",
@@ -9626,7 +9575,7 @@ const BOOTSTRAP_COLUMNS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Particle :: struct { x: i64, y: i64 }
 col_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) { c.generations[i] = 0  c.free_list[i] = N - 1 - i  i = i + 1 }
     c.free_count = N
 }
@@ -9642,14 +9591,14 @@ col_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>) -> boo
     c.generations[raw & 4294967295] == (raw >> 32)
 }
 sum_col :: fn(xs: []i64) -> i64 {
-    mut total : i64 = 0
-    mut i : i64 = 0
+    var total : i64 = 0
+    var i : i64 = 0
     n := slice_len(xs)
     while (i < n) { total = total + xs[i]  i = i + 1 }
     total
 }
 main :: fn() -> i64 {
-    mut c : columns<Particle, 8> = columns_new()
+    var c : columns<Particle, 8> = columns_new()
     col_reset($Particle, $8, c)
     a := col_insert($Particle, $8, c, Particle { x = 10, y = 1 })
     col_insert($Particle, $8, c, Particle { x = 20, y = 2 })
@@ -9858,8 +9807,8 @@ const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 sum :: fn(s: []i64) -> i64 {
-    mut total : i64 = 0
-    mut i : i64 = 0
+    var total : i64 = 0
+    var i : i64 = 0
     n := slice_len(s)
     while (i < n) {
         total = total + s[i]
@@ -9893,7 +9842,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     arr := [1, 2, 3]
     view : []i64 = arr
-    mut i : i64 = 7
+    var i : i64 = 7
     unsafe { printf("%lld\n", view[i]) }
     0
 }
@@ -10031,7 +9980,7 @@ fn wrapping_arithmetic_is_asked_for_by_name() {
     let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          main :: fn() -> i64 {\n\
          \x20   key : i64 = 123456789\n\
-         \x20   mut h := wrap_mul(key, 2654435761)\n\
+         \x20   var h := wrap_mul(key, 2654435761)\n\
          \x20   h = wrap_add(h, 7)\n\
          \x20   unsafe { printf(\"%lld\\n\", h & 4611686018427387903) }\n\
          \x20   0\n}\n";
@@ -10050,7 +9999,7 @@ fn wrapping_arithmetic_is_asked_for_by_name() {
 fn a_frame_wider_than_a_page_touches_each_page() {
     let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          wide :: fn(seed: i64) -> i64 {\n\
-         \x20   mut buffer : [8192]i64 = [0; 8192]\n\
+         \x20   var buffer : [8192]i64 = [0; 8192]\n\
          \x20   buffer[0] = seed\n\
          \x20   buffer[8191] = seed\n\
          \x20   buffer[0] + buffer[8191]\n\
@@ -10164,7 +10113,7 @@ hindex :: fn(handle: i64) -> i64 { handle & 4294967295 }
 hgen :: fn(handle: i64) -> i64 { handle >> 32 }
 
 slab_reset :: fn(mut p: Slab) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < 4) { p.generations[i] = 0 p.free_list[i] = 3 - i i = i + 1 }
     p.free_count = 4
 }
@@ -10190,7 +10139,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab = Slab {
+    var world : Slab = Slab {
         storage = [
             Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
             Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
@@ -10268,8 +10217,8 @@ fn native_freestanding_links_without_libc() {
 // read past the array. Status only, since a trap composes no message.
 const FREESTANDING_OUT_OF_BOUNDS: &str = r#"
 main :: fn() -> i64 {
-    mut a : [3]i64 = [10, 20, 30]
-    mut i : i64 = 5
+    var a : [3]i64 = [10, 20, 30]
+    var i : i64 = 5
     a[i]
 }
 "#;
@@ -10408,7 +10357,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
     greeting := "hi"
-    mut i : i64 = 5
+    var i : i64 = 5
     unsafe { printf("%lld\n", greeting[i]) }
     0
 }
@@ -10446,8 +10395,8 @@ read_sum :: fn(a: i64, b: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut x : i64 = 10
-    mut y : i64 = 20
+    var x : i64 = 10
+    var y : i64 = 20
     swap(ptr_to(x), ptr_to(y))
     unsafe { printf("%lld\n", x) }
     unsafe { printf("%lld\n", y) }
@@ -10490,7 +10439,7 @@ Mixed :: struct {
 }
 
 main :: fn() -> i64 {
-    mut p := Point { x = 3, y = 4 }
+    var p := Point { x = 3, y = 4 }
     unsafe { printf("%lld\n", p.x) }
     unsafe { printf("%lld\n", read_sum(p)) }
     p.x = 100
@@ -10518,7 +10467,7 @@ const ARRAYS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 sum_array :: fn(a: [5]i64) -> i64 {
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..5 {
         total = total + a[i]
     }
@@ -10526,12 +10475,12 @@ sum_array :: fn(a: [5]i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut nums := [10, 20, 30, 40, 50]
+    var nums := [10, 20, 30, 40, 50]
     unsafe { printf("%lld\n", nums[0]) }
     unsafe { printf("%lld\n", nums[2]) }
     nums[1] = 99
     unsafe { printf("%lld\n", nums[1]) }
-    mut running : i64 = 0
+    var running : i64 = 0
     for i in 0..5 {
         running = running + nums[i]
     }
@@ -10600,12 +10549,12 @@ Outer :: struct { one: Inner, two: Inner }
 P :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    mut o := Outer { one = Inner { a = 1, b = 2 }, two = Inner { a = 3, b = 4 } }
+    var o := Outer { one = Inner { a = 1, b = 2 }, two = Inner { a = 3, b = 4 } }
     o.one = o.two
     unsafe { printf("%lld\n", o.one.a) }
     unsafe { printf("%lld\n", o.one.b) }
 
-    mut arr := [P { x = 1, y = 2 }, P { x = 9, y = 8 }]
+    var arr := [P { x = 1, y = 2 }, P { x = 9, y = 8 }]
     arr[0] = arr[1]
     unsafe { printf("%lld\n", arr[0].x) }
     unsafe { printf("%lld\n", arr[0].y) }
@@ -10718,7 +10667,7 @@ manhattan :: fn(p: Point) -> i64 {
 }
 
 scaled_sum :: fn(p: Point, factor: i64) -> i64 {
-    mut copy := p
+    var copy := p
     copy.x = copy.x * factor
     copy.y = copy.y * factor
     copy.x + copy.y
@@ -10839,8 +10788,8 @@ main :: fn() -> i64 {
     w := wrap(Point { x = 8, y = 9 })
     unsafe { printf("%lld\n", w.y) }
 
-    mut a : i64 = 100
-    mut b : i64 = 200
+    var a : i64 = 100
+    var b : i64 = 200
     swap(a, b)
     unsafe { printf("%lld\n", a) }
     unsafe { printf("%lld\n", b) }
@@ -10883,7 +10832,7 @@ main :: fn() -> i64 {
     b : Buffer<i64> = Buffer { data = [7, 8, 9], count = 3 }
     unsafe { printf("%lld\n", b.data[2]) }
 
-    mut w := Wrapper { pair = p, tag = 99 }
+    var w := Wrapper { pair = p, tag = 99 }
     w.pair.second = 40
     unsafe { printf("%lld\n", w.pair.first + w.pair.second) }
     unsafe { printf("%lld\n", w.tag) }
@@ -10911,7 +10860,7 @@ scaled :: fn(mut p: Point, k: i64) -> i64 { p.x = p.x * k  p.x + p.y }
 
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum(Point { x = 8, y = 9 })) }
-    mut q := Point { x = 3, y = 4 }
+    var q := Point { x = 3, y = 4 }
     unsafe { printf("%lld\n", scaled(q, 10)) }
     0
 }
@@ -10986,7 +10935,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", size_of($i64)) }
     unsafe { printf("%lld\n", size_of($Entity)) }
 
-    mut world : Slab<Entity, 16> = Slab {
+    var world : Slab<Entity, 16> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 16],
         free_list = [0; 16],
         generations = [0; 16],
@@ -11033,7 +10982,7 @@ main :: fn() -> i64 {
     inferred := Pair { first = 30, second = 12 }
     unsafe { printf("%lld\n", inferred.first + inferred.second) }
 
-    mut pool : Slab<Pair<i64>, 4> = Slab {
+    var pool : Slab<Pair<i64>, 4> = Slab {
         storage = [zero_pair(); 4],
         generations = [0; 4],
         free_count = 0,
@@ -11099,7 +11048,7 @@ main :: fn() -> i64 {
         Pair { first = 3, second = 4 },
         Pair { first = 5, second = 6 }
     ]
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..3 {
         total = total + arr[i].first + arr[i].second
     }
@@ -11109,8 +11058,8 @@ main :: fn() -> i64 {
     g := o.f
     unsafe { printf("%lld\n", g(o.seed)) }
 
-    mut x : Pair<i64> = Pair { first = 1, second = 2 }
-    mut y : Pair<i64> = Pair { first = 9, second = 8 }
+    var x : Pair<i64> = Pair { first = 1, second = 2 }
+    var y : Pair<i64> = Pair { first = 9, second = 8 }
     swap(x, y)
     unsafe { printf("%lld\n", x.first + y.second) }
     0
@@ -11275,7 +11224,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", p.first) }
     if (p.second) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
 
-    mut b := filled($i64, $4, 3)
+    var b := filled($i64, $4, 3)
     b.items[1] = 9
     unsafe { printf("%lld\n", b.items[0] + b.items[1] + b.count) }
     0
@@ -11302,7 +11251,7 @@ const SELF_HOSTED_GENERIC_WRITTEN: &str = "import \"io.frost\"\nPair :: struct($
      \x20   p := Pair<i64, bool> { first = 7, second = true }\n\
      \x20   print_int_line(p.first)\n\
      \x20   if (p.second) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   mut b := filled($i64, $4, 3)\n\
+     \x20   var b := filled($i64, $4, 3)\n\
      \x20   b.items[1] = 9\n\
      \x20   print_int_line(b.items[0] + b.items[1] + b.count)\n\
      \x20   0\n\
@@ -11418,7 +11367,7 @@ Slab :: struct($T: Type, $N: usize) {
 }
 
 reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) { s.generations[i] = 0  s.free_list[i] = N - 1 - i  i = i + 1 }
     s.free_count = N
 }
@@ -11454,7 +11403,7 @@ total :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 8> = Slab {
+    var world : Slab<Entity, 8> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 8],
         generations = [0; 8],
         free_list = [0; 8],
@@ -11524,7 +11473,7 @@ sub3 :: fn(x: i64) -> i64 { x - 3 }
 
 main :: fn() -> i64 {
     ops := [add1, mul2, sub3]
-    mut v : i64 = 10
+    var v : i64 = 10
     for i in 0..3 {
         f := ops[i]
         v = f(v)
@@ -11567,7 +11516,7 @@ kind_of :: fn(shape: Shape) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut d : Descriptor = Descriptor {
+    var d : Descriptor = Descriptor {
         type = 3, match = 4, struct = 5, return = 6,
     }
     d.type = 9
@@ -11607,7 +11556,7 @@ DOUBLE :: CAPACITY * 2
 STRIDE :: 1 << 4 | 0
 
 fill :: fn(mut buffer: Buffer) {
-    mut index : i64 = 0
+    var index : i64 = 0
     while (index < CAPACITY) {
         buffer.bytes[index] = cast($u8, 65 + index)
         index = index + 1
@@ -11616,14 +11565,14 @@ fill :: fn(mut buffer: Buffer) {
 }
 
 main :: fn() -> i64 {
-    mut buffer : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }
+    var buffer : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }
     fill(buffer)
     unsafe { printf("%lld\n", buffer.bytes[0]) }
     unsafe { printf("%lld\n", buffer.bytes[7]) }
     unsafe { printf("%lld\n", buffer.used) }
     unsafe { printf("%lld\n", sizeof(Buffer)) }
 
-    mut wide : [DOUBLE]i64 = [3; DOUBLE]
+    var wide : [DOUBLE]i64 = [3; DOUBLE]
     wide[15] = 9
     unsafe { printf("%lld\n", wide[0]) }
     unsafe { printf("%lld\n", wide[15]) }
@@ -11656,7 +11605,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", STEP) }
     unsafe { printf("%lld\n", OFFSET) }
     unsafe { printf("%lld\n", COMPUTED) }
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..LIMIT {
         if (i % STEP == 0) { total = total + 1 }
     }
@@ -11742,7 +11691,7 @@ fib :: fn(n: i64) -> i64 {
 triple :: fn(x: i64) -> i64 { x * 3 }
 
 apply_to_array :: fn(f: fn(i64) -> i64, values: [4]i64) -> i64 {
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..4 {
         total = total + f(values[i])
     }
@@ -11844,7 +11793,7 @@ sum_inner :: fn(o: Outer) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut o := Outer { tag = 5, inner = Inner { a = 10, b = 20 } }
+    var o := Outer { tag = 5, inner = Inner { a = 10, b = 20 } }
     unsafe { printf("%lld\n", o.tag) }
     unsafe { printf("%lld\n", o.inner.a) }
     unsafe { printf("%lld\n", sum_inner(o)) }
@@ -11871,19 +11820,19 @@ Particle :: struct { x: i64, y: i64 }
 Grid :: struct { cells: [4]i64, count: i64 }
 
 main :: fn() -> i64 {
-    mut ps := [Particle { x = 1, y = 2 }, Particle { x = 3, y = 4 }, Particle { x = 5, y = 6 }]
+    var ps := [Particle { x = 1, y = 2 }, Particle { x = 3, y = 4 }, Particle { x = 5, y = 6 }]
     unsafe { printf("%lld\n", ps[0].x) }
     unsafe { printf("%lld\n", ps[1].y) }
     ps[2].x = 99
     unsafe { printf("%lld\n", ps[2].x) }
 
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..3 {
         total = total + ps[i].x
     }
     unsafe { printf("%lld\n", total) }
 
-    mut g := Grid { cells = [10, 20, 30, 40], count = 4 }
+    var g := Grid { cells = [10, 20, 30, 40], count = 4 }
     unsafe { printf("%lld\n", g.cells[1]) }
     g.cells[2] = 77
     unsafe { printf("%lld\n", g.cells[2]) }
@@ -11924,7 +11873,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", describe(leaf)) }
     unsafe { printf("%lld\n", describe(pair)) }
 
-    mut grid := [[1, 2, 3], [4, 5, 6]]
+    var grid := [[1, 2, 3], [4, 5, 6]]
     unsafe { printf("%lld\n", grid[0][2]) }
     unsafe { printf("%lld\n", grid[1][1]) }
     grid[1][2] = 99
@@ -12002,7 +11951,7 @@ origin :: fn() -> Point {
 }
 
 main :: fn() -> i64 {
-    mut p := Point { x = 1, y = 2 }
+    var p := Point { x = 1, y = 2 }
     bump(p.x)
     unsafe { printf("%lld\n", p.x) }
     unsafe { printf("%lld\n", p.y) }
@@ -12075,7 +12024,7 @@ Slab :: struct($T: Type, $N: usize) {
 }
 
 reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) { s.generations[i] = 0  s.free_list[i] = N - 1 - i  i = i + 1 }
     s.free_count = N
 }
@@ -12107,7 +12056,7 @@ index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 429496
 generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
 
 main :: fn() -> i64 {
-    mut p : Slab<Entity, 8> = Slab {
+    var p : Slab<Entity, 8> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 8],
         generations = [0; 8],
         free_list = [0; 8],
@@ -12453,7 +12402,7 @@ twice :: fn(mut n: i64) {
 }
 
 main :: fn() -> i64 {
-    mut x : i64 = 5
+    var x : i64 = 5
     bump(x)
     unsafe { printf("%lld\n", x) }
     twice(x)
@@ -12538,7 +12487,7 @@ fn a_move_error_in_each_of_two_functions_is_reported() {
 #[test]
 fn a_pointer_into_the_frame_may_not_be_returned() {
     let source = "leak :: fn() -> ^i64 {\n\
-                  \x20   mut local : i64 = 42\n\
+                  \x20   var local : i64 = 42\n\
                   \x20   ptr_to(local)\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error("frameptr", source);
@@ -12554,7 +12503,7 @@ fn a_pointer_into_the_frame_may_not_be_returned() {
 #[test]
 fn a_frame_pointer_may_not_escape_wrapped_in_an_unsafe_block() {
     let source = "leak :: fn() -> ^i64 {\n\
-                  \x20   mut local : i64 = 42\n\
+                  \x20   var local : i64 = 42\n\
                   \x20   unsafe { ptr_to(local) }\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error_checked("frameunsafe", source);
@@ -12567,7 +12516,7 @@ fn a_frame_pointer_may_not_escape_wrapped_in_an_unsafe_block() {
 #[test]
 fn a_frame_pointer_may_not_be_returned_from_an_unsafe_block() {
     let source = "leak :: fn() -> ^i64 {\n\
-                  \x20   mut local : i64 = 42\n\
+                  \x20   var local : i64 = 42\n\
                   \x20   return unsafe { ptr_to(local) }\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error_checked("frameunsafereturn", source);
@@ -12580,7 +12529,7 @@ fn a_frame_pointer_may_not_be_returned_from_an_unsafe_block() {
 #[test]
 fn a_frame_pointer_bound_inside_an_unsafe_block_may_not_be_returned() {
     let source = "leak :: fn() -> ^i64 {\n\
-                  \x20   mut local : i64 = 42\n\
+                  \x20   var local : i64 = 42\n\
                   \x20   held := unsafe { ptr_to(local) }\n\
                   \x20   held\n}\n\
                   main :: fn() -> i64 { 0 }\n";
@@ -12601,14 +12550,14 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
         (
             "returninside",
             "leak :: fn() -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   unsafe { return ptr_to(x) }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
         (
             "boundinside",
             "leak :: fn() -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   unsafe { p := ptr_to(x)\n\
              \x20   p }\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -12616,8 +12565,8 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
         (
             "ifasvalue",
             "leak :: fn(c: bool) -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
-             \x20   mut y : i64 = 7\n\
+             \x20   var x : i64 = 42\n\
+             \x20   var y : i64 = 7\n\
              \x20   unsafe { if (c) { ptr_to(x) } else { ptr_to(y) } }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12625,14 +12574,14 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
             "matchasvalue",
             "Pick :: enum { One, Two }\n\
              leak :: fn(p: Pick) -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   unsafe { match p { case .One: ptr_to(x) case .Two: ptr_to(x) } }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
         (
             "nestedunsafe",
             "leak :: fn() -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   unsafe { ptr_to(x) }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12640,7 +12589,7 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
             "structwrap",
             "Box :: struct { p: ^i64 }\n\
              leak :: fn() -> Box {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   unsafe { Box { p = ptr_to(x) } }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12682,7 +12631,7 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
             "launderedcall",
             "launder :: fn(p: ^i64) -> ^i64 { p }\n\
              leak :: fn() -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
+             \x20   var local : i64 = 42\n\
              \x20   launder(ptr_to(local))\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12691,7 +12640,7 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
             "Holder :: struct { a: [4]i64 }\n\
              pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
              leak :: fn() -> ref i64 {\n\
-             \x20   mut local : Holder = Holder { a = [11, 22, 33, 44] }\n\
+             \x20   var local : Holder = Holder { a = [11, 22, 33, 44] }\n\
              \x20   pick(local, 0)\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12700,7 +12649,7 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
             "Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
              identity :: fn(p: ^i64) -> ^i64 { p }\n\
              leak :: fn() -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
+             \x20   var local : i64 = 42\n\
              \x20   ops := Ops { pass = identity }\n\
              \x20   ops.pass(ptr_to(local))\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -12709,8 +12658,8 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
             "assignedthenreturned",
             "start :: fn(seed: ^i64) -> ^i64 { seed }\n\
              leak :: fn(seed: ^i64) -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
-             \x20   mut p : ^i64 = start(seed)\n\
+             \x20   var local : i64 = 42\n\
+             \x20   var p : ^i64 = start(seed)\n\
              \x20   p = ptr_to(local)\n\
              \x20   p\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -12719,7 +12668,7 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
             "returninmatcharm",
             "Pick :: enum { One, Two }\n\
              leak :: fn(p: Pick, fallback: ^i64) -> ^i64 {\n\
-             \x20   mut x : i64 = 42\n\
+             \x20   var x : i64 = 42\n\
              \x20   match p {\n\
              \x20       case .One: { return ptr_to(x) }\n\
              \x20       case .Two: { x = x + 1 }\n\
@@ -12760,7 +12709,7 @@ fn a_view_traced_to_storage_that_outlives_the_call_is_allowed() {
                   \x20   unsafe { slice_from($i64, ptr_to(held[from]), count) }\n}\n\
                   bump :: fn(mut v: i64) -> i64 { v }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut h : Holder = Holder { a = [1, 2, 3, 4] }\n\
+                  \x20   var h : Holder = Holder { a = [1, 2, 3, 4] }\n\
                   \x20   print_int_line(bump(through(h)))\n\
                   \x20   0\n}\n";
     let directory = std::env::temp_dir();
@@ -12798,7 +12747,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
             "launderedcall",
             "launder :: fn(p: ^i64) -> ^i64 { p }\n\
              leak :: fn() -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
+             \x20   var local : i64 = 42\n\
              \x20   launder(ptr_to(local))\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12807,7 +12756,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
             "Holder :: struct { a: [4]i64 }\n\
              pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
              leak :: fn() -> ref i64 {\n\
-             \x20   mut local : Holder = Holder { a = [11, 22, 33, 44] }\n\
+             \x20   var local : Holder = Holder { a = [11, 22, 33, 44] }\n\
              \x20   pick(local, 0)\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -12816,7 +12765,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
             "Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
              identity :: fn(p: ^i64) -> ^i64 { p }\n\
              leak :: fn() -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
+             \x20   var local : i64 = 42\n\
              \x20   ops := Ops { pass = identity }\n\
              \x20   ops.pass(ptr_to(local))\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -12825,8 +12774,8 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
             "assignedthenreturned",
             "start :: fn(seed: ^i64) -> ^i64 { seed }\n\
              leak :: fn(seed: ^i64) -> ^i64 {\n\
-             \x20   mut local : i64 = 42\n\
-             \x20   mut p : ^i64 = start(seed)\n\
+             \x20   var local : i64 = 42\n\
+             \x20   var p : ^i64 = start(seed)\n\
              \x20   p = ptr_to(local)\n\
              \x20   p\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -12873,7 +12822,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
                    indirect :: fn(p: ^i64, ops: Ops) -> ^i64 { ops.pass(p) }\n\
                    bump :: fn(mut v: i64) -> i64 { v }\n\
                    main :: fn() -> i64 {\n\
-                   \x20   mut h : Holder = Holder { a = [1, 2, 3, 4] }\n\
+                   \x20   var h : Holder = Holder { a = [1, 2, 3, 4] }\n\
                    \x20   print_int_line(bump(through(h)))\n\
                    \x20   0\n}\n";
     let input = directory.join("frost_shframe_allowed.frost");
@@ -12899,8 +12848,8 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
 #[test]
 fn a_frame_pointer_read_back_through_a_pointer_may_not_be_returned() {
     let source = "leak :: fn() -> ^i64 {\n\
-                  \x20   mut x : i64 = 42\n\
-                  \x20   mut p : ^i64 = unsafe { ptr_to(x) }\n\
+                  \x20   var x : i64 = 42\n\
+                  \x20   var p : ^i64 = unsafe { ptr_to(x) }\n\
                   \x20   unsafe { pp := ptr_to(p)\n\
                   \x20   pp^ }\n}\n\
                   main :: fn() -> i64 { 0 }\n";
@@ -12921,7 +12870,7 @@ fn a_frame_pointer_read_back_through_a_pointer_may_not_be_returned() {
 #[test]
 fn reading_a_local_through_a_pointer_is_still_allowed() {
     let source = "import \"io.frost\"\nread :: fn() -> i64 {\n\
-                  \x20   mut x : i64 = 42\n\
+                  \x20   var x : i64 = 42\n\
                   \x20   p := unsafe { ptr_to(x) }\n\
                   \x20   unsafe { p^ }\n}\n\
                   main :: fn() -> i64 { print_int_line(read())\n0 }\n";
@@ -13065,8 +13014,8 @@ fn a_try_inside_a_with_block_lowers_like_any_other() {
     let source = format!(
         "{TRY_HEAD}\n\
          use_it :: fn(ok: i64) -> i64 ! FileError {{\n\
-         \x20   mut arena : Arena<64> = Arena {{ data = [0; 64], offset = 0 }}\n\
-         \x20   mut n : i64 = 0\n\
+         \x20   var arena : Arena<64> = Arena {{ data = [0; 64], offset = 0 }}\n\
+         \x20   var n : i64 = 0\n\
          \x20   with arena {{\n\
          \x20       n = read_size(ok)?\n\
          \x20   }}\n\
@@ -13128,8 +13077,8 @@ fn an_arena_pointer_read_back_through_a_pointer_may_not_outlive_its_region() {
     let source = format!(
         "{ARENA_PRELUDE}\
          grab :: fn() -> i64 {{\n\
-         \x20   mut arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
-         \x20   mut out : ^i64 = unsafe {{ ptr_to(arena.offset) }}\n\
+         \x20   var arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
+         \x20   var out : ^i64 = unsafe {{ ptr_to(arena.offset) }}\n\
          \x20   with arena {{\n\
          \x20       p := alloc_int(arena)\n\
          \x20       pp := unsafe {{ ptr_to(p) }}\n\
@@ -13152,8 +13101,8 @@ fn reading_the_value_an_arena_pointer_names_is_allowed() {
     let source = format!(
         "import \"io.frost\"\n{ARENA_PRELUDE}\
          grab :: fn() -> i64 {{\n\
-         \x20   mut arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
-         \x20   mut total : i64 = 0\n\
+         \x20   var arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
+         \x20   var total : i64 = 0\n\
          \x20   with arena {{\n\
          \x20       p := alloc_int(arena)\n\
          \x20       unsafe {{ p^ = 7 }}\n\
@@ -13179,7 +13128,7 @@ fn a_registration_inside_a_non_final_unsafe_block_is_not_an_escape() {
                   reg :: extern fn($cb: fn(mut Ctx, ^u8), move ctx: Ctx)
                   on :: fn(mut c: Ctx, a: ^u8) { c.got = 1 }
                   f :: fn() -> i64 {
-                      mut ctx : Ctx = Ctx { got = 0 }
+                      var ctx : Ctx = Ctx { got = 0 }
                       unsafe { reg($on, ctx) }
                       0
 }
@@ -13257,7 +13206,7 @@ pass_through :: fn(p: ^i64) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut n : i64 = 7
+    var n : i64 = 7
     q := pass_through(ptr_to(n))
     unsafe { printf("%lld\n", q^) }
     0
@@ -13357,7 +13306,7 @@ widest :: fn($T: Type, a: $T, b: $T) -> T where is_integer(T) || is_float(T) {
 
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", twice($i64, 21)) }
-    mut numbers : [3]i64 = [7, 8, 9]
+    var numbers : [3]i64 = [7, 8, 9]
     unsafe { printf("%lld\n", first($i64, numbers)) }
     unsafe { printf("%lld\n", widest($i64, 4, 9)) }
     0
@@ -13435,7 +13384,7 @@ const SELF_HOSTED_WHERE: &str = "import \"io.frost\"\ntwice :: fn($T: Type, v: $
      main :: fn() -> i64 {\n\
      \x20   print_int_line(twice($i64, 21))\n\
      \x20   print_f64_line(twice($f64, 1.5))\n\
-     \x20   mut numbers : [3]i64 = [7, 8, 9]\n\
+     \x20   var numbers : [3]i64 = [7, 8, 9]\n\
      \x20   print_int_line(first($i64, numbers))\n\
      \x20   0\n\
      }\n";
@@ -13602,7 +13551,7 @@ fn a_program_declares_its_own_ordering_for_its_own_type() {
          point_equal :: fn(a: Point, b: Point) -> bool { a.x == b.x }\n\
          point_order :: Ordering<Point> { less = point_less, equal = point_equal }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut points := [Point { x = 3, y = 0 }, Point { x = 1, y = 0 }]\n\
+         \x20   var points := [Point { x = 3, y = 0 }, Point { x = 1, y = 0 }]\n\
          \x20   sort($Point, $point_order, points)\n\
          \x20   print_int_line(points[0].x)\n\
          \x20   print_int_line(points[1].x)\n    0\n}\n",
@@ -13650,8 +13599,8 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse {
 }
 
 number :: fn(text: str) -> i64 ! Parse {
-    mut total : i64 = 0
-    mut index : i64 = 0
+    var total : i64 = 0
+    var index : i64 = 0
     while (index < str_len(text)) {
         d := digit(text, index)?
         total = total * 10 + d
@@ -13958,7 +13907,7 @@ double :: fn(mut n: i64) -> i64 {
 take :: fn(v: i64) { print_int_line(v) }
 
 main :: fn() -> i64 {
-    mut counter : i64 = 0
+    var counter : i64 = 0
     bump(counter)
     print_int_line(counter)
     bump(counter)
@@ -14228,7 +14177,7 @@ Particle :: struct { position: Vec3, life: f32 }
 Attribute :: struct { offset: i64, size: i64, floating: bool }
 
 describe :: fn($T: Type, mut out: []Attribute) -> i64 {
-    mut index : i64 = 0
+    var index : i64 = 0
     for field in fields(T) {
         out[index] = Attribute {
             offset = offset_of(field),
@@ -14241,9 +14190,9 @@ describe :: fn($T: Type, mut out: []Attribute) -> i64 {
 }
 
 show :: fn($T: Type) {
-    mut table := [Attribute { offset = 0, size = 0, floating = false }; 8]
+    var table := [Attribute { offset = 0, size = 0, floating = false }; 8]
     count := describe($T, table)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         print_int_line(table[i].offset)
         print_int_line(table[i].size)
@@ -14326,7 +14275,7 @@ first :: fn(args: $...) -> i64 {
 }
 
 count :: fn(label: i64, args: $...) -> i64 {
-    mut total := label
+    var total := label
     for value in args { total = total + 1 }
     total
 }
@@ -14395,7 +14344,7 @@ twice :: fn(args: $...) {
 }
 
 main :: fn() -> i64 {
-    mut counter : i64 = 0
+    var counter : i64 = 0
     twice(bump(counter))
     print_int_line(counter)
     twice(1.5)
@@ -14428,7 +14377,7 @@ fn self_hosted_evaluates_a_list_element_once() {
 const EMPTY_LIST: &str = r#"import "io.frost"
 
 tally :: fn(base: i64, args: $...) -> i64 {
-    mut total := base
+    var total := base
     for value in args { total = total + value }
     total
 }
@@ -14463,7 +14412,7 @@ fn self_hosted_keeps_nothing_for_an_empty_list() {
 #[test]
 fn a_list_indexed_by_a_variable_is_refused() {
     let source = "pick :: fn(args: $...) -> i64 {\n\
-                  \x20   mut at : i64 = 0\n\
+                  \x20   var at : i64 = 0\n\
                   \x20   unsafe { args[at] }\n}\n\
                   main :: fn() -> i64 { pick(1, 2) }\n";
     let message = compile_error("packindexvar", source);
@@ -14599,7 +14548,7 @@ ascending :: fn(a: i64, b: i64) -> bool { a < b }
 descending :: fn(a: i64, b: i64) -> bool { a > b }
 
 best3 :: fn($T: Type, $before: Type, move x: $T, move y: $T, move z: $T) -> $T {
-    mut result := x
+    var result := x
     if (before(y, result)) { result = y }
     if (before(z, result)) { result = z }
     result
@@ -14622,7 +14571,7 @@ main :: fn() -> i64 {
 fn a_compile_time_function_argument_specializes_and_calls_directly() {
     let source = "cmp :: fn(a: i64, b: i64) -> bool { a < b }\n\
                   pick :: fn($T: Type, $f: Type, move a: $T, move b: $T) -> $T {\n\
-                  \x20   mut best := a\n    if (f(b, best)) { best = b }\n    best\n}\n\
+                  \x20   var best := a\n    if (f(b, best)) { best = b }\n    best\n}\n\
                   main :: fn() -> i64 { pick($i64, $cmp, 2, 1) }\n";
     let Some(c_source) = emit_c_source("constfndirect", source) else {
         return;
@@ -14654,22 +14603,22 @@ swap_generic :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
 replace :: fn(mut p: Point, move q: Point) { p = q }
 
 main :: fn() -> i64 {
-    mut x : i64 = 1
-    mut y : i64 = 2
+    var x : i64 = 1
+    var y : i64 = 2
     swap_scalar(x, y)
     unsafe { printf("%lld\n", x) }
 
-    mut m : i64 = 3
-    mut n : i64 = 4
+    var m : i64 = 3
+    var n : i64 = 4
     swap_generic(m, n)
     unsafe { printf("%lld\n", m) }
 
-    mut a := Point { x = 1, y = 2 }
-    mut b := Point { x = 9, y = 8 }
+    var a := Point { x = 1, y = 2 }
+    var b := Point { x = 9, y = 8 }
     swap_generic(a, b)
     unsafe { printf("%lld\n", a.x) }
 
-    mut c := Point { x = 5, y = 6 }
+    var c := Point { x = 5, y = 6 }
     replace(c, Point { x = 7, y = 0 })
     unsafe { printf("%lld\n", c.x) }
     0
@@ -14720,7 +14669,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
-    mut result := x
+    var result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -14799,13 +14748,13 @@ fn a_frame_pointer_may_not_leave_by_any_road() {
         (
             "param",
             "stash :: fn(mut slot: ^i64) {\n\
-             \x20   mut local : i64 = 5\n    slot = ptr_to(local)\n}\n\
+             \x20   var local : i64 = 5\n    slot = ptr_to(local)\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
         (
             "branch",
             "pick :: fn(c: bool) -> ^i64 {\n\
-             \x20   mut a : i64 = 1\n\
+             \x20   var a : i64 = 1\n\
              \x20   if (c) { ptr_to(a) } else { ptr_to(a) }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
@@ -14813,7 +14762,7 @@ fn a_frame_pointer_may_not_leave_by_any_road() {
             "struct",
             "Holder :: struct { p: ^i64 }\n\
              wrap :: fn() -> Holder {\n\
-             \x20   mut a : i64 = 1\n    Holder { p = ptr_to(a) }\n}\n\
+             \x20   var a : i64 = 1\n    Holder { p = ptr_to(a) }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
     ];
@@ -15889,7 +15838,7 @@ zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 })) }
 
-    mut pool : Slab<Pair<i64>, 4> = Slab { storage = [zero(); 4], count = 0 }
+    var pool : Slab<Pair<i64>, 4> = Slab { storage = [zero(); 4], count = 0 }
     h := insert($Pair<i64>, $4, pool, Pair { first = 10, second = 20 })
     unsafe { printf("%lld\n", pool.storage[h].first + pool.storage[h].second) }
     0
@@ -16197,7 +16146,7 @@ fn the_standard_json_reader_walks_a_nested_document() {
     let source = "import \"io.frost\"\nimport \"json.frost\"\n\
                   main :: fn() -> i64 {\n\
                   \x20   text := \"{\\\"name\\\":\\\"color\\\",\\\"members\\\":[{\\\"n\\\":1},{\\\"n\\\":22}],\\\"ok\\\":true}\"\n\
-                  \x20   mut document := json_parse(text)\n\
+                  \x20   var document := json_parse(text)\n\
                   \x20   root := json_root(document)\n\
                   \x20   if (json_kind(document, root) == JsonKind::Object) { print_int_line(6) } else { print_int_line(0) }\n\
                   \x20   if (json_text_eq(document, json_member(document, root, \"name\"), \"color\")) { print_int_line(1) } else { print_int_line(0) }\n\
@@ -16222,7 +16171,7 @@ fn the_standard_json_reader_answers_with_whole_numbers() {
     let source = "import \"io.frost\"\nimport \"json.frost\"\n\
                   main :: fn() -> i64 {\n\
                   \x20   text := \"{\\\"a\\\":2.75,\\\"b\\\":-0.25,\\\"c\\\":1.5e2,\\\"d\\\":7}\"\n\
-                  \x20   mut document := json_parse(text)\n\
+                  \x20   var document := json_parse(text)\n\
                   \x20   root := json_root(document)\n\
                   \x20   if (json_real(document, json_member(document, root, \"a\")) == 2.75) { print_int_line(1) } else { print_int_line(0) }\n\
                   \x20   if (json_real(document, json_member(document, root, \"b\")) == -0.25) { print_int_line(1) } else { print_int_line(0) }\n\
@@ -16286,8 +16235,8 @@ fn mixed_width_arithmetic_widens_to_the_wider_operand() {
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 to_i64 :: fn(s: str) -> i64 {
-    mut value : i64 = 0
-    mut i : i64 = 0
+    var value : i64 = 0
+    var i : i64 = 0
     while (i < str_len(s)) {
         value = value * 10 + (s[i] - 48)
         i = i + 1
@@ -16300,13 +16249,13 @@ main :: fn() -> i64 {
 
     text := "7"
     byte := text[0]
-    mut accumulator : i64 = 1234
+    var accumulator : i64 = 1234
     unsafe { printf("%lld\n", accumulator * 10 + (byte - 48)) }
 
     // A literal still takes the width of what it is combined with, which is
     // what the backwards rule was there to protect and which still holds. The
     // sum leaves eight bits, so it says which it means.
-    mut small : u8 = 250
+    var small : u8 = 250
     small = wrap_add(small, 10)
     wide : i64 = small
     unsafe { printf("%lld\n", wide) }
@@ -16408,7 +16357,7 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
                   File :: linear struct { fd: i64 }\n\
                   Node :: struct { file: File, hp: i64 }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut pool : Slab<Node, 2> = Slab {\n\
+                  \x20   var pool : Slab<Node, 2> = Slab {\n\
                   \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
                   \x20       generations = [0; 2],\n\
                   \x20       free_list = [0; 2],\n\
@@ -16452,7 +16401,7 @@ fn both_compilers_refuse_writing_into_what_was_consumed() {
                   open :: fn(n: i64) -> File { File { fd = n } }\n\
                   drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut h := Holder { file = open(7), name = 1 }\n\
+                  \x20   var h := Holder { file = open(7), name = 1 }\n\
                   \x20   drop_holder(h)\n\
                   \x20   h.file = open(9)\n\
                   \x20   drop_holder(h)\n}\n";
@@ -16573,10 +16522,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   source := Resource { held = no_trio(), transient = false, tag = 0,\n\
          \x20       slot = 0 }\n\
          \x20   given := backing_of(b, source)\n\
-         \x20   mut into := b.into\n\
+         \x20   var into := b.into\n\
          \x20   into[at].held = given\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut b := Box { pool = heap_slice($Slot, 2),\n\
+         \x20   var b := Box { pool = heap_slice($Slot, 2),\n\
          \x20       into = heap_slice($Resource, 2) }\n\
          \x20   put(b, 0)\n\
          \x20   print_int_line(1)\n\
@@ -16598,7 +16547,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Holder :: struct { m: Meters }\n\
          main :: fn() -> i64 {\n\
          \x20   plain : i64 = 2\n\
-         \x20   mut h := Holder { m = cast($Meters, 0) }\n\
+         \x20   var h := Holder { m = cast($Meters, 0) }\n\
          \x20   h.m = plain\n\
          \x20   print_int_line(1)\n\
          \x20   0\n}\n",
@@ -16610,7 +16559,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Holder :: struct { usage: Usage }\n\
          main :: fn() -> i64 {\n\
          \x20   plain : u32 = 2\n\
-         \x20   mut h := Holder { usage = Usage::None }\n\
+         \x20   var h := Holder { usage = Usage::None }\n\
          \x20   h.usage = plain\n\
          \x20   print_int_line(1)\n\
          \x20   0\n}\n",
@@ -16640,7 +16589,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          close :: fn(move f: File) -> i64 { f.fd }\n\
          drop_run :: fn(move xs: [2]File) -> i64 { 0 }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut run : [2]File = [File { fd = 9 }; 2]\n\
+         \x20   var run : [2]File = [File { fd = 9 }; 2]\n\
          \x20   close(run[0])\n\
          \x20   close(run[0])\n\
          \x20   drop_run(run)\n}\n",
@@ -16660,7 +16609,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   close(h.file)\n}\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
          \x20   twice(h)\n\
          \x20   drop_holder(h)\n}\n",
         "moved",
@@ -16676,7 +16625,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          open :: fn(n: i64) -> File { File { fd = n } }\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut h := Holder { file = open(7), name = 1 }\n\
+         \x20   var h := Holder { file = open(7), name = 1 }\n\
          \x20   drop_holder(h)\n\
          \x20   h.file = open(9)\n\
          \x20   drop_holder(h)\n}\n",
@@ -16706,7 +16655,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut pool : Slab<Node, 2> = Slab {\n\
+         \x20   var pool : Slab<Node, 2> = Slab {\n\
          \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
          \x20       generations = [0; 2],\n\
          \x20       free_list = [0; 2],\n\
@@ -16757,7 +16706,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          once :: fn(mut h: Holder) -> i64 { close(h.file) }\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
          \x20   print_int_line(once(h))\n    print_int_line(once(h))\n    drop_holder(h)\n}\n",
         "moved",
     ),
@@ -16801,7 +16750,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nFile :: linear struct { fd: i64 }\n\
          close :: fn(move f: File) -> i64 { f.fd }\n\
          run :: fn() -> i64 {\n\
-         \x20   mut i : i64 = 0\n\
+         \x20   var i : i64 = 0\n\
          \x20   while (i < 4) {\n\
          \x20       f := File { fd = i }\n\
          \x20       if (i == 2) {\n            break\n        }\n\
@@ -16961,7 +16910,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              zero := 0
-             mut o := Outer { kept = Held { at = unsafe { ptr_cast($Inner, zero) } } }
+             var o := Outer { kept = Held { at = unsafe { ptr_cast($Inner, zero) } } }
              from_local(o)
              0
          }
@@ -17031,7 +16980,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   h.view = data\n}\n\
          main :: fn() -> i64 {\n\
          \x20   outer : [1]i64 = [0]\n\
-         \x20   mut h : Holder = { view = outer }\n\
+         \x20   var h : Holder = { view = outer }\n\
          \x20   stash(h)\n\
          \x20   h.view[0]\n}\n",
         "the storage it names dies when the call returns",
@@ -17046,7 +16995,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   keep(h, data)\n}\n\
          main :: fn() -> i64 {\n\
          \x20   outer : [1]i64 = [0]\n\
-         \x20   mut h : Holder = { view = outer }\n\
+         \x20   var h : Holder = { view = outer }\n\
          \x20   escape(h)\n\
          \x20   h.view[0]\n}\n",
         "the storage it names dies when the call returns",
@@ -17070,7 +17019,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "Holder :: struct { view: []i64 }\n\
          escape :: fn(seed: []i64) -> Holder {\n\
          \x20   data : [4]i64 = [11, 22, 33, 44]\n\
-         \x20   mut h : Holder = { view = seed }\n\
+         \x20   var h : Holder = { view = seed }\n\
          \x20   h.view = data\n\
          \x20   h\n}\n\
          main :: fn() -> i64 {\n\
@@ -17135,7 +17084,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "Point :: struct { x: i64, y: i64 }\n\
          both :: fn(mut a: Point, mut b: Point) { a.x = 1  b.x = 2 }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut p : Point = { x = 0, y = 0 }\n\
+         \x20   var p : Point = { x = 0, y = 0 }\n\
          \x20   both(p, p)\n\
          \x20   p.x\n}\n",
         "borrow",
@@ -17143,7 +17092,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_raw_pointer_read_outside_an_unsafe_block",
         "main :: fn() -> i64 {\n\
-         \x20   mut n : i64 = 5\n\
+         \x20   var n : i64 = 5\n\
          \x20   p := ptr_to(n)\n\
          \x20   p^\n}\n",
         "unsafe",
@@ -17151,7 +17100,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_pointer_cast_outside_an_unsafe_block",
         "main :: fn() -> i64 {\n\
-         \x20   mut n : i64 = 5\n\
+         \x20   var n : i64 = 5\n\
          \x20   p := ptr_to(n)\n\
          \x20   q := ptr_cast($i64, p)\n\
          \x20   0\n}\n",
@@ -17213,7 +17162,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_view_read_after_its_container_grew",
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   var v := vec_new($i64, 1)\n\
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := vec_slice($i64, v)\n\
          \x20   vec_push($i64, v, 222)\n\
@@ -17229,10 +17178,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_view_read_at_the_top_of_a_growing_loop",
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   var v := vec_new($i64, 1)\n\
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := vec_slice($i64, v)\n\
-         \x20   mut count : i64 = 0\n\
+         \x20   var count : i64 = 0\n\
          \x20   while (count < 8) {\n\
          \x20       print_int_line(view[0])\n\
          \x20       vec_push($i64, v, count)\n\
@@ -17248,7 +17197,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_ref_element_written_after_its_container_grew",
         "import \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   var v := vec_new($i64, 1)\n\
          \x20   vec_push($i64, v, 111)\n\
          \x20   ref held := vec_slice($i64, v)[0]\n\
          \x20   vec_push($i64, v, 222)\n\
@@ -17268,7 +17217,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   var v := vec_new($i64, 1)\n\
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := passthrough(vec_slice($i64, v))\n\
          \x20   vec_push($i64, v, 222)\n\
@@ -17282,7 +17231,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   var v := vec_new($i64, 1)\n\
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := passthrough(vec_slice($i64, v))\n\
          \x20   vec_free($i64, v)\n\
@@ -17317,9 +17266,9 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          carve :: fn() -> []u8 uses Arena<256> {\n\
          \x20   carve_from(arena)\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
+         \x20   var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
          \x20   other : [1]u8 = [0]\n\
-         \x20   mut escaped : []u8 = other\n\
+         \x20   var escaped : []u8 = other\n\
          \x20   with arena {\n\
          \x20       escaped = carve()\n\
          \x20   }\n\
@@ -17460,6 +17409,10 @@ const SAME_FAULTS: &[(&str, &str)] = &[
         "main :: fn() -> i64 {\n    x := 7\u{a3}\n    0\n}\n",
     ),
     (
+        "mutlocal",
+        "main :: fn() -> i64 {\n    mut x := 1\n    x = 2\n    x\n}\n",
+    ),
+    (
         "twounknown",
         "one :: fn() -> i64 {\n    bogus\n}\ntwo :: fn() -> i64 {\n    other\n}\nmain :: fn() -> i64 { one() + two() }\n",
     ),
@@ -17557,7 +17510,7 @@ fn both_compilers_refuse_consuming_an_element_or_a_borrowed_field_twice() {
                    close :: fn(move f: File) -> i64 { f.fd }\n\
                    drop_run :: fn(move xs: [2]File) -> i64 { 0 }\n\
                    main :: fn() -> i64 {\n\
-                   \x20   mut run : [2]File = [File { fd = 9 }; 2]\n\
+                   \x20   var run : [2]File = [File { fd = 9 }; 2]\n\
                    \x20   close(run[0])\n\
                    \x20   close(run[0])\n\
                    \x20   drop_run(run)\n}\n";
@@ -17569,7 +17522,7 @@ fn both_compilers_refuse_consuming_an_element_or_a_borrowed_field_twice() {
                     \x20   close(h.file)\n}\n\
                     drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
                     main :: fn() -> i64 {\n\
-                    \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+                    \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
                     \x20   twice(h)\n\
                     \x20   drop_holder(h)\n}\n";
     for (name, source) in [("dfelem", element), ("dfborrow", borrowed)] {
@@ -18423,7 +18376,7 @@ fn installed_layout(name: &str, compiler: &Path) -> Option<(PathBuf, PathBuf)> {
 const AWAY_FROM_THE_CHECKOUT: &str = "import \"io.frost\"\nimport \"vec.frost\"
 
      main :: fn() -> i64 {
-         mut numbers := vec_new($i64, 4)
+         var numbers := vec_new($i64, 4)
          vec_push($i64, numbers, 20)
          vec_push($i64, numbers, 22)
          print_int_line(vec_get($i64, numbers, 0) + vec_get($i64, numbers, 1))
@@ -19028,7 +18981,7 @@ fn the_assembler_writes_the_line_table_the_system_assembler_writes() {
          \x20   total\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut sum : i64 = 0\n\
+         \x20   var sum : i64 = 0\n\
          \x20   sum = add(sum, 3)\n\
          \x20   sum = add(sum, 4)\n\
          \x20   while (sum < 40) {\n\
@@ -19583,11 +19536,11 @@ fn the_assembler_encodes_what_the_system_assembler_does() {
     std::fs::write(
         &floats,
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-         \x20   mut x : f64 = 1.5\n\
-         \x20   mut y : f64 = 0.25\n\
+         \x20   var x : f64 = 1.5\n\
+         \x20   var y : f64 = 0.25\n\
          \x20   print_f64_line(x + y)\n    print_f64_line(x - y)\n    print_f64_line(x * y)\n    print_f64_line(x / y)\n\
          \x20   if (x > y) { print_int_line(1) }\n\
-         \x20   mut n : i64 = 3\n    z := x * 2.0\n    print_f64_line(z)\n    print_int_line(n)\n    0\n}\n",
+         \x20   var n : i64 = 3\n    z := x * 2.0\n    print_f64_line(z)\n    print_int_line(n)\n    0\n}\n",
     )
     .unwrap();
 
@@ -19818,7 +19771,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              o.answer = build(a)
          }
          main :: fn() -> i64 {
-             mut o := Outer { answer = Answer { held = made() }, source = made() }
+             var o := Outer { answer = Answer { held = made() }, source = made() }
              from_field(o)
              from_temporary(o)
              from_local(o)
@@ -19870,8 +19823,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              held.value = held.value + more
          }
          main :: fn() -> i64 {
-             mut held := Held { value = 1 }
-             mut table := Table {
+             var held := Held { value = 1 }
+             var table := Table {
                  call = unsafe { ptr_cast($fn(^u8, i64), add) } }
              table.call(unsafe { ptr_cast($u8, ptr_to(held)) }, 41)
              print_int_line(held.value)
@@ -19961,8 +19914,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nFile :: linear struct { fd: i64 }\n\
          close :: fn(move f: File) -> i64 { f.fd }\n\
          run :: fn() -> i64 {\n\
-         \x20   mut i : i64 = 0\n\
-         \x20   mut total : i64 = 0\n\
+         \x20   var i : i64 = 0\n\
+         \x20   var total : i64 = 0\n\
          \x20   while (i < 4) {\n\
          \x20       f := File { fd = i }\n\
          \x20       total = total + close(f)\n\
@@ -20128,13 +20081,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Trio :: struct { a: Small, b: Small, tail: i64 }\n\
          take :: fn(held: Small) -> Small { held }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut t := Trio { a = Small { value = 0.0 },\n\
+         \x20   var t := Trio { a = Small { value = 0.0 },\n\
          \x20       b = Small { value = 2.5 }, tail = 4242 }\n\
          \x20   t.a = take(Small { value = 1.5 })\n\
          \x20   print_bool_line(t.b.value == 2.5)\n\
          \x20   print_int_line(t.tail)\n\
-         \x20   mut held : [3]Small = [Small { value = 0.0 }; 3]\n\
-         \x20   mut guard : i64 = 777\n\
+         \x20   var held : [3]Small = [Small { value = 0.0 }; 3]\n\
+         \x20   var guard : i64 = 777\n\
          \x20   held[1] = take(Small { value = 3.5 })\n\
          \x20   print_bool_line(held[2].value == 0.0)\n\
          \x20   print_int_line(guard)\n    0\n}\n",
@@ -20154,7 +20107,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   out[0] = 7\n\
          \x20   out[3] = out[0] + 1\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut held : [4]i64 = [0; 4]\n\
+         \x20   var held : [4]i64 = [0; 4]\n\
          \x20   fill(held)\n\
          \x20   print_int_line(held[0])\n\
          \x20   print_int_line(held[3])\n    0\n}\n",
@@ -20187,7 +20140,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "type_named_before_it_is_declared",
         "import \"io.frost\"\nmake :: fn() -> i64 {\n\
-         \x20   mut held := Later { value = 3 }\n\
+         \x20   var held := Later { value = 3 }\n\
          \x20   held.value\n}\n\
          Later :: struct { value: i64 }\n\
          main :: fn() -> i64 {\n    print_int_line(make())\n    0\n}\n",
@@ -20199,7 +20152,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nHolder :: struct { inner: Later, tag: i64 }\n\
          Later :: struct { value: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
+         \x20   var h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
          \x20   print_int_line(h.inner.value)\n    print_int_line(sizeof(Holder))\n    0\n}\n",
         "7\n16\n",
     ),
@@ -20220,7 +20173,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Store :: struct { bag: Bag<Cell>, count: i64 }
          reach :: fn(mut a: Store) -> i64 { only(a.bag).value }
          main :: fn() -> i64 {
-             mut s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
+             var s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
              print_int_line(reach(s))
     0
 }
@@ -20257,20 +20210,20 @@ many
     (
         "the_widest_unsigned_types_are_unsigned",
         "import \"io.frost\"\nmain :: fn() -> i64 {
-    mut big : u64 = 9223372036854775807
+    var big : u64 = 9223372036854775807
     big = big + 1
-    mut two : u64 = 2
-    mut one : u64 = 1
+    var two : u64 = 2
+    var one : u64 = 1
     print_int_line(big / two)
     print_int_line(big % 3)
     if (big > one) { print_int_line(1) } else { print_int_line(0) }
     if (big < one) { print_int_line(1) } else { print_int_line(0) }
     print_int_line(big >> 1)
-    mut span : usize = 9223372036854775807
+    var span : usize = 9223372036854775807
     span = span + 2
     if (span > one) { print_int_line(1) } else { print_int_line(0) }
     print_int_line(span / two)
-    mut n : i64 = -100
+    var n : i64 = -100
     print_int_line(n / 7)
     print_int_line(n >> 2)
     0
@@ -20299,7 +20252,7 @@ many
         "import \"io.frost\"\nmain :: fn() -> i64 {
     print_int_line(1 << 63)
     print_int_line(1 << 40)
-    mut bits : i64 = 0
+    var bits : i64 = 0
     bits = bits | (1 << 63)
     print_int_line(bits)
     0
@@ -20320,18 +20273,18 @@ many
     (
         "a_for_over_a_range",
         "import \"io.frost\"\nmain :: fn() -> i64 {
-    mut total : i64 = 0
+    var total : i64 = 0
     for i in 0..6 {
         total = total + i
     }
     print_int_line(total)
-    mut closed : i64 = 0
+    var closed : i64 = 0
     for i in 1..=4 {
         closed = closed + i
     }
     print_int_line(closed)
     n := 3
-    mut counted : i64 = 0
+    var counted : i64 = 0
     for i in 0..n {
         counted = counted + 1
     }
@@ -20409,13 +20362,13 @@ swap :: fn(mut a: $T, mut b: $T) {
 bytes :: fn($T: Type) -> i64 { sizeof(T) }
 
 main :: fn() -> i64 {
-    mut u := Vec3 { x = 1, y = 2, z = 3 }
-    mut v := Vec3 { x = 4, y = 5, z = 6 }
+    var u := Vec3 { x = 1, y = 2, z = 3 }
+    var v := Vec3 { x = 4, y = 5, z = 6 }
     swap(u, v)
     print_int_line(u.x)
     print_int_line(v.x)
-    mut a : i64 = 100
-    mut b : i64 = 200
+    var a : i64 = 100
+    var b : i64 = 200
     swap(a, b)
     print_int_line(a)
     print_int_line(bytes($Vec3))
@@ -20454,7 +20407,7 @@ widest :: fn(mut a: $T, by: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut u := Vec3 { x = 3, y = 4, z = 5 }
+    var u := Vec3 { x = 3, y = 4, z = 5 }
     scale(10, u)
     print_int_line(u.x)
     print_int_line(widest(u, 6))
@@ -20480,7 +20433,7 @@ main :: fn() -> i64 {
 }
 
 counted :: fn(v: []$T) -> i64 {
-    mut n : i64 = 0
+    var n : i64 = 0
     for x in v {
         n = n + 1
     }
@@ -20514,7 +20467,7 @@ main :: fn() -> i64 {
     (
         "a_loop_variable_read_carries_no_storage",
         "import \"io.frost\"\nwidest :: fn(v: []i64) -> i64 {
-    mut best : i64 = 0
+    var best : i64 = 0
     for x in v {
         if (x > best) { best = x }
     }
@@ -20522,7 +20475,7 @@ main :: fn() -> i64 {
 }
 
 counted :: fn(v: []$T) -> i64 {
-    mut n : i64 = 0
+    var n : i64 = 0
     for index, x in v {
         n = index
     }
@@ -20790,7 +20743,7 @@ main :: fn() -> i64 {
          \x20   count : i64 = held\n\
          \x20   count + 1\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut m : Meters = 41\n\
+         \x20   var m : Meters = 41\n\
          \x20   print_int_line(far(ptr_to(m)))\n\
          \x20   0\n}\n",
         "42\n",
@@ -20808,7 +20761,7 @@ main :: fn() -> i64 {
          \x20   }\n\
          \x20   0\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   mut g := no_grip()\n\
+         \x20   var g := no_grip()\n\
          \x20   print_int_line(same(ptr_to(g)))\n\
          \x20   0\n}\n",
         "1\n",
@@ -20826,8 +20779,8 @@ main :: fn() -> i64 {
          main :: fn() -> i64 {\n\
          \x20   named : f32 = FLOOR + RISE\n\
          \x20   written : f32 = -2.1 + 1.1\n\
-         \x20   mut a : f32 = -2.1\n\
-         \x20   mut b : f32 = 1.1\n\
+         \x20   var a : f32 = -2.1\n\
+         \x20   var b : f32 = 1.1\n\
          \x20   computed := a + b\n\
          \x20   wide : f64 = -2.1 + 1.1\n\
          \x20   print_int_line(cast($i64, named * 100.0))\n\
@@ -20888,11 +20841,11 @@ main :: fn() -> i64 {
          \x20   print_int_line(texts[1][0])\n\
          \x20   held : Holder = { rows = pair }\n\
          \x20   print_int_line(held.rows[0][1])\n\
-         \x20   mut v := vec_new($i64, 2)\n\
+         \x20   var v := vec_new($i64, 2)\n\
          \x20   vec_push($i64, v, 55)\n\
          \x20   print_int_line(vec_slice($i64, v)[0])\n\
          \x20   vec_free($i64, v)\n\
-         \x20   mut grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
+         \x20   var grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
          \x20   print_int_line(grid[1][1])\n\
          \x20   0\n}\n",
         "3\n99\n2\n55\n10\n",

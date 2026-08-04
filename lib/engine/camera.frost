@@ -78,7 +78,7 @@ camera_view :: fn(c: Camera) -> Mat4 {
 // that reads depth agrees with this: a pipeline keeps what is greater, a depth
 // buffer is cleared to zero, and a shadow map is compared the other way round.
 camera_projection :: fn(c: Camera, w: i64, h: i64) -> Mat4 {
-    mut aspect : f32 = 1.0
+    var aspect : f32 = 1.0
     if (h > 0) {
         wide : f32 = w
         tall : f32 = h
@@ -97,8 +97,8 @@ camera_view_projection :: fn(c: Camera, w: i64, h: i64) -> Mat4 {
 // One frame of input. Everything is scaled by the step, so how fast it moves
 // does not depend on how fast the frames are.
 camera_advance :: fn(mut c: Camera, held: Input, step: f32) {
-    mut turn : f32 = 0.0
-    mut tilt : f32 = 0.0
+    var turn : f32 = 0.0
+    var tilt : f32 = 0.0
     if (input_key_down(held, KEY_LEFT)) { turn = turn + 1.0 }
     if (input_key_down(held, KEY_RIGHT)) { turn = turn - 1.0 }
     if (input_key_down(held, KEY_UP)) { tilt = tilt + 1.0 }
@@ -110,7 +110,7 @@ camera_advance :: fn(mut c: Camera, held: Input, step: f32) {
     // correct after a turn without anything having to remember to update it.
     forward := camera_forward(c)
     right := vec3_normalize(vec3_cross(forward, vec3(0.0, 1.0, 0.0)))
-    mut motion := vec3(0.0, 0.0, 0.0)
+    var motion := vec3(0.0, 0.0, 0.0)
     if (input_key_down(held, KEY_W)) { motion = vec3_add(motion, forward) }
     if (input_key_down(held, KEY_S)) { motion = vec3_sub(motion, forward) }
     if (input_key_down(held, KEY_D)) { motion = vec3_add(motion, right) }

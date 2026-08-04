@@ -42,7 +42,7 @@ surprises.
 | Rust | Frost |
 | --- | --- |
 | `let x = 5;` | `x := 5` |
-| `let mut x = 5;` | `mut x := 5` |
+| `let mut x = 5;` | `var x := 5` |
 | `let x: i64 = 5;` | `x : i64 = 5` |
 | `const MAX: i64 = 10;` | `MAX :: 10` |
 | `fn add(a: i64, b: i64) -> i64 { a + b }` | `add :: fn(a: i64, b: i64) -> i64 { a + b }` |
@@ -86,11 +86,13 @@ There is no `let`. A name is introduced with one of three operators:
   enums, and top-level items are all constants, which is why every function is
   written `name :: fn(..)`.
 
-Bindings are immutable by default, exactly as in Rust. `mut` makes a local
-assignable:
+Bindings are immutable by default, exactly as in Rust. `var` declares one the
+body may assign again. It is not Rust's `let mut`: `mut` in Frost means exactly
+one thing, the parameter mode, so a reader who sees it knows a caller's value
+is being written:
 
 ```frost
-mut total : i64 = 0
+var total : i64 = 0
 total = total + 1
 ```
 
@@ -160,8 +162,8 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 A name is not a variable, though. There is no naked `return` that hands back
 whatever the names hold, because that is control flow you cannot see at the
 `return`. The `return` is required either way: a trailing expression is one
-value. `mut` goes in front of any name the body writes afterwards, as in
-`magnitude, mut negative := classify(value)`.
+value. `var` goes in front of any name the body writes afterwards, as in
+`magnitude, var negative := classify(value)`.
 
 What you cannot do is treat the list as a value. `(i64, i64)` is not a type, so
 it cannot be stored in a field, passed as an argument, or bound to one name. A
@@ -314,7 +316,7 @@ scale :: fn(mut p: Point, k: i64) {
 }
 
 main :: fn() -> i64 {
-    mut p := Point { x = 3, y = 4 }
+    var p := Point { x = 3, y = 4 }
     scale(p, 2)            // no '&mut' here
     p.x
 }
@@ -364,7 +366,7 @@ one, you dereference it with postfix `^`, and both the taking and the reading
 belong in an `unsafe` block:
 
 ```frost
-mut hero := Entity { hp = 100, mana = 30 }
+var hero := Entity { hp = 100, mana = 30 }
 pe : ^Entity = ptr_to(hero)
 unsafe { pe^.hp = pe^.hp - 25 }
 ```
@@ -506,7 +508,7 @@ import "slab.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = Slab {
+    var world : Slab<Entity, 16> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 16],
         generations = [0; 16],
         free_list = [0; 16],
@@ -607,7 +609,7 @@ which can declare the signature it needs:
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
-    mut result := x
+    var result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -864,7 +866,7 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = Slab {
+    var world : Slab<Entity, 16> = Slab {
         storage = [Entity { hp = 0, kind = Kind::Player }; 16],
         generations = [0; 16],
         free_list = [0; 16],

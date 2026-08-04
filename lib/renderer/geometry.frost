@@ -95,7 +95,7 @@ geometry_at :: fn(held: ^Geometry) -> ref Geometry {
 
 geometry_new :: fn(device: Device, vertex_room: i64,
     index_room: i64) -> Geometry {
-    mut vertex_descriptor := buffer_descriptor_init()
+    var vertex_descriptor := buffer_descriptor_init()
     // Copied from as well as into: growing one is a copy on the device from the
     // old buffer to the new, and a buffer that cannot be read from would have to
     // make the trip through the CPU instead.
@@ -103,7 +103,7 @@ geometry_new :: fn(device: Device, vertex_room: i64,
         | BufferUsage::CopySrc
     vertex_descriptor.size = vertex_room * VERTEX_STRIDE
 
-    mut index_descriptor := buffer_descriptor_init()
+    var index_descriptor := buffer_descriptor_init()
     index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
         | BufferUsage::CopySrc
     index_descriptor.size = index_room * INDEX_BYTES
@@ -152,8 +152,8 @@ geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
     }
     // Measured here rather than asked of the caller, since the vertices are in
     // hand and nothing else knows the shape.
-    mut radius : f32 = 0.0
-    mut at : i64 = 0
+    var radius : f32 = 0.0
+    var at : i64 = 0
     while (at < added) {
         reach := vec3_length(vertices[at].position)
         if (reach > radius) {
@@ -247,7 +247,7 @@ grow_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
 // CPU once and there is no reason for it to make the trip again.
 replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
-    mut descriptor := buffer_descriptor_init()
+    var descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
         | BufferUsage::CopySrc
     descriptor.size = room * VERTEX_STRIDE
@@ -261,7 +261,7 @@ replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
 
 replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
     room: i64) {
-    mut descriptor := buffer_descriptor_init()
+    var descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
         | BufferUsage::CopySrc
     descriptor.size = room * INDEX_BYTES
@@ -295,7 +295,7 @@ carry_over :: fn(from: Buffer, into: Buffer, device: Device, queue: Queue,
     encoder := device_create_command_encoder(device, no_pointer())
     command_encoder_copy_buffer_to_buffer(encoder, from, 0, into, 0,
         cast($u64, bytes))
-    mut command := command_encoder_finish(encoder, no_pointer())
+    var command := command_encoder_finish(encoder, no_pointer())
     queue_submit(queue, 1, ptr_to(command))
     command_buffer_release(command)
     command_encoder_release(encoder)

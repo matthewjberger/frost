@@ -79,7 +79,7 @@ byte_of :: fn(src: str, index: i64, len: i64) -> i64 {
 // would walk it to its terminator before comparing anything. The terminator
 // check at the end keeps a word that merely starts the same from matching.
 str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
-    mut k : i64 = 0
+    var k : i64 = 0
     while (k < len) {
         byte := byte_at(word, k)
         if (byte == 0 || src[off + k] != byte) {
@@ -117,6 +117,9 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         }
         if (str_range_eq(src, off, len, "ref")) {
             return TokenKind::KwRef
+        }
+        if (str_range_eq(src, off, len, "var")) {
+            return TokenKind::KwVar
         }
     } else if (len == 4) {
         if (str_range_eq(src, off, len, "case")) {
@@ -277,7 +280,7 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     // operators below used to keep it and be pushed as an end-of-file token,
     // so the parser stopped where the byte was and the compiler wrote an empty
     // program and reported success. One stray byte silently truncated a file.
-    mut kind : TokenKind = TokenKind::Eof
+    var kind : TokenKind = TokenKind::Eof
     if (c == CH_LPAREN) { kind = TokenKind::Lparen }
     if (c == CH_RPAREN) { kind = TokenKind::Rparen }
     if (c == CH_LBRACE) { kind = TokenKind::Lbrace }
@@ -312,7 +315,7 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
         // read. A multi-byte character is taken whole, continuation bytes and
         // all, so the report shows the character the file holds rather than
         // its first byte.
-        mut span : i64 = 1
+        var span : i64 = 1
         while (i + span < len
             && byte_of(src, i + span, len) >= 128
             && byte_of(src, i + span, len) < 192) {
@@ -326,7 +329,7 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
 }
 
 tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     // A byte-order mark, which some editors write at the head of a UTF-8 file.
     // It carries no meaning here and is not an operator, so it is stepped over
     // before the first token rather than reported as a stray byte.
@@ -344,12 +347,12 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
             }
         } else if (is_digit(c)) {
             start := i
-            mut value : i64 = 0
+            var value : i64 = 0
             // `0x` and `0b`, read before the decimal path since both start with
             // a digit that is a number on its own. A C header writes its
             // constants in hex, and transcribing them into decimal by hand is a
             // step where a digit goes missing quietly.
-            mut base : i64 = 10
+            var base : i64 = 10
             if (c == CH_0 && is_radix_mark(byte_of(src, i + 1, len))) {
                 mark := byte_of(src, i + 1, len)
                 base = 16
@@ -384,7 +387,7 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
             // starting a field access. The fractional part is not converted
             // here. A float literal keeps its byte range and both backends
             // hand the text to the tool that already knows how to read it.
-            mut is_float : bool = false
+            var is_float : bool = false
             if (byte_of(src, i, len) == CH_DOT
                 && is_digit(byte_of(src, i + 1, len))) {
                 is_float = true

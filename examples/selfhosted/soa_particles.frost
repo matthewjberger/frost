@@ -11,8 +11,8 @@ Particle :: struct { x: i64, y: i64 }
 
 // One field of every element, as a contiguous slice.
 sum_x :: fn(xs: []i64) -> i64 {
-    mut total : i64 = 0
-    mut i : i64 = 0
+    var total : i64 = 0
+    var i : i64 = 0
     n := slice_len(xs)
     while (i < n) {
         total = total + xs[i]
@@ -22,7 +22,7 @@ sum_x :: fn(xs: []i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : columns<Particle, 8> = columns_new()
+    var world : columns<Particle, 8> = columns_new()
     columns_reset($Particle, $8, world)
 
     a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })

@@ -1,6 +1,5 @@
-// The snippet the README shows, kept here so it is a program that runs rather
-// than prose that drifts. The test suite checks the two against each other and
-// checks what this prints.
+// The official tour of the language, as a program. The test suite compiles it
+// and checks what it prints, so every claim in the comments holds.
 //
 //   frost examples/tour.frost
 
@@ -27,8 +26,8 @@ attack :: fn(e: Entity) -> i64 {
 // a return type list answers with two values without a tuple type behind them.
 // Naming the values says which is which, and lets the `return` say it too.
 tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
-    mut sum : i64 = 0
-    mut best : i64 = 0
+    var sum : i64 = 0
+    var best : i64 = 0
     for held in party {
         hit := attack(held)
         sum = sum + hit
@@ -73,7 +72,7 @@ damage_of :: fn(e: Entity) -> i64 {
 main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
-    mut hero : Entity = { hp = 90, kind = .Hero }
+    var hero : Entity = { hp = 90, kind = .Hero }
     heal(hero, 10)                   // hero is borrowed and changed
     print_int_line(hero.hp)          // 100
     print_int_line(attack(hero))     // 10

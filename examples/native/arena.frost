@@ -41,7 +41,7 @@ alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena {
+    var arena : Arena<256> = Arena {
         data = [0; 256],
         offset = 0,
     }

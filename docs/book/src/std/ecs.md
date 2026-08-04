@@ -20,7 +20,7 @@ Position :: struct { x: f32, y: f32 }
 Velocity :: struct { x: f32, y: f32 }
 
 main :: fn() -> i64 {
-    mut world := ecs_new()
+    var world := ecs_new()
     position := ecs_register($Position, world)
     velocity := ecs_register($Velocity, world)
 
@@ -28,13 +28,13 @@ main :: fn() -> i64 {
     ecs_add($Position, world, ship, position, Position { x = 0.0, y = 0.0 })
     ecs_add($Velocity, world, ship, velocity, Velocity { x = 1.0, y = 0.5 })
 
-    mut q := query_begin(world)
+    var q := query_begin(world)
     query_with(q, position)
     query_with(q, velocity)
     while (query_next(world, q)) {
-        mut p := query_column($Position, world, q, position)
+        var p := query_column($Position, world, q, position)
         v := query_column($Velocity, world, q, velocity)
-        mut i : i64 = 0
+        var i : i64 = 0
         while (i < q.count) {
             p[i].x = p[i].x + v[i].x
             p[i].y = p[i].y + v[i].y
@@ -93,9 +93,9 @@ keeps a column contiguous.
 A query is a cursor over the tables holding a set of components:
 
 ```frost
-mut q := query_begin(world, position | velocity)
+var q := query_begin(world, position | velocity)
 while (query_next(world, q)) {
-    mut p := query_column($Position, world, q, position)
+    var p := query_column($Position, world, q, position)
     v := query_column($Velocity, world, q, velocity)
     entities := query_entities(world, q)
     ...
@@ -112,7 +112,7 @@ reads through, and a `for` over it unrolls both where the call is written.
 
 ```frost
 integrate :: fn(mut p: []Position, mut v: []Velocity, count: i64) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x
         i = i + 1
@@ -132,7 +132,7 @@ rather than with the indices they were given.
 What a query asks for beyond the components its body reads:
 
 ```frost
-mut f := no_filters()
+var f := no_filters()
 f = filter_without(f, frozen)             // table level
 f = filter_changed(f, velocity, last_run) // row level
 for_each_row($move, world, f, $Position, $Velocity)
@@ -161,11 +161,11 @@ program, once a frame, so everything written during a frame shares one time.
 watermark := ecs_tick(world)
 ... systems run ...
 
-mut q := query_begin(world, transform)
+var q := query_begin(world, transform)
 while (query_next(world, q)) {
     stamps := query_changed(world, q, transform)
     t := query_column($Transform, world, q, transform)
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < q.count) {
         if (stamps[i] >= watermark) { upload(t[i]) }
         i = i + 1
@@ -189,7 +189,7 @@ a column of one and reached through the same typed slice.
 time := ecs_resource_register($Time, world)
 ecs_resource_set($Time, world, time, time_new())
 held := ecs_resource($Time, world, time)
-mut place := ecs_resource_slice($Time, world, time)
+var place := ecs_resource_slice($Time, world, time)
 place[0].frame = place[0].frame + 1
 ```
 
@@ -228,8 +228,8 @@ own place by sequence number rather than by index, so clearing the channel
 neither repeats what a reader saw nor hides what it did not:
 
 ```frost
-mut damage := events_new($Damage)
-mut renderer := reader_new()
+var damage := events_new($Damage)
+var renderer := reader_new()
 events_send($Damage, damage, Damage { amount = 3 })
 
 held := events_read($Damage, damage, renderer)   // what this reader has not seen
@@ -247,7 +247,7 @@ is stored beside the mark, so a tag left on a despawned id is not read as a mark
 on the entity that gets that id next.
 
 ```frost
-mut selected := tag_new()
+var selected := tag_new()
 tag_add(selected, entity)
 if (tag_has(selected, entity)) { ... }
 ```
@@ -258,7 +258,7 @@ A structural change made while a query is walking would move the rows the walk
 is holding, so it is queued and applied when the walk is done:
 
 ```frost
-mut queued := commands_new()
+var queued := commands_new()
 ... during the walk ...
 commands_despawn(queued, entities[i])
 ... after it ...
@@ -273,9 +273,9 @@ give a tree walked without allocating per node: the parent, the first child, and
 the next sibling.
 
 ```frost
-mut tree := hierarchy_new()
+var tree := hierarchy_new()
 hierarchy_attach(tree, wheel, car)
-mut child := hierarchy_first_child(tree, car)
+var child := hierarchy_first_child(tree, car)
 while (is_no_entity(child) == false) {
     ...
     child = hierarchy_next_sibling(tree, child)
@@ -290,7 +290,7 @@ each, run in ascending stage order, so ordering is a number rather than a graph
 of declared dependencies:
 
 ```frost
-mut frame := schedule_new()
+var frame := schedule_new()
 schedule_add(frame, Stage::First, read_input)
 schedule_add(frame, Stage::Update, integrate)
 schedule_add_in_state(frame, Stage::Update, PAUSED, draw_menu)

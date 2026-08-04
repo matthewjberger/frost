@@ -48,7 +48,7 @@ FLOOR_Y :: -2.0
 SPACING :: 2.2
 
 main :: fn() -> i64 {
-    mut config := app_config("Frost lit", WIDTH, HEIGHT)
+    var config := app_config("Frost lit", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = DRAWN
@@ -77,7 +77,7 @@ run :: fn(move app: App) -> i64 {
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
-    mut looks : [4]i64 = [0; 4]
+    var looks : [4]i64 = [0; 4]
     looks[0] = materials_add(app.materials, material_of(vec4(0.85, 0.32, 0.30, 1.0), 0.35, 0.0))
     looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.46, 1.0), 0.6, 0.0))
     looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.2, 0.0))
@@ -100,7 +100,7 @@ run :: fn(move app: App) -> i64 {
         material = looks[3], layer = ONE_LAYER })
 
     half : f32 = 1.5
-    mut made : i64 = 0
+    var made : i64 = 0
     while (made < SHAPES) {
         row := made / GRID
         column := made - row * GRID
@@ -111,7 +111,7 @@ run :: fn(move app: App) -> i64 {
             vec3((across - half) * SPACING, FLOOR_Y + 1.4,
                 (along - half) * SPACING),
             vec3(0.8, 0.8, 0.8), 0.4 + 0.1 * made)
-        mut shape := cube
+        var shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
@@ -142,7 +142,7 @@ run :: fn(move app: App) -> i64 {
     ecs_set($Light, app.world, pointed, lights.light,
         spot(vec3(0.55, 0.75, 1.0), 40.0, 0.25, 0.45))
 
-    mut eye := camera_default()
+    var eye := camera_default()
     eye.position = vec3(0.0, 1.6, 11.0)
     eye.pitch = -0.12
     app_camera_set(app, eye)

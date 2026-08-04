@@ -170,7 +170,7 @@ names them. Every struct also gets a `<name>_init()` returning a zeroed one, so
 a program names only the fields it means:
 
 ```frost
-mut configuration := surface_configuration_init()
+var configuration := surface_configuration_init()
 configuration.device = device
 configuration.format = surface_format
 configuration.usage = TextureUsage::RenderAttachment
@@ -238,7 +238,7 @@ function and the state it records with, and it declares three things: the colour
 target it writes, the depth target it writes, and the resources it reads.
 
 ```frost
-mut g := graph_new(device, 3, 2)
+var g := graph_new(device, 3, 2)
 screen := graph_backbuffer(g)
 map := graph_depth(g, "shadow map", 1024, 1024, DEPTH_FORMAT)
 depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
@@ -436,7 +436,7 @@ What a pass walks is flat:
 
 ```frost
 list := unsafe { s^.list^ }
-mut index : i64 = 0
+var index : i64 = 0
 while (index < draw_list_count(list)) {
     one := draw_list_at(list, index)
     render_pass_encoder_set_bind_group(pass, 1, one.binding, 0, no_pointer())
@@ -460,7 +460,7 @@ a pass records every item it is handed.
 and `gltf_spawn` turns that into entities:
 
 ```frost
-mut held := gltf_read("lib/engine/assets/shapes.glb")
+var held := gltf_read("lib/engine/assets/shapes.glb")
 root := gltf_spawn(world, held, device, queue, registry, cache, ids)
 gltf_free(held)
 ```
@@ -519,7 +519,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) { ... }
 enough to make all four demos stop compiling, each on the same shape:
 
 ```frost
-mut f := renderer_begin(r)
+var f := renderer_begin(r)
 if (frame_ok(f)) {
     graph_run(graph, f)
     renderer_end(r, f)      // ends the frame only when one was acquired

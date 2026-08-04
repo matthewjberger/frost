@@ -40,10 +40,10 @@ two elements gives a slice of length two. Writing through it writes into the
 vector:
 
 ```frost
-mut v := vec_new($VecPoint, 2)
+var v := vec_new($VecPoint, 2)
 vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
 vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
-mut held := vec_slice($VecPoint, v)
+var held := vec_slice($VecPoint, v)
 held[1].x = 30
 assert(vec_get($VecPoint, v, 1).x == 30)
 vec_free($VecPoint, v)
@@ -133,7 +133,7 @@ A string key goes through a one-field wrapper:
 ```frost
 Text :: struct { bytes: str }
 
-mut ages := map_new($Text, $i64, 8)
+var ages := map_new($Text, $i64, 8)
 map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
 held := map_get($Text, $i64, $text_keys, ages, text("ada"), 0)
 ```
@@ -196,7 +196,7 @@ rule is section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md).
 
 ```frost
-mut world : Slab<Entity, 8> = Slab {
+var world : Slab<Entity, 8> = Slab {
     storage = [Entity { hp = 0, mana = 0 }; 8],
     generations = [0; 8],
     free_list = [0; 8],
@@ -245,7 +245,7 @@ else.
 ```frost
 Particle :: struct { x: i64, y: i64 }
 
-mut world : columns<Particle, 8> = columns_new()
+var world : columns<Particle, 8> = columns_new()
 columns_reset($Particle, $8, world)
 
 a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })

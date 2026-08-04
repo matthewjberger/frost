@@ -105,8 +105,8 @@ cheapest test in the library to write:
 ```frost
 test "a vector gives back every block it took, however far it grew" {
     before := heap_live()
-    mut v := vec_new($i64, 1)
-    mut i : i64 = 0
+    var v := vec_new($i64, 1)
+    var i : i64 = 0
     while (i < 500) {
         vec_push($i64, v, i)
         i = i + 1
@@ -127,10 +127,10 @@ directly:
 ```frost
 test "what a block took is what releasing it gives back" {
     before := heap_live()
-    mut held := heap_slice($i64, 16)
+    var held := heap_slice($i64, 16)
     assert(heap_live() == before + 1)
     held[0] = 1
-    mut bigger := heap_grow_slice($i64, held, 64)
+    var bigger := heap_grow_slice($i64, held, 64)
     assert(heap_live() == before + 1)
     heap_release_slice($i64, bigger)
     assert(heap_live() == before)

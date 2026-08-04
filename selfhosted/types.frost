@@ -48,7 +48,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
     // An enum reached through a borrow is still that enum, which is what a
     // parameter of enum type is. A field access through a pointer reads
     // through it, so the tag is reached the same way either way.
-    mut ty := type_of(p, left)
+    var ty := type_of(p, left)
     if (is_pointer(ty)) {
         ty = pointee(p, ty)
     }
@@ -73,7 +73,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
     // writing to where it was.
     tag_left := enum_tag_operand(p, left)
     tag_right := enum_tag_operand(p, right)
-    mut held := arena_at(p.arena, id)
+    var held := arena_at(p.arena, id)
     held.a = tag_left
     held.b = tag_right
 }
@@ -86,7 +86,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
 enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
     node := arena_at(p.arena, side)
     if (node.kind == NodeKind::StructLit) {
-        mut init := node.a
+        var init := node.a
         while (init != (-1)) {
             held := arena_at(p.arena, init)
             value := held.a
@@ -106,8 +106,8 @@ enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
 // argument is classified and converted by what the callee said it takes rather
 // than by what the caller happened to write.
 nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
-    mut id := params
-    mut index : i64 = 0
+    var id := params
+    var index : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         if (index == n) {
@@ -123,7 +123,7 @@ nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
 // C passes one rather than as an address. Recorded beside the parameter nodes
 // rather than on them, because the placement is the only thing it changes.
 param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
-    mut entry : i64 = 0
+    var entry : i64 = 0
     while (entry < p.value_params.count) {
         held := arena_at(p.value_params, entry)
         if (held.name_off == param_node) {
@@ -138,8 +138,8 @@ param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
 // takes the address. An aggregate is already reached by address and a scalar is
 // not, and this is what says so.
 nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
-    mut id := params
-    mut index : i64 = 0
+    var id := params
+    var index : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
@@ -154,8 +154,8 @@ nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
 }
 
 nth_param_by_value :: fn(mut p: Parser, params: i64, n: i64) -> bool {
-    mut id := params
-    mut index : i64 = 0
+    var id := params
+    var index : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
@@ -174,7 +174,7 @@ nth_param_by_value :: fn(mut p: Parser, params: i64, n: i64) -> bool {
 // the first: `emit_program` binds `node` to an i64 and later to a `^Node`, and
 // answering with the i64 types `node^.next` as a scalar and reads offset zero.
 lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = p.locals.count
+    var i : i64 = p.locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.locals, i)
@@ -472,7 +472,7 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
 }
 
 local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    mut i : i64 = p.locals.count
+    var i : i64 = p.locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.locals, i)
@@ -510,7 +510,7 @@ constant_node :: fn(mut p: Parser, id: i64) -> i64 {
 // Whether the value named (off, len) has been moved on the current path, read
 // by the flow-aware move check as it walks a function body.
 is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.moved.count) {
         entry := arena_at(p.moved, i)
         if (entry.name_len == len
@@ -564,7 +564,7 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
 // struct or a `^T`), which is dereferenced one level first, so `a.count` and
 // `node^.next` both resolve.
 field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
-    mut struct_ty := base_ty
+    var struct_ty := base_ty
     if (is_pointer(struct_ty)) {
         struct_ty = pointee(p, struct_ty)
     }
@@ -574,7 +574,7 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     def := arena_at(p.structs, struct_index_of(struct_ty))
     struct_off := def.name_off
     struct_len := def.name_len
-    mut fid := def.field_head
+    var fid := def.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.name_len == len
@@ -678,7 +678,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         base_node := arena_at(p.arena, base)
         if (base_node.kind == NodeKind::Index) {
             cbase_ty := type_of(p, base_node.a)
-            mut cthrough := cbase_ty
+            var cthrough := cbase_ty
             if (is_pointer(cthrough)) {
                 cthrough = pointee(p, cthrough)
             }
@@ -739,7 +739,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     // type when one was in force, otherwise from the first thing in it, and the
     // length from how many there are.
     if (kind == NodeKind::ArrayLit) {
-        mut element : i64 = TY_I64
+        var element : i64 = TY_I64
         if (node.val != 0) {
             element = node.val - 1
         } else {
@@ -861,7 +861,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
 
 // The generic-fns index of a function, or -1 if it is not generic.
 generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.generic_fns.count) {
         entry := arena_at(p.generic_fns, i)
         if (entry.fn_index == fn_index) {
@@ -891,10 +891,10 @@ call_args_for :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
 // It is what says which argument stands for the type parameter; without it the
 // first argument whose type is known has to do.
 call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
-    mut count : i64 = 0
-    mut first : i64 = TY_I64
+    var count : i64 = 0
+    var first : i64 = TY_I64
     xstart := p.gargs.count
-    mut id := head
+    var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
@@ -923,7 +923,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
-        mut t := type_of(p, value)
+        var t := type_of(p, value)
         if (is_pointer(t)) {
             t = pointee(p, t)
         }
@@ -932,7 +932,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
         // implicit is monomorphized on every one of them, not just the first.
         if (is_struct_ty(t)) {
             si := struct_index_of(t)
-            mut k : i64 = 0
+            var k : i64 = 0
             while (k < p.instances.count) {
                 inst := arena_at(p.instances, k)
                 if (inst.struct_index == si) {
@@ -967,7 +967,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
         next_id := node.next
         vnode := arena_at(p.arena, value)
         if (vnode.kind != NodeKind::TypeVal) {
-            mut held := argument_type(p, value)
+            var held := argument_type(p, value)
             if (is_pointer(held)) {
                 held = pointee(p, held)
             }
@@ -989,7 +989,7 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64, ret: i64) {
     // The discovery pass runs until it finds nothing new, so the same
     // monomorphization is offered more than once and only the first is kept.
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.mono_rets.count) {
         entry := arena_at(p.mono_rets, i)
         if (entry.fn_index == fn_index && entry.arg == arg
@@ -1025,7 +1025,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
     // re-parsed with a real argument for each instance. The placeholder itself
     // must not drive an instantiation, which would emit a `^T` for a T that is
     // no type.
-    mut g : i64 = 0
+    var g : i64 = 0
     while (g < xarg_count) {
         entry := arena_at(p.gargs, xarg_start + g)
         if (entry.value == TY_PARAM) {
@@ -1033,7 +1033,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
         }
         g = g + 1
     }
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.type_args.count) {
         entry := arena_at(p.type_args, i)
         if (entry.arg == arg && entry.xarg_count == xarg_count
@@ -1048,7 +1048,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
 }
 
 collect_type_args :: fn(mut p: Parser) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.instances.count) {
         // A generic struct written as `Box<i64>` names no function, so its
         // tuple is offered to every generic.
@@ -1087,8 +1087,8 @@ collect_type_args :: fn(mut p: Parser) {
 // Answers whether any tuple changed, which is a round that found something new:
 // a changed tuple is a specialization nothing has been instantiated for yet.
 settle_pack_args :: fn(mut p: Parser) -> bool {
-    mut changed := false
-    mut i : i64 = 0
+    var changed := false
+    var i : i64 = 0
     while (i < p.type_args.count) {
         used := arena_at(p.type_args, i)
         start := used.xarg_start
@@ -1111,14 +1111,14 @@ settle_pack_args :: fn(mut p: Parser) -> bool {
 // types.
 settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
     buf_start := p.argbuf.count
-    mut differs := false
-    mut k : i64 = 0
+    var differs := false
+    var k : i64 = 0
     while (k < count) {
         held := arena_at(p.gargs, start + k)
         value := held.value
         is_type := held.is_type
         pending := held.pending
-        mut settled := value
+        var settled := value
         if (pending >= 0) {
             settled = pending_ret_type(p, pending)
         }
@@ -1126,7 +1126,7 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
         // is recorded once and never revised, so reading it after that answers
         // the same, and a run that keeps changing is a fixpoint that never
         // closes.
-        mut later := pending
+        var later := pending
         if (settled != value) {
             differs = true
             later = -1
@@ -1135,7 +1135,7 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
             GArg { value = settled, is_type = is_type, pending = later })
         k = k + 1
     }
-    mut fresh : i64 = -1
+    var fresh : i64 = -1
     if (differs) {
         fresh = copy_run(p, buf_start)
     }
@@ -1156,7 +1156,7 @@ pending_ret_type :: fn(mut p: Parser, pending: i64) -> i64 {
 
 mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> i64 {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.mono_rets.count) {
         entry := arena_at(p.mono_rets, i)
         if (entry.fn_index == fn_index && entry.arg == arg
@@ -1173,7 +1173,7 @@ mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 // The global function of this name, or -1. A function used as a value or called
 // indirectly is found this way when the name is not a local.
 fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.fns.count) {
         sym := arena_at(p.fns, i)
         if (sym.len == len && sym.defined == 1
@@ -1215,7 +1215,7 @@ bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
     if (literal_node.kind != NodeKind::StructLit) {
         return -1
     }
-    mut id := literal_node.a
+    var id := literal_node.a
     while (id != (-1)) {
         init := arena_at(p.arena, id)
         init_off := init.val
@@ -1242,8 +1242,8 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     sym := arena_at(p.fns, fn_index)
     ret := sym.ret_type
     param_start := p.proc_params.count
-    mut count : i64 = 0
-    mut pid := sym.params
+    var count : i64 = 0
+    var pid := sym.params
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0,
@@ -1326,7 +1326,7 @@ record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64,
 // The type a name binds to in the declaration being parsed, or -1 when nothing
 // here names it. The last binding wins, the same rule the emitters' table has.
 parse_local_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = p.parse_locals.count
+    var i : i64 = p.parse_locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.parse_locals, i)
@@ -1342,7 +1342,7 @@ parse_local_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // else. What an expansion-time `if` may ask about is a parameter, since that is
 // what an instantiation decides and a local is not.
 parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = p.parse_param_end
+    var i : i64 = p.parse_param_end
     while (i > p.parse_param_start) {
         i = i - 1
         entry := arena_at(p.parse_locals, i)
@@ -1367,7 +1367,7 @@ bound_value :: fn(mut p: Parser, value: i64) -> i64 {
     }
     name_off := node.val
     name_len := node.c
-    mut i : i64 = p.parse_locals.count
+    var i : i64 = p.parse_locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.parse_locals, i)
@@ -1415,7 +1415,7 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
     // work the tuple out again where it was written. One entry per
     // monomorphization keeps this table the size of what the program
     // instantiates rather than the size of how often it is read.
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < p.pending_rets.count) {
         entry := arena_at(p.pending_rets, i)
         if (entry.fn_index == fn_index && entry.arg == arg
@@ -1463,11 +1463,11 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
         advance(p)
     }
     advance(p)
-    mut depth : i64 = 0
-    mut position : i64 = 0
-    mut found : i64 = -1
-    mut at_start : i64 = 1
-    mut compile_time : i64 = 0
+    var depth : i64 = 0
+    var position : i64 = 0
+    var found : i64 = -1
+    var at_start : i64 = 1
+    var compile_time : i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Rparen && depth == 0) {
@@ -1511,7 +1511,7 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
                 // so the argument's element is what it binds to. The brackets
                 // are stepped over and how many were stepped over is the answer
                 // to that.
-                mut through : i64 = 0
+                var through : i64 = 0
                 if (cur(p) == TokenKind::Lbracket) {
                     while (cur(p) != TokenKind::Rbracket
                         && cur(p) != TokenKind::Eof) {
@@ -1563,14 +1563,14 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
 // element rather than the argument.
 call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
     through: i64) -> i64 {
-    mut id := args
-    mut seen : i64 = 0
+    var id := args
+    var seen : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
         if (seen == at) {
-            mut held := argument_type(p, value)
+            var held := argument_type(p, value)
             if (is_pointer(held)) {
                 held = pointee(p, held)
             }
@@ -1595,7 +1595,7 @@ call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
 // -1 when the call writes its type arguments out, since those are read where
 // the tuples are collected and need nothing from here.
 parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
-    mut id := args
+    var id := args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
@@ -1623,7 +1623,7 @@ parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
-        mut held := argument_type(p, value)
+        var held := argument_type(p, value)
         if (is_pointer(held)) {
             held = pointee(p, held)
         }
@@ -1638,7 +1638,7 @@ parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
 // The field a name is bound to by a `for` over `fields(T)`, as the entry
 // holding what it is and where it sits, or -1 when the name is not one.
 field_binding_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = p.field_bindings.count
+    var i : i64 = p.field_bindings.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.field_bindings, i)
@@ -1679,7 +1679,7 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     // How many compile-time parameters the callee declares before its list: the
     // primary one, if it has one, and the rest. A `$` argument fills those
     // first, and anything past them is an element of the list.
-    mut declared : i64 = gfn.xparam_count
+    var declared : i64 = gfn.xparam_count
     if (gfn.tparam_len > 0) {
         declared = declared + 1
     }
@@ -1694,9 +1694,9 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     // leaves a run of its own in `gargs`, so building this run there directly
     // would interleave the two.
     buf_start := p.argbuf.count
-    mut primary : i64 = TY_I64
-    mut types_seen : i64 = 0
-    mut id := args
+    var primary : i64 = TY_I64
+    var types_seen : i64 = 0
+    var id := args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
@@ -1713,9 +1713,9 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
         }
         id = next_id
     }
-    mut count : i64 = 0
-    mut index : i64 = 0
-    mut seen : i64 = 0
+    var count : i64 = 0
+    var index : i64 = 0
+    var seen : i64 = 0
     id = args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -1756,7 +1756,7 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
 // one piece. Answers where it landed.
 copy_run :: fn(mut p: Parser, at: i64) -> i64 {
     start := p.gargs.count
-    mut k : i64 = at
+    var k : i64 = at
     while (k < p.argbuf.count) {
         held := arena_at(p.argbuf, k)
         value := held.value
@@ -1788,8 +1788,8 @@ call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
 }
 
 nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
-    mut id := args
-    mut seen : i64 = 0
+    var id := args
+    var seen : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
@@ -1807,8 +1807,8 @@ nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
 }
 
 count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
-    mut id := args
-    mut count : i64 = 0
+    var id := args
+    var count : i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a

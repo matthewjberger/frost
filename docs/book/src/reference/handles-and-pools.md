@@ -136,7 +136,7 @@ against no generation.
 ```frost
 slot := slab_slot($Unit, $1024, pool, handle)
 if (slot >= 0) {
-    mut round : i64 = 0
+    var round : i64 = 0
     while (round < many) {
         total = total + pool.storage[slot].hp
         round = round + 1

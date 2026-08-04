@@ -32,7 +32,7 @@ alloc_int :: fn(mut a: Arena) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut a := arena_new(256)
+    var a := arena_new(256)
 
     p := alloc_int(a)
     unsafe { p^ = 42 }

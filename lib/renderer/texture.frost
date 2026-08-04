@@ -61,7 +61,7 @@ image_set :: fn(mut held: Image, x: i64, y: i64, colour: Vec4) {
 // A number from zero to one as a byte, with anything outside brought back in
 // rather than allowed to wrap into the wrong colour entirely.
 channel :: fn(value: f32) -> u8 {
-    mut held := value
+    var held := value
     if (held < 0.0) {
         held = 0.0
     }
@@ -72,9 +72,9 @@ channel :: fn(value: f32) -> u8 {
 }
 
 image_fill :: fn(mut held: Image, colour: Vec4) {
-    mut y : i64 = 0
+    var y : i64 = 0
     while (y < held.height) {
-        mut x : i64 = 0
+        var x : i64 = 0
         while (x < held.width) {
             image_set(held, x, y, colour)
             x = x + 1
@@ -85,12 +85,12 @@ image_fill :: fn(mut held: Image, colour: Vec4) {
 
 // Squares of two colours, `size` texels a side.
 image_checker :: fn(mut held: Image, size: i64, first: Vec4, second: Vec4) {
-    mut y : i64 = 0
+    var y : i64 = 0
     while (y < held.height) {
-        mut x : i64 = 0
+        var x : i64 = 0
         while (x < held.width) {
             cell := x / size + y / size
-            mut colour := first
+            var colour := first
             if (cell - (cell / 2) * 2 == 1) {
                 colour = second
             }
@@ -107,18 +107,18 @@ image_checker :: fn(mut held: Image, size: i64, first: Vec4, second: Vec4) {
 image_bricks :: fn(mut held: Image, brick: Vec4, mortar: Vec4) {
     course := held.height / 8
     length := held.width / 4
-    mut y : i64 = 0
+    var y : i64 = 0
     while (y < held.height) {
         row := y / course
-        mut shift : i64 = 0
+        var shift : i64 = 0
         if (row - (row / 2) * 2 == 1) {
             shift = length / 2
         }
-        mut x : i64 = 0
+        var x : i64 = 0
         while (x < held.width) {
             along := (x + shift) - ((x + shift) / length) * length
             down := y - row * course
-            mut colour := brick
+            var colour := brick
             if (down < 2 || along < 2) {
                 colour = mortar
             }
@@ -134,15 +134,15 @@ image_bricks :: fn(mut held: Image, brick: Vec4, mortar: Vec4) {
 image_rings :: fn(mut held: Image, first: Vec4, second: Vec4) {
     middle_x := held.width / 2
     middle_y := held.height / 2
-    mut y : i64 = 0
+    var y : i64 = 0
     while (y < held.height) {
-        mut x : i64 = 0
+        var x : i64 = 0
         while (x < held.width) {
             across : f32 = x - middle_x
             down : f32 = y - middle_y
             away := sqrtf(across * across + down * down)
             band := cast($i64, away / 6.0)
-            mut colour := first
+            var colour := first
             if (band - (band / 2) * 2 == 1) {
                 colour = second
             }
@@ -158,18 +158,18 @@ image_rings :: fn(mut held: Image, first: Vec4, second: Vec4) {
 // it is the whole reason to draw it.
 image_corner_marks :: fn(mut held: Image, colour: Vec4) {
     size := held.width / 8
-    mut y : i64 = 0
+    var y : i64 = 0
     while (y < size) {
-        mut x : i64 = 0
+        var x : i64 = 0
         while (x < size) {
             image_set(held, x, y, colour)
             x = x + 1
         }
         y = y + 1
     }
-    mut down : i64 = 0
+    var down : i64 = 0
     while (down < held.height) {
-        mut across : i64 = 0
+        var across : i64 = 0
         while (across < 2) {
             image_set(held, across, down, colour)
             across = across + 1
@@ -180,7 +180,7 @@ image_corner_marks :: fn(mut held: Image, colour: Vec4) {
 
 // The whole of a two-dimensional image, as the size every call here means.
 whole_extent :: fn(width: i64, height: i64) -> Extent3D {
-    mut size := extent_3D_init()
+    var size := extent_3D_init()
     size.width = cast($u32, width)
     size.height = cast($u32, height)
     size.depth_or_array_layers = 1
@@ -207,7 +207,7 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     // Two of them, because the descriptor takes one by value and the write
     // takes the address of one, and a value that moved into a field is no
     // longer here to take the address of.
-    mut descriptor := texture_descriptor_init()
+    var descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(held.width, held.height)
@@ -216,23 +216,23 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     descriptor.sample_count = 1
     made := device_create_texture(device, ptr_to(descriptor))
 
-    mut destination := texel_copy_texture_info_init()
+    var destination := texel_copy_texture_info_init()
     destination.texture = made
     destination.mip_level = 0
     destination.aspect = TEXTURE_ASPECT_ALL
 
-    mut layout := texel_copy_buffer_layout_init()
+    var layout := texel_copy_buffer_layout_init()
     layout.offset = 0
     layout.bytes_per_row = cast($u32, held.width * CHANNELS)
     layout.rows_per_image = cast($u32, held.height)
 
-    mut written := whole_extent(held.width, held.height)
+    var written := whole_extent(held.width, held.height)
     queue_write_texture(queue, ptr_to(destination),
         ptr_to(held.pixels[0]),
         cast($u64, held.width * held.height * CHANNELS), ptr_to(layout),
         ptr_to(written))
 
-    mut view_descriptor := texture_view_descriptor_init()
+    var view_descriptor := texture_view_descriptor_init()
     view_descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
     view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D
     view_descriptor.mip_level_count = 1
@@ -240,7 +240,7 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     view_descriptor.aspect = TEXTURE_ASPECT_ALL
     view := texture_create_view(made, ptr_to(view_descriptor))
 
-    mut sampler_descriptor := sampler_descriptor_init()
+    var sampler_descriptor := sampler_descriptor_init()
     sampler_descriptor.address_mode_u = ADDRESS_MODE_REPEAT
     sampler_descriptor.address_mode_v = ADDRESS_MODE_REPEAT
     sampler_descriptor.address_mode_w = ADDRESS_MODE_REPEAT
@@ -273,7 +273,7 @@ texture_free :: fn(held: Texture2D) {
 // buffer. Nothing about it is special beyond being both at once.
 texture_render_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
-    mut descriptor := texture_descriptor_init()
+    var descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::RenderAttachment
         | TextureUsage::TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
@@ -283,7 +283,7 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
     descriptor.sample_count = 1
     made := device_create_texture(device, ptr_to(descriptor))
 
-    mut view_descriptor := texture_view_descriptor_init()
+    var view_descriptor := texture_view_descriptor_init()
     view_descriptor.format = format
     view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D
     view_descriptor.mip_level_count = 1
@@ -293,7 +293,7 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
 
     // Clamped rather than repeated, because what is drawn into a target has
     // edges rather than tiling, and reading past one should hold the edge.
-    mut sampler_descriptor := sampler_descriptor_init()
+    var sampler_descriptor := sampler_descriptor_init()
     sampler_descriptor.address_mode_u = ADDRESS_MODE_CLAMP_TO_EDGE
     sampler_descriptor.address_mode_v = ADDRESS_MODE_CLAMP_TO_EDGE
     sampler_descriptor.address_mode_w = ADDRESS_MODE_CLAMP_TO_EDGE
@@ -313,7 +313,7 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
 // thing the light can see.
 texture_depth_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
-    mut descriptor := texture_descriptor_init()
+    var descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::RenderAttachment
         | TextureUsage::TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
@@ -323,7 +323,7 @@ texture_depth_target :: fn(device: Device, width: i64, height: i64,
     descriptor.sample_count = 1
     made := device_create_texture(device, ptr_to(descriptor))
 
-    mut view_descriptor := texture_view_descriptor_init()
+    var view_descriptor := texture_view_descriptor_init()
     view_descriptor.format = format
     view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D
     view_descriptor.mip_level_count = 1
@@ -344,7 +344,7 @@ texture_depth_target :: fn(device: Device, width: i64, height: i64,
 // surfaces that should be dark, which reads as a scene with its shadows
 // inverted rather than as a broken one.
 comparison_sampler :: fn(device: Device) -> Sampler {
-    mut descriptor := sampler_descriptor_init()
+    var descriptor := sampler_descriptor_init()
     descriptor.address_mode_u = ADDRESS_MODE_CLAMP_TO_EDGE
     descriptor.address_mode_v = ADDRESS_MODE_CLAMP_TO_EDGE
     descriptor.address_mode_w = ADDRESS_MODE_CLAMP_TO_EDGE
@@ -377,7 +377,7 @@ comparison_sampler :: fn(device: Device) -> Sampler {
 // that is its decision rather than this one's.
 texture_array_new :: fn(device: Device, width: i64, height: i64,
     layers: i64) -> Texture2D {
-    mut descriptor := texture_descriptor_init()
+    var descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = layered_extent(width, height, layers)
@@ -386,7 +386,7 @@ texture_array_new :: fn(device: Device, width: i64, height: i64,
     descriptor.sample_count = 1
     made := device_create_texture(device, ptr_to(descriptor))
 
-    mut view_descriptor := texture_view_descriptor_init()
+    var view_descriptor := texture_view_descriptor_init()
     view_descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
     view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D_ARRAY
     view_descriptor.mip_level_count = 1
@@ -394,7 +394,7 @@ texture_array_new :: fn(device: Device, width: i64, height: i64,
     view_descriptor.aspect = TEXTURE_ASPECT_ALL
     view := texture_create_view(made, ptr_to(view_descriptor))
 
-    mut sampler_descriptor := sampler_descriptor_init()
+    var sampler_descriptor := sampler_descriptor_init()
     sampler_descriptor.address_mode_u = ADDRESS_MODE_REPEAT
     sampler_descriptor.address_mode_v = ADDRESS_MODE_REPEAT
     sampler_descriptor.address_mode_w = ADDRESS_MODE_REPEAT
@@ -413,18 +413,18 @@ texture_array_new :: fn(device: Device, width: i64, height: i64,
 // a layer is a slice of one allocation rather than a texture of its own.
 texture_array_write :: fn(held: Texture2D, queue: Queue, layer: i64,
     given: Image) {
-    mut destination := texel_copy_texture_info_init()
+    var destination := texel_copy_texture_info_init()
     destination.texture = held.texture
     destination.mip_level = 0
     destination.aspect = TEXTURE_ASPECT_ALL
     destination.origin = layer_origin(layer)
 
-    mut layout := texel_copy_buffer_layout_init()
+    var layout := texel_copy_buffer_layout_init()
     layout.offset = 0
     layout.bytes_per_row = cast($u32, given.width * CHANNELS)
     layout.rows_per_image = cast($u32, given.height)
 
-    mut written := layered_extent(given.width, given.height, 1)
+    var written := layered_extent(given.width, given.height, 1)
     queue_write_texture(queue, ptr_to(destination), ptr_to(given.pixels[0]),
         cast($u64, given.width * given.height * CHANNELS), ptr_to(layout),
         ptr_to(written))
@@ -433,7 +433,7 @@ texture_array_write :: fn(held: Texture2D, queue: Queue, layer: i64,
 // A layer's own corner of the allocation, which is where the third coordinate
 // stops meaning depth and starts meaning which one.
 layer_origin :: fn(layer: i64) -> Origin3D {
-    mut at := origin_3D_init()
+    var at := origin_3D_init()
     at.x = 0
     at.y = 0
     at.z = cast($u32, layer)
@@ -441,7 +441,7 @@ layer_origin :: fn(layer: i64) -> Origin3D {
 }
 
 layered_extent :: fn(width: i64, height: i64, layers: i64) -> Extent3D {
-    mut size := extent_3D_init()
+    var size := extent_3D_init()
     size.width = cast($u32, width)
     size.height = cast($u32, height)
     size.depth_or_array_layers = cast($u32, layers)

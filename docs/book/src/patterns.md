@@ -251,7 +251,7 @@ Nothing failed. The tests passed. It leaked three blocks per column.
 ```frost
 test "a world gives back every block it took" {
     before := heap_live()
-    mut world := ecs_new()
+    var world := ecs_new()
     ecs_free(world)
     assert(heap_live() == before)
 }
@@ -289,8 +289,8 @@ Related: binding a *local* struct to a second name moves it.
 
 ```frost
 root := ecs_spawn(world)
-mut parent := root          // root is gone from here on
-mut parent := Entity { id = root.id, generation = root.generation }   // instead
+var parent := root          // root is gone from here on
+var parent := Entity { id = root.id, generation = root.generation }   // instead
 ```
 
 Binding a *parameter* to a name is the other way round: it copies, so writing
@@ -299,7 +299,7 @@ like `mask_with` read the way it should.
 
 ```frost
 mask_with :: fn(m: Mask, index: i64) -> Mask {
-    mut out := m                  // a copy of the caller's mask
+    var out := m                  // a copy of the caller's mask
     out.words[index / 64] = ...
     out
 }
@@ -376,7 +376,7 @@ both accept.
   the scrutinee are not the syntax, and the error you get from the wrong form
   names a later line.
 - **Do not write through a read parameter.** `into[at] = x` where `into: str` is
-  a read borrow lowered differently by each backend. Bind `mut destination :=
+  a read borrow lowered differently by each backend. Bind `var destination :=
   into` first, which is what you meant anyway.
 - **A `(` or `[` that opens a line starts a statement.** `(table.mask & mask)`
   on its own line is not a call of the line above it.

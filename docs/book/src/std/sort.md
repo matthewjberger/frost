@@ -61,7 +61,7 @@ comparison ends up inside the loop. Nothing is stored, nothing is dispatched,
 and the sorted slice never holds a function pointer.
 
 ```frost
-mut items := [5, 2, 9, 1, 7]
+var items := [5, 2, 9, 1, 7]
 sort($i64, $i64_ascending, items)     // 1 2 5 7 9
 sort($i64, $i64_descending, items)    // 9 7 5 2 1
 ```
@@ -71,7 +71,7 @@ through `vec_slice`, so a vector with room for sixty-four and three elements in
 it sorts three.
 
 ```frost
-mut v := vec_new($i64, 4)
+var v := vec_new($i64, 4)
 vec_push($i64, v, 3)
 vec_push($i64, v, 1)
 vec_push($i64, v, 2)

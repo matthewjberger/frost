@@ -62,7 +62,7 @@ in full:
 ```
 break case continue defer distinct else enum extern false fn for if import
 in inline linear match move mut ref return safe struct true
-type unsafe uses where while with
+type unsafe uses var where while with
 ```
 
 `true` and `false` are reserved here and are the boolean literals of 2.5.

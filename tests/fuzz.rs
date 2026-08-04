@@ -259,7 +259,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 // type rather than with what it is represented by.
                 let expr = gen_expr(rng, 2);
                 source.push_str(&format!(
-                    "    mut p{index} : Meters = {expr}\n\
+                    "    var p{index} : Meters = {expr}\n\
                      \x20   print_int_line(through(ptr_to(p{index})))\n"
                 ));
             }
@@ -269,7 +269,7 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                 // code by a whole stride and one over an integer moves it
                 // inside the first.
                 source.push_str(&format!(
-                    "    mut g{index} := no_grip()\n\
+                    "    var g{index} := no_grip()\n\
                      \x20   print_int_line(grips(ptr_to(g{index})))\n"
                 ));
             }
@@ -434,7 +434,7 @@ fn view_kind(kind: usize) -> ViewKind {
         1 => ViewKind {
             import: "mem.frost",
             held_type: "^i64",
-            storage: "mut cell : i64 = 5",
+            storage: "var cell : i64 = 5",
             view: "ptr_to(cell)",
             parameter: "mut source: i64",
             honest: "ptr_to(source)",
@@ -464,7 +464,7 @@ fn view_kind(kind: usize) -> ViewKind {
         4 => ViewKind {
             import: "slab.frost",
             held_type: "[]i64",
-            storage: "mut bag : Slab<i64, 4> = { storage = [0; 4], generations = [0; 4], free_list = [0; 4], free_count = 0 }",
+            storage: "var bag : Slab<i64, 4> = { storage = [0; 4], generations = [0; 4], free_list = [0; 4], free_count = 0 }",
             view: "bag.storage",
             parameter: "mut source: Slab<i64, 4>",
             honest: "source.storage",
@@ -472,7 +472,7 @@ fn view_kind(kind: usize) -> ViewKind {
         5 => ViewKind {
             import: "columns.frost",
             held_type: "[]i64",
-            storage: "mut bag : columns<Pt, 4> = columns_new()",
+            storage: "var bag : columns<Pt, 4> = columns_new()",
             view: "bag.x",
             parameter: "mut source: columns<Pt, 4>",
             honest: "source.x",
@@ -480,7 +480,7 @@ fn view_kind(kind: usize) -> ViewKind {
         _ => ViewKind {
             import: "mem.frost",
             held_type: "ref i64",
-            storage: "mut data : [4]i64 = [11, 22, 33, 44]",
+            storage: "var data : [4]i64 = [11, 22, 33, 44]",
             view: "data[0]",
             parameter: "mut source: [4]i64",
             honest: "source[0]",
@@ -537,11 +537,11 @@ fn safety_case(
     let noise = match rng.below(3) {
         0 => String::new(),
         1 => format!(
-            "    mut spare : i64 = {}\n    spare = spare + 1\n",
+            "    var spare : i64 = {}\n    spare = spare + 1\n",
             rng.below(9)
         ),
         _ => format!(
-            "    mut spare : i64 = 0\n    while (spare < {}) {{ spare = spare + 1 }}\n",
+            "    var spare : i64 = 0\n    while (spare < {}) {{ spare = spare + 1 }}\n",
             rng.below(4) + 1
         ),
     };
@@ -690,7 +690,7 @@ fn growth_case(
     let push = match position {
         0 => format!("    vec_push(${element}, {grown}, 7)\n"),
         1 => format!(
-            "    mut step : {element} = 0\n\
+            "    var step : {element} = 0\n\
              \x20   while (step < {}) {{ vec_push(${element}, {grown}, step)  step = step + 1 }}\n",
             rng.below(3) + 1
         ),
@@ -702,8 +702,8 @@ fn growth_case(
     };
     format!(
         "{head}main :: fn() -> i64 {{\n\
-         \x20   mut v := vec_new(${element}, 1)\n\
-         \x20   mut other := vec_new(${element}, 1)\n\
+         \x20   var v := vec_new(${element}, 1)\n\
+         \x20   var other := vec_new(${element}, 1)\n\
          \x20   vec_push(${element}, v, 11)\n\
          \x20   vec_push(${element}, other, 22)\n\
          \x20   {take}\n\

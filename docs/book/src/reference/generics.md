@@ -65,7 +65,7 @@ aggregate be written once rather than once per size:
 
 ```frost
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    mut i : i64 = 0
+    var i : i64 = 0
     while (i < N) { s.generations[i] = 0  i = i + 1 }
 }
 
@@ -87,7 +87,7 @@ function pointer and no indirect call:
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
-    mut result := x
+    var result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -222,7 +222,7 @@ a compile-time list. The body is written once and compiled once per field of
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
 
 describe :: fn($T: Type, mut out: []Attribute) -> i64 {
-    mut index : i64 = 0
+    var index : i64 = 0
     for field in fields(T) {
         out[index] = Attribute {
             offset = offset_of(field),

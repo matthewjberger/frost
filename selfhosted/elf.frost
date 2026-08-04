@@ -137,7 +137,7 @@ elf_reloc_symbol :: fn(mut unit: Assembly, sym: i64) -> i64 {
 
 // The next multiple of `alignment` at or above `at`.
 elf_align :: fn(at: i64, alignment: i64) -> i64 {
-    mut answer := at
+    var answer := at
     while (answer % alignment != 0) {
         answer = answer + 1
     }
@@ -212,8 +212,8 @@ elf_slot :: fn(number: i64, debug: bool) -> i64 {
 // Where a section's name starts in the table of them. The null section's name
 // is the empty one at the front, which every table begins with.
 elf_section_name_at :: fn(number: i64, debug: bool) -> i64 {
-    mut at : i64 = 1
-    mut i : i64 = 1
+    var at : i64 = 1
+    var i : i64 = 1
     while (i < number) {
         at = at + str_len(elf_section_name(i, debug)) + 1
         i = i + 1
@@ -231,7 +231,7 @@ elf_section_names_size :: fn(debug: bool) -> i64 {
 // Write the object. The header, the sections, the fixups, the symbols, the two
 // name tables, and the section headers last.
 write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
-    mut debug_bytes := object_blob()
+    var debug_bytes := object_blob()
     marks := dwarf_build(unit, debug_bytes, "frost")
     debug := marks.wanted
     line_size := marks.line_size
@@ -252,9 +252,9 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
 
     // Which entry each carried name takes, and how much room its text needs.
-    mut next_index := elf_first_named(debug)
-    mut names_size : i64 = 1
-    mut i : i64 = 0
+    var next_index := elf_first_named(debug)
+    var names_size : i64 = 1
+    var i : i64 = 0
     while (i < asm_symbol_count(unit)) {
         if (elf_carried(unit, i)) {
             held := asm_symbol_at(unit, i)
@@ -317,10 +317,10 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
     blob_zeros(object, rela_at - object.count)
 
-    mut r : i64 = 0
+    var r : i64 = 0
     while (r < reloc_count) {
         fixup := asm_reloc_at(unit, r)
-        mut kind : i64 = R_X86_64_PC32
+        var kind : i64 = R_X86_64_PC32
         if (fixup.kind == FIXUP_CALL) {
             kind = R_X86_64_PLT32
         }
@@ -352,13 +352,13 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         elf_symbol(object, 0, STB_LOCAL, STT_SECTION, ELF_SEC_LINE, 0)
         elf_symbol(object, 0, STB_LOCAL, STT_SECTION, ELF_SEC_ABBREV, 0)
     }
-    mut name_at : i64 = 1
-    mut s : i64 = 0
+    var name_at : i64 = 1
+    var s : i64 = 0
     while (s < asm_symbol_count(unit)) {
         if (elf_carried(unit, s)) {
             held := asm_symbol_at(unit, s)
-            mut kind : i64 = STT_NOTYPE
-            mut section : i64 = ELF_SEC_NULL
+            var kind : i64 = STT_NOTYPE
+            var section : i64 = ELF_SEC_NULL
             if (held.section == SEC_TEXT) {
                 kind = STT_FUNC
                 section = elf_section(ELF_SEC_TEXT, debug)
@@ -373,11 +373,11 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
 
     blob_byte(object, 0)
-    mut n : i64 = 0
+    var n : i64 = 0
     while (n < asm_symbol_count(unit)) {
         if (elf_carried(unit, n)) {
             held := asm_symbol_at(unit, n)
-            mut k : i64 = 0
+            var k : i64 = 0
             while (k < held.len) {
                 blob_byte(object, unit.src[held.off + k])
                 k = k + 1
@@ -388,7 +388,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
 
     blob_byte(object, 0)
-    mut c : i64 = 1
+    var c : i64 = 1
     while (c < elf_section_total(debug)) {
         name := elf_section_name(c, debug)
         blob_copy(object, name, str_len(name))

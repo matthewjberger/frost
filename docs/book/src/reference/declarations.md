@@ -10,12 +10,14 @@ externs, and imports.
 | --- | --- |
 | `name := expr` | bind a local, type inferred |
 | `name : Type = expr` | bind a local, type explicit |
-| `mut name := expr` / `mut name : Type = expr` | bind a mutable local |
+| `var name := expr` / `var name : Type = expr` | bind an assignable local |
 | `a, b := call()` | bind the several values of one call (5.2a) |
 | `ref name := place` | bind a borrow of a place, not a copy of it |
 | `NAME :: expr` | declare a constant, evaluated once |
 
-Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
+Bindings are immutable unless `var`. A `var` local is reassigned with `=`.
+`mut` is not a binding form: it is the parameter mode of chapter 4, and a
+`mut` written at statement position is refused with the words that say so.
 
 `ref name := place` binds a borrow rather than a copy, so writing through the
 name writes the place: `ref entry := table[index]` then `entry.count = 0` is a
@@ -109,10 +111,10 @@ ends every path with a `return`. A `return` that lists a different number of
 values than the list has is a compile error, as is one that lists several values
 in a function that returns one.
 
-`mut` goes in front of any name the body goes on to write:
+`var` goes in front of any name the body goes on to write:
 
 ```
-magnitude, mut negative := classify(value)
+magnitude, var negative := classify(value)
 negative = false
 ```
 
@@ -197,8 +199,8 @@ written in:
 
 ```frost
 number :: fn(text: str) -> i64 ! Parse {
-    mut total : i64 = 0
-    mut index : i64 = 0
+    var total : i64 = 0
+    var index : i64 = 0
     while (index < str_len(text)) {
         d := digit(text, index)?
         total = total * 10 + d

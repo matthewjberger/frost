@@ -3031,7 +3031,7 @@ mod tests {
             bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
             bag_grow :: fn(mut b: Bag, fresh: []i64) { b.room = fresh }\n\
             run :: fn(mut b: Bag, fresh: []i64) -> i64 {\n\
-                mut view := bag_slice(b)\n\
+                var view := bag_slice(b)\n\
                 bag_grow(b, fresh)\n\
                 view = bag_slice(b)\n\
                 view[0]\n\
@@ -3208,7 +3208,7 @@ mod tests {
         let source = "\
             add :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
-                mut x : i64 = 0\n\
+                var x : i64 = 0\n\
                 add(x, x)\n\
             }";
         assert!(check(source).is_err());
@@ -3220,7 +3220,7 @@ mod tests {
             Point :: struct { x: i64, y: i64 }\n\
             mix :: fn(a: Point, b: mut Point) { }\n\
             run :: fn() {\n\
-                mut x : Point = Point { x = 0, y = 0 }\n\
+                var x : Point = Point { x = 0, y = 0 }\n\
                 mix(x, x)\n\
             }";
         assert!(check(source).is_err());
@@ -3234,7 +3234,7 @@ mod tests {
         let source = "\
             bump :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn(i: i64, j: i64) {\n\
-                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                var xs : [4]i64 = [0, 0, 0, 0]\n\
                 bump(xs[i], xs[j])\n\
             }";
         assert!(check(source).is_err());
@@ -3246,7 +3246,7 @@ mod tests {
         let source = "\
             bump :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
-                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                var xs : [4]i64 = [0, 0, 0, 0]\n\
                 bump(xs[0], xs[1])\n\
             }";
         assert!(check(source).is_ok());
@@ -3257,7 +3257,7 @@ mod tests {
         let source = "\
             bump :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
-                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                var xs : [4]i64 = [0, 0, 0, 0]\n\
                 bump(xs[2], xs[2])\n\
             }";
         assert!(check(source).is_err());
@@ -3268,8 +3268,8 @@ mod tests {
         let source = "\
             add :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
-                mut x : i64 = 0\n\
-                mut y : i64 = 0\n\
+                var x : i64 = 0\n\
+                var y : i64 = 0\n\
                 add(x, y)\n\
             }";
         assert!(check(source).is_ok());
@@ -3366,7 +3366,7 @@ mod tests {
             close :: extern fn(f: File)\n\
             run :: fn() {\n\
                 f := open()\n\
-                mut i : i64 = 0\n\
+                var i : i64 = 0\n\
                 while (i < 3) { close(f)  i = i + 1 }\n\
             }";
         assert!(check(source).is_err());
@@ -3532,7 +3532,7 @@ mod tests {
             take :: fn(move p: Point) -> i64 { p.x }\n\
             run :: fn() {\n\
                 p := Point { x = 1, y = 2 }\n\
-                mut i : i64 = 0\n\
+                var i : i64 = 0\n\
                 while (i < 3) { take(p)  i = i + 1 }\n\
             }";
         assert!(check(source).is_err());
@@ -3545,7 +3545,7 @@ mod tests {
             take :: fn(p: Point) -> i64 { p.x }\n\
             make :: fn() -> Point { Point { x = 5, y = 6 } }\n\
             run :: fn() {\n\
-                mut i : i64 = 0\n\
+                var i : i64 = 0\n\
                 while (i < 3) { p := make()  take(p)  i = i + 1 }\n\
             }";
         assert!(check(source).is_ok());

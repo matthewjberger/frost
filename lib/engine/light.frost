@@ -122,13 +122,13 @@ lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> LightCo
 // next one would go.
 gather_lights :: fn(mut world: World, ids: LightIds, mut out: []GpuLight,
     written: i64, wanted_directional: bool) -> i64 {
-    mut q := query_begin(world)
+    var q := query_begin(world)
     query_with(q, ids.light)
     query_with(q, ids.global_transform)
-    mut count := written
+    var count := written
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        mut row : i64 = 0
+        var row : i64 = 0
         while (row < slice_len(rows) && count < slice_len(out)) {
             entity := rows[row]
             one := ecs_get($Light, world, entity, ids.light)

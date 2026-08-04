@@ -95,6 +95,7 @@ pub enum Token {
     Ref,
     Unsafe,
     Uses,
+    Var,
     Where,
     Ellipsis,
     While,
@@ -191,6 +192,7 @@ impl Display for Token {
             Ref => "ref".to_string(),
             Unsafe => "unsafe".to_string(),
             Uses => "uses".to_string(),
+            Var => "var".to_string(),
             Where => "where".to_string(),
             Ellipsis => "...".to_string(),
             While => "while".to_string(),
@@ -231,6 +233,7 @@ keywords! {
     "_" => Underscore,
     "fn" => Function,
     "mut" => Mut,
+    "var" => Var,
     "move" => Move,
     "true" => True,
     "false" => False,
@@ -906,11 +909,11 @@ mod tests {
     }
 
     #[test]
-    fn mut_declaration() -> Result<()> {
+    fn var_declaration() -> Result<()> {
         check_tokens(
-            "mut x := 5;",
+            "var x := 5;",
             &[
-                Token::Mut,
+                Token::Var,
                 Token::Identifier("x".to_string()),
                 Token::ColonAssign,
                 Token::Integer(5),
