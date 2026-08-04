@@ -221,17 +221,7 @@ pub fn type_from_string(source: &str) -> Result<Type> {
     parser.parse_type()
 }
 
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub position: Position,
-    pub message: String,
-}
-
-impl std::fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "at {}: {}", self.position.describe(), self.message)
-    }
-}
+pub use crate::diagnostic::Diagnostic;
 
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
@@ -700,6 +690,16 @@ impl<'a> Parser<'a> {
             roots,
         };
         (module, std::mem::take(&mut self.diagnostics))
+    }
+
+    /// Diagnostics found before parsing began, the lexer's. They go first so
+    /// the report reads in source order, and their presence fails the parse
+    /// the way a parse error does: tolerance is about reporting more, never
+    /// about accepting more.
+    pub fn preload_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
+        let mut held = diagnostics;
+        held.append(&mut self.diagnostics);
+        self.diagnostics = held;
     }
 
     fn record_error(&mut self, fallback: Position, error: &anyhow::Error) {
@@ -5309,6 +5309,35 @@ mod tests {
             names.iter().any(|name| name == "second"),
             "recovery should keep 'second', got {names:?}"
         );
+        Ok(())
+    }
+
+    // A file broken in the lexer and broken in the parser reports both, the
+    // lexer's first, and a program with either kind of fault is still refused.
+    #[test]
+    fn lexer_faults_and_parse_faults_report_together() -> Result<()> {
+        let input = "text :: \"one\\q\"\nbroken :: fn(a: i64 { a }\nlast :: fn() -> i64 { 7 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        parser.preload_diagnostics(lexer.diagnostics().to_vec());
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(diagnostics.len() >= 2, "got {diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("Unknown escape sequence"),
+            "the lexer's diagnostic goes first, got {diagnostics:?}"
+        );
+        assert_eq!(diagnostics[0].position.line, 1);
+        let names = constant_names(&program);
+        assert!(
+            names.iter().any(|name| name == "last"),
+            "recovery should keep 'last', got {names:?}"
+        );
+
+        let mut refused = Parser::with_positions(&tokens, &positions);
+        refused.preload_diagnostics(lexer.diagnostics().to_vec());
+        assert!(refused.parse().is_err(), "a lexer fault still refuses");
         Ok(())
     }
 

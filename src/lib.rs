@@ -6,7 +6,7 @@ mod build_cache;
 mod c_abi;
 mod callbacks;
 mod diagnostic;
-pub use diagnostic::render as render_diagnostic;
+pub use diagnostic::{Diagnostic, render as render_diagnostic};
 mod distinct_types;
 mod failure_sets;
 mod import_visibility;
