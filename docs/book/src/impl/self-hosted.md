@@ -67,8 +67,9 @@ Each file states what it is about at the top and lists what it offers on one
 file's text into one buffer. `names` interns and resolves. `types` does the
 typing and the checks that ride on it. `parser` is recursive descent. `layout`
 works out sizes and offsets, `emit` is what both backends write through, and
-`emit_c` and `emit_asm` are the backends. `regions` is the region check, and
-`frost` is the driver.
+`emit_c` and `emit_asm` are the backends. `regions` is the region check,
+`query` answers what an editor asks of a checked program, and `frost` is the
+driver.
 
 The import order is acyclic, and the assembly backend does not depend on the C
 one, which is what `emit` is for.

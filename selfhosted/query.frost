@@ -223,6 +223,17 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         }
         ci = ci + 1
     }
+    mut vi : i64 = 0
+    while (vi < p.value_consts.count) {
+        held := arena_at(p.value_consts, vi)
+        if (word_names(question, name_at, p.src, held.name_off,
+            held.name_len)) {
+            report_int(query_line(p.modules, p.src, held.name_off))
+            report("\n")
+            return
+        }
+        vi = vi + 1
+    }
 }
 
 // Each field of the named struct with the type it holds, one per line, the
