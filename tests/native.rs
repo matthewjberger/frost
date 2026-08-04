@@ -17287,6 +17287,20 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // The same question asked of an arena rather than of a frame. A `[]T`
     // carved out of one names the arena's storage exactly as a `^T` does, and
     // reading only the pointer let the slice beside it leave the block.
+    // A literal of a name nothing declares. The self-hosted compiler answered
+    // `i64` for the name, since that is what it answers for a type name it
+    // cannot find, and `i64` is not a struct: every pass after it read a struct
+    // index out of the type and indexed the struct table at 0 - STRUCT_BASE, so
+    // the compile ended with an arena complaining about -16 rather than with a
+    // word about the program. A crash on a program that is wrong says nothing
+    // about what is wrong with it.
+    (
+        "a_literal_of_an_undeclared_type",
+        "main :: fn() -> i64 {\n\
+         \x20   held := Absent { a = 2 }\n\
+         \x20   0\n}\n",
+        "unknown struct 'Absent'",
+    ),
     (
         "a_slice_of_an_arena_leaving_its_with_block",
         "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }\n\

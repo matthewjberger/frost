@@ -731,8 +731,18 @@ fn compile() -> Result<()> {
     // list of `unsafe` blocks is only worth reading while every one of them
     // earns its place. `--audit-unsafe` turns the report into a failure, which
     // is what holds a tree to it.
-    for held in &idle {
-        eprintln!("warning: at {}: {}", held.position.describe(), held.message);
+    // A warning is a report too, so a caller reading JSON gets it as one rather
+    // than as a line of prose in the middle of the stream.
+    if wants_json() {
+        eprint!("{}", frost::diagnostics_as_json(&idle, "warning"));
+    } else {
+        for held in &idle {
+            eprintln!(
+                "warning: at {}: {}",
+                held.position.describe(),
+                held.message
+            );
+        }
     }
     if cli.audit_unsafe && !idle.is_empty() {
         anyhow::bail!(
