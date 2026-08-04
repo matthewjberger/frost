@@ -2749,7 +2749,13 @@ report_if_stale :: fn(mut p: Parser, name_off: i64, name_len: i64, verb: str) {
 // the length it had. Reading those as one refused the ECS and every program
 // built on it.
 note_replaced_run :: fn(mut p: Parser, place: i64) {
-    if (place < 0) {
+    // A place reached through a raw dereference is not one this answers for.
+    // Where it lands is exactly what nothing here knows, so the overlap test
+    // reads it as possibly anything, and a single `unsafe { p^ = 42 }` would
+    // leave every view in the frame stale. Raw pointers are the explicit escape
+    // hatch and what they reach is the caller's responsibility, so this declines
+    // rather than saying everything moved.
+    if (place < 0 || place_reaches_raw(p, place)) {
         return
     }
     total := p.view_runs.count
@@ -2760,7 +2766,8 @@ note_replaced_run :: fn(mut p: Parser, place: i64) {
         held_off := entry.name_off
         held_len := entry.name_len
         run := entry.slot
-        if (run >= 0 && place_maybe_within(p, run, place)
+        if (run >= 0 && place_reaches_raw(p, run) == false
+            && place_maybe_within(p, run, place)
             && stale_view_of(p, held_off, held_len) < 0) {
             arena_push(p.stale_views,
                 LocalVar { name_off = held_off, name_len = held_len, ty = 0,
@@ -3364,6 +3371,19 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
             }
             revive_place(p, node.a)
             walk_moves_expr(p, place_under(p, node.a))
+            // A write that puts a different run in a place is the growth a
+            // container does inside itself, seen from the frame that holds it.
+            // `vec_push` writes `v.storage` because handing the borrow to a
+            // helper would copy the header and lose the new block, so a body
+            // that grows a run and reads a view of it never calls anything and
+            // no summary carries it.
+            //
+            // Which write replaces a run is asked of the places, not of the
+            // types: a write to the run, or to something the run hangs off,
+            // replaces it, and a write to an element inside it does not.
+            if (is_place_expr(p, node.a)) {
+                note_replaced_run(p, node.a)
+            }
             // Writing to a `ref` writes through it into the container, so it is
             // a use of the run rather than a rebinding of the name, and a stale
             // one lands in the block that was given back.

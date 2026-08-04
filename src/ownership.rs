@@ -1471,12 +1471,25 @@ impl MoveChecker<'_> {
     /// still has the pointer and the length it had. Reading those as one refused
     /// the ECS and every program built on it.
     fn note_replaced(&mut self, place: &[Step]) {
+        // A place reached through a raw dereference is not one this answers
+        // for. Where it lands is exactly what nothing here knows, so the
+        // overlap test reads it as possibly anything, and a single
+        // `unsafe { p^ = 42 }` would leave every view in the frame stale.
+        // Raw pointers are the explicit escape hatch and what they reach is
+        // the caller's responsibility, so this declines rather than saying
+        // everything moved.
+        if reaches_through_raw(place) {
+            return;
+        }
         let marked: Vec<String> = self
             .view_runs
             .iter()
             .filter(|(name, runs)| {
                 !self.stale.contains_key(name.as_str())
-                    && runs.iter().any(|run| place_maybe_within(run, place))
+                    && runs.iter().any(|run| {
+                        !reaches_through_raw(run)
+                            && place_maybe_within(run, place)
+                    })
             })
             .map(|(name, _)| name.clone())
             .collect();
@@ -1844,6 +1857,21 @@ impl MoveChecker<'_> {
             }
             Statement::Assignment(target, value) => {
                 self.visit(value, true)?;
+                // A write that puts a different run in a place is the growth a
+                // container does inside itself, seen from the frame that holds
+                // it. `vec_push` writes `v.storage` because handing the borrow
+                // to a helper would copy the header and lose the new block, so
+                // a body that grows a run and reads a view of it never calls
+                // anything and no summary carries it.
+                //
+                // Which write replaces a run is asked of the places, not of the
+                // types: a write to the run, or to something the run hangs off,
+                // replaces it, and a write to an element inside it does not.
+                // That is the same relation a call's replacement is weighed by,
+                // and it needs no type table, which is what had left this open.
+                if let Some(path) = self.borrow_place(target) {
+                    self.note_replaced(&without_borrow_derefs(path));
+                }
                 // Writing to a `ref` writes through it into the container, so
                 // it is a use of the run rather than a rebinding of the name,
                 // and a stale one lands in the block that was given back.
@@ -2802,6 +2830,51 @@ mod tests {
                 bag_grow(b, fresh)\n\
                 view = bag_slice(b)\n\
                 view[0]\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    // The three writes that neighbour the one which replaces a run. Reading
+    // which is which off the places rather than off the types is what makes
+    // these three cheap to tell apart: a different field is apart at its first
+    // step, an element sits below the run, and reading before the write happens
+    // before anything moved.
+    #[test]
+    fn a_write_beside_a_run_leaves_a_view_of_it_alone() {
+        let source = "\
+            Bag :: struct { room: []i64, len: i64 }\n\
+            bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+            grow_other :: fn(mut b: Bag, count: i64) -> i64 {\n\
+                view := bag_slice(b)\n\
+                b.len = count\n\
+                view[0]\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn a_write_into_a_run_leaves_a_view_of_it_alone() {
+        let source = "\
+            Bag :: struct { room: []i64, len: i64 }\n\
+            bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+            write_element :: fn(mut b: Bag, value: i64) -> i64 {\n\
+                view := bag_slice(b)\n\
+                b.room[0] = value\n\
+                view[0]\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn a_view_read_before_the_same_body_replaces_its_run_is_allowed() {
+        let source = "\
+            Bag :: struct { room: []i64, len: i64 }\n\
+            bag_slice :: fn(b: Bag) -> []i64 { b.room }\n\
+            read_then_grow :: fn(mut b: Bag, fresh: []i64) -> i64 {\n\
+                view := bag_slice(b)\n\
+                held := view[0]\n\
+                b.room = fresh\n\
+                held\n\
             }";
         assert!(check(source).is_ok());
     }
