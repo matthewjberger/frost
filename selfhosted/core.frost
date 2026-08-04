@@ -1505,6 +1505,10 @@ Parser :: struct {
     // that change the answer, never write to it.
     type_cache: Arena<TypeCacheEntry>,
     type_cache_on: i64,
+    // Whether a type name that resolves to nothing is reported. Off while the
+    // declarations are being read, since a name declared further down the file
+    // is not yet in the table.
+    type_check_names: i64,
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {

@@ -1390,6 +1390,19 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
+    // A name nothing declares is not a type. Answering `i64` for one let a
+    // signature name a type that is not there and go through every pass
+    // without a word.
+    // A type parameter in scope means this is a template's own parse, where a
+    // name stands for whatever the instance binds it to.
+    if (p.type_check_names == 1 && p.type_param_len == 0
+        && p.gbindings.count == 0) {
+        report_where(p.modules, p.src, offset)
+        report("'")
+        report_src(p.src, offset, length)
+        report("' is not a type this program declares")
+        frost_rt_recover_note()
+    }
     TY_I64
 }
 

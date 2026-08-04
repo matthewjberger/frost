@@ -912,6 +912,7 @@ fn compile() -> Result<()> {
         &program.ast,
         &program.roots,
     ));
+    faults.extend(frost::check_declared_types(&program.ast, &program.roots));
     let (unchecked, idle) =
         frost::check_unsafety_and_audit(&program.ast, &program.roots);
     faults.extend(unchecked);
