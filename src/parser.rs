@@ -2400,6 +2400,18 @@ impl<'a> Parser<'a> {
 
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
+                continue;
+            }
+            // A comma separates one element from the next. A token that begins
+            // no expression is reported as the token it is, by the walk that
+            // reads the next element.
+            if self.peek_nth(0) != end_token
+                && !matches!(self.peek_nth(0), Token::Illegal(_))
+            {
+                let written = self.peek_nth(0).to_string();
+                return Err(self.here(format!(
+                    "expected ',' between one element and the next, found '{written}'"
+                )));
             }
         }
         self.read_token();

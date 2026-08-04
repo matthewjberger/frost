@@ -17294,6 +17294,15 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // the compile ended with an arena complaining about -16 rather than with a
     // word about the program. A crash on a program that is wrong says nothing
     // about what is wrong with it.
+    // A comma separates one argument from the next. Without the rule
+    // `add(1 2)` compiled and answered what `add(1, 2)` answers.
+    (
+        "a_dropped_comma_between_arguments",
+        "add :: fn(a: i64, b: i64) -> i64 { a + b }
+         main :: fn() -> i64 { add(1 2) }
+",
+        "expected ',' between one element and the next",
+    ),
     (
         "a_literal_of_an_undeclared_type",
         "main :: fn() -> i64 {\n\
