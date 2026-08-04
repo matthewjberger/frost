@@ -158,10 +158,10 @@ emit_asm_zero :: fn(size: i64) {
 //   - it is written as a place rather than read as a value, where what the
 //     emitter wants is the slot's own address.
 //
-// The walk below pins on all three and on anything it does not recognise, so a
-// shape nobody thought about keeps its names in memory. What survives is a
-// plain scalar the body only ever reads and assigns by name, and `reads` counts
-// those reads so a name used once is left alone.
+// The walk below pins on all three and on any shape it has no rule for, so an
+// unrecognised one keeps its names in memory. What survives is a plain scalar
+// the body only reads and assigns by name, and `reads` counts those reads so a
+// name used once is left alone.
 // ---------------------------------------------------------------------------
 
 // The entry for a name, made on first sight.
@@ -292,8 +292,7 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
     }
     // A field or an index reaches its base's storage. A pointer base holds the
     // address rather than being one, so reading it is a value read, but the
-    // base is treated as a place either way: what that costs is one load of a
-    // pointer, which is what the emitter does today.
+    // base counts as a place either way, which costs one load of a pointer.
     if (kind == NodeKind::Field || kind == NodeKind::Index) {
         asm_scan_expr(p, node.a, true)
         if (kind == NodeKind::Index) {
@@ -780,10 +779,9 @@ emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     emit_text("\n")
 }
 
-// The same store, out of %rax rather than out of %r11. Every value this backend
-// produces is already in %rax, so the copy into %r11 that the store used to be
-// given was one instruction to put a value where it already was. The widths are
-// the register's own low parts, which is the same rule as above.
+// The same store, out of %rax, which is where every value this backend produces
+// already sits. The widths are the register's own low parts, the same rule as
+// above.
 emit_asm_store_rax_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     size := scalar_size(ty)
     var op : str = "movq %rax, "
@@ -2205,8 +2203,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             // A right operand that is a number, and an operation that reads one
             // where it is written, need no register between the two. Stepping
             // by one and comparing against a bound are most of the arithmetic a
-            // program does, and this is the instruction each of them was
-            // costing.
+            // program does, and both go this way.
             if (simple != SIMPLE_LOCAL
                 && asm_folds_immediate(op, unsigned)) {
                 value := asm_immediate_operand(p, bin.b, simple)
