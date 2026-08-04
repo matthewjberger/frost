@@ -35,6 +35,7 @@ import "parser.frost"
 import "emit_c.frost"
 import "emit_asm.frost"
 import "regions.frost"
+import "query.frost"
 import "blob.frost"
 import "assemble.frost"
 import "coff.frost"
@@ -722,11 +723,26 @@ main :: fn() -> i64 {
     // the emitters do, and the passes before it read whatever local table the
     // parse left behind.
     check_types(parser, program)
+    // Every fault the walks above reported, refused here before the unsafety
+    // gate reads annotations a faulted function never finished writing, and
+    // before any backend writes a word.
+    if (frost_rt_recover_failures() > 0) {
+        frost_rt_die()
+    }
     // After the types, because whether an index or a field read goes through a
     // raw pointer is a question about a local's type, and check_types is where
     // the locals are known. It writes the answer onto the node and this reads
     // it.
     check_unsafety(parser)
+
+    // An editor's question about a checked program, answered instead of a
+    // build. The program was parsed and checked exactly as a build would
+    // have, so the answer reads the same tables a build reads.
+    question := unsafe { frost_rt_getenv("FROST_QUERY") }
+    if (cstr_len(question) > 0) {
+        run_query(parser, program, question)
+        return 0
+    }
 
     // The checks are done, so a node's type is settled. The memo is what makes
     // emit stop re-deriving the same ones, and a per-module build emits as many

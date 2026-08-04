@@ -504,7 +504,7 @@ bench-incremental:
 bench-incremental:
     cargo build -r -q -p frost --bin frost
     python bench/generate.py bench/generated | Out-Null
-    Remove-Item -Recurse -Force "$env:TEMP/frost-bench-build" -ErrorAction Ignore
+    if (Test-Path "$env:TEMP/frost-bench-build") { Remove-Item -Recurse -Force "$env:TEMP/frost-bench-build" }
     $full = (Measure-Command { ./target/release/frost.exe --link -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost | Out-Null; $again = (Measure-Command { ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; "{0,-14} {1,7:N0} ms" -f "full", $full; "{0,-14} {1,7:N0} ms" -f "incremental", $again
 
 # Measures the self-hosted compiler against the bootstrap on one source, so

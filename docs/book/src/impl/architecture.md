@@ -57,6 +57,32 @@ Which backend runs, what the executable depends on at run time, and what the
 compiler itself is written in are three separate questions that sound alike.
 [build-modes.md](build-modes.md) separates them.
 
+## The AST is flat arenas
+
+The AST (`src/ast.rs`) is not a tree of boxes. Every expression, statement,
+pattern, and signature lives in a flat `Vec` on `Ast` and is named by a typed
+index (`ExprId`, `StmtId`, and so on), names are interned to `Symbol`
+indices, child lists are runs in side arrays rather than per-node
+allocations, and a node's source extent is a `TokenSpan` into one
+token-position table. This is the shape the self-hosted compiler has always
+had, so the two compilers walk their programs the same way, and it is what
+keeps the front end's time on a 58k-line program in the low hundreds of
+milliseconds.
+
+## Faults are diagnostics, not exits
+
+The lexer turns a byte it cannot read into a token the parser refuses in
+place, the parser recovers at declaration and statement boundaries, and
+lowering, type checking, and the ownership check each walk every function and
+collect what they find (`src/diagnostic.rs`). A program with any diagnostic
+is still refused before a backend writes a word: tolerance is about reporting
+more, never about accepting more. The self-hosted compiler does the same
+with a runtime recovery mark, and a harness test holds the two to the same
+faults, on the same lines, in the same words. `src/query.rs` answers what an
+editor asks of a checked program (symbols, definitions, fields, local types)
+from the same arenas and IR the build reads; the self-hosted compiler
+answers the same questions through `FROST_QUERY`.
+
 ## Modules
 
 `src/imports.rs` reads each imported file once, renames the top-level names the

@@ -393,7 +393,7 @@ fn check_statement(
             for field in ast.fields_in(*fields) {
                 if field.field_type.contains_reference() {
                     bail!(
-                        "ownership: cannot store a reference in struct '{}' (field '{}'); references are second-class",
+                        "cannot store a reference in struct '{}' (field '{}'); references are second-class",
                         ast.name(*name),
                         ast.name(field.name)
                     );
@@ -408,7 +408,7 @@ fn check_statement(
                 for field in ast.fields_in(fields) {
                     if field.field_type.contains_reference() {
                         bail!(
-                            "ownership: cannot store a reference in enum '{}' (variant '{}', field '{}'); references are second-class",
+                            "cannot store a reference in enum '{}' (variant '{}', field '{}'); references are second-class",
                             ast.name(*name),
                             ast.name(variant.name),
                             ast.name(field.name)
@@ -439,7 +439,7 @@ fn check_statement(
                 && return_type.contains_reference()
             {
                 bail!(
-                    "ownership: extern function '{}' cannot return a reference",
+                    "extern function '{}' cannot return a reference",
                     ast.name(*name)
                 );
             }
@@ -582,7 +582,7 @@ fn handed_out_unnameable(
                 continue;
             }
             reports.push(format!(
-                "ownership: '{key}' gives away a resource out of '{}', which \
+                "'{key}' gives away a resource out of '{}', which \
                  this function only borrows, and names it by an element rather \
                  than by a field. A caller cannot be told which element went, \
                  so nothing stops it asking again and being handed the same one \
@@ -1768,7 +1768,7 @@ impl MoveChecker<'_> {
         {
             let root = root.clone();
             bail!(
-                "ownership: '{root}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+                "'{root}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
             );
         }
         if let Some(Step::Named(root)) = path.first()
@@ -1776,7 +1776,7 @@ impl MoveChecker<'_> {
         {
             let root = root.clone();
             bail!(
-                "ownership: '{root}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
+                "'{root}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
             );
         }
         let key = self.place_key(path);
@@ -1800,12 +1800,12 @@ impl MoveChecker<'_> {
             MoveState::Live => {}
             MoveState::Deferred if consuming => {
                 bail!(
-                    "ownership: value '{blamed}' is already scheduled for consumption by a later defer; it cannot be moved again"
+                    "value '{blamed}' is already scheduled for consumption by a later defer; it cannot be moved again"
                 );
             }
             MoveState::Deferred => {}
             MoveState::Moved | MoveState::MaybeMoved => {
-                bail!("ownership: use of moved value '{blamed}'");
+                bail!("use of moved value '{blamed}'");
             }
         }
         if consuming {
@@ -1855,7 +1855,7 @@ impl MoveChecker<'_> {
             let key = self.place_key(&path);
             let (held, blamed) = self.state_of_place(&path, &key);
             if held != MoveState::Live {
-                bail!("ownership: use of moved value '{blamed}'");
+                bail!("use of moved value '{blamed}'");
             }
             let consumed = if self.in_defer {
                 MoveState::Deferred
@@ -2033,7 +2033,7 @@ impl MoveChecker<'_> {
                 {
                     let name = ast.name(*name);
                     bail!(
-                        "ownership: '{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to write. Take the view again after the growth"
+                        "'{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to write. Take the view again after the growth"
                     );
                 }
                 // A binding that is given a view again names the run it was
@@ -2058,7 +2058,7 @@ impl MoveChecker<'_> {
                 } else if let Some(path) = self.borrow_place(target) {
                     let key = self.place_key(&path);
                     if let Some(blamed) = self.moved_container_of(&path) {
-                        bail!("ownership: use of moved value '{blamed}'");
+                        bail!("use of moved value '{blamed}'");
                     }
                     self.revive_place(&path, &key);
                     self.visit_beneath(target)?;
@@ -2173,11 +2173,11 @@ impl MoveChecker<'_> {
             {
                 if self.is_linear_variable(name) {
                     bail!(
-                        "ownership: linear value '{name}' is consumed inside a loop; a linear resource must be consumed exactly once, not once per iteration"
+                        "linear value '{name}' is consumed inside a loop; a linear resource must be consumed exactly once, not once per iteration"
                     );
                 }
                 bail!(
-                    "ownership: value '{name}' is moved inside a loop; it would be used after move on a later iteration"
+                    "value '{name}' is moved inside a loop; it would be used after move on a later iteration"
                 );
             }
         }
@@ -2335,12 +2335,12 @@ impl MoveChecker<'_> {
                 let name = ast.name(*name);
                 if let Some(container) = self.views_gone_storage(name) {
                     bail!(
-                        "ownership: '{name}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
+                        "'{name}' views storage held by '{container}', which has been given away; the block it names is not the caller's to read"
                     );
                 }
                 if let Some(replaced) = self.views_replaced_run(name) {
                     bail!(
-                        "ownership: '{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
+                        "'{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
                     );
                 }
                 match self.state_of(name) {
@@ -2358,12 +2358,12 @@ impl MoveChecker<'_> {
                     MoveState::Deferred => {
                         if moving {
                             bail!(
-                                "ownership: value '{name}' is already scheduled for consumption by a later defer; it cannot be moved again"
+                                "value '{name}' is already scheduled for consumption by a later defer; it cannot be moved again"
                             );
                         }
                     }
                     MoveState::Moved | MoveState::MaybeMoved => {
-                        bail!("ownership: use of moved value '{name}'");
+                        bail!("use of moved value '{name}'");
                     }
                 }
                 Ok(())
@@ -2850,11 +2850,11 @@ fn check_borrow_exclusivity(
                 let other = describe_place(other_place);
                 if *exclusive && *other_exclusive {
                     bail!(
-                        "ownership: '{name}' and '{other}' are both borrowed as mutable in a single call; mutable borrows are exclusive"
+                        "'{name}' and '{other}' are both borrowed as mutable in a single call; mutable borrows are exclusive"
                     );
                 }
                 bail!(
-                    "ownership: '{name}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive"
+                    "'{name}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive"
                 );
             }
         }

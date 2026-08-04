@@ -65,7 +65,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
         if (field.next != (-1)) {
             report_where(p.modules, p.src, position)
             report("an enum whose variants carry fields cannot be compared with ==, since two values can be the same variant and hold different things; match on it instead")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
     }
     // Both nodes are made before the one being rewritten is reached for, since
@@ -380,7 +380,7 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
             report("' is wanted, which cannot hold all of one; write cast($")
             report_type_name(p, to)
             report(", ...) to say the loss is meant")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
     }
     // A literal that does not fit what it is being read at. The type is in hand
@@ -396,7 +396,7 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
             report_int(integer_low(to))
             report(" to ")
             report_int(integer_high(to))
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
     }
     // A set of bits has no such exemption. Its whole content is the names, so a
@@ -591,7 +591,7 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     report("' has no field '")
     report_src(p.src, off, len)
     report("'")
-    frost_rt_die()
+    frost_rt_recover_escape()
     TY_I64
 }
 

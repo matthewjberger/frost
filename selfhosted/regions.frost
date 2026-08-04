@@ -12,7 +12,8 @@ import "parser.frost"
 
 export check_borrow_exclusivity, check_calls, check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources,
-    check_reference_fields, check_regions, check_types, check_unsafety
+    check_reference_fields, check_regions, check_types, check_types_in,
+    check_unsafety
 
 // A pool whose elements are resources.
 //
@@ -100,7 +101,7 @@ report_pool :: fn(mut p: Parser, struct_ty: i64) {
     report("'")
     report_src(p.src, name_off, name_len)
     report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 
@@ -172,7 +173,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     if (cur(p) != TokenKind::Lparen) {
         report_where(p.modules, p.src, pred_off)
         report("a `where` bound is a predicate applied to a compile-time parameter")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     advance(p)
     param_off := cur_off(p)
@@ -186,7 +187,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
         report("the bound names ")
         report_src(p.src, param_off, param_len)
         report(", which is not a compile-time parameter of this function")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     answer := bound_predicate(p, pred_off, pred_len, ty)
     if (answer < 0) {
@@ -194,7 +195,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
         report_src(p.src, pred_off, pred_len)
         report(" is not one of the bounds a type can be held to, which are: ")
         report("is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     answer == 1
 }
@@ -275,7 +276,7 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
         report_type_name(p, garg.value)
         x = x + 1
     }
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +297,36 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
 // if it were a program reports errors against code no one wrote.
 // ---------------------------------------------------------------------------
 
+// One function's type walk, run with an escape armed so a fault ends the
+// walk of this function rather than the compile, and the loop goes on to the
+// next one. The walk resets its own local table at entry, so whatever a
+// faulted function left half-written is cleared by the next turn.
+TypeTurn :: struct {
+    parser: ^u8,
+    body: i64,
+    params: i64,
+    fn_index: i64,
+    ret: i64,
+}
+
+check_types_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($TypeTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    unsafe {
+        check_types_in(parser^, turn^.body, turn^.params, turn^.fn_index,
+            turn^.ret)
+    }
+}
+
+check_types_one :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
+    ret: i64) {
+    mut turn := TypeTurn { parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+        body = body, params = params, fn_index = fn_index, ret = ret }
+    unsafe {
+        frost_rt_recover_run(check_types_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+}
+
 check_types :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (-1)) {
@@ -304,7 +335,7 @@ check_types :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
-            check_types_in(p, node.a, node.b, node.val, sym.ret_type)
+            check_types_one(p, node.a, node.b, node.val, sym.ret_type)
         }
         id = next_id
     }
@@ -325,7 +356,7 @@ check_types :: fn(mut p: Parser, head: i64) {
                 // own still names its parameters.
                 ret := p.last_return_type
                 fnode := arena_at(p.arena, instance)
-                check_types_in(p, fnode.a, fnode.b, fnode.val, ret)
+                check_types_one(p, fnode.a, fnode.b, fnode.val, ret)
             }
             ii = ii + 1
         }
@@ -462,7 +493,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 report_type_name(p, value_ty)
                 report("'")
                 report_distinct_note(p, value, value_ty, annotation)
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
         }
         record_local(p, off, len, ty)
@@ -511,7 +542,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             report_type_name(p, value_ty)
             report("'")
             report_distinct_note(p, value, value_ty, place_ty)
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         return
     }
@@ -529,7 +560,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             report_src(p.src, p.current_fn_off, p.current_fn_len)
             report("' returns a value of the wrong type")
             report_distinct_note(p, value, value_ty, p.current_ret)
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         return
     }
@@ -576,12 +607,40 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
 // The expression walk is here to find calls, since an argument is one of the
 // four places a value crosses. The rest of it is the recursion that reaches
 // them.
+// A name nothing declares, refused here rather than surfacing as whatever a
+// backend dies with after the checks have all answered. The chain is the one
+// emission accepts: a local, a constant, a function's address, or a struct
+// constant.
+check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
+    if (local_exists(p, off, len)) {
+        return
+    }
+    if (is_const(p, off, len)) {
+        return
+    }
+    if (fn_index_of(p, off, len) >= 0) {
+        return
+    }
+    if (value_const_node(p, off, len) >= 0) {
+        return
+    }
+    report_where(p.modules, p.src, off)
+    report("unknown variable '")
+    report_src(p.src, off, len)
+    report("'")
+    frost_rt_recover_escape()
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
     }
     node := arena_at(p.arena, id)
     kind := node.kind
+    if (kind == NodeKind::Var) {
+        check_name_known(p, node.val, node.c)
+        return
+    }
     if (kind == NodeKind::Call) {
         check_call_arguments(p, node.a, node.val, node.c)
         return
@@ -751,7 +810,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                     report_type_name(p, arg_ty)
                     report("'")
                     report_distinct_note(p, value, arg_ty, expected)
-                    frost_rt_die()
+                    frost_rt_recover_escape()
                 }
             }
             index = index + 1
@@ -791,7 +850,7 @@ check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
         report("' is a set of bits, and '")
         report_operator(op)
         report("' is not something two sets answer; combine them with '|', narrow them with '&', and compare them with '==' or 'flags_has'")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     // A written number takes the other side's type where the context gives it
     // one, so what was written is the question rather than what it typed as.
@@ -800,7 +859,7 @@ check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
         report("'")
         report_type_name(p, named)
         report("' is a set of bits, built from the names declared under it, and a number is not one of them")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     // Two sets combine when they are the same set. Otherwise the answer would
     // be a number wearing one of the two names.
@@ -813,7 +872,7 @@ check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
         report("' against a '")
         report_type_name(p, right_ty)
         report("'")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
 }
 
@@ -1277,7 +1336,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                 if (is_linear_type(p, sym.ret_type)) {
                     report_where(p.modules, p.src, named_at)
                     report("this call answers with a value that has to be consumed, and nothing here consumes it")
-                    frost_rt_die()
+                    frost_rt_recover_escape()
                 }
             }
         }
@@ -1292,7 +1351,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                 report("linear value '")
                 report_src(p.src, node.val, node.c)
                 report("' is never consumed")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
         }
         // A block in trailing position answers with whatever its own last
@@ -1603,7 +1662,7 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
         report_src(p.src, hnode.val, hnode.c)
         report("', which has been given away; the block it names is not the ")
         report("caller's to read")
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
     // The run summaries name the field under the container, which is narrower
     // than what the walk above reads and reaches a view taken through a wrapper:
@@ -1624,7 +1683,7 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
             report_src(p.src, hnode.val, hnode.c)
             report("', which has been given away; the block it names is not ")
             report("the caller's to read")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         which = which + 1
         run = view_run_nth(p, name_off, name_len, which)
@@ -1634,14 +1693,26 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     // allocator has taken. Every read through it is bounds-checked against a
     // length describing what used to be there.
     report_if_stale(p, name_off, name_len, "read")
-    if (place_is_moved(p, id) < 0) {
+    moved_slot := place_is_moved(p, id)
+    if (moved_slot < 0) {
         return
     }
     report_where(p.modules, p.src, name_off)
     report("use of moved value '")
     report_src(p.src, name_off, name_len)
     report("'")
-    frost_rt_die()
+    // Where the value went, said the way the fault itself is said, so the
+    // reader sees the move and the use as two placed lines of one story. The
+    // slot recorded at the move is the place node written there, and its root
+    // carries the source offset of that line.
+    report("\n")
+    moved_root := strip_place(p, moved_slot, place_depth(p, moved_slot))
+    moved_node := arena_at(p.arena, moved_root)
+    report_where(p.modules, p.src, moved_node.val)
+    report("'")
+    report_src(p.src, name_off, name_len)
+    report("' was moved here")
+    frost_rt_recover_escape()
 }
 
 walk_moves_expr :: fn(mut p: Parser, id: i64) {
@@ -2735,7 +2806,7 @@ report_if_stale :: fn(mut p: Parser, name_off: i64, name_len: i64, verb: str) {
     report("back, so the storage this names is not the caller's to ")
     report(verb)
     report(". Take the view again after the growth")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 // A run has been given back to the allocator and a different one put in its
@@ -3110,7 +3181,7 @@ walk_moves_while :: fn(mut p: Parser, body: i64) {
             report("value '")
             report_src(p.src, e.name_off, e.name_len)
             report("' is moved inside a loop; it would be used after move on a later iteration")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         k = k + 1
     }
@@ -3323,7 +3394,7 @@ report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
                             report("this gives away a resource out of '")
                             report_src(p.src, pname_off, pname_len)
                             report("', which it only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take it by `move` and answer with it")
-                            frost_rt_die()
+                            frost_rt_recover_escape()
                         }
                     }
                 }
@@ -3367,7 +3438,7 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 report("use of moved value '")
                 report_src(p.src, rnode.val, rnode.c)
                 report("'")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             revive_place(p, node.a)
             walk_moves_expr(p, place_under(p, node.a))
@@ -3534,6 +3605,35 @@ settle_summaries :: fn(mut p: Parser) {
     p.moves_quiet = 0
 }
 
+// One function's move walk, under the same mark the type walk runs under, so
+// a fault in one function still leaves every other function's faults on
+// stderr. The per-function state is reset before the mark is armed, so an
+// escape mid-walk leaves nothing for the next turn to trip over.
+MoveTurn :: struct {
+    parser: ^u8,
+    body: i64,
+    params: i64,
+    answers: i64,
+    fn_index: i64,
+    func_node: i64,
+}
+
+check_moves_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($MoveTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    answered := unsafe { turn^.answers }
+    mut answers : bool = false
+    if (answered == 1) {
+        answers = true
+    }
+    unsafe {
+        check_linear_locals(parser^, turn^.body, answers)
+        walk_moves_body(parser^, turn^.body, turn^.params, answers)
+        report_unnameable(parser^, turn^.params, turn^.fn_index,
+            turn^.func_node)
+    }
+}
+
 check_moves :: fn(mut p: Parser) {
     settle_runs(p)
     settle_summaries(p)
@@ -3542,18 +3642,25 @@ check_moves :: fn(mut p: Parser) {
         node := arena_at(p.arena, i)
         if (node.kind == NodeKind::Func) {
             fn_index := node.val
-            mut answers : bool = false
+            mut answers : i64 = 0
             if (fn_index >= 0 && fn_index < p.fns.count) {
                 sym := arena_at(p.fns, fn_index)
-                answers = is_linear_type(p, sym.ret_type)
+                if (is_linear_type(p, sym.ret_type)) {
+                    answers = 1
+                }
             }
-            check_linear_locals(p, node.a, answers)
             p.moved.count = 0
             p.move_views.count = 0
             p.view_runs.count = 0
             p.stale_views.count = 0
-            walk_moves_body(p, node.a, node.b, answers)
-            report_unnameable(p, node.b, fn_index, i)
+            mut turn := MoveTurn {
+                parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+                body = node.a, params = node.b, answers = answers,
+                fn_index = fn_index, func_node = i }
+            unsafe {
+                frost_rt_recover_run(check_moves_guarded,
+                    ptr_cast($u8, ptr_to(turn)))
+            }
         }
         i = i + 1
     }
@@ -3773,7 +3880,7 @@ check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) 
                             report("and mutable in a single call; mutable ")
                             report("borrows are exclusive")
                         }
-                        frost_rt_die()
+                        frost_rt_recover_escape()
                     }
                 }
                 j = j + 1
@@ -3827,7 +3934,7 @@ check_reference_fields :: fn(mut p: Parser) {
                 report("' (field '")
                 report_src(p.src, field.name_off, field.name_len)
                 report("'); references are second-class")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             fid = field.next
         }
@@ -4739,7 +4846,7 @@ frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
     report("a pointer into this frame is ")
     report_cstr(how)
     report("; the storage it names dies when the call returns")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 frame_unproven :: fn(mut p: Parser, pos: i64) {
@@ -4747,7 +4854,7 @@ frame_unproven :: fn(mut p: Parser, pos: i64) {
     report("this answers with a borrowed view whose storage cannot be traced ")
     report("to a parameter or an allocation capability; a view that leaves the ")
     report("call has to name storage that outlives it")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 frame_unhandled :: fn(mut p: Parser, what: ^i8, pos: i64) {
@@ -4755,7 +4862,7 @@ frame_unhandled :: fn(mut p: Parser, what: ^i8, pos: i64) {
     report("the frame check has no rule for this ")
     report_cstr(what)
     report(", so it cannot say where the storage it names lives")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 // What a value leaving the call is worth. PROV_FRAME is refused outright.
@@ -5820,7 +5927,7 @@ region_escape :: fn(mut p: Parser, how: ^i8) {
     report("' escapes its region by ")
     report_cstr(how)
     report("; it may not outlive the arena")
-    frost_rt_die()
+    frost_rt_recover_escape()
 }
 
 check_region_block :: fn(mut p: Parser, head: i64) {
@@ -6007,7 +6114,7 @@ check_unsafety :: fn(mut p: Parser) {
             report_where(p.modules, p.src, node.pos)
             report_cstr(what)
             report(" is unchecked, so it belongs in an `unsafe` block")
-            frost_rt_die()
+            frost_rt_recover_escape()
         }
         if (gated == 1) {
             mark_span_used(p, node.pos)
@@ -6086,7 +6193,7 @@ report_idle_unsafe :: fn(mut p: Parser) {
         i = i + 1
     }
     if (found == 1 && p.audit_unsafe == 1) {
-        frost_rt_die()
+        frost_rt_recover_escape()
     }
 }
 
@@ -6235,7 +6342,7 @@ check_calls :: fn(mut p: Parser) {
                 report("call to undefined function '")
                 report_src(p.src, name_off, name_len)
                 report("'")
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
             mut expected : i64 = 0
             if (callee_proc >= 0) {
@@ -6260,7 +6367,7 @@ check_calls :: fn(mut p: Parser) {
                 frost_rt_error_int(expected)
                 report(" argument(s) but got ")
                 frost_rt_error_int(got)
-                frost_rt_die()
+                frost_rt_recover_escape()
             }
         }
         i = i + 1

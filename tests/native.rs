@@ -5723,8 +5723,8 @@ fn self_hosted_rejects_an_undefined_variable() {
         return;
     };
     assert!(
-        message.contains("undefined variable"),
-        "expected an undefined-variable error, got:\n{message}"
+        message.contains("unknown variable"),
+        "expected an unknown-variable error, got:\n{message}"
     );
 }
 
@@ -17366,6 +17366,61 @@ fn bootstrap_refusal(name: &str, source: &str) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
+// The questions an editor asks, answered by the self-hosted compiler from the
+// tables its passes already build. The expectations are the ones the
+// bootstrap's query layer answers in its own unit tests, so the two compilers
+// are held to one oracle: the outline in source order, a definition's line, a
+// struct's fields with their types, and a local's type off the checked walk.
+#[test]
+fn self_hosted_answers_editor_queries() {
+    let Some(compiler) = build_self_hosted_compiler("query") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_query_sample.frost");
+    let source = "Point :: struct { x: i64, y: i64 }\n\
+                  Shape :: enum { Dot, Box { w: i64, h: i64 } }\n\
+                  LIMIT :: 32\n\
+                  area :: fn(w: i64, h: i64) -> i64 {\n\
+                  \x20   total := w * h\n\
+                  \x20   total\n\
+                  }\n\
+                  main :: fn() -> i64 { area(2, 3) }\n";
+    std::fs::write(&input, source).unwrap();
+    let asked = [
+        (
+            "symbols",
+            "Point struct 1\nShape enum 2\nLIMIT const 3\narea fn 4\nmain fn 8\n",
+        ),
+        ("definition Shape", "2\n"),
+        ("fields Point", "x i64\ny i64\n"),
+        ("local area total", "i64 5\n"),
+    ];
+    for (question, wanted) in asked {
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .env("FROST_QUERY", question)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success(),
+            "the query '{question}' failed:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let answer = String::from_utf8_lossy(&run.stderr).replace("\r\n", "\n");
+        assert_eq!(
+            answer, wanted,
+            "the query '{question}' answered differently"
+        );
+        assert!(
+            run.stdout.is_empty(),
+            "the query '{question}' emitted a program"
+        );
+    }
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+}
+
 // A resource reached through a field is a place of its own, so consuming it
 // twice consumes it twice. Both compilers tracked moves by name, so the field
 // was never recorded and neither said the second consumption was one: three
@@ -17374,6 +17429,93 @@ fn bootstrap_refusal(name: &str, source: &str) -> String {
 //
 // Held here against both compilers, since a refusal only one of them makes is a
 // divergence rather than a rule.
+// Programs whose faults both compilers keep reading past, so one run reports
+// every one of them. Each is compared as the (line, message) pairs read off
+// the caret reports, in order: the same faults, on the same lines, in the
+// same words. Column and path spelling stay each compiler's own.
+const SAME_FAULTS: &[(&str, &str)] = &[
+    (
+        "twostmt",
+        "good :: fn() -> i64 {\n    held := 3\n    ]\n    other := 4\n    )\n    held + other\n}\nmain :: fn() -> i64 { good() }\n",
+    ),
+    (
+        "topandstmt",
+        "42\ngood :: fn() -> i64 {\n    held := 3\n    ]\n    held\n}\nmain :: fn() -> i64 { good() }\n",
+    ),
+    (
+        "strayinbody",
+        "main :: fn() -> i64 {\n    print 7\u{a3}\n    0\n}\n",
+    ),
+    (
+        "twounknown",
+        "one :: fn() -> i64 {\n    bogus\n}\ntwo :: fn() -> i64 {\n    other\n}\nmain :: fn() -> i64 { one() + two() }\n",
+    ),
+    (
+        "moveagain",
+        "Buffer :: linear struct { size: i64 }\nbuffer_make :: fn() -> Buffer { Buffer { size = 4 } }\nbuffer_free :: fn(move b: Buffer) { }\nmain :: fn() -> i64 {\n    held := buffer_make()\n    buffer_free(held)\n    buffer_free(held)\n    0\n}\n",
+    ),
+];
+
+// The (line, message) pairs of a diagnostic dump: each `path:line:col:` header
+// sets the line, and each caret line under it contributes its message.
+fn located_faults(report: &str) -> Vec<(usize, String)> {
+    let mut faults = Vec::new();
+    let mut at = 0usize;
+    for line in report.lines() {
+        let held = line.trim_end();
+        if let Some(rest) = held.strip_suffix(':') {
+            let mut parts = rest.rsplitn(3, ':');
+            let column = parts.next().unwrap_or("");
+            let row = parts.next().unwrap_or("");
+            if !column.is_empty()
+                && !row.is_empty()
+                && column.bytes().all(|b| b.is_ascii_digit())
+                && row.bytes().all(|b| b.is_ascii_digit())
+            {
+                at = row.parse().unwrap();
+            }
+        }
+        if let Some(mark) = held.find("^ ") {
+            faults.push((at, held[mark + 2..].to_string()));
+        }
+    }
+    faults
+}
+
+#[test]
+fn both_compilers_report_the_same_fault_lines() {
+    let Some(compiler) = build_self_hosted_compiler("faultlines") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    for (name, source) in SAME_FAULTS {
+        let bootstrap = bootstrap_refusal(name, source);
+        let input = directory.join(format!("frost_faults_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        assert!(
+            !run.status.success(),
+            "the self-hosted compiler built {name}, which the bootstrap refuses"
+        );
+        let hosted = String::from_utf8_lossy(&run.stderr).to_string();
+        let wanted = located_faults(&bootstrap);
+        let got = located_faults(&hosted);
+        assert!(
+            !wanted.is_empty(),
+            "no located fault in the bootstrap's report for {name}:\n{bootstrap}"
+        );
+        assert_eq!(
+            wanted, got,
+            "the two compilers describe {name} differently:\nbootstrap:\n{bootstrap}\nself-hosted:\n{hosted}"
+        );
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
 #[test]
 fn both_compilers_refuse_consuming_a_field_twice() {
     let source = "File :: linear struct { fd: i64 }\n\
