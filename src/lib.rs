@@ -1,5 +1,7 @@
 mod allocation_sources;
 mod arith_prelude;
+mod ast;
+mod ast_display;
 mod build_cache;
 mod c_abi;
 mod callbacks;
@@ -32,12 +34,12 @@ mod types;
 mod unsafety;
 
 pub use self::{
-    allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
-    distinct_types::*, failure_sets::*, import_visibility::*, imports::*,
-    interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
-    ir_ownership::*, ir_typecheck::*, layers::Layer, lexer::*, manifest::*,
-    multi_returns::*, ownership::*, param_modes::*, parser::*, regions::*,
-    types::*, unsafety::*,
+    allocation_sources::*, ast::*, ast_display::*, build_cache::*, c_abi::*,
+    callbacks::*, distinct_types::*, failure_sets::*, import_visibility::*,
+    imports::*, interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*,
+    ir_interp::*, ir_ownership::*, ir_typecheck::*, layers::Layer, lexer::*,
+    manifest::*, multi_returns::*, ownership::*, param_modes::*, parser::*,
+    regions::*, types::*, unsafety::*,
 };
 
 use std::fmt::Display;

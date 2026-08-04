@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 
-use crate::parser::{Spanned, Statement};
+use crate::ast::{Ast, Module, Splicer, StmtId, TokenSpan};
 
 // What a caller needs to know about a module without seeing the rest of it.
 //
@@ -15,13 +15,19 @@ use crate::parser::{Spanned, Statement};
 //
 // Non-generic bodies are not here. They are what a module can change without
 // rebuilding its dependents.
+//
+// The declarations are a fresh arena built by copying the kept statements in
+// order, symbols interned in first-use order, so the serialized form is
+// deterministic and a fingerprint can hash it directly. Its position table
+// holds one entry per declaration, the statement's own position, which is the
+// granularity the old spanned statements carried.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleInterface {
     // The module's identity, its path relative to the project root. Also what
     // the private-name tag is derived from.
     pub module: String,
     pub exports: Vec<String>,
-    pub declarations: Vec<Spanned<Statement>>,
+    pub declarations: Module,
     pub linear_types: Vec<String>,
 }
 
@@ -31,15 +37,16 @@ pub struct ModuleInterface {
 // an unexported struct is a program the current visibility rule allows, and the
 // caller cannot type-check the call without the layout.
 fn reachable_types(
-    declarations: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
     exports: &HashSet<String>,
 ) -> HashSet<String> {
     let mut wanted: HashSet<String> = HashSet::new();
     let mut changed = true;
     while changed {
         changed = false;
-        for statement in declarations {
-            let Some(name) = declared_name(statement) else {
+        for statement in roots {
+            let Some(name) = declared_name(ast, *statement) else {
                 continue;
             };
             if !exports.contains(name) && !wanted.contains(name) {
@@ -47,7 +54,8 @@ fn reachable_types(
             }
             let mut mentioned = Vec::new();
             crate::interface_names::names_in_statement(
-                &statement.node,
+                ast,
+                *statement,
                 &mut mentioned,
             );
             for named in mentioned {
@@ -63,27 +71,58 @@ fn reachable_types(
 impl ModuleInterface {
     pub fn of(
         module: &str,
-        declarations: &[Spanned<Statement>],
+        ast: &Ast,
+        roots: &[StmtId],
         exports: &[String],
         linear_types: &HashSet<String>,
     ) -> Self {
         let exported: HashSet<String> = exports.iter().cloned().collect();
-        let carried = reachable_types(declarations, &exported);
-        let kept: Vec<Spanned<Statement>> = declarations
+        let carried = reachable_types(ast, roots, &exported);
+        let kept: Vec<StmtId> = roots
             .iter()
+            .copied()
             .filter(|statement| {
-                declared_name(statement).is_some_and(|name| {
+                declared_name(ast, *statement).is_some_and(|name| {
                     exported.contains(name) || carried.contains(name)
                 })
             })
-            .cloned()
             .collect();
+        let mut declarations = Module::default();
+        let splicer = Splicer::new(ast, 0);
+        for (index, statement) in kept.iter().enumerate() {
+            declarations
+                .ast
+                .token_positions
+                .push(ast.stmt_position(*statement));
+            let expr_watermark = declarations.ast.expressions.len();
+            let stmt_watermark = declarations.ast.statements.len();
+            let copied = splicer.statement(
+                &mut declarations.ast,
+                *statement,
+                &mut |name| name.to_string(),
+            );
+            // The copy carries spans into the source's token table, which the
+            // interface does not keep. Every node of this declaration points
+            // at the one position the declaration has, the way a spanned
+            // statement carried one position for everything under it.
+            let span = TokenSpan {
+                first: index as u32,
+                last: index as u32,
+            };
+            for held in &mut declarations.ast.expr_spans[expr_watermark..] {
+                *held = span;
+            }
+            for held in &mut declarations.ast.stmt_spans[stmt_watermark..] {
+                *held = span;
+            }
+            declarations.roots.push(copied);
+        }
         let mut linear: Vec<String> = linear_types.iter().cloned().collect();
         linear.sort();
         Self {
             module: module.to_string(),
             exports: exports.to_vec(),
-            declarations: kept,
+            declarations,
             linear_types: linear,
         }
     }
@@ -125,10 +164,11 @@ pub fn built_from_interfaces() -> bool {
 pub fn check_interface_covers_exports(
     interface: &ModuleInterface,
 ) -> Result<()> {
-    let declared: HashSet<&str> = interface
-        .declarations
+    let held = &interface.declarations;
+    let declared: HashSet<&str> = held
+        .roots
         .iter()
-        .filter_map(declared_name)
+        .filter_map(|statement| declared_name(&held.ast, *statement))
         .collect();
     for export in &interface.exports {
         if !declared.contains(export.as_str()) {
@@ -149,19 +189,24 @@ pub fn check_interface_covers_exports(
 // interface's to supply.
 pub fn check_interface_is_closed(
     interface: &ModuleInterface,
-    all_declarations: &[Spanned<Statement>],
+    ast: &Ast,
+    all_declarations: &[StmtId],
 ) -> Result<()> {
-    let declared_here: HashSet<&str> =
-        all_declarations.iter().filter_map(declared_name).collect();
-    let carried: HashSet<&str> = interface
-        .declarations
+    let declared_here: HashSet<&str> = all_declarations
         .iter()
-        .filter_map(declared_name)
+        .filter_map(|statement| declared_name(ast, *statement))
         .collect();
-    for statement in &interface.declarations {
+    let held = &interface.declarations;
+    let carried: HashSet<&str> = held
+        .roots
+        .iter()
+        .filter_map(|statement| declared_name(&held.ast, *statement))
+        .collect();
+    for statement in &held.roots {
         let mut mentioned = Vec::new();
         crate::interface_names::names_in_statement(
-            &statement.node,
+            &held.ast,
+            *statement,
             &mut mentioned,
         );
         for name in mentioned {
@@ -178,15 +223,15 @@ pub fn check_interface_is_closed(
     Ok(())
 }
 
-fn declared_name(statement: &Spanned<Statement>) -> Option<&str> {
-    match &statement.node {
-        Statement::Constant(name, _)
-        | Statement::Struct(name, _, _)
-        | Statement::Enum(name, _, _)
-        | Statement::Flags(name, _, _)
-        | Statement::TypeAlias(name, _)
-        | Statement::Extern { name, .. }
-        | Statement::Declared { name, .. } => Some(name.as_str()),
+pub fn declared_name(ast: &Ast, statement: StmtId) -> Option<&str> {
+    match ast.stmt(statement) {
+        crate::ast::Statement::Constant(name, _)
+        | crate::ast::Statement::Struct(name, _, _)
+        | crate::ast::Statement::Enum(name, _, _)
+        | crate::ast::Statement::Flags(name, _, _)
+        | crate::ast::Statement::TypeAlias(name, _)
+        | crate::ast::Statement::Extern { name, .. }
+        | crate::ast::Statement::Declared { name, .. } => Some(ast.name(*name)),
         _ => None,
     }
 }
@@ -231,19 +276,28 @@ fn first_difference(
             after.linear_types, before.linear_types
         );
     }
-    if before.declarations.len() != after.declarations.len() {
+    if before.declarations.roots.len() != after.declarations.roots.len() {
         return format!(
             "{} declarations came back from {}",
-            after.declarations.len(),
-            before.declarations.len()
+            after.declarations.roots.len(),
+            before.declarations.roots.len()
         );
     }
-    for (one, other) in before.declarations.iter().zip(&after.declarations) {
-        if one != other {
-            let named = declared_name(one).unwrap_or("an unnamed declaration");
+    for (one, other) in before
+        .declarations
+        .roots
+        .iter()
+        .zip(&after.declarations.roots)
+    {
+        let rendered_before =
+            crate::ast_display::display_stmt(&before.declarations.ast, *one);
+        let rendered_after =
+            crate::ast_display::display_stmt(&after.declarations.ast, *other);
+        if rendered_before != rendered_after {
+            let named = declared_name(&before.declarations.ast, *one)
+                .unwrap_or("an unnamed declaration");
             return format!(
-                "the declaration of '{named}' became {:?} from {:?}",
-                other.node, one.node
+                "the declaration of '{named}' became {rendered_after:?} from {rendered_before:?}"
             );
         }
     }
@@ -260,10 +314,11 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
+        let module = parser.parse().unwrap();
         ModuleInterface::of(
             "lib/test.frost",
-            &statements,
+            &module.ast,
+            &module.roots,
             parser.exports(),
             &parser.linear_types().iter().cloned().collect(),
         )
@@ -283,10 +338,11 @@ mod tests {
     }
 
     fn carried(interface: &ModuleInterface) -> Vec<&str> {
-        let mut names: Vec<&str> = interface
-            .declarations
+        let held = &interface.declarations;
+        let mut names: Vec<&str> = held
+            .roots
             .iter()
-            .filter_map(declared_name)
+            .filter_map(|statement| declared_name(&held.ast, *statement))
             .collect();
         names.sort();
         names
@@ -342,10 +398,15 @@ mod tests {
              area :: fn(w: i64) -> i64 { scale(w) }\n",
         );
         let source = interface.declarations.clone();
-        check_interface_is_closed(&interface, &source).unwrap();
-        interface
-            .declarations
-            .retain(|statement| declared_name(statement) != Some("scale"));
-        assert!(check_interface_is_closed(&interface, &source).is_err());
+        check_interface_is_closed(&interface, &source.ast, &source.roots)
+            .unwrap();
+        let kept_ast = interface.declarations.ast.clone();
+        interface.declarations.roots.retain(|statement| {
+            declared_name(&kept_ast, *statement) != Some("scale")
+        });
+        assert!(
+            check_interface_is_closed(&interface, &source.ast, &source.roots)
+                .is_err()
+        );
     }
 }

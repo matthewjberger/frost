@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 
-use crate::parser::{
-    Block, Expression, ParamMode, Parameter, Program, Spanned, Statement,
+use crate::ast::{
+    Ast, ExprId, Expression, Parameter, Range32, Statement, StmtId, TokenSpan,
 };
+use crate::parser::ParamMode;
 use crate::types::Type;
 
 // Lowers allocation sources. A `uses A` function draws an allocation capability
@@ -55,64 +56,93 @@ impl Provider {
 }
 
 impl Source {
-    fn expression(&self) -> Expression {
-        let name = Expression::Identifier(self.name.clone());
+    fn expression(&self, ast: &mut Ast, span: TokenSpan) -> ExprId {
+        let symbol = ast.intern(&self.name);
+        let name = ast.push_expr(Expression::Identifier(symbol), span);
         if self.borrow {
-            return Expression::BorrowMut(Box::new(name));
+            return ast.push_expr(Expression::BorrowMut(name), span);
         }
         name
     }
 }
 
-pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
+pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
     let mut uses_functions: HashMap<String, Vec<Type>> = HashMap::new();
 
     // First pass. Give every `uses` function one implicit capability parameter
     // per source it draws, in the order they were declared.
-    for statement in program.iter_mut() {
-        if let Statement::Constant(
-            _,
-            Expression::Function(parameters, signature, _)
-            | Expression::Proc(parameters, signature, _),
-        ) = &mut statement.node
-            && !signature.uses.is_empty()
-        {
-            let capabilities = signature.uses.clone();
-            for capability in &capabilities {
-                parameters.push(Parameter {
-                    name: capability_binding(capability),
-                    type_annotation: Some(capability.clone()),
-                    mutable: true,
-                    mode: ParamMode::Write,
-                    compile_time_signature: None,
-                    pack: false,
-                });
+    for statement in roots {
+        let Statement::Constant(name, value) = ast.stmt(*statement) else {
+            continue;
+        };
+        let (name, value) = (*name, *value);
+        let (params, signature, body, function) = match ast.expr(value) {
+            Expression::Function(params, signature, body) => {
+                (*params, *signature, *body, true)
             }
-            signature.uses.clear();
-            if let Statement::Constant(name, _) = &statement.node {
-                uses_functions.insert(name.clone(), capabilities);
+            Expression::Proc(params, signature, body) => {
+                (*params, *signature, *body, false)
             }
+            _ => continue,
+        };
+        if ast.signature(signature).uses.is_empty() {
+            continue;
         }
+        let capabilities = ast.signature(signature).uses.clone();
+        let mut parameters = ast.params_in(params).to_vec();
+        for capability in &capabilities {
+            let binding = ast.intern(&capability_binding(capability));
+            parameters.push(Parameter {
+                name: binding,
+                type_annotation: Some(capability.clone()),
+                mutable: true,
+                mode: ParamMode::Write,
+                compile_time_signature: None,
+                pack: false,
+            });
+        }
+        let widened = ast.add_parameters(parameters);
+        ast.signatures[signature.0 as usize].uses.clear();
+        ast.expressions[value.0 as usize] = if function {
+            Expression::Function(widened, signature, body)
+        } else {
+            Expression::Proc(widened, signature, body)
+        };
+        uses_functions.insert(ast.name(name).to_string(), capabilities);
     }
 
     // Second pass. Thread the capability argument through calls and inline the
     // `with` blocks that provide it.
     let threader = Threader { uses_functions };
-    for statement in program.iter_mut() {
-        if let Statement::Constant(
-            name,
-            Expression::Function(_, _, body) | Expression::Proc(_, _, body),
-        ) = &mut statement.node
-        {
-            let mut provider = Provider::default();
-            if let Some(capabilities) = threader.uses_functions.get(name) {
-                for capability in capabilities {
-                    provider = provider
-                        .extended(capability_binding(capability), false);
-                }
+    for statement in roots {
+        let Statement::Constant(name, value) = ast.stmt(*statement) else {
+            continue;
+        };
+        let (name, value) = (*name, *value);
+        let (params, signature, body, function) = match ast.expr(value) {
+            Expression::Function(params, signature, body) => {
+                (*params, *signature, *body, true)
             }
-            let taken = std::mem::take(body);
-            *body = threader.thread_block(taken, &provider)?;
+            Expression::Proc(params, signature, body) => {
+                (*params, *signature, *body, false)
+            }
+            _ => continue,
+        };
+        let mut provider = Provider::default();
+        if let Some(capabilities) = threader.uses_functions.get(ast.name(name))
+        {
+            for capability in capabilities {
+                provider =
+                    provider.extended(capability_binding(capability), false);
+            }
+        }
+        let threaded = threader.thread_block(ast, body, &provider)?;
+        if threaded != body {
+            ast.expressions[value.0 as usize] = if function {
+                Expression::Function(params, signature, threaded)
+            } else {
+                Expression::Proc(params, signature, threaded)
+            };
         }
     }
 
@@ -141,206 +171,191 @@ struct Threader {
 }
 
 impl Threader {
-    fn thread_block(&self, block: Block, provider: &Provider) -> Result<Block> {
-        let mut threaded = Vec::with_capacity(block.len());
-        for statement in block {
-            if let Statement::With(capability, body) = statement.node {
+    fn thread_block(
+        &self,
+        ast: &mut Ast,
+        block: Range32,
+        provider: &Provider,
+    ) -> Result<Range32> {
+        let statements = ast.stmts_in(block).to_vec();
+        let mut threaded = Vec::with_capacity(statements.len());
+        let mut inlined = false;
+        for statement in statements {
+            if let Statement::With(capability, body) = ast.stmt(statement) {
                 // The block is a region. Inline it with the arena it names
                 // added to what a call inside it may draw from.
-                let inner = self
-                    .thread_block(body, &provider.extended(capability, true))?;
-                threaded.extend(inner);
+                let (capability, body) = (*capability, *body);
+                let extended =
+                    provider.extended(ast.name(capability).to_string(), true);
+                let inner = self.thread_block(ast, body, &extended)?;
+                threaded.extend_from_slice(ast.stmts_in(inner));
+                inlined = true;
             } else {
-                let position = statement.position;
-                let node = self.thread_statement(statement.node, provider)?;
-                threaded.push(Spanned { node, position });
+                self.thread_statement(ast, statement, provider)?;
+                threaded.push(statement);
             }
         }
-        Ok(threaded)
+        if inlined {
+            Ok(ast.add_stmt_list(&threaded))
+        } else {
+            Ok(block)
+        }
     }
 
     fn thread_statement(
         &self,
-        statement: Statement,
+        ast: &mut Ast,
+        statement: StmtId,
         provider: &Provider,
-    ) -> Result<Statement> {
-        let threaded = match statement {
-            Statement::Let {
-                name,
-                type_annotation,
-                value,
-                mutable,
-            } => Statement::Let {
-                name,
-                type_annotation,
-                value: self.thread_expression(value, provider)?,
-                mutable,
-            },
-            Statement::Constant(name, value) => Statement::Constant(
-                name,
-                self.thread_expression(value, provider)?,
-            ),
-            Statement::Return(value) => {
-                Statement::Return(self.thread_expression(value, provider)?)
+    ) -> Result<()> {
+        match ast.stmt(statement).clone() {
+            Statement::Let { value, .. }
+            | Statement::Constant(_, value)
+            | Statement::Return(value)
+            | Statement::Expression(value) => {
+                self.thread_expression(ast, value, provider)?;
             }
-            Statement::Expression(value) => {
-                Statement::Expression(self.thread_expression(value, provider)?)
+            Statement::Assignment(place, value) => {
+                self.thread_expression(ast, place, provider)?;
+                self.thread_expression(ast, value, provider)?;
             }
-            Statement::Assignment(place, value) => Statement::Assignment(
-                self.thread_expression(place, provider)?,
-                self.thread_expression(value, provider)?,
-            ),
-            Statement::Defer(inner) => Statement::Defer(Box::new(
-                self.thread_statement(*inner, provider)?,
-            )),
-            Statement::For(variable, second, iterable, body) => Statement::For(
-                variable,
-                second,
-                self.thread_expression(iterable, provider)?,
-                self.thread_block(body, provider)?,
-            ),
-            Statement::While(condition, body) => Statement::While(
-                self.thread_expression(condition, provider)?,
-                self.thread_block(body, provider)?,
-            ),
+            Statement::Defer(inner) => {
+                self.thread_statement(ast, inner, provider)?;
+            }
+            Statement::For(variable, second, iterable, body) => {
+                self.thread_expression(ast, iterable, provider)?;
+                let threaded = self.thread_block(ast, body, provider)?;
+                if threaded != body {
+                    ast.statements[statement.0 as usize] =
+                        Statement::For(variable, second, iterable, threaded);
+                }
+            }
+            Statement::While(condition, body) => {
+                self.thread_expression(ast, condition, provider)?;
+                let threaded = self.thread_block(ast, body, provider)?;
+                if threaded != body {
+                    ast.statements[statement.0 as usize] =
+                        Statement::While(condition, threaded);
+                }
+            }
             Statement::With(..) => {
                 unreachable!("`with` is inlined by thread_block")
             }
-            other => other,
-        };
-        Ok(threaded)
+            _ => {}
+        }
+        Ok(())
     }
 
     fn thread_expression(
         &self,
-        expression: Expression,
+        ast: &mut Ast,
+        expression: ExprId,
         provider: &Provider,
-    ) -> Result<Expression> {
-        let threaded = match expression {
+    ) -> Result<()> {
+        match ast.expr(expression).clone() {
             Expression::Call(callee, arguments) => {
-                let callee = self.thread_expression(*callee, provider)?;
-                let mut lowered = Vec::with_capacity(arguments.len() + 1);
-                for argument in arguments {
-                    lowered.push(self.thread_expression(argument, provider)?);
+                self.thread_expression(ast, callee, provider)?;
+                for argument in ast.exprs_in(arguments).to_vec() {
+                    self.thread_expression(ast, argument, provider)?;
                 }
-                if let Expression::Identifier(name) = &callee
-                    && self.uses_functions.contains_key(name)
-                {
-                    lowered.extend(self.capability_arguments(name, provider)?);
+                if let Expression::Identifier(name) = ast.expr(callee) {
+                    let name = ast.name(*name).to_string();
+                    if self.uses_functions.contains_key(&name) {
+                        let span = ast.expr_span(expression);
+                        let extra = self
+                            .capability_arguments(ast, &name, provider, span)?;
+                        let mut lowered = ast.exprs_in(arguments).to_vec();
+                        lowered.extend(extra);
+                        let widened = ast.add_expr_list(&lowered);
+                        ast.expressions[expression.0 as usize] =
+                            Expression::Call(callee, widened);
+                    }
                 }
-                Expression::Call(Box::new(callee), lowered)
             }
-            Expression::Try(inner) => Expression::Try(Box::new(
-                self.thread_expression(*inner, provider)?,
-            )),
-            Expression::Prefix(operator, inner) => Expression::Prefix(
-                operator,
-                Box::new(self.thread_expression(*inner, provider)?),
-            ),
-            Expression::AddressOf(inner) => Expression::AddressOf(Box::new(
-                self.thread_expression(*inner, provider)?,
-            )),
-            Expression::Borrow(inner) => Expression::Borrow(Box::new(
-                self.thread_expression(*inner, provider)?,
-            )),
-            Expression::BorrowMut(inner) => Expression::BorrowMut(Box::new(
-                self.thread_expression(*inner, provider)?,
-            )),
-            Expression::Dereference(inner) => Expression::Dereference(
-                Box::new(self.thread_expression(*inner, provider)?),
-            ),
-            Expression::FieldAccess(base, field) => Expression::FieldAccess(
-                Box::new(self.thread_expression(*base, provider)?),
-                field,
-            ),
-            Expression::Infix(left, operator, right) => Expression::Infix(
-                Box::new(self.thread_expression(*left, provider)?),
-                operator,
-                Box::new(self.thread_expression(*right, provider)?),
-            ),
-            Expression::Index(base, index) => Expression::Index(
-                Box::new(self.thread_expression(*base, provider)?),
-                Box::new(self.thread_expression(*index, provider)?),
-            ),
-            Expression::Range(start, end, inclusive) => Expression::Range(
-                Box::new(self.thread_expression(*start, provider)?),
-                Box::new(self.thread_expression(*end, provider)?),
-                inclusive,
-            ),
+            Expression::Try(inner)
+            | Expression::Prefix(_, inner)
+            | Expression::AddressOf(inner)
+            | Expression::Borrow(inner)
+            | Expression::BorrowMut(inner)
+            | Expression::Dereference(inner)
+            | Expression::FieldAccess(inner, _) => {
+                self.thread_expression(ast, inner, provider)?;
+            }
+            Expression::Infix(left, _, right)
+            | Expression::Index(left, right)
+            | Expression::Range(left, right, _) => {
+                self.thread_expression(ast, left, provider)?;
+                self.thread_expression(ast, right, provider)?;
+            }
             Expression::If(condition, consequence, alternative) => {
-                Expression::If(
-                    Box::new(self.thread_expression(*condition, provider)?),
-                    self.thread_block(consequence, provider)?,
-                    match alternative {
-                        Some(block) => {
-                            Some(self.thread_block(block, provider)?)
-                        }
-                        None => None,
-                    },
-                )
+                self.thread_expression(ast, condition, provider)?;
+                let threaded_consequence =
+                    self.thread_block(ast, consequence, provider)?;
+                let threaded_alternative = match alternative {
+                    Some(block) => {
+                        Some(self.thread_block(ast, block, provider)?)
+                    }
+                    None => None,
+                };
+                if threaded_consequence != consequence
+                    || threaded_alternative != alternative
+                {
+                    ast.expressions[expression.0 as usize] = Expression::If(
+                        condition,
+                        threaded_consequence,
+                        threaded_alternative,
+                    );
+                }
             }
-            Expression::StructInit(name, fields) => Expression::StructInit(
-                name,
-                self.thread_fields(fields, provider)?,
-            ),
-            Expression::EnumVariantInit(name, variant, fields) => {
-                Expression::EnumVariantInit(
-                    name,
-                    variant,
-                    self.thread_fields(fields, provider)?,
-                )
+            Expression::StructInit(_, fields)
+            | Expression::EnumVariantInit(_, _, fields) => {
+                for field in ast.named_in(fields).to_vec() {
+                    self.thread_expression(ast, field.value, provider)?;
+                }
             }
             Expression::Switch(scrutinee, cases) => {
-                let scrutinee =
-                    Box::new(self.thread_expression(*scrutinee, provider)?);
-                let mut threaded = Vec::with_capacity(cases.len());
-                for case in cases {
-                    threaded.push(crate::parser::SwitchCase {
-                        pattern: case.pattern,
-                        body: self.thread_block(case.body, provider)?,
-                    });
+                self.thread_expression(ast, scrutinee, provider)?;
+                for index in cases.indices() {
+                    let body = ast.cases[index].body;
+                    let threaded = self.thread_block(ast, body, provider)?;
+                    if threaded != body {
+                        ast.cases[index].body = threaded;
+                    }
                 }
-                Expression::Switch(scrutinee, threaded)
             }
             Expression::Tuple(items) => {
-                let mut threaded = Vec::with_capacity(items.len());
-                for item in items {
-                    threaded.push(self.thread_expression(item, provider)?);
+                for item in ast.exprs_in(items).to_vec() {
+                    self.thread_expression(ast, item, provider)?;
                 }
-                Expression::Tuple(threaded)
             }
             Expression::Unsafe(body) => {
-                Expression::Unsafe(self.thread_block(body, provider)?)
+                let threaded = self.thread_block(ast, body, provider)?;
+                if threaded != body {
+                    ast.expressions[expression.0 as usize] =
+                        Expression::Unsafe(threaded);
+                }
             }
             // A nested function literal cannot see the enclosing capability, so
             // its body threads with no provider of its own.
             Expression::Function(parameters, signature, body) => {
-                Expression::Function(
-                    parameters,
-                    signature,
-                    self.thread_block(body, &Provider::default())?,
-                )
+                let threaded =
+                    self.thread_block(ast, body, &Provider::default())?;
+                if threaded != body {
+                    ast.expressions[expression.0 as usize] =
+                        Expression::Function(parameters, signature, threaded);
+                }
             }
-            Expression::Proc(parameters, signature, body) => Expression::Proc(
-                parameters,
-                signature,
-                self.thread_block(body, &Provider::default())?,
-            ),
-            other => other,
-        };
-        Ok(threaded)
-    }
-
-    fn thread_fields(
-        &self,
-        fields: Vec<(String, Expression)>,
-        provider: &Provider,
-    ) -> Result<Vec<(String, Expression)>> {
-        let mut threaded = Vec::with_capacity(fields.len());
-        for (name, value) in fields {
-            threaded.push((name, self.thread_expression(value, provider)?));
+            Expression::Proc(parameters, signature, body) => {
+                let threaded =
+                    self.thread_block(ast, body, &Provider::default())?;
+                if threaded != body {
+                    ast.expressions[expression.0 as usize] =
+                        Expression::Proc(parameters, signature, threaded);
+                }
+            }
+            _ => {}
         }
-        Ok(threaded)
+        Ok(())
     }
 
     // One argument per source the callee draws, chosen by the name the
@@ -350,9 +365,11 @@ impl Threader {
     // apart, and the name is what tells them apart.
     fn capability_arguments(
         &self,
+        ast: &mut Ast,
         callee: &str,
         provider: &Provider,
-    ) -> Result<Vec<Expression>> {
+        span: TokenSpan,
+    ) -> Result<Vec<ExprId>> {
         let capabilities = self.uses_functions.get(callee).unwrap();
         let mut arguments = Vec::with_capacity(capabilities.len());
         for capability in capabilities {
@@ -377,7 +394,7 @@ impl Threader {
                     available.join(", ")
                 )
             };
-            arguments.push(source.expression());
+            arguments.push(source.expression(ast, span));
         }
         Ok(arguments)
     }

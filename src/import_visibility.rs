@@ -22,10 +22,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::interface_names::names_in_statement;
-use crate::parser::{
-    Block, Expression, Pattern, Spanned, Statement, SwitchCase,
+use crate::ast::{
+    Ast, ExprId, Expression, Pattern, PatternId, Range32, Statement, StmtId,
 };
+use crate::interface_names::names_in_statement;
 
 // What one file wrote: the module it is, what it declares, what it imports, and
 // the names it uses. The imports are canonical paths, since the same file
@@ -43,30 +43,31 @@ pub struct FileNames {
 impl FileNames {
     pub fn of(
         module: &str,
-        statements: &[Spanned<Statement>],
+        ast: &Ast,
+        roots: &[StmtId],
         imports: &[PathBuf],
     ) -> Self {
         let mut declared = HashSet::new();
-        for statement in statements {
-            if let Some(name) = top_level_name(&statement.node) {
+        for statement in roots {
+            if let Some(name) = top_level_name(ast, *statement) {
                 declared.insert(name.to_string());
             }
         }
         let mut used = Vec::new();
-        for statement in statements {
+        for statement in roots {
             let mut candidates = Vec::new();
-            names_in_statement(&statement.node, &mut candidates);
+            names_in_statement(ast, *statement, &mut candidates);
             let mut bound = HashSet::new();
-            bound_in_statement(&statement.node, &mut bound);
+            bound_in_statement(ast, *statement, &mut bound);
             used.extend(
                 candidates.into_iter().filter(|name| !bound.contains(name)),
             );
         }
         let mut renamed = HashSet::new();
-        for statement in statements {
-            if let Statement::Import(_, renames) = &statement.node {
-                for rename in renames {
-                    renamed.insert(rename.exported.clone());
+        for statement in roots {
+            if let Statement::Import(_, renames) = ast.stmt(*statement) {
+                for rename in ast.renames_in(*renames) {
+                    renamed.insert(ast.name(rename.exported).to_string());
                 }
             }
         }
@@ -175,15 +176,15 @@ pub fn unimported_names(
     reports
 }
 
-fn top_level_name(statement: &Statement) -> Option<&str> {
-    match statement {
+fn top_level_name(ast: &Ast, statement: StmtId) -> Option<&str> {
+    match ast.stmt(statement) {
         Statement::Constant(name, _)
         | Statement::Struct(name, _, _)
         | Statement::Enum(name, _, _)
         | Statement::Flags(name, _, _)
         | Statement::TypeAlias(name, _)
         | Statement::Extern { name, .. }
-        | Statement::Declared { name, .. } => Some(name.as_str()),
+        | Statement::Declared { name, .. } => Some(ast.name(*name)),
         _ => None,
     }
 }
@@ -191,107 +192,113 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
 // Every name a declaration binds anywhere inside it: parameters, locals, loop
 // and region names, and what a pattern binds.
 pub(crate) fn bound_in_statement(
-    statement: &Statement,
+    ast: &Ast,
+    statement: StmtId,
     out: &mut HashSet<String>,
 ) {
-    match statement {
+    match ast.stmt(statement) {
         Statement::Let { name, value, .. } => {
-            out.insert(name.clone());
-            bound_in_expression(value, out);
+            out.insert(ast.name(*name).to_string());
+            bound_in_expression(ast, *value, out);
         }
         Statement::LetMultiple(bindings, value) => {
-            for binding in bindings {
-                out.insert(binding.name.clone());
+            for binding in ast.bindings_in(*bindings) {
+                out.insert(ast.name(binding.name).to_string());
             }
-            bound_in_expression(value, out);
+            bound_in_expression(ast, *value, out);
         }
         Statement::Constant(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)
-        | Statement::Print(value, _) => bound_in_expression(value, out),
+        | Statement::Print(value, _) => bound_in_expression(ast, *value, out),
         Statement::Assignment(place, value) => {
-            bound_in_expression(place, out);
-            bound_in_expression(value, out);
+            bound_in_expression(ast, *place, out);
+            bound_in_expression(ast, *value, out);
         }
-        Statement::Defer(inner) => bound_in_statement(inner, out),
+        Statement::Defer(inner) => bound_in_statement(ast, *inner, out),
         Statement::For(first, second, sequence, body) => {
-            out.insert(first.clone());
+            out.insert(ast.name(*first).to_string());
             if let Some(second) = second {
-                out.insert(second.clone());
+                out.insert(ast.name(*second).to_string());
             }
-            bound_in_expression(sequence, out);
-            bound_in_block(body, out);
+            bound_in_expression(ast, *sequence, out);
+            bound_in_block(ast, *body, out);
         }
         Statement::While(condition, body) => {
-            bound_in_expression(condition, out);
-            bound_in_block(body, out);
+            bound_in_expression(ast, *condition, out);
+            bound_in_block(ast, *body, out);
         }
         Statement::With(capability, body) => {
-            out.insert(capability.clone());
-            bound_in_block(body, out);
+            out.insert(ast.name(*capability).to_string());
+            bound_in_block(ast, *body, out);
         }
         _ => {}
     }
 }
 
-fn bound_in_block(block: &Block, out: &mut HashSet<String>) {
-    for statement in block {
-        bound_in_statement(&statement.node, out);
+fn bound_in_block(ast: &Ast, block: Range32, out: &mut HashSet<String>) {
+    for statement in ast.stmts_in(block) {
+        bound_in_statement(ast, *statement, out);
     }
 }
 
-fn bound_in_pattern(pattern: &Pattern, out: &mut HashSet<String>) {
-    match pattern {
+fn bound_in_pattern(ast: &Ast, pattern: PatternId, out: &mut HashSet<String>) {
+    match ast.pattern(pattern) {
         Pattern::Identifier(name) => {
-            out.insert(name.clone());
+            out.insert(ast.name(*name).to_string());
         }
         Pattern::EnumVariant { bindings, .. } => {
-            for (_, binding) in bindings {
-                out.insert(binding.clone());
+            for binding in ast.pattern_bindings_in(*bindings) {
+                out.insert(ast.name(binding.binding).to_string());
             }
         }
         Pattern::Tuple(patterns) => {
-            for held in patterns {
-                bound_in_pattern(held, out);
+            for held in ast.patterns_in(*patterns) {
+                bound_in_pattern(ast, *held, out);
             }
         }
         _ => {}
     }
 }
 
-fn bound_in_expression(expression: &Expression, out: &mut HashSet<String>) {
-    match expression {
+fn bound_in_expression(
+    ast: &Ast,
+    expression: ExprId,
+    out: &mut HashSet<String>,
+) {
+    match ast.expr(expression) {
         Expression::Function(parameters, _, body)
         | Expression::Proc(parameters, _, body) => {
-            for parameter in parameters {
-                out.insert(parameter.name.clone());
+            for parameter in ast.params_in(*parameters) {
+                let name = ast.name(parameter.name);
+                out.insert(name.to_string());
                 // `$T` binds the bare name too, since that is what the body
                 // writes where the type goes.
-                if let Some(bare) = parameter.name.strip_prefix('$') {
+                if let Some(bare) = name.strip_prefix('$') {
                     out.insert(bare.to_string());
                 }
             }
-            bound_in_block(body, out);
+            bound_in_block(ast, *body, out);
         }
         Expression::If(condition, then_block, else_block) => {
-            bound_in_expression(condition, out);
-            bound_in_block(then_block, out);
+            bound_in_expression(ast, *condition, out);
+            bound_in_block(ast, *then_block, out);
             if let Some(block) = else_block {
-                bound_in_block(block, out);
+                bound_in_block(ast, *block, out);
             }
         }
-        Expression::Unsafe(block) => bound_in_block(block, out),
+        Expression::Unsafe(block) => bound_in_block(ast, *block, out),
         Expression::Switch(scrutinee, cases) => {
-            bound_in_expression(scrutinee, out);
-            for SwitchCase { pattern, body } in cases {
-                bound_in_pattern(pattern, out);
-                bound_in_block(body, out);
+            bound_in_expression(ast, *scrutinee, out);
+            for case in ast.cases_in(*cases) {
+                bound_in_pattern(ast, case.pattern, out);
+                bound_in_block(ast, case.body, out);
             }
         }
         Expression::Call(callee, arguments) => {
-            bound_in_expression(callee, out);
-            for argument in arguments {
-                bound_in_expression(argument, out);
+            bound_in_expression(ast, *callee, out);
+            for argument in ast.exprs_in(*arguments) {
+                bound_in_expression(ast, *argument, out);
             }
         }
         Expression::Prefix(_, inner)
@@ -301,22 +308,22 @@ fn bound_in_expression(expression: &Expression, out: &mut HashSet<String>) {
         | Expression::Dereference(inner)
         | Expression::UnsafeFn(inner)
         | Expression::FieldAccess(inner, _)
-        | Expression::Try(inner) => bound_in_expression(inner, out),
+        | Expression::Try(inner) => bound_in_expression(ast, *inner, out),
         Expression::Infix(left, _, right)
         | Expression::Index(left, right)
         | Expression::Range(left, right, _) => {
-            bound_in_expression(left, out);
-            bound_in_expression(right, out);
+            bound_in_expression(ast, *left, out);
+            bound_in_expression(ast, *right, out);
         }
         Expression::Tuple(values) => {
-            for held in values {
-                bound_in_expression(held, out);
+            for held in ast.exprs_in(*values) {
+                bound_in_expression(ast, *held, out);
             }
         }
         Expression::StructInit(_, fields)
         | Expression::EnumVariantInit(_, _, fields) => {
-            for (_, held) in fields {
-                bound_in_expression(held, out);
+            for held in ast.named_in(*fields) {
+                bound_in_expression(ast, held.value, out);
             }
         }
         _ => {}

@@ -3,9 +3,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::ast::{
+    Ast, Expression, Module, Parameter, Range32, Splicer, Statement, StmtId,
+    splice_positions,
+};
 use crate::interface::ModuleInterface;
-use crate::parser::{Expression, Parameter, Spanned, Statement};
 use crate::types::Type;
+
+// The shape of a record on disk. Bumped when the serialized AST changes form,
+// so a record written by an older compiler misses cleanly instead of
+// deserializing into the wrong meaning. The field has no serde default on
+// purpose: a record without one is from before the arena AST and must miss.
+pub const CACHE_FORMAT: u32 = 2;
 
 // What the compiler remembers about a module between builds. A module is
 // rebuilt only when its own source or an imported interface changes, and this is the thing that answers that
@@ -16,6 +25,7 @@ use crate::types::Type;
 // module requires knowing what it imports before it has been parsed.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleRecord {
+    pub format_version: u32,
     pub module: String,
     pub source_hash: String,
     pub imports: Vec<String>,
@@ -54,7 +64,9 @@ impl BuildCache {
     pub fn load(&self, tag: &str, source_hash: &str) -> Option<ModuleRecord> {
         let text = std::fs::read_to_string(self.record_path(tag)).ok()?;
         let record: ModuleRecord = serde_json::from_str(&text).ok()?;
-        (record.source_hash == source_hash && record.module_tag() == tag)
+        (record.format_version == CACHE_FORMAT
+            && record.source_hash == source_hash
+            && record.module_tag() == tag)
             .then_some(record)
     }
 
@@ -117,30 +129,61 @@ pub(crate) fn digest(text: &str) -> String {
 // The bodies stay in the interface itself. They are how the module's own object
 // gets built when it is the module being rebuilt. It is only the fingerprint
 // that looks past them.
+//
+// Blanking a body severs its nodes from the tree but leaves them in the
+// arena, and the arena is what serializes, so the hashed view is rebuilt by
+// copying only what the blanked declarations still reach. The copy re-interns
+// symbols in walk order, so the view is deterministic whatever order the
+// original arena grew in.
 pub fn interface_fingerprint(interface: &ModuleInterface) -> Result<String> {
     let mut view = interface.clone();
+    for statement in &view.declarations.roots.clone() {
+        blank_ordinary_body(&mut view.declarations.ast, *statement);
+    }
+    let mut compact = Module::default();
+    {
+        let held = &view.declarations;
+        splice_positions(&mut compact.ast, &held.ast);
+        let splicer = Splicer::new(&held.ast, 0);
+        for statement in &held.roots {
+            let copied =
+                splicer.statement(&mut compact.ast, *statement, &mut |name| {
+                    name.to_string()
+                });
+            compact.roots.push(copied);
+        }
+    }
+    view.declarations = compact;
     // A file id is registration order, so leaving it in would make the hash
     // depend on which other modules the program happened to reach first.
-    stamp_file(&mut view.declarations, 0);
-    for statement in &mut view.declarations {
-        blank_ordinary_body(&mut statement.node);
-    }
+    stamp_file(&mut view, 0);
     Ok(digest(&view.to_json()?))
 }
 
-fn blank_ordinary_body(statement: &mut Statement) {
-    let Statement::Constant(_, value) = statement else {
+fn blank_ordinary_body(ast: &mut Ast, statement: StmtId) {
+    let Statement::Constant(_, value) = ast.stmt(statement) else {
         return;
     };
-    let (Expression::Function(params, _, body)
-    | Expression::Proc(params, _, body)) = value
+    let value = *value;
+    let (Expression::Function(params, _, _) | Expression::Proc(params, _, _)) =
+        ast.expr(value)
     else {
         return;
     };
-    if params.iter().any(is_compile_time) {
+    let params = *params;
+    if ast
+        .params_in(params)
+        .iter()
+        .any(|parameter| is_compile_time(ast, parameter))
+    {
         return;
     }
-    body.clear();
+    let (Expression::Function(_, _, body) | Expression::Proc(_, _, body)) =
+        &mut ast.expressions[value.0 as usize]
+    else {
+        return;
+    };
+    *body = Range32::EMPTY;
 }
 
 // What a module contributes when it is not being rebuilt. An ordinary function
@@ -150,30 +193,52 @@ fn blank_ordinary_body(statement: &mut Statement) {
 // the caller is what stamps out the template. Everything else is carried as it
 // stands. A type is layout the caller lays out its own frame with, and a
 // constant is a value.
-pub fn as_declaration(statement: &Statement) -> Option<Statement> {
-    let Statement::Constant(name, value) = statement else {
+//
+// Answers the reduced form pushed into `dest`, or `None` when the declaration
+// is carried as it stands and the caller splices it whole.
+pub fn push_as_declaration(
+    dest: &mut Ast,
+    splicer: &Splicer<'_>,
+    statement: StmtId,
+) -> Option<StmtId> {
+    let source = splicer.source;
+    let Statement::Constant(name, value) = source.stmt(statement) else {
         return None;
     };
     let (Expression::Function(params, return_sig, _)
-    | Expression::Proc(params, return_sig, _)) = value
+    | Expression::Proc(params, return_sig, _)) = source.expr(*value)
     else {
         return None;
     };
-    if params.iter().any(is_compile_time) {
+    if source
+        .params_in(*params)
+        .iter()
+        .any(|parameter| is_compile_time(source, parameter))
+    {
         return None;
     }
-    Some(Statement::Declared {
-        name: name.clone(),
-        params: params.clone(),
-        return_sig: return_sig.clone(),
-    })
+    let name = *name;
+    let params = *params;
+    let return_sig = *return_sig;
+    let span = source.stmt_span(statement);
+    let copied_params = splicer.copy_parameters(dest, params);
+    let copied_signature = splicer.copy_signature(dest, return_sig);
+    let copied_name = dest.intern(source.name(name));
+    Some(dest.push_stmt(
+        Statement::Declared {
+            name: copied_name,
+            params: copied_params,
+            return_sig: copied_signature,
+        },
+        splicer.shifted(span),
+    ))
 }
 
-fn is_compile_time(parameter: &Parameter) -> bool {
+fn is_compile_time(ast: &Ast, parameter: &Parameter) -> bool {
     parameter.compile_time_signature.is_some()
         || matches!(
             &parameter.type_annotation,
-            Some(Type::TypeParam(name)) if name == &parameter.name
+            Some(Type::TypeParam(name)) if name == ast.name(parameter.name)
         )
 }
 
@@ -199,116 +264,11 @@ pub fn module_fingerprint(
 // necessarily the same id in the process that wrote an interface and the one
 // that reads it back. Module attribution reads the top-level position's file
 // id, so an interface loaded from a record has to be restamped or its
-// declarations land in another module's object.
-pub fn stamp_file(statements: &mut [Spanned<Statement>], file: u32) {
-    for statement in statements.iter_mut() {
-        statement.position.file = file;
-        stamp_statement(&mut statement.node, file);
-    }
-}
-
-fn stamp_statement(statement: &mut Statement, file: u32) {
-    match statement {
-        Statement::Constant(_, value) => stamp_expression(value, file),
-        Statement::Let { value, .. } | Statement::LetMultiple(_, value) => {
-            stamp_expression(value, file)
-        }
-        Statement::Return(value) | Statement::Expression(value) => {
-            stamp_expression(value, file)
-        }
-        Statement::Print(value, arguments) => {
-            stamp_expression(value, file);
-            for argument in arguments {
-                stamp_expression(argument, file);
-            }
-        }
-        Statement::Assignment(target, value) => {
-            stamp_expression(target, file);
-            stamp_expression(value, file);
-        }
-        Statement::Defer(inner) => stamp_statement(inner, file),
-        Statement::For(_, _, range, body) => {
-            stamp_expression(range, file);
-            stamp_file(body, file);
-        }
-        Statement::While(condition, body) => {
-            stamp_expression(condition, file);
-            stamp_file(body, file);
-        }
-        Statement::With(_, body) => stamp_file(body, file),
-        Statement::Struct(..)
-        | Statement::Enum(..)
-        | Statement::Flags(..)
-        | Statement::TypeAlias(..)
-        | Statement::Extern { .. }
-        | Statement::Declared { .. }
-        | Statement::Break
-        | Statement::Continue
-        | Statement::Import(..) => {}
-    }
-}
-
-fn stamp_expression(expression: &mut Expression, file: u32) {
-    match expression {
-        Expression::PackMap(operand, _, _)
-        | Expression::Prefix(_, operand)
-        | Expression::AddressOf(operand)
-        | Expression::Borrow(operand)
-        | Expression::BorrowMut(operand)
-        | Expression::Try(operand)
-        | Expression::Dereference(operand)
-        | Expression::ArrayRepeat(operand, _)
-        | Expression::FieldAccess(operand, _) => {
-            stamp_expression(operand, file)
-        }
-        Expression::Infix(left, _, right)
-        | Expression::Index(left, right)
-        | Expression::Range(left, right, _) => {
-            stamp_expression(left, file);
-            stamp_expression(right, file);
-        }
-        Expression::If(condition, consequence, alternative) => {
-            stamp_expression(condition, file);
-            stamp_file(consequence, file);
-            if let Some(block) = alternative {
-                stamp_file(block, file);
-            }
-        }
-        Expression::Function(_, _, body) | Expression::Proc(_, _, body) => {
-            stamp_file(body, file)
-        }
-        Expression::Call(callee, arguments) => {
-            stamp_expression(callee, file);
-            for argument in arguments.iter_mut() {
-                stamp_expression(argument, file);
-            }
-        }
-        Expression::StructInit(_, fields)
-        | Expression::EnumVariantInit(_, _, fields) => {
-            for (_, value) in fields.iter_mut() {
-                stamp_expression(value, file);
-            }
-        }
-        Expression::Tuple(elements) => {
-            for element in elements.iter_mut() {
-                stamp_expression(element, file);
-            }
-        }
-        Expression::Switch(scrutinee, cases) => {
-            stamp_expression(scrutinee, file);
-            for case in cases.iter_mut() {
-                stamp_file(&mut case.body, file);
-            }
-        }
-        Expression::Unsafe(body) => stamp_file(body, file),
-        Expression::UnsafeFn(inner) => stamp_expression(inner, file),
-        Expression::Identifier(_)
-        | Expression::Literal(_)
-        | Expression::Boolean(_)
-        | Expression::Sizeof(_)
-        | Expression::TypeId(_)
-        | Expression::TypeName(_)
-        | Expression::TypeValue(_) => {}
+// declarations land in another module's object. Positions live in the
+// arena's one table, so restamping is a pass over it rather than a walk.
+pub fn stamp_file(interface: &mut ModuleInterface, file: u32) {
+    for position in &mut interface.declarations.ast.token_positions {
+        position.file = file;
     }
 }
 
@@ -322,10 +282,11 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
+        let module = parser.parse().unwrap();
         ModuleInterface::of(
             "lib/test.frost",
-            &statements,
+            &module.ast,
+            &module.roots,
             parser.exports(),
             &parser.linear_types().iter().cloned().collect(),
         )

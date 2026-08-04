@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 
-use crate::parser::{ParamMode, Parameter, Spanned, Statement};
+use crate::ast::{Ast, Parameter, Statement, StmtId};
+use crate::parser::ParamMode;
 use crate::types::Type;
 
 // An `extern fn` with a `$handler` parameter bound to a function signature is
@@ -23,20 +24,25 @@ use crate::types::Type;
 // the same function pointer in a struct field went unchecked. The position is
 // not what makes the context identifiable. Being the one parameter the handler
 // can write is.
-pub fn check_callback_declarations(
-    program: &[Spanned<Statement>],
-) -> Result<()> {
-    for statement in program {
-        let Statement::Extern { name, params, .. } = &statement.node else {
+pub fn check_callback_declarations(ast: &Ast, roots: &[StmtId]) -> Result<()> {
+    for statement in roots {
+        let Statement::Extern { name, params, .. } = ast.stmt(*statement)
+        else {
             continue;
         };
-        for parameter in params {
+        for parameter in ast.params_in(*params) {
             let Some(bound) = &parameter.compile_time_signature else {
                 continue;
             };
             crate::source_map::locate(
-                check_registration(name, params, parameter, bound),
-                statement.position,
+                check_registration(
+                    ast,
+                    ast.name(*name),
+                    ast.params_in(*params),
+                    parameter,
+                    bound,
+                ),
+                ast.stmt_position(*statement),
             )?;
         }
     }
@@ -95,21 +101,24 @@ fn sole_context(handler_params: &[Type]) -> Option<&Type> {
 
 // Every callback registration in a program, by name.
 pub fn callback_registrations(
-    program: &[Spanned<Statement>],
+    ast: &Ast,
+    roots: &[StmtId],
 ) -> HashMap<String, CallbackShape> {
     let mut registrations = HashMap::new();
-    for statement in program {
-        let Statement::Extern { name, params, .. } = &statement.node else {
+    for statement in roots {
+        let Statement::Extern { name, params, .. } = ast.stmt(*statement)
+        else {
             continue;
         };
-        if let Some(shape) = callback_shape(params) {
-            registrations.insert(name.clone(), shape);
+        if let Some(shape) = callback_shape(ast.params_in(*params)) {
+            registrations.insert(ast.name(*name).to_string(), shape);
         }
     }
     registrations
 }
 
 fn check_registration(
+    ast: &Ast,
     name: &str,
     params: &[Parameter],
     handler: &Parameter,
@@ -118,7 +127,7 @@ fn check_registration(
     let Type::Proc(handler_params, _) = bound else {
         bail!(
             "the compile-time parameter '${}' of the extern '{name}' is bound to '{bound}', which is not a function signature, so there is no callback to build",
-            handler.name
+            ast.name(handler.name)
         );
     };
     let writable = handler_params
@@ -130,13 +139,13 @@ fn check_registration(
     if writable == 0 {
         bail!(
             "the callback '${}' of the extern '{name}' has no 'mut' parameter, so it has no context, and a callback that cannot write its context has nothing to do that a plain function pointer does not",
-            handler.name
+            ast.name(handler.name)
         );
     }
     if writable > 1 {
         bail!(
             "the callback '${}' of the extern '{name}' has {writable} 'mut' parameters, so nothing says which one is the context the library is being asked to keep; a callback has one context",
-            handler.name
+            ast.name(handler.name)
         );
     }
     let Some(context) = sole_context(handler_params) else {
@@ -149,7 +158,7 @@ fn check_registration(
     let Some(carrier) = carrier else {
         bail!(
             "the callback '${}' of the extern '{name}' takes a context of type '{context}', but '{name}' has no parameter of that type to take it from",
-            handler.name
+            ast.name(handler.name)
         );
     };
     // The registration keeps the context past the call, so the caller must not
@@ -157,8 +166,8 @@ fn check_registration(
     if carrier.mode != ParamMode::Move {
         bail!(
             "'{}' is the context of the callback '${}' of the extern '{name}', so it has to be taken by 'move': the callback can fire at any time while it is registered, and the caller must not still hold it",
-            carrier.name,
-            handler.name
+            ast.name(carrier.name),
+            ast.name(handler.name)
         );
     }
     Ok(())
@@ -174,8 +183,8 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
-        check_callback_declarations(&statements)
+        let module = parser.parse().unwrap();
+        check_callback_declarations(&module.ast, &module.roots)
     }
 
     const CONTEXT: &str = "Ctx :: struct { hits: i64 }\n";
@@ -215,8 +224,8 @@ mod tests {
         let mut lexer = Lexer::new(&source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
-        let shape = callback_registrations(&statements);
+        let module = parser.parse().unwrap();
+        let shape = callback_registrations(&module.ast, &module.roots);
         let shape = shape.get("request").unwrap();
         assert_eq!(shape.handler, 0);
         assert_eq!(shape.context, 1);
@@ -283,8 +292,8 @@ mod tests {
         let mut lexer = Lexer::new(&source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse().unwrap();
-        let found = callback_registrations(&statements);
+        let module = parser.parse().unwrap();
+        let found = callback_registrations(&module.ast, &module.roots);
         let shape = found.get("register").unwrap();
         assert_eq!(shape.handler, 0);
         assert_eq!(shape.context, 1);
