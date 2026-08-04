@@ -190,22 +190,22 @@ impl std::error::Error for LocatedError {}
 /// since an editor applying an edit works in bytes. `span` is that offset and
 /// where the text the report is about ends; for a report that names a point
 /// rather than a range the two are the same number.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Report {
     pub file: Option<String>,
     pub line: usize,
     pub column: usize,
     pub span: (usize, usize),
-    pub severity: &'static str,
+    pub severity: String,
     pub message: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<Place>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<Replacement>,
 }
 
 /// Another place one report is about.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Place {
     pub file: Option<String>,
     pub line: usize,
@@ -215,7 +215,7 @@ pub struct Place {
 }
 
 /// An edit that answers a report: the bytes to replace and what to put there.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Replacement {
     pub file: Option<String>,
     pub span: (usize, usize),
@@ -295,7 +295,7 @@ pub fn as_report(diagnostic: &Diagnostic, severity: &'static str) -> Report {
         line,
         column,
         span: (at, at),
-        severity,
+        severity: severity.to_string(),
         message,
         related,
         fix,

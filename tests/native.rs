@@ -17468,6 +17468,174 @@ const SAME_FAULTS: &[(&str, &str)] = &[
     ),
 ];
 
+// A program whose faults are found by four different walks: an escape from a
+// frame, a resource consumed twice, a call given too many arguments and a name
+// nothing declares. One run names all four, which is the whole point of the
+// checks reporting rather than stopping: an agent editing this file learns
+// everything wrong with it from one compile instead of four.
+const FOUR_WALKS: &str = "Buffer :: linear struct { size: i64 }\n\
+     buffer_make :: fn() -> Buffer { Buffer { size = 4 } }\n\
+     buffer_free :: fn(move b: Buffer) { }\n\
+     takes_one :: fn(v: i64) -> i64 { v }\n\
+     moved_twice :: fn() -> i64 {\n\
+     \x20   held := buffer_make()\n\
+     \x20   buffer_free(held)\n\
+     \x20   buffer_free(held)\n\
+     \x20   0\n}\n\
+     escapes :: fn() -> ^i64 {\n\
+     \x20   var local : i64 = 3\n\
+     \x20   unsafe { ptr_to(local) }\n}\n\
+     too_many :: fn() -> i64 { takes_one(1, 2) }\n\
+     unknown_name :: fn() -> i64 { nowhere }\n\
+     main :: fn() -> i64 { moved_twice() + too_many() + unknown_name() }\n";
+
+#[test]
+fn one_run_names_what_every_walk_found() {
+    let report = bootstrap_refusal("fourwalks", FOUR_WALKS);
+    for wanted in [
+        "region: a pointer into the frame of 'escapes'",
+        "use of moved value 'held'",
+        "expects 1 argument(s) but 2 were given",
+        "unknown variable 'nowhere'",
+    ] {
+        assert!(
+            report.contains(wanted),
+            "one run did not say '{wanted}':\n{report}"
+        );
+    }
+}
+
+// A fault reported by two walks is one fault. The ownership rules are walked
+// once over the source and once over the bodies specialization expands, and for
+// a program with no generic in it both walks say the same thing; the run used
+// to say it twice.
+#[test]
+fn one_fault_is_reported_once() {
+    let report = bootstrap_refusal(
+        "saidonce",
+        "Buffer :: linear struct { size: i64 }\n\
+         buffer_make :: fn() -> Buffer { Buffer { size = 4 } }\n\
+         buffer_free :: fn(move b: Buffer) { }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := buffer_make()\n\
+         \x20   buffer_free(held)\n\
+         \x20   buffer_free(held)\n\
+         \x20   0\n}\n",
+    );
+    let said = report.matches("use of moved value 'held'").count();
+    assert_eq!(said, 1, "the one fault was named {said} times:\n{report}");
+}
+
+// An undeclared name used in two places is one thing to fix, so it is one
+// report carrying both places rather than two reports.
+#[test]
+fn one_root_cause_is_one_report_with_every_place() {
+    let report = bootstrap_refusal(
+        "oneroot",
+        "one :: fn() -> i64 { Absent { a = 1 }.a }\n\
+         two :: fn() -> i64 { Absent { a = 2 }.a }\n\
+         three :: fn() -> i64 { Absent { a = 3 }.a }\n\
+         main :: fn() -> i64 { one() + two() + three() }\n",
+    );
+    let said = report.matches("unknown struct 'Absent'").count();
+    assert_eq!(
+        said, 3,
+        "one root cause was named {said} times, and it shows in three places:\n{report}"
+    );
+    // Three places, and the caret report puts each on the line it is about.
+    for line in ["1:22", "2:22", "3:24"] {
+        assert!(
+            report.contains(line),
+            "the report does not point at {line}:\n{report}"
+        );
+    }
+}
+
+// What `--diagnostics=json` writes, read back and applied. The file is broken
+// only in ways an edit answers, so a reader that applies every certain edit
+// gets a program that builds, which is what makes the channel worth having.
+#[test]
+fn the_json_reports_round_trip_through_frost_fix() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join(unique("frost_fixup"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("fixme.frost");
+    std::fs::write(
+        &file,
+        "counted :: fn() -> i64 {\n\
+         \x20   mut total := 0\n\
+         \x20   total = total + 1\n\
+         \x20   total\n}\n\
+         doubled :: fn(n: i64) -> i64 {\n\
+         \x20   mut held := n\n\
+         \x20   held = held * 2\n\
+         \x20   held\n}\n\
+         main :: fn() -> i64 { counted() + doubled(4) }\n",
+    )
+    .unwrap();
+
+    let object = directory.join("fixme.o");
+    let asked = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--diagnostics=json")
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&file)
+        .output()
+        .unwrap();
+    let reports = String::from_utf8_lossy(&asked.stderr);
+    let lines: Vec<&str> =
+        reports.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "one report per fault:\n{reports}");
+    for line in &lines {
+        let held: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|_| panic!("not a report: {line}"));
+        assert_eq!(held["severity"], "error");
+        assert_eq!(held["fix"]["replacement"], "var");
+        assert_eq!(held["fix"]["certain"], true);
+        // The span is where the edit goes, counted in bytes, and it is as long
+        // as the text it stands in for.
+        let span = &held["fix"]["span"];
+        assert_eq!(
+            span[1].as_u64().unwrap() - span[0].as_u64().unwrap(),
+            3,
+            "the edit replaces `mut`"
+        );
+    }
+
+    let fixed = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("fix")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(
+        fixed.status.success(),
+        "frost fix failed:\n{}",
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        !text.contains("mut "),
+        "an edit was left unapplied:\n{text}"
+    );
+
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the fixed file did not build:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // The (line, message) pairs of a diagnostic dump: each `path:line:col:` header
 // sets the line, and each caret line under it contributes its message.
 fn located_faults(report: &str) -> Vec<(usize, String)> {
@@ -18552,16 +18720,16 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
         // neither build starts and the comparison below proves nothing.
         std::fs::copy(&library, work.join("SDL3.dll")).unwrap();
         let exe = work.join(format!("window{}", std::env::consts::EXE_SUFFIX));
-        let build = Command::new(&installed)
-            .current_dir(&work)
-            .arg("--link")
-            .arg("--libs")
-            .arg(&library)
-            .arg("-o")
-            .arg(&exe)
-            .arg("examples/graphics/window.frost")
-            .output()
-            .unwrap();
+        let build = run_when_no_longer_busy(
+            Command::new(&installed)
+                .current_dir(&work)
+                .arg("--link")
+                .arg("--libs")
+                .arg(&library)
+                .arg("-o")
+                .arg(&exe)
+                .arg("examples/graphics/window.frost"),
+        );
         assert!(
             build.status.success() && exe.exists(),
             "{label} could not link against a C library from {}:\n{}{}",
@@ -18743,18 +18911,18 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
             installed_layout(&format!("cret_{label}"), frost)
                 .expect("could not lay out an installed compiler");
         let exe = work.join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
-        let build = Command::new(&installed)
-            .current_dir(&work)
-            .arg("--link")
-            .arg("--libs")
-            .arg(&object)
-            .arg("--libs")
-            .arg(&dirty_object)
-            .arg("-o")
-            .arg(&exe)
-            .arg(&program)
-            .output()
-            .unwrap();
+        let build = run_when_no_longer_busy(
+            Command::new(&installed)
+                .current_dir(&work)
+                .arg("--link")
+                .arg("--libs")
+                .arg(&object)
+                .arg("--libs")
+                .arg(&dirty_object)
+                .arg("-o")
+                .arg(&exe)
+                .arg(&program),
+        );
         assert!(
             build.status.success() && exe.exists(),
             "{label} could not build the program from {}:\n{}{}",
@@ -18762,7 +18930,8 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
-        let run = Command::new(&exe).current_dir(&work).output().unwrap();
+        let run =
+            run_when_no_longer_busy(Command::new(&exe).current_dir(&work));
         assert!(
             run.status.success(),
             "{label} built a program that did not run: {:?}",
