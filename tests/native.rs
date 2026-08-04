@@ -4936,6 +4936,35 @@ fn self_hosted_rejects_an_unsupported_declaration() {
     );
 }
 
+// The primitive type names are predeclared identifiers, so a local may go by
+// one and the type parser still means the type. The bootstrap used to reserve
+// them while the self-hosted compiler read them as names, which was a program
+// one compiler accepted and the other refused; this holds the two to the same
+// answer.
+const PREDECLARED_NAMES: &str = "import \"io.frost\"\n\
+     main :: fn() -> i64 {\n\
+     \x20   i64 := 5\n\
+     \x20   str := 2\n\
+     \x20   usize := i64 + str\n\
+     \x20   held : i64 = usize\n\
+     \x20   print_int_line(held)\n\
+     \x20   0\n}\n";
+
+#[test]
+fn both_compilers_accept_a_local_named_after_a_primitive() {
+    let Some(bootstrap) = bootstrap_output("predeclared", PREDECLARED_NAMES)
+    else {
+        return;
+    };
+    assert_eq!(bootstrap, "7\n");
+    let Some(hosted) =
+        selfhosted_unaudited_output("shpredeclared", PREDECLARED_NAMES)
+    else {
+        return;
+    };
+    assert_eq!(hosted, "7\n");
+}
+
 // The tour's comments claim numbers, so it is compiled and run and the
 // numbers are checked.
 #[test]
@@ -17411,6 +17440,10 @@ const SAME_FAULTS: &[(&str, &str)] = &[
     (
         "mutlocal",
         "main :: fn() -> i64 {\n    mut x := 1\n    x = 2\n    x\n}\n",
+    ),
+    (
+        "boolname",
+        "main :: fn() -> i64 {\n    true := 1\n    0\n}\n",
     ),
     (
         "twounknown",

@@ -1,7 +1,7 @@
 # 7. Statements
 
 A block `{ Stmt* }` is a sequence of statements and is itself an expression whose
-value is its trailing expression (or `void`).
+value is its trailing expression, when it has one.
 
 - Expression statement, an expression evaluated for effect.
 - Binding, the forms in 5.1.

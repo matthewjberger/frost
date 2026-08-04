@@ -60,31 +60,37 @@ Reserved words of the specified language, the keyword table of `src/lexer.rs`
 in full:
 
 ```
-break case continue defer distinct else enum extern false fn for if import
-in inline linear match move mut ref return safe struct true
+break case continue defer distinct else enum extern fn for if import
+in inline linear match move mut ref return safe struct
 type unsafe uses var where while with
 ```
 
-`true` and `false` are reserved here and are the boolean literals of 2.5.
-
-Reserved primitive type names, each its own token:
+The primitive type names are predeclared identifiers:
 
 ```
-i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
+i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str
 ```
 
-Four words carry meaning without being reserved, so each stays usable as an
-ordinary identifier. `test` is read only at the start of a top-level test
-declaration (5.4) and `export` only on a top-level export line (5.5). `flags` is
-read as a declaration only when a scalar type and a brace follow it (3.6b), and
-`value` only as a parameter mode, where a name follows it (chapter 12). `Type`
-(capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
+Each means its type wherever a type is read, ahead of any declaration going by
+the same name, so the meaning cannot be redeclared, and each stays usable as
+an ordinary binding or field name. `void` is a type only inside the compilers;
+no surface program writes it.
+
+`true` and `false`, the boolean literals of 2.5, are predeclared the same way:
+identifiers to the lexer, always the booleans in expression position. A
+binding, parameter or constant by either name could never be read back, so
+declaring one is refused where the declaration is read.
+
+Several more words carry meaning without being reserved, so each stays usable
+as an ordinary identifier. `test` is read only at the start of a top-level test
+declaration (5.4) and `export` only on a top-level export line (5.5). `flags`
+is read as a declaration only when a scalar type and a brace follow it (3.6b),
+and `value` only as a parameter mode, where a name follows it (chapter 12).
+`Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
 identifier recognized in that position, unlike the lowercase keyword `type`.
-
-The type builtins `sizeof`, `typename` and `type_id` are not reserved either:
-each is an ordinary name read as the builtin only where it is called with a
-type argument (6.8), the way `ptr_to` and the other builtin functions are read
-at a call.
+The type builtins `sizeof`, `typename` and `type_id` are ordinary names read
+as the builtin only where one is called with a type argument (6.8), the way
+`ptr_to` and the other builtin functions are read at a call.
 
 ## 2.5 Literals
 

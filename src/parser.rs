@@ -45,6 +45,53 @@ fn signature_is_typed(signature: &ReturnSignature) -> bool {
     !matches!(signature.kind, ReturnKind::None) || !signature.uses.is_empty()
 }
 
+// The predeclared type names. Each is an ordinary identifier to the lexer and
+// means its type wherever a type is read, ahead of any declaration going by
+// the same name, so the meaning cannot be redeclared. `void` is only a type
+// internally: no surface program needs to write it, so only the compiler's own
+// round trip through `type_from_string` reads it back.
+fn primitive_type(name: &str, internal: bool) -> Option<Type> {
+    Some(match name {
+        "i8" => Type::I8,
+        "i16" => Type::I16,
+        "i32" => Type::I32,
+        "i64" => Type::I64,
+        "isize" => Type::Isize,
+        "u8" => Type::U8,
+        "u16" => Type::U16,
+        "u32" => Type::U32,
+        "u64" => Type::U64,
+        "usize" => Type::Usize,
+        "f32" => Type::F32,
+        "f64" => Type::F64,
+        "bool" => Type::Bool,
+        "str" => Type::Str,
+        "void" if internal => Type::Void,
+        _ => return None,
+    })
+}
+
+// The scalar names a `flags` declaration may follow its word with. A wider
+// set than the integers on purpose, so a float or bool there reaches the
+// declaration's own refusal, which names the type.
+fn is_scalar_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+    )
+}
+
 // The integer operators a constant expression may combine names with. Their
 // presence after `Name :: OtherName` is what marks the whole thing a constant
 // declaration rather than `Enum::Variant` access at statement position.
@@ -710,6 +757,19 @@ impl<'a> Parser<'a> {
         self.diagnostics = held;
     }
 
+    // `true` and `false` always mean the booleans in expression position, so
+    // a binding, parameter or constant by either name could never be read
+    // back. Refused where the declaration is read, in the words the
+    // self-hosted compiler also says.
+    fn refuse_literal_name(&self, name: &str) -> Result<()> {
+        if name == "true" || name == "false" {
+            return Err(self.at_consumed(format!(
+                "'{name}' always means the boolean, so it cannot be declared as a name"
+            )));
+        }
+        Ok(())
+    }
+
     // The error a site raises when the token it is looking at is the mistake:
     // the position is that token's, captured now, not wherever the cursor
     // ends up once recovery has skipped ahead.
@@ -967,6 +1027,19 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
+            // A constant whose value is a boolean literal. The words are
+            // identifiers now, so they are named here rather than sitting in
+            // the token list below.
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::DoubleColon)
+                    && matches!(
+                        self.peek_nth(2),
+                        Token::Identifier(word)
+                            if word == "true" || word == "false"
+                    ) =>
+            {
+                Some(self.parse_constant_or_struct_statement()?)
+            }
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::DoubleColon)
                     && matches!(
@@ -980,8 +1053,6 @@ impl<'a> Parser<'a> {
                             | Token::Integer(_)
                             | Token::Float(_)
                             | Token::StringLiteral(_)
-                            | Token::True
-                            | Token::False
                             | Token::Function
                             | Token::Inline
                             | Token::Unsafe
@@ -1093,6 +1164,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier after 'for'"),
         };
+        self.refuse_literal_name(&iterator)?;
         let iterator = self.ast.intern(&iterator);
         // `for index, item in items` names the position as well as the element,
         // for the loops that need to know where they are.
@@ -1101,6 +1173,7 @@ impl<'a> Parser<'a> {
             match self.read_token() {
                 Token::Identifier(name) => {
                     let name = name.to_string();
+                    self.refuse_literal_name(&name)?;
                     Some(self.ast.intern(&name))
                 }
                 other => {
@@ -1200,6 +1273,7 @@ impl<'a> Parser<'a> {
                 Token::Identifier(name) => name.to_string(),
                 other => bail!("Expected a name to bind, found {other}"),
             };
+            self.refuse_literal_name(&name)?;
             let name = self.ast.intern(&name);
             bindings.push(MultiBinding { name, mutable });
             if matches!(self.peek_nth(0), Token::Comma) {
@@ -1243,6 +1317,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
         };
+        self.refuse_literal_name(&name)?;
 
         if !matches!(self.read_token(), Token::ColonAssign) {
             bail!("Expected ':='");
@@ -1279,6 +1354,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier after 'ref'"),
         };
+        self.refuse_literal_name(&name)?;
         if !matches!(self.read_token(), Token::ColonAssign) {
             bail!("Expected ':=' after 'ref identifier'");
         }
@@ -1306,6 +1382,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
         };
+        self.refuse_literal_name(&name)?;
 
         if !matches!(self.read_token(), Token::Colon) {
             bail!("Expected ':'");
@@ -1341,6 +1418,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
         };
+        self.refuse_literal_name(&identifier)?;
 
         if !matches!(self.read_token(), Token::DoubleColon) {
             bail!("Expected '::'");
@@ -1567,6 +1645,7 @@ impl<'a> Parser<'a> {
                     Token::Identifier(name) => name.to_string(),
                     _ => bail!("Expected parameter name"),
                 };
+                self.refuse_literal_name(&param_name)?;
                 if !matches!(self.read_token(), Token::Colon) {
                     bail!("Expected ':' after parameter name");
                 }
@@ -1708,8 +1787,6 @@ impl<'a> Parser<'a> {
                 | Token::Minus
                 | Token::Ampersand
                 | Token::Dollar
-                | Token::True
-                | Token::False
                 | Token::Dot
                 | Token::LeftBrace
                 | Token::LeftBracket
@@ -1756,6 +1833,22 @@ impl<'a> Parser<'a> {
                 let arguments = self.ast.add_expr_list(&[argument]);
                 self.ast
                     .push_expr(Expression::Call(callee, arguments), span)
+            }
+            // The boolean literals. Predeclared meanings rather than reserved
+            // words: the words always mean the booleans in expression
+            // position, and declaring either as a name is refused where the
+            // declaration is read.
+            Token::Identifier(word) if word == "true" => {
+                self.read_token();
+                self.ast
+                    .push_expr(Expression::Boolean(true), self.span_from(start))
+            }
+            Token::Identifier(word) if word == "false" => {
+                self.read_token();
+                self.ast.push_expr(
+                    Expression::Boolean(false),
+                    self.span_from(start),
+                )
             }
             Token::Identifier(identifier) => {
                 let identifier = identifier.to_string();
@@ -1825,18 +1918,6 @@ impl<'a> Parser<'a> {
                 let held = self.parse_type()?;
                 self.ast.push_expr(
                     Expression::TypeValue(held),
-                    self.span_from(start),
-                )
-            }
-            Token::True => {
-                self.read_token();
-                self.ast
-                    .push_expr(Expression::Boolean(true), self.span_from(start))
-            }
-            Token::False => {
-                self.read_token();
-                self.ast.push_expr(
-                    Expression::Boolean(false),
                     self.span_from(start),
                 )
             }
@@ -2409,6 +2490,16 @@ impl<'a> Parser<'a> {
         let mut has_non_param_content = false;
         while index < max_lookahead {
             match self.peek_nth(index) {
+                // The boolean literals cannot be parameter names, so they say
+                // this is an expression the way an integer does.
+                Token::Identifier(word)
+                    if word == "true" || word == "false" =>
+                {
+                    if depth == 0 {
+                        has_non_param_content = true;
+                        saw_identifier = false;
+                    }
+                }
                 Token::Identifier(_) | Token::Mut | Token::Underscore => {
                     if depth == 0 {
                         saw_identifier = true;
@@ -2445,9 +2536,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Integer(_)
                 | Token::Float(_)
-                | Token::StringLiteral(_)
-                | Token::True
-                | Token::False => {
+                | Token::StringLiteral(_) => {
                     if depth == 0 {
                         has_non_param_content = true;
                         saw_identifier = false;
@@ -2514,6 +2603,7 @@ impl<'a> Parser<'a> {
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
+                self.refuse_literal_name(&name)?;
 
                 // `args: $...` is a compile-time list of values rather than
                 // a value of some type, so it has no type annotation of its
@@ -2657,11 +2747,11 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Pattern::Literal(Literal::String(s))
             }
-            Token::True => {
+            Token::Identifier(word) if word == "true" => {
                 self.read_token();
                 Pattern::Literal(Literal::Boolean(true))
             }
-            Token::False => {
+            Token::Identifier(word) if word == "false" => {
                 self.read_token();
                 Pattern::Literal(Literal::Boolean(false))
             }
@@ -2936,6 +3026,7 @@ impl<'a> Parser<'a> {
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
+                self.refuse_literal_name(&name)?;
 
                 // `args: $...` is a compile-time list of values rather than
                 // a value of some type, so it has no type annotation of its
@@ -3041,6 +3132,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected type parameter name after '$'"),
         };
+        self.refuse_literal_name(&name)?;
         if !matches!(self.read_token(), Token::Colon) {
             bail!("Expected ':' after type parameter name");
         }
@@ -3059,7 +3151,7 @@ impl<'a> Parser<'a> {
             // name stands for that integer in the body as well as in a type, so
             // a function over `[N]T` can be written once rather than once per
             // capacity.
-            Token::TypeUsize => {
+            Token::Identifier(word) if word == "usize" => {
                 self.read_token();
                 None
             }
@@ -3085,66 +3177,6 @@ impl<'a> Parser<'a> {
 
     fn parse_type(&mut self) -> Result<Type> {
         let base_type = match self.peek_nth(0) {
-            Token::TypeI8 => {
-                self.read_token();
-                Type::I8
-            }
-            Token::TypeI16 => {
-                self.read_token();
-                Type::I16
-            }
-            Token::TypeI32 => {
-                self.read_token();
-                Type::I32
-            }
-            Token::TypeI64 => {
-                self.read_token();
-                Type::I64
-            }
-            Token::TypeIsize => {
-                self.read_token();
-                Type::Isize
-            }
-            Token::TypeU8 => {
-                self.read_token();
-                Type::U8
-            }
-            Token::TypeU16 => {
-                self.read_token();
-                Type::U16
-            }
-            Token::TypeU32 => {
-                self.read_token();
-                Type::U32
-            }
-            Token::TypeU64 => {
-                self.read_token();
-                Type::U64
-            }
-            Token::TypeUsize => {
-                self.read_token();
-                Type::Usize
-            }
-            Token::TypeF32 => {
-                self.read_token();
-                Type::F32
-            }
-            Token::TypeF64 => {
-                self.read_token();
-                Type::F64
-            }
-            Token::TypeBool => {
-                self.read_token();
-                Type::Bool
-            }
-            Token::TypeStr => {
-                self.read_token();
-                Type::Str
-            }
-            Token::TypeVoid => {
-                self.read_token();
-                Type::Void
-            }
             Token::Caret => {
                 self.read_token();
                 Type::Ptr(Box::new(self.parse_type()?))
@@ -3306,6 +3338,11 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => {
                 let name = name.to_string();
                 self.read_token();
+                if let Some(primitive) =
+                    primitive_type(&name, self.internal_types)
+                {
+                    return Ok(primitive);
+                }
                 match name.as_str() {
                     "Handle" => {
                         if !matches!(self.peek_nth(0), Token::LessThan) {
@@ -3446,19 +3483,7 @@ impl<'a> Parser<'a> {
             && matches!(self.peek_nth(offset + 2), Token::LeftBrace)
             && matches!(
                 self.peek_nth(offset + 1),
-                Token::TypeI8
-                    | Token::TypeI16
-                    | Token::TypeI32
-                    | Token::TypeI64
-                    | Token::TypeIsize
-                    | Token::TypeU8
-                    | Token::TypeU16
-                    | Token::TypeU32
-                    | Token::TypeU64
-                    | Token::TypeUsize
-                    | Token::TypeF32
-                    | Token::TypeF64
-                    | Token::TypeBool
+                Token::Identifier(name) if is_scalar_type_name(name)
             )
     }
 

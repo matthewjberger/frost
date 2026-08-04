@@ -1331,6 +1331,25 @@ columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
 // template struct is not returned here. `Name<Arg>` instantiation is handled in
 // parse_type. An unknown name falls back to i64.
 type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    // The predeclared names come first, so a primitive means its type
+    // wherever a type is read and no binding or alias can redeclare it,
+    // which is the order the bootstrap resolves the same names in.
+    if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
+    if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
+    if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
+    if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
+    if (str_range_eq(p.src, offset, length, "isize")) { return TY_ISIZE }
+    if (str_range_eq(p.src, offset, length, "u64")) { return TY_U64 }
+    if (str_range_eq(p.src, offset, length, "u32")) { return TY_U32 }
+    if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
+    if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
+    if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
+    if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
+    if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
+    if (str_range_eq(p.src, offset, length, "str")) {
+        return array_of(p, TY_U8, -1)
+    }
+    if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     if (p.type_param_len == length
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         if (p.binding_active == 1) {
@@ -1361,22 +1380,6 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         a = a + 1
     }
-    if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
-    if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
-    if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
-    if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
-    if (str_range_eq(p.src, offset, length, "isize")) { return TY_ISIZE }
-    if (str_range_eq(p.src, offset, length, "u64")) { return TY_U64 }
-    if (str_range_eq(p.src, offset, length, "u32")) { return TY_U32 }
-    if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
-    if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
-    if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
-    if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
-    if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
-    if (str_range_eq(p.src, offset, length, "str")) {
-        return array_of(p, TY_U8, -1)
-    }
-    if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     var i : i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
@@ -1474,6 +1477,24 @@ fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // way at a call, and this is what tells the type argument from the function
 // argument.
 is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
+    // The predeclared names come first, matching `type_code_for`, so what
+    // counts as a type name and what a type name means agree.
+    if (str_range_eq(p.src, offset, length, "i64")) { return true }
+    if (str_range_eq(p.src, offset, length, "i32")) { return true }
+    if (str_range_eq(p.src, offset, length, "i16")) { return true }
+    if (str_range_eq(p.src, offset, length, "i8")) { return true }
+    if (str_range_eq(p.src, offset, length, "isize")) { return true }
+    if (str_range_eq(p.src, offset, length, "u64")) { return true }
+    if (str_range_eq(p.src, offset, length, "u32")) { return true }
+    if (str_range_eq(p.src, offset, length, "u16")) { return true }
+    if (str_range_eq(p.src, offset, length, "u8")) { return true }
+    if (str_range_eq(p.src, offset, length, "usize")) { return true }
+    if (str_range_eq(p.src, offset, length, "f64")) { return true }
+    if (str_range_eq(p.src, offset, length, "f32")) { return true }
+    if (str_range_eq(p.src, offset, length, "str")) { return true }
+    if (str_range_eq(p.src, offset, length, "bool")) { return true }
+    if (str_range_eq(p.src, offset, length, "Handle")) { return true }
+    if (str_range_eq(p.src, offset, length, "columns")) { return true }
     if (p.type_param_len == length
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         return true
@@ -1496,22 +1517,6 @@ is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
         }
         a = a + 1
     }
-    if (str_range_eq(p.src, offset, length, "i64")) { return true }
-    if (str_range_eq(p.src, offset, length, "i32")) { return true }
-    if (str_range_eq(p.src, offset, length, "i16")) { return true }
-    if (str_range_eq(p.src, offset, length, "i8")) { return true }
-    if (str_range_eq(p.src, offset, length, "isize")) { return true }
-    if (str_range_eq(p.src, offset, length, "u64")) { return true }
-    if (str_range_eq(p.src, offset, length, "u32")) { return true }
-    if (str_range_eq(p.src, offset, length, "u16")) { return true }
-    if (str_range_eq(p.src, offset, length, "u8")) { return true }
-    if (str_range_eq(p.src, offset, length, "usize")) { return true }
-    if (str_range_eq(p.src, offset, length, "f64")) { return true }
-    if (str_range_eq(p.src, offset, length, "f32")) { return true }
-    if (str_range_eq(p.src, offset, length, "str")) { return true }
-    if (str_range_eq(p.src, offset, length, "bool")) { return true }
-    if (str_range_eq(p.src, offset, length, "Handle")) { return true }
-    if (str_range_eq(p.src, offset, length, "columns")) { return true }
     var i : i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)

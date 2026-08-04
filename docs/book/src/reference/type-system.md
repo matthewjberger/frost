@@ -12,4 +12,4 @@ and expression has a compile-time type.
 
 Type checking runs on the typed intermediate representation after lowering
 (`src/ir_typecheck.rs`). It validates operand types, call arity, and that a
-non-`void` function returns a value on every path.
+function declaring a return answers with a value on every path.

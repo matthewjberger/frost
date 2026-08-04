@@ -90,10 +90,10 @@ str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
     byte_at(word, len) == 0
 }
 
-// Every identifier in the source is asked whether it is a keyword, and there
-// are thirty-two of them, so asking about each in turn is thirty-two
-// comparisons for every name a program mentions. A keyword's length rules out
-// all but a handful before any bytes are looked at.
+// Every identifier in the source is asked whether it is a keyword, so asking
+// about each in turn is one comparison per keyword for every name a program
+// mentions. A keyword's length rules out all but a handful before any bytes
+// are looked at.
 classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     if (len == 2) {
         if (str_range_eq(src, off, len, "fn")) {
@@ -108,9 +108,6 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     } else if (len == 3) {
         if (str_range_eq(src, off, len, "for")) {
             return TokenKind::KwFor
-        }
-        if (str_range_eq(src, off, len, "let")) {
-            return TokenKind::KwLet
         }
         if (str_range_eq(src, off, len, "mut")) {
             return TokenKind::KwMut
@@ -140,9 +137,6 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         if (str_range_eq(src, off, len, "test")) {
             return TokenKind::KwTest
         }
-        if (str_range_eq(src, off, len, "true")) {
-            return TokenKind::KwTrue
-        }
         if (str_range_eq(src, off, len, "uses")) {
             return TokenKind::KwUses
         }
@@ -155,9 +149,6 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         }
         if (str_range_eq(src, off, len, "defer")) {
             return TokenKind::KwDefer
-        }
-        if (str_range_eq(src, off, len, "false")) {
-            return TokenKind::KwFalse
         }
         if (str_range_eq(src, off, len, "match")) {
             return TokenKind::KwMatch
