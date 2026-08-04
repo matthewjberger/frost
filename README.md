@@ -33,25 +33,110 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 | dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
 | classes and methods | plain structs and free functions |
 
-## A short tour
+## The language at a glance
 
-The tour covers borrows that are parameter modes, a resource the compiler counts,
-a failure that travels in the signature, a `for` that needs no iterator, a
-function that answers with two values, and literals that leave out a type the
-context already carries while every field keeps its name.
+```frost
+// A program is data and free functions. Every top-level declaration is
+// `name :: value`, and a file's exports are one `export` line.
+import "io.frost"
 
-<p align="center">
-  <img src="docs/book/src/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
-</p>
+MAX_HEALTH :: 100                    // a constant, folded where it is named
+Meters :: distinct i64               // same bits, different type; no unwrapping
+
+Kind :: enum { Hero, Monster { damage: i64 } }
+Entity :: struct { hp: i64, kind: Kind }
+
+// An unmarked parameter borrows to read. `mut` borrows and writes the
+// caller's value. `move` takes ownership. The call site writes nothing,
+// there is no `&` anywhere, and nothing a borrow could escape into exists,
+// which is why there are no lifetimes to annotate.
+heal :: fn(mut e: Entity, amount: i64) {
+    e.hp = e.hp + amount
+}
+
+attack :: fn(e: Entity) -> i64 {
+    // `match` binds the payload and has to cover every variant.
+    match e.kind {
+        case .Hero: 10
+        case .Monster { damage }: damage
+    }
+}
+
+// A function answers with several values through a return type list.
+// There is no tuple type; the names say which value is which.
+tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
+    var sum : i64 = 0                // `var` declares an assignable local
+    var best : i64 = 0
+    for held in party {              // walks a slice, array, or str; no iterator
+        hit := attack(held)          // `:=` binds, immutable by default
+        sum = sum + hit
+        if (hit > best) { best = hit }
+    }
+    return { total = sum, strongest = best }
+}
+
+// A `linear` value must be consumed exactly once on every path out,
+// or the program does not build. `move` is what consumes it.
+Session :: linear struct { id: i64 }
+close :: fn(move s: Session) -> i64 { s.id }
+
+// `-> T ! E` says how a function fails, and `?` hands the failure up.
+Blocked :: struct { at: i64 }
+strike :: fn(e: Entity) -> i64 ! Blocked {
+    if (e.hp <= 0) { return { at = e.hp } }
+    attack(e)
+}
+round :: fn(e: Entity) -> i64 ! Blocked {
+    hit := strike(e)?
+    hit * 2
+}
+
+// Generics monomorphize over types, integers, and functions, so the
+// inner-loop call is direct. `$f` with a signature is the whole bound story.
+descending :: fn(a: i64, b: i64) -> bool { a > b }
+best_of :: fn($T: Type, $before: fn(T, T) -> bool, move a: $T, move b: $T) -> $T {
+    var kept := a
+    if (before(b, kept)) { kept = b }
+    kept
+}
+
+// C links without a binding layer, and calling it is gated by `unsafe`.
+strlen :: extern fn(s: ^i8) -> i64
+
+main :: fn() -> i64 {
+    var hero : Entity = { hp = 90, kind = .Hero }  // the context names the type
+    heal(hero, 10)                                 // borrowed and changed
+    print_int_line(hero.hp)                        // 100
+
+    party : [2]Entity = [hero, { hp = 40, kind = .Monster { damage = 12 } }]
+    total, strongest := tally(party)               // both values, bound by name
+    print_int_line(total)                          // 22
+    print_int_line(strongest)                      // 12
+
+    s := Session { id = 7 }
+    print_int_line(close(s))                       // s cannot be named again
+
+    print_int_line(best_of($i64, $descending, 3, 9))   // 9
+    print_int_line(sizeof(Entity))                 // a compile-time constant
+    print_int_line(unsafe { strlen("hello") })     // 5
+    0
+}
+```
+
+Past this screen: long-lived data lives in pools named by generational
+`Handle`s, small copy values that go stale rather than dangling; a `with` block
+is an arena whose pointers cannot outlive it; `columns<T, N>` stores a struct
+as one array per field; `defer` runs where the function leaves; and `test`
+blocks run under `--test`. [`examples/tour.frost`](examples/tour.frost) is the
+official tour, a runnable program the suite compiles and checks:
 
 ```bash
 frost examples/tour.frost          # compile, link, and run
 ```
 
-That is [`examples/tour.frost`](examples/tour.frost). A test compiles it, checks
-what it prints, and checks it still matches what is written here.
-
-For long-lived data, a value lives in a pool and is named by a `Handle`, a small copy value. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is built on that, and [`just app scene`](docs/book/src/std/ecs.md) runs it: entities in an ECS, two passes, depth deciding what is in front.
+The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is
+built on those handles, and [`just app scene`](docs/book/src/std/ecs.md) runs
+it: entities in an ECS, two passes, depth deciding what is in front.
 
 ## Documentation
 
@@ -248,7 +333,7 @@ frost/
 ├── std/          # the standard library, in Frost
 ├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
 ├── lib/          # the engine, in Frost: platform, renderer, engine
-├── tools/        # the wgpu binding generator, and the highlighter
+├── tools/        # the wgpu binding generator
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
 ├── .vscode/      # editor settings, and the VS Code grammar for .frost

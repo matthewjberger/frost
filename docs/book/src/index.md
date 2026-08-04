@@ -38,18 +38,14 @@ What Frost has instead of the usual machinery: borrows that are parameter modes,
 a resource the compiler counts, a failure that travels in the signature, a `for`
 with no iterator to implement, a function that answers with two values and no
 tuple type behind them, and literals that leave out a type the context already
-carries while every field keeps its name.
-
-<p align="center">
-  <img src="tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
-</p>
+carries while every field keeps its name. [A tour of Frost](tour.md) walks all
+of it, and the program behind it runs:
 
 ```bash
 frost examples/tour.frost          # compile, link, and run
 ```
 
-That is `examples/tour.frost`, not prose. A test compiles it, checks what it
-prints, and checks it still matches what is written here.
+That is `examples/tour.frost`. A test compiles it and checks what it prints.
 
 ## What it does
 
