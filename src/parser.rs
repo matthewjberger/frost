@@ -909,6 +909,8 @@ impl<'a> Parser<'a> {
                     | Token::Break
                     | Token::Continue
                     | Token::Ref
+                    | Token::Var
+                    | Token::Mut
                     | Token::If
                     | Token::Match
                     | Token::Unsafe
@@ -972,18 +974,24 @@ impl<'a> Parser<'a> {
                     "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`".to_string(),
                 ));
             }
+            // A binding lives in a block. At the top level the same tokens
+            // fall through to the arm below that names what may stand there,
+            // which is what the self-hosted compiler also says.
             Token::Identifier(_)
-                if matches!(self.peek_nth(1), Token::Comma) =>
+                if self.block_depth > 0
+                    && matches!(self.peek_nth(1), Token::Comma) =>
             {
                 Some(self.parse_multiple_declaration()?)
             }
             Token::Identifier(_)
-                if matches!(self.peek_nth(1), Token::ColonAssign) =>
+                if self.block_depth > 0
+                    && matches!(self.peek_nth(1), Token::ColonAssign) =>
             {
                 Some(self.parse_declaration(false)?)
             }
             Token::Identifier(_)
-                if matches!(self.peek_nth(1), Token::Colon)
+                if self.block_depth > 0
+                    && matches!(self.peek_nth(1), Token::Colon)
                     && !matches!(self.peek_nth(2), Token::Colon) =>
             {
                 Some(self.parse_typed_declaration(false)?)
@@ -3103,6 +3111,7 @@ impl<'a> Parser<'a> {
                 Token::Identifier(name) => name.to_string(),
                 _ => bail!("Expected type parameter name after '$'"),
             };
+            self.refuse_literal_name(&param_name)?;
             if !matches!(self.read_token(), Token::Colon) {
                 bail!("Expected ':' after type parameter name");
             }

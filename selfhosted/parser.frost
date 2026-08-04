@@ -382,6 +382,17 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         advance(p)
         return inner
     }
+    // Everything past here reads a name. Any other token, a stray byte among
+    // them, is refused where it stands, in the words the bootstrap says for
+    // the same token, rather than being read as a name spelled by whatever
+    // the bytes were.
+    if (kind != TokenKind::Ident) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("Token not valid for an expression: '")
+        report_src(p.src, cur_off(p), cur_len(p))
+        report("'")
+        frost_rt_recover_escape()
+    }
     offset := cur_off(p)
     length := cur_len(p)
     advance(p)
@@ -2868,6 +2879,11 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         callee := call_target(p, value)
         p.ti = names_at
         while (cur(p) != TokenKind::Coloneq && cur(p) != TokenKind::Eof) {
+            if (cur(p) == TokenKind::KwMut) {
+                report_where(p.modules, p.src, cur_off(p))
+                report("`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`")
+                frost_rt_recover_escape()
+            }
             if (cur(p) == TokenKind::KwVar) {
                 advance(p)
             }
@@ -4165,6 +4181,7 @@ parse_struct :: fn(mut p: Parser) {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
+            refuse_literal_name(p, poff, plen)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
@@ -4346,6 +4363,7 @@ parse_enum :: fn(mut p: Parser) {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
+            refuse_literal_name(p, poff, plen)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
