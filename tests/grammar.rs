@@ -153,26 +153,23 @@ fn formatting_the_corpus_is_idempotent() {
     }
 }
 
-// Formatting moves no token to another line, which is what makes it safe in a
-// language where the line a token is on is meaning. Counted rather than argued:
-// the same tokens, in the same order, on the same lines.
+// Formatting changes no token. The bytes between them are this formatter's to
+// settle; the tokens are the program.
 #[test]
-fn formatting_the_corpus_moves_no_token() {
+fn formatting_the_corpus_changes_no_token() {
     for file in corpus() {
         let source = std::fs::read_to_string(&file).unwrap();
         let formatted = frost::format_source(&source);
-        let before: Vec<&str> = source.lines().map(str::trim).collect();
-        let after: Vec<&str> = formatted.lines().map(str::trim).collect();
-        // Blank lines collapse, so the comparison is of the lines that hold
-        // something, and each must still hold the same thing.
-        let before: Vec<&&str> =
-            before.iter().filter(|line| !line.is_empty()).collect();
-        let after: Vec<&&str> =
-            after.iter().filter(|line| !line.is_empty()).collect();
+        let before = frost::tokens_and_gaps(&source).unwrap();
+        let after = frost::tokens_and_gaps(&formatted)
+            .unwrap_or_else(|| panic!("{} did not lex after", file.display()));
+        let tokens = |pieces: &Vec<String>| -> Vec<String> {
+            pieces.iter().skip(1).step_by(2).cloned().collect()
+        };
         assert_eq!(
-            before.len(),
-            after.len(),
-            "{} gained or lost a line",
+            tokens(&before),
+            tokens(&after),
+            "{} has different tokens after formatting",
             file.display()
         );
     }
