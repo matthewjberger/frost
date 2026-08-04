@@ -10,26 +10,33 @@ carry `_` between digits; `FLOAT` covers a fraction, an `e` exponent, or both.
 
 ## 13.1 Program and statements
 
+The top level holds declarations. A binding, a loop, and an expression
+statement live inside blocks, and either compiler refuses one written at file
+scope by naming what may stand there.
+
 ```
-Program   = Statement*
+Program   = TopLevel*
+
+TopLevel =
+      "import" STRING ImportRenames? ";"?
+    | ExportLine
+    | TestBlock
+    | IDENT "::" ConstBody ";"?
 
 Statement =
-      "return" ( Expr ( "," Expr )* )? ";"?
+      TopLevel
+    | "return" ( Expr ( "," Expr )* )? ";"?
     | "defer" Statement
     | "for" IDENT ( "," IDENT )? "in" Expr Block
     | "while" "(" Expr ")" Block
     | "with" IDENT Block                      // a region, 8a
     | "break" ";"?
     | "continue" ";"?
-    | "import" STRING ImportRenames? ";"?
-    | ExportLine
-    | TestBlock
     | "var" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
     | "ref" IDENT ":=" Expr ";"?             // bind a borrow of a place (5.1)
     | MultiNames ":=" Expr ";"?              // several values from one call
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
-    | IDENT "::" ConstBody ";"?
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 

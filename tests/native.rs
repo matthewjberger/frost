@@ -17438,8 +17438,21 @@ const SAME_FAULTS: &[(&str, &str)] = &[
         "main :: fn() -> i64 {\n    x := 7\u{a3}\n    0\n}\n",
     ),
     (
+        "strayincall",
+        "take :: fn(v: i64) -> i64 { v }\nmain :: fn() -> i64 {\n    take(7\u{a3})\n    0\n}\n",
+    ),
+    ("topbinding", "x := 1\nmain :: fn() -> i64 {\n    0\n}\n"),
+    (
+        "booltparam",
+        "Pair :: struct($true: Type) { first: i64 }\nmain :: fn() -> i64 { 0 }\n",
+    ),
+    (
         "mutlocal",
         "main :: fn() -> i64 {\n    mut x := 1\n    x = 2\n    x\n}\n",
+    ),
+    (
+        "mutinlist",
+        "divide :: fn(a: i64, b: i64) -> (q: i64, r: i64) {\n    return a / b, a % b\n}\nmain :: fn() -> i64 {\n    a, mut b := divide(7, 2)\n    b = b + 1\n    a + b\n}\n",
     ),
     (
         "boolname",
