@@ -11,9 +11,7 @@ use frost::{
     Literal as AstLiteral, Manifest, Module, Parameter as AstParameter,
     Parser as FrostParser, Position, Range32, Resolution, ReturnKind,
     ReturnSignature, RunOutcome, SearchRoot, Statement, TEST_PREFIX, TokenSpan,
-    Type, build_module, build_module_per_module, check_callback_declarations,
-    check_frame_escapes, check_linearity, check_module, check_ownership,
-    check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
+    Type, compile_ir_to_object, emit_c, lower_allocation_sources,
     lower_failure_sets, lower_multiple_returns, lower_param_modes,
     register_entry_file, resolve_distinct_types, resolve_imports_cached,
     run_module, strip_unsafe_fns,
@@ -81,6 +79,32 @@ struct Cli {
         help = "Directory to search for imports, after the importing file's own. Repeatable"
     )]
     lib_path: Vec<String>,
+
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        help = "How diagnostics are written: `caret` for a reader, `json` for one object per report per line"
+    )]
+    diagnostics: Option<String>,
+}
+
+/// Whether this run writes its reports as JSON.
+///
+/// Read from the arguments directly rather than from the parsed command line,
+/// because the top of the program has to know before `clap` has run: a file that
+/// cannot be read is a report too, and the caller asked for JSON for all of
+/// them.
+fn wants_json() -> bool {
+    let mut arguments = std::env::args();
+    while let Some(argument) = arguments.next() {
+        if argument == "--diagnostics" {
+            return arguments.next().as_deref() == Some("json");
+        }
+        if let Some(format) = argument.strip_prefix("--diagnostics=") {
+            return format == "json";
+        }
+    }
+    false
 }
 
 // Where an import may be found, most specific first.
@@ -313,6 +337,98 @@ fn test_directory(directory: &Path, arguments: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Why a compile was refused, as the reports themselves rather than as text.
+///
+/// The reports reach the top of the program this way so that what is printed is
+/// chosen there: the same faults are a caret report for a reader and a line of
+/// JSON each for a program. Displaying it gives the caret report's text, which
+/// is what an error printed any other way already gave.
+#[derive(Debug)]
+struct Refused(Vec<frost::Diagnostic>);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lines: Vec<String> =
+            self.0.iter().map(frost::Diagnostic::rendered).collect();
+        write!(f, "{}", lines.join("\n"))
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Everything the run collected, as the one error a refused compile prints.
+fn refuse(collected: &[frost::Diagnostic]) -> Result<()> {
+    if collected.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(Refused(frost::grouped_diagnostics(
+        collected.to_vec()
+    ))))
+}
+
+/// A rewrite's fault, printed beside every fault the checks had already found.
+///
+/// The chain's innermost message is the one with something to say, which is
+/// also the one `render_diagnostic` prints, so joining that with the collected
+/// reports gives the same text either way.
+fn beside<T>(collected: &[frost::Diagnostic], outcome: Result<T>) -> Result<T> {
+    let fault = match outcome {
+        Ok(held) => return Ok(held),
+        Err(fault) => fault,
+    };
+    let mut held = collected.to_vec();
+    // A rewrite's fault has no report of its own, so it becomes one: the
+    // innermost message is the one with something to say, and it says where it
+    // is itself when it knows.
+    if let Some(innermost) = fault.chain().last() {
+        // A message a pass joined from several faults is several faults, so
+        // each line becomes a report of its own rather than one report holding
+        // a paragraph.
+        for line in innermost.to_string().lines() {
+            held.push(frost::Diagnostic::new(
+                frost::Position::default(),
+                line.to_string(),
+            ));
+        }
+    }
+    Err(anyhow!(Refused(frost::grouped_diagnostics(held))))
+}
+
+/// Lower to IR and check the IR, beside the faults the walks over the syntax
+/// found.
+///
+/// A function that failed to lower contributes no IR, so the two IR checks run
+/// only when lowering was clean: asked about a module with a hole where a
+/// function should be, they report the hole in every function that calls it
+/// rather than what is wrong. Whatever they do find joins the collected
+/// reports, since a region escape in one function and a type error in another
+/// are two faults and one run should name both.
+fn lowered_and_checked(
+    program: &mut Module,
+    linear_types: &std::collections::HashSet<String>,
+    per_module: bool,
+    collected: &[frost::Diagnostic],
+) -> Result<frost::IrModule> {
+    let (module, lowering) = beside(
+        collected,
+        frost::build_module_recovering(
+            &mut program.ast,
+            &program.roots,
+            linear_types,
+            per_module,
+        ),
+    )?;
+    let mut faults = collected.to_vec();
+    faults.extend(lowering.iter().cloned());
+
+    if lowering.is_empty() {
+        faults.extend(frost::check_module_recovering(&module));
+        faults.extend(frost::check_linearity_recovering(&module));
+    }
+    refuse(&faults)?;
+    Ok(module)
+}
+
 /// How much stack the compiler runs on.
 ///
 /// Every pass over a program recurses over its syntax, so how deep the compiler
@@ -346,7 +462,29 @@ fn main() -> std::process::ExitCode {
             // where it is gets the line it is about and a caret under the
             // column, which is what the self-hosted compiler has always done
             // and there is no reason for two formats.
-            eprint!("{}", frost::render_diagnostic(&error));
+            //
+            // A caller that asked for JSON gets the reports themselves, which
+            // is why they travel to here as reports. A fault raised as text
+            // rather than as a report still becomes one, so the stream holds
+            // every fault whatever raised it.
+            if wants_json() {
+                let refused = match error.downcast_ref::<Refused>() {
+                    Some(refused) => refused.0.clone(),
+                    None => frost::render_diagnostic(&error)
+                        .lines()
+                        .filter_map(|line| line.strip_prefix("frost: "))
+                        .map(|held| {
+                            frost::Diagnostic::new(
+                                frost::Position::default(),
+                                held.to_string(),
+                            )
+                        })
+                        .collect(),
+                };
+                eprint!("{}", frost::diagnostics_as_json(&refused, "error"));
+            } else {
+                eprint!("{}", frost::render_diagnostic(&error));
+            }
             std::process::ExitCode::FAILURE
         }
     }
@@ -459,18 +597,19 @@ fn compile() -> Result<()> {
             )
         });
     }
-    check_callback_declarations(&program.ast, &program.roots)
-        .context("Callback error")?;
+    // Every check reports what it found and the next one still runs, so one
+    // invocation names every independent fault rather than the first pass's
+    // worth. A rewrite is the exception: it edits the program, and no pass
+    // after a failed edit can be trusted to read what it left behind, so a
+    // rewrite that fails ends the run with whatever the checks have collected.
+    let mut faults: Vec<frost::Diagnostic> = Vec::new();
+    faults.extend(frost::check_callback_declarations_recovering(
+        &program.ast,
+        &program.roots,
+    ));
     let (unchecked, idle) =
         frost::check_unsafety_and_audit(&program.ast, &program.roots);
-    if !unchecked.is_empty() {
-        let listed: Vec<String> = unchecked
-            .iter()
-            .map(|d| format!("at {}: {}", d.position.describe(), d.message))
-            .collect();
-        return Err(anyhow::anyhow!(listed.join("\n")))
-            .context("Unsafe operation error");
-    }
+    faults.extend(unchecked);
     // A block holding nothing unchecked is reported on every build, since the
     // list of `unsafe` blocks is only worth reading while every one of them
     // earns its place. `--audit-unsafe` turns the report into a failure, which
@@ -488,18 +627,26 @@ fn compile() -> Result<()> {
     // plain function it wraps before any later pass or backend sees one.
     strip_unsafe_fns(&mut program.ast, &program.roots);
     resolve_distinct_types(&mut program.ast, &program.roots);
-    lower_multiple_returns(&mut program.ast, &mut program.roots)
-        .context("Multiple return error")?;
-    check_regions(&program.ast, &program.roots).context("Region error")?;
-    check_frame_escapes(&program.ast, &program.roots)
-        .context("Region error")?;
-    lower_allocation_sources(&mut program.ast, &program.roots)
-        .context("Allocation source error")?;
+    beside(
+        &faults,
+        lower_multiple_returns(&mut program.ast, &mut program.roots),
+    )?;
+    faults.extend(frost::check_regions_recovering(
+        &program.ast,
+        &program.roots,
+    ));
+    faults.extend(frost::check_frame_escapes_recovering(
+        &program.ast,
+        &program.roots,
+    ));
+    beside(
+        &faults,
+        lower_allocation_sources(&mut program.ast, &program.roots),
+    )?;
     // A failure set's result is linear when what it carries is, so the set of
     // linear types grows here and the ownership check below sees the whole of
     // it.
-    lower_failure_sets(&mut program, &mut linear_types)
-        .context("Failure set error")?;
+    beside(&faults, lower_failure_sets(&mut program, &mut linear_types))?;
     lower_param_modes(&mut program.ast, &program.roots);
     // `assert` is a builtin, so it belongs to every program rather than to the
     // test harness that used to be the only thing declaring what it lowers to.
@@ -508,9 +655,9 @@ fn compile() -> Result<()> {
     if !cli.test && !declares_extern(&program, "frost_rt_assert_at") {
         push_assert_declaration(&mut program);
     }
-    check_ownership(&program.ast, &program.roots, &linear_types)
-        .context("Ownership error")?;
-
+    // The ownership check reads the program that is about to be lowered, which
+    // under `--test` is the one the harness has been added to, so each path
+    // runs it over its own and none runs it twice.
     if cli.test {
         if tests.is_empty() {
             println!("no tests found in {}", cli.file);
@@ -518,13 +665,13 @@ fn compile() -> Result<()> {
         }
         let mut augmented = program.clone();
         push_test_harness(&mut augmented, &tests);
-        check_ownership(&augmented.ast, &augmented.roots, &linear_types)
-            .context("Ownership error")?;
+        faults.extend(frost::check_ownership_recovering(
+            &augmented.ast,
+            &augmented.roots,
+            &linear_types,
+        ));
         let module =
-            build_module(&mut augmented.ast, &augmented.roots, &linear_types)
-                .context("IR lowering error")?;
-        check_module(&module).context("IR type error")?;
-        check_linearity(&module).context("Linearity error")?;
+            lowered_and_checked(&mut augmented, &linear_types, false, &faults)?;
         let stem = Path::new(&cli.file)
             .file_stem()
             .unwrap_or_default()
@@ -575,12 +722,15 @@ fn compile() -> Result<()> {
         std::process::exit(1);
     }
 
+    faults.extend(frost::check_ownership_recovering(
+        &program.ast,
+        &program.roots,
+        &linear_types,
+    ));
+
     if cli.run_ir {
         let module =
-            build_module(&mut program.ast, &program.roots, &linear_types)
-                .context("IR lowering error")?;
-        check_module(&module).context("IR type error")?;
-        check_linearity(&module).context("Linearity error")?;
+            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
         match run_module(&module) {
             RunOutcome::Output(output) => {
                 print!("{output}");
@@ -595,10 +745,7 @@ fn compile() -> Result<()> {
 
     if cli.emit_c {
         let module =
-            build_module(&mut program.ast, &program.roots, &linear_types)
-                .context("IR lowering error")?;
-        check_module(&module).context("IR type error")?;
-        check_linearity(&module).context("Linearity error")?;
+            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
         let c_source = emit_c(&module).context("C emission error")?;
 
         let input_path = Path::new(&cli.file);
@@ -640,18 +787,12 @@ fn compile() -> Result<()> {
         // Linking is where a module can be its own compilation unit, so it is
         // also where a specialization is emitted once per module that asked for
         // it rather than once per program.
-        let module = if cli.link {
-            build_module_per_module(
-                &mut program.ast,
-                &program.roots,
-                &linear_types,
-            )
-        } else {
-            build_module(&mut program.ast, &program.roots, &linear_types)
-        }
-        .context("IR lowering error")?;
-        check_module(&module).context("IR type error")?;
-        check_linearity(&module).context("Linearity error")?;
+        let module = lowered_and_checked(
+            &mut program,
+            &linear_types,
+            cli.link,
+            &faults,
+        )?;
         let input_path = Path::new(&cli.file);
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
 
@@ -766,10 +907,7 @@ fn compile() -> Result<()> {
         }
     } else {
         let module =
-            build_module(&mut program.ast, &program.roots, &linear_types)
-                .context("IR lowering error")?;
-        check_module(&module).context("IR type error")?;
-        check_linearity(&module).context("Linearity error")?;
+            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
         let stem = Path::new(&cli.file)
