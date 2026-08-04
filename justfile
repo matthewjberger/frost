@@ -337,11 +337,6 @@ bindgen:
     cargo run -r -q -p frost --bin frost -- --link -o tools/wgpu_bindgen.exe tools/wgpu_bindgen.frost
     ./tools/wgpu_bindgen.exe
 
-# Redraws docs/book/src/tour.svg, the picture of examples/tour.frost the README shows
-tour-image:
-    cargo run -r -q -p frost --bin frost -- --link -o tools/highlight.exe tools/highlight.frost
-    ./tools/highlight.exe
-
 # Builds the self-hosted compiler (frost written in frost)
 #
 # Through the C backend rather than the native one. That takes about six seconds
