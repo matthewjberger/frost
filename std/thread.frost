@@ -11,8 +11,8 @@
 export spawn, join, atomic_add
 
 frost_rt_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
-frost_rt_thread_join  :: extern fn(handle: i64)
-frost_rt_atomic_add_i64   :: extern fn(cell: ^i64, amount: i64) -> i64
+frost_rt_thread_join :: extern fn(handle: i64)
+frost_rt_atomic_add_i64 :: extern fn(cell: ^i64, amount: i64) -> i64
 
 // Run `body` on a new thread with `context`, and answer a handle to join later.
 // The context must outlive the thread, so it lives in the spawner's frame and

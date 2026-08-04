@@ -41,17 +41,17 @@ main :: fn() -> i64 {
     // Read the kind out and apply it, all through handles, with the entities
     // never leaving the slab.
     world[player].hp = world[player].hp + delta(world[goblin].kind)
-    print_int_line(world[player].hp)  // 85
+    print_int_line(world[player].hp) // 85
     world[player].hp = world[player].hp + delta(world[potion].kind)
-    print_int_line(world[player].hp)  // 110
+    print_int_line(world[player].hp) // 110
 
     show(slab_release($Entity, $16, world, goblin))
-    show(slab_alive($Entity, $16, world, goblin))   // 0, released
-    show(slab_alive($Entity, $16, world, player))   // 1, untouched
+    show(slab_alive($Entity, $16, world, goblin)) // 0, released
+    show(slab_alive($Entity, $16, world, player)) // 1, untouched
 
     // The newcomer takes the goblin's slot, and the goblin's handle stays stale.
     newcomer := slab_insert($Entity, $16, world, Entity { hp = 5, kind = Kind::Player })
-    show(slab_alive($Entity, $16, world, goblin))   // 0
-    print_int_line(world[newcomer].hp)  // 5
+    show(slab_alive($Entity, $16, world, goblin)) // 0
+    print_int_line(world[newcomer].hp) // 5
     0
 }

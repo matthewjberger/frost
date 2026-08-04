@@ -777,7 +777,6 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
     total
 }
 
-
 // A callback's info struct is not in the IDL's `structs`. The header derives
 // one per callback, so this does too: the chain pointer, when the callback may
 // fire, the function itself, and two userdata slots C hands back untouched.

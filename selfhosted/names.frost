@@ -369,7 +369,7 @@ push_alias :: fn(mut p: Parser, from_off: i64, from_len: i64, to_off: i64,
     to_len: i64) -> i64 {
     mark := p.aliases.count
     arena_push(p.aliases, Alias { from_off = from_off, from_len = from_len,
-        to_off = to_off, to_len = to_len })
+            to_off = to_off, to_len = to_len })
     mark
 }
 
@@ -796,18 +796,18 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
         }
     }
     held := distinct_repr(ty)
-    if (held == TY_I64) { report("i64")   return }
-    if (held == TY_I32) { report("i32")   return }
-    if (held == TY_I16) { report("i16")   return }
-    if (held == TY_I8) { report("i8")     return }
+    if (held == TY_I64) { report("i64") return }
+    if (held == TY_I32) { report("i32") return }
+    if (held == TY_I16) { report("i16") return }
+    if (held == TY_I8) { report("i8") return }
     if (held == TY_ISIZE) { report("isize") return }
-    if (held == TY_U64) { report("u64")   return }
-    if (held == TY_U32) { report("u32")   return }
-    if (held == TY_U16) { report("u16")   return }
-    if (held == TY_U8) { report("u8")     return }
+    if (held == TY_U64) { report("u64") return }
+    if (held == TY_U32) { report("u32") return }
+    if (held == TY_U16) { report("u16") return }
+    if (held == TY_U8) { report("u8") return }
     if (held == TY_USIZE) { report("usize") return }
-    if (held == TY_F64) { report("f64")   return }
-    if (held == TY_F32) { report("f32")   return }
+    if (held == TY_F64) { report("f64") return }
+    if (held == TY_F32) { report("f32") return }
     if (held == TY_BOOL) { report("bool") return }
     if (held == TY_VOID) { report("nothing") return }
     if (held == TY_HANDLE) { report("Handle") return }
@@ -875,20 +875,20 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
         }
     }
     held := distinct_repr(ty)
-    if (held == TY_I64) { synth_bytes(p, "i64")     return }
-    if (held == TY_I32) { synth_bytes(p, "i32")     return }
-    if (held == TY_I16) { synth_bytes(p, "i16")     return }
-    if (held == TY_I8) { synth_bytes(p, "i8")       return }
+    if (held == TY_I64) { synth_bytes(p, "i64") return }
+    if (held == TY_I32) { synth_bytes(p, "i32") return }
+    if (held == TY_I16) { synth_bytes(p, "i16") return }
+    if (held == TY_I8) { synth_bytes(p, "i8") return }
     if (held == TY_ISIZE) { synth_bytes(p, "isize") return }
-    if (held == TY_U64) { synth_bytes(p, "u64")     return }
-    if (held == TY_U32) { synth_bytes(p, "u32")     return }
-    if (held == TY_U16) { synth_bytes(p, "u16")     return }
-    if (held == TY_U8) { synth_bytes(p, "u8")       return }
+    if (held == TY_U64) { synth_bytes(p, "u64") return }
+    if (held == TY_U32) { synth_bytes(p, "u32") return }
+    if (held == TY_U16) { synth_bytes(p, "u16") return }
+    if (held == TY_U8) { synth_bytes(p, "u8") return }
     if (held == TY_USIZE) { synth_bytes(p, "usize") return }
-    if (held == TY_F64) { synth_bytes(p, "f64")     return }
-    if (held == TY_F32) { synth_bytes(p, "f32")     return }
-    if (held == TY_BOOL) { synth_bytes(p, "bool")   return }
-    if (held == TY_VOID) { synth_bytes(p, "void")   return }
+    if (held == TY_F64) { synth_bytes(p, "f64") return }
+    if (held == TY_F32) { synth_bytes(p, "f32") return }
+    if (held == TY_BOOL) { synth_bytes(p, "bool") return }
+    if (held == TY_VOID) { synth_bytes(p, "void") return }
     if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
     if (is_pointer(held)) {
         synth_bytes(p, "^")
@@ -1592,4 +1592,3 @@ new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
             next = -1, pos = cur_off(p) },
     )
 }
-

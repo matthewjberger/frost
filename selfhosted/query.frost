@@ -216,7 +216,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     while (ci < p.consts.count) {
         held := arena_at(p.consts, ci)
         if (word_names(question, name_at, p.src, held.name_off,
-            held.name_len)) {
+                held.name_len)) {
             report_int(query_line(p.modules, p.src, held.name_off))
             report("\n")
             return
@@ -227,7 +227,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     while (vi < p.value_consts.count) {
         held := arena_at(p.value_consts, vi)
         if (word_names(question, name_at, p.src, held.name_off,
-            held.name_len)) {
+                held.name_len)) {
             report_int(query_line(p.modules, p.src, held.name_off))
             report("\n")
             return
@@ -286,11 +286,11 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
                 while (li < p.locals.count) {
                     held := arena_at(p.locals, li)
                     if (word_names(question, name_at, p.src, held.name_off,
-                        held.name_len)) {
+                            held.name_len)) {
                         report_type_name(p, held.ty)
                         report(" ")
                         report_int(query_line(p.modules, p.src,
-                            held.name_off))
+                                held.name_off))
                         report("\n")
                         return
                     }

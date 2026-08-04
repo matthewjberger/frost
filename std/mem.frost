@@ -23,20 +23,20 @@ export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
 // How many blocks are out. A container that frees what it took leaves this
 // where it found it, so a test can say a leak happened rather than waiting for
 // a long-running program to notice.
-frost_rt_heap_live    :: safe extern fn() -> i64
+frost_rt_heap_live :: safe extern fn() -> i64
 // How many bytes a count of elements takes, refused where the multiplication
 // would wrap. Safe because it is arithmetic and an abort: a wrapped size asks
 // for fewer bytes than the caller believes, and the slice built over the block
 // then reads past its end with every access reporting as bounds-checked.
-frost_rt_check_size   :: safe extern fn(count: i64, width: i64) -> i64
+frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64
 // A view of `count` elements starting `from` into a run of `room`, refused where
 // it reaches past the end. Safe for the same reason: arithmetic and an abort.
-frost_rt_check_span   :: safe extern fn(from: i64, count: i64, room: i64) -> i64
-frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_rt_check_span :: safe extern fn(from: i64, count: i64, room: i64) -> i64
+frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8
 frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
-frost_rt_heap_free    :: extern fn(block: ^u8)
-frost_rt_mem_set      :: extern fn(destination: ^u8, value: i64, size: i64)
-frost_rt_mem_copy     :: extern fn(destination: ^u8, source: ^u8, size: i64)
+frost_rt_heap_free :: extern fn(block: ^u8)
+frost_rt_mem_set :: extern fn(destination: ^u8, value: i64, size: i64)
+frost_rt_mem_copy :: extern fn(destination: ^u8, source: ^u8, size: i64)
 
 // Room for `count` elements of `T`. A count of zero still allocates one, so a
 // container never holds a pointer to nothing.

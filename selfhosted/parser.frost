@@ -333,7 +333,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         bind_answer_type(p, bind, answered)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-            ty = 0, slot = 0 })
+                ty = 0, slot = 0 })
         return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
     }
@@ -350,7 +350,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         answered := assign_match_values(p, chosen, name_off, name_len)
         bind_answer_type(p, bind, answered)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-            ty = 0, slot = 0 })
+                ty = 0, slot = 0 })
         return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
     }
@@ -1301,7 +1301,7 @@ splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
             name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
                 k)
             value = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+                name_off)
         }
         arg := new_node(p, NodeKind::Arg, value, 0, 0)
         if (head == (-1)) {
@@ -2019,7 +2019,7 @@ push_bindings :: fn(mut p: Parser, tparam_off: i64, tparam_len: i64,
         param := arena_at(p.gparams, xparam_start + i)
         garg := arena_at(p.gargs, xarg_start + i)
         arena_push(p.gbindings, GBinding { name_off = param.name_off,
-            name_len = param.name_len, bound = garg.value })
+                name_len = param.name_len, bound = garg.value })
         i = i + 1
     }
     mark
@@ -2472,7 +2472,7 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
                 answered = type_of(p, body.a)
             }
             place := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+                name_off)
             body.kind = NodeKind::Assign
             body.b = body.a
             body.a = place
@@ -2629,7 +2629,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         p.match_count = p.match_count + 1
         bind := new_let_node(p, scrutinee, name_off, name_len, -1)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = bind,
-            ty = 0, slot = 0 })
+                ty = 0, slot = 0 })
         subject = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
         scrutinee = new_field_node(p, subject, p.name_tag, 3)
@@ -5177,7 +5177,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     set_ret_type(p, fn_index, TY_VOID)
     set_params(p, fn_index, -1)
     arena_push(p.tests, TestCase { name_off = name_off, name_len = name_len,
-        fn_index = fn_index })
+            fn_index = fn_index })
     // A test body is a function body and defers like one. Without its own mark
     // a `defer` written in a test was left on the list for whatever was parsed
     // next to run.
@@ -5860,7 +5860,7 @@ record_mono_rets :: fn(mut p: Parser) {
             is_pack := used.is_pack
             owner := used.owner
             if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                owner) && tuple_is_first_for(p, gi, ii)) {
+                    owner) && tuple_is_first_for(p, gi, ii)) {
                 node := parse_generic_instance(p, gi, arg, xstart, xcount)
                 fnode := arena_at(p.arena, node)
                 record_mono_ret(p, fnode.val, arg, xstart, xcount,
@@ -5871,4 +5871,3 @@ record_mono_rets :: fn(mut p: Parser) {
         gi = gi + 1
     }
 }
-

@@ -186,7 +186,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
 
     total_relocs := reloc_count + line_relocs + info_relocs
     blob_room(object, object_room(unit, section_count, text_count + data_count,
-        line_size + abbrev_size + info_size, total_relocs * 10))
+            line_size + abbrev_size + info_size, total_relocs * 10))
 
     // The section symbols come first, each followed by the record describing
     // the section it stands for, so a local fixup has something to name.

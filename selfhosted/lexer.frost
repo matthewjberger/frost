@@ -198,7 +198,7 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
 push_token :: fn(mut tokens: Arena<Token>, kind: TokenKind, off: i64, len: i64,
     value: i64) {
     id := arena_push(tokens, Token { kind = kind, off = off, len = len,
-        value = value })
+            value = value })
     id
 }
 
@@ -437,4 +437,3 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
 // ---------------------------------------------------------------------------
 // Token cursor. The parser reads token kinds through these rather than bytes.
 // ---------------------------------------------------------------------------
-

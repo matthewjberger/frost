@@ -1196,11 +1196,11 @@ run :: fn(move app: App) -> i64 {
     drawn := ids.drawn
     global := ids.global_transform
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(), local), spin), drawn), global), ids.transform)
+                        mask_empty(), local), spin), drawn), global), ids.transform)
     // The root has a place and a turn and nothing drawn, since it is what the
     // grid hangs off rather than a thing on the screen.
     root_wanted := mask_with(mask_with(mask_with(mask_empty(), local),
-        spin), global)
+            spin), global)
 
     // One more than the things that are drawn: the last is the root every
     // shape hangs off, placed by the systems and drawn by nothing.
@@ -1210,17 +1210,16 @@ run :: fn(move app: App) -> i64 {
     // starts with, since the point of keying by entity is that a thing spawned
     // later needs nothing resized.
 
-
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
     floor := ecs_spawn_with(app.world, wanted)
     ecs_set($LocalTransform, app.world, floor, local, LocalTransform {
-        translation = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
-        scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
+            translation = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
+            scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
     ecs_set($Spin, app.world, floor, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
     ecs_set($Drawn, app.world, floor, drawn, Drawn { mesh = cube,
-        material = looks[3], layer = ONE_LAYER })
+            material = looks[3], layer = ONE_LAYER })
     entities[0] = floor
 
     // The middle column and the middle row, so the grid is centred on the
@@ -1236,9 +1235,9 @@ run :: fn(move app: App) -> i64 {
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, entity, local,
             LocalTransform { translation = vec3((across - half) * COLUMN_SPACING,
-                lowest + up * ROW_RISE,
-                (up - half) * ROW_DEPTH),
-            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+                    lowest + up * ROW_RISE,
+                    (up - half) * ROW_DEPTH),
+                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the shadows underneath
         // move differently rather than as one shape.
@@ -1252,7 +1251,7 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, app.world, entity, drawn, Drawn { mesh = shape,
-            material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
+                material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
 
         // Nothing here makes a buffer or a binding. What is drawn and where it
         // is are the world's; the device side of it is worked out from the
@@ -1266,8 +1265,8 @@ run :: fn(move app: App) -> i64 {
     // an orbit and neither of them says anything about the other.
     root := ecs_spawn_with(app.world, root_wanted)
     ecs_set($LocalTransform, app.world, root, local, LocalTransform {
-        translation = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
-        scale = vec3(1.0, 1.0, 1.0) })
+            translation = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
+            scale = vec3(1.0, 1.0, 1.0) })
     ecs_set($Spin, app.world, root, spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
     // Hung off the root before the root is put in the table, since putting it
@@ -1335,7 +1334,7 @@ run :: fn(move app: App) -> i64 {
         pulse = Pulse {
             pipeline = make_pulse_pipeline(device,
                 make_post_shader(device,
-        StringView { data = PULSE_SHADER, length = str_len(PULSE_SHADER) }), pulse_pipeline_layout),
+                    StringView { data = PULSE_SHADER, length = str_len(PULSE_SHADER) }), pulse_pipeline_layout),
             frame_group = frame_group, glow_group = no_bind_group(),
             groups = 2,
         },

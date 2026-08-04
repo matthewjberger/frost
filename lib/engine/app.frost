@@ -57,7 +57,7 @@ import "io.frost"
 // Stopping, which a module that needs it declares for itself: neither
 // `ecs.frost` nor the wgpu binding hands these out.
 frost_rt_error :: extern fn(text: ^i8)
-frost_rt_die   :: safe extern fn()
+frost_rt_die :: safe extern fn()
 
 export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
     app_failed, app_install, app_install_if_absent, app_install_group,
@@ -418,8 +418,8 @@ GraphConfig :: struct {
 app_configure_graph :: fn($Ctx: Type, mut app: App,
     hook: fn(mut Ctx, mut Graph, Device, u32), state: ^Ctx) {
     vec_push($GraphConfig, app.graph_configs, GraphConfig {
-        hook = unsafe { ptr_cast($fn(^u8, mut Graph, Device, u32), hook) },
-        state = unsafe { ptr_cast($u8, state) } })
+            hook = unsafe { ptr_cast($fn(^u8, mut Graph, Device, u32), hook) },
+            state = unsafe { ptr_cast($u8, state) } })
 }
 
 // The hooks, then the order they imply, then the first size. False when the
@@ -455,8 +455,8 @@ UpdateGraph :: struct {
 app_update_graph :: fn($Ctx: Type, mut app: App,
     hook: fn(mut Ctx, mut Graph, World), state: ^Ctx) {
     vec_push($UpdateGraph, app.update_graph, UpdateGraph {
-        hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
-        state = unsafe { ptr_cast($u8, state) } })
+            hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
+            state = unsafe { ptr_cast($u8, state) } })
 }
 
 // The hooks, in the order they were added, before the frame is filled. What
@@ -482,8 +482,8 @@ BeforeRender :: struct {
 app_before_render :: fn($Ctx: Type, mut app: App,
     hook: fn(mut Ctx, mut App), state: ^Ctx) {
     vec_push($BeforeRender, app.before_render, BeforeRender {
-        hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
-        state = unsafe { ptr_cast($u8, state) } })
+            hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
+            state = unsafe { ptr_cast($u8, state) } })
 }
 
 // The renderer, composed: a pass that draws what the world says is drawn, lit by

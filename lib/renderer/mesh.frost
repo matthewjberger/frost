@@ -524,7 +524,7 @@ test "a buffer that runs out grows, and what is in it comes with it" {
     // the wrong length would leave exactly these spans over the wrong bytes.
     var seen := heap_slice($Vertex, 64)
     assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
-        64 * VERTEX_STRIDE, ptr_to(seen[0])))
+            64 * VERTEX_STRIDE, ptr_to(seen[0])))
     var at : i64 = 0
     while (at < 24) {
         step : f32 = at
@@ -578,7 +578,7 @@ test "a cache that loses most of what it held puts the rest back at the start" {
     // smaller buffer are the small mesh's, marked as its own.
     var seen := heap_slice($Vertex, 24)
     assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
-        24 * VERTEX_STRIDE, ptr_to(seen[0])))
+            24 * VERTEX_STRIDE, ptr_to(seen[0])))
     var at : i64 = 0
     while (at < 24) {
         step : f32 = at

@@ -87,17 +87,17 @@ run :: fn(move app: App) -> i64 {
     ids := app_ids(app)
     lights := light_ids(app.world)
     drawn := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(), ids.local_transform), spin), ids.drawn),
-        ids.global_transform), ids.transform)
+                        mask_empty(), ids.local_transform), spin), ids.drawn),
+            ids.global_transform), ids.transform)
     // A light needs somewhere to be and nothing to draw.
     lighting := mask_with(mask_with(mask_with(mask_empty(),
-        ids.local_transform), ids.global_transform), lights.light)
+                ids.local_transform), ids.global_transform), lights.light)
 
     floor := ecs_spawn_with(app.world, drawn)
     app_place(app, floor, ids, spin, vec3(0.0, FLOOR_Y, 0.0),
         vec3(9.0, 0.25, 9.0), 0.0)
     ecs_set($Drawn, app.world, floor, ids.drawn, Drawn { mesh = cube,
-        material = looks[3], layer = ONE_LAYER })
+            material = looks[3], layer = ONE_LAYER })
 
     half : f32 = 1.5
     var made : i64 = 0
@@ -116,7 +116,7 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
-            material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
+                material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
         made = made + 1
     }
 

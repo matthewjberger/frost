@@ -46,18 +46,18 @@ main :: fn() -> i64 {
             i = i + 1
         }
     }
-    print_int_line(total)  // 10
+    print_int_line(total) // 10
 
     wounded := ecs_get($Health, world, ogre, health)
     ecs_set($Health, world, ogre, health, Health { hp = wounded.hp - 15 })
-    print_int_line(ecs_get($Health, world, ogre, health).hp)  // 25
+    print_int_line(ecs_get($Health, world, ogre, health).hp) // 25
 
     // Despawning frees the id and bumps its generation, so the handle held here
     // stops naming anything.
     ecs_despawn(world, ogre)
-    show(ecs_alive(world, ogre))   // 0
-    show(ecs_alive(world, hero))   // 1
-    print_int_line(ecs_count(world))  // 2
+    show(ecs_alive(world, ogre)) // 0
+    show(ecs_alive(world, hero)) // 1
+    print_int_line(ecs_count(world)) // 2
 
     ecs_free(world)
     0

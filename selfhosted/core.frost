@@ -48,20 +48,20 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
 // be met stops here with a message instead of answering null and leaving the
 // caller to write through it. Safe because the call either gives back a block or
 // does not return; what is done with the block is gated as ever.
-frost_rt_alloc  :: safe extern fn(size: i64) -> ^u8
+frost_rt_alloc :: safe extern fn(size: i64) -> ^u8
 // How many bytes a count of elements takes, refused where the product would
 // wrap. Safe because it is arithmetic and an abort.
 frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64
 // A view of `count` elements starting `from` into a run of `room`, refused where
 // it reaches past the end. Safe for the same reason.
 frost_rt_check_span :: safe extern fn(from: i64, count: i64, room: i64) -> i64
-frost_rt_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
-frost_rt_str_len   :: extern fn(s: ^i8) -> i64
+frost_rt_byte_at :: extern fn(s: ^i8, i: i64) -> i64
+frost_rt_str_len :: extern fn(s: ^i8) -> i64
 // Emits a counted run of bytes. The read is bounded by the length, so the one
 // caller, emit_text below, hands it a `str` whose length it already knows
 // and the emit path is safe. Only this declaration keeps the gate.
 frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)
-frost_rt_emit_int  :: safe extern fn(value: i64)
+frost_rt_emit_int :: safe extern fn(value: i64)
 frost_rt_emit_char :: safe extern fn(byte: i64)
 // Send the emitted text to memory rather than to a file. The buffer belongs to
 // the runtime and grows to hold whatever is emitted, so what comes back is
@@ -71,7 +71,7 @@ frost_rt_emit_memory_length :: safe extern fn() -> i64
 frost_rt_emit_memory_at :: extern fn() -> ^u8
 frost_rt_emit_memory_done :: safe extern fn()
 frost_rt_read_file :: extern fn(path: ^i8) -> ^i8
-frost_rt_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
+frost_rt_byte_set :: extern fn(buffer: ^i8, index: i64, value: i64)
 
 // Emit a string. A `str` carries its own length, so this reads exactly that
 // many bytes rather than scanning for a terminator, which is what lets every
@@ -111,13 +111,13 @@ emit_memory_text :: fn() -> str {
 // are handed, so they are `safe` and need no block. The ones taking a `^i8` read
 // until a NUL, and `ptr_to` hands out a `^i8` without one at no cost, so those
 // keep the gate. The caller is what promises the terminator.
-frost_rt_error     :: extern fn(text: ^i8)
+frost_rt_error :: extern fn(text: ^i8)
 frost_rt_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
 frost_rt_error_bytes :: extern fn(data: ^u8, length: i64)
 frost_rt_error_int :: safe extern fn(value: i64)
-frost_rt_die       :: safe extern fn()
+frost_rt_die :: safe extern fn()
 frost_rt_is_windows :: safe extern fn() -> i64
-frost_rt_getenv    :: extern fn(name: ^i8) -> ^i8
+frost_rt_getenv :: extern fn(name: ^i8) -> ^i8
 
 // Compose a diagnostic on stderr. A `str` is written by the length it carries,
 // a source range by the length it is given, and a C string by the length up to
@@ -172,17 +172,17 @@ report_cstr :: fn(s: ^i8) {
 // The command line, and the two things a compiler does with the world once it
 // has read one: put its output somewhere, and run the tool that finishes the
 // build. Emitted output goes to standard output until a file is opened for it.
-frost_rt_arg_count   :: safe extern fn() -> i64
-frost_rt_arg_at      :: safe extern fn(index: i64) -> ^i8
-frost_rt_emit_open   :: extern fn(path: ^i8) -> i64
-frost_rt_emit_close  :: safe extern fn()
+frost_rt_arg_count :: safe extern fn() -> i64
+frost_rt_arg_at :: safe extern fn(index: i64) -> ^i8
+frost_rt_emit_open :: extern fn(path: ^i8) -> i64
+frost_rt_emit_close :: safe extern fn()
 frost_rt_run_command :: extern fn(command: ^i8) -> i64
 // One OS thread, for the one thing this compiler does more than once at a time:
 // handing several assembler runs to the machine at once rather than waiting out
 // each in turn. The body takes the raw pointer the spawner gives it, which is
 // the shape C wants, and casts it back to what it knows.
 frost_rt_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
-frost_rt_thread_join  :: extern fn(handle: i64)
+frost_rt_thread_join :: extern fn(handle: i64)
 // Parser recovery: run the body with an escape armed, so a fault ends the
 // declaration it is in rather than the compile, and count what escaped so
 // the compile still refuses at the end. The escape with no mark armed dies,
@@ -229,31 +229,31 @@ NodeKind :: enum {
 // STRUCT_BASE plus its table index. A pointer to a type T (also how a borrow
 // parameter is modelled, since a borrow is a C pointer) is POINTER_BASE plus T, so
 // pointer nesting composes by repeated addition.
-TY_I64   :: 0
-TY_I8    :: 1
-TY_BOOL  :: 2
-TY_U8    :: 3
-TY_VOID  :: 4
+TY_I64 :: 0
+TY_I8 :: 1
+TY_BOOL :: 2
+TY_U8 :: 3
+TY_VOID :: 4
 TY_PARAM :: 5
-TY_I16   :: 6
-TY_I32   :: 7
-TY_U16   :: 8
-TY_U32   :: 9
-TY_U64   :: 10
+TY_I16 :: 6
+TY_I32 :: 7
+TY_U16 :: 8
+TY_U32 :: 9
+TY_U64 :: 10
 TY_ISIZE :: 11
 TY_USIZE :: 12
-TY_F32   :: 13
-TY_F64   :: 14
+TY_F32 :: 13
+TY_F64 :: 14
 // `Handle<T>`: a copyable i64 that packs a slot index and a generation. It is a
 // scalar at the ABI, the same width as an i64 and converting freely to one. The
 // element type it names comes from the slab it indexes, not from the code here.
 // Its own code is what tells `slab[handle]` apart from an ordinary index.
 TY_HANDLE :: 15
-STRUCT_BASE  :: 16
+STRUCT_BASE :: 16
 // A fixed array and a slice are both an entry in one table, since a slice is an
 // array that did not say how long it is. That keeps `[]T` and `[N]T` one kind of
 // thing everywhere but their layout.
-ARRAY_BASE   :: 500000
+ARRAY_BASE :: 500000
 // `^T` and borrows of `T` where `T` is distinct, which are the one shape that
 // cannot be reached by adding a base to the type pointed at. See `Indirect`.
 // The range sits under POINTER_BASE so `is_pointer` answers for it by reading
@@ -265,7 +265,7 @@ POINTER_BASE :: 1000000
 // borrow was proven safe where it was formed, a raw pointer was not. The flag
 // sits far above pointer nesting so `is_pointer` still answers yes for a borrow
 // and only the gate and `pointee` tell them apart.
-BORROW_FLAG  :: 1000000000
+BORROW_FLAG :: 1000000000
 // A compile-time integer argument to a generic, a value generic like the `N` in
 // `Slab<T, N>`. It rides in the same i64 space as a type code so the whole
 // monomorphization machinery stays keyed on one integer per argument. A code at
@@ -273,7 +273,7 @@ BORROW_FLAG  :: 1000000000
 // every real type code, and a value argument never reaches layout or the
 // pointer tests. It is resolved to an array length or an integer literal while
 // the generic body is re-parsed with the argument bound.
-CONST_BASE   :: 2000000000
+CONST_BASE :: 2000000000
 // A function pointer, a value that is the address of a function with a given
 // signature. It is a pointer at the ABI but not a data pointer. It is neither
 // dereferenced nor pointer-arithmeticked, it is called. A code at or above this
@@ -281,14 +281,14 @@ CONST_BASE   :: 2000000000
 // value-generic range so `is_pointer` and `is_borrow`, which now stop below
 // CONST_BASE, answer no for it, since a function pointer emits its own C
 // declarator rather than a trailing `*`.
-PROC_BASE    :: 3000000000
+PROC_BASE :: 3000000000
 // A function chosen at the call site, the argument a `$f: fn(i64) -> i64`
 // parameter is given. It rides in the same i64 space as a type code because a
 // compile-time function argument is monomorphized on exactly like a type: a
 // code at or above this base names entry `code - FN_BASE` of the `fns` table.
 // It is not a type and never reaches layout. What it does reach is name
 // resolution, where the body's `f(x)` finds the function that was passed.
-FN_BASE      :: 4000000000
+FN_BASE :: 4000000000
 // A `distinct` type: `Meters :: distinct i64` is laid out, computed and passed
 // to C as an i64, and is not one. The code carries both halves of that. The
 // number above the base divides into the type it is represented by and an index
@@ -296,7 +296,7 @@ FN_BASE      :: 4000000000
 // codes. Carrying the representation in the code rather than in a table is what
 // lets `is_float`, `scalar_size` and the rest resolve a distinct type without
 // the parser, and they all take a bare type code.
-DISTINCT_BASE   :: 5000000000
+DISTINCT_BASE :: 5000000000
 DISTINCT_STRIDE :: 4096
 
 // Binary operator codes.
@@ -305,18 +305,18 @@ OP_SUB :: 1
 OP_MUL :: 2
 OP_DIV :: 3
 OP_MOD :: 4
-OP_LT  :: 5
-OP_GT  :: 6
-OP_LE  :: 7
-OP_GE  :: 8
-OP_EQ  :: 9
-OP_NE  :: 10
+OP_LT :: 5
+OP_GT :: 6
+OP_LE :: 7
+OP_GE :: 8
+OP_EQ :: 9
+OP_NE :: 10
 OP_AND :: 11
-OP_OR  :: 12
-OP_SHL    :: 13
-OP_SHR    :: 14
+OP_OR :: 12
+OP_SHL :: 13
+OP_SHR :: 14
 OP_BITAND :: 15
-OP_BITOR  :: 16
+OP_BITOR :: 16
 // Arithmetic that keeps the low bits of its type and drops the rest. Ordinary
 // arithmetic refuses a result that does not fit; a hash is the case where
 // leaving the range is the point, and it says so at the site.
@@ -418,41 +418,41 @@ TokenKind :: enum {
 }
 
 // Character codes (the language has no character literals).
-CH_TAB     :: 9
-CH_LF      :: 10
-CH_CR      :: 13
-CH_SPACE   :: 32
-CH_BANG    :: 33
+CH_TAB :: 9
+CH_LF :: 10
+CH_CR :: 13
+CH_SPACE :: 32
+CH_BANG :: 33
 CH_QUESTION :: 63
 CH_PERCENT :: 37
-CH_AMP     :: 38
-CH_LPAREN  :: 40
-CH_RPAREN  :: 41
-CH_STAR    :: 42
-CH_PLUS    :: 43
-CH_COMMA   :: 44
-CH_MINUS   :: 45
-CH_SLASH   :: 47
-CH_0       :: 48
-CH_9       :: 57
-CH_SEMI    :: 59
-CH_LT      :: 60
-CH_EQ      :: 61
-CH_GT      :: 62
-CH_LBRACE  :: 123
-CH_PIPE    :: 124
-CH_RBRACE  :: 125
+CH_AMP :: 38
+CH_LPAREN :: 40
+CH_RPAREN :: 41
+CH_STAR :: 42
+CH_PLUS :: 43
+CH_COMMA :: 44
+CH_MINUS :: 45
+CH_SLASH :: 47
+CH_0 :: 48
+CH_9 :: 57
+CH_SEMI :: 59
+CH_LT :: 60
+CH_EQ :: 61
+CH_GT :: 62
+CH_LBRACE :: 123
+CH_PIPE :: 124
+CH_RBRACE :: 125
 CH_LOWER_A :: 97
 CH_LOWER_Z :: 122
-CH_DQUOTE     :: 34
-CH_DOLLAR     :: 36
-CH_DOT        :: 46
-CH_COLON      :: 58
-CH_UPPER_A    :: 65
-CH_UPPER_Z    :: 90
-CH_LBRACKET   :: 91
-CH_RBRACKET   :: 93
-CH_CARET      :: 94
+CH_DQUOTE :: 34
+CH_DOLLAR :: 36
+CH_DOT :: 46
+CH_COLON :: 58
+CH_UPPER_A :: 65
+CH_UPPER_Z :: 90
+CH_LBRACKET :: 91
+CH_RBRACKET :: 93
+CH_CARET :: 94
 CH_UNDERSCORE :: 95
 CH_LOWER_B :: 98
 CH_LOWER_E :: 101
@@ -462,9 +462,9 @@ CH_UPPER_B :: 66
 CH_UPPER_E :: 69
 CH_UPPER_F :: 70
 CH_UPPER_X :: 88
-CH_BACKSLASH  :: 92
-CH_LOWER_N    :: 110
-CH_LOWER_T    :: 116
+CH_BACKSLASH :: 92
+CH_LOWER_N :: 110
+CH_LOWER_T :: 116
 
 // `pos` is where in the one buffer this node was written, which is what turns a
 // diagnostic into a file, a line and a column. A node the compiler synthesizes
@@ -1522,4 +1522,3 @@ cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
     }
     true
 }
-

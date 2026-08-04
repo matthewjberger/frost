@@ -303,7 +303,7 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
         return at
     }
     mine := arena_push(modules, Module { path = path, start = 0, finish = 0,
-        cursor_off = -1, cursor_line = 1, cursor_column = 1 })
+            cursor_off = -1, cursor_line = 1, cursor_column = 1 })
     raw := unsafe { frost_rt_read_file(path) }
     // The file's bytes as a slice, once, so nothing below indexes a bare
     // pointer.
@@ -640,7 +640,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
             off := json_text_off(document, named)
             len := json_text_len(document, named)
             add_root(roots, normalise_path(
-                join_under(prefix_of(entry, directory), text, off, len)))
+                    join_under(prefix_of(entry, directory), text, off, len)))
         }
         named = json_next(document, named)
     }
@@ -653,7 +653,7 @@ manifest_roots :: fn(entry: ^i8, mut roots: Arena<SearchRoot>,
             off := json_text_off(document, layer)
             len := json_text_len(document, layer)
             add_layer(layers, text_as_cstr(text, off, len), absolute_path(
-                join_under(prefix_of(entry, directory), text, off, len)))
+                    join_under(prefix_of(entry, directory), text, off, len)))
         }
         layer = json_next(document, layer)
     }
@@ -900,4 +900,3 @@ source_with_room :: fn(text: str) -> str {
     buffer[length] = 0
     buffer
 }
-

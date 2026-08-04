@@ -357,9 +357,9 @@ run :: fn(move app: App) -> i64 {
 
     ids := app_ids(app)
     wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-        mask_empty(),
-        ids.local_transform), spin), ids.drawn),
-        ids.global_transform), ids.transform)
+                        mask_empty(),
+                        ids.local_transform), spin), ids.drawn),
+            ids.global_transform), ids.transform)
 
     half : f32 = 2.5
     var made : i64 = 0
@@ -371,8 +371,8 @@ run :: fn(move app: App) -> i64 {
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set($LocalTransform, app.world, entity,
             ids.local_transform, LocalTransform {
-            translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
-            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+                translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
+                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the field does not read
         // as one object drawn thirty-six times.
@@ -386,7 +386,7 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set($Drawn, app.world, entity, ids.drawn, Drawn { mesh = shape,
-            material = looks[made - (made / 4) * 4], layer = ONE_LAYER })
+                material = looks[made - (made / 4) * 4], layer = ONE_LAYER })
 
         made = made + 1
     }

@@ -2,7 +2,7 @@ import "io.frost"
 
 min_of :: fn(move a: $T, move b: $T) -> T { if (a < b) { a } else { b } }
 max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
-clamp  :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
+clamp :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
 
 swap :: fn(mut a: $T, mut b: $T) {
     t := a

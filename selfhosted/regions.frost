@@ -105,7 +105,6 @@ report_pool :: fn(mut p: Parser, struct_ty: i64) {
     frost_rt_recover_note()
 }
 
-
 // ---------------------------------------------------------------------------
 // `where` bounds.
 //
@@ -351,7 +350,7 @@ check_types :: fn(mut p: Parser, head: i64) {
             is_pack := used.is_pack
             owner := used.owner
             if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                owner) && tuple_is_first_for(p, gi, ii)) {
+                    owner) && tuple_is_first_for(p, gi, ii)) {
                 instance := parse_generic_instance(p, gi, arg, xstart, xcount)
                 // The return type worked out for this instance. The template's
                 // own still names its parameters.
@@ -881,19 +880,19 @@ check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
 // way a type name is, since a function answering with one would be answering
 // with text this compiler carries as a view rather than as a literal.
 report_operator :: fn(op: i64) {
-    if (op == OP_ADD) { report("+")   return }
-    if (op == OP_SUB) { report("-")   return }
-    if (op == OP_MUL) { report("*")   return }
-    if (op == OP_DIV) { report("/")   return }
-    if (op == OP_MOD) { report("%")   return }
-    if (op == OP_LT) { report("<")    return }
-    if (op == OP_GT) { report(">")    return }
-    if (op == OP_LE) { report("<=")   return }
-    if (op == OP_GE) { report(">=")   return }
-    if (op == OP_AND) { report("&&")  return }
-    if (op == OP_OR) { report("||")   return }
-    if (op == OP_SHL) { report("<<")  return }
-    if (op == OP_SHR) { report(">>")  return }
+    if (op == OP_ADD) { report("+") return }
+    if (op == OP_SUB) { report("-") return }
+    if (op == OP_MUL) { report("*") return }
+    if (op == OP_DIV) { report("/") return }
+    if (op == OP_MOD) { report("%") return }
+    if (op == OP_LT) { report("<") return }
+    if (op == OP_GT) { report(">") return }
+    if (op == OP_LE) { report("<=") return }
+    if (op == OP_GE) { report(">=") return }
+    if (op == OP_AND) { report("&&") return }
+    if (op == OP_OR) { report("||") return }
+    if (op == OP_SHL) { report("<<") return }
+    if (op == OP_SHR) { report(">>") return }
     report("an operator")
 }
 
@@ -906,7 +905,6 @@ check_argument_expressions :: fn(mut p: Parser, args: i64) {
         id = next_id
     }
 }
-
 
 // Two modules exporting the same name is not itself a problem, since an import
 // says what a file may name and a file importing only one of them sees only
@@ -1623,7 +1621,7 @@ note_view :: fn(mut p: Parser, off: i64, len: i64, container: i64) {
         i = i + 1
     }
     arena_push(p.move_views, LocalVar { name_off = off, name_len = len,
-        ty = 0, slot = container })
+            ty = 0, slot = container })
 }
 
 view_container_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
@@ -4023,7 +4021,7 @@ note_prov :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
         i = i + 1
     }
     arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0,
-        slot = held })
+            slot = held })
 }
 
 // The declared type recorded against a name, or -1.
@@ -4054,7 +4052,7 @@ note_type :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
         i = i + 1
     }
     arena_push(table, LocalVar { name_off = off, name_len = len, ty = ty,
-        slot = 0 })
+            slot = 0 })
 }
 
 // Whether a value of this type is, or holds, a view of storage it does not own.
@@ -5163,8 +5161,8 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
             frame_check_block(p, first, 0)
         } else if (kind == NodeKind::Assert
             || kind == NodeKind::Break || kind == NodeKind::Continue) {
-            // Nothing leaves the frame through one. An assert reads a value,
-            // and the two transfers carry no value at all.
+        // Nothing leaves the frame through one. An assert reads a value,
+        // and the two transfers carry no value at all.
         } else {
             frame_unhandled(p, "statement", pos)
         }
@@ -6437,4 +6435,3 @@ check_calls :: fn(mut p: Parser) {
         i = i + 1
     }
 }
-

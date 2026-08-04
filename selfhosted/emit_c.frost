@@ -1070,11 +1070,11 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                         borrow = 1
                     }
                 }
-                // Check the argument against the parameter. A generic
-                // template's parameter types are placeholders bound per
-                // instantiation, so they carry nothing to check against. An
-                // auto-borrowed argument is a value whose address is taken
-                // here, so it answers to the pointee rather than the pointer.
+            // Check the argument against the parameter. A generic
+            // template's parameter types are placeholders bound per
+            // instantiation, so they carry nothing to check against. An
+            // auto-borrowed argument is a value whose address is taken
+            // here, so it answers to the pointee rather than the pointer.
             }
             // A string literal reaching a parameter of slice type, where the
             // parameter belongs to a generic: the literal is a pointer to
@@ -1951,7 +1951,7 @@ emit_program :: fn(mut p: Parser, head: i64) {
             is_pack := used.is_pack
             owner := used.owner
             if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                owner) && tuple_is_first_for(p, gi, ii)) {
+                    owner) && tuple_is_first_for(p, gi, ii)) {
                 node := parse_generic_instance(p, gi, arg, xstart, xcount)
                 ret := p.last_return_type
                 emit_mono_prototype(p, node, arg, xstart, xcount, ret)
@@ -1978,7 +1978,7 @@ emit_program :: fn(mut p: Parser, head: i64) {
                 is_pack := used.is_pack
                 owner := used.owner
                 if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                    owner) && tuple_is_first_for(p, gi, ii)) {
+                        owner) && tuple_is_first_for(p, gi, ii)) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_mono_function(p, node, arg, xstart, xcount, ret)
@@ -2043,4 +2043,3 @@ emit_test_main :: fn(mut p: Parser) {
 // whatever compiles its output. Every node ever parsed lives in one arena, so a
 // linear scan over it reaches every call without walking the tree.
 // ---------------------------------------------------------------------------
-

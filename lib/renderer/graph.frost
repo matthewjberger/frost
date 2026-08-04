@@ -441,7 +441,6 @@ graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
         unsafe { ptr_cast($u8, state) })
 }
 
-
 // A pass that records for itself. It is handed the encoder and its targets and
 // opens whatever passes it needs, in whatever order it needs them, which is what
 // something made of several steps is: one thing to the graph and a sequence
@@ -986,7 +985,7 @@ make_resources :: fn(mut g: Graph) {
         var held := g.resources
         one := held[i]
         if (one.transient || one.external) {
-            // The pool owns one, and the program owns the other.
+        // The pool owns one, and the program owns the other.
         } else if (is_buffer(one)) {
             if (one.made == false && one.width > 0) {
                 held[i].buffer = make_buffer(g.device, one.width, one.usage)
@@ -1401,12 +1400,12 @@ run_node :: fn(mut g: Graph, mut f: Frame, one: GraphPass) {
     mark_written(g, one.color)
     mark_written(g, one.depth)
     one.record(one.state, NodeContext {
-        encoder = frame_encoder(f),
-        into = target_for(g, f, one),
-        color_load = color_load,
-        depth_load = depth_load,
-        clear = one.clear,
-    })
+            encoder = frame_encoder(f),
+            into = target_for(g, f, one),
+            color_load = color_load,
+            depth_load = depth_load,
+            clear = one.clear,
+        })
 }
 
 // A compute pass over the frame's encoder. It writes buffers, so it has no

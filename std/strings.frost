@@ -69,7 +69,7 @@ str_index_of :: fn(s: str, needle: str) -> i64 {
         var i : i64 = 0
         var same := true
         while (i < str_len(needle)) {
-            if (s[start + i] != needle[i]) { same = false  i = str_len(needle) }
+            if (s[start + i] != needle[i]) { same = false i = str_len(needle) }
             else { i = i + 1 }
         }
         if (same) { return start }
@@ -103,7 +103,7 @@ str_byte_is_space :: fn(byte: i64) -> bool {
 str_to_i64 :: fn(s: str) -> i64 {
     var i : i64 = 0
     var negative := false
-    if (str_len(s) > 0 && s[0] == 45) { negative = true  i = 1 }
+    if (str_len(s) > 0 && s[0] == 45) { negative = true i = 1 }
     var value : i64 = 0
     while (i < str_len(s)) {
         if (str_byte_is_digit(s[i]) == false) { return 0 }

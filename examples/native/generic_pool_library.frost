@@ -25,10 +25,10 @@ main :: fn() -> i64 {
     slab_reset($Entity, $8, world)
 
     h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
-    print_int_line(world[h].hp)  // 100
-    print_int_line(world[h].mana)  // 30
+    print_int_line(world[h].hp) // 100
+    print_int_line(world[h].mana) // 30
     world[h].hp = 75
-    print_int_line(world[h].hp)  // 75
+    print_int_line(world[h].hp) // 75
 
     // The same code at a different element type and a different capacity.
     var ground : Slab<Tile, 4> = Slab {
@@ -39,10 +39,10 @@ main :: fn() -> i64 {
     }
     slab_reset($Tile, $4, ground)
     t := slab_insert($Tile, $4, ground, Tile { height = 12 })
-    print_int_line(ground[t].height)  // 12
+    print_int_line(ground[t].height) // 12
 
-    show(slab_alive($Entity, $8, world, h))     // 1
-    show(slab_release($Entity, $8, world, h))   // 1
-    show(slab_alive($Entity, $8, world, h))     // 0
+    show(slab_alive($Entity, $8, world, h)) // 1
+    show(slab_release($Entity, $8, world, h)) // 1
+    show(slab_alive($Entity, $8, world, h)) // 0
     0
 }

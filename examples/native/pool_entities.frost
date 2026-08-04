@@ -15,8 +15,8 @@ Entity :: struct { hp: i64, mana: i64 }
 // A handle packs the slot index and the generation into one i64, which is why it
 // is a copy value rather than a pointer, and why a stale one is detectable
 // rather than dangling.
-index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 4294967295 }
-generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
+index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle raw & 4294967295 }
+generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle raw >> 32 }
 
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
@@ -32,22 +32,22 @@ main :: fn() -> i64 {
     hero := slab_insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
     goblin := slab_insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
 
-    print_int_line(index_of(hero))  // 0
-    print_int_line(index_of(goblin))  // 1
+    print_int_line(index_of(hero)) // 0
+    print_int_line(index_of(goblin)) // 1
 
-    print_int_line(p[hero].hp)  // 100
+    print_int_line(p[hero].hp) // 100
     p[hero].hp = p[hero].hp - 25
-    print_int_line(p[hero].hp)  // 75, written in place
+    print_int_line(p[hero].hp) // 75, written in place
 
-    show(slab_alive($Entity, $8, p, goblin))    // 1
-    show(slab_release($Entity, $8, p, goblin))  // 1
-    show(slab_alive($Entity, $8, p, goblin))    // 0
+    show(slab_alive($Entity, $8, p, goblin)) // 1
+    show(slab_release($Entity, $8, p, goblin)) // 1
+    show(slab_alive($Entity, $8, p, goblin)) // 0
 
     // The released slot is reused, and the old handle stays stale because the
     // slot's generation moved past it.
     orc := slab_insert($Entity, $8, p, Entity { hp = 80, mana = 0 })
-    print_int_line(index_of(orc))  // 1, the goblin's slot
-    print_int_line(generation_of(orc))  // 1, a generation later
-    show(slab_alive($Entity, $8, p, goblin))    // 0
+    print_int_line(index_of(orc)) // 1, the goblin's slot
+    print_int_line(generation_of(orc)) // 1, a generation later
+    show(slab_alive($Entity, $8, p, goblin)) // 0
     0
 }

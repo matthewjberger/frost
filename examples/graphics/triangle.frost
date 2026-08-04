@@ -67,9 +67,9 @@ fill_device :: fn(status: u32, handle: Device, value message: StringView,
 // first.
 Vertex :: struct { position: Vec4, colour: Vec4 }
 
-VERTEX_COUNT  :: 3
+VERTEX_COUNT :: 3
 VERTEX_STRIDE :: 32
-VERTEX_BYTES  :: 96
+VERTEX_BYTES :: 96
 UNIFORM_BYTES :: 64
 
 // The shader. Positions and colours arrive in a vertex buffer, and the matrix
@@ -107,7 +107,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "
 
-WIDTH  :: 960
+WIDTH :: 960
 HEIGHT :: 540
 
 main :: fn() -> i64 {

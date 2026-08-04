@@ -34,9 +34,9 @@ export Vec2, Vec3, Vec4, Mat4, Quat,
 // The C standard library's single-precision transcendentals. Each takes and
 // returns a number with no pointer, so it is `safe` and needs no block.
 sqrtf :: safe extern fn(x: f32) -> f32
-sinf  :: safe extern fn(x: f32) -> f32
-cosf  :: safe extern fn(x: f32) -> f32
-tanf  :: safe extern fn(x: f32) -> f32
+sinf :: safe extern fn(x: f32) -> f32
+cosf :: safe extern fn(x: f32) -> f32
+tanf :: safe extern fn(x: f32) -> f32
 
 Vec2 :: struct { x: f32, y: f32 }
 Vec3 :: struct { x: f32, y: f32, z: f32 }
@@ -136,20 +136,20 @@ vec4_dot :: inline fn(a: Vec4, b: Vec4) -> f32 {
 
 mat4_zero :: fn() -> Mat4 {
     Mat4 { m = [
-        0.0, 0.0, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0.0,
-    ] }
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+        ] }
 }
 
 mat4_identity :: fn() -> Mat4 {
     Mat4 { m = [
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0,
-    ] }
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ] }
 }
 
 // `a` applied after `b`: the product that transforms a column vector by `b`
@@ -525,11 +525,11 @@ quat_to_mat4 :: fn(q: Quat) -> Mat4 {
     wy := n.w * n.y
     wz := n.w * n.z
     Mat4 { m = [
-        1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy), 0.0,
-        2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx), 0.0,
-        2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy), 0.0,
-        0.0, 0.0, 0.0, 1.0,
-    ] }
+            1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy), 0.0,
+            2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx), 0.0,
+            2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy), 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ] }
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +632,7 @@ test "vec3 lengths and distance" {
     unit := vec3_normalize(vec3(0.0, 0.0, 5.0))
     assert(near_vec3(unit, vec3(0.0, 0.0, 1.0)))
     assert(near_vec3(vec3_normalize(vec3(0.0, 0.0, 0.0)),
-        vec3(0.0, 0.0, 0.0)))
+            vec3(0.0, 0.0, 0.0)))
 }
 
 test "vec3 lerp reaches both ends" {
@@ -678,29 +678,29 @@ test "mat4 multiplication applies the right one first" {
     move_then_scale := mat4_mul(grow, move_by)
     at := vec3(1.0, 0.0, 0.0)
     assert(near_vec3(mat4_transform_point(scale_then_move, at),
-        vec3(3.0, 0.0, 0.0)))
+            vec3(3.0, 0.0, 0.0)))
     assert(near_vec3(mat4_transform_point(move_then_scale, at),
-        vec3(4.0, 0.0, 0.0)))
+            vec3(4.0, 0.0, 0.0)))
 }
 
 test "mat4 translation moves a point and not a direction" {
     move_by := mat4_translation(vec3(3.0, 4.0, 5.0))
     assert(near_vec3(mat4_transform_point(move_by, vec3(1.0, 1.0, 1.0)),
-        vec3(4.0, 5.0, 6.0)))
+            vec3(4.0, 5.0, 6.0)))
     // A direction has no position, so translating one changes nothing. That is
     // the whole difference between the two.
     assert(near_vec3(mat4_transform_dir(move_by, vec3(1.0, 0.0, 0.0)),
-        vec3(1.0, 0.0, 0.0)))
+            vec3(1.0, 0.0, 0.0)))
     assert(near_vec4(mat4_mul_vec4(move_by, vec4(0.0, 0.0, 0.0, 1.0)),
-        vec4(3.0, 4.0, 5.0, 1.0)))
+            vec4(3.0, 4.0, 5.0, 1.0)))
 }
 
 test "mat4 scale" {
     grow := mat4_scale(vec3(2.0, 3.0, 4.0))
     assert(near_vec3(mat4_transform_point(grow, vec3(1.0, 1.0, 1.0)),
-        vec3(2.0, 3.0, 4.0)))
+            vec3(2.0, 3.0, 4.0)))
     assert(near_vec3(mat4_transform_dir(grow, vec3(1.0, 1.0, 1.0)),
-        vec3(2.0, 3.0, 4.0)))
+            vec3(2.0, 3.0, 4.0)))
 }
 
 test "mat4 rotations turn one axis into the next" {
@@ -792,7 +792,7 @@ test "the infinite perspective agrees with a far plane far enough away" {
     at_ten := mat4_mul_vec4(endless, vec4(0.0, 0.0, -10.0, 1.0))
     bounded_at_ten := mat4_mul_vec4(bounded, vec4(0.0, 0.0, -10.0, 1.0))
     assert(near(at_ten.z / at_ten.w,
-        bounded_at_ten.z / bounded_at_ten.w))
+            bounded_at_ten.z / bounded_at_ten.w))
 }
 
 test "the reverse box puts its near plane at one" {
@@ -916,19 +916,19 @@ test "look at puts the camera where it says" {
     view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0), up)
     // What the camera looks at lands in front of it, three away down -z.
     assert(near_vec3(mat4_transform_point(view, vec3(0.0, 0.0, 0.0)),
-        vec3(0.0, 0.0, -3.0)))
+            vec3(0.0, 0.0, -3.0)))
     // The camera's own position lands on the origin, which is what a view
     // matrix is for.
     assert(near_vec3(mat4_transform_point(view, vec3(0.0, 0.0, 3.0)),
-        vec3(0.0, 0.0, 0.0)))
+            vec3(0.0, 0.0, 0.0)))
     // Right stays right and up stays up when the camera has not rolled.
     assert(near_vec3(mat4_transform_dir(view, vec3(1.0, 0.0, 0.0)),
-        vec3(1.0, 0.0, 0.0)))
+            vec3(1.0, 0.0, 0.0)))
     assert(near_vec3(mat4_transform_dir(view, up), up))
     // Looking from the side instead, the same target is still three ahead.
     from_x := mat4_look_at(vec3(3.0, 0.0, 0.0), vec3(0.0, 0.0, 0.0), up)
     assert(near_vec3(mat4_transform_point(from_x, vec3(0.0, 0.0, 0.0)),
-        vec3(0.0, 0.0, -3.0)))
+            vec3(0.0, 0.0, -3.0)))
 }
 
 test "quaternion identity and length" {
@@ -961,7 +961,7 @@ test "a quaternion rotates the way the matrix does" {
     // quat_to_mat4 is that rotation and not its inverse.
     assert(near_mat4(quat_to_mat4(about_y), mat4_rotation_y(quarter)))
     assert(near_vec3(mat4_transform_dir(quat_to_mat4(about_y), z),
-        quat_rotate_vec3(about_y, z)))
+            quat_rotate_vec3(about_y, z)))
     assert(near_mat4(quat_to_mat4(quat_identity()), mat4_identity()))
     assert(near_vec3(quat_rotate_vec3(quat_identity(), x), x))
 }
@@ -977,7 +977,7 @@ test "quaternion multiplication composes rotations" {
     assert(near_mat4(quat_to_mat4(half), mat4_rotation_y(radians(180.0))))
     // The identity composes with anything and changes nothing.
     assert(near_mat4(quat_to_mat4(quat_mul(quat_identity(), about_y)),
-        quat_to_mat4(about_y)))
+            quat_to_mat4(about_y)))
     // The conjugate of a unit quaternion is its inverse, so the two together
     // are the identity.
     back := quat_mul(about_y, quat_conjugate(about_y))

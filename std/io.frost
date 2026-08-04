@@ -58,10 +58,10 @@ print_str :: fn(text: str) {
     unsafe { frost_rt_write_bytes(ptr_to(text[0]), str_len(text)) }
 }
 
-print_int_line :: fn(value: i64) { print_int(value)  print_char(10) }
+print_int_line :: fn(value: i64) { print_int(value) print_char(10) }
 
-print_str_line :: fn(text: str) { print_str(text)  print_char(10) }
+print_str_line :: fn(text: str) { print_str(text) print_char(10) }
 
-print_f64_line :: fn(value: f64) { print_f64(value)  print_char(10) }
+print_f64_line :: fn(value: f64) { print_f64(value) print_char(10) }
 
-print_bool_line :: fn(value: bool) { print_bool(value)  print_char(10) }
+print_bool_line :: fn(value: bool) { print_bool(value) print_char(10) }

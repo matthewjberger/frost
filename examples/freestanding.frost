@@ -37,6 +37,6 @@ main :: fn() -> i64 {
     unsafe {
         p^ = 20
         q^ = 22
-        p^ + q^             // 42, returned as the process exit code
+        p^ + q^ // 42, returned as the process exit code
     }
 }
