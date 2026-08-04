@@ -23,8 +23,8 @@ f64_less :: fn(a: f64, b: f64) -> bool { a < b }
 f64_greater :: fn(a: f64, b: f64) -> bool { a > b }
 f64_equal :: fn(a: f64, b: f64) -> bool { a == b }
 
-i64_ascending :: Ordering<i64>{ less = i64_less, equal = i64_equal }
-i64_descending :: Ordering<i64>{ less = i64_greater, equal = i64_equal }
+i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
+i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 
-f64_ascending :: Ordering<f64>{ less = f64_less, equal = f64_equal }
-f64_descending :: Ordering<f64>{ less = f64_greater, equal = f64_equal }
+f64_ascending :: Ordering<f64> { less = f64_less, equal = f64_equal }
+f64_descending :: Ordering<f64> { less = f64_greater, equal = f64_equal }

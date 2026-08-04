@@ -38,7 +38,7 @@ columns_full :: fn($T: Type, $N: usize, c: columns<T, N>) -> bool {
 // The caller checks `columns_full` first. The element is scattered into the
 // columns at the free slot. The handle carries that slot's current generation.
 columns_insert :: fn($T: Type, $N: usize, mut c: columns<T, N>, move value: $T)
-    -> Handle<T>{
+    -> Handle<T> {
     c.free_count = c.free_count - 1
     index := c.free_list[c.free_count]
     handle: Handle<T> = (c.generations[index] << 32) | index

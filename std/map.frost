@@ -110,13 +110,13 @@ str_same :: fn(a: str, b: str) -> bool {
     true
 }
 
-i64_keys :: Hashing<i64>{ hash = i64_hash, equal = i64_same }
-str_keys :: Hashing<str>{ hash = str_hash, equal = str_same }
-text_keys :: Hashing<Text>{ hash = text_hash, equal = text_same }
+i64_keys :: Hashing<i64> { hash = i64_hash, equal = i64_same }
+str_keys :: Hashing<str> { hash = str_hash, equal = str_same }
+text_keys :: Hashing<Text> { hash = text_hash, equal = text_same }
 
 // A power-of-two capacity, so the slot index is a mask rather than a modulo,
 // and a fresh block with every slot empty.
-map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V>{
+map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V> {
     var cap: i64 = 8
     while (cap < capacity) { cap = cap * 2 }
     keys := heap_slice($K, cap)
@@ -290,7 +290,7 @@ cell_same :: fn(a: Cell, b: Cell) -> bool {
     a.x == b.x && a.y == b.y
 }
 
-cell_keys :: Hashing<Cell>{ hash = cell_hash, equal = cell_same }
+cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
 
 test "a value is put and read back" {
     var m := map_new($i64, $i64, 8)

@@ -477,7 +477,7 @@ mask_hash :: fn(m: Mask) -> i64 {
     h
 }
 
-mask_keys :: Hashing<Mask>{ hash = mask_hash, equal = mask_equal }
+mask_keys :: Hashing<Mask> { hash = mask_hash, equal = mask_equal }
 
 // ---------------------------------------------------------------------------
 // The world
@@ -1775,7 +1775,7 @@ ecs_count_matching :: fn(world: World, f: Filters, types: $...) -> i64 {
 // lose the pointer it has to be freed through. A `Vec` keeps the two apart.
 //
 // The caller owns what comes back and releases it with `vec_free`.
-ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity>{
+ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity> {
     total := ecs_count_matching(world, f, $T for T in types)
     var out := vec_new($Entity, total)
     if (total == 0) {
@@ -1806,7 +1806,7 @@ ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity>{
 // Written as a gather and two index loops rather than as a cursor, since a pair
 // is two rows that may be in two different tables and no single walk is over
 // both. The caller owns what comes back and releases it with `vec_free`.
-ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair>{
+ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair> {
     var held := ecs_gather(world, f, $T for T in types)
     names := vec_slice($Entity, held)
     total := slice_len(names)

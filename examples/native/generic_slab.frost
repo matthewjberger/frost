@@ -35,7 +35,7 @@ slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     s.free_count = N
 }
 
-slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T>{
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value

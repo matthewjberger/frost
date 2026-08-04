@@ -975,7 +975,7 @@ Arena :: struct($T: Type) {
     count: i64,
 }
 
-arena_make :: fn($T: Type, cap: i64) -> Arena<T>{
+arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     // `frost_rt_alloc` is a `safe extern`: it hands back memory or does not
     // return, so it cannot corrupt any. Reading those bytes as a `T` is the
     // unchecked part, and that is all the block below vouches for.

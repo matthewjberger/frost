@@ -23,7 +23,7 @@ Vec :: linear struct($T: Type) {
 
 // An empty vector with room reserved up front, so a known-size fill does not
 // reallocate. A capacity of zero is allowed and grows on the first push.
-vec_new :: fn($T: Type, capacity: i64) -> Vec<T>{
+vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
     var room := capacity
     if (room < 1) { room = 1 }
     Vec { storage = heap_slice($T, room), len = 0, cap = room }
