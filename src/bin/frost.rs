@@ -485,6 +485,112 @@ fn format_paths(arguments: &[String]) -> Result<bool> {
     Ok(clean)
 }
 
+/// `frost lint <paths...>`: report what is worth looking at, and refuse nothing.
+///
+/// A finding is advisory: a build never fails on one, and `frost <file>` says
+/// exactly what it said before. Exits nonzero when there are findings, so a
+/// build that wants to hold a tree to none of them can.
+fn lint_paths(arguments: &[String]) -> Result<bool> {
+    let named: Vec<&String> = arguments
+        .iter()
+        .filter(|held| !held.starts_with("--"))
+        .collect();
+    if named.is_empty() {
+        bail!("frost lint: which files?");
+    }
+    let mut files = Vec::new();
+    for path in named {
+        let path = Path::new(path);
+        if path.is_dir() {
+            files.extend(frost_files(path)?);
+        } else {
+            files.push(path.to_path_buf());
+        }
+    }
+    let mut clean = true;
+    for file in &files {
+        let source = fs::read_to_string(file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        let entry = register_entry_file(file, &base);
+        let mut lexer = Lexer::new(&source);
+        let Ok(tokens) = lexer.tokenize() else {
+            continue;
+        };
+        let positions: Vec<Position> = lexer
+            .positions()
+            .iter()
+            .map(|position| Position {
+                file: entry,
+                ..*position
+            })
+            .collect();
+        let mut parser = FrostParser::with_positions(&tokens, &positions);
+        let (parsed, faulted) = parser.parse_recovering();
+        // A file that does not parse is a file the compiler has something to
+        // say about, and saying it twice helps nobody.
+        if !faulted.is_empty() {
+            continue;
+        }
+        let exports: Vec<String> = parser.exports().to_vec();
+        // Over the program the file becomes once its imports are resolved,
+        // which is what a build reads. Asked about the file alone, the unsafety
+        // walk cannot see the declaration that says a called extern is
+        // unchecked, and reports every block that wraps one.
+        let mut roots = Vec::new();
+        if let Some(standard) = frost::bundled_std() {
+            roots.push(SearchRoot::named("std", standard));
+        }
+        let project = base.canonicalize().unwrap_or_else(|_| base.clone());
+        let mut layers = Vec::new();
+        if let Ok(Some((manifest, directory))) = Manifest::find_upward(&project)
+        {
+            for search in manifest.search_paths(&directory) {
+                roots.push(SearchRoot::project(search));
+            }
+            for (name, path) in
+                manifest.layers.iter().zip(manifest.layer_paths(&directory))
+            {
+                layers.push(Layer::new(name, &path));
+            }
+        }
+        let Ok(resolved) = resolve_imports_cached(
+            parsed,
+            &base,
+            parser.linear_types().clone(),
+            parser.tests().to_vec(),
+            Resolution {
+                cache: None,
+                roots: &roots,
+                layers: &layers,
+            },
+        ) else {
+            continue;
+        };
+        let whole = resolved.program;
+        let found: Vec<frost::Diagnostic> =
+            frost::lint(&whole.ast, &whole.roots, &exports, &tokens)
+                .into_iter()
+                .filter(|held| held.position.file == entry)
+                .collect();
+        if found.is_empty() {
+            continue;
+        }
+        clean = false;
+        if wants_json() {
+            print!("{}", frost::diagnostics_as_json(&found, "warning"));
+        } else {
+            for held in &found {
+                print!(
+                    "{}",
+                    frost::render_diagnostic(&anyhow!(held.rendered()))
+                );
+            }
+        }
+    }
+    Ok(clean)
+}
+
 /// `frost fix <file>`: apply every edit the reports carry that can be applied
 /// unread.
 ///
@@ -597,6 +703,16 @@ fn main() -> std::process::ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().is_some_and(|held| held == "fmt") {
         return match format_paths(&arguments[1..]) {
+            Ok(true) => std::process::ExitCode::SUCCESS,
+            Ok(false) => std::process::ExitCode::FAILURE,
+            Err(error) => {
+                eprint!("{}", frost::render_diagnostic(&error));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    if arguments.first().is_some_and(|held| held == "lint") {
+        return match lint_paths(&arguments[1..]) {
             Ok(true) => std::process::ExitCode::SUCCESS,
             Ok(false) => std::process::ExitCode::FAILURE,
             Err(error) => {
