@@ -1466,6 +1466,16 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         }
         if (cur(p) == TokenKind::Comma) {
             advance(p)
+        } else if (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof
+            && cur(p) != TokenKind::Illegal) {
+            // A comma separates one argument from the next. A token that begins
+            // no expression is reported as the token it is, by the walk that
+            // reads the next argument.
+            report_where(p.modules, p.src, cur_off(p))
+            report("expected ',' between one element and the next, found '")
+            report_src(p.src, cur_off(p), cur_len(p))
+            report("'")
+            frost_rt_recover_escape()
         }
     }
     advance(p)
