@@ -17662,6 +17662,71 @@ fn located_faults(report: &str) -> Vec<(usize, String)> {
     faults
 }
 
+// Programs whose faults are found by three different walks, so one run names
+// all of them and the two compilers name the same ones.
+//
+// Compared as a set rather than in order, which is the one thing here the two
+// compilers do not share: which fault comes first follows which walk found it,
+// and each runs its walks in its own order. The bootstrap checks what a program
+// owns before lowering it and finds a call of the wrong length while lowering;
+// the self-hosted compiler counts arguments first and walks moves after. The
+// faults, their lines and their words are the same, and that is the part worth
+// holding.
+const SAME_FAULTS_ANY_ORDER: &[(&str, &str)] = &[(
+    "threewalks",
+    "Buffer :: linear struct { size: i64 }\n\
+     buffer_make :: fn() -> Buffer { Buffer { size = 4 } }\n\
+     buffer_free :: fn(move b: Buffer) { }\n\
+     takes_one :: fn(v: i64) -> i64 { v }\n\
+     moved_twice :: fn() -> i64 {\n\
+     \x20   held := buffer_make()\n\
+     \x20   buffer_free(held)\n\
+     \x20   buffer_free(held)\n\
+     \x20   0\n}\n\
+     too_many :: fn() -> i64 { takes_one(1, 2) }\n\
+     unknown_name :: fn() -> i64 { nowhere }\n\
+     main :: fn() -> i64 { moved_twice() + too_many() + unknown_name() }\n",
+)];
+
+#[test]
+fn both_compilers_name_the_same_faults_whatever_found_them() {
+    let Some(compiler) = build_self_hosted_compiler("anyorder") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    for (name, source) in SAME_FAULTS_ANY_ORDER {
+        let bootstrap = bootstrap_refusal(name, source);
+        let input = directory.join(format!("frost_order_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        assert!(
+            !run.status.success(),
+            "the self-hosted compiler built {name}, which the bootstrap refuses"
+        );
+        let hosted = String::from_utf8_lossy(&run.stderr).to_string();
+        let mut wanted = located_faults(&bootstrap);
+        let mut got = located_faults(&hosted);
+        wanted.sort();
+        got.sort();
+        // Three faults, and the move points back at where the value went, so
+        // four located lines.
+        assert_eq!(
+            wanted.len(),
+            4,
+            "one run should name every fault of {name}:\n{bootstrap}"
+        );
+        assert_eq!(
+            wanted, got,
+            "the two compilers name different faults in {name}:\nbootstrap:\n{bootstrap}\nself-hosted:\n{hosted}"
+        );
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
 #[test]
 fn both_compilers_report_the_same_fault_lines() {
     let Some(compiler) = build_self_hosted_compiler("faultlines") else {

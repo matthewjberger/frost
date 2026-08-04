@@ -659,6 +659,19 @@ void frost_rt_recover_escape(void) {
     longjmp(frost_rt_recover_stack[frost_rt_recover_depth], 1);
 }
 
+/* A fault a walk can carry on past. Some checks hold nothing across the thing
+   they are checking: a call is checked against the signature it names and the
+   next call is checked against its own, so a fault in one leaves nothing
+   half-written for the next to trip over. Those report and keep walking, which
+   needs the count and the newline that end a report without the escape. Arming
+   a mark per call would be a setjmp per node of the program, which is what this
+   is instead of. */
+void frost_rt_recover_note(void) {
+    fputc('\n', stderr);
+    fflush(stderr);
+    frost_rt_recover_count++;
+}
+
 int64_t frost_rt_recover_failures(void) { return frost_rt_recover_count; }
 
 /* An assertion outside a test has nowhere to escape to, so it still aborts.
