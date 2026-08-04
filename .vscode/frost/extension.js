@@ -23,6 +23,9 @@ const TYPE_KINDS = {
 
 const EXCLUDED_DIRECTORIES = [".frost-build", "target", ".git"];
 
+// How the compiler ends a line of JSON, either way it was written.
+const LINE_BREAKS = /\r?\n/;
+
 const files = new Map();
 let ready = Promise.resolve();
 
@@ -472,8 +475,58 @@ const documentFormattingProvider = {
   },
 };
 
+// Findings from `frost lint`, published where the editor shows problems. They
+// are warnings: a build never refuses on one.
+const findings = vscode.languages.createDiagnosticCollection("frost");
+
+function publishFindings(document) {
+  if (document.languageId !== "frost") {
+    return;
+  }
+  const compiler = vscode.workspace
+    .getConfiguration("frost")
+    .get("compilerPath", "frost");
+  let written;
+  try {
+    written = require("child_process").execFileSync(
+      compiler,
+      ["lint", "--diagnostics=json", document.uri.fsPath],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
+    );
+  } catch (error) {
+    // A nonzero exit is what having findings looks like, so the output is
+    // still what to read.
+    written = error && typeof error.stdout === "string" ? error.stdout : "";
+  }
+  const found = [];
+  for (const line of written.split(LINE_BREAKS)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let report;
+    try {
+      report = JSON.parse(line);
+    } catch (error) {
+      continue;
+    }
+    const at = new vscode.Position(
+      Math.max(0, (report.line || 1) - 1),
+      Math.max(0, (report.column || 1) - 1)
+    );
+    found.push(
+      new vscode.Diagnostic(
+        new vscode.Range(at, at),
+        report.message || "",
+        vscode.DiagnosticSeverity.Warning
+      )
+    );
+  }
+  findings.set(document.uri, found);
+}
+
 function activate(context) {
   ready = indexWorkspace().catch(() => undefined);
+  context.subscriptions.push(findings);
 
   const selector = { language: "frost" };
   const timers = new Map();
@@ -506,6 +559,14 @@ function activate(context) {
       );
     })
   );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(publishFindings),
+    vscode.workspace.onDidOpenTextDocument(publishFindings)
+  );
+  for (const open of vscode.workspace.textDocuments) {
+    publishFindings(open);
+  }
 
   const watcher = vscode.workspace.createFileSystemWatcher("**/*.frost");
   watcher.onDidCreate(indexFile, null, context.subscriptions);

@@ -12,6 +12,8 @@
 - **Snippets** for the declaration forms, `match`, the loops, `with`, `unsafe`,
   `defer` and `test`.
 - **A schema** for `frost.json`, so the manifest completes and validates.
+- **Findings**, published as warnings in the Problems panel on open and on
+  save, from `frost lint --diagnostics=json`. A build never refuses on one.
 - **Formatting**, which runs `frost fmt -` over the buffer, so Format Document
   and format-on-save write what a build's `frost fmt --check` accepts. The
   editor and the build run the same code rather than keeping two of it.
