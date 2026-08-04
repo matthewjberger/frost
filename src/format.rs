@@ -22,6 +22,10 @@ use crate::lexer::{Lexer, Position, Token};
 /// one. The formatter's output is the program, so the mark does not come back.
 const BOM: &str = "\u{feff}";
 
+/// What a line ends with. The formatter's output uses this whatever the input
+/// used.
+const LINE_BREAK: char = '\n';
+
 /// One token's extent in the source, in bytes.
 struct Extent {
     start: usize,
@@ -158,6 +162,10 @@ enum Role {
     /// that closes it.
     TypeBracketOpen,
     TypeBracketClose,
+    /// The `::` that declares a name, against the one that names a variant of a
+    /// type. `Point :: struct { ... }` declares and `NodeKind::Var` names, and
+    /// the space is what the grammar tells them apart by.
+    Declares,
 }
 
 /// Whether a token can end a value, which is what tells a read from a type and a
@@ -194,10 +202,28 @@ fn begins_a_type(token: Option<&Token>) -> bool {
 }
 
 /// The job each token is doing.
-fn roles(tokens: &[Token]) -> Vec<Role> {
+fn roles(
+    tokens: &[Token],
+    opens_line: &[bool],
+    brace_depth: &[i32],
+) -> Vec<Role> {
     let mut held = vec![Role::Plain; tokens.len()];
     for index in 0..tokens.len() {
         match &tokens[index] {
+            // A declaration is a name at the head of its line followed by `::`.
+            // Anywhere else the `::` reaches into a type for one of the names
+            // declared under it.
+            // Only at the top level, where declarations live. Inside a body a
+            // name at the head of its line is an expression, and
+            // `TokenKind::Ident` standing alone as a function's answer is one.
+            Token::DoubleColon
+                if index >= 1
+                    && brace_depth[index] == 0
+                    && opens_line[index - 1]
+                    && matches!(tokens[index - 1], Token::Identifier(_)) =>
+            {
+                held[index] = Role::Declares;
+            }
             // A `<` opens a generic's arguments when a name is in front of it and
             // a matching `>` closes a run holding only what a type argument can
             // be. `a < b` fails that on the first token that could not.
@@ -287,6 +313,13 @@ fn spaced(
 ) -> bool {
     let (left, left_role) = left;
     let (right, right_role) = right;
+    // A name reaches into a type tight, and a declaration is spaced.
+    if matches!(left, Token::DoubleColon) {
+        return left_role == Role::Declares;
+    }
+    if matches!(right, Token::DoubleColon) {
+        return right_role == Role::Declares;
+    }
     // A generic's arguments are written tight, and so is the name in front of
     // them: `Slab<T, N>`, `Arena<256>`.
     if left_role == Role::TypeArgumentOpen
@@ -466,7 +499,25 @@ pub fn format(source: &str) -> String {
     // What the author indented each line by, indexed by line number. A blank
     // line and a comment line hold no token, so the line a token sits on is
     // found from its offset rather than counted off as tokens are written.
-    let roles = roles(&tokens);
+    // Which tokens are the first on their line, which is what tells a
+    // declaration's `::` from a variant's.
+    let mut opens_line = Vec::with_capacity(held.len());
+    let mut brace_depth = Vec::with_capacity(held.len());
+    let mut previous_end = 0usize;
+    let mut counted = 0i32;
+    for (index, extent) in held.iter().enumerate() {
+        let gap = &source[previous_end..extent.start];
+        opens_line.push(index == 0 || gap.contains(LINE_BREAK));
+        if matches!(tokens[index], Token::RightBrace) {
+            counted -= 1;
+        }
+        brace_depth.push(counted);
+        if matches!(tokens[index], Token::LeftBrace) {
+            counted += 1;
+        }
+        previous_end = extent.end;
+    }
+    let roles = roles(&tokens, &opens_line, &brace_depth);
     // Braces are the statement nesting and the other brackets are an expression
     // running over more than one line. A line inside an unclosed bracket is
     // indented past the line that opened it, and a line that continues an
@@ -700,6 +751,20 @@ mod tests {
         );
         assert!(formatted.contains("\n        + 2\n"), "{formatted}");
         assert!(formatted.contains("\n    -1\n"), "{formatted}");
+    }
+
+    // `Point :: struct` declares and `NodeKind::Var` names one of the names
+    // declared under a type. The space is what tells them apart, so a formatter
+    // that spaced both would rewrite every variant in the tree.
+    #[test]
+    fn a_declaration_is_spaced_and_a_variant_is_tight() {
+        let source = "Kind :: enum { Var }
+main :: fn() -> i64 {
+    k := Kind::Var
+    0
+}
+";
+        assert_eq!(format(source), source);
     }
 
     #[test]
