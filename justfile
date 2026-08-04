@@ -541,6 +541,121 @@ bench-selfhost-incremental: selfhost-build
     echo "C, incremental first:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
     echo "C, incremental unchanged:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
 
+# Where the assembly backend stands against the C route, in numbers.
+#
+# Builds the compiler twice: once through the bootstrap's C backend, which is
+# what ships, and once by handing that compiler its own source through
+# `--emit-asm`. Then times both of them compiling the tree, and counts the
+# instructions the backend emitted, because a change meant to remove loads has
+# to show in both numbers and a change that trades one for the other is not a
+# win. The instruction count belongs to the emitted text rather than to the
+# compiler that emitted it, so it is counted once.
+#
+# Baseline, before any register allocation, minimum of five on this machine:
+#
+#     built by             frost.frost    std suite
+#     gcc, the C route         175 ms       303 ms
+#     frost, --emit-asm        735 ms       999 ms
+#
+#     instructions             298,420      366,052
+#
+# Four times slower on its own source, three on the library, and that gap is
+# the whole reason `selfhost-build` goes through C.
+[windows]
+bench-asm:
+    #!powershell.exe -NoProfile
+    $ErrorActionPreference = "Stop"
+    cargo build -r -q -p frost --bin frost
+    $root = (Get-Location).Path
+    $gcc = Join-Path $root "selfhosted/frost_bench_gcc.exe"
+    $own = Join-Path $root "selfhosted/frost_bench_own.exe"
+    $out = Join-Path $env:TEMP "frost_bench.s"
+    Write-Host "building the compiler through C, then through its own assembly"
+    ./target/release/frost.exe --link --emit-c -o $gcc selfhosted/frost.frost
+    & $gcc --link -o $own selfhosted/frost.frost
+    $suite = (Get-ChildItem std/*.frost | ForEach-Object { $_.FullName })
+    # A warning on standard error is an error record in Windows PowerShell even
+    # when the compiler exited cleanly, so the exit code is what says whether a
+    # run worked and the stream itself is dropped.
+    $ErrorActionPreference = "SilentlyContinue"
+    function best($exe, $source) {
+        $lowest = [double]::MaxValue
+        for ($run = 0; $run -lt 5; $run++) {
+            $took = (Measure-Command { $null = & $exe @("--emit-asm", "-o", $out, $source) 2>$null }).TotalMilliseconds
+            if ($LASTEXITCODE -ne 0) { throw "$exe failed on $source" }
+            if ($took -lt $lowest) { $lowest = $took }
+        }
+        $lowest
+    }
+    function total($exe) {
+        $sum = 0.0
+        foreach ($source in $suite) { $sum = $sum + (best $exe $source) }
+        $sum
+    }
+    Write-Host ""
+    Write-Host ("{0,-22} {1,12} {2,12}" -f "built by", "frost.frost", "std suite")
+    foreach ($pair in @(@("gcc, the C route", $gcc), @("frost, --emit-asm", $own))) {
+        Write-Host ("{0,-22} {1,9:N0} ms {2,9:N0} ms" -f $pair[0], (best $pair[1] "selfhosted/frost.frost"), (total $pair[1]))
+    }
+    function instructions($source) {
+        $null = & $gcc @("--emit-asm", "-o", $out, $source) 2>$null
+        [regex]::Matches([System.IO.File]::ReadAllText($out), '(?m)^[ \t]+[A-Za-z]').Count
+    }
+    $mine = instructions "selfhosted/frost.frost"
+    $theirs = 0
+    foreach ($source in $suite) { $theirs = $theirs + (instructions $source) }
+    Write-Host ""
+    Write-Host ("{0,-22} {1,9:N0}    {2,9:N0}" -f "instructions", $mine, $theirs)
+    Remove-Item $out -Force -ErrorAction Ignore
+
+# Where the assembly backend stands against the C route, in numbers (Unix)
+[unix]
+bench-asm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -r -q -p frost --bin frost
+    gcc_built="selfhosted/frost_bench_gcc.exe"
+    own_built="selfhosted/frost_bench_own.exe"
+    out="${TMPDIR:-/tmp}/frost_bench.s"
+    echo "building the compiler through C, then through its own assembly"
+    ./target/release/frost --link --emit-c -o "$gcc_built" selfhosted/frost.frost
+    "./$gcc_built" --link -o "$own_built" selfhosted/frost.frost
+    best() {
+        local lowest=999999999
+        for _ in 1 2 3 4 5; do
+            local started=$(date +%s%N)
+            "$1" --emit-asm -o "$out" "$2" 2>/dev/null
+            local took=$(( ($(date +%s%N) - started) / 1000000 ))
+            if [ "$took" -lt "$lowest" ]; then lowest=$took; fi
+        done
+        echo "$lowest"
+    }
+    total() {
+        local sum=0
+        for source in std/*.frost; do
+            sum=$(( sum + $(best "$1" "$source") ))
+        done
+        echo "$sum"
+    }
+    echo
+    printf "%-22s %12s %12s\n" "built by" "frost.frost" "std suite"
+    printf "%-22s %9s ms %9s ms\n" "gcc, the C route" \
+        "$(best "./$gcc_built" selfhosted/frost.frost)" "$(total "./$gcc_built")"
+    printf "%-22s %9s ms %9s ms\n" "frost, --emit-asm" \
+        "$(best "./$own_built" selfhosted/frost.frost)" "$(total "./$own_built")"
+    instructions() {
+        "./$gcc_built" --emit-asm -o "$out" "$1" 2>/dev/null
+        grep -cE '^[[:space:]]+[A-Za-z]' "$out"
+    }
+    mine=$(instructions selfhosted/frost.frost)
+    theirs=0
+    for source in std/*.frost; do
+        theirs=$(( theirs + $(instructions "$source") ))
+    done
+    echo
+    printf "%-22s %9s    %9s\n" "instructions" "$mine" "$theirs"
+    rm -f "$out"
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture
