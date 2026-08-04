@@ -483,6 +483,7 @@ fn parse_module(
             .with_context(|| format!("in {}", path.display()))?;
     let mut parser = Parser::with_positions(&tokens, &positions);
     parser.also_generic(generics);
+    parser.preload_diagnostics(lexer.diagnostics_in_file(file));
     let module = parser
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;

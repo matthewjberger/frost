@@ -320,6 +320,13 @@ pub struct Lexer<'a> {
     column: usize,
     token_start: Position,
     positions: Vec<Position>,
+    // What was wrong with the source, one entry per fault, each carrying the
+    // token it was found in. A fault yields a placeholder token and lexing
+    // continues, because a half-typed string is the normal state of a file
+    // being edited and one bad character should not cost every diagnostic
+    // after it. A program with any entry here is still refused: the parser
+    // carries these forward and the build fails on them.
+    diagnostics: Vec<crate::diagnostic::Diagnostic>,
 }
 
 impl<'a> Lexer<'a> {
@@ -337,6 +344,7 @@ impl<'a> Lexer<'a> {
                 file: 0,
             },
             positions: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -344,19 +352,39 @@ impl<'a> Lexer<'a> {
         &self.positions
     }
 
+    pub fn diagnostics(&self) -> &[crate::diagnostic::Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// The diagnostics with each position's file id filled in, for the caller
+    /// that knows which file this source came from. The lexer itself does not.
+    pub fn diagnostics_in_file(
+        &self,
+        file: u32,
+    ) -> Vec<crate::diagnostic::Diagnostic> {
+        self.diagnostics
+            .iter()
+            .map(|held| crate::diagnostic::Diagnostic {
+                position: Position {
+                    file,
+                    ..held.position
+                },
+                message: held.message.clone(),
+            })
+            .collect()
+    }
+
+    fn report(&mut self, message: String) {
+        self.diagnostics.push(crate::diagnostic::Diagnostic {
+            position: self.token_start,
+            message,
+        });
+    }
+
     pub fn tokenize(&mut self) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         loop {
-            let next_token = match self.next_token() {
-                Ok(token) => token,
-                Err(error) => {
-                    return Err(anyhow::anyhow!(
-                        "at line {}, column {}: {error}",
-                        self.token_start.line,
-                        self.token_start.column
-                    ));
-                }
-            };
+            let next_token = self.next_token();
             if let Token::EndOfFile = next_token {
                 break;
             }
@@ -366,7 +394,7 @@ impl<'a> Lexer<'a> {
         Ok(tokens)
     }
 
-    fn next_token(&mut self) -> Result<Token> {
+    fn next_token(&mut self) -> Token {
         self.skip_while(Self::is_whitespace);
         self.token_start = Position {
             line: self.line,
@@ -374,7 +402,7 @@ impl<'a> Lexer<'a> {
             file: 0,
         };
         let first_char = self.read_char();
-        let token = match first_char {
+        match first_char {
             '=' => self.next_char_or(Assign, '=', Equal),
             ';' => Semicolon,
             '(' => LeftParentheses,
@@ -432,7 +460,10 @@ impl<'a> Lexer<'a> {
                     self.read_char();
                     loop {
                         if self.is_eof() {
-                            bail!("Unterminated block comment");
+                            self.report(
+                                "Unterminated block comment".to_string(),
+                            );
+                            break;
                         }
                         if self.peek_nth(0) == '*' && self.peek_nth(1) == '/' {
                             self.read_char();
@@ -476,9 +507,13 @@ impl<'a> Lexer<'a> {
                 let mut literal = String::new();
                 loop {
                     match self.peek_nth(0) {
-                        EOF_CHAR => bail!(
-                            "Reached end of file while scanning string. Expected closing delimiter '\"'."
-                        ),
+                        EOF_CHAR => {
+                            self.report(
+                                "Reached end of file while scanning string. Expected closing delimiter '\"'."
+                                    .to_string(),
+                            );
+                            break;
+                        }
                         // A literal may span lines, and one written on a file
                         // saved with CRLF must be the same string as the same
                         // literal saved with LF. The carriage return is dropped
@@ -502,10 +537,13 @@ impl<'a> Lexer<'a> {
                                 '\\' => '\\',
                                 '"' => '"',
                                 '\'' => '\'',
-                                other => bail!(
-                                    "Unknown escape sequence '\\{}' in string literal",
+                                other => {
+                                    self.report(format!(
+                                        "Unknown escape sequence '\\{}' in string literal",
+                                        other
+                                    ));
                                     other
-                                ),
+                                }
                             };
                             literal.push(resolved);
                         }
@@ -531,7 +569,13 @@ impl<'a> Lexer<'a> {
                 if cleaned.is_empty() {
                     Illegal("0x".to_string())
                 } else {
-                    Integer(Self::radix(&cleaned, 16)?)
+                    match Self::radix(&cleaned, 16) {
+                        Ok(value) => Integer(value),
+                        Err(error) => {
+                            self.report(error.to_string());
+                            Integer(0)
+                        }
+                    }
                 }
             }
             '0' if matches!(self.peek_nth(0), 'b' | 'B') => {
@@ -541,7 +585,13 @@ impl<'a> Lexer<'a> {
                 if cleaned.is_empty() {
                     Illegal("0b".to_string())
                 } else {
-                    Integer(Self::radix(&cleaned, 2)?)
+                    match Self::radix(&cleaned, 2) {
+                        Ok(value) => Integer(value),
+                        Err(error) => {
+                            self.report(error.to_string());
+                            Integer(0)
+                        }
+                    }
                 }
             }
             c if Self::is_digit(c) => {
@@ -572,22 +622,49 @@ impl<'a> Lexer<'a> {
                 let number = number.replace('_', "");
                 if is_float {
                     if self.peek_nth(0) == 'f' {
-                        self.read_char();
-                        if self.peek_nth(0) == '3' && self.peek_nth(1) == '2' {
-                            self.read_char();
-                            self.read_char();
+                        self.read_token_float_suffix();
+                        match number.parse::<f32>() {
+                            Ok(value) => Float32(value),
+                            Err(_) => {
+                                self.report(format!(
+                                    "{number} is not a number"
+                                ));
+                                Float32(0.0)
+                            }
                         }
-                        Float32(number.parse::<f32>()?)
                     } else {
-                        Float(number.parse::<f64>()?)
+                        match number.parse::<f64>() {
+                            Ok(value) => Float(value),
+                            Err(_) => {
+                                self.report(format!(
+                                    "{number} is not a number"
+                                ));
+                                Float(0.0)
+                            }
+                        }
                     }
                 } else {
-                    Integer(number.parse::<i64>()?)
+                    match number.parse::<i64>() {
+                        Ok(value) => Integer(value),
+                        Err(_) => {
+                            self.report(format!(
+                                "{number} does not fit in sixty-four bits"
+                            ));
+                            Integer(0)
+                        }
+                    }
                 }
             }
             illegal => Illegal(illegal.to_string()),
-        };
-        Ok(token)
+        }
+    }
+
+    fn read_token_float_suffix(&mut self) {
+        self.read_char();
+        if self.peek_nth(0) == '3' && self.peek_nth(1) == '2' {
+            self.read_char();
+            self.read_char();
+        }
     }
 
     fn read_char(&mut self) -> char {
@@ -697,6 +774,72 @@ mod tests {
         {
             assert_eq!(token, *expected_token);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_bad_escape_still_lexes_the_rest_of_the_file() -> Result<()> {
+        let mut lexer = Lexer::new("s := \"a\\qb\"\nx := 5");
+        let tokens = lexer.tokenize()?;
+        assert_eq!(lexer.diagnostics().len(), 1);
+        assert!(
+            lexer.diagnostics()[0]
+                .message
+                .contains("Unknown escape sequence '\\q'")
+        );
+        assert!(tokens.iter().any(|held| matches!(held, Token::Integer(5))));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unterminated_string_reports_and_yields_what_it_has() -> Result<()> {
+        let mut lexer = Lexer::new("s := \"abc");
+        let tokens = lexer.tokenize()?;
+        assert_eq!(lexer.diagnostics().len(), 1);
+        assert!(
+            lexer.diagnostics()[0]
+                .message
+                .contains("Reached end of file while scanning string")
+        );
+        assert!(matches!(
+            tokens.last(),
+            Some(Token::StringLiteral(text)) if text == "abc"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_overflowing_literal_reports_and_stands_in() -> Result<()> {
+        let mut lexer = Lexer::new("x := 0xFFFFFFFFFFFFFFFFF");
+        let tokens = lexer.tokenize()?;
+        assert_eq!(lexer.diagnostics().len(), 1);
+        assert!(
+            lexer.diagnostics()[0]
+                .message
+                .contains("does not fit in sixty-four bits")
+        );
+        assert!(tokens.iter().any(|held| matches!(held, Token::Integer(0))));
+        Ok(())
+    }
+
+    #[test]
+    fn a_clean_file_lexes_with_nothing_to_say() -> Result<()> {
+        let mut lexer = Lexer::new("x := \"fine\\n\"\ny := 0xFF");
+        lexer.tokenize()?;
+        assert!(lexer.diagnostics().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn every_fault_in_a_file_is_reported() -> Result<()> {
+        let mut lexer = Lexer::new(
+            "a := \"one\\q\"\nb := 0b111111111111111111111111111111111111111111111111111111111111111111\nc := \"tail",
+        );
+        lexer.tokenize()?;
+        assert_eq!(lexer.diagnostics().len(), 3);
+        assert_eq!(lexer.diagnostics()[0].position.line, 1);
+        assert_eq!(lexer.diagnostics()[1].position.line, 2);
+        assert_eq!(lexer.diagnostics()[2].position.line, 3);
         Ok(())
     }
 

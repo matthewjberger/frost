@@ -12,6 +12,21 @@
 
 use std::fmt::Write as _;
 
+// A located failure, the unit every recovering pass answers with. The
+// position names where, the message says what, and rendering happens at the
+// boundary rather than in the pass that found it.
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub position: crate::lexer::Position,
+    pub message: String,
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "at {}: {}", self.position.describe(), self.message)
+    }
+}
+
 /// The whole of what a failed compile prints.
 ///
 /// The chain's innermost message is the one with something to say; the outer

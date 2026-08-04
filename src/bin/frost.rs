@@ -411,6 +411,7 @@ fn compile() -> Result<()> {
         &layers,
         &project_root,
     ));
+    parser.preload_diagnostics(lexer.diagnostics_in_file(entry));
     let parsed = parser.parse().context("Parser error")?;
     // A module's object is only its own on the link path, so that is the only
     // place a cached one can be linked instead of built. `--test` needs every
