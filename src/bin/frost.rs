@@ -429,6 +429,62 @@ fn lowered_and_checked(
     Ok(module)
 }
 
+/// `frost fmt <paths...>`: write the one rendering of every file named.
+///
+/// A directory is every `.frost` file under it. `-` is standard input, whose
+/// rendering goes to standard output, which is what an editor calls. `--check`
+/// writes nothing and names the files that are not already formatted, so a build
+/// can refuse on it.
+fn format_paths(arguments: &[String]) -> Result<bool> {
+    let check = arguments.iter().any(|held| held == "--check");
+    let named: Vec<&String> = arguments
+        .iter()
+        .filter(|held| !held.starts_with("--"))
+        .collect();
+    if named.is_empty() {
+        bail!("frost fmt: which files?");
+    }
+    if named.len() == 1 && named[0] == "-" {
+        let mut source = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut source)
+            .context("reading standard input")?;
+        let formatted = frost::format_source(&source);
+        if check {
+            return Ok(formatted == source);
+        }
+        print!("{formatted}");
+        return Ok(true);
+    }
+
+    let mut files = Vec::new();
+    for path in named {
+        let path = Path::new(path);
+        if path.is_dir() {
+            files.extend(frost_files(path)?);
+        } else {
+            files.push(path.to_path_buf());
+        }
+    }
+    let mut clean = true;
+    for file in &files {
+        let source = fs::read_to_string(file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let formatted = frost::format_source(&source);
+        if formatted == source {
+            continue;
+        }
+        clean = false;
+        if check {
+            println!("{}", file.display());
+            continue;
+        }
+        fs::write(file, &formatted)
+            .with_context(|| format!("writing {}", file.display()))?;
+        println!("formatted {}", file.display());
+    }
+    Ok(clean)
+}
+
 /// `frost fix <file>`: apply every edit the reports carry that can be applied
 /// unread.
 ///
@@ -539,6 +595,16 @@ fn main() -> std::process::ExitCode {
     // before it took anything else. A file really named `fix` is still
     // compilable by writing its extension, which every Frost file has.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|held| held == "fmt") {
+        return match format_paths(&arguments[1..]) {
+            Ok(true) => std::process::ExitCode::SUCCESS,
+            Ok(false) => std::process::ExitCode::FAILURE,
+            Err(error) => {
+                eprint!("{}", frost::render_diagnostic(&error));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if arguments.first().is_some_and(|held| held == "fix") {
         let Some(file) = arguments.get(1) else {
             eprintln!("frost fix: which file?");
@@ -577,15 +643,21 @@ fn main() -> std::process::ExitCode {
             // rather than as a report still becomes one, so the stream holds
             // every fault whatever raised it.
             if wants_json() {
+                // A fault raised as text becomes a report per line of the
+                // innermost message, which is the one with something to say and
+                // the one the caret report prints.
                 let refused = match error.downcast_ref::<Refused>() {
                     Some(refused) => refused.0.clone(),
-                    None => frost::render_diagnostic(&error)
+                    None => error
+                        .chain()
+                        .last()
+                        .map(|innermost| innermost.to_string())
+                        .unwrap_or_default()
                         .lines()
-                        .filter_map(|line| line.strip_prefix("frost: "))
-                        .map(|held| {
+                        .map(|line| {
                             frost::Diagnostic::new(
                                 frost::Position::default(),
-                                held.to_string(),
+                                line.to_string(),
                             )
                         })
                         .collect(),

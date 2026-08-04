@@ -65,8 +65,8 @@ impl std::fmt::Display for Diagnostic {
 /// A message that already says where it is carries its own place, which is the
 /// one printed, so that is the pair two reports are the same by. The ownership
 /// rules are walked twice, once over the source and once over the bodies
-/// specialization expands, and a program with no generic in it gets the same
-/// answer both times; without this the run says everything about it twice.
+/// specialization expands, and for a program with no generic in it both walks
+/// answer the same.
 ///
 /// A pass that reports a whole item's failure names the item and then repeats
 /// what the walk inside it said, which is already located, so the prefixes

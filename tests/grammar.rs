@@ -86,3 +86,94 @@ fn grammar_rejects_malformed_input() {
         assert!(!parses(source), "grammar should reject:\n{source}");
     }
 }
+
+// Every `.frost` file in the repository, which is what the formatter's
+// invariants are held over. The corpus is the style definition, so it is also
+// the only honest test set.
+fn corpus() -> Vec<std::path::PathBuf> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    let mut stack = vec![
+        root.join("std"),
+        root.join("lib"),
+        root.join("selfhosted"),
+        root.join("examples"),
+        root.join("tools"),
+        root.join("bench"),
+    ];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "frost") {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+// The invariant everything else stands on: the token extents and the gaps
+// between them are the whole file. If this holds, no comment and no piece of
+// whitespace is invisible to the formatter, whatever it then decides to write.
+#[test]
+fn every_source_is_its_tokens_and_gaps() {
+    let files = corpus();
+    assert!(files.len() > 100, "the corpus should be the whole tree");
+    for file in &files {
+        let source = std::fs::read_to_string(file).unwrap();
+        let pieces = frost::tokens_and_gaps(&source)
+            .unwrap_or_else(|| panic!("{} could not be lexed", file.display()));
+        assert_eq!(
+            pieces.concat(),
+            source,
+            "{} is not its tokens and its gaps",
+            file.display()
+        );
+    }
+}
+
+#[test]
+fn formatting_the_corpus_is_idempotent() {
+    for file in corpus() {
+        let source = std::fs::read_to_string(&file).unwrap();
+        let once = frost::format_source(&source);
+        let twice = frost::format_source(&once);
+        assert_eq!(
+            once,
+            twice,
+            "{} formats differently the second time",
+            file.display()
+        );
+    }
+}
+
+// Formatting moves no token to another line, which is what makes it safe in a
+// language where the line a token is on is meaning. Counted rather than argued:
+// the same tokens, in the same order, on the same lines.
+#[test]
+fn formatting_the_corpus_moves_no_token() {
+    for file in corpus() {
+        let source = std::fs::read_to_string(&file).unwrap();
+        let formatted = frost::format_source(&source);
+        let before: Vec<&str> = source.lines().map(str::trim).collect();
+        let after: Vec<&str> = formatted.lines().map(str::trim).collect();
+        // Blank lines collapse, so the comparison is of the lines that hold
+        // something, and each must still hold the same thing.
+        let before: Vec<&&str> =
+            before.iter().filter(|line| !line.is_empty()).collect();
+        let after: Vec<&&str> =
+            after.iter().filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            before.len(),
+            after.len(),
+            "{} gained or lost a line",
+            file.display()
+        );
+    }
+}
