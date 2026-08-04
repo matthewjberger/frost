@@ -27,6 +27,24 @@ impl std::fmt::Display for Diagnostic {
     }
 }
 
+// An error that knows where it happened. A bail site that can see the
+// offending token stamps that token's position into one of these, and the
+// recovery loop reads it back out instead of stamping wherever the cursor
+// stopped, which after a long declaration is lines past the mistake.
+#[derive(Debug)]
+pub struct LocatedError {
+    pub position: crate::lexer::Position,
+    pub message: String,
+}
+
+impl std::fmt::Display for LocatedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "at {}: {}", self.position.describe(), self.message)
+    }
+}
+
+impl std::error::Error for LocatedError {}
+
 /// The whole of what a failed compile prints.
 ///
 /// The chain's innermost message is the one with something to say; the outer

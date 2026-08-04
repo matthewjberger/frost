@@ -529,9 +529,11 @@ impl<'a> Parser<'a> {
             let token = self.read_token().clone();
             match token {
                 Token::Identifier(name) => self.exports.push(name),
-                other => bail!(
-                    "Expected an identifier in export list, found {other:?}"
-                ),
+                other => {
+                    return Err(self.at_consumed(format!(
+                        "Expected an identifier in export list, found '{other}'"
+                    )));
+                }
             }
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
@@ -566,7 +568,10 @@ impl<'a> Parser<'a> {
                 Ok(())
             }
             other => {
-                bail!("Expected '>' to close type arguments, found {other:?}")
+                let written = other.to_string();
+                Err(self.here(format!(
+                    "Expected '>' to close type arguments, found '{written}'"
+                )))
             }
         }
     }
@@ -629,7 +634,10 @@ impl<'a> Parser<'a> {
         let name = match self.read_token() {
             Token::StringLiteral(text) => text.clone(),
             other => {
-                bail!("Expected a string literal after 'test', found {other:?}")
+                let written = other.to_string();
+                return Err(self.at_consumed(format!(
+                    "Expected a string literal after 'test', found '{written}'"
+                )));
             }
         };
         let body = self.parse_block()?;
@@ -702,7 +710,40 @@ impl<'a> Parser<'a> {
         self.diagnostics = held;
     }
 
+    // The error a site raises when the token it is looking at is the mistake:
+    // the position is that token's, captured now, not wherever the cursor
+    // ends up once recovery has skipped ahead.
+    fn here(&self, message: String) -> anyhow::Error {
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position: self.current_position().unwrap_or_default(),
+            message,
+        })
+    }
+
+    // The same, for a site that has already consumed the offending token.
+    fn at_consumed(&self, message: String) -> anyhow::Error {
+        let position = if self.positions.is_empty() || self.consumed == 0 {
+            Position::default()
+        } else {
+            let index = (self.consumed - 1).min(self.positions.len() - 1);
+            self.positions[index]
+        };
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position,
+            message,
+        })
+    }
+
     fn record_error(&mut self, fallback: Position, error: &anyhow::Error) {
+        if let Some(located) =
+            error.downcast_ref::<crate::diagnostic::LocatedError>()
+        {
+            self.diagnostics.push(Diagnostic {
+                position: located.position,
+                message: located.message.clone(),
+            });
+            return;
+        }
         let position = self.current_position().unwrap_or(fallback);
         self.diagnostics.push(Diagnostic {
             position,
@@ -917,7 +958,24 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
-            _ => Some(self.parse_expression_statement()?),
+            _ => {
+                // A token no statement can start gets the dispatch's own
+                // answer, naming what could stand here, rather than whichever
+                // message the expression parser dies with after taking the
+                // token as the start of one.
+                if !Self::can_begin_expression(self.peek_nth(0)) {
+                    let written = self.peek_nth(0).to_string();
+                    if self.block_depth == 0 {
+                        return Err(self.here(format!(
+                            "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
+                        )));
+                    }
+                    return Err(self.here(format!(
+                        "expected a statement, found '{written}'"
+                    )));
+                }
+                Some(self.parse_expression_statement()?)
+            }
         })
     }
 
@@ -1006,9 +1064,12 @@ impl<'a> Parser<'a> {
                     let name = name.to_string();
                     Some(self.ast.intern(&name))
                 }
-                other => bail!(
-                    "Expected a second name after ',' in a for loop, found {other:?}"
-                ),
+                other => {
+                    let written = other.to_string();
+                    return Err(self.at_consumed(format!(
+                        "Expected a second name after ',' in a for loop, found '{written}'"
+                    )));
+                }
             }
         } else {
             None
@@ -1610,6 +1671,39 @@ impl<'a> Parser<'a> {
         Ok(self.ast.push_stmt(statement, self.span_from(start)))
     }
 
+    // The tokens the prefix arms of `parse_expression` answer, one list kept
+    // beside them so the statement dispatch can name what it expected.
+    // Ampersand is here because its arm refuses with the message that teaches
+    // the borrow model, which beats naming the token. A token added there and
+    // not here turns a precise complaint back into whichever inner message
+    // surfaces, which is wrong but not silent.
+    fn can_begin_expression(token: &Token) -> bool {
+        matches!(
+            token,
+            Token::Identifier(_)
+                | Token::StringLiteral(_)
+                | Token::Integer(_)
+                | Token::Float(_)
+                | Token::Float32(_)
+                | Token::Bang
+                | Token::Minus
+                | Token::Ampersand
+                | Token::Sizeof
+                | Token::Typename
+                | Token::Dollar
+                | Token::True
+                | Token::False
+                | Token::Dot
+                | Token::LeftBrace
+                | Token::LeftBracket
+                | Token::LeftParentheses
+                | Token::If
+                | Token::Function
+                | Token::Match
+                | Token::Unsafe
+        )
+    }
+
     fn parse_expression(&mut self, precedence: Precedence) -> Result<ExprId> {
         let start = self.mark();
         let mut expression = match self.peek_nth(0) {
@@ -1739,7 +1833,12 @@ impl<'a> Parser<'a> {
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
-            token => bail!("Token not valid for an expression: {:?}", token),
+            token => {
+                let written = token.to_string();
+                return Err(self.here(format!(
+                    "Token not valid for an expression: '{written}'"
+                )));
+            }
         };
 
         while self.peek_nth(0) != &Token::Semicolon
@@ -1990,9 +2089,12 @@ impl<'a> Parser<'a> {
                         self.span_from(start),
                     ));
                 }
-                token => bail!(
-                    "Expected a count after ';' in an array literal, found {token:?}"
-                ),
+                token => {
+                    let written = token.to_string();
+                    return Err(self.at_consumed(format!(
+                        "Expected a count after ';' in an array literal, found '{written}'"
+                    )));
+                }
             };
             if !matches!(self.read_token(), Token::RightBracket) {
                 bail!("Expected ']' after an array repeat count");
@@ -2091,7 +2193,12 @@ impl<'a> Parser<'a> {
         }
         match crate::lexer::keyword_spelling(token) {
             Some(word) => Ok(word.to_string()),
-            None => bail!("Expected {context}, found {token:?}"),
+            None => {
+                let written = token.to_string();
+                Err(self.at_consumed(format!(
+                    "Expected {context}, found '{written}'"
+                )))
+            }
         }
     }
 
@@ -2444,10 +2551,10 @@ impl<'a> Parser<'a> {
                     pack,
                 });
             } else {
-                bail!(
-                    "Expected a parameter name in parameter list, found {:?}",
-                    self.peek_nth(0)
-                );
+                let written = self.peek_nth(0).to_string();
+                return Err(self.here(format!(
+                    "Expected a parameter name in parameter list, found '{written}'"
+                )));
             }
 
             if matches!(self.peek_nth(0), Token::Comma) {
@@ -2619,7 +2726,12 @@ impl<'a> Parser<'a> {
                     Pattern::Identifier(self.ast.intern(&name))
                 }
             }
-            token => bail!("Unexpected token in pattern: {:?}", token),
+            token => {
+                let written = token.to_string();
+                return Err(self.here(format!(
+                    "Unexpected token in pattern: '{written}'"
+                )));
+            }
         };
         Ok(self.ast.push_pattern(pattern))
     }
@@ -2861,10 +2973,10 @@ impl<'a> Parser<'a> {
                     pack,
                 });
             } else {
-                bail!(
-                    "Expected a parameter name in parameter list, found {:?}",
-                    self.peek_nth(0)
-                );
+                let written = self.peek_nth(0).to_string();
+                return Err(self.here(format!(
+                    "Expected a parameter name in parameter list, found '{written}'"
+                )));
             }
 
             if matches!(self.peek_nth(0), Token::Comma) {
@@ -3106,7 +3218,10 @@ impl<'a> Parser<'a> {
                     let size = match self.read_token() {
                         Token::Integer(size) => *size as usize,
                         token => {
-                            bail!("Expected array size, found {:?}", token)
+                            let written = token.to_string();
+                            return Err(self.at_consumed(format!(
+                                "Expected array size, found '{written}'"
+                            )));
                         }
                     };
                     if !matches!(self.read_token(), Token::RightBracket) {
@@ -3245,7 +3360,12 @@ impl<'a> Parser<'a> {
                 };
                 Type::TypeParam(param_name)
             }
-            token => bail!("Expected type, found {:?}", token),
+            token => {
+                let written = token.to_string();
+                return Err(
+                    self.here(format!("Expected type, found '{written}'"))
+                );
+            }
         };
         Ok(base_type)
     }
@@ -5308,6 +5428,73 @@ mod tests {
         assert!(
             names.iter().any(|name| name == "second"),
             "recovery should keep 'second', got {names:?}"
+        );
+        Ok(())
+    }
+
+    // A token in a message reads as the reader wrote it, not as the compiler
+    // stores it: 'found '5'', never 'found Integer(5)'.
+    #[test]
+    fn a_message_spells_the_token_the_reader_wrote() -> Result<()> {
+        let input = "f :: fn(5) -> i64 { 1 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (_, diagnostics) = parser.parse_recovering();
+        assert!(!diagnostics.is_empty());
+        assert!(
+            diagnostics[0].message.contains("found '5'"),
+            "got {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics[0].message.contains("Integer"),
+            "got {diagnostics:?}"
+        );
+        Ok(())
+    }
+
+    // The statement dispatch answers with what could stand at the position,
+    // rather than whichever inner branch's message surfaces.
+    #[test]
+    fn a_stray_token_names_what_a_declaration_head_could_be() -> Result<()> {
+        let input = "}\ngood :: fn() -> i64 { 1 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(!diagnostics.is_empty());
+        assert!(
+            diagnostics[0].message.contains(
+                "expected a declaration head, `import`, `export`, or `test`, found '}'"
+            ),
+            "got {diagnostics:?}"
+        );
+        let names = constant_names(&program);
+        assert!(names.iter().any(|name| name == "good"));
+        Ok(())
+    }
+
+    // The diagnostic lands on the offending token, not wherever the cursor
+    // stopped once recovery had skipped ahead.
+    #[test]
+    fn a_diagnostic_lands_on_the_offending_token() -> Result<()> {
+        let input = "a :: fn() -> i64 { 1 }\n\
+                     b :: fn(, x: i64) -> i64 { x }\n\
+                     c :: fn() -> i64 { 3 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (_, diagnostics) = parser.parse_recovering();
+        assert!(!diagnostics.is_empty());
+        assert_eq!(diagnostics[0].position.line, 2, "got {diagnostics:?}");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("Expected a parameter name in parameter list"),
+            "got {diagnostics:?}"
         );
         Ok(())
     }
