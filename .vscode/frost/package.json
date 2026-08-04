@@ -2,7 +2,7 @@
   "name": "frost",
   "displayName": "Frost",
   "description": "Syntax highlighting and navigation for the Frost language",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -50,6 +50,16 @@
         "path": "./snippets/frost.json"
       }
     ],
+    "configuration": {
+      "title": "Frost",
+      "properties": {
+        "frost.compilerPath": {
+          "type": "string",
+          "default": "frost",
+          "description": "The frost compiler the formatter runs. A name is looked up on PATH."
+        }
+      }
+    },
     "jsonValidation": [
       {
         "fileMatch": "frost.json",

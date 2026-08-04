@@ -441,6 +441,37 @@ const hoverProvider = {
   },
 };
 
+// Formatting is `frost fmt -`: the compiler reads the buffer on standard input
+// and writes its one rendering to standard output, so the editor and the build
+// agree by running the same code rather than by keeping two of it. The whole
+// document is replaced, and a compiler that is not on PATH or that fails leaves
+// the buffer alone.
+const documentFormattingProvider = {
+  provideDocumentFormattingEdits(document) {
+    const compiler = vscode.workspace
+      .getConfiguration("frost")
+      .get("compilerPath", "frost");
+    let written;
+    try {
+      written = require("child_process").execFileSync(compiler, ["fmt", "-"], {
+        input: document.getText(),
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch (error) {
+      return undefined;
+    }
+    if (written === document.getText()) {
+      return undefined;
+    }
+    const whole = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length)
+    );
+    return [vscode.TextEdit.replace(whole, written)];
+  },
+};
+
 function activate(context) {
   ready = indexWorkspace().catch(() => undefined);
 
@@ -448,6 +479,10 @@ function activate(context) {
   const timers = new Map();
 
   context.subscriptions.push(
+    vscode.languages.registerDocumentFormattingEditProvider(
+      selector,
+      documentFormattingProvider
+    ),
     vscode.languages.registerDocumentSymbolProvider(
       selector,
       documentSymbolProvider
