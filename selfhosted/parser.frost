@@ -1257,10 +1257,6 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
         name_off)
 }
 
-parse_arg_list :: fn(mut p: Parser) -> i64 {
-    parse_arg_list_for(p, -1)
-}
-
 // The arguments of a call, with the callee's index when there is one. Each
 // argument is parsed under the type the parameter declares, which is what a
 // `.Variant` written there takes its enum from. A callee defined later in the
