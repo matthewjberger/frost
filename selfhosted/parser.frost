@@ -3434,12 +3434,17 @@ refuse_minus_continuation :: fn(mut p: Parser, at: i64) {
 
 // One statement of a block, run with an escape armed so a fault ends the
 // statement rather than the declaration around it. The pending mark and the
-// block depth ride along, because an escape mid-statement leaves both where
-// the fault found them and the loop has to put them back.
+// depths ride along, because an escape mid-statement leaves them where the
+// fault found them and the loop has to put them back: a stale unsafe depth
+// would swallow the unsafety faults of everything after it, and a stale
+// expected type would type later literals against a context that is gone.
 StmtTurn :: struct {
     parser: ^u8,
     mark: i64,
     depth: i64,
+    unsafe_depth: i64,
+    defer_depth: i64,
+    expected_type: i64,
     statement: i64,
 }
 
@@ -3499,6 +3504,9 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             parser = unsafe { ptr_cast($u8, ptr_to(p)) },
             mark = mark,
             depth = p.block_depth,
+            unsafe_depth = p.unsafe_depth,
+            defer_depth = p.defer_depth,
+            expected_type = p.expected_type,
             statement = -1
         }
         escaped := unsafe {
@@ -3508,6 +3516,9 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         if (escaped == 1) {
             p.pending.count = mark
             p.block_depth = turn.depth
+            p.unsafe_depth = turn.unsafe_depth
+            p.defer_depth = turn.defer_depth
+            p.expected_type = turn.expected_type
             synchronize_statement(p, terminator)
             while (cur(p) == TokenKind::Semi) {
                 advance(p)
@@ -5542,9 +5553,15 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
 // The parser and the answer of one recovered turn, handed through the raw
 // pointer the runtime's recovery runner takes, the way a thread body takes
 // its job.
+// The depths a half-parsed declaration can leave raised ride along, because
+// an escape mid-`unsafe`, mid-`defer`, or mid-block leaves them where the
+// fault found them and the loop has to put them back before the next head.
 RecoverTurn :: struct {
     parser: ^u8,
     item: i64,
+    block_depth: i64,
+    unsafe_depth: i64,
+    defer_depth: i64,
 }
 
 parse_declaration_guarded :: fn(raw: ^u8) {
@@ -5585,13 +5602,19 @@ parse_program :: fn(mut p: Parser) -> i64 {
     while (cur(p) != TokenKind::Eof) {
         mut turn := RecoverTurn {
             parser = unsafe { ptr_cast($u8, ptr_to(p)) },
-            item = -1
+            item = -1,
+            block_depth = p.block_depth,
+            unsafe_depth = p.unsafe_depth,
+            defer_depth = p.defer_depth
         }
         escaped := unsafe {
             frost_rt_recover_run(parse_declaration_guarded,
                 ptr_cast($u8, ptr_to(turn)))
         }
         if (escaped == 1) {
+            p.block_depth = turn.block_depth
+            p.unsafe_depth = turn.unsafe_depth
+            p.defer_depth = turn.defer_depth
             synchronize_declaration(p)
         } else if (turn.item != (-1)) {
             if (head == (-1)) {

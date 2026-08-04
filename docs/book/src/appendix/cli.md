@@ -158,6 +158,7 @@ ordinary build.
 | `FROST_BACKEND` | `asm` picks the assembly emitter, when no backend flag was given |
 | `FROST_RUNTIME` | Where `frost_runtime.c` is. Defaults to `runtime/frost_runtime.c` relative to the working directory, which is what a checkout you are not standing in needs changed |
 | `FROST_ABI` | `sysv` or `win` overrides the host's calling convention, so either target's output can be read from either host |
+| `FROST_QUERY` | Answer an editor's question about the checked program instead of building it: `symbols`, `definition NAME`, `fields NAME`, or `local FN NAME`. Answers go to stderr, one line each, and nothing is emitted |
 | `CC` | The C compiler the emitted C and the link go to. Defaults to `gcc` on Windows and `cc` elsewhere |
 
 `FROST_INPUT` and `FROST_BACKEND` are what the fixpoint checks and the older
