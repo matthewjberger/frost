@@ -9,7 +9,7 @@ the same shape gets on the same terms.
 
 Where the library reaches outside the language it does it the way a program
 would, with an `extern` declaration. `mem.frost` declares the C allocator,
-`io.frost` the runtime's emit helpers, `fs.frost` its file calls,
+`io.frost` the runtime's write helpers, `fs.frost` its file calls,
 `thread.frost` its threading ones, and `math.frost` and `math64.frost` the C
 transcendentals. Those six files hold every `extern` in the library. The other
 eleven declare none, which is why they are ordinary safe code.

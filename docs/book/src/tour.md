@@ -21,6 +21,8 @@ frost program.frost --link -o program && ./program
 methods. Behavior lives in free functions.
 
 ```frost
+import "io.frost"
+
 square :: fn(x: i64) -> i64 { x * x }
 
 main :: fn() -> i64 {
@@ -29,24 +31,26 @@ main :: fn() -> i64 {
     for i in 0..n {
         total = total + square(i)
     }
-    print total            // 55
+    print_int_line(total)  // 55
     0
 }
 ```
 
-`print` is a statement, not a library function, so showing a number needs
-nothing declared and nothing imported. `print expr` writes one value and a
-newline. The format form fills each `{}` from the values after the literal:
+Writing output is a library question. `import "io.frost"` brings in the
+writers, named for what they write: `print_int_line`, `print_str_line`,
+`print_f64_line`, `print_bool_line`, and the no-newline forms beside them, so a
+line built from several values is several calls:
 
 ```frost
-print "hp {} of {}", entity.hp, entity.max
+print_str("hp ")
+print_int(entity.hp)
+print_str(" of ")
+print_int_line(entity.max)
 ```
 
-The compiler reads that literal and splits it into the pieces to write where the
-statement is written, so no format exists at run time and nothing parses one.
-The printable set is closed and lives in the compiler: the integer widths, the
-floats, `bool`, `Handle`, `str` and `^i8`. Anything else is an error naming the
-type ([statements.md](reference/statements.md)).
+Each writer is a few lines of ordinary Frost over one runtime call, and the
+library is the whole story: there is no print statement in the language
+([text-and-io.md](std/text-and-io.md)).
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
@@ -99,6 +103,8 @@ A `struct` is just its fields. An `enum` is a tagged union with payloads.
 Neither carries methods.
 
 ```frost
+import "io.frost"
+
 Point :: struct { x: i64, y: i64 }
 
 Shape :: enum {
@@ -115,8 +121,8 @@ area :: fn(s: Shape) -> i64 {
 
 main :: fn() -> i64 {
     p := Point { x = 3, y = 4 }
-    print p.x + p.y                                     // 7
-    print area(Shape::Rect { width = 4, height = 5 })   // 20
+    print_int_line(p.x + p.y)                                     // 7
+    print_int_line(area(Shape::Rect { width = 4, height = 5 }))   // 20
     0
 }
 ```
@@ -127,8 +133,8 @@ A variant can leave its enum out wherever the type is already stated, which is
 the construction counterpart of the `case .Circle` an arm writes:
 
 ```frost
-s : Shape = .Circle { radius = 4 }                 // the annotation says which
-print area(.Rect { width = 4, height = 5 })        // the parameter does
+s : Shape = .Circle { radius = 4 }                    // the annotation says which
+print_int_line(area(.Rect { width = 4, height = 5 })) // the parameter does
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return
 ```
 
@@ -156,6 +162,8 @@ parameter, written on its declaration, and the call site says nothing:
 | move | `move p: Point` | ownership transferred |
 
 ```frost
+import "io.frost"
+
 scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
     p.x = p.x * k
     p.y = p.y * k
@@ -164,7 +172,7 @@ scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
 main :: fn() -> i64 {
     mut p := Point { x = 3, y = 4 }
     scale(p, 2)                       // no sigil at the call
-    print p.x                         // 6
+    print_int_line(p.x)               // 6
     0
 }
 ```
@@ -179,6 +187,8 @@ of a place rather than a copy of it, and a function may answer with one, which
 is what lets a container hand back an element instead of a copy of it:
 
 ```frost
+import "io.frost"
+
 at :: fn(points: []Point, index: i64) -> ref Point {
     ref result := points[index]
     result
@@ -188,7 +198,7 @@ main :: fn() -> i64 {
     mut storage : [3]Point = [Point { x = 0, y = 0 }; 3]
     held := at(storage, 1)
     held.x = 9
-    print storage[1].x       // 9, written through the borrow
+    print_int_line(storage[1].x)  // 9, written through the borrow
     0
 }
 ```
@@ -221,9 +231,9 @@ close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print close(f)   // consumes f exactly once
-    // close(f)      // error: use of moved value 'f'
-}                    // dropping f without consuming would also be an error
+    print_int_line(close(f))   // consumes f exactly once
+    // close(f)                // error: use of moved value 'f'
+}                              // dropping f without consuming would also be an error
 ```
 
 Chapter 9 of [linear.md](reference/linear.md) has the consume rules, including
@@ -263,8 +273,8 @@ which is where the names come from at the match:
 
 ```frost
 match number(text) {
-    case .Ok { value }: { print value }
-    case .Err { error }: { print error.at }
+    case .Ok { value }: { print_int_line(value) }
+    case .Err { error }: { print_int_line(error.at) }
 }
 ```
 
@@ -294,6 +304,7 @@ array beside a parallel `generations` array).
 
 ```frost
 import "slab.frost"
+import "io.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
 
@@ -308,12 +319,12 @@ main :: fn() -> i64 {
 
     hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
 
-    print world[hero].hp                  // 100
+    print_int_line(world[hero].hp)        // 100
     world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print world[hero].hp                  // 75
+    print_int_line(world[hero].hp)        // 75
 
     slab_release($Entity, $16, world, hero)
-    print slab_alive($Entity, $16, world, hero)   // 0, the generation moved on
+    print_int_line(slab_alive($Entity, $16, world, hero))   // 0, the generation moved on
     0
 }
 ```
@@ -335,6 +346,7 @@ a hot loop:
 
 ```frost
 import "columns.frost"
+import "io.frost"
 
 Particle :: struct { x: i64, y: i64 }
 
@@ -343,7 +355,7 @@ main :: fn() -> i64 {
     columns_reset($Particle, $8, world)
     h := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
 
-    print world[h].x               // 10, checked at the handle's slot
+    print_int_line(world[h].x)     // 10, checked at the handle's slot
     world[h].x = 100               // scatter a field back to the slot
     // world.x is the whole [8]i64 column, and coerces to a []i64 slice
     0
@@ -360,6 +372,8 @@ Generic functions and structs monomorphize, so there is no runtime dispatch. A
 type parameter is written `$T`:
 
 ```frost
+import "io.frost"
+
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
@@ -367,12 +381,12 @@ swap      :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)               // Pair<i64> inferred
-    print p.first + p.second           // 7
+    print_int_line(p.first + p.second) // 7
 
     mut x : i64 = 1
     mut y : i64 = 2
     swap(x, y)
-    print x                            // 2
+    print_int_line(x)                  // 2
     0
 }
 ```
@@ -386,7 +400,7 @@ and pass the type explicitly with a leading `$`:
 bytes_for :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 
 main :: fn() -> i64 {
-    print bytes_for($Entity, 16)       // pass the type with $
+    print_int_line(bytes_for($Entity, 16))   // pass the type with $
     0
 }
 ```
@@ -423,7 +437,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print best($i64, $ascending, 7, 3)   // 3
+    print_int_line(best($i64, $ascending, 7, 3))   // 3
     0
 }
 ```
@@ -462,11 +476,13 @@ and a bundle without the `$` is a struct holding several. There are no capturing
 closures.
 
 ```frost
+import "io.frost"
+
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
 main :: fn() -> i64 {
-    print apply(double, 21)   // 42
+    print_int_line(apply(double, 21))   // 42
     0
 }
 ```
@@ -477,23 +493,31 @@ A parameter written `args: $...` takes as many arguments as the call gives it,
 of whatever types they are:
 
 ```frost
+import "io.frost"
+
 printall :: fn(args: $...) {
     for value in args {
-        print value
+        if (is_float(value)) {
+            print_f64_line(value)
+        } else if (is_slice(value)) {
+            print_str_line(value)
+        } else {
+            print_int_line(value)
+        }
     }
 }
 
 main :: fn() -> i64 {
-    printall(1, 2.5, 9)
+    printall(1, 2.5, "three")
     0
 }
 ```
 
 The `for` is not a loop. The body is compiled once per element with `value`
-standing for that element, so what runs is three `print`s of three different
-types. An `if` over what a type is gets its answer at expansion time too, and
-the branch that cannot run is dropped before anything checks it, which is what
-lets one body serve elements of different types.
+standing for that element, so what runs is three writes of three different
+types. The `if` over what a type is gets its answer at expansion time, and the
+branch that cannot run is dropped before anything checks it, which is what lets
+one body serve elements of different types.
 
 There is no compile-time string parsing, no recursion and no unbounded loop:
 everything here walks a list whose length the call fixed, so expansion costs
@@ -509,14 +533,16 @@ those numbers out to lay the struct out, so write the table over them rather
 than beside them:
 
 ```frost
+import "io.frost"
+
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
 
 main :: fn() -> i64 {
-    print field_count(Vertex)
+    print_int_line(field_count(Vertex))
     for field in fields(Vertex) {
-        print offset_of(field)
-        print sizeof(field)
-        if (is_float(field)) { print 1 } else { print 0 }
+        print_int_line(offset_of(field))
+        print_int_line(sizeof(field))
+        if (is_float(field)) { print_int_line(1) } else { print_int_line(0) }
     }
     0
 }
@@ -537,10 +563,12 @@ second language for asking about types (11.1d of
 A fixed-size array `[N]T` knows its length, and every index is checked:
 
 ```frost
+import "io.frost"
+
 main :: fn() -> i64 {
     arr := [10, 20, 30]
-    print arr[2]     // 30
-    // arr[5]         // aborts: index 5 out of bounds for length 3
+    print_int_line(arr[2])   // 30
+    // arr[5]                // aborts: index 5 out of bounds for length 3
     0
 }
 ```
@@ -625,6 +653,7 @@ handle that stays checkable after the slot it names is reused.
 
 ```frost
 import "slab.frost"
+import "io.frost"
 
 Kind   :: enum { Player, Enemy { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
@@ -651,10 +680,11 @@ main :: fn() -> i64 {
         Entity { hp = 30, kind = .Enemy { damage = 15 } })
 
     world[player].hp = world[player].hp + delta(world[goblin])
-    print "hp {}", world[player].hp                  // 85
+    print_str("hp ")
+    print_int_line(world[player].hp)                 // 85
 
     slab_release($Entity, $16, world, goblin)
-    print slab_alive($Entity, $16, world, goblin)    // 0
+    print_int_line(slab_alive($Entity, $16, world, goblin))   // 0
     0
 }
 ```

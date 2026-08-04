@@ -86,8 +86,7 @@ pub(crate) fn names_in_statement(
         }
         Statement::LetMultiple(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => names_in_expression(ast, *value, out),
+        | Statement::Expression(value) => names_in_expression(ast, *value, out),
         Statement::Assignment(place, value) => {
             names_in_expression(ast, *place, out);
             names_in_expression(ast, *value, out);

@@ -180,8 +180,8 @@ lives, the container lives, and the block moves.
 
 ```frost
 view := vec_slice($i64, v)
-vec_push($i64, v, 1)       // fills, so the block is replaced
-print view[0]              // refused: it names the old one
+vec_push($i64, v, 1)         // fills, so the block is replaced
+print_int_line(view[0])      // refused: it names the old one
 ```
 
 `vec_slice` answers with a view of `v.storage`, and `vec_push` writes a wider
@@ -547,8 +547,8 @@ so nobody has to find out by reading the passes.
   hold :: fn(mut v: Vec<i64>) -> Holder { Holder { view = vec_slice($i64, v) } }
 
   h := hold(v)
-  vec_push($i64, v, 1)       // may grow, which frees the old block
-  print h.view[0]            // reads it anyway, not refused
+  vec_push($i64, v, 1)           // may grow, which frees the old block
+  print_int_line(h.view[0])      // reads it anyway, not refused
   ```
 
   Both shapes are open: the view stored in a local struct and read after a growth

@@ -17,6 +17,7 @@
 import "fs.frost"
 import "format.frost"
 import "strings.frost"
+import "io.frost"
 
 IN  :: "examples/tour.frost"
 OUT :: "docs/book/src/tour.svg"
@@ -301,7 +302,7 @@ first_declaration :: fn(text: str) -> i64 {
 main :: fn() -> i64 {
     read := fs_read(IN)
     if (read.ok == false) {
-        print 0
+        print_int_line(0)
         fs_free(read)
         return 1
     }
@@ -366,14 +367,14 @@ main :: fn() -> i64 {
     builder_str_value(out, "</svg>\n")
 
     if (fs_write(OUT, builder_str(out)) == false) {
-        print 0
+        print_int_line(0)
         builder_free(out)
         fs_free(read)
         return 1
     }
-    print lines
-    print columns
-    print builder_len(out)
+    print_int_line(lines)
+    print_int_line(columns)
+    print_int_line(builder_len(out))
 
     builder_free(out)
     fs_free(read)

@@ -282,13 +282,6 @@ impl Lowering {
             Statement::Let { value, .. } | Statement::Expression(value) => {
                 self.check_expression(ast, value, returns)
             }
-            Statement::Print(value, arguments) => {
-                self.check_expression(ast, value, returns)?;
-                for argument in ast.exprs_in(arguments).to_vec() {
-                    self.check_expression(ast, argument, returns)?;
-                }
-                Ok(())
-            }
             Statement::Assignment(place, value) => {
                 self.check_expression(ast, place, returns)?;
                 self.check_expression(ast, value, returns)

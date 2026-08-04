@@ -1153,44 +1153,6 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     }
 }
 
-// One value of a formatted `print`, written as what it is: an integer of any
-// width as an integer, a float as a float, and a `str` as its bytes.
-emit_write_value :: fn(mut p: Parser, value: i64) {
-    value_ty := type_of(p, value)
-    if (is_array_ty(value_ty) && is_slice_ty(p, value_ty)) {
-        emit_text("frost_rt_write_bytes((const char*)(")
-        emit_expr(p, value)
-        emit_text(").data, (")
-        emit_expr(p, value)
-        emit_text(").len);\n")
-        return
-    }
-    // A `^i8` is a C string, whose length is where its NUL is. An unannotated
-    // string literal is one of these.
-    if (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8) {
-        emit_text("frost_rt_write_cstr((const char*)(")
-        emit_expr(p, value)
-        emit_text("));\n")
-        return
-    }
-    if (is_float(value_ty)) {
-        emit_text("frost_rt_write_f64((double)(")
-        emit_expr(p, value)
-        emit_text("));\n")
-        return
-    }
-    if (is_aggregate(value_ty)) {
-        report_where(p.modules, p.src, arena_at(p.arena, value).pos)
-        report("there is no way to write a ")
-        report_type_name(p, value_ty)
-        report(", so write what it holds instead")
-        frost_rt_die()
-    }
-    emit_text("frost_rt_write_i64((long long)(")
-    emit_expr(p, value)
-    emit_text("));\n")
-}
-
 emit_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
@@ -1290,47 +1252,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("}\n")
         return
     }
-    if (kind == NodeKind::Print) {
-        // A format was split into its pieces at parse time, so what is left is
-        // a list to write in order, with one newline at the end.
-        if (node.a == (-1)) {
-            mut piece := node.b
-            while (piece != (-1)) {
-                pnode := arena_at(p.arena, piece)
-                next_piece := pnode.next
-                if (pnode.kind == NodeKind::StrLit) {
-                    emit_text("frost_rt_write_bytes(\"")
-                    emit_string_content(p.src, pnode.val, pnode.c)
-                    emit_text("\", ")
-                    frost_rt_emit_int(literal_length(p.src, pnode.val, pnode.c))
-                    emit_text(");\n")
-                } else {
-                    emit_write_value(p, pnode.a)
-                }
-                piece = next_piece
-            }
-            emit_text("frost_rt_write_newline();\n")
-            return
-        }
-        value := node.a
-        value_ty := type_of(p, value)
-        // A run of bytes rather than a number is written as bytes. Everything
-        // else keeps the two printf forms it always had.
-        if ((is_array_ty(value_ty) && is_slice_ty(p, value_ty))
-            || (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8)) {
-            emit_write_value(p, value)
-            emit_text("frost_rt_write_newline();\n")
-            return
-        }
-        if (is_float(value_ty)) {
-            emit_text("printf(\"%g\\n\", (double)(")
-        } else {
-            emit_text("printf(\"%lld\\n\", (long long)(")
-        }
-        emit_expr(p, value)
-        emit_text("));\n")
-        return
-    }
+
     if (kind == NodeKind::Return) {
         value := node.a
         if (value == (-1)) {
@@ -2013,11 +1935,6 @@ emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("  return n;\n")
     emit_text("}\n")
     emit_text("int64_t frost_rt_slot(int64_t, int64_t, const int64_t*);\n")
-    emit_text("void frost_rt_write_bytes(const char*, int64_t);\n")
-    emit_text("void frost_rt_write_i64(int64_t);\n")
-    emit_text("void frost_rt_write_f64(double);\n")
-    emit_text("void frost_rt_write_newline(void);\n")
-    emit_text("void frost_rt_write_cstr(const char*);\n")
     emit_type_forward_decls(p)
     emit_type_defs(p)
     emit_extern_prototypes(p, head)

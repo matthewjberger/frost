@@ -192,8 +192,7 @@ fn read_through_statement(
         }
         Statement::Constant(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => {
+        | Statement::Expression(value) => {
             read_through_expression(ast, value, through, bound)
         }
         Statement::Assignment(place, value) => {

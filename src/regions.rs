@@ -354,12 +354,10 @@ impl<'a> Region<'a> {
                     }
                 }
             }
-            // `print` writes a value out and stores nothing, and the rest
-            // are declarations or control transfers. Listed rather than
-            // caught by `_`, so a new statement form is a compile error
+            // Declarations and control transfers store nothing. Listed rather
+            // than caught by `_`, so a new statement form is a compile error
             // here instead of a road out of the region nobody walked.
-            Statement::Print(..)
-            | Statement::Struct(..)
+            Statement::Struct(..)
             | Statement::Enum(..)
             | Statement::Flags(..)
             | Statement::TypeAlias(..)
@@ -991,8 +989,7 @@ fn statement_expressions(statement: &Statement) -> Vec<ExprId> {
         | Statement::LetMultiple(_, value)
         | Statement::Return(value)
         | Statement::Assignment(_, value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => vec![*value],
+        | Statement::Expression(value) => vec![*value],
         Statement::While(condition, _) => vec![*condition],
         Statement::For(_, _, sequence, _) => vec![*sequence],
         _ => Vec::new(),
@@ -1173,9 +1170,7 @@ fn kept_of_block(
             Statement::With(_, body) => {
                 kept_of_block(*body, walk, kept, environment, found);
             }
-            Statement::Expression(value)
-            | Statement::Print(value, _)
-            | Statement::Return(value) => {
+            Statement::Expression(value) | Statement::Return(value) => {
                 kept_of_expression(*value, walk, kept, environment, found);
             }
             _ => {}
@@ -1318,7 +1313,7 @@ fn answer_of_block(
             // answering with a view of a parameter from one of those was
             // recorded as naming nothing: the caller was then free to store it
             // somewhere that outlives what it points into.
-            Statement::Expression(value) | Statement::Print(value, _) => {
+            Statement::Expression(value) => {
                 answer_of_branches(*value, walk, environment, answer);
             }
             _ => {}
@@ -1871,13 +1866,11 @@ impl Frame<'_> {
             Statement::Expression(value) => {
                 self.check_expression_statement(*value, answers, at);
             }
-            // `print` writes a value out and hands nothing to the caller, so
-            // no storage leaves the frame through one. The rest are
-            // declarations and control transfers. Listed rather than caught
-            // by `_`, so a new statement form is a compile error here rather
-            // than a road out of the frame that nobody walked.
-            Statement::Print(..)
-            | Statement::Struct(..)
+            // Declarations and control transfers hand nothing to the caller.
+            // Listed rather than caught by `_`, so a new statement form is a
+            // compile error here rather than a road out of the frame that
+            // nobody walked.
+            Statement::Struct(..)
             | Statement::Enum(..)
             | Statement::Flags(..)
             | Statement::TypeAlias(..)

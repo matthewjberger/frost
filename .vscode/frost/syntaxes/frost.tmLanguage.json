@@ -189,10 +189,6 @@
           "match": "\\b(value)\\b(?=\\s+[a-z_][A-Za-z0-9_]*\\s*:)"
         },
         {
-          "name": "keyword.other.frost",
-          "match": "\\b(print)\\b"
-        },
-        {
           "name": "constant.language.boolean.frost",
           "match": "\\b(true|false)\\b"
         },
@@ -238,7 +234,7 @@
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "function-calls": {
-      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|flags|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|print|sizeof|cast|typename|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|flags|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
       "captures": {
         "1": { "name": "entity.name.function.frost" }
       }

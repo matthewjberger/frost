@@ -229,31 +229,32 @@ impl<'a> Interpreter<'a> {
         if callee == "printf" {
             return self.printf(arguments, locals);
         }
-        // The pieces a `print` is written as. The interpreter is one of the
-        // three backends a program is checked against, so it has to write the
-        // same bytes the other two do.
+        // What std/io.frost writes through. The interpreter is one of the
+        // backends a program is checked against, so it has to write the same
+        // bytes the ones that link the runtime do.
         if callee == "frost_rt_write_bytes" {
             return self.write_bytes(arguments);
         }
-        if callee == "frost_rt_write_i64" || callee == "frost_rt_print_i64" {
+        if callee == "frost_rt_write_i64" {
             let value = operand_value(&arguments[0], locals);
             let Value::Int(number) = value else {
                 return unsupported("writing a value that is not an integer");
             };
             self.output.push_str(&number.to_string());
-            if callee == "frost_rt_print_i64" {
-                self.output.push('\n');
-            }
             return Ok(Value::Int(0));
         }
         // A float is written the way C writes `%g`, which this does not
-        // reproduce, so a program printing one is left to the two backends that
+        // reproduce, so a program printing one is left to the backends that
         // link the runtime rather than answered differently here.
-        if callee == "frost_rt_write_f64" || callee == "frost_rt_print_f64" {
+        if callee == "frost_rt_write_f64" {
             return unsupported("writing a float");
         }
-        if callee == "frost_rt_write_newline" {
-            self.output.push('\n');
+        if callee == "frost_rt_write_char" {
+            let value = operand_value(&arguments[0], locals);
+            let Value::Int(byte) = value else {
+                return unsupported("writing a byte that is not an integer");
+            };
+            self.output.push(byte as u8 as char);
             return Ok(Value::Int(0));
         }
         // Every slice is built through this, so the interpreter has to answer it

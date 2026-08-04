@@ -207,8 +207,7 @@ fn walk_statement(
         Statement::LetMultiple(_, value)
         | Statement::Constant(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => walk_expression(ast, value, declared),
+        | Statement::Expression(value) => walk_expression(ast, value, declared),
         Statement::Assignment(place, value) => {
             walk_expression(ast, place, declared);
             walk_expression(ast, value, declared);

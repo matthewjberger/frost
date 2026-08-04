@@ -1471,13 +1471,6 @@ impl Renamer {
             }
             Statement::Return(value) => self.expression(ast, value, scope),
             Statement::Expression(value) => self.expression(ast, value, scope),
-            Statement::Print(value, arguments) => {
-                self.expression(ast, value, scope);
-                for index in arguments.indices() {
-                    let argument = ast.expr_list[index];
-                    self.expression(ast, argument, scope);
-                }
-            }
             Statement::Assignment(target, value) => {
                 self.expression(ast, target, scope);
                 self.expression(ast, value, scope);

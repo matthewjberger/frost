@@ -1,7 +1,9 @@
 // Programs in this directory are for the self-hosted compiler
-// (selfhosted/frost.frost), which understands a subset of Frost and has its own
-// `print` statement. Run one with `just selfhost-native examples/selfhosted/fib.frost`
+// (selfhosted/frost.frost). They write output through `import "io.frost"` like
+// any other program. Run one with `just selfhost-native examples/selfhosted/fib.frost`
 // to go through the native backend, or `just selfhost-run ...` for the C backend.
+
+import "io.frost"
 
 fib :: fn(n: i64) -> i64 {
     if (n < 2) { return n }
@@ -11,9 +13,9 @@ fib :: fn(n: i64) -> i64 {
 main :: fn() -> i64 {
     mut i : i64 = 0
     while (i < 10) {
-        print fib(i)
+        print_int_line(fib(i))
         i = i + 1
     }
-    print 6 * 7
+    print_int_line(6 * 7)
     0
 }

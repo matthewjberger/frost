@@ -3,6 +3,8 @@
 // back is an ordinary enum, so the two sides are read with `match` the way any
 // other variant is.
 
+import "io.frost"
+
 ParseError :: struct { at: i64 }
 
 digit_of :: fn(c: i64) -> i64 ! ParseError {
@@ -35,10 +37,10 @@ payload :: fn(high: i64, low: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print side(52, 55)
-    print payload(52, 55)
+    print_int_line(side(52, 55))
+    print_int_line(payload(52, 55))
 
-    print side(52, 90)
-    print payload(52, 90)
+    print_int_line(side(52, 90))
+    print_int_line(payload(52, 90))
     0
 }

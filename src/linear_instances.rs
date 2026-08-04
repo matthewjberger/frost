@@ -551,8 +551,9 @@ fn walk_statement(
         Statement::LetMultiple(_, value)
         | Statement::Constant(_, value)
         | Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value, _) => walk_expression(ast, *value, found, at),
+        | Statement::Expression(value) => {
+            walk_expression(ast, *value, found, at)
+        }
         Statement::Assignment(place, value) => {
             walk_expression(ast, *place, found, at);
             walk_expression(ast, *value, found, at);

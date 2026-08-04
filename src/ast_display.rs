@@ -114,16 +114,6 @@ pub fn display_stmt(ast: &Ast, statement: StmtId) -> String {
         Statement::Return(expression) => {
             format!("return {};", display_expr(ast, *expression))
         }
-        Statement::Print(expression, arguments) => {
-            let mut written =
-                format!("print {}", display_expr(ast, *expression));
-            for argument in ast.exprs_in(*arguments) {
-                written
-                    .push_str(&format!(", {}", display_expr(ast, *argument)));
-            }
-            written.push(char::from(59));
-            written
-        }
         Statement::Expression(expression) => display_expr(ast, *expression),
         Statement::Struct(name, type_params, fields) => {
             let field_strs: Vec<String> = ast

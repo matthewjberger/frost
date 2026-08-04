@@ -251,8 +251,8 @@ columns_reset($Particle, $8, world)
 a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
 columns_insert($Particle, $8, world, Particle { x = 20, y = 2 })
 
-print world[a].x + world[a].y   // one element, generation-checked
-print sum_x(world.x)            // the whole x column, as a []i64
+print_int_line(world[a].x + world[a].y)   // one element, generation-checked
+print_int_line(sum_x(world.x))            // the whole x column, as a []i64
 ```
 
 `world.x` is the column, handed out as a slice, which is what a data-oriented

@@ -30,7 +30,6 @@ Statement =
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
     | IDENT "::" ConstBody ";"?
-    | "print" Expr ( "," Expr )* ";"?         // a value, or a format and its values
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 

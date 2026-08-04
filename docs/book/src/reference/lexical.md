@@ -61,7 +61,7 @@ in full:
 
 ```
 break case continue defer distinct else enum extern false fn for if import
-in inline linear match move mut print ref return safe struct true
+in inline linear match move mut ref return safe struct true
 type unsafe uses where while with
 ```
 

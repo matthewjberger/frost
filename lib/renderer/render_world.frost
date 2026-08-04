@@ -55,6 +55,7 @@ import "material.frost"
 import "mesh.frost"
 import "math.frost"
 import "mem.frost"
+import "io.frost"
 
 export Drawn, Transform, ONE_LAYER, OVERLAY_LAYER, ObjectData, RenderWorld,
     render_world_new, render_world_at, render_world_free, render_world_begin,
@@ -457,7 +458,7 @@ render_world_begin :: fn(mut held: RenderWorld) {
 render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, mesh: i64,
     material: i64, layer: i64) {
     if (held.count >= held.room) {
-        print "render: more things to draw than the world was made room for"
+        print_str_line("render: more things to draw than the world was made room for")
         return
     }
     mut places := held.transforms

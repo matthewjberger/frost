@@ -2154,88 +2154,6 @@ emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
     }
 }
 
-// A call to one of the runtime's write helpers, with the arguments already in
-// place: `count` says how many of them there are, so the shadow space and the
-// stack alignment the convention wants are the same shape as any other call.
-emit_asm_write_call :: fn(mut p: Parser, name: str, count: i64) {
-    shadow := abi_shadow(p)
-    frame := shadow
-    if (frame % 16 != 0) {
-        frame = frame + 8
-    }
-    asm_i("subq $", frame, ", %rsp")
-    if (p.abi_windows == 0) {
-        asm("movb $0, %al")
-    }
-    emit_text("    call ")
-    emit_text(name)
-    emit_text("\n")
-    asm_i("addq $", frame, ", %rsp")
-}
-
-// One text piece, whose bytes are the literal's own label in the data section.
-emit_asm_write_literal :: fn(mut p: Parser, piece: i64) {
-    node := arena_at(p.arena, piece)
-    asm_i("leaq .Lstr", piece, "(%rip), %rax")
-    emit_text("    movq %rax, ")
-    emit_asm_arg_reg(p, 0)
-    emit_text("\n")
-    asm_i("movq $", literal_length(p.src, node.val, node.c), ", %rax")
-    emit_text("    movq %rax, ")
-    emit_asm_arg_reg(p, 1)
-    emit_text("\n")
-    emit_asm_write_call(p, "frost_rt_write_bytes", 2)
-}
-
-// One value of a formatted `print`, written as what it is.
-emit_asm_write_value :: fn(mut p: Parser, value: i64) {
-    value_ty := type_of(p, value)
-    if (is_array_ty(value_ty) && is_slice_ty(p, value_ty)) {
-        // A slice is a pointer beside a length, and it is held by address.
-        emit_asm_expr(p, value)
-        asm("movq %rax, %r11")
-        asm("movq 0(%r11), %rax")
-        emit_text("    movq %rax, ")
-        emit_asm_arg_reg(p, 0)
-        emit_text("\n")
-        asm("movq 8(%r11), %rax")
-        emit_text("    movq %rax, ")
-        emit_asm_arg_reg(p, 1)
-        emit_text("\n")
-        emit_asm_write_call(p, "frost_rt_write_bytes", 2)
-        return
-    }
-    if (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8) {
-        emit_asm_expr(p, value)
-        emit_text("    movq %rax, ")
-        emit_asm_arg_reg(p, 0)
-        emit_text("\n")
-        emit_asm_write_call(p, "frost_rt_write_cstr", 1)
-        return
-    }
-    if (is_aggregate(value_ty)) {
-        report_where(p.modules, p.src, arena_at(p.arena, value).pos)
-        report("there is no way to write a ")
-        report_type_name(p, value_ty)
-        report(", so write what it holds instead")
-        frost_rt_die()
-    }
-    emit_asm_expr(p, value)
-    if (is_float(value_ty)) {
-        emit_asm_convert(p, value_ty, TY_F64)
-        // A double parameter travels in an SSE register, and Windows names it
-        // by the argument's own position rather than by how many floats came
-        // before it.
-        emit_asm_move("movq", "%rax", "%xmm0")
-        emit_asm_write_call(p, "frost_rt_write_f64", 1)
-        return
-    }
-    emit_text("    movq %rax, ")
-    emit_asm_arg_reg(p, 0)
-    emit_text("\n")
-    emit_asm_write_call(p, "frost_rt_write_i64", 1)
-}
-
 emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
@@ -2328,73 +2246,6 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Return) {
         emit_asm_return(p, node.a)
-        return
-    }
-    if (kind == NodeKind::Print) {
-        // A format was split into its pieces at parse time, so what is left is
-        // a list to write in order, with one newline at the end.
-        if (node.a == (-1)) {
-            mut piece := node.b
-            while (piece != (-1)) {
-                pnode := arena_at(p.arena, piece)
-                next_piece := pnode.next
-                if (pnode.kind == NodeKind::StrLit) {
-                    emit_asm_write_literal(p, piece)
-                } else {
-                    emit_asm_write_value(p, pnode.a)
-                }
-                piece = next_piece
-            }
-            emit_asm_write_call(p, "frost_rt_write_newline", 0)
-            return
-        }
-        one_ty := type_of(p, node.a)
-        // A run of bytes rather than a number is written as bytes.
-        if ((is_array_ty(one_ty) && is_slice_ty(p, one_ty))
-            || (is_pointer(one_ty) && pointee(p, one_ty) == TY_I8)) {
-            emit_asm_write_value(p, node.a)
-            emit_asm_write_call(p, "frost_rt_write_newline", 0)
-            return
-        }
-        shadow := abi_shadow(p)
-        value_ty := type_of(p, node.a)
-        emit_asm_expr(p, node.a)
-        // printf takes the format then the value, in whichever registers this
-        // convention names, and System V wants the vector register count in al.
-        //
-        // A float is promoted to double the way any variadic argument is, and
-        // travels in an SSE register. Windows wants it in the matching integer
-        // register as well, since a variadic callee does not know which kind
-        // it was handed and reads whichever the format says.
-        if (is_float(value_ty)) {
-            emit_asm_convert(p, value_ty, TY_F64)
-            emit_asm_move("movq", "%rax", "%xmm1")
-            if (p.abi_windows == 1) {
-                emit_text("    movq %rax, ")
-                emit_asm_arg_reg(p, 1)
-                emit_text("\n")
-            } else {
-                emit_asm_move("movapd", "%xmm1", "%xmm0")
-            }
-            emit_text("    leaq .Lfmtf(%rip), ")
-        } else {
-            emit_text("    movq %rax, ")
-            emit_asm_arg_reg(p, 1)
-            emit_text("\n")
-            emit_text("    leaq .Lfmt(%rip), ")
-        }
-        emit_asm_arg_reg(p, 0)
-        emit_text("\n")
-        if (p.abi_windows == 0) {
-            if (is_float(value_ty)) {
-                asm("movb $1, %al")
-            } else {
-                asm("movb $0, %al")
-            }
-        }
-        asm_i("subq $", shadow, ", %rsp")
-        asm("call printf")
-        asm_i("addq $", shadow, ", %rsp")
         return
     }
     if (kind == NodeKind::If) {
@@ -3052,10 +2903,6 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         emit_text("\"\n")
         ti = ti + 1
     }
-    emit_text(".Lfmt:\n")
-    emit_text("    .asciz \"%lld\\n\"\n")
-    emit_text(".Lfmtf:\n")
-    emit_text("    .asciz \"%g\\n\"\n")
     emit_asm_strings(p)
 }
 

@@ -30,21 +30,6 @@ value is its trailing expression (or `void`).
 - `defer`, `defer Stmt` runs `Stmt` where the function leaves, last deferred
   first. Only at the top level of a function body, and not run by `break` or
   `continue` (chapter 9.3).
-- `print Expr` writes one value and a newline to standard output: an integer as
-  `%lld`, a float as `%g`, and a `str` or `^i8` as its bytes.
-- `print STRING ( "," Expr )*` writes a line built from a format literal. Each
-  `{}` in the literal is a hole filled by the value at the same position, and
-  `{{` and `}}` are one brace each. The count of holes and the count of values
-  have to agree.
 
-  ```frost
-  print "hp {} of {}", entity.hp, entity.max
-  ```
-
-  The literal is read by the compiler, which splits it into the pieces to write
-  where the statement is written. No format exists at run time, nothing parses
-  one, and the values are written by their types, so the printable set is closed
-  and lives in the compiler: the integer widths, the floats, `bool`, `Handle`,
-  `str` and `^i8`. Anything else is an error naming the type. This is the same
-  arrangement as `print` being a statement keyword rather than a library
-  function.
+There is no print statement. Writing output is `import "io.frost"` and a call,
+one writer per type ([text-and-io.md](../std/text-and-io.md)).

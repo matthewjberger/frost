@@ -564,7 +564,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind::ExprStmt || kind == NodeKind::Print) {
+    if (kind == NodeKind::ExprStmt) {
         check_types_expr(p, node.a)
         return
     }
@@ -1020,11 +1020,10 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         return true
     }
     mut value : i64 = -1
-    // `print close(s)` consumes what the call takes, the same as writing the
-    // call on its own line does. A statement holding an expression holds
-    // whatever that expression hands away.
+    // A statement holding an expression holds whatever that expression hands
+    // away.
     if (kind == NodeKind::ExprStmt || kind == NodeKind::Let
-        || kind == NodeKind::Return || kind == NodeKind::Print) {
+        || kind == NodeKind::Return) {
         value = node.a
     }
     if (kind == NodeKind::Assign) {
@@ -2498,7 +2497,7 @@ walk_runs_block :: fn(mut p: Parser, head: i64) {
             walk_runs_expr(p, node.a)
             note_run_local(p, node.val, node.c, run_place_of(p, node.a))
         }
-        if (kind == NodeKind::Print || kind == NodeKind::ExprStmt) {
+        if (kind == NodeKind::ExprStmt) {
             walk_runs_expr(p, node.a)
         }
         if (kind == NodeKind::Return) {
@@ -3410,7 +3409,7 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
-        if (kind == NodeKind::Let || kind == NodeKind::Print || kind == NodeKind::ExprStmt
+        if (kind == NodeKind::Let || kind == NodeKind::ExprStmt
             || kind == NodeKind::Return) {
             walk_moves_expr(p, node.a)
         }
@@ -5122,7 +5121,7 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
         // Every statement that holds an expression holds calls, and a call
         // that keeps a pointer keeps it wherever it was written.
         if (kind == NodeKind::Let || kind == NodeKind::Return
-            || kind == NodeKind::ExprStmt || kind == NodeKind::Print
+            || kind == NodeKind::ExprStmt
             || kind == NodeKind::While || kind == NodeKind::If
             || kind == NodeKind::Match) {
             frame_judge_kept(p, first, pos)
@@ -5155,11 +5154,10 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
             frame_check_block(p, second, 0)
         } else if (kind == NodeKind::With) {
             frame_check_block(p, first, 0)
-        } else if (kind == NodeKind::Print || kind == NodeKind::Assert
+        } else if (kind == NodeKind::Assert
             || kind == NodeKind::Break || kind == NodeKind::Continue) {
-            // Nothing leaves the frame through one. A print writes a value out
-            // and hands nothing back, an assert reads one, and the two transfers
-            // carry no value at all.
+            // Nothing leaves the frame through one. An assert reads a value,
+            // and the two transfers carry no value at all.
         } else {
             frame_unhandled(p, "statement", pos)
         }
@@ -5626,8 +5624,7 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
             }
             grew = grew | kept_walk_expr(p, node.b, params, fn_index)
         }
-        if (kind == NodeKind::Return || kind == NodeKind::ExprStmt
-            || kind == NodeKind::Print) {
+        if (kind == NodeKind::Return || kind == NodeKind::ExprStmt) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         }
         if (kind == NodeKind::While) {

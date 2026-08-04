@@ -4,6 +4,8 @@
 //
 //   frost examples/tour.frost
 
+import "io.frost"
+
 Kind :: enum { Hero, Monster { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
@@ -72,11 +74,11 @@ main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
     mut hero : Entity = { hp = 90, kind = .Hero }
-    heal(hero, 10)                 // hero is borrowed and changed
-    print hero.hp                  // 100
-    print attack(hero)             // 10
+    heal(hero, 10)                   // hero is borrowed and changed
+    print_int_line(hero.hp)          // 100
+    print_int_line(attack(hero))     // 10
 
-    print damage_of(hero)          // 20
+    print_int_line(damage_of(hero))  // 20
 
     party : [3]Entity = [
         { hp = 100, kind = .Hero },
@@ -84,10 +86,10 @@ main :: fn() -> i64 {
         { hp = 25, kind = .Monster { damage = 30 } },
     ]
     total, strongest := tally(party)
-    print total                    // 52
-    print strongest                // 30
+    print_int_line(total)            // 52
+    print_int_line(strongest)        // 30
 
     s := Session { id = 7 }
-    print close(s)                 // s cannot be named again
+    print_int_line(close(s))         // s cannot be named again
     0
 }

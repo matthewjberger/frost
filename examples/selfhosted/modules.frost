@@ -2,9 +2,10 @@
 // in the program once however many times it is named.
 
 import "lib/shapes.frost"
+import "io.frost"
 
 main :: fn() -> i64 {
     r := Rect { width = 3, height = 4 }
-    print area(r)
+    print_int_line(area(r))
     0
 }

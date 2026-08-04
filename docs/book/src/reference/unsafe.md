@@ -108,9 +108,10 @@ nothing.
 
 The walk lists every statement and expression form rather than ending in a
 wildcard, so a form nobody handled is a compile error in the compiler instead of
-a hole in the gate. `print` was that hole: every gated operation written under
-one compiled, and a program holding no `unsafe` block at all read far out of
-bounds through a raw pointer and died on the access.
+a hole in the gate. The print statement, when the language still had one, was
+that hole: every gated operation written under one compiled, and a program
+holding no `unsafe` block at all read far out of bounds through a raw pointer
+and died on the access.
 
 The gate runs on every build and nothing turns it off. A switch that did would
 make `unsafe` a claim about how a program was compiled rather than about the
