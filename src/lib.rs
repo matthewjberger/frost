@@ -6,7 +6,12 @@ mod build_cache;
 mod c_abi;
 mod callbacks;
 mod diagnostic;
-pub use diagnostic::{Diagnostic, render as render_diagnostic};
+pub use diagnostic::{
+    Diagnostic, Place, Replacement, Report, as_json as diagnostics_as_json,
+    as_report, grouped as grouped_diagnostics, render as render_diagnostic,
+};
+mod fixes;
+pub use fixes::{Edit, byte_offset, edit_for};
 mod distinct_types;
 mod failure_sets;
 mod import_visibility;

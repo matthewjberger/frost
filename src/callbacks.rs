@@ -25,6 +25,23 @@ use crate::types::Type;
 // not what makes the context identifiable. Being the one parameter the handler
 // can write is.
 pub fn check_callback_declarations(ast: &Ast, roots: &[StmtId]) -> Result<()> {
+    let reports = check_callback_declarations_recovering(ast, roots);
+    if reports.is_empty() {
+        return Ok(());
+    }
+    let rendered: Vec<String> =
+        reports.iter().map(|held| held.rendered()).collect();
+    Err(anyhow::anyhow!(rendered.join("\n")))
+}
+
+/// Check each declaration, reporting one failure per registration rather than
+/// stopping at the first. A declaration is checked against itself alone, so a
+/// malformed one says nothing about the next.
+pub fn check_callback_declarations_recovering(
+    ast: &Ast,
+    roots: &[StmtId],
+) -> Vec<crate::diagnostic::Diagnostic> {
+    let mut reports = Vec::new();
     for statement in roots {
         let Statement::Extern { name, params, .. } = ast.stmt(*statement)
         else {
@@ -34,19 +51,21 @@ pub fn check_callback_declarations(ast: &Ast, roots: &[StmtId]) -> Result<()> {
             let Some(bound) = &parameter.compile_time_signature else {
                 continue;
             };
-            crate::source_map::locate(
-                check_registration(
-                    ast,
-                    ast.name(*name),
-                    ast.params_in(*params),
-                    parameter,
-                    bound,
-                ),
-                ast.stmt_position(*statement),
-            )?;
+            if let Err(fault) = check_registration(
+                ast,
+                ast.name(*name),
+                ast.params_in(*params),
+                parameter,
+                bound,
+            ) {
+                reports.push(crate::diagnostic::Diagnostic::new(
+                    ast.stmt_position(*statement),
+                    fault.to_string(),
+                ));
+            }
         }
     }
-    Ok(())
+    reports
 }
 
 // Which argument of a registration is the callback and which is the context,

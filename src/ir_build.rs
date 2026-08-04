@@ -112,19 +112,6 @@ pub fn build_module(
     strict(build_module_inner(ast, roots, linear, false)?)
 }
 
-// The same lowering, but a specialization is emitted once per module that
-// instantiates it rather than once per program. Only correct when the result is
-// about to be split into one object per module, since two definitions of a name
-// in a single object is a duplicate symbol. Split, they are module-local and a
-// module's object is self-contained.
-pub fn build_module_per_module(
-    ast: &mut Ast,
-    roots: &[StmtId],
-    linear: &HashSet<String>,
-) -> Result<IrModule> {
-    strict(build_module_inner(ast, roots, linear, true)?)
-}
-
 /// Lower every function, reporting one failure per function rather than
 /// stopping at the first: unknown names are the most common fault while a
 /// file is being edited, and one of them should not mask the rest. The outer
@@ -133,12 +120,19 @@ pub fn build_module_per_module(
 /// function contributes no IR and its pending specializations drop with it;
 /// the module holds what lowered, and a backend only ever sees it when the
 /// diagnostics list is empty.
+///
+/// `per_module` emits a specialization once per module that instantiates it
+/// rather than once per program. Only correct when the result is about to be
+/// split into one object per module, since two definitions of a name in a
+/// single object is a duplicate symbol. Split, they are module-local and a
+/// module's object is self-contained.
 pub fn build_module_recovering(
     ast: &mut Ast,
     roots: &[StmtId],
     linear: &HashSet<String>,
+    per_module: bool,
 ) -> Result<(IrModule, Vec<crate::diagnostic::Diagnostic>)> {
-    build_module_inner(ast, roots, linear, false)
+    build_module_inner(ast, roots, linear, per_module)
 }
 
 fn strict(
@@ -9939,7 +9933,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        build_module_recovering(&mut module.ast, &module.roots, &linear)
+        build_module_recovering(&mut module.ast, &module.roots, &linear, false)
             .unwrap()
     }
 

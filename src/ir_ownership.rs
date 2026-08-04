@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
+use crate::diagnostic::Diagnostic;
 use crate::ir::{
     BlockId, IrFunction, IrModule, IrOperand, IrRvalue, IrStatement,
     IrTerminator, LocalId,
 };
-use crate::lexer::Position;
 
 const UNOWNED: u8 = 1;
 const OWNED: u8 = 2;
@@ -15,13 +15,31 @@ const CONSUMED: u8 = 4;
 type State = HashMap<LocalId, u8>;
 
 pub fn check_linearity(module: &IrModule) -> Result<()> {
-    for function in &module.functions {
-        check_function(function)?;
+    let reports = check_linearity_recovering(module);
+    if reports.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let rendered: Vec<String> =
+        reports.iter().map(|held| held.rendered()).collect();
+    Err(anyhow::anyhow!(rendered.join("\n")))
 }
 
-fn check_function(function: &IrFunction) -> Result<()> {
+/// Check each function, reporting one failure per function rather than
+/// stopping at the first. The ownership state a walk builds belongs to the
+/// function it walked, so a fault in one says nothing about the next.
+pub fn check_linearity_recovering(
+    module: &IrModule,
+) -> Vec<crate::diagnostic::Diagnostic> {
+    let mut reports = Vec::new();
+    for function in &module.functions {
+        if let Err(fault) = check_function(function) {
+            reports.push(fault);
+        }
+    }
+    reports
+}
+
+fn check_function(function: &IrFunction) -> Result<(), Diagnostic> {
     let linear_locals: Vec<LocalId> = (0..function.locals.len())
         .filter(|&local| function.locals[local].linear)
         .collect();
@@ -181,7 +199,7 @@ fn report_block(
     block_id: BlockId,
     mut state: State,
     referenced: &HashSet<LocalId>,
-) -> Result<()> {
+) -> Result<(), Diagnostic> {
     for statement in &function.blocks[block_id].statements {
         if let IrStatement::Consume(local) = statement {
             let current = state.get(local).copied().unwrap_or(UNOWNED);
@@ -237,17 +255,11 @@ fn located(
     function: &IrFunction,
     local: LocalId,
     message: String,
-) -> anyhow::Error {
-    let position = function.locals[local].position;
-    if position == Position::default() {
-        anyhow::anyhow!("{message}")
-    } else {
-        anyhow::anyhow!(
-            "at {}: {}",
-            position.describe(),
-            crate::imports::demangle_private_names(&message.to_string())
-        )
-    }
+) -> Diagnostic {
+    Diagnostic::new(
+        function.locals[local].position,
+        crate::imports::demangle_private_names(&message),
+    )
 }
 
 fn local_name(function: &IrFunction, local: LocalId) -> String {

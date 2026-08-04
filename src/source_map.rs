@@ -62,6 +62,21 @@ pub fn path_of(name: &str) -> Option<String> {
         .map(|(_, path)| path.clone())
 }
 
+/// The id of a file already recorded under this name, and nothing for a name
+/// that was never recorded. Registering is what `register` is for; this only
+/// asks, so reading a place back out of a message it was written into cannot
+/// grow the table.
+pub fn id_of(name: &str) -> Option<u32> {
+    let files = match table().read() {
+        Ok(files) => files,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    files
+        .iter()
+        .position(|held| held == name)
+        .map(|index| index as u32 + 1)
+}
+
 pub fn name_of(file: u32) -> Option<String> {
     if file == 0 {
         return None;
