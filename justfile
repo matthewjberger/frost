@@ -339,16 +339,10 @@ bindgen:
 
 # Builds the self-hosted compiler (frost written in frost)
 #
-# Through the C backend rather than the native one. That takes about nine
-# seconds against one, and it is deliberate: the compiler it produces is
-# measurably faster at everything it goes on to do, because a C compiler inlines
-# where neither Cranelift nor Frost's own backend does. `just bench-asm` is
-# where the numbers are and what keeps this honest; the last reading was 189 ms
-# against 711 for the compiler on its own source.
-#
-# Frost's own backend allocates registers now, which was the standing reason to
-# expect this line to change, and it did not: the gap is inlining rather than
-# register use. See the note above bench-asm.
+# Through the C backend rather than the native one. It is the slower build and
+# the deliberate one: the compiler it produces is faster at everything it goes
+# on to do, because a C compiler inlines where neither Cranelift nor Frost's own
+# backend does. `just bench-asm` is what keeps that claim honest.
 #
 # The two routes are held to emitting the same bytes by
 # both_routes_build_the_same_compiler, which compares what a Cranelift-built and
@@ -549,33 +543,20 @@ bench-selfhost-incremental: selfhost-build
     echo "C, incremental first:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
     echo "C, incremental unchanged:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
 
-# Where the assembly backend stands against the C route, in numbers.
+# Where the assembly backend stands against the C route.
 #
-# Builds the compiler twice: once through the bootstrap's C backend, which is
-# what ships, and once by handing that compiler its own source through
-# `--emit-asm`. Then times both of them compiling the tree, and counts the
-# instructions the backend emitted, because a change meant to remove loads has
-# to show in both numbers and a change that trades one for the other is not a
-# win. The instruction count belongs to the emitted text rather than to the
-# compiler that emitted it, so it is counted once.
+# Builds the compiler twice, once through the bootstrap's C backend and once by
+# handing that compiler its own source through `--emit-asm`, then times both of
+# them compiling the tree and counts the instructions the backend emitted. Both
+# numbers, because a change that removes instructions and costs time is not a
+# win and neither is the reverse. The count belongs to the emitted text rather
+# than to the compiler that emitted it, so it is taken once.
 #
-# Where it stands, minimum of five on this machine:
-#
-#     built by             frost.frost    std suite
-#     gcc, the C route         189 ms       324 ms
-#     frost, --emit-asm        711 ms       961 ms
-#
-#     instructions             299,119      360,049
-#
-# Holding a name in a register bought nine percent against the stack machine
-# that came before it (781 ms and 1,048 ms, 305,465 instructions). What it did
-# not buy is the rest, and the calibration that says why is `gcc -O0`: the same
-# compiler built at -O0 runs its own source in 1,315 ms and at -O2 in 189, so
-# this backend sits between the two and nearer -O0. What separates it from the C
-# route is the whole of an optimizer rather than register allocation, and
-# inlining most of all: every `arena_at` here is a call with a frame, a stack
-# probe and a return where gcc leaves a multiply and an add. That is why
-# `selfhost-build` still goes through C.
+# The C route wins, and what wins it is inlining: every `arena_at` here is a
+# call with a frame, a stack probe and a return where a C compiler leaves a
+# multiply and an add. `gcc -O0` is the calibration that says so, since the same
+# compiler built that way lands the other side of this backend. That is why
+# `selfhost-build` goes through C.
 [windows]
 bench-asm:
     #!powershell.exe -NoProfile
