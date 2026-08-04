@@ -553,21 +553,21 @@ bench-selfhost-incremental: selfhost-build
 #
 # Where it stands, minimum of five on this machine:
 #
-#     built by                        frost.frost    std suite
-#     gcc, the C route                     189 ms       324 ms
-#     frost, stack machine                 781 ms     1,048 ms
-#     frost, names held in registers       711 ms       961 ms
+#     built by             frost.frost    std suite
+#     gcc, the C route         189 ms       324 ms
+#     frost, --emit-asm        711 ms       961 ms
 #
-#     instructions, stack machine      305,465      366,052
-#     instructions, in registers       299,269      360,049
+#     instructions             299,119      360,049
 #
-# Holding a name in a register buys nine percent. What it does not buy is the
-# rest: the C route is still nearly four times faster, and the calibration that
-# says why is `gcc -O0`, which builds the same compiler and runs it in 1,315 ms.
-# This backend sits between -O0 and -O2 and closer to -O0, so what separates it
-# from the C route is the whole of an optimizer rather than register allocation,
-# and inlining most of all: every `arena_at` here is a call with a frame, a
-# stack probe and a return where gcc leaves a multiply and an add.
+# Holding a name in a register bought nine percent against the stack machine
+# that came before it (781 ms and 1,048 ms, 305,465 instructions). What it did
+# not buy is the rest, and the calibration that says why is `gcc -O0`: the same
+# compiler built at -O0 runs its own source in 1,315 ms and at -O2 in 189, so
+# this backend sits between the two and nearer -O0. What separates it from the C
+# route is the whole of an optimizer rather than register allocation, and
+# inlining most of all: every `arena_at` here is a call with a frame, a stack
+# probe and a return where gcc leaves a multiply and an add. That is why
+# `selfhost-build` still goes through C.
 [windows]
 bench-asm:
     #!powershell.exe -NoProfile
@@ -576,15 +576,10 @@ bench-asm:
     $root = (Get-Location).Path
     $gcc = Join-Path $root "selfhosted/frost_bench_gcc.exe"
     $own = Join-Path $root "selfhosted/frost_bench_own.exe"
-    $held = Join-Path $root "selfhosted/frost_bench_held.exe"
     $out = Join-Path $env:TEMP "frost_bench.s"
     Write-Host "building the compiler through C, then through its own assembly"
     ./target/release/frost.exe --link --emit-c -o $gcc selfhosted/frost.frost
-    $env:FROST_ASM_REGS = $null
     & $gcc --link -o $own selfhosted/frost.frost
-    $env:FROST_ASM_REGS = "1"
-    & $gcc --link -o $held selfhosted/frost.frost
-    $env:FROST_ASM_REGS = $null
     $suite = (Get-ChildItem std/*.frost | ForEach-Object { $_.FullName })
     # A warning on standard error is an error record in Windows PowerShell even
     # when the compiler exited cleanly, so the exit code is what says whether a
@@ -605,24 +600,19 @@ bench-asm:
         $sum
     }
     Write-Host ""
-    Write-Host ("{0,-30} {1,12} {2,12}" -f "built by", "frost.frost", "std suite")
-    foreach ($pair in @(@("gcc, the C route", $gcc), @("frost, stack machine", $own), @("frost, names held in registers", $held))) {
-        Write-Host ("{0,-30} {1,9:N0} ms {2,9:N0} ms" -f $pair[0], (best $pair[1] "selfhosted/frost.frost"), (total $pair[1]))
+    Write-Host ("{0,-22} {1,12} {2,12}" -f "built by", "frost.frost", "std suite")
+    foreach ($pair in @(@("gcc, the C route", $gcc), @("frost, --emit-asm", $own))) {
+        Write-Host ("{0,-22} {1,9:N0} ms {2,9:N0} ms" -f $pair[0], (best $pair[1] "selfhosted/frost.frost"), (total $pair[1]))
     }
-    function instructions($source, $regs) {
-        $env:FROST_ASM_REGS = $regs
+    function instructions($source) {
         $null = & $gcc @("--emit-asm", "-o", $out, $source) 2>$null
-        $env:FROST_ASM_REGS = $null
         [regex]::Matches([System.IO.File]::ReadAllText($out), '(?m)^[ \t]+[A-Za-z]').Count
     }
+    $mine = instructions "selfhosted/frost.frost"
+    $theirs = 0
+    foreach ($source in $suite) { $theirs = $theirs + (instructions $source) }
     Write-Host ""
-    Write-Host ("{0,-30} {1,12} {2,12}" -f "emitted for", "frost.frost", "std suite")
-    foreach ($how in @(@("instructions, stack machine", $null), @("instructions, in registers", "1"))) {
-        $mine = instructions "selfhosted/frost.frost" $how[1]
-        $theirs = 0
-        foreach ($source in $suite) { $theirs = $theirs + (instructions $source $how[1]) }
-        Write-Host ("{0,-30} {1,9:N0}    {2,9:N0}" -f $how[0], $mine, $theirs)
-    }
+    Write-Host ("{0,-22} {1,9:N0}    {2,9:N0}" -f "instructions", $mine, $theirs)
     Remove-Item $out -Force -ErrorAction Ignore
 
 # Where the assembly backend stands against the C route, in numbers (Unix)
@@ -633,12 +623,10 @@ bench-asm:
     cargo build -r -q -p frost --bin frost
     gcc_built="selfhosted/frost_bench_gcc.exe"
     own_built="selfhosted/frost_bench_own.exe"
-    held_built="selfhosted/frost_bench_held.exe"
     out="${TMPDIR:-/tmp}/frost_bench.s"
     echo "building the compiler through C, then through its own assembly"
     ./target/release/frost --link --emit-c -o "$gcc_built" selfhosted/frost.frost
     "./$gcc_built" --link -o "$own_built" selfhosted/frost.frost
-    FROST_ASM_REGS=1 "./$gcc_built" --link -o "$held_built" selfhosted/frost.frost
     best() {
         local lowest=999999999
         for _ in 1 2 3 4 5; do
@@ -657,30 +645,22 @@ bench-asm:
         echo "$sum"
     }
     echo
-    printf "%-30s %12s %12s\n" "built by" "frost.frost" "std suite"
-    printf "%-30s %9s ms %9s ms\n" "gcc, the C route" \
+    printf "%-22s %12s %12s\n" "built by" "frost.frost" "std suite"
+    printf "%-22s %9s ms %9s ms\n" "gcc, the C route" \
         "$(best "./$gcc_built" selfhosted/frost.frost)" "$(total "./$gcc_built")"
-    printf "%-30s %9s ms %9s ms\n" "frost, stack machine" \
+    printf "%-22s %9s ms %9s ms\n" "frost, --emit-asm" \
         "$(best "./$own_built" selfhosted/frost.frost)" "$(total "./$own_built")"
-    printf "%-30s %9s ms %9s ms\n" "frost, names held in registers" \
-        "$(best "./$held_built" selfhosted/frost.frost)" "$(total "./$held_built")"
     instructions() {
-        FROST_ASM_REGS="$2" "./$gcc_built" --emit-asm -o "$out" "$1" 2>/dev/null
+        "./$gcc_built" --emit-asm -o "$out" "$1" 2>/dev/null
         grep -cE '^[[:space:]]+[A-Za-z]' "$out"
     }
-    count_all() {
-        local sum=0
-        for source in std/*.frost; do
-            sum=$(( sum + $(instructions "$source" "$1") ))
-        done
-        echo "$sum"
-    }
+    theirs=0
+    for source in std/*.frost; do
+        theirs=$(( theirs + $(instructions "$source") ))
+    done
     echo
-    printf "%-30s %12s %12s\n" "emitted for" "frost.frost" "std suite"
-    printf "%-30s %9s    %9s\n" "instructions, stack machine" \
-        "$(instructions selfhosted/frost.frost '')" "$(count_all '')"
-    printf "%-30s %9s    %9s\n" "instructions, in registers" \
-        "$(instructions selfhosted/frost.frost 1)" "$(count_all 1)"
+    printf "%-22s %9s    %9s\n" "instructions" \
+        "$(instructions selfhosted/frost.frost)" "$theirs"
     rm -f "$out"
 
 # Runs all tests
