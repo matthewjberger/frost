@@ -582,6 +582,39 @@ emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     emit_text("\n")
 }
 
+// The same store, out of %rax rather than out of %r11. Every value this backend
+// produces is already in %rax, so the copy into %r11 that the store used to be
+// given was one instruction to put a value where it already was. The widths are
+// the register's own low parts, which is the same rule as above.
+emit_asm_store_rax_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
+    size := scalar_size(ty)
+    var op : str = "movq %rax, "
+    if (size == 1) {
+        op = "movb %al, "
+    } else if (size == 2) {
+        op = "movw %ax, "
+    } else if (size == 4) {
+        op = "movl %eax, "
+    }
+    emit_text("    ")
+    emit_text(op)
+    frost_rt_emit_int(slot)
+    emit_text(base)
+    emit_text("\n")
+}
+
+// A value in %rax on its way into a place. The old shape moved it to %r11 and
+// stored from there; where the backend is allowed to, it stores from %rax and
+// the move is not emitted at all.
+emit_asm_store_value :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
+    if (p.asm_regs == 1) {
+        emit_asm_store_rax_to(p, ty, slot, base)
+        return
+    }
+    asm("movq %rax, %r11")
+    emit_asm_store_to(p, ty, slot, base)
+}
+
 // One two-operand instruction, written out.
 emit_asm_move :: fn(op: str, from: str, to: str) {
     emit_text("    ")
@@ -1280,6 +1313,107 @@ emit_asm_arith_check :: fn(mut p: Parser, op: i64, ty: i64, unsigned: bool) {
     }
 }
 
+// Whether the operation can take its right operand as an immediate written into
+// the instruction rather than out of %r11.
+//
+// What cannot: a divide and a remainder, whose divisor is compared against zero
+// in %r11 before the operation runs; a shift, whose count is checked in %r11 and
+// then moved to %cl; an unsigned multiply, whose one-operand form takes no
+// immediate; and `&&` and `||`, which branch rather than compute and never
+// reach here. Everything else reads an immediate in the same instruction that
+// does the work, so the move that put it in a register is not emitted.
+asm_folds_immediate :: fn(op: i64, unsigned: bool) -> bool {
+    if (op == OP_ADD || op == OP_SUB || op == OP_WRAP_ADD || op == OP_WRAP_SUB
+        || op == OP_WRAP_MUL || op == OP_BITAND || op == OP_BITOR) {
+        return true
+    }
+    if (op == OP_MUL) {
+        return unsigned == false
+    }
+    op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE || op == OP_EQ
+        || op == OP_NE
+}
+
+// The comparison against an immediate, answering 0 or 1 in %rax the way
+// `emit_asm_compare` does against a register.
+emit_asm_compare_imm :: fn(setcc: str, value: i64) {
+    asm_i("cmpq $", value, ", %rax")
+    emit_text("    ")
+    emit_text(setcc)
+    emit_text(" %al\n")
+    asm("movzbq %al, %rax")
+}
+
+// The operation with its right operand written into the instruction. Only
+// reached for an operator `asm_folds_immediate` answered for, so every shape
+// below is one the assembler encodes with an immediate source.
+emit_asm_binop_imm :: fn(op: i64, unsigned: bool, value: i64) {
+    if (op == OP_ADD || op == OP_WRAP_ADD) {
+        asm_i("addq $", value, ", %rax")
+        return
+    }
+    if (op == OP_SUB || op == OP_WRAP_SUB) {
+        asm_i("subq $", value, ", %rax")
+        return
+    }
+    // The signed multiply is the one that takes an immediate, and wrapping
+    // keeps the low bits whatever the signedness, so both come here.
+    if (op == OP_MUL || op == OP_WRAP_MUL) {
+        asm_i("imulq $", value, ", %rax")
+        return
+    }
+    if (op == OP_BITAND) {
+        asm_i("andq $", value, ", %rax")
+        return
+    }
+    if (op == OP_BITOR) {
+        asm_i("orq $", value, ", %rax")
+        return
+    }
+    if (op == OP_LT) {
+        if (unsigned) { emit_asm_compare_imm("setb", value) }
+        else { emit_asm_compare_imm("setl", value) }
+        return
+    }
+    if (op == OP_GT) {
+        if (unsigned) { emit_asm_compare_imm("seta", value) }
+        else { emit_asm_compare_imm("setg", value) }
+        return
+    }
+    if (op == OP_LE) {
+        if (unsigned) { emit_asm_compare_imm("setbe", value) }
+        else { emit_asm_compare_imm("setle", value) }
+        return
+    }
+    if (op == OP_GE) {
+        if (unsigned) { emit_asm_compare_imm("setae", value) }
+        else { emit_asm_compare_imm("setge", value) }
+        return
+    }
+    if (op == OP_EQ) {
+        emit_asm_compare_imm("sete", value)
+        return
+    }
+    emit_asm_compare_imm("setne", value)
+}
+
+// The value a simple right operand stands for. Only asked of the two kinds that
+// are a number rather than a load.
+asm_immediate_operand :: fn(mut p: Parser, id: i64, kind: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    if (kind == SIMPLE_NUMBER) {
+        return node.val
+    }
+    const_value(p, node.val, node.c)
+}
+
+// Whether the number fits the four-byte field these instructions carry. A wider
+// one has to be built in a register first, which is what moving it to %r11 was
+// doing, so it keeps going that way.
+asm_immediate_fits :: fn(value: i64) -> bool {
+    value >= -2147483648 && value <= 2147483647
+}
+
 emit_asm_binop :: fn(op: i64, unsigned: bool) {
     if (op == OP_ADD || op == OP_WRAP_ADD) {
         asm("addq %r11, %rax")
@@ -1856,9 +1990,24 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         // most of the arithmetic a program does.
         simple := simple_operand_kind(p, bin.b)
         if (simple != SIMPLE_NONE) {
+            unsigned := binop_is_unsigned(left_ty, right_ty)
+            // A right operand that is a number, and an operation that reads one
+            // where it is written, need no register between the two. Stepping
+            // by one and comparing against a bound are most of the arithmetic a
+            // program does, and this is the instruction each of them was
+            // costing.
+            if (p.asm_regs == 1 && simple != SIMPLE_LOCAL
+                && asm_folds_immediate(op, unsigned)) {
+                value := asm_immediate_operand(p, bin.b, simple)
+                if (asm_immediate_fits(value)) {
+                    emit_asm_expr(p, bin.a)
+                    emit_asm_binop_imm(op, unsigned, value)
+                    emit_asm_arith_check(p, op, type_of(p, id), unsigned)
+                    return
+                }
+            }
             emit_asm_expr(p, bin.a)
             emit_asm_simple_into_r11(p, bin.b, simple)
-            unsigned := binop_is_unsigned(left_ty, right_ty)
             emit_asm_arith_pre(p, op, type_of(p, id))
             emit_asm_binop(op, unsigned)
             emit_asm_arith_check(p, op, type_of(p, id), unsigned)
@@ -1969,8 +2118,7 @@ emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
             asm_i("leaq ", slot + at, "(%rbp), %r10")
             emit_asm_copy(type_size(p, element))
         } else {
-            asm("movq %rax, %r11")
-            emit_asm_store_to(p, element, slot + at, "(%rbp)")
+            emit_asm_store_value(p, element, slot + at, "(%rbp)")
         }
         at = at + stride
         entry = enode.next
@@ -2008,8 +2156,7 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
             asm_i("leaq ", slot + offset, "(%rbp), %r10")
             emit_asm_copy(type_size(p, member))
         } else {
-            asm("movq %rax, %r11")
-            emit_asm_store_to(p, member, slot + offset, "(%rbp)")
+            emit_asm_store_value(p, member, slot + offset, "(%rbp)")
         }
         fid = next_id
     }
@@ -2544,8 +2691,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             emit_asm_copy(type_size(p, ty))
             return
         }
-        asm("movq %rax, %r11")
-        emit_asm_store_to(p, ty, slot, "(%rbp)")
+        emit_asm_store_value(p, ty, slot, "(%rbp)")
         return
     }
     if (kind == NodeKind::Assign) {

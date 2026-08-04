@@ -1464,6 +1464,11 @@ Parser :: struct {
     // into the emitted text as comments. FROST_ASM_NAMES asks for it, and
     // nothing but reading the sets against a function wants it.
     asm_debug_names: i64,
+    // Whether the assembly backend puts what its scan found to work: an
+    // operand read where it already is rather than staged through a register,
+    // and a value stored from where it already is. FROST_ASM_REGS asks for it
+    // while the two ways of emitting are being weighed against each other.
+    asm_regs: i64,
     // A memo of each node's derived type, read by type_of. It is filled only
     // while emitting, where a node's type is fixed and asked for repeatedly.
     // type_cache_on gates it so the checks, which ask under generic bindings

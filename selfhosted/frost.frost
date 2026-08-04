@@ -374,6 +374,17 @@ asm_debug_names_wanted :: fn() -> i64 {
     0
 }
 
+// Whether the assembly backend reads an operand where it already sits rather
+// than staging it through a register first. An environment variable while the
+// two ways of emitting are being weighed: what comes out has to be measured
+// against what comes out without it, and a build cannot be asked for both.
+asm_regs_wanted :: fn() -> i64 {
+    if (cstr_len(unsafe { frost_rt_getenv("FROST_ASM_REGS") }) != 0) {
+        return 1
+    }
+    0
+}
+
 main :: fn() -> i64 {
     options := options_from_command_line()
     if (options.help == 1) {
@@ -676,6 +687,7 @@ main :: fn() -> i64 {
         audit_unsafe = options.audit_unsafe,
         debug_lines = options.debug_lines,
         asm_debug_names = asm_debug_names_wanted(),
+        asm_regs = asm_regs_wanted(),
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
     }
