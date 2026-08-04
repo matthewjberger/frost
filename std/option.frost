@@ -11,11 +11,11 @@ export Option, option_some, option_none, option_is_some, option_unwrap_or
 Option :: enum ($T: Type) { None, Some { value: T } }
 
 option_some :: fn($T: Type, move value: $T) -> Option<T>{
-    Option :: Some { value = value }
+    Option::Some { value = value }
 }
 
 option_none :: fn($T: Type) -> Option<T>{
-    Option :: None
+    Option::None
 }
 
 // Held to values that are not resources: matching an option consumes it, so an

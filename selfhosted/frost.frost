@@ -99,7 +99,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
 
     // Whether this build encodes its own output. What the encoder reads is
     // assembly, so the C backend still hands each unit to the toolchain.
-    assembles := options.backend == Backend :: Asm
+    assembles := options.backend == Backend::Asm
     // Grown to what each module turns out to need, so a build that hands its
     // units to the toolchain never grows any of it at all.
     var unit := assembly_of(object_format())
@@ -116,7 +116,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     var index: i64 = 0
     while (index < p.modules.count) {
         var suffix: ^i8 = ".s"
-        if (options.backend == Backend :: C) {
+        if (options.backend == Backend::C) {
             suffix = ".c"
         }
         source := join_number(prefix, index, suffix)
@@ -131,7 +131,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_die()
         }
         p.emit_module = index
-        if (options.backend == Backend :: C) {
+        if (options.backend == Backend::C) {
             // Every unit carries the declarations, since a C unit cannot call
             // what it has not seen: the runtime's prototypes, every type, every
             // extern, and a prototype for every function and specialization in
@@ -301,7 +301,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     // compiler entitled to assume neither ever happens is entitled to
     // miscompile the unit, and comparing this backend against the other one
     // would not show it, since both sides go through the same C compiler.
-    if (options.backend != Backend :: Asm) {
+    if (options.backend != Backend::Asm) {
         base = join_two(base, " -fwrapv -fno-strict-aliasing")
     }
     // What `--libs` named goes after the objects and ahead of the platform's
@@ -801,7 +801,7 @@ main :: fn() -> i64 {
 
     // The encoder is part of this compiler, so a build that ends in an object
     // reaches one without writing assembly for another program to read back.
-    if (options.backend == Backend :: Asm
+    if (options.backend == Backend::Asm
         && (options.object == 1 || options.link == 1)) {
         var object: ^i8 = options.output
         if (options.link == 1) {
@@ -819,7 +819,7 @@ main :: fn() -> i64 {
     // afterwards. Without -o and without --link it goes to standard output.
     var emit_path: ^i8 = options.output
     if (options.link == 1) {
-        if (options.backend == Backend :: Asm) {
+        if (options.backend == Backend::Asm) {
             emit_path = join_two(executable, ".s")
         } else {
             emit_path = join_two(executable, ".c")
@@ -838,7 +838,7 @@ main :: fn() -> i64 {
         }
     }
 
-    if (options.backend == Backend :: Asm) {
+    if (options.backend == Backend::Asm) {
         emit_asm_program(parser, program)
     } else {
         emit_text("#include <stdio.h>\n")

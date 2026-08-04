@@ -124,7 +124,7 @@ map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V>{
     var state := heap_slice($Slot, cap)
     var i: i64 = 0
     while (i < cap) {
-        state[i] = Slot :: Empty
+        state[i] = Slot::Empty
         i = i + 1
     }
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
@@ -159,8 +159,8 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
     held := m.keys
     while (true) {
         s := m.state[i]
-        if (s == Slot :: Empty) { return i }
-        if (s == Slot :: Used && ops.equal(held[i], key)) {
+        if (s == Slot::Empty) { return i }
+        if (s == Slot::Used && ops.equal(held[i], key)) {
             return i
         }
         i = i + 1
@@ -175,7 +175,7 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 map_insert :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
     key: $K, move value: $V) {
     slot := map_find($K, $V, $ops, m, key)
-    if (m.state[slot] != Slot :: Used) {
+    if (m.state[slot] != Slot::Used) {
         m.count = m.count + 1
     }
     var keys := m.keys
@@ -183,7 +183,7 @@ map_insert :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
     var state := m.state
     keys[slot] = key
     values[slot] = value
-    state[slot] = Slot :: Used
+    state[slot] = Slot::Used
 }
 
 map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
@@ -200,7 +200,7 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
     var fresh_state := heap_slice($Slot, room)
     var s: i64 = 0
     while (s < room) {
-        fresh_state[s] = Slot :: Empty
+        fresh_state[s] = Slot::Empty
         s = s + 1
     }
     m.state = fresh_state
@@ -208,7 +208,7 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
     m.count = 0
     var i: i64 = 0
     while (i < old_cap) {
-        if (old_state[i] == Slot :: Used) {
+        if (old_state[i] == Slot::Used) {
             map_insert($K, $V, $ops, m, old_keys[i], old_values[i])
         }
         i = i + 1
@@ -231,7 +231,7 @@ map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
 map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
     key: $K) -> bool {
     slot := map_find($K, $V, $ops, m, key)
-    m.state[slot] == Slot :: Used
+    m.state[slot] == Slot::Used
 }
 
 // The value for a key, or the supplied default when the key is absent, so a
@@ -245,7 +245,7 @@ map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
     move fallback: $V) -> $V where !is_linear(V) {
     slot := map_find($K, $V, $ops, m, key)
-    if (m.state[slot] == Slot :: Used) {
+    if (m.state[slot] == Slot::Used) {
         return m.values[slot]
     }
     fallback
@@ -256,10 +256,10 @@ map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
 map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
     key: $K) -> bool {
     slot := map_find($K, $V, $ops, m, key)
-    found := m.state[slot] == Slot :: Used
+    found := m.state[slot] == Slot::Used
     if (found) {
         var state := m.state
-        state[slot] = Slot :: Gone
+        state[slot] = Slot::Gone
         m.count = m.count - 1
     }
     found
@@ -273,7 +273,7 @@ map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>)
     var state := m.state
     var i: i64 = 0
     while (i < m.cap) {
-        state[i] = Slot :: Empty
+        state[i] = Slot::Empty
         i = i + 1
     }
     m.count = 0

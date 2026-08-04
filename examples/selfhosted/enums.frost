@@ -18,9 +18,9 @@ area :: fn(s: Shape) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(area(Shape :: Circle { radius = 5 }))
-    print_int_line(area(Shape :: Rectangle { width = 4, height = 6 }))
-    print_int_line(area(Shape :: Point))
+    print_int_line(area(Shape::Circle { radius = 5 }))
+    print_int_line(area(Shape::Rectangle { width = 4, height = 6 }))
+    print_int_line(area(Shape::Point))
     print_int_line(sizeof(Shape))
     0
 }

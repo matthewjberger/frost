@@ -157,11 +157,11 @@ bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
 // what was read.
 bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> bool {
-    if (cur(p) == TokenKind :: Bang) {
+    if (cur(p) == TokenKind::Bang) {
         advance(p)
         return bound_term(p, gfn_index, arg, xarg_start, xarg_count) == false
     }
-    if (cur(p) == TokenKind :: Lparen) {
+    if (cur(p) == TokenKind::Lparen) {
         advance(p)
         held := bound_expr(p, gfn_index, arg, xarg_start, xarg_count)
         advance(p)
@@ -170,7 +170,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     pred_off := cur_off(p)
     pred_len := cur_len(p)
     advance(p)
-    if (cur(p) != TokenKind :: Lparen) {
+    if (cur(p) != TokenKind::Lparen) {
         report_where(p.modules, p.src, pred_off)
         report("a `where` bound is a predicate applied to a compile-time parameter")
         frost_rt_recover_escape()
@@ -204,7 +204,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
 bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     xarg_start: i64, xarg_count: i64) -> bool {
     var held := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
-    while (cur(p) == TokenKind :: Andand) {
+    while (cur(p) == TokenKind::Andand) {
         advance(p)
         right := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
         held = held && right
@@ -215,7 +215,7 @@ bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
 bound_expr :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> bool {
     var held := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
-    while (cur(p) == TokenKind :: Oror) {
+    while (cur(p) == TokenKind::Oror) {
         advance(p)
         right := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
         held = held || right
@@ -255,7 +255,7 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
     var i: i64 = gfn.bound_token
     while (i < p.tokens.count) {
         token := arena_at(p.tokens, i)
-        if (token.kind == TokenKind :: Lbrace) {
+        if (token.kind == TokenKind::Lbrace) {
             i = p.tokens.count
         } else {
             report_src(p.src, token.off, token.len)
@@ -333,7 +333,7 @@ check_types :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NodeKind :: Func) {
+        if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
             check_types_one(p, node.a, node.b, node.val, sym.ret_type)
         }
@@ -420,14 +420,14 @@ mark_single :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Float) {
+    if (kind == NodeKind::Float) {
         var held := arena_at(p.arena, id)
         held.a = 1
         return
     }
     // Arithmetic over literals is a literal, so the width reaches through it.
     // A comparison answers a truth value whatever it was handed, and stops it.
-    if (kind == NodeKind :: Bin && op_answers_truth(node.val) == false) {
+    if (kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
         left := node.a
         right := node.b
         mark_single(p, left)
@@ -438,20 +438,20 @@ mark_single :: fn(mut p: Parser, id: i64) {
     // replaced by the number it holds rather than marked, since one constant is
     // read in as many places as it is written and each of them decides its own
     // width; this node is the one use.
-    if (kind == NodeKind :: Var && local_exists(p, node.val, node.c) == false) {
+    if (kind == NodeKind::Var && local_exists(p, node.val, node.c) == false) {
         source := value_const_node(p, node.val, node.c)
         if (source < 0) {
             return
         }
         literal := arena_at(p.arena, source)
-        if (literal.kind != NodeKind :: Float) {
+        if (literal.kind != NodeKind::Float) {
             return
         }
         sign := literal.b
         offset := literal.val
         length := literal.c
         var here := arena_at(p.arena, id)
-        here.kind = NodeKind :: Float
+        here.kind = NodeKind::Float
         here.a = 1
         here.b = sign
         here.val = offset
@@ -462,7 +462,7 @@ mark_single :: fn(mut p: Parser, id: i64) {
 check_types_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Let) {
+    if (kind == NodeKind::Let) {
         value := node.a
         annotation := node.b
         off := node.val
@@ -499,7 +499,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         record_local(p, off, len, ty)
         return
     }
-    if (kind == NodeKind :: Assign) {
+    if (kind == NodeKind::Assign) {
         place := node.a
         value := node.b
         check_types_expr(p, place)
@@ -508,7 +508,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         // handle, so the place is every column at once rather than one value
         // with a type to compare against.
         place_node := arena_at(p.arena, place)
-        if (place_node.kind == NodeKind :: Index) {
+        if (place_node.kind == NodeKind::Index) {
             var through := type_of(p, place_node.a)
             if (is_pointer(through)) {
                 through = pointee(p, through)
@@ -546,7 +546,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: Return) {
+    if (kind == NodeKind::Return) {
         value := node.a
         if (value == (-1)) {
             return
@@ -564,11 +564,11 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: ExprStmt) {
+    if (kind == NodeKind::ExprStmt) {
         check_types_expr(p, node.a)
         return
     }
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         check_types_expr(p, node.a)
         check_types_list(p, node.b)
         if (node.val != (-1)) {
@@ -576,7 +576,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: While) {
+    if (kind == NodeKind::While) {
         if (node.c != (-1)) {
             check_types_list(p, node.c)
         }
@@ -584,7 +584,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         check_types_list(p, node.b)
         return
     }
-    if (kind == NodeKind :: Match) {
+    if (kind == NodeKind::Match) {
         check_types_expr(p, node.a)
         var cid := node.b
         while (cid != (-1)) {
@@ -595,7 +595,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: With) {
+    if (kind == NodeKind::With) {
         check_types_list(p, node.a)
         return
     }
@@ -637,20 +637,20 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         check_name_known(p, node.val, node.c)
         return
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         check_call_arguments(p, node.a, node.val, node.c)
         return
     }
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         check_types_expr(p, node.a)
         check_argument_expressions(p, node.b)
         return
     }
-    if (kind == NodeKind :: StructLit) {
+    if (kind == NodeKind::StructLit) {
         struct_ty := node.val
         var fid := node.a
         while (fid != (-1)) {
@@ -668,7 +668,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::ArrayLit) {
         // The element type, where the literal has one to give. Asking an arena
         // for the entry a type that is not an array names would be a read past
         // its end rather than an answer.
@@ -687,8 +687,8 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: Bin || kind == NodeKind :: Index
-        || kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
         // Whether this indexes a raw pointer is a question about the base's
         // type, and the locals that answer it exist only here. The unsafety
         // gate runs before this pass and has no local table, so what it needs
@@ -698,19 +698,19 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         // nothing is being vouched for and no block is asked for.
         // A borrow of a raw pointer is that pointer under another name, so the
         // question is asked of what the borrow names.
-        if (kind == NodeKind :: Index) {
+        if (kind == NodeKind::Index) {
             var base_ty := type_of(p, node.a)
             if (is_borrow(base_ty)) {
                 base_ty = pointee(p, base_ty)
             }
             if (is_raw_pointer(base_ty)
                 && arena_at(p.arena, constant_node(p, node.a)).kind
-                != NodeKind :: StrLit) {
+                != NodeKind::StrLit) {
                 var held := arena_at(p.arena, id)
                 held.c = 1
             }
         }
-        if (kind == NodeKind :: Bin) {
+        if (kind == NodeKind::Bin) {
             check_flags_operator(p, node.val, node.a, node.b, node.pos)
         }
         check_types_expr(p, node.a)
@@ -723,7 +723,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         // `f32` beside it widens to meet it: true for the values a float holds
         // exactly and false for the rest, which is a wrong answer that looks
         // right wherever the numbers are round.
-        if (kind == NodeKind :: Bin && op_answers_truth(node.val)) {
+        if (kind == NodeKind::Bin && op_answers_truth(node.val)) {
             if (untyped_literal(p, node.b)) {
                 want_single(p, node.b, type_of(p, node.a))
             } else if (untyped_literal(p, node.a)) {
@@ -732,14 +732,14 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Deref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: Ref
-        || kind == NodeKind :: PtrCast || kind == NodeKind :: SliceLen
-        || kind == NodeKind :: Assert) {
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Assert) {
         // Whether a field is reached through a raw pointer is the same
         // question indexing asks, and it has the same answer only here, so it
         // is written onto the node the same way.
-        if (kind == NodeKind :: Field && is_raw_pointer(type_of(p, node.a))) {
+        if (kind == NodeKind::Field && is_raw_pointer(type_of(p, node.a))) {
             var held := arena_at(p.arena, id)
             held.b = 1
         }
@@ -775,7 +775,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NodeKind :: TypeVal) {
+        if (vnode.kind != NodeKind::TypeVal) {
             check_types_expr(p, value)
             declared := nth_param_type(p, sym.params, index)
             if (declared >= 0) {
@@ -948,7 +948,7 @@ is_var_named :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         return false
     }
     node := arena_at(p.arena, id)
-    if (node.kind != NodeKind :: Var) {
+    if (node.kind != NodeKind::Var) {
         return false
     }
     node.c == len && bytes_equal(p.src, node.val, off, len)
@@ -981,7 +981,7 @@ call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
         // depth down rather than only in this call's own argument list.
         if (arg != (-1)) {
             anode := arena_at(p.arena, arg)
-            if (anode.kind == NodeKind :: Call
+            if (anode.kind == NodeKind::Call
                 && call_consumes(p, anode.a, anode.val, off, len)) {
                 return true
             }
@@ -996,36 +996,36 @@ call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
 stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Return && is_var_named(p, node.a, off, len)) {
+    if (kind == NodeKind::Return && is_var_named(p, node.a, off, len)) {
         return true
     }
     // A body's trailing expression is what the function answers with, so naming
     // a resource there hands it to the caller exactly as a `return` does. It is
     // still an expression statement at this point: the emitters are what turn
     // the last one into a return.
-    if (kind == NodeKind :: ExprStmt && node.next == (-1)
+    if (kind == NodeKind::ExprStmt && node.next == (-1)
         && is_var_named(p, node.a, off, len)) {
         return true
     }
     // `held := value` moves what `value` held, so the obligation to consume it
     // is the new name's from here on, and that name is checked in its turn.
-    if (kind == NodeKind :: Let && is_var_named(p, node.a, off, len)) {
+    if (kind == NodeKind::Let && is_var_named(p, node.a, off, len)) {
         return true
     }
     // `place = value` is the same move into somewhere that outlives the name:
     // a vector written into a field of a struct the caller owns is the struct's
     // from there on.
-    if (kind == NodeKind :: Assign && is_var_named(p, node.b, off, len)) {
+    if (kind == NodeKind::Assign && is_var_named(p, node.b, off, len)) {
         return true
     }
     var value: i64 = -1
     // A statement holding an expression holds whatever that expression hands
     // away.
-    if (kind == NodeKind :: ExprStmt || kind == NodeKind :: Let
-        || kind == NodeKind :: Return) {
+    if (kind == NodeKind::ExprStmt || kind == NodeKind::Let
+        || kind == NodeKind::Return) {
         value = node.a
     }
-    if (kind == NodeKind :: Assign) {
+    if (kind == NodeKind::Assign) {
         value = node.b
     }
     expr_consumes(p, value, off, len)
@@ -1043,42 +1043,42 @@ expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     kind := node.kind
     left := node.a
     right := node.b
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         if (call_consumes(p, left, node.val, off, len)) {
             return true
         }
         return args_consume(p, left, off, len)
     }
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         return args_consume(p, left, off, len)
     }
     // Only the left side of `&&` and `||` is reached on every path, so a call
     // written on the right hands the value on sometimes rather than always.
-    if (kind == NodeKind :: Bin) {
+    if (kind == NodeKind::Bin) {
         if (node.val == OP_AND || node.val == OP_OR) {
             return expr_consumes(p, left, off, len)
         }
         return expr_consumes(p, left, off, len)
             || expr_consumes(p, right, off, len)
     }
-    if (kind == NodeKind :: Index || kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::Index || kind == NodeKind::SliceFrom) {
         return expr_consumes(p, left, off, len)
             || expr_consumes(p, right, off, len)
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Deref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: PtrCast
-        || kind == NodeKind :: Cast || kind == NodeKind :: SliceLen
-        || kind == NodeKind :: Assert || kind == NodeKind :: Ref) {
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::PtrCast
+        || kind == NodeKind::Cast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Assert || kind == NodeKind::Ref) {
         return expr_consumes(p, left, off, len)
     }
     // An `if` used as a value hands it on only where both arms do, the same
     // rule an `if` written as a statement answers to.
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         return right != (-1) && node.val != (-1)
             && consumes_block(p, right, off, len, true)
             && consumes_block(p, node.val, off, len, true)
     }
-    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         return items_consume(p, left, off, len)
     }
     false
@@ -1139,7 +1139,7 @@ match_subject_is :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         return false
     }
     held := arena_at(p.arena, subject)
-    if (held.kind != NodeKind :: Field) {
+    if (held.kind != NodeKind::Field) {
         return false
     }
     is_var_named(p, held.a, off, len)
@@ -1168,16 +1168,16 @@ match_arms_consume :: fn(mut p: Parser, cases: i64, off: i64, len: i64) -> bool 
 // one.
 match_in :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
-    if (node.kind == NodeKind :: Match) {
+    if (node.kind == NodeKind::Match) {
         return id
     }
-    if (node.kind == NodeKind :: ExprStmt || node.kind == NodeKind :: Return) {
+    if (node.kind == NodeKind::ExprStmt || node.kind == NodeKind::Return) {
         inner := node.a
         if (inner == (-1)) {
             return -1
         }
         held := arena_at(p.arena, inner)
-        if (held.kind == NodeKind :: Match) {
+        if (held.kind == NodeKind::Match) {
             return inner
         }
     }
@@ -1224,7 +1224,7 @@ stmt_consumes_all :: fn(mut p: Parser, id: i64, off: i64, len: i64,
         return true
     }
     node := arena_at(p.arena, id)
-    if (node.kind == NodeKind :: If && node.val != (-1)
+    if (node.kind == NodeKind::If && node.val != (-1)
         && consumes_block(p, node.b, off, len, loops)
         && consumes_block(p, node.val, off, len, loops)) {
         return true
@@ -1254,22 +1254,22 @@ exits_without :: fn(mut p: Parser, id: i64, off: i64, len: i64,
     loops: bool) -> bool {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Return) {
+    if (kind == NodeKind::Return) {
         return true
     }
-    if (loops && (kind == NodeKind :: Break || kind == NodeKind :: Continue)) {
+    if (loops && (kind == NodeKind::Break || kind == NodeKind::Continue)) {
         return true
     }
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         return branch_exits_without(p, node.b, off, len, loops)
             || branch_exits_without(p, node.val, off, len, loops)
     }
-    if (kind == NodeKind :: With) {
+    if (kind == NodeKind::With) {
         return branch_exits_without(p, node.a, off, len, loops)
     }
     // A `break` written inside this loop leaves the loop, not the block the
     // loop sits in, so only a `return` reaches past it.
-    if (kind == NodeKind :: While) {
+    if (kind == NodeKind::While) {
         return branch_exits_without(p, node.b, off, len, false)
     }
     held := match_in(p, id)
@@ -1322,13 +1322,13 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
         // A call whose answer holds a resource, made as a statement, drops what
         // it answered with. Naming the value is what gives anything the chance
         // to consume it.
-        if (kind == NodeKind :: ExprStmt && node.a != (-1)
+        if (kind == NodeKind::ExprStmt && node.a != (-1)
             && (answers && last) == false) {
             value := arena_at(p.arena, node.a)
             value_kind := value.kind
             callee := value.val
             named_at := value.c
-            if (value_kind == NodeKind :: Call && callee >= 0
+            if (value_kind == NodeKind::Call && callee >= 0
                 && callee < p.fns.count) {
                 sym := arena_at(p.fns, callee)
                 if (is_linear_type(p, sym.ret_type)) {
@@ -1338,7 +1338,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                 }
             }
         }
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             var ty := node.b
             if (ty == (-1)) {
                 ty = type_of(p, node.a)
@@ -1355,14 +1355,14 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
         // A block in trailing position answers with whatever its own last
         // statement answers with, so the obligation carries into it. A loop
         // body never answers.
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             check_linear_locals(p, node.b, answers && last)
             check_linear_locals(p, node.val, answers && last)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             check_linear_locals(p, node.b, false)
         }
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             check_linear_locals(p, node.a, answers && last)
         }
         id = node.next
@@ -1409,10 +1409,10 @@ places_same :: fn(mut p: Parser, a: i64, b: i64) -> bool {
     if (kind != nb.kind) {
         return false
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         if (na.c != nb.c) {
             return false
         }
@@ -1421,10 +1421,10 @@ places_same :: fn(mut p: Parser, a: i64, b: i64) -> bool {
         }
         return places_same(p, na.a, nb.a)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         ia := arena_at(p.arena, na.b)
         ib := arena_at(p.arena, nb.b)
-        if (ia.kind != NodeKind :: Num || ib.kind != NodeKind :: Num) {
+        if (ia.kind != NodeKind::Num || ib.kind != NodeKind::Num) {
             return false
         }
         if (ia.val != ib.val) {
@@ -1432,7 +1432,7 @@ places_same :: fn(mut p: Parser, a: i64, b: i64) -> bool {
         }
         return places_same(p, na.a, nb.a)
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         // A borrow was proven where it formed. A raw pointer says nothing about
         // where it lands, so two of them are not definitely anything.
         if (na.val != 1 || nb.val != 1) {
@@ -1528,14 +1528,14 @@ place_under :: fn(mut p: Parser, id: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return -1
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         walk_moves_expr(p, node.b)
         return place_under(p, node.a)
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Field || kind == NodeKind::Deref) {
         return place_under(p, node.a)
     }
     id
@@ -1557,11 +1557,11 @@ moves_viewed_container :: fn(mut p: Parser, id: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Ref || kind == NodeKind :: Index
-        || kind == NodeKind :: Field) {
+    if (kind == NodeKind::Ref || kind == NodeKind::Index
+        || kind == NodeKind::Field) {
         return moves_viewed_container(p, node.a)
     }
-    if (kind != NodeKind :: Call) {
+    if (kind != NodeKind::Call) {
         return -1
     }
     sym := arena_at(p.fns, node.val)
@@ -1719,7 +1719,7 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         report_if_moved(p, id, node.val, node.c)
         return
     }
@@ -1727,17 +1727,17 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
     // what has gone rather than only its root being weighed. Reading one field
     // after another was given away is reading different storage, and taking the
     // whole after a part is taking the same resource twice.
-    if ((kind == NodeKind :: Field || kind == NodeKind :: Index)
+    if ((kind == NodeKind::Field || kind == NodeKind::Index)
         && is_place_expr(p, id)) {
         root := strip_place(p, id, place_depth(p, id))
         rnode := arena_at(p.arena, root)
         report_if_moved(p, id, rnode.val, rnode.c)
-        if (kind == NodeKind :: Index) {
+        if (kind == NodeKind::Index) {
             walk_moves_expr(p, node.b)
         }
         return
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         walk_moves_call(p, node.a, node.val)
         return
     }
@@ -1745,7 +1745,7 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
     // program runs, so nothing here knows what it takes, but the arguments are
     // read wherever they go and a use of what has gone is a use of what has
     // gone. The reads were walked past entirely.
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         walk_moves_expr(p, node.a)
         var pid := node.b
         while (pid != (-1)) {
@@ -1755,18 +1755,18 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: Bin || kind == NodeKind :: Index || kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::Bin || kind == NodeKind::Index || kind == NodeKind::SliceFrom) {
         walk_moves_expr(p, node.a)
         walk_moves_expr(p, node.b)
         return
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Deref || kind == NodeKind :: AddrOf
-        || kind == NodeKind :: Ref || kind == NodeKind :: PtrCast || kind == NodeKind :: SliceLen
-        || kind == NodeKind :: Assert) {
+    if (kind == NodeKind::Field || kind == NodeKind::Deref || kind == NodeKind::AddrOf
+        || kind == NodeKind::Ref || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Assert) {
         walk_moves_expr(p, node.a)
         return
     }
-    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         var child := node.a
         while (child != (-1)) {
             cnode := arena_at(p.arena, child)
@@ -1793,10 +1793,10 @@ push_field_chain :: fn(mut p: Parser, place: i64) -> bool {
     base := node.a
     name_off := node.val
     name_len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return true
     }
-    if (kind != NodeKind :: Field) {
+    if (kind != NodeKind::Field) {
         return false
     }
     if (push_field_chain(p, base) == false) {
@@ -1866,7 +1866,7 @@ note_summaries :: fn(mut p: Parser, fn_index: i64, params: i64) {
                     rnode := arena_at(p.arena, root)
                     root_off := rnode.val
                     root_len := rnode.c
-                    if (rnode.kind == NodeKind :: Var && root_len == pname_len
+                    if (rnode.kind == NodeKind::Var && root_len == pname_len
                         && bytes_equal(p.src, root_off, pname_off, pname_len)
                         && place != root) {
                         start := p.summary_steps.count
@@ -1967,17 +1967,17 @@ push_run_chain :: fn(mut p: Parser, place: i64) -> bool {
     base := node.a
     name_off := node.val
     name_len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return true
     }
-    if (kind == NodeKind :: Index || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Index || kind == NodeKind::Deref) {
         if (push_run_chain(p, base) == false) {
             return false
         }
         p.run_chain_open = 0
         return true
     }
-    if (kind != NodeKind :: Field) {
+    if (kind != NodeKind::Field) {
         return false
     }
     if (push_run_chain(p, base) == false) {
@@ -2058,7 +2058,7 @@ note_run :: fn(mut p: Parser, which: i64, place: i64) -> bool {
     }
     root := strip_place(p, place, place_depth(p, place))
     rnode := arena_at(p.arena, root)
-    if (rnode.kind != NodeKind :: Var) {
+    if (rnode.kind != NodeKind::Var) {
         return false
     }
     root_off := rnode.val
@@ -2124,7 +2124,7 @@ run_place_type :: fn(mut p: Parser, place: i64) -> i64 {
     base := node.a
     name_off := node.val
     name_len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         var id := p.runs_params
         while (id != (-1)) {
             pnode := arena_at(p.arena, id)
@@ -2146,21 +2146,21 @@ run_place_type :: fn(mut p: Parser, place: i64) -> i64 {
         }
         return -1
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         held := run_place_type(p, base)
         if (held < 0 || is_struct_ty(held) == false) {
             return -1
         }
         return field_type(p, held, name_off, name_len)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         held := run_place_type(p, base)
         if (held < 0 || is_array_ty(held) == false) {
             return -1
         }
         return array_element(p, held)
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         held := run_place_type(p, base)
         if (held < 0 || is_pointer(held) == false) {
             return -1
@@ -2229,7 +2229,7 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         if (n != 0) {
             return -1
         }
@@ -2241,7 +2241,7 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
         }
         return run_local_of(p, node.val, node.c)
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         if (n != 0) {
             return -1
         }
@@ -2250,11 +2250,11 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
         }
         return -1
     }
-    if (kind == NodeKind :: Index || kind == NodeKind :: Ref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Index || kind == NodeKind::Ref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Deref) {
         return run_place_nth(p, node.a, n)
     }
-    if (kind == NodeKind :: SliceFrom || kind == NodeKind :: PtrCast) {
+    if (kind == NodeKind::SliceFrom || kind == NodeKind::PtrCast) {
         // The builtins that form a view have no body to read an entry off, and
         // the standard library reaches every run through one of them. What they
         // were given is what they can be naming.
@@ -2264,7 +2264,7 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
         }
         return run_place_nth(p, node.b, n)
     }
-    if (kind != NodeKind :: Call) {
+    if (kind != NodeKind::Call) {
         return -1
     }
     run_call_place(p, node.a, node.val, n)
@@ -2324,7 +2324,7 @@ run_arg_base :: fn(mut p: Parser, arg: i64, n: i64) -> i64 {
     // a name, and reading it as a place of its own loses the container behind
     // it. The two tables are the two walks: the summaries are settling, or they
     // have settled and this is the walk that reports.
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         if (n == 0) {
             local := run_local_of(p, node.val, node.c)
             if (local >= 0) {
@@ -2342,11 +2342,11 @@ run_arg_base :: fn(mut p: Parser, arg: i64, n: i64) -> i64 {
         }
         return arg
     }
-    if (kind == NodeKind :: Ref || kind == NodeKind :: Index
-        || kind == NodeKind :: Field) {
+    if (kind == NodeKind::Ref || kind == NodeKind::Index
+        || kind == NodeKind::Field) {
         return run_arg_base(p, node.a, n)
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return run_call_place(p, node.a, node.val, n)
     }
     -1
@@ -2375,14 +2375,14 @@ note_run_answer :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         then_head := node.b
         else_head := node.val
         note_run_answer(p, block_answer(p, then_head))
         note_run_answer(p, block_answer(p, else_head))
         return
     }
-    if (kind == NodeKind :: Match) {
+    if (kind == NodeKind::Match) {
         var cid := node.b
         while (cid != (-1)) {
             cnode := arena_at(p.arena, cid)
@@ -2435,7 +2435,7 @@ walk_runs_expr :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         note_run_replacements(p, node.a, node.val)
         var aid := node.a
         while (aid != (-1)) {
@@ -2449,7 +2449,7 @@ walk_runs_expr :: fn(mut p: Parser, id: i64) {
     // runs it is handed is not known, since the callee is decided while the
     // program runs, but a growth written inside one of its arguments is a
     // growth like any other and was walked past.
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         walk_runs_expr(p, node.a)
         var pid := node.b
         while (pid != (-1)) {
@@ -2459,20 +2459,20 @@ walk_runs_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NodeKind :: Bin || kind == NodeKind :: Index
-        || kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
         walk_runs_expr(p, node.a)
         walk_runs_expr(p, node.b)
         return
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Deref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: Ref
-        || kind == NodeKind :: PtrCast || kind == NodeKind :: SliceLen
-        || kind == NodeKind :: Cast || kind == NodeKind :: Assert) {
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Cast || kind == NodeKind::Assert) {
         walk_runs_expr(p, node.a)
         return
     }
-    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         var child := node.a
         while (child != (-1)) {
             cnode := arena_at(p.arena, child)
@@ -2492,18 +2492,18 @@ walk_runs_block :: fn(mut p: Parser, head: i64) {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             walk_runs_expr(p, node.a)
             note_run_local(p, node.val, node.c, run_place_of(p, node.a))
         }
-        if (kind == NodeKind :: ExprStmt) {
+        if (kind == NodeKind::ExprStmt) {
             walk_runs_expr(p, node.a)
         }
-        if (kind == NodeKind :: Return) {
+        if (kind == NodeKind::Return) {
             walk_runs_expr(p, node.a)
             note_run_answer(p, node.a)
         }
-        if (kind == NodeKind :: Assign) {
+        if (kind == NodeKind::Assign) {
             walk_runs_expr(p, node.b)
             walk_runs_expr(p, node.a)
             // A write that puts a different run in a place is the growth this
@@ -2515,19 +2515,19 @@ walk_runs_block :: fn(mut p: Parser, head: i64) {
                 note_run(p, 1, node.a)
             }
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             walk_runs_expr(p, node.a)
             walk_runs_block(p, node.b)
             walk_runs_block(p, node.val)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             walk_runs_expr(p, node.a)
             walk_runs_block(p, node.b)
         }
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             walk_runs_block(p, node.a)
         }
-        if (kind == NodeKind :: Match) {
+        if (kind == NodeKind::Match) {
             walk_runs_expr(p, node.a)
             var cid := node.b
             while (cid != (-1)) {
@@ -2591,7 +2591,7 @@ settle_runs :: fn(mut p: Parser) {
             body := node.a
             params := node.b
             fn_index := node.val
-            if (kind == NodeKind :: Func) {
+            if (kind == NodeKind::Func) {
                 var answers_view: bool = false
                 if (fn_index >= 0 && fn_index < p.fns.count) {
                     sym := arena_at(p.fns, fn_index)
@@ -2629,10 +2629,10 @@ viewed_run_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Ref) {
+    if (kind == NodeKind::Ref) {
         return run_behind_nth(p, node.a, n)
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return run_call_place(p, node.a, node.val, n)
     }
     -1
@@ -2646,11 +2646,11 @@ run_behind_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Ref || kind == NodeKind :: Index
-        || kind == NodeKind :: Field) {
+    if (kind == NodeKind::Ref || kind == NodeKind::Index
+        || kind == NodeKind::Field) {
         return run_behind_nth(p, node.a, n)
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return run_call_place(p, node.a, node.val, n)
     }
     -1
@@ -2737,7 +2737,7 @@ note_view_runs :: fn(mut p: Parser, off: i64, len: i64, value: i64) {
     // container rather than binding the name to something else.
     var borrowed: i64 = 0
     vnode := arena_at(p.arena, value)
-    if (vnode.kind == NodeKind :: Ref) {
+    if (vnode.kind == NodeKind::Ref) {
         borrowed = 1
     }
     var n: i64 = 0
@@ -2934,22 +2934,22 @@ report_place :: fn(mut p: Parser, id: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         report_src(p.src, node.val, node.c)
         return
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         report_place(p, node.a)
         report(".")
         report_src(p.src, node.val, node.c)
         return
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         report_place(p, node.a)
         report("[]")
         return
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         report_place(p, node.a)
         report("^")
     }
@@ -3005,7 +3005,7 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                     ptype = TY_VOID
                 }
             }
-            if (pnode.a != 1 && anode.kind == NodeKind :: Var
+            if (pnode.a != 1 && anode.kind == NodeKind::Var
                 && is_aggregate(ptype)) {
                 arena_push(p.moved,
                     LocalVar { name_off = anode.val, name_len = anode.c,
@@ -3038,7 +3038,7 @@ block_diverges :: fn(mut p: Parser, head: i64) -> bool {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
-        if (node.kind == NodeKind :: Return) {
+        if (node.kind == NodeKind::Return) {
             return true
         }
         id = next_id
@@ -3105,21 +3105,21 @@ collect_bound_names :: fn(mut p: Parser, head: i64) {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             arena_push(p.move_scratch,
                 LocalVar { name_off = node.val, name_len = node.c, ty = 0, slot = 0 })
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             collect_bound_names(p, node.b)
             collect_bound_names(p, node.val)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             collect_bound_names(p, node.b)
         }
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             collect_bound_names(p, node.a)
         }
-        if (kind == NodeKind :: Match) {
+        if (kind == NodeKind::Match) {
             var cid := node.b
             while (cid != (-1)) {
                 cnode := arena_at(p.arena, cid)
@@ -3201,7 +3201,7 @@ param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
     base := node.a
     name_off := node.val
     name_len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         var id := params
         while (id != (-1)) {
             pnode := arena_at(p.arena, id)
@@ -3220,7 +3220,7 @@ param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
         }
         return -1
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         held := param_place_type(p, base, params)
         if (held < 0) {
             return -1
@@ -3241,7 +3241,7 @@ param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
         }
         return field_type(p, held, name_off, name_len)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         held := param_place_type(p, base, params)
         if (held < 0 || is_array_ty(held) == false) {
             return -1
@@ -3300,7 +3300,7 @@ walk_moves_body :: fn(mut p: Parser, body: i64, params: i64, answers: bool) {
     }
     if (last != (-1)) {
         node := arena_at(p.arena, last)
-        if (node.kind == NodeKind :: ExprStmt) {
+        if (node.kind == NodeKind::ExprStmt) {
             note_handed_out(p, node.a)
         }
     }
@@ -3377,7 +3377,7 @@ report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
                     rnode := arena_at(p.arena, root)
                     root_off := rnode.val
                     root_len := rnode.c
-                    if (rnode.kind == NodeKind :: Var && root_len == pname_len
+                    if (rnode.kind == NodeKind::Var && root_len == pname_len
                         && bytes_equal(p.src, root_off, pname_off, pname_len)
                         && place != root) {
                         mark := p.summary_steps.count
@@ -3408,18 +3408,18 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
-        if (kind == NodeKind :: Let || kind == NodeKind :: ExprStmt
-            || kind == NodeKind :: Return) {
+        if (kind == NodeKind::Let || kind == NodeKind::ExprStmt
+            || kind == NodeKind::Return) {
             walk_moves_expr(p, node.a)
         }
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             note_view(p, node.val, node.c, moves_viewed_container(p, node.a))
             note_view_runs(p, node.val, node.c, node.a)
         }
-        if (kind == NodeKind :: Return) {
+        if (kind == NodeKind::Return) {
             note_handed_out(p, node.a)
         }
-        if (kind == NodeKind :: Assign) {
+        if (kind == NodeKind::Assign) {
             walk_moves_expr(p, node.b)
             // The target is written, not read. Putting a value into a place is
             // what makes it hold one again, so a place given away and then
@@ -3461,7 +3461,7 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 target_kind := tnode.kind
                 target_off := tnode.val
                 target_len := tnode.c
-                if (target_kind == NodeKind :: Var
+                if (target_kind == NodeKind::Var
                     && view_is_borrow(p, target_off, target_len)) {
                     report_if_stale(p, target_off, target_len, "write")
                 }
@@ -3470,24 +3470,24 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 // what taking the view again after a push amounts to. A write
                 // that hands it no view is a write through it, and leaves what
                 // it views alone.
-                if (target_kind == NodeKind :: Var
+                if (target_kind == NodeKind::Var
                     && viewed_run_nth(p, node.b, 0) >= 0) {
                     note_view_runs(p, target_off, target_len, node.b)
                 }
             }
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             walk_moves_expr(p, node.a)
             walk_moves_if(p, node.b, node.val)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             walk_moves_expr(p, node.a)
             walk_moves_while(p, node.b)
         }
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             walk_moves_block(p, node.a)
         }
-        if (kind == NodeKind :: Match) {
+        if (kind == NodeKind::Match) {
             walk_moves_expr(p, node.a)
             walk_moves_match(p, node.b)
         }
@@ -3584,7 +3584,7 @@ settle_summaries :: fn(mut p: Parser) {
             body := node.a
             params := node.b
             fn_index := node.val
-            if (kind == NodeKind :: Func) {
+            if (kind == NodeKind::Func) {
                 var answers: bool = false
                 if (fn_index >= 0 && fn_index < p.fns.count) {
                     sym := arena_at(p.fns, fn_index)
@@ -3638,7 +3638,7 @@ check_moves :: fn(mut p: Parser) {
     var i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
-        if (node.kind == NodeKind :: Func) {
+        if (node.kind == NodeKind::Func) {
             fn_index := node.val
             var answers: i64 = 0
             if (fn_index >= 0 && fn_index < p.fns.count) {
@@ -3702,10 +3702,10 @@ is_place_expr :: fn(mut p: Parser, id: i64) -> bool {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return true
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index || kind == NodeKind::Deref) {
         return is_place_expr(p, node.a)
     }
     false
@@ -3716,7 +3716,7 @@ is_place_expr :: fn(mut p: Parser, id: i64) -> bool {
 place_depth :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index || kind == NodeKind::Deref) {
         return 1 + place_depth(p, node.a)
     }
     0
@@ -3745,7 +3745,7 @@ index_overlaps :: fn(mut p: Parser, a: i64, b: i64) -> bool {
     }
     na := arena_at(p.arena, a)
     nb := arena_at(p.arena, b)
-    if (na.kind == NodeKind :: Num && nb.kind == NodeKind :: Num) {
+    if (na.kind == NodeKind::Num && nb.kind == NodeKind::Num) {
         return na.val == nb.val
     }
     true
@@ -3758,10 +3758,10 @@ places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
     if (kind != nb.kind) {
         return false
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         if (na.c != nb.c) {
             return false
         }
@@ -3770,10 +3770,10 @@ places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
         }
         return places_equal(p, na.a, nb.a)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         return places_equal(p, na.a, nb.a) && index_overlaps(p, na.b, nb.b)
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         return places_equal(p, na.a, nb.a)
     }
     false
@@ -3791,13 +3791,13 @@ place_reaches_raw :: fn(mut p: Parser, id: i64) -> bool {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         if (node.val != 1) {
             return true
         }
         return place_reaches_raw(p, node.a)
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
         return place_reaches_raw(p, node.a)
     }
     false
@@ -3899,7 +3899,7 @@ check_borrow_exclusivity :: fn(mut p: Parser) {
     var n: i64 = 0
     while (n < p.arena.count) {
         node := arena_at(p.arena, n)
-        if (node.kind == NodeKind :: Call) {
+        if (node.kind == NodeKind::Call) {
             check_call_exclusivity(p, node.a, node.val, node.pos)
         }
         n = n + 1
@@ -4232,17 +4232,17 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
     child := node.a
     off := node.val
     len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return type_listed(p.frame_types, p.src, off, len)
     }
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         base := frame_place_type(p, child)
         if (base < 0) {
             return -1
         }
         return field_type_by_range(p, base, off, len)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         base := frame_place_type(p, child)
         if (base < 0) {
             return -1
@@ -4266,7 +4266,7 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return -1
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         base := frame_place_type(p, child)
         if (base < 0 || is_pointer(base) == false) {
             return -1
@@ -4287,54 +4287,54 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
     kind := node.kind
     child := node.a
     val := node.val
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, val)
         if (sym.defined == 0) {
             return -1
         }
         return sym.ret_type
     }
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         callee := frame_place_type(p, child)
         if (callee < 0 || is_proc(callee) == false) {
             return -1
         }
         return proc_ret(p, callee)
     }
-    if (kind == NodeKind :: AddrOf) {
+    if (kind == NodeKind::AddrOf) {
         held := frame_place_type(p, child)
         if (held < 0) {
             return -1
         }
         return pointer_to(p, held)
     }
-    if (kind == NodeKind :: Ref) {
+    if (kind == NodeKind::Ref) {
         held := frame_place_type(p, child)
         if (held < 0) {
             return -1
         }
         return borrow_of(p, held)
     }
-    if (kind == NodeKind :: PtrCast) {
+    if (kind == NodeKind::PtrCast) {
         return pointer_to(p, val)
     }
-    if (kind == NodeKind :: SliceFrom || kind == NodeKind :: Cast) {
+    if (kind == NodeKind::SliceFrom || kind == NodeKind::Cast) {
         return val
     }
     // A literal is a `^i8` everywhere but an index into one, which is where the
     // compiler reads the bytes it already holds.
-    if (kind == NodeKind :: StrLit) {
+    if (kind == NodeKind::StrLit) {
         return POINTER_BASE + TY_I8
     }
     // A struct literal carries its type, not its table index.
-    if (kind == NodeKind :: StructLit) {
+    if (kind == NodeKind::StructLit) {
         return val
     }
     // A literal says both halves of its own type: the element from a declared
     // type when one was in force, otherwise from the first thing in it, and the
     // length from how many there are. Both halves are stored plus one, so an
     // untouched zero is "not written down".
-    if (kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::ArrayLit) {
         var element: i64 = -1
         if (val != 0) {
             element = val - 1
@@ -4349,16 +4349,16 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
     }
     // A number written as a bit of a flags type carries that type, stored plus
     // one. Every other one takes its type from where it was written.
-    if (kind == NodeKind :: Num) {
+    if (kind == NodeKind::Num) {
         if (node.b != 0) {
             return node.b - 1
         }
         return TY_I64
     }
-    if (kind == NodeKind :: Float) {
+    if (kind == NodeKind::Float) {
         return TY_F64
     }
-    if (kind == NodeKind :: SliceLen || kind == NodeKind :: Sizeof) {
+    if (kind == NodeKind::SliceLen || kind == NodeKind::Sizeof) {
         return TY_I64
     }
     frame_place_type(p, id)
@@ -4409,7 +4409,7 @@ frame_place_prov :: fn(mut p: Parser, id: i64) -> i64 {
     child := node.a
     off := node.val
     len := node.c
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         // A borrow names storage somewhere else, so it answers with wherever
         // that was and not with the frame it sits in.
         held := prov_listed(p.frame_places, p.src, off, len)
@@ -4431,18 +4431,18 @@ frame_place_prov :: fn(mut p: Parser, id: i64) -> i64 {
     // a `str` or a raw pointer lands wherever that indirection points, which is
     // a question about the base's value: `held[0]` on a `[]T` parameter names
     // the caller's block, not the slice sitting in this frame.
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         base := frame_place_type(p, child)
         if (base >= 0 && (is_pointer(base) || is_slice_ty(p, base))) {
             return frame_value_prov(p, child)
         }
         return frame_place_prov(p, child)
     }
-    if (kind == NodeKind :: Field || kind == NodeKind :: Ref
-        || kind == NodeKind :: AddrOf) {
+    if (kind == NodeKind::Field || kind == NodeKind::Ref
+        || kind == NodeKind::AddrOf) {
         return frame_place_prov(p, child)
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         return frame_value_prov(p, child)
     }
     // Not a place. It names no storage of its own, so it holds nothing to how
@@ -4629,14 +4629,14 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     kind := node.kind
     child := node.a
     // An address of a place names that place's storage.
-    if (kind == NodeKind :: AddrOf || kind == NodeKind :: Ref) {
+    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
         return frame_place_prov(p, child)
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return frame_name_prov(p, node.val, node.c)
     }
     // Reaching into a value stays inside whatever it named.
-    if (kind == NodeKind :: Index || kind == NodeKind :: Field) {
+    if (kind == NodeKind::Index || kind == NodeKind::Field) {
         return frame_value_prov(p, child)
     }
     // Reading back through a pointer hands out whatever sits there. A scalar
@@ -4644,7 +4644,7 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     // `p^` under `-> i64` is the ordinary way to read a local. A read whose type
     // holds a view hands the view out again, which is `pp^` where `pp` was taken
     // from a binding that held a frame pointer.
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         base := frame_place_type(p, child)
         if (base >= 0 && is_pointer(base)
             && type_holds_view(p, pointee(p, base), FRAME_TYPE_DEPTH) == false) {
@@ -4654,26 +4654,26 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     }
     // A cast keeps pointing where it pointed, and a slice wraps a pointer in a
     // length, so both answer with what they were built from.
-    if (kind == NodeKind :: PtrCast || kind == NodeKind :: Cast) {
+    if (kind == NodeKind::PtrCast || kind == NodeKind::Cast) {
         return frame_value_prov(p, child)
     }
-    if (kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::SliceFrom) {
         return prov_max(frame_value_prov(p, child),
             frame_value_prov(p, node.b))
     }
     // A value built around views is as short-lived as the shortest of them, so a
     // struct carrying a frame pointer out is caught the way a bare one is. An
     // enum variant is a struct literal too, so this covers it.
-    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         return frame_list_prov(p, child)
     }
     // A block used as a value answers with whichever branch runs, so it is worth
     // the shortest-lived of them.
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         return prov_max(frame_block_prov(p, node.b),
             frame_block_prov(p, node.val))
     }
-    if (kind == NodeKind :: Match) {
+    if (kind == NodeKind::Match) {
         var held: i64 = PROV_OUTLIVES
         var arm := node.b
         while (arm != (-1)) {
@@ -4684,19 +4684,19 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return held
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return frame_call_prov(p, id)
     }
-    if (kind == NodeKind :: CallPtr) {
+    if (kind == NodeKind::CallPtr) {
         return frame_call_ptr_prov(p, id)
     }
     // A value that names no storage places no constraint on how long a view
     // built from it may live. Arithmetic is among them: there is no pointer
     // arithmetic in the surface, so a binary operator answers with a number.
-    if (kind == NodeKind :: Num || kind == NodeKind :: Float
-        || kind == NodeKind :: StrLit || kind == NodeKind :: TypeVal
-        || kind == NodeKind :: Bin || kind == NodeKind :: SliceLen
-        || kind == NodeKind :: Sizeof || kind == NodeKind :: Assert) {
+    if (kind == NodeKind::Num || kind == NodeKind::Float
+        || kind == NodeKind::StrLit || kind == NodeKind::TypeVal
+        || kind == NodeKind::Bin || kind == NodeKind::SliceLen
+        || kind == NodeKind::Sizeof || kind == NodeKind::Assert) {
         return PROV_OUTLIVES
     }
     // Listed rather than caught by a fallthrough. Frost has no exhaustiveness
@@ -4745,14 +4745,14 @@ frame_expected_prov :: fn(mut p: Parser, id: i64, expected: i64) -> i64 {
     // A literal names its own type where the source wrote one, and takes it from
     // the context where the source left it out, which is what an inferred
     // literal and the struct behind a multi-return both are.
-    if (kind == NodeKind :: StructLit) {
+    if (kind == NodeKind::StructLit) {
         var held := node.val
         if (held < 0) {
             held = expected
         }
         return frame_literal_prov(p, held, node.a)
     }
-    if (kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::ArrayLit) {
         element := frame_element_type(p, expected)
         var worst: i64 = PROV_OUTLIVES
         var item := node.a
@@ -4764,11 +4764,11 @@ frame_expected_prov :: fn(mut p: Parser, id: i64, expected: i64) -> i64 {
         }
         return worst
     }
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         return prov_max(frame_block_expected(p, node.b, expected),
             frame_block_expected(p, node.val, expected))
     }
-    if (kind == NodeKind :: Match) {
+    if (kind == NodeKind::Match) {
         var worst: i64 = PROV_OUTLIVES
         var arm := node.b
         while (arm != (-1)) {
@@ -4833,10 +4833,10 @@ frame_borrowed_place :: fn(mut p: Parser, id: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Ref) {
+    if (kind == NodeKind::Ref) {
         return frame_place_prov(p, node.a)
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, node.val)
         if (sym.defined == 1 && is_borrow(sym.ret_type)) {
             return frame_call_prov(p, id)
@@ -4907,7 +4907,7 @@ block_answer :: fn(mut p: Parser, head: i64) -> i64 {
         return -1
     }
     node := arena_at(p.arena, last)
-    if (node.kind == NodeKind :: ExprStmt) {
+    if (node.kind == NodeKind::ExprStmt) {
         return node.a
     }
     -1
@@ -4996,7 +4996,7 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         callee := node.val
         args := node.a
         count := count_value_args(p, args)
@@ -5078,20 +5078,20 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
     }
     // Only where the field is a node, for the same reason the walk that built
     // the table is explicit about it.
-    if (kind == NodeKind :: Call || kind == NodeKind :: StructLit
-        || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::Call || kind == NodeKind::StructLit
+        || kind == NodeKind::ArrayLit) {
         frame_judge_kept_list(p, node.a, pos)
-    } else if (kind == NodeKind :: CallPtr) {
+    } else if (kind == NodeKind::CallPtr) {
         frame_judge_kept(p, node.a, pos)
         frame_judge_kept_list(p, node.b, pos)
-    } else if (kind == NodeKind :: Bin || kind == NodeKind :: Index
-        || kind == NodeKind :: SliceFrom) {
+    } else if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
         frame_judge_kept(p, node.a, pos)
         frame_judge_kept(p, node.b, pos)
-    } else if (kind == NodeKind :: Field || kind == NodeKind :: Deref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: Ref
-        || kind == NodeKind :: PtrCast || kind == NodeKind :: Cast
-        || kind == NodeKind :: SliceLen || kind == NodeKind :: Assert) {
+    } else if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::Cast
+        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
         frame_judge_kept(p, node.a, pos)
     }
 }
@@ -5125,29 +5125,29 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
         // that keeps a pointer keeps it wherever it was written.
         // Every statement that holds an expression holds calls, and a call
         // that keeps a pointer keeps it wherever it was written.
-        if (kind == NodeKind :: Let || kind == NodeKind :: Return
-            || kind == NodeKind :: ExprStmt
-            || kind == NodeKind :: While || kind == NodeKind :: If
-            || kind == NodeKind :: Match) {
+        if (kind == NodeKind::Let || kind == NodeKind::Return
+            || kind == NodeKind::ExprStmt
+            || kind == NodeKind::While || kind == NodeKind::If
+            || kind == NodeKind::Match) {
             frame_judge_kept(p, first, pos)
         }
-        if (kind == NodeKind :: Assign) {
+        if (kind == NodeKind::Assign) {
             frame_judge_kept(p, second, pos)
         }
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             frame_note_let(p, id)
-        } else if (kind == NodeKind :: Assign) {
+        } else if (kind == NodeKind::Assign) {
             frame_note_assign(p, id)
-        } else if (kind == NodeKind :: Return) {
+        } else if (kind == NodeKind::Return) {
             frame_judge(p, first, "returned", pos)
-        } else if (kind == NodeKind :: ExprStmt) {
+        } else if (kind == NodeKind::ExprStmt) {
             if (answers == 1) {
                 frame_judge(p, first, "the block's value", pos)
             }
-        } else if (kind == NodeKind :: If) {
+        } else if (kind == NodeKind::If) {
             frame_check_block(p, second, answers)
             frame_check_block(p, third, answers)
-        } else if (kind == NodeKind :: Match) {
+        } else if (kind == NodeKind::Match) {
             var arm := second
             while (arm != (-1)) {
                 case_node := arena_at(p.arena, arm)
@@ -5155,12 +5155,12 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
                 arm = case_node.next
                 frame_check_block(p, body, answers)
             }
-        } else if (kind == NodeKind :: While) {
+        } else if (kind == NodeKind::While) {
             frame_check_block(p, second, 0)
-        } else if (kind == NodeKind :: With) {
+        } else if (kind == NodeKind::With) {
             frame_check_block(p, first, 0)
-        } else if (kind == NodeKind :: Assert
-            || kind == NodeKind :: Break || kind == NodeKind :: Continue) {
+        } else if (kind == NodeKind::Assert
+            || kind == NodeKind::Break || kind == NodeKind::Continue) {
         // Nothing leaves the frame through one. An assert reads a value,
         // and the two transfers carry no value at all.
         } else {
@@ -5243,10 +5243,10 @@ answer_reaches_inline :: fn(mut p: Parser, id: i64) -> bool {
     node := arena_at(p.arena, id)
     kind := node.kind
     base := node.a
-    if (kind == NodeKind :: Field) {
+    if (kind == NodeKind::Field) {
         return answer_reaches_inline(p, base)
     }
-    if (kind == NodeKind :: Index) {
+    if (kind == NodeKind::Index) {
         held := frame_place_type(p, base)
         if (held < 0) {
             return answer_reaches_inline(p, base)
@@ -5256,7 +5256,7 @@ answer_reaches_inline :: fn(mut p: Parser, id: i64) -> bool {
         }
         return false
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         return false
     }
     true
@@ -5269,13 +5269,13 @@ answer_place_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
         if (answer_reaches_inline(p, id)) {
             return answer_place_mask(p, node.a, params)
         }
         return 0
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         return 0
     }
     answer_value_mask(p, id, params)
@@ -5289,10 +5289,10 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
     child := node.a
-    if (kind == NodeKind :: AddrOf || kind == NodeKind :: Ref) {
+    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
         return answer_place_mask(p, child, params)
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         bit := answer_param_bit(p, params, node.val, node.c)
         if (bit != 0) {
             return bit
@@ -5305,7 +5305,7 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     // A place read by value copies what is there. Whatever views the copy holds
     // point where they already pointed, so the container is not named by it.
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
         held := frame_place_type(p, id)
         if (held >= 0 && type_holds_view(p, held, FRAME_TYPE_DEPTH) == false) {
             return 0
@@ -5315,17 +5315,17 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
         }
         return 0
     }
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         return 0
     }
-    if (kind == NodeKind :: PtrCast || kind == NodeKind :: Cast) {
+    if (kind == NodeKind::PtrCast || kind == NodeKind::Cast) {
         return answer_value_mask(p, child, params)
     }
-    if (kind == NodeKind :: SliceFrom) {
+    if (kind == NodeKind::SliceFrom) {
         return answer_value_mask(p, child, params)
             | answer_value_mask(p, node.b, params)
     }
-    if (kind == NodeKind :: StructLit || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         var found: i64 = 0
         var item := child
         while (item != (-1)) {
@@ -5335,11 +5335,11 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
         }
         return found
     }
-    if (kind == NodeKind :: If) {
+    if (kind == NodeKind::If) {
         return answer_block_answer(p, node.b, params)
             | answer_block_answer(p, node.val, params)
     }
-    if (kind == NodeKind :: Match) {
+    if (kind == NodeKind::Match) {
         var found: i64 = 0
         var arm := node.b
         while (arm != (-1)) {
@@ -5349,13 +5349,13 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
         }
         return found
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return answer_call_mask(p, id, params)
     }
-    if (kind == NodeKind :: Num || kind == NodeKind :: Float
-        || kind == NodeKind :: StrLit || kind == NodeKind :: Sizeof
-        || kind == NodeKind :: SliceLen || kind == NodeKind :: TypeVal
-        || kind == NodeKind :: Bin) {
+    if (kind == NodeKind::Num || kind == NodeKind::Float
+        || kind == NodeKind::StrLit || kind == NodeKind::Sizeof
+        || kind == NodeKind::SliceLen || kind == NodeKind::TypeVal
+        || kind == NodeKind::Bin) {
         return 0
     }
     // A shape this walk does not read answers with every parameter, which is
@@ -5425,22 +5425,22 @@ answer_walk_block :: fn(mut p: Parser, head: i64, params: i64,
         node := arena_at(p.arena, id)
         kind := node.kind
         next := node.next
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             mask := answer_value_mask(p, node.a, params)
             note_type(p.answer_locals, p.src, node.val, node.c, mask)
         }
-        if (kind == NodeKind :: Return) {
+        if (kind == NodeKind::Return) {
             found = found | answer_exit_mask(p, node.a, params, answers_place)
         }
-        if (kind == NodeKind :: While || kind == NodeKind :: With) {
+        if (kind == NodeKind::While || kind == NodeKind::With) {
             found = found | answer_walk_block(p, node.b, params, answers_place)
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             found = found | answer_walk_block(p, node.b, params, answers_place)
             found = found
                 | answer_walk_block(p, node.val, params, answers_place)
         }
-        if (kind == NodeKind :: Match) {
+        if (kind == NodeKind::Match) {
             var arm := node.b
             while (arm != (-1)) {
                 case_node := arena_at(p.arena, arm)
@@ -5477,11 +5477,11 @@ kept_container_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Field || kind == NodeKind :: Index
-        || kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Field || kind == NodeKind::Index
+        || kind == NodeKind::Deref) {
         return kept_container_mask(p, node.a, params)
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         bit := answer_param_bit(p, params, node.val, node.c)
         if (bit != 0) {
             return bit
@@ -5531,7 +5531,7 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
     node := arena_at(p.arena, id)
     kind := node.kind
     var grew: i64 = 0
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         callee := node.val
         args := node.a
         count := count_value_args(p, args)
@@ -5568,20 +5568,20 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
     // Only where the field is a node. `val` carries a number for a literal and
     // a symbol for a call, so walking it blindly follows whatever integer
     // happens to sit there.
-    if (kind == NodeKind :: Call || kind == NodeKind :: StructLit
-        || kind == NodeKind :: ArrayLit) {
+    if (kind == NodeKind::Call || kind == NodeKind::StructLit
+        || kind == NodeKind::ArrayLit) {
         grew = grew | kept_walk_list(p, node.a, params, fn_index)
-    } else if (kind == NodeKind :: CallPtr) {
+    } else if (kind == NodeKind::CallPtr) {
         grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         grew = grew | kept_walk_list(p, node.b, params, fn_index)
-    } else if (kind == NodeKind :: Bin || kind == NodeKind :: Index
-        || kind == NodeKind :: SliceFrom) {
+    } else if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
         grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         grew = grew | kept_walk_expr(p, node.b, params, fn_index)
-    } else if (kind == NodeKind :: Field || kind == NodeKind :: Deref
-        || kind == NodeKind :: AddrOf || kind == NodeKind :: Ref
-        || kind == NodeKind :: PtrCast || kind == NodeKind :: Cast
-        || kind == NodeKind :: SliceLen || kind == NodeKind :: Assert) {
+    } else if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::Cast
+        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
         grew = grew | kept_walk_expr(p, node.a, params, fn_index)
     }
     grew
@@ -5612,12 +5612,12 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
         node := arena_at(p.arena, id)
         kind := node.kind
         next := node.next
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             mask := answer_value_mask(p, node.a, params)
             note_type(p.answer_locals, p.src, node.val, node.c, mask)
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         }
-        if (kind == NodeKind :: Assign) {
+        if (kind == NodeKind::Assign) {
             into := kept_container_mask(p, node.a, params)
             held := answer_value_mask(p, node.b, params)
             var bit: i64 = 0
@@ -5629,25 +5629,25 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
             }
             grew = grew | kept_walk_expr(p, node.b, params, fn_index)
         }
-        if (kind == NodeKind :: Return || kind == NodeKind :: ExprStmt) {
+        if (kind == NodeKind::Return || kind == NodeKind::ExprStmt) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
             grew = grew | kept_walk_block(p, node.b, params, fn_index)
         }
         // A `with` block holds its body where a `while` holds its condition, so
         // the two are not one case: walking the body as an expression follows
         // statement fields as though they were nodes.
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             grew = grew | kept_walk_block(p, node.a, params, fn_index)
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
             grew = grew | kept_walk_block(p, node.b, params, fn_index)
             grew = grew | kept_walk_block(p, node.val, params, fn_index)
         }
-        if (kind == NodeKind :: Match) {
+        if (kind == NodeKind::Match) {
             grew = grew | kept_walk_expr(p, node.a, params, fn_index)
             var arm := node.b
             while (arm != (-1)) {
@@ -5676,7 +5676,7 @@ settle_kept :: fn(mut p: Parser) {
         var i: i64 = 0
         while (i < p.arena.count) {
             node := arena_at(p.arena, i)
-            if (node.kind == NodeKind :: Func && node.val >= 0
+            if (node.kind == NodeKind::Func && node.val >= 0
                 && node.val < p.fns.count) {
                 sym := arena_at(p.fns, node.val)
                 params := sym.params
@@ -5703,7 +5703,7 @@ settle_answer_sources :: fn(mut p: Parser) {
         var i: i64 = 0
         while (i < p.arena.count) {
             node := arena_at(p.arena, i)
-            if (node.kind == NodeKind :: Func) {
+            if (node.kind == NodeKind::Func) {
                 body := node.a
                 fn_index := node.val
                 sym := arena_at(p.fns, fn_index)
@@ -5772,7 +5772,7 @@ check_frame_escapes :: fn(mut p: Parser) {
     var i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
-        if (node.kind == NodeKind :: Func) {
+        if (node.kind == NodeKind::Func) {
             body := node.a
             sym := arena_at(p.fns, node.val)
             answer := sym.ret_type
@@ -5828,11 +5828,11 @@ root_name :: fn(mut p: Parser, id: i64) -> i64 {
     while (current != (-1)) {
         node := arena_at(p.arena, current)
         kind := node.kind
-        if (kind == NodeKind :: Var) {
+        if (kind == NodeKind::Var) {
             return current
         }
-        if (kind == NodeKind :: Field || kind == NodeKind :: Index || kind == NodeKind :: Deref
-            || kind == NodeKind :: AddrOf || kind == NodeKind :: PtrCast) {
+        if (kind == NodeKind::Field || kind == NodeKind::Index || kind == NodeKind::Deref
+            || kind == NodeKind::AddrOf || kind == NodeKind::PtrCast) {
             current = node.a
         } else {
             return -1
@@ -5849,7 +5849,7 @@ mentions_region :: fn(mut p: Parser, id: i64) -> bool {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         off := node.val
         len := node.c
         if (len == p.region_len
@@ -5858,10 +5858,10 @@ mentions_region :: fn(mut p: Parser, id: i64) -> bool {
         }
         return name_listed(p.tainted, p.src, off, len)
     }
-    if (kind == NodeKind :: Num || kind == NodeKind :: StrLit || kind == NodeKind :: TypeVal) {
+    if (kind == NodeKind::Num || kind == NodeKind::StrLit || kind == NodeKind::TypeVal) {
         return false
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         return mentions_region_args(p, node.a)
     }
     mentions_region(p, node.a) || mentions_region(p, node.b)
@@ -5890,7 +5890,7 @@ region_points_at_tainted :: fn(mut p: Parser, id: i64) -> bool {
         return false
     }
     node := arena_at(p.arena, id)
-    if (node.kind != NodeKind :: AddrOf && node.kind != NodeKind :: Ref) {
+    if (node.kind != NodeKind::AddrOf && node.kind != NodeKind::Ref) {
         return false
     }
     root := root_name(p, node.a)
@@ -5907,21 +5907,21 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     }
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NodeKind :: AddrOf) {
+    if (kind == NodeKind::AddrOf) {
         return mentions_region(p, node.a)
     }
-    if (kind == NodeKind :: Var) {
+    if (kind == NodeKind::Var) {
         return name_listed(p.tainted, p.src, node.val, node.c)
     }
     // A cast still points where it pointed. A dereference does not: it reads
     // the value there, and reading out of the region is what the region is for.
-    if (kind == NodeKind :: PtrCast) {
+    if (kind == NodeKind::PtrCast) {
         return region_pointer(p, node.a)
     }
     // Reading back through a pointer at a binding that holds an arena pointer
     // hands that pointer out again. `pp^` where `pp` was taken from something
     // already tainted, not `p^` where `p` is the arena pointer itself.
-    if (kind == NodeKind :: Deref) {
+    if (kind == NodeKind::Deref) {
         root := root_name(p, node.a)
         if (root == (-1)) {
             return false
@@ -5929,7 +5929,7 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
         rnode := arena_at(p.arena, root)
         return name_listed(p.region_via_pointer, p.src, rnode.val, rnode.c)
     }
-    if (kind == NodeKind :: Call) {
+    if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, node.val)
         // Every view, not only a raw pointer. A `[]T` or a `str` carved out of
         // an arena names the arena's storage exactly as a `^T` does, and reading
@@ -5962,7 +5962,7 @@ check_region_block :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NodeKind :: Let) {
+        if (kind == NodeKind::Let) {
             // A binding declared inside the region dies with it, so it may hold
             // a region pointer.
             if (region_pointer(p, node.a)) {
@@ -5973,7 +5973,7 @@ check_region_block :: fn(mut p: Parser, head: i64) {
             }
             list_name(p.inner, node.val, node.c)
         }
-        if (kind == NodeKind :: Assign) {
+        if (kind == NodeKind::Assign) {
             if (region_pointer(p, node.b)) {
                 place := root_name(p, node.a)
                 var outside: bool = true
@@ -5994,24 +5994,24 @@ check_region_block :: fn(mut p: Parser, head: i64) {
         // dies at the closing brace. It is not one from a `uses` function: the
         // arena belongs to the caller, so the pointer is handed to the caller's
         // region and checked there.
-        if (kind == NodeKind :: Return && p.region_returns == 0) {
+        if (kind == NodeKind::Return && p.region_returns == 0) {
             if (region_pointer(p, node.a)) {
                 region_escape(p, "being returned")
             }
         }
-        if (kind == NodeKind :: ExprStmt && p.region_returns == 0) {
+        if (kind == NodeKind::ExprStmt && p.region_returns == 0) {
             if (next_id == (-1) && region_pointer(p, node.a)) {
                 region_escape(p, "being the block's value")
             }
         }
-        if (kind == NodeKind :: If) {
+        if (kind == NodeKind::If) {
             check_region_block(p, node.b)
             check_region_block(p, node.val)
         }
-        if (kind == NodeKind :: While) {
+        if (kind == NodeKind::While) {
             check_region_block(p, node.b)
         }
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             check_region_block(p, node.a)
         }
         id = next_id
@@ -6051,7 +6051,7 @@ check_regions :: fn(mut p: Parser) {
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         kind := node.kind
-        if (kind == NodeKind :: With) {
+        if (kind == NodeKind::With) {
             body := node.a
             p.region_off = node.val
             p.region_len = node.c
@@ -6061,7 +6061,7 @@ check_regions :: fn(mut p: Parser) {
             p.region_returns = 0
             check_region_once(p, body)
         }
-        if (kind == NodeKind :: Func) {
+        if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
             // Once per capability the function draws, since a pointer into any
             // of them is a pointer that may not outlive the call.
@@ -6110,25 +6110,25 @@ check_unsafety :: fn(mut p: Parser) {
         // through it. Such a read is marked where the parser makes it, since
         // this walk has no local types in hand. Only a raw pointer is
         // unchecked.
-        if (kind == NodeKind :: Deref && node.val != 1) {
+        if (kind == NodeKind::Deref && node.val != 1) {
             gated = 1
             what = "reading through a raw pointer"
         }
-        if (kind == NodeKind :: PtrCast) {
+        if (kind == NodeKind::PtrCast) {
             gated = 1
             what = "ptr_cast"
         }
         // Forming a slice from a raw pointer and a length is a claim the
         // bytes are that, which nothing checks. Reads through the slice are
         // checked, so the claim is the only unsafe part.
-        if (kind == NodeKind :: SliceFrom) {
+        if (kind == NodeKind::SliceFrom) {
             gated = 1
             what = "slice_from"
         }
         // An array or a slice knows its own length, so indexing one is
         // checked. A borrow was proven safe where it formed. Only a raw
         // pointer is unchecked.
-        if (kind == NodeKind :: Index) {
+        if (kind == NodeKind::Index) {
             if (node.c == 1) {
                 gated = 1
                 what = "indexing a raw pointer"
@@ -6145,13 +6145,13 @@ check_unsafety :: fn(mut p: Parser) {
         // where the two functions happen to share a parameter name that is a
         // diagnostic about the wrong type, and where they do not it is a
         // silently wrong answer.
-        if (kind == NodeKind :: Field) {
+        if (kind == NodeKind::Field) {
             if (node.b == 1) {
                 gated = 1
                 what = "reading a field through a raw pointer"
             }
         }
-        if (kind == NodeKind :: Call) {
+        if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, node.val)
             if (sym.is_extern == 1 && sym.is_safe == 0) {
                 gated = 1
@@ -6271,7 +6271,7 @@ let_proc_type :: fn(mut p: Parser, value: i64) -> i64 {
         return -1
     }
     node := arena_at(p.arena, value)
-    if (node.kind == NodeKind :: Field) {
+    if (node.kind == NodeKind::Field) {
         var i: i64 = 0
         while (i < p.fields.count) {
             field := arena_at(p.fields, i)
@@ -6284,7 +6284,7 @@ let_proc_type :: fn(mut p: Parser, value: i64) -> i64 {
         }
         return -1
     }
-    if (node.kind == NodeKind :: Var) {
+    if (node.kind == NodeKind::Var) {
         held := fn_index_of(p, node.val, node.c)
         if (held >= 0) {
             sym := arena_at(p.fns, held)
@@ -6300,7 +6300,7 @@ proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     var i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
-        if (node.kind == NodeKind :: Param && is_proc(node.b)
+        if (node.kind == NodeKind::Param && is_proc(node.b)
             && node.c == len && bytes_equal(p.src, node.val, off, len)) {
             return node.b
         }
@@ -6308,7 +6308,7 @@ proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         // parameter of one is. `run := schedule.systems[i].run` then `run(world)`
         // is how a table of functions is walked, and the name is a local rather
         // than anything declared.
-        if (node.kind == NodeKind :: Let && node.c == len
+        if (node.kind == NodeKind::Let && node.c == len
             && bytes_equal(p.src, node.val, off, len)) {
             var ty := node.b
             if (ty < 0 || is_proc(ty) == false) {
@@ -6345,7 +6345,7 @@ check_calls :: fn(mut p: Parser) {
         kind := node.kind
         fn_index := node.val
         args := node.a
-        if (kind == NodeKind :: Call) {
+        if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, fn_index)
             defined := sym.defined
             name_off := sym.off

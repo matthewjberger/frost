@@ -237,11 +237,11 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
 surface_layout :: fn(device: Device) -> BindGroupLayout {
     var entries: [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
     entries[0].binding = 0
-    entries[0].visibility = ShaderStage :: Fragment
+    entries[0].visibility = ShaderStage::Fragment
     entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
     entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D_ARRAY
     entries[1].binding = 1
-    entries[1].visibility = ShaderStage :: Fragment
+    entries[1].visibility = ShaderStage::Fragment
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
     var descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 2
@@ -291,7 +291,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask :: All
+    target.write_mask = ColorWriteMask::All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -408,7 +408,7 @@ run :: fn(move app: App) -> i64 {
     looks[3] = materials_add(app.materials, material_of(vec4(0.98, 1.0, 0.94, 1.0), 0.45, 0.0))
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage :: Vertex | ShaderStage :: Fragment)
+        ShaderStage::Vertex | ShaderStage::Fragment)
     material_layout := surface_layout(device)
     var layouts: [3]BindGroupLayout = [frame_layout,
         render_world_layout(app.render), material_layout]

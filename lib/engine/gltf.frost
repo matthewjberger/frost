@@ -345,7 +345,7 @@ read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
         held.alpha_mode = alpha_mode_of(document,
             json_member(document, node, "alphaMode"))
         held.double_sided = json_kind(document,
-            json_member(document, node, "doubleSided")) == JsonKind :: True
+            json_member(document, node, "doubleSided")) == JsonKind::True
         vec_push($Material, model.materials, held)
         index = index + 1
         node = json_next(document, node)

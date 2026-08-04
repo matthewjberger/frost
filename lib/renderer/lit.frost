@@ -89,7 +89,7 @@ Lit :: struct {
 lit_new :: fn(device: Device, format: u32, scene_layout: BindGroupLayout,
     batch_layout: BindGroupLayout) -> Lit {
     frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
-        ShaderStage :: Vertex | ShaderStage :: Fragment)
+        ShaderStage::Vertex | ShaderStage::Fragment)
     frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
 
     light_layout := lights_layout(device)
@@ -297,7 +297,7 @@ lights_layout :: fn(device: Device) -> BindGroupLayout {
     var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
-        entries[slot].visibility = ShaderStage :: Fragment
+        entries[slot].visibility = ShaderStage::Fragment
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
         slot = slot + 1
     }
@@ -379,7 +379,7 @@ make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask :: All
+    target.write_mask = ColorWriteMask::All
     if (blended) {
         target.blend = ptr_to(blend)
     }

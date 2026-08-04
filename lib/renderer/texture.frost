@@ -208,7 +208,7 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     // takes the address of one, and a value that moved into a field is no
     // longer here to take the address of.
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage :: TextureBinding | TextureUsage :: CopyDst
+    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(held.width, held.height)
     descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
@@ -274,8 +274,8 @@ texture_free :: fn(held: Texture2D) {
 texture_render_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage :: RenderAttachment
-        | TextureUsage :: TextureBinding
+    descriptor.usage = TextureUsage::RenderAttachment
+        | TextureUsage::TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(width, height)
     descriptor.format = format
@@ -314,8 +314,8 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
 texture_depth_target :: fn(device: Device, width: i64, height: i64,
     format: u32) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage :: RenderAttachment
-        | TextureUsage :: TextureBinding
+    descriptor.usage = TextureUsage::RenderAttachment
+        | TextureUsage::TextureBinding
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = whole_extent(width, height)
     descriptor.format = format
@@ -378,7 +378,7 @@ comparison_sampler :: fn(device: Device) -> Sampler {
 texture_array_new :: fn(device: Device, width: i64, height: i64,
     layers: i64) -> Texture2D {
     var descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage :: TextureBinding | TextureUsage :: CopyDst
+    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = layered_extent(width, height, layers)
     descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM

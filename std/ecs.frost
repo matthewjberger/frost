@@ -785,7 +785,7 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.row = row
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
-    note_change(world, ChangeKind :: Spawn, made, -1)
+    note_change(world, ChangeKind::Spawn, made, -1)
     made
 }
 
@@ -812,7 +812,7 @@ ecs_spawn_with :: fn(mut world: World, mask: Mask) -> Entity {
     var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(mask, index)) {
-            note_change(world, ChangeKind :: Add, made, index)
+            note_change(world, ChangeKind::Add, made, index)
         }
         index = index + 1
     }
@@ -873,7 +873,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
-    note_change(world, ChangeKind :: Despawn, entity, -1)
+    note_change(world, ChangeKind::Despawn, entity, -1)
 }
 
 // ---------------------------------------------------------------------------
@@ -947,7 +947,7 @@ ecs_add :: fn($T: Type, mut world: World, entity: Entity, component: i64,
     current := vec_slice($Table, world.tables)[slot.table].mask
     if (mask_has(current, component) == false) {
         migrate(world, entity, mask_with(current, component))
-        note_change(world, ChangeKind :: Add, entity, component)
+        note_change(world, ChangeKind::Add, entity, component)
     }
     ecs_set($T, world, entity, component, value)
     // A component the entity has just been given was added now, whatever the
@@ -970,7 +970,7 @@ ecs_remove :: fn(mut world: World, entity: Entity, component: i64) {
         return
     }
     migrate(world, entity, mask_without(current, component))
-    note_change(world, ChangeKind :: Remove, entity, component)
+    note_change(world, ChangeKind::Remove, entity, component)
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
@@ -1416,21 +1416,21 @@ runs_second :: fn(mut w: World) {}
 
 test "a system is removed by the function it was registered with" {
     var held := schedule_new()
-    schedule_add(held, Stage :: Update, runs_first)
-    schedule_add(held, Stage :: Update, runs_second)
+    schedule_add(held, Stage::Update, runs_first)
+    schedule_add(held, Stage::Update, runs_second)
     assert(schedule_count(held) == 2)
     assert(schedule_remove(held, runs_first))
     assert(schedule_count(held) == 1)
     // The one left is the one that was not asked for, and it kept its stage.
     kept := vec_get($System, held.systems, 0)
     assert(kept.run == runs_second)
-    assert(kept.stage == Stage :: Update)
+    assert(kept.stage == Stage::Update)
     schedule_free(held)
 }
 
 test "removing a system that was never added changes nothing" {
     var held := schedule_new()
-    schedule_add(held, Stage :: Update, runs_first)
+    schedule_add(held, Stage::Update, runs_first)
     assert(schedule_remove(held, runs_second) == false)
     assert(schedule_count(held) == 1)
     schedule_free(held)
@@ -1438,16 +1438,16 @@ test "removing a system that was never added changes nothing" {
 
 test "the systems after the one removed keep their order" {
     var held := schedule_new()
-    schedule_add(held, Stage :: First, runs_first)
-    schedule_add(held, Stage :: Update, runs_second)
-    schedule_add(held, Stage :: Last, runs_first)
+    schedule_add(held, Stage::First, runs_first)
+    schedule_add(held, Stage::Update, runs_second)
+    schedule_add(held, Stage::Last, runs_first)
     assert(schedule_remove(held, runs_first))
     assert(schedule_count(held) == 2)
     // The first match went, so what is left is the second and the third in the
     // order they were written.
     var items := vec_slice($System, held.systems)
-    assert(items[0].stage == Stage :: Update)
-    assert(items[1].stage == Stage :: Last)
+    assert(items[0].stage == Stage::Update)
+    assert(items[1].stage == Stage::Last)
     schedule_free(held)
 }
 
@@ -1993,13 +1993,13 @@ commands_free :: fn(move c: Commands) {
 // exist until the queue is applied.
 commands_spawn :: fn(mut c: Commands) {
     vec_push($Command, c.queued,
-        Command { kind = CommandKind :: Spawn,
+        Command { kind = CommandKind::Spawn,
             entity = Entity { id = 0, generation = 0 } })
 }
 
 commands_despawn :: fn(mut c: Commands, entity: Entity) {
     vec_push($Command, c.queued,
-        Command { kind = CommandKind :: Despawn, entity = entity })
+        Command { kind = CommandKind::Despawn, entity = entity })
 }
 
 // Run the queue in the order it was written and empty it.
@@ -2009,7 +2009,7 @@ commands_apply :: fn(mut c: Commands, mut world: World) {
         held := vec_get($Command, c.queued, i)
         kind := held.kind
         target := held.entity
-        if (kind == CommandKind :: Spawn) {
+        if (kind == CommandKind::Spawn) {
             ecs_spawn(world)
         } else {
             ecs_despawn(world, target)
@@ -2303,7 +2303,7 @@ schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
 
 // The systems added to `Stage::Startup`, which a frame does not run.
 schedule_start :: fn(mut s: Schedule, mut world: World, state: i64) {
-    startup := stage_order(Stage :: Startup)
+    startup := stage_order(Stage::Startup)
     run_stages(s, world, state, startup, startup)
 }
 
@@ -2492,7 +2492,7 @@ ecs_remove_bundle :: fn(mut world: World, entity: Entity, types: $...) {
     var component: i64 = 0
     while (component < world.registry.count) {
         if (mask_has(current, component) && mask_has(unwanted, component)) {
-            note_change(world, ChangeKind :: Remove, entity, component)
+            note_change(world, ChangeKind::Remove, entity, component)
         }
         component = component + 1
     }
@@ -2784,7 +2784,7 @@ group_spawn :: fn(mut g: Group) -> Entity {
     slot.alive = true
     g.live = g.live + 1
     made := Entity { id = id, generation = generation }
-    group_note(g, ChangeKind :: Spawn, made)
+    group_note(g, ChangeKind::Spawn, made)
     made
 }
 
@@ -2868,7 +2868,7 @@ group_despawn :: fn(mut g: Group, entity: Entity) -> bool {
     slot.generation = entity.generation + 1
     g.live = g.live - 1
     vec_push($i64, g.free_ids, entity.id)
-    group_note(g, ChangeKind :: Despawn, entity)
+    group_note(g, ChangeKind::Despawn, entity)
     true
 }
 
@@ -3506,8 +3506,8 @@ test "a schedule runs its systems in stage order" {
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
     // Added last, run first: the stage decides, not the order they were added.
-    schedule_add(frame, Stage :: Last, second_system)
-    schedule_add(frame, Stage :: First, first_system)
+    schedule_add(frame, Stage::Last, second_system)
+    schedule_add(frame, Stage::First, first_system)
     assert(schedule_count(frame) == 2)
     schedule_run(frame, world, ANY_STATE)
     // first_system then second_system: (0 * 2 + 1) * 2.
@@ -3519,7 +3519,7 @@ test "a schedule runs its systems in stage order" {
 test "a system bound to a state runs only in that state" {
     var world := ecs_new()
     var frame := schedule_new()
-    schedule_add_in_state(frame, Stage :: Update, 1, spawning_system)
+    schedule_add_in_state(frame, Stage::Update, 1, spawning_system)
     schedule_run(frame, world, 0)
     assert(ecs_count(world) == 0)
     schedule_run(frame, world, 1)
@@ -3562,11 +3562,11 @@ test "a world asked to keep a log says what changed structurally" {
     ecs_despawn(world, a)
     held := ecs_log(world)
     assert(slice_len(held) == 4)
-    assert(held[0].kind == ChangeKind :: Spawn)
-    assert(held[1].kind == ChangeKind :: Add)
+    assert(held[0].kind == ChangeKind::Spawn)
+    assert(held[1].kind == ChangeKind::Add)
     assert(held[1].component == health)
-    assert(held[2].kind == ChangeKind :: Remove)
-    assert(held[3].kind == ChangeKind :: Despawn)
+    assert(held[2].kind == ChangeKind::Remove)
+    assert(held[3].kind == ChangeKind::Despawn)
     assert(held[3].entity.id == a.id)
     ecs_log_clear(world)
     assert(slice_len(ecs_log(world)) == 0)
@@ -3707,7 +3707,7 @@ test "a tree gives back what it took" {
 test "a schedule, a tag and a command buffer give back what they took" {
     before := heap_live()
     var frame := schedule_new()
-    schedule_add(frame, Stage :: Update, spawning_system)
+    schedule_add(frame, Stage::Update, spawning_system)
     schedule_free(frame)
     var marks := tag_new()
     var world := ecs_new()
@@ -4331,9 +4331,9 @@ test "every stage runs, in the order the stages are written" {
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
     // Added back to front, so only the stage can put them right.
-    schedule_add(frame, Stage :: Last, third_system)
-    schedule_add(frame, Stage :: Update, second_system)
-    schedule_add(frame, Stage :: First, first_system)
+    schedule_add(frame, Stage::Last, third_system)
+    schedule_add(frame, Stage::Update, second_system)
+    schedule_add(frame, Stage::First, first_system)
     assert(schedule_count(frame) == 3)
     schedule_run(frame, world, ANY_STATE)
     // first: 0 * 2 + 1 = 1, second: 1 * 2 = 2, third: 2 * 3 = 6.
@@ -4345,7 +4345,7 @@ test "every stage runs, in the order the stages are written" {
 test "a system runs once per pass over its stage" {
     var world := ecs_new()
     var frame := schedule_new()
-    schedule_add(frame, Stage :: Update, spawning_system)
+    schedule_add(frame, Stage::Update, spawning_system)
     schedule_run(frame, world, ANY_STATE)
     assert(ecs_count(world) == 1)
     schedule_run(frame, world, ANY_STATE)
@@ -4893,13 +4893,13 @@ test "the group log records identities and the member log records rows" {
 
     identities := group_log(g)
     assert(slice_len(identities) == 1)
-    assert(identities[0].kind == ChangeKind :: Spawn)
+    assert(identities[0].kind == ChangeKind::Spawn)
 
     rows := ecs_log(member)
     var added: i64 = 0
     var held: i64 = 0
     while (held < slice_len(rows)) {
-        if (rows[held].kind == ChangeKind :: Add
+        if (rows[held].kind == ChangeKind::Add
             && rows[held].component == transform) {
             added = added + 1
         }
@@ -5471,18 +5471,18 @@ test "a walk reads when a row arrived and when it changed" {
 // Stages run in the order they are written down, and the order is a number so
 // a schedule can sort by it.
 test "the stages are ordered" {
-    assert(stage_order(Stage :: Startup) < stage_order(Stage :: First))
-    assert(stage_order(Stage :: First) < stage_order(Stage :: Update))
-    assert(stage_order(Stage :: Update) < stage_order(Stage :: LateUpdate))
-    assert(stage_order(Stage :: LateUpdate) < stage_order(Stage :: FrameStart))
-    assert(stage_order(Stage :: FrameStart) < stage_order(Stage :: FrameUpdate))
-    assert(stage_order(Stage :: FrameUpdate)
-        < stage_order(Stage :: FramePostUpdate))
-    assert(stage_order(Stage :: FramePostUpdate) < stage_order(Stage :: Render))
-    assert(stage_order(Stage :: Render) < stage_order(Stage :: Last))
+    assert(stage_order(Stage::Startup) < stage_order(Stage::First))
+    assert(stage_order(Stage::First) < stage_order(Stage::Update))
+    assert(stage_order(Stage::Update) < stage_order(Stage::LateUpdate))
+    assert(stage_order(Stage::LateUpdate) < stage_order(Stage::FrameStart))
+    assert(stage_order(Stage::FrameStart) < stage_order(Stage::FrameUpdate))
+    assert(stage_order(Stage::FrameUpdate)
+        < stage_order(Stage::FramePostUpdate))
+    assert(stage_order(Stage::FramePostUpdate) < stage_order(Stage::Render))
+    assert(stage_order(Stage::Render) < stage_order(Stage::Last))
     // A frame begins after `Startup`, which is what keeps a startup system out
     // of every frame that follows it.
-    assert(FIRST_FRAME_STAGE == stage_order(Stage :: First))
+    assert(FIRST_FRAME_STAGE == stage_order(Stage::First))
 }
 
 // A startup system runs once and no frame runs it again.
@@ -5490,8 +5490,8 @@ test "a startup system runs once and a frame does not" {
     var world := ecs_new()
     ecs_resource_register($TestOrder, world)
     var frame := schedule_new()
-    schedule_add(frame, Stage :: Startup, first_system)
-    schedule_add(frame, Stage :: Update, second_system)
+    schedule_add(frame, Stage::Startup, first_system)
+    schedule_add(frame, Stage::Update, second_system)
 
     // `first_system` doubles and adds one, `second_system` doubles.
     schedule_start(frame, world, ANY_STATE)

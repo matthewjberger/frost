@@ -241,7 +241,7 @@ make_pipeline :: fn(device: Device, format: u32,
 
     var target := color_target_state_init()
     target.format = format
-    target.write_mask = ColorWriteMask :: All
+    target.write_mask = ColorWriteMask::All
 
     var fragment := fragment_state_init()
     fragment.module = shader
@@ -339,7 +339,7 @@ run :: fn(move app: App) -> i64 {
     looks[3] = materials_add(app.materials, material_of(vec4(0.9, 0.75, 0.3, 1.0), 0.45, 0.0))
 
     frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage :: Vertex | ShaderStage :: Fragment)
+        ShaderStage::Vertex | ShaderStage::Fragment)
     // The second group is the renderer's own: every object and the visible
     // list, bound once rather than one binding per thing.
     var layouts: [2]BindGroupLayout = [frame_layout,

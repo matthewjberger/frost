@@ -327,17 +327,17 @@ graph_free :: fn(move g: Graph) {
 // The window's own texture, which the graph does not own and does not make. Its
 // view changes every frame and comes from the frame.
 graph_backbuffer :: fn(mut g: Graph) -> ResourceId {
-    add_resource(g, "backbuffer", ResourceKind :: Backbuffer, 0, 0, 0)
+    add_resource(g, "backbuffer", ResourceKind::Backbuffer, 0, 0, 0)
 }
 
 graph_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    add_resource(g, name, ResourceKind :: Color, format, w, h)
+    add_resource(g, name, ResourceKind::Color, format, w, h)
 }
 
 graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    add_resource(g, name, ResourceKind :: Depth, format, w, h)
+    add_resource(g, name, ResourceKind::Depth, format, w, h)
 }
 
 // A target that lives inside one frame. It is written by a pass and consumed by
@@ -346,18 +346,18 @@ graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
 // costs one texture per step that is alive at once rather than one per step.
 graph_transient_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    mark_transient(g, add_resource(g, name, ResourceKind :: Color, format, w, h))
+    mark_transient(g, add_resource(g, name, ResourceKind::Color, format, w, h))
 }
 
 graph_transient_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
     format: u32) -> ResourceId {
-    mark_transient(g, add_resource(g, name, ResourceKind :: Depth, format, w, h))
+    mark_transient(g, add_resource(g, name, ResourceKind::Depth, format, w, h))
 }
 
 // A target the graph orders passes around and does not own. The program hands
 // it a view each frame, or each camera.
 graph_external_color :: fn(mut g: Graph, name: str) -> ResourceId {
-    made := add_resource(g, name, ResourceKind :: Color, 0, 0, 0)
+    made := add_resource(g, name, ResourceKind::Color, 0, 0, 0)
     if (resource_is_none(made) == false) {
         var held := g.resources
         held[resource_index(made)].external = true
@@ -393,7 +393,7 @@ mark_transient :: fn(mut g: Graph, r: ResourceId) -> ResourceId {
 // reads, the counts an indirect draw is issued from.
 graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
     usage: BufferUsage) -> ResourceId {
-    made := add_resource(g, name, ResourceKind :: Buffer, 0, bytes, 0)
+    made := add_resource(g, name, ResourceKind::Buffer, 0, bytes, 0)
     if (resource_is_none(made) == false) {
         var held := g.resources
         held[resource_index(made)].usage = usage
@@ -415,7 +415,7 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     var held := g.resources
     held[index] = Resource {
         name = name, kind = kind, format = format, width = w, height = h,
-        usage = BufferUsage :: None,
+        usage = BufferUsage::None,
         held = no_texture2d(), buffer = no_buffer(),
         made = false, written = false, sampled = false,
         transient = false, slot = -1, first_use = -1, last_use = -1,
@@ -435,7 +435,7 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
 // is what keeps `unsafe` out of the passes themselves.
 graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     draw: fn(mut Ctx, RenderPassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind :: Render,
+    add_pass(g, name, PassKind::Render,
         unsafe { ptr_cast($fn(^u8, RenderPassEncoder), draw) },
         dispatches_nothing, records_nothing,
         unsafe { ptr_cast($u8, state) })
@@ -451,7 +451,7 @@ graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
 // only that the node applies them itself.
 graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     record: fn(mut Ctx, NodeContext), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind :: Node, draws_nothing, dispatches_nothing,
+    add_pass(g, name, PassKind::Node, draws_nothing, dispatches_nothing,
         unsafe { ptr_cast($fn(^u8, NodeContext), record) },
         unsafe { ptr_cast($u8, state) })
 }
@@ -461,7 +461,7 @@ graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
 // difference is only what it is handed to record into.
 graph_compute_pass :: fn($Ctx: Type, mut g: Graph, name: str,
     dispatch: fn(mut Ctx, ComputePassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind :: Compute, draws_nothing,
+    add_pass(g, name, PassKind::Compute, draws_nothing,
         unsafe { ptr_cast($fn(^u8, ComputePassEncoder), dispatch) },
         records_nothing, unsafe { ptr_cast($u8, state) })
 }
@@ -511,7 +511,7 @@ graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
 // other, which is what puts the nested work in the right place in this graph's
 // order.
 graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
-    made := add_pass(g, name, PassKind :: SubGraph, draws_nothing,
+    made := add_pass(g, name, PassKind::SubGraph, draws_nothing,
         dispatches_nothing, records_nothing, no_pointer())
     if (pass_index(made) >= 0) {
         var held := g.passes
@@ -1621,7 +1621,7 @@ test "a pass runs after the compute pass whose buffer it reads" {
     var nothing := Recorded { times = 0 }
     var g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    visible := graph_buffer(g, "visible", 4096, BufferUsage :: Storage)
+    visible := graph_buffer(g, "visible", 4096, BufferUsage::Storage)
     // Declared first, and it reads what the compute pass writes.
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
@@ -1638,7 +1638,7 @@ test "a compute pass that writes a buffer draws nowhere and is allowed" {
     var nothing := Recorded { times = 0 }
     var g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    counts := graph_buffer(g, "counts", 256, BufferUsage :: Storage)
+    counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
     cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
     graph_writes(g, cull, counts)
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))

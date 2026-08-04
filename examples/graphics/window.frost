@@ -21,12 +21,12 @@ import "../../lib/platform/sdl.frost"
 import "io.frost"
 
 main :: fn() -> i64 {
-    if (sdl_init(InitFlags :: Video) == false) {
+    if (sdl_init(InitFlags::Video) == false) {
         print_int_line(0)
         return 1
     }
 
-    window := window_create("Frost", 960, 540, WindowFlags :: Resizable)
+    window := window_create("Frost", 960, 540, WindowFlags::Resizable)
     if (is_no_window(window)) {
         print_int_line(0)
         sdl_quit()
@@ -38,7 +38,7 @@ main :: fn() -> i64 {
     while (running) {
         var event := event_new()
         while (poll_event(event)) {
-            if (event_kind(event) == EventKind :: Quit) {
+            if (event_kind(event) == EventKind::Quit) {
                 running = false
             }
         }

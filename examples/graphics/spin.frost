@@ -35,7 +35,7 @@ spinning :: fn(axis: Vec3, speed: f32, rest: Quat) -> Spin {
 // with a transform.
 spin_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
-    app_add_system(app, Stage :: FrameUpdate, turn_things)
+    app_add_system(app, Stage::FrameUpdate, turn_things)
 }
 
 // Every turn advanced by the frame's step, and written where a rotation lives.

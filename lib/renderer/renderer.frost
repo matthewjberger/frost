@@ -106,7 +106,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     r.configuration = surface_configuration_init()
     r.configuration.device = r.device
     r.configuration.format = r.format
-    r.configuration.usage = TextureUsage :: RenderAttachment
+    r.configuration.usage = TextureUsage::RenderAttachment
     r.configuration.width = cast($u32, w)
     r.configuration.height = cast($u32, h)
     r.configuration.present_mode = PRESENT_MODE_FIFO
