@@ -17309,6 +17309,15 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "indented past the statement above it",
     ),
+    // A type name nothing declares. Read as an opaque name it went through
+    // every pass without a word, and for a parameter nothing reads, forever.
+    (
+        "an_undeclared_type_in_a_signature",
+        "takes :: fn(v: Absent) -> i64 { 0 }
+         main :: fn() -> i64 { 0 }
+",
+        "is not a type this program declares",
+    ),
     (
         "a_dropped_comma_between_arguments",
         "add :: fn(a: i64, b: i64) -> i64 { a + b }

@@ -5631,6 +5631,9 @@ parse_program :: fn(mut p: Parser) -> i64 {
     parse_constant_declarations(p)
     p.ti = start
     parse_type_declarations(p)
+    // Every declaration is in the tables now, so a type name that resolves to
+    // nothing is a name nothing declares.
+    p.type_check_names = 1
     p.ti = start
     var head: i64 = -1
     var tail: i64 = -1
