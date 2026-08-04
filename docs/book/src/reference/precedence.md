@@ -25,14 +25,15 @@ is normative and matches the reference parser's precedence mapping.
 Specified language, matching the keyword table of `src/lexer.rs` (2.4):
 
 ```
-break case continue defer distinct else enum extern false fn for if import
-in inline linear match move mut ref return safe struct true
+break case continue defer distinct else enum extern fn for if import
+in inline linear match move mut ref return safe struct
 type unsafe uses var where while with
 ```
 
-Primitive type names are `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
-str void`. The wildcard is `_`. `test`, `export`, `flags` and `value` are
-contextual, not reserved, and so is the capitalized `Type` of `$T: Type`.
+The primitive type names `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64
+bool str` and the boolean literals `true` and `false` are predeclared
+identifiers (2.4). The wildcard is `_`. `test`, `export`, `flags` and `value`
+are contextual, and so is the capitalized `Type` of `$T: Type`.
 
 ## 14.3 String escapes
 

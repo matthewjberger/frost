@@ -249,11 +249,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         return made
     }
-    if (kind == TokenKind::KwTrue) {
+    // The boolean literals. Predeclared meanings rather than reserved words:
+    // the words always mean the booleans in expression position, and declaring
+    // either as a name is refused where the declaration is read.
+    if (kind == TokenKind::Ident
+        && str_range_eq(p.src, cur_off(p), cur_len(p), "true")) {
         advance(p)
         return new_node(p, NodeKind::Num, 0, 0, 1)
     }
-    if (kind == TokenKind::KwFalse) {
+    if (kind == TokenKind::Ident
+        && str_range_eq(p.src, cur_off(p), cur_len(p), "false")) {
         advance(p)
         return new_node(p, NodeKind::Num, 0, 0, 0)
     }
@@ -2691,6 +2696,22 @@ unsafe_block_is_value :: fn(mut p: Parser) -> bool {
     false
 }
 
+// `true` and `false` always mean the booleans in expression position, so a
+// binding, parameter or constant by either name could never be read back.
+// Refused where the declaration is read, in the words the bootstrap also says.
+refuse_literal_name :: fn(mut p: Parser, offset: i64, length: i64) {
+    if (str_range_eq(p.src, offset, length, "true")) {
+        report_where(p.modules, p.src, offset)
+        report("'true' always means the boolean, so it cannot be declared as a name")
+        frost_rt_recover_escape()
+    }
+    if (str_range_eq(p.src, offset, length, "false")) {
+        report_where(p.modules, p.src, offset)
+        report("'false' always means the boolean, so it cannot be declared as a name")
+        frost_rt_recover_escape()
+    }
+}
+
 // A statement that binds several names to the values of one call. A name
 // followed by a comma is nothing else at statement position.
 starts_multi_binding :: fn(mut p: Parser) -> bool {
@@ -2770,7 +2791,6 @@ can_begin_expression :: fn(kind: TokenKind) -> bool {
         || kind == TokenKind::Int || kind == TokenKind::Float
         || kind == TokenKind::Bang || kind == TokenKind::Minus
         || kind == TokenKind::Amp || kind == TokenKind::Dollar
-        || kind == TokenKind::KwTrue || kind == TokenKind::KwFalse
         || kind == TokenKind::Dot || kind == TokenKind::Lbrace
         || kind == TokenKind::Lbracket || kind == TokenKind::Lparen
         || kind == TokenKind::KwIf || kind == TokenKind::KwFn
@@ -2791,6 +2811,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         name_off := cur_off(p)
         name_len := cur_len(p)
+        refuse_literal_name(p, name_off, name_len)
         advance(p)
         advance(p)
         place := parse_expr(p)
@@ -2852,6 +2873,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             }
             name_off := cur_off(p)
             name_len := cur_len(p)
+            refuse_literal_name(p, name_off, name_len)
             advance(p)
             base := new_named_node(p, NodeKind::Var, 0, temp_off, temp_len)
             field := synth_numbered(p, "value", index)
@@ -2889,6 +2911,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         offset := cur_off(p)
         length := cur_len(p)
+        refuse_literal_name(p, offset, length)
         advance(p)
         var ann : i64 = -1
         if (cur(p) == TokenKind::Colon) {
@@ -2996,6 +3019,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         first_off := cur_off(p)
         first_len := cur_len(p)
+        refuse_literal_name(p, first_off, first_len)
         advance(p)
         var item_off := first_off
         var item_len := first_len
@@ -3004,6 +3028,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             advance(p)
             item_off = cur_off(p)
             item_len = cur_len(p)
+            refuse_literal_name(p, item_off, item_len)
             advance(p)
             has_index = 1
         }
@@ -3179,6 +3204,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloneq) {
         offset := cur_off(p)
         length := cur_len(p)
+        refuse_literal_name(p, offset, length)
         advance(p)
         advance(p)
         value := parse_expr(p)
@@ -3190,6 +3216,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
         offset := cur_off(p)
         length := cur_len(p)
+        refuse_literal_name(p, offset, length)
         advance(p)
         ann := parse_type_annotation(p)
         advance(p)
@@ -3864,6 +3891,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
+            refuse_literal_name(p, poff, plen)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
             // A bundle parameter binds to a name whether or not the body ever
@@ -3887,6 +3915,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
         } else {
             offset := cur_off(p)
             length := cur_len(p)
+            refuse_literal_name(p, offset, length)
             advance(p)
             var ty := parse_type_annotation(p)
             // A mode borrow of a value is passed by pointer, and the call site
@@ -5338,6 +5367,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::KwTest) {
         return parse_test(p)
     }
+    refuse_literal_name(p, cur_off(p), cur_len(p))
     if (at_type_declaration(p)) {
         // Already read, before any body was.
         skip_declaration(p)

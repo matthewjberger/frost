@@ -256,7 +256,7 @@ failure. A function that wants both returns a struct it names.
 
 ```
 name :: extern fn(params) -> R        // foreign function (chapter 12)
-name :: extern fn(params)             // foreign function returning void
+name :: extern fn(params)             // foreign function returning nothing
 import "path"                         // bring another source file into scope
 ```
 

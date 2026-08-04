@@ -177,9 +177,9 @@ consumes it (chapter 9).
 
 ## 6.8 `sizeof`, `cast`, `typename`, and `unsafe`
 
-None of these words is reserved. `sizeof`, `typename` and `type_id` are
-builtin names recognized where one is called with a type argument, the same
-way `ptr_to` and `cast` are recognized at a call.
+`sizeof`, `typename` and `type_id` are builtin names, recognized where one is
+called with a type argument the same way `ptr_to` and `cast` are recognized at
+a call, and each stays usable as an ordinary identifier elsewhere.
 
 - `sizeof(T)` is a compile-time constant.
 - `cast($T, value)` converts a scalar to `T` when the conversion loses

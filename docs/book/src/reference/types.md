@@ -8,7 +8,10 @@
 | `u8` `u16` `u32` `u64` `usize` | unsigned integers | 1, 2, 4, 8, 8 |
 | `f32` `f64` | IEEE floats | 4, 8 |
 | `bool` | boolean | 1 |
-| `void` | the unit/empty type | 0 |
+
+A function that declares no return has the empty type inside the compilers,
+where it goes by `void`. It has no surface spelling: leaving the `->` off is
+how the empty type is written.
 
 All scalar types are copy types (chapter 8). Integer arithmetic whose result
 does not fit the type it is computed at aborts rather than wrapping: add,

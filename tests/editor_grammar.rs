@@ -5,10 +5,20 @@ const GRAMMAR: &str = concat!(
     "/.vscode/frost/syntaxes/frost.tmLanguage.json"
 );
 
-const CONTEXTUAL: &[&str] =
-    &["export", "flags", "include_str", "test", "value"];
+const CONTEXTUAL: &[&str] = &[
+    "export",
+    "false",
+    "flags",
+    "include_str",
+    "test",
+    "true",
+    "value",
+];
 
-const BUILTIN_TYPES: &[&str] = &["Handle", "Type", "columns"];
+const BUILTIN_TYPES: &[&str] = &[
+    "Handle", "Type", "bool", "columns", "f32", "f64", "i16", "i32", "i64",
+    "i8", "isize", "str", "u16", "u32", "u64", "u8", "usize",
+];
 
 const FUNCTION_MARKERS: &[&str] = &["extern", "inline", "safe", "unsafe"];
 
