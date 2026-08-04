@@ -12,6 +12,10 @@
 - **Snippets** for the declaration forms, `match`, the loops, `with`, `unsafe`,
   `defer` and `test`.
 - **A schema** for `frost.json`, so the manifest completes and validates.
+- **Formatting**, which runs `frost fmt -` over the buffer, so Format Document
+  and format-on-save write what a build's `frost fmt --check` accepts. The
+  editor and the build run the same code rather than keeping two of it.
+  `frost.compilerPath` names the compiler; a bare name is looked up on PATH.
 - **A problem matcher**, `$frost`, which turns a located compiler diagnostic
   into an entry in the Problems panel.
 
