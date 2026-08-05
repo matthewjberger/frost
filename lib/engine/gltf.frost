@@ -606,8 +606,8 @@ accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
     }
     stride := number_or(document, json_member(document, view, "byteStride"),
         width * components)
-    offset := number_or(document, json_member(document, view, "byteOffset"), 0)
-        + number_or(document, json_member(document, node, "byteOffset"), 0)
+    offset := (number_or(document, json_member(document, view, "byteOffset"), 0)
+        + number_or(document, json_member(document, node, "byteOffset"), 0))
     if (stride < width * components || offset < 0) {
         return absent
     }

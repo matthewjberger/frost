@@ -1462,8 +1462,8 @@ asm_folds_immediate :: fn(op: i64, unsigned: bool) -> bool {
     if (op == OP_MUL) {
         return unsigned == false
     }
-    op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE || op == OP_EQ
-        || op == OP_NE
+    (op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE || op == OP_EQ
+        || op == OP_NE)
 }
 
 // The comparison against an immediate, answering 0 or 1 in %rax the way
@@ -2506,9 +2506,9 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // the stack the other path pushes them through is not needed. Every other
     // shape, and anything that has to be converted, borrowed, taken apart or
     // spilled, takes the path below.
-    var placed_directly: bool = capability == 0 && sret == 0
+    var placed_directly: bool = (capability == 0 && sret == 0
         && register_ret == 0 && typed_params
-        && value_count == count && value_count <= abi_arg_regs(p)
+        && value_count == count && value_count <= abi_arg_regs(p))
     var kinds: Arena<LocalVar> = arena_make($LocalVar, 8)
     var probe: i64 = 0
     while (probe < value_count && placed_directly) {
@@ -2691,9 +2691,9 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             }
             // Whether this one lands in a register, which is what decides
             // where it is read from.
-            to_register := kind != 2
+            to_register := (kind != 2
                 && ((wants_sse && sse_reg < sse_regs)
-                || (wants_sse == false && int_reg < regs))
+                    || (wants_sse == false && int_reg < regs)))
             var direct: i64 = 0
             if (want < 0) {
                 if (to_register) {

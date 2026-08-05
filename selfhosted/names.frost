@@ -592,9 +592,9 @@ is_main_name :: fn(src: str, offset: i64, length: i64) -> bool {
     if (length != 4) {
         return false
     }
-    src[offset] == 109 && src[offset + 1] == 97
+    (src[offset] == 109 && src[offset + 1] == 97
         && src[offset + 2] == 105
-        && src[offset + 3] == 110
+        && src[offset + 3] == 110)
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,9 +1121,9 @@ is_struct_ty :: fn(ty: i64) -> bool {
 // arithmetic on it means nothing.
 is_integer :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
-    held == TY_I8 || held == TY_I16 || held == TY_I32 || held == TY_I64
+    (held == TY_I8 || held == TY_I16 || held == TY_I32 || held == TY_I64
         || held == TY_ISIZE || held == TY_U8 || held == TY_U16
-        || held == TY_U32 || held == TY_U64 || held == TY_USIZE
+        || held == TY_U32 || held == TY_U64 || held == TY_USIZE)
 }
 
 is_float :: fn(ty: i64) -> bool {
@@ -1301,9 +1301,9 @@ is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
 // rather than a column of the element. A scatter or gather touches only the
 // element columns, skipping these three.
 is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    str_range_eq(p.src, off, len, "generations")
+    (str_range_eq(p.src, off, len, "generations")
         || str_range_eq(p.src, off, len, "free_list")
-        || str_range_eq(p.src, off, len, "free_count")
+        || str_range_eq(p.src, off, len, "free_count"))
 }
 
 // An already-synthesized columns container for element `element` at capacity

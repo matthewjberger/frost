@@ -1149,9 +1149,9 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             // nothing when it fails, and a handle of nothing is not a handle.
             // Every later call would read through it, so the failure is said
             // here rather than at whichever call happened to be next.
-            hands_back_handle := returns >= 0
+            hands_back_handle := (returns >= 0
                 && type_starts(document, json_member(document, returns, "type"),
-                "object.")
+                    "object."))
             if (hands_back_handle) {
                 builder_str_value(out, " {
     held := unsafe { wgpu")

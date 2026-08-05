@@ -31,17 +31,17 @@ ROLE_DECLARES :: 6
 // Whether a token can end a value, which separates a read from a type and a
 // subtraction from a negation.
 ends_a_value :: fn(kind: TokenKind) -> bool {
-    kind == TokenKind::Ident || kind == TokenKind::Int
+    (kind == TokenKind::Ident || kind == TokenKind::Int
         || kind == TokenKind::Float || kind == TokenKind::Str
         || kind == TokenKind::Rparen || kind == TokenKind::Rbracket
-        || kind == TokenKind::Rbrace
+        || kind == TokenKind::Rbrace)
 }
 
 // Whether a token can begin a type.
 begins_a_type :: fn(kind: TokenKind) -> bool {
-    kind == TokenKind::Ident || kind == TokenKind::Caret
+    (kind == TokenKind::Ident || kind == TokenKind::Caret
         || kind == TokenKind::Lbracket || kind == TokenKind::KwFn
-        || kind == TokenKind::Dollar || kind == TokenKind::KwRef
+        || kind == TokenKind::Dollar || kind == TokenKind::KwRef)
 }
 
 // Whether a token opens or closes a nesting level.
@@ -123,7 +123,7 @@ type_arguments_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
 
 // Whether a line beginning with this token continues the line above.
 continues_a_line :: fn(kind: TokenKind) -> bool {
-    kind == TokenKind::Plus || kind == TokenKind::Star
+    (kind == TokenKind::Plus || kind == TokenKind::Star
         || kind == TokenKind::Slash || kind == TokenKind::Percent
         || kind == TokenKind::Andand || kind == TokenKind::Oror
         || kind == TokenKind::Dot || kind == TokenKind::Eqeq
@@ -131,7 +131,7 @@ continues_a_line :: fn(kind: TokenKind) -> bool {
         || kind == TokenKind::Le || kind == TokenKind::Gt
         || kind == TokenKind::Ge || kind == TokenKind::Amp
         || kind == TokenKind::Pipe
-        || kind == TokenKind::Arrow || kind == TokenKind::Question
+        || kind == TokenKind::Arrow || kind == TokenKind::Question)
 }
 
 // Whether a line opens a declaration, which at the top level is the only thing
@@ -321,8 +321,8 @@ format_source :: fn(src: str, length: i64) {
             if (open_brackets > 0) {
                 running_on = open_brackets
             } else if (open_braces == 0) {
-                closes := token.kind == TokenKind::Rbrace
-                    || token.kind == TokenKind::Lbrace
+                closes := (token.kind == TokenKind::Rbrace
+                    || token.kind == TokenKind::Lbrace)
                 if (closes == false
                     && opens_a_declaration(token.kind,
                         kind_at(tokens, index + 1)) == false) {
@@ -464,8 +464,8 @@ joins_the_line_above :: fn(src: str, mut tokens: Arena<Token>, index: i64,
     kind := kind_at(tokens, index)
     previous := kind_at(tokens, index - 1)
     if (kind == TokenKind::Lbrace) {
-        return previous != TokenKind::Lbrace && previous != TokenKind::Rbrace
-            && previous != TokenKind::Semi && previous != TokenKind::Comma
+        return (previous != TokenKind::Lbrace && previous != TokenKind::Rbrace
+            && previous != TokenKind::Semi && previous != TokenKind::Comma)
     }
     if (kind == TokenKind::KwElse) {
         return previous == TokenKind::Rbrace

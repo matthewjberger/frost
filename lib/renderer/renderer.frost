@@ -148,8 +148,8 @@ renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
 
 // Whether what the surface answered with is something to draw into.
 acquired :: fn(f: Frame) -> bool {
-    f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
-        || f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL
+    (f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
+        || f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL)
 }
 
 // Letting go of the texture the surface handed over. A failed acquire answers

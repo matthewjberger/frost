@@ -342,8 +342,8 @@ make_directory :: fn(path: ^i8) {
 // naming rather than a file name, since taking it as one produces a confusing
 // error about an unreadable file much later.
 looks_like_a_flag :: fn(text: ^i8) -> bool {
-    cstr_len(text) > 0
-        && byte_at(text, 0) == CH_MINUS
+    (cstr_len(text) > 0
+        && byte_at(text, 0) == CH_MINUS)
 }
 
 options_from_command_line :: fn() -> Options {

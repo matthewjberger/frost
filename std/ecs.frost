@@ -5213,10 +5213,10 @@ test "a pair walk names each pair once" {
         assert(pairs[index].a.id != pairs[index].b.id)
         var other := index + 1
         while (other < slice_len(pairs)) {
-            same := pairs[index].a.id == pairs[other].a.id
-                && pairs[index].b.id == pairs[other].b.id
-            flipped := pairs[index].a.id == pairs[other].b.id
-                && pairs[index].b.id == pairs[other].a.id
+            same := (pairs[index].a.id == pairs[other].a.id
+                && pairs[index].b.id == pairs[other].b.id)
+            flipped := (pairs[index].a.id == pairs[other].b.id
+                && pairs[index].b.id == pairs[other].a.id)
             assert(same == false)
             assert(flipped == false)
             other = other + 1

@@ -35,9 +35,9 @@ scalar_size :: fn(held: i64) -> i64 {
 // A `bool` is a 0 or a 1 in one byte, so it zero-extends.
 is_unsigned :: fn(held: i64) -> bool {
     ty := distinct_repr(held)
-    is_pointer(ty) == false
+    (is_pointer(ty) == false
         && (ty == TY_BOOL || ty == TY_U8 || ty == TY_U16 || ty == TY_U32
-        || ty == TY_U64 || ty == TY_USIZE)
+            || ty == TY_U64 || ty == TY_USIZE))
 }
 
 align_up :: fn(offset: i64, alignment: i64) -> i64 {
@@ -80,8 +80,8 @@ payload_base :: fn(mut p: Parser, field_head: i64) -> i64 {
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.variant < 0) {
-            after_tag = align_up(after_tag, align_of(p, field.ty))
-                + type_size(p, field.ty)
+            after_tag = (align_up(after_tag, align_of(p, field.ty))
+                + type_size(p, field.ty))
         } else {
             one := align_of(p, field.ty)
             if (one > widest) {
@@ -112,15 +112,15 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.variant < 0) {
-            total = align_up(total, align_of(p, field.ty))
-                + type_size(p, field.ty)
+            total = (align_up(total, align_of(p, field.ty))
+                + type_size(p, field.ty))
         } else {
             if (field.variant != carried) {
                 carried = field.variant
                 running = base
             }
-            running = align_up(running, align_of(p, field.ty))
-                + type_size(p, field.ty)
+            running = (align_up(running, align_of(p, field.ty))
+                + type_size(p, field.ty))
             if (running > total) {
                 total = running
             }

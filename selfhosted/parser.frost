@@ -2757,14 +2757,14 @@ unsafe_block_is_value :: fn(mut p: Parser) -> bool {
             depth = depth - 1
             if (started == 1 && depth == 0) {
                 next := peek_kind(p, offset + 1)
-                return next == TokenKind::Eqeq || next == TokenKind::Ne || next == TokenKind::Lt
+                return (next == TokenKind::Eqeq || next == TokenKind::Ne || next == TokenKind::Lt
                     || next == TokenKind::Le || next == TokenKind::Gt || next == TokenKind::Ge
                     || next == TokenKind::Plus || next == TokenKind::Minus || next == TokenKind::Star
                     || next == TokenKind::Slash || next == TokenKind::Percent
                     || next == TokenKind::Andand || next == TokenKind::Oror || next == TokenKind::Shl
                     || next == TokenKind::Shr || next == TokenKind::Amp || next == TokenKind::Pipe
                     || next == TokenKind::Dot || next == TokenKind::Lbracket
-                    || next == TokenKind::Question || next == TokenKind::Coloncolon
+                    || next == TokenKind::Question || next == TokenKind::Coloncolon)
             }
         }
         offset = offset + 1
@@ -2794,8 +2794,8 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Comma) {
         return true
     }
-    cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
-        && peek_kind(p, 2) == TokenKind::Comma
+    (cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
+        && peek_kind(p, 2) == TokenKind::Comma)
 }
 
 // `for i in a..b { ... }`, written out as the counted loop it stands for, with
@@ -2863,14 +2863,14 @@ parse_for_range :: fn(mut p: Parser, first_off: i64, item_off: i64,
 // anything else is a fault said where it stands, rather than a name made of
 // whatever the token spells.
 can_begin_expression :: fn(kind: TokenKind) -> bool {
-    kind == TokenKind::Ident || kind == TokenKind::Str
+    (kind == TokenKind::Ident || kind == TokenKind::Str
         || kind == TokenKind::Int || kind == TokenKind::Float
         || kind == TokenKind::Bang || kind == TokenKind::Minus
         || kind == TokenKind::Amp || kind == TokenKind::Dollar
         || kind == TokenKind::Dot || kind == TokenKind::Lbrace
         || kind == TokenKind::Lbracket || kind == TokenKind::Lparen
         || kind == TokenKind::KwIf || kind == TokenKind::KwFn
-        || kind == TokenKind::KwMatch || kind == TokenKind::KwUnsafe
+        || kind == TokenKind::KwMatch || kind == TokenKind::KwUnsafe)
 }
 
 parse_stmt :: fn(mut p: Parser) -> i64 {
@@ -3850,8 +3850,8 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
 // Whether a name is the compile-time list this instance bound. A template being
 // read with nothing bound answers false, since there is no list there yet.
 names_pack :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    p.pack_len > 0 && p.pack_len == len
-        && bytes_equal(p.src, p.pack_off, off, len)
+    (p.pack_len > 0 && p.pack_len == len
+        && bytes_equal(p.src, p.pack_off, off, len))
 }
 
 // Read the body of a compile-time `for` once per element, with the loop's name
@@ -5421,8 +5421,8 @@ at_type_declaration :: fn(mut p: Parser) -> bool {
         || third == TokenKind::KwLinear || third == TokenKind::KwDistinct) {
         return true
     }
-    third == TokenKind::Ident && peek_is_word(p, 2, "flags")
-        && peek_kind(p, 4) == TokenKind::Lbrace
+    (third == TokenKind::Ident && peek_is_word(p, 2, "flags")
+        && peek_kind(p, 4) == TokenKind::Lbrace)
 }
 
 // Advance past the declaration here without reading it, which is what lets one

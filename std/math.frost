@@ -1048,8 +1048,8 @@ inside :: fn(planes: [6]Vec4, centre: Vec3, radius: f32) -> bool {
     var index: i64 = 0
     while (index < 6) {
         held := planes[index]
-        reach := held.x * centre.x + held.y * centre.y + held.z * centre.z
-            + held.w
+        reach := (held.x * centre.x + held.y * centre.y + held.z * centre.z
+            + held.w)
         if (reach < -radius) {
             return false
         }
