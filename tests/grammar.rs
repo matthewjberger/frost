@@ -174,3 +174,23 @@ fn formatting_the_corpus_changes_no_token() {
         );
     }
 }
+
+// The tree is what the formatter writes. A build fails on a file that is not,
+// which is what keeps one rendering the only rendering.
+#[test]
+fn the_corpus_is_formatted() {
+    let unformatted: Vec<String> = corpus()
+        .into_iter()
+        .filter(|file| {
+            std::fs::read_to_string(file)
+                .map(|source| frost::format_source(&source) != source)
+                .unwrap_or(false)
+        })
+        .map(|file| file.display().to_string())
+        .collect();
+    assert!(
+        unformatted.is_empty(),
+        "run `frost fmt` over these:\n{}",
+        unformatted.join("\n")
+    );
+}
