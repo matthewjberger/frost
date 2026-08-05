@@ -55,9 +55,10 @@ surprises.
 | `for x in &xs { }` | `for x in xs { }` |
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
 | `println!("{}", x)` | `import "io.frost"` and `print_int_line(x)` |
-| `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
+| `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (q: i64, r: i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
-| no equivalent | `-> (quotient: i64, remainder: i64)`, named like Odin's |
+| `let (q, _) = divide(a, b);` | `q, _ := divide(a, b)` |
+| named results optional (Go, Odin) | `-> (quotient: i64, remainder: i64)`, every value named |
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
 | `Point(1, 2)` (tuple struct) | nothing; every field is named |
@@ -150,8 +151,10 @@ divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
 quotient, remainder := divide(17, 5)
 ```
 
-The values can be named in the signature, the way Odin and Jai name theirs, and
-a named list can be returned by name instead of by order:
+Every value in the list is named, which is where Frost parts company with Go,
+Odin and Jai: they all make the names optional and Frost requires them. The
+names say which value is which at the declaration, they are what `frost api`
+shows, and they are the fields a `return` by name writes:
 
 ```frost
 split :: fn(value: i64) -> (high: i64, low: i64) {
@@ -159,11 +162,13 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 }
 ```
 
-A name is not a variable, though. There is no naked `return` that hands back
-whatever the names hold, because that is control flow you cannot see at the
-`return`. The `return` is required either way: a trailing expression is one
-value. `var` goes in front of any name the body writes afterwards, as in
-`magnitude, var negative := classify(value)`.
+A name in the list is a label for one of the values. There is no naked `return`
+that hands back whatever the names hold, because that is control flow you cannot
+see at the `return`, which is the job Go's named results do and Frost's do not.
+The `return` is required either way: a trailing expression is one value. `var`
+goes in front of any name the body writes afterwards, as in
+`magnitude, var negative := classify(value)`, and `_` takes a value the caller
+has no use for, as in `quotient, _ := divide(17, 5)`.
 
 What you cannot do is treat the list as a value. `(i64, i64)` is not a type, so
 it cannot be stored in a field, passed as an argument, or bound to one name. A
@@ -493,8 +498,8 @@ This is where you put everything that Rust would model with `Rc<RefCell<T>>`,
 or interlinked data lives in a slab and is named by a `Handle<T>`, a small
 copyable value that is an index plus a generation, not a pointer.
 
-A slab is not a language type and there is no runtime behind it.
-`std/slab.frost` is ordinary Frost: the storage, the free list, the generation
+The slab lives in the library, with no runtime behind it. `std/slab.frost` is
+ordinary Frost: the storage, the free list, the generation
 counters, and the packing of an index and a generation into one handle are all
 written out, the way `slotmap` and `generational-arena` are written out in Rust.
 What the compiler adds is the subscript, because "hand back a validated

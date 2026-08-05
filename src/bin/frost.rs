@@ -1086,9 +1086,18 @@ fn compile() -> Result<()> {
     // plain function it wraps before any later pass or backend sees one.
     strip_unsafe_fns(&mut program.ast, &program.roots);
     resolve_distinct_types(&mut program.ast, &program.roots);
+    // The transitive set, since a struct holding a resource is one. The
+    // lowering asks it about a `_` taking a value that has to be consumed, and
+    // asking the declared set alone would have missed a struct holding a file.
+    let held_linear =
+        frost::linear_with_holders(&linear_types, &program.ast, &program.roots);
     beside(
         &faults,
-        lower_multiple_returns(&mut program.ast, &mut program.roots),
+        lower_multiple_returns(
+            &mut program.ast,
+            &mut program.roots,
+            &held_linear,
+        ),
     )?;
     faults.extend(frost::check_regions_recovering(
         &program.ast,

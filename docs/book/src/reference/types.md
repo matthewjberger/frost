@@ -53,6 +53,13 @@ written at is a compile error rather than a silent wrap.
 `cast` is for scalars. Reinterpreting a pointer is `ptr_cast` and lives inside
 `unsafe` (6.8); the two are not spellings of each other.
 
+A pointer is an address and an address is a whole number, so a `^T` and an
+integer reach each other in either direction, which is what a call into C hands
+over and what address arithmetic reads back. Among the rest of the scalars it
+reaches nothing: a float holds a different encoding of the same bits and a
+`bool` holds one of two values, so `f : f64 = p` and `b : bool = p` are refused
+and the diagnostic names the pointer.
+
 ## 3.2 Aggregate types
 
 - Structs `Name`, declared `Name :: struct { field: T, ... }`, are exactly
@@ -68,6 +75,13 @@ written at is a compile error rather than a silent wrap.
   copy value, the same fat-pointer shape as `str` (which is `[]u8`). An array
   coerces to a slice of the whole array, `s[i]` is bounds-checked against the
   runtime length (10.4), and `slice_len(s)` reads the length in constant time.
+  A parameter of array type is a borrow of the caller's array (chapter 8), so
+  the slice made from one views the caller's storage: a write through it lands
+  in the argument, and handing the slice back out of the call is a view of
+  storage that outlives it. The coercion holds in every position that takes a
+  slice: a binding with an annotation, an assignment, a field of a literal, an
+  argument, and a `return`. What carries the length is the array's type, which
+  the borrow still names.
 
 Aggregates are move types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.

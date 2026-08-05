@@ -783,6 +783,18 @@ emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
     // Frost-side question, settled before any of this runs.
     from := distinct_repr(held_from)
     to := distinct_repr(held_to)
+    // An array reached through an address becomes a slice of the whole of
+    // itself, which is what a parameter of array type is: a borrow, so %rax
+    // already holds where the caller's array sits, and the length is the one
+    // the array's type carries. Ahead of the pointer rule below, which would
+    // otherwise leave the bare address where a slice belongs.
+    if (is_pointer(from) && is_array_ty(to) && is_slice_ty(p, to)) {
+        held := pointee(p, from)
+        if (is_array_ty(held) && is_slice_ty(p, held) == false) {
+            emit_asm_slice_of(p, held)
+            return
+        }
+    }
     if (from == to || is_pointer(from) || is_pointer(to)) {
         return
     }

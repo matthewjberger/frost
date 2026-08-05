@@ -983,7 +983,9 @@ impl<'a> Parser<'a> {
             // A binding lives in a block. At the top level the same tokens
             // fall through to the arm below that names what may stand there,
             // which is what the self-hosted compiler also says.
-            Token::Identifier(_)
+            // A `_` opens the list the same way a name does, since a caller
+            // may want the second value and none of the first.
+            Token::Identifier(_) | Token::Underscore
                 if self.block_depth > 0
                     && matches!(self.peek_nth(1), Token::Comma) =>
             {
@@ -1283,11 +1285,27 @@ impl<'a> Parser<'a> {
             } else {
                 false
             };
+            // `_` takes a value the caller has no use for. The list binds one
+            // name per value the call answers with, so without it a caller
+            // wanting only the first has to invent a name for the rest, and
+            // that name is a live binding somebody can read by mistake. It
+            // stands here as the wildcard token rather than as a name, so the
+            // lowering below gives it storage nothing can reach and any number
+            // of them may sit in one list.
             let name = match self.read_token() {
                 Token::Identifier(name) => name.to_string(),
+                Token::Underscore => String::from("_"),
                 other => bail!("Expected a name to bind, found {other}"),
             };
-            self.refuse_literal_name(&name)?;
+            if name == "_" {
+                if mutable {
+                    bail!(
+                        "`var` makes a binding assignable and `_` binds nothing; write `_` on its own"
+                    );
+                }
+            } else {
+                self.refuse_literal_name(&name)?;
+            }
             let name = self.ast.intern(&name);
             bindings.push(MultiBinding { name, mutable });
             if matches!(self.peek_nth(0), Token::Comma) {
@@ -3015,10 +3033,13 @@ impl<'a> Parser<'a> {
                 "a return type list holds two or more values; write `-> T` for one"
             );
         }
-        let named = values.iter().filter(|held| held.name.is_some()).count();
-        if named != 0 && named != values.len() {
+        // A name says which value is which, and it is the field a `return` by
+        // name writes. A list that left one out had that field called `value0`,
+        // a spelling the compiler chose and the language never offered, so the
+        // name is required rather than optional.
+        if values.iter().any(|held| held.name.is_none()) {
             bail!(
-                "a return type list names all of its values or none of them, so that a `return` by name can write every field"
+                "a return type list names every value; write `-> (name: T, name: T)`"
             );
         }
         for (index, held) in values.iter().enumerate() {
@@ -5349,7 +5370,7 @@ mod tests {
 
     #[test]
     fn multiple_returns_two_types() -> Result<()> {
-        let input = "fn(a: i64, b: i64) -> (i64, i64) { return a / b, a % b }";
+        let input = "fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) { return a / b, a % b }";
         let module = parse_module(input)?;
         assert_eq!(module.roots.len(), 1);
         let ast = &module.ast;
@@ -5363,7 +5384,7 @@ mod tests {
             {
                 let values = ast.return_values_in(*values);
                 assert_eq!(values.len(), 2);
-                assert!(values.iter().all(|held| held.name.is_none()));
+                assert!(values.iter().all(|held| held.name.is_some()));
                 assert!(values.iter().all(|held| held.value_type == Type::I64));
             } else {
                 bail!("Expected a return type list");
@@ -5419,32 +5440,13 @@ mod tests {
     #[test]
     fn return_signature_to_type_multiple() {
         let mut ast = Ast::default();
-        let unnamed = |value_type| ReturnValue {
-            name: None,
+        let named = |ast: &mut Ast, name: &str, value_type| ReturnValue {
+            name: Some(ast.intern(name)),
             value_type,
         };
-        let values = ast
-            .add_return_values(vec![unnamed(Type::I64), unnamed(Type::Bool)]);
-        let sig = ReturnSignature::plain(ReturnKind::Multiple(values));
-        assert_eq!(
-            ast.signature_to_type(&sig),
-            Some(Type::Struct("__multi_i64_bool".to_string()))
-        );
-
-        // Named values are part of what the struct is, so a list that names
-        // them is a different struct from one that does not.
-        let quotient = ast.intern("quotient");
-        let remainder = ast.intern("remainder");
-        let values = ast.add_return_values(vec![
-            ReturnValue {
-                name: Some(quotient),
-                value_type: Type::I64,
-            },
-            ReturnValue {
-                name: Some(remainder),
-                value_type: Type::I64,
-            },
-        ]);
+        let first = named(&mut ast, "quotient", Type::I64);
+        let second = named(&mut ast, "remainder", Type::I64);
+        let values = ast.add_return_values(vec![first, second]);
         let sig = ReturnSignature::plain(ReturnKind::Multiple(values));
         assert_eq!(
             ast.signature_to_type(&sig),
@@ -5452,15 +5454,30 @@ mod tests {
                 "__multi_quotient__i64_remainder__i64".to_string()
             ))
         );
+
+        // The names are part of what the struct is, so two lists holding the
+        // same types under different names are different structs.
+        let first = named(&mut ast, "high", Type::I64);
+        let second = named(&mut ast, "low", Type::I64);
+        let values = ast.add_return_values(vec![first, second]);
+        let sig = ReturnSignature::plain(ReturnKind::Multiple(values));
+        assert_eq!(
+            ast.signature_to_type(&sig),
+            Some(Type::Struct("__multi_high__i64_low__i64".to_string()))
+        );
     }
 
     #[test]
-    fn a_return_type_list_names_all_of_its_values_or_none() {
-        let input = "fn(a: i64) -> (quotient: i64, i64) { return a, a }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = Parser::new(&tokens);
-        assert!(parser.parse().is_err());
+    fn a_return_type_list_names_every_value() {
+        for input in [
+            "fn(a: i64) -> (quotient: i64, i64) { return a, a }",
+            "fn(a: i64) -> (i64, i64) { return a, a }",
+        ] {
+            let mut lexer = Lexer::new(input);
+            let tokens = lexer.tokenize().unwrap();
+            let mut parser = Parser::new(&tokens);
+            assert!(parser.parse().is_err(), "{input} was accepted");
+        }
     }
 
     #[test]

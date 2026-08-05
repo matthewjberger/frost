@@ -911,7 +911,8 @@ main :: fn() -> i64 {
 }
 "#;
 
-// `-> (i64, i64)` and the binding that takes it apart. There is no tuple type:
+// `-> (a: i64, b: i64)` and the binding that takes it apart. There is no tuple
+// type:
 // each distinct list of types becomes one struct, the `return` becomes a struct
 // literal, and the binding becomes a temporary and a field read per name. Two
 // functions returning the same list share the struct, which is what
@@ -937,7 +938,7 @@ split_bytes :: fn(value: i64) -> (high: i64, low: i64) {
 }
 
 // A return from inside a nested block, and a value that is not an integer.
-classify :: fn(value: i64) -> (i64, bool) {
+classify :: fn(value: i64) -> (size: i64, negative: bool) {
     if (value < 0) {
         return 0 - value, true
     }
@@ -945,7 +946,7 @@ classify :: fn(value: i64) -> (i64, bool) {
 }
 
 // An aggregate is one of the values like any other.
-corners :: fn(size: i64) -> (Point, Point) {
+corners :: fn(size: i64) -> (origin: Point, far: Point) {
     return Point { x = 0, y = 0 }, Point { x = size, y = size }
 }
 
@@ -999,14 +1000,10 @@ fn a_return_type_list_is_held_to_its_shape() {
             "return a, b, a\n",
             "lists 3 values and the function returns 2",
         ),
-        (
-            "return { quotient = a / b, remainder = a % b }\n",
-            "names its values and the signature does not",
-        ),
     ];
     for (body, expected) in cases {
         let source = format!(
-            "divide :: fn(a: i64, b: i64) -> (i64, i64) {{ {body} }}\nmain :: fn() -> i64 {{ 0 }}\n"
+            "divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {{ {body} }}\nmain :: fn() -> i64 {{ 0 }}\n"
         );
         let message = compile_error("multiretbad", &source);
         assert!(
@@ -1015,7 +1012,7 @@ fn a_return_type_list_is_held_to_its_shape() {
         );
     }
 
-    let bound_wrong = "divide :: fn(a: i64, b: i64) -> (i64, i64) { return a / b, a % b }\n\
+    let bound_wrong = "divide :: fn(a: i64, b: i64) -> (q: i64, r: i64) { return a / b, a % b }\n\
          main :: fn() -> i64 {\n\
          \x20   only := divide(7, 2)\n\
          \x20   0\n\
@@ -1026,15 +1023,22 @@ fn a_return_type_list_is_held_to_its_shape() {
         "expected the binding diagnostic in:\n{message}"
     );
 
-    // A list names every value or none of them, so a `return` by name can write
-    // every field, and no name is used twice.
-    let half_named = "divide :: fn(a: i64) -> (quotient: i64, i64) { return a, a }\n\
-         main :: fn() -> i64 { 0 }\n";
-    let message = compile_error("multirethalf", half_named);
-    assert!(
-        message.contains("names all of its values or none"),
-        "expected the all-or-none diagnostic in:\n{message}"
-    );
+    // A list names every value, so a `return` by name can write every field,
+    // and no name is used twice. Leaving one out and leaving all of them out
+    // are the same fault, since the field a `return` would write is the
+    // compiler's own `value0` either way.
+    for unnamed in [
+        "divide :: fn(a: i64) -> (quotient: i64, i64) { return a, a }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "divide :: fn(a: i64) -> (i64, i64) { return a, a }\n\
+         main :: fn() -> i64 { 0 }\n",
+    ] {
+        let message = compile_error("multiretunnamed", unnamed);
+        assert!(
+            message.contains("names every value"),
+            "expected the every-value diagnostic in:\n{message}"
+        );
+    }
 
     let twice = "divide :: fn(a: i64) -> (n: i64, n: i64) { return a, a }\n\
          main :: fn() -> i64 { 0 }\n";
@@ -5100,7 +5104,8 @@ fn self_hosted_for_walks_a_sequence() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
-// The self-hosted compiler returns several values too. `-> (i64, i64)` becomes
+// The self-hosted compiler returns several values too. A return type list
+// becomes
 // a struct made fresh for that function, `return a, b` becomes a literal of it,
 // and the binding becomes a temporary and a field read per name. That is the
 // whole feature, written out at parse time, so both backends see the struct
@@ -5112,7 +5117,7 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
      split_bytes :: fn(value: i64) -> (high: i64, low: i64) {
          return { high = value / 256, low = value % 256 }
      }
-     classify :: fn(value: i64) -> (i64, bool) {
+     classify :: fn(value: i64) -> (size: i64, negative: bool) {
          if (value < 0) {
              return 0 - value, true
          }
@@ -14963,6 +14968,152 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+// A destructure of a call into an imported module, on the build that reads
+// that module back from the cache.
+//
+// The unsafe gate reads what each function answers with off the top level, and
+// a cached module arrives as a declaration built from its interface rather than
+// as the constant its source spells. The list of values was read off the
+// constant alone, so on the second build every name in the destructure was
+// bound to no type, and the index rule met a base it could not name and refused
+// `view[0]`. The first build took the same program, which is what makes this
+// worth a test of its own: a suite that compiles each program once cannot see
+// it.
+#[test]
+fn a_destructure_of_a_cached_module_is_taken_on_every_build() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join(unique("frost_multi_cached"));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("split.frost"),
+        "export split\n\
+         split :: fn(source: []i64) -> (view: []i64, count: i64) {\n\
+         \x20   return { view = source, count = 4 }\n\
+         }\n",
+    )
+    .unwrap();
+    let root = directory.join("multi_cached.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         import \"split.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   var data : [4]i64 = [10, 20, 30, 40]\n\
+         \x20   view, count := split(data)\n\
+         \x20   unsafe { printf(\"%lld\n\", view[0] + count) }\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let build = directory.join("build");
+    for pass in 1..=3 {
+        let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("--link")
+            .arg("--incremental")
+            .arg("--build-dir")
+            .arg(&build)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "build {pass} refused the program:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+            "14\n",
+            "build {pass} produced the wrong program"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+// An address read as something other than a whole number.
+//
+// A pointer is an address and an address is a number, so a pointer and an
+// integer reach each other: that is what a call into C hands over and what
+// address arithmetic reads back, and both compilers take it. A float holds a
+// different encoding of the same bits and a `bool` holds one of two values, so
+// reading an address as either is a mistake. The bootstrap caught both in the
+// typed IR. The self-hosted compiler's `types_compatible` ran out of rules and
+// answered yes, so `f : f64 = p` and `b : bool = p` compiled there and were
+// refused here.
+//
+// The wording stays each compiler's own, since the bootstrap names the IR local
+// and the self-hosted one names the binding. The refusal is what both answer
+// for, and the two shapes that stay legal are checked beside them so this
+// cannot be satisfied by refusing every pointer conversion.
+#[test]
+fn both_compilers_refuse_an_address_read_as_a_float_or_a_bool() {
+    const HELD: &str = "import \"io.frost\"
+         main :: fn() -> i64 {
+             var data : [4]i64 = [10, 20, 30, 40]
+             p := unsafe { ptr_cast($i64, ptr_to(data[0])) }
+             ";
+    for (name, tail) in [
+        (
+            "ptrfloat",
+            "f : f64 = p
+             print_int_line(1)",
+        ),
+        (
+            "ptrbool",
+            "b : bool = p
+             if (b) { print_int_line(1) }",
+        ),
+    ] {
+        let source = format!(
+            "{HELD}{tail}
+             0
+         }}
+"
+        );
+        let bootstrap = compile_error(name, &source);
+        assert!(
+            bootstrap.contains("^i64"),
+            "the bootstrap took an address read as a {name}:
+{bootstrap}"
+        );
+        let Some(hosted) = self_hosted_rejects(name, &source) else {
+            return;
+        };
+        assert!(
+            hosted.contains("^i64"),
+            "the self-hosted compiler refused {name} without naming the              pointer:
+{hosted}"
+        );
+    }
+
+    // The integer directions stay legal, both ways, in both compilers.
+    let legal = "import \"io.frost\"
+         main :: fn() -> i64 {
+             var data : [4]i64 = [10, 20, 30, 40]
+             p := unsafe { ptr_cast($i64, ptr_to(data[0])) }
+             q : i64 = p
+             back : ^i64 = q
+             print_int_line(unsafe { back[0] })
+             0
+         }
+";
+    let Some(output) = bootstrap_output("ptrint", legal) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "10
+"
+    );
+}
+
 // A callback registration is an `extern fn` with a `$handler` parameter bound
 // to a function signature, and the whole ownership
 // argument is that the context moves in. What this checks is that the argument
@@ -16483,6 +16634,127 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A struct a program declared whose name happens to start the way the
+    // multiple-return lowering names the ones it synthesizes. The bootstrap
+    // told them apart by that prefix, so this one was taken out of the linear
+    // closure, stopped being a resource, and the `File` in it leaked with no
+    // diagnostic. The lowering records the structs it made now, so a name is a
+    // name.
+    (
+        "a_declared_struct_named_like_a_lowered_one",
+        "import \"io.frost\"
+         File :: linear struct { handle: i64 }
+         __multiHolder :: struct { f: File }
+         open :: fn(n: i64) -> File { File { handle = n } }
+         main :: fn() -> i64 {
+             held := __multiHolder { f = open(3) }
+             print_int_line(held.f.handle)
+             0
+         }
+",
+        "linear value 'held'",
+    ),
+    // `var` on a discard. One makes a binding assignable and the other binds
+    // nothing, so the pair says two things that cannot both be true.
+    (
+        "a_var_on_a_discard",
+        "import \"io.frost\"
+         split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
+         main :: fn() -> i64 {
+             high, var _ := split(4096)
+             print_int_line(high)
+             0
+         }
+",
+        "`var` makes a binding assignable and `_` binds nothing",
+    ),
+    // A `_` taking a value that has to be consumed. The list binds one name per
+    // value, so a resource has to land on one and be consumed there. Refused
+    // where the `_` is written rather than by the linearity walk, which runs on
+    // what the lowering left behind and would name the storage it gave the
+    // discard, a name nothing in the program spells.
+    (
+        "an_underscore_dropping_a_resource",
+        "import \"io.frost\"
+         File :: linear struct { handle: i64 }
+         pair :: fn(n: i64) -> (opened: File, count: i64) {
+             return { opened = File { handle = n }, count = 1 }
+         }
+         close :: fn(move f: File) { print_int_line(f.handle) }
+         main :: fn() -> i64 {
+             _, count := pair(3)
+             print_int_line(count)
+             0
+         }
+",
+        "this `_` drops a 'File', which is consumed exactly once",
+    ),
+    // `_` as an ordinary binding. It is the wildcard token of 2.3 and never a
+    // name, so this has nowhere to parse. The self-hosted lexer had no token
+    // for it at all: `_` fell into the identifier rule, so `_ := 5` bound a
+    // readable local called `_` that a second one silently shadowed.
+    (
+        "an_underscore_bound_as_a_name",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             _ := 5
+             print_int_line(1)
+             0
+         }
+",
+        "expected a statement, found '_'",
+    ),
+    // `_` read back. Same cause, and the reason the one above matters: under
+    // the self-hosted compiler this printed 5.
+    (
+        "an_underscore_read_as_a_value",
+        "import \"io.frost\"
+         split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
+         main :: fn() -> i64 {
+             high, _ := split(4096)
+             print_int_line(high + _)
+             0
+         }
+",
+        "Token not valid for an expression: '_'",
+    ),
+    // A return type list that leaves a value unnamed. The fields were then
+    // called `value0` and `value1`, spellings each compiler picked for itself
+    // and no program was allowed to write, which took a refusal apiece to
+    // enforce. No signature in the corpus wrote one, so the list names every
+    // value and both the synthesis and the refusal guarding it are gone.
+    (
+        "a_return_type_list_that_leaves_a_value_unnamed",
+        "import \"io.frost\"
+         split :: fn(value: i64) -> (i64, i64) {
+             return value / 256, value % 256
+         }
+         main :: fn() -> i64 {
+             high, low := split(4096)
+             print_int_line(high + low)
+             0
+         }
+",
+        "a return type list names every value",
+    ),
+    // A call answering with a return type list, bound to one name. The struct
+    // behind the list carries a name each compiler chose, so a program holding
+    // one holds a value of a type it has no way to write, and reading a field
+    // off it reaches a field name the compiler picked. The self-hosted compiler
+    // bound it, read `held.high`, and ran.
+    (
+        "a_multi_return_bound_to_one_name",
+        "import \"io.frost\"\n\
+         split :: fn(value: i64) -> (high: i64, low: i64) {\n\
+         \x20   return { high = value / 256, low = value % 256 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := split(4096)\n\
+         \x20   print_int_line(held.high)\n\
+         \x20   0\n\
+         }\n",
+        "'split' returns 2 values, so its call is bound by a list of names",
+    ),
     // An aggregate travels by address, so once a call has taken one there is
     // nothing left to tell a pointer to one struct from a pointer to another:
     // every check after that point is looking at a machine word. The bootstrap
@@ -20074,6 +20346,170 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A `str` is a `[]u8` (3.2), so `slice_len` reads its length like any other
+    // slice, and an array of bytes reaching a `str` is the same coercion an
+    // array of anything else makes. The bootstrap asked for `Type::Slice` alone
+    // and refused both; the self-hosted compiler holds the two as one type and
+    // took them.
+    (
+        "a_str_is_a_slice_of_bytes",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             var bytes : [3]u8 = [104, 105, 33]
+             text : str = bytes
+             print_str_line(text)
+             print_int_line(slice_len(text))
+             written : str = \"ada\"
+             print_int_line(slice_len(written))
+             0
+         }
+",
+        "hi!
+3
+3
+",
+    ),
+    // A return type list carrying a resource, consumed by the name it landed
+    // on. The struct the list becomes holds a `linear` field, so the closure
+    // that makes a struct holding a resource a resource made the temporary the
+    // lowering builds one too, and nothing consumes a temporary. Both compilers
+    // refused the correct program and named `__multi_result0` doing it. That
+    // struct is the one aggregate a program cannot hold: it is built at the
+    // `return`, taken apart at the binding, and every field is read exactly
+    // once, so its obligation is the sum of its fields' and each of those lands
+    // on a name that is tracked.
+    (
+        "a_return_type_list_carries_a_resource",
+        "import \"io.frost\"
+         File :: linear struct { handle: i64 }
+         pair :: fn(n: i64) -> (opened: File, count: i64) {
+             return { opened = File { handle = n }, count = 1 }
+         }
+         close :: fn(move f: File) { print_int_line(f.handle) }
+         main :: fn() -> i64 {
+             held, count := pair(3)
+             close(held)
+             print_int_line(count)
+             0
+         }
+",
+        "3
+1
+",
+    ),
+    // `_` in a binding list, for a value the caller has no use for. Any number
+    // of them, in any position, including the first, which is the one the
+    // statement dispatch had to learn: a list used to be recognized by a
+    // leading identifier. The value is still read into storage the compiler
+    // names, so a linear one taken by a `_` is still owed a consumer.
+    (
+        "a_binding_list_discards_with_an_underscore",
+        "import \"io.frost\"
+         split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
+         main :: fn() -> i64 {
+             high, _ := split(4096)
+             a, _ := split(512)
+             _, low := split(770)
+             print_int_line(high + a + low)
+             0
+         }
+",
+        "20
+",
+    ),
+    // Names bound by taking a call's several values apart, then used the way
+    // the types they were given allow: a slice indexed, a `str` indexed, a
+    // struct's own view reached through it, an array indexed. The bootstrap
+    // lowers the destructure after the unsafe gate walks it, so the gate meets
+    // the binding as it was written and has to read the types off the
+    // signature; the self-hosted compiler lowers it as it parses. One shape per
+    // type the gate can name, since a fix covering `[]T` alone covers the case
+    // that was found rather than the rule.
+    (
+        "names_taken_from_a_call_carry_the_types_they_were_given",
+        "import \"io.frost\"\nHolder :: struct { row: []i64 }
+         split :: fn(source: []i64) -> (view: []i64, count: i64) {
+             return { view = source, count = 4 }
+         }
+         label :: fn() -> (text: str, length: i64) {
+             return { text = \"hello\", length = 5 }
+         }
+         wrap :: fn(source: []i64) -> (held: Holder, count: i64) {
+             return { held = Holder { row = source }, count = 3 }
+         }
+         rows :: fn() -> (row: [3]i64, count: i64) {
+             return { row = [4, 5, 6], count = 3 }
+         }
+         main :: fn() -> i64 {
+             var data : [4]i64 = [10, 20, 30, 40]
+             view, count := split(data)
+             print_int_line(view[0] + count)
+             text, length := label()
+             print_int_line(text[0] + length)
+             held, held_count := wrap(data)
+             print_int_line(held.row[1] + held_count)
+             row, row_count := rows()
+             print_int_line(row[2] + row_count)
+             0
+         }
+",
+        "14
+109
+23
+9
+",
+    ),
+    // A parameter of array type coerced to a slice, in every position that
+    // takes one. A parameter is a borrow, so the name holds where the caller's
+    // array sits, and the slice is built from that address beside the length
+    // the array's type carries. The self-hosted compiler refused three of these
+    // positions and wrote the bare address into the other three, so the length
+    // came out as whatever sat beside it; the bootstrap copied the array into
+    // the callee's frame first, so a write through the slice reached the copy
+    // and a slice handed back pointed into a frame that was gone. `bump` is
+    // what tells the two apart: the write lands in the caller's array.
+    (
+        "an_array_parameter_is_sliced_where_the_caller_holds_it",
+        "import \"io.frost\"\nSink :: struct { view: []i64 }
+         head :: fn(view: []i64) -> i64 { view[0] }
+         by_let :: fn(mut source: [4]i64) -> i64 {
+             view : []i64 = source
+             view[0]
+         }
+         by_literal :: fn(mut source: [4]i64) -> i64 {
+             sink := Sink { view = source }
+             sink.view[1]
+         }
+         by_argument :: fn(mut source: [4]i64) -> i64 { head(source) }
+         by_return :: fn(mut source: [4]i64) -> []i64 { return source }
+         by_read_borrow :: fn(source: [4]i64) -> i64 {
+             view : []i64 = source
+             view[2]
+         }
+         bump :: fn(mut source: [4]i64) {
+             view : []i64 = source
+             view[0] = 99
+         }
+         main :: fn() -> i64 {
+             var data : [4]i64 = [10, 20, 30, 40]
+             print_int_line(by_let(data))
+             print_int_line(by_literal(data))
+             print_int_line(by_argument(data))
+             print_int_line(by_return(data)[3])
+             print_int_line(by_read_borrow(data))
+             bump(data)
+             print_int_line(data[0])
+             0
+         }
+",
+        "10
+20
+10
+40
+30
+99
+",
+    ),
     // A struct handed to a call by value, where what comes back is a struct that
     // holds one. Nothing points at the argument: it was copied in. The region
     // walk gave up on any aggregate answer and read the argument's own storage

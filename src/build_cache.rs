@@ -14,7 +14,7 @@ use crate::types::Type;
 // so a record written by an older compiler misses cleanly instead of
 // deserializing into the wrong meaning. The field has no serde default on
 // purpose: a record without one is from before the arena AST and must miss.
-pub const CACHE_FORMAT: u32 = 3;
+pub const CACHE_FORMAT: u32 = 4;
 
 // What the compiler remembers about a module between builds. A module is
 // rebuilt only when its own source or an imported interface changes, and this is the thing that answers that

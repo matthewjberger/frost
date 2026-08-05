@@ -59,8 +59,8 @@ compiler itself is written in are three separate questions that sound alike.
 
 ## The AST is flat arenas
 
-The AST (`src/ast.rs`) is not a tree of boxes. Every expression, statement,
-pattern, and signature lives in a flat `Vec` on `Ast` and is named by a typed
+Every expression, statement, pattern, and signature in `src/ast.rs` lives in a
+flat `Vec` on `Ast` and is named by a typed
 index (`ExprId`, `StmtId`, and so on), names are interned to `Symbol`
 indices, child lists are runs in side arrays rather than per-node
 allocations, and a node's source extent is a `TokenSpan` into one

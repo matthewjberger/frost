@@ -95,6 +95,9 @@ str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
 // mentions. A keyword's length rules out all but a handful before any bytes
 // are looked at.
 classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
+    if (len == 1 && str_range_eq(src, off, len, "_")) {
+        return TokenKind::Underscore
+    }
     if (len == 2) {
         if (str_range_eq(src, off, len, "fn")) {
             return TokenKind::KwFn

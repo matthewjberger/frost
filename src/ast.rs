@@ -269,6 +269,11 @@ pub struct Ast {
     pub pattern_bindings: Vec<PatternBinding>,
     pub signatures: Vec<ReturnSignature>,
     pub return_values: Vec<ReturnValue>,
+    // The structs a return type list was lowered to, by name. Recorded rather
+    // than recognized from the name, so a program declaring `__multiThing` is a
+    // struct like any other: read off the spelling, such a declaration was
+    // taken out of the linear closure and a resource in it went unconsumed.
+    pub multi_return_structs: Vec<Symbol>,
     pub symbol_list: Vec<Symbol>,
     pub symbols: SymbolTable,
     // One Position per token, the lexer's table carried through. Splicing
@@ -783,6 +788,14 @@ impl Ast {
         }
     }
 
+    /// Whether a name is one the multiple-return lowering made, which the
+    /// lowering says by recording it rather than the reader by its spelling.
+    pub fn is_multi_return_struct(&self, name: &str) -> bool {
+        self.multi_return_structs
+            .iter()
+            .any(|held| self.name(*held) == name)
+    }
+
     // The struct a return type list becomes. One per distinct list, named
     // after what it holds, so two functions returning the same list under the
     // same names share it and two that name their values differently do not.
@@ -801,8 +814,10 @@ impl Ast {
         name
     }
 
-    // The field a return type list's nth value lives in: the name the
-    // signature gave it, or its position when the signature gave none.
+    // The field a return type list's nth value lives in, which is the name the
+    // signature gave it. Every list names one, so the fallback is for a record
+    // an older compiler wrote and `CACHE_FORMAT` failed to turn away: a name is
+    // wanted here either way, and an empty one is a field called nothing.
     pub fn multi_return_field_name(
         &self,
         values: Range32,

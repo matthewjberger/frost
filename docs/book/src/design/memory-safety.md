@@ -285,7 +285,7 @@ sum(x, x)   // fine: multiple shared borrows
 Which argument is a borrow and which kind it is comes from the callee's
 parameter modes, so the check reads the signature rather than the call's syntax.
 
-This per-call check is sufficient, not merely necessary, because borrows are
+This per-call check settles the question on its own, because borrows are
 second-class. A borrow cannot be saved to be aliased later, so there is no
 cross-call aliasing to reason about. The question "who else holds a reference to
 this?" collapses to "what does this one call borrow?".

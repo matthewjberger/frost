@@ -9,6 +9,7 @@ import "types.frost"
 import "layout.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
+    check_discarded_resources,
     instance_params,
     parse_generic_instance, parse_program,
     record_mono_rets,
@@ -2090,7 +2091,8 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
             is_linear = holds_linear(p, field_head, template_linear),
-            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
+            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0,
+            declared = 1, is_multi = 0 },
     )
     arena_push(
         p.instances,
@@ -2189,7 +2191,8 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         StructDef { name_off = name_off, name_len = name_len, field_head = head,
             is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
             instance_id = struct_index, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
+            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
+            is_multi = 0 },
     )
     STRUCT_BASE + struct_index
 }
@@ -2794,6 +2797,12 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Comma) {
         return true
     }
+    // A `_` opens the list the same way a name does, since a caller may want
+    // the second value and none of the first.
+    if (cur(p) == TokenKind::Underscore
+        && peek_kind(p, 1) == TokenKind::Comma) {
+        return true
+    }
     (cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
         && peek_kind(p, 2) == TokenKind::Comma)
 }
@@ -2937,6 +2946,11 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         temp_off := synth_numbered(p, "__multi", unique)
         temp_len := 7 + digits_in(unique)
         value := parse_expr(p)
+        // The one call entitled to answer with a return type list, since this
+        // is where the list is taken apart again. `check_multi_call_bound`
+        // reads this and refuses every other one.
+        arena_push(p.multi_calls,
+            LocalVar { name_off = value, name_len = 0, ty = 0, slot = 0 })
         after := p.ti
         head := new_let_node(p, value, temp_off, temp_len, -1)
         var tail := head
@@ -2949,12 +2963,40 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 report("`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`")
                 frost_rt_recover_escape()
             }
+            var assignable: i64 = 0
             if (cur(p) == TokenKind::KwVar) {
+                assignable = 1
                 advance(p)
             }
-            name_off := cur_off(p)
-            name_len := cur_len(p)
-            refuse_literal_name(p, name_off, name_len)
+            // `_` takes a value the caller has no use for. The list binds one
+            // name per value the call answers with, so without it a caller
+            // wanting only the first has to invent a name for the rest, and
+            // that name is a live binding somebody can read by mistake. The
+            // field is still read, into storage under a name no source can
+            // spell and a fresh one per discard: a linear value is a resource
+            // somebody owes a consumer, and dropping the read would lose it
+            // without a word.
+            var name_off := cur_off(p)
+            var name_len := cur_len(p)
+            if (cur(p) == TokenKind::Underscore) {
+                if (assignable == 1) {
+                    report_where(p.modules, p.src, cur_off(p))
+                    report("`var` makes a binding assignable and `_` binds nothing; write `_` on its own")
+                    frost_rt_recover_escape()
+                }
+                // A resource taken by a `_` is refused once the resources are
+                // settled. Said there rather than by the move walk, which runs
+                // on what this rewrite left behind and would name the storage
+                // below, a name nothing in the program spells.
+                arena_push(p.multi_discards,
+                    LocalVar { name_off = callee, name_len = index,
+                        ty = name_off, slot = 0 })
+                held := p.arena.count
+                name_off = synth_numbered(p, "__discard", held)
+                name_len = 9 + digits_in(held)
+            } else {
+                refuse_literal_name(p, name_off, name_len)
+            }
             advance(p)
             base := new_named_node(p, NodeKind::Var, 0, temp_off, temp_len)
             field := synth_numbered(p, "value", index)
@@ -4355,7 +4397,8 @@ parse_struct :: fn(mut p: Parser) {
                 field_head = -1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
-                xparam_start = xparam_start, xparam_count = xparam_count, is_enum = 0, declared = 1 })
+                xparam_start = xparam_start, xparam_count = xparam_count,
+                is_enum = 0, declared = 1, is_multi = 0 })
     } else {
         head := parse_struct_fields(p)
         record_struct(p, entry_index,
@@ -4363,7 +4406,8 @@ parse_struct :: fn(mut p: Parser) {
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = -1,
                 is_linear = holds_linear(p, head, linear_flag), emitted = 0,
-                xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 })
+                xparam_start = 0, xparam_count = 0, is_enum = 0,
+                declared = 1, is_multi = 0 })
     }
 }
 
@@ -4538,7 +4582,7 @@ parse_enum :: fn(mut p: Parser) {
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 1, declared = 1 })
+                is_enum = 1, declared = 1, is_multi = 0 })
         return
     }
     // The enum's own index is known before its body is, since a variant has to
@@ -4554,7 +4598,7 @@ parse_enum :: fn(mut p: Parser) {
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = -1,
             is_linear = linear_flag, emitted = 0, xparam_start = 0,
-            xparam_count = 0, is_enum = 1, declared = 1 })
+            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0 })
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -4774,6 +4818,37 @@ resolve_multi_field :: fn(mut p: Parser, node_id: i64, callee: i64,
     true
 }
 
+// A `_` in a binding list, held to the values that may be dropped. A resource
+// is consumed exactly once, so taking one and naming it nothing loses it.
+//
+// Called once, after `settle_linear_types` has answered for every declaration,
+// since a struct holding a resource is one and that is settled at the end of
+// the parse. Run before then it would ask a flag that is not in yet.
+check_discarded_resources :: fn(mut p: Parser) {
+    var i: i64 = 0
+    while (i < p.multi_discards.count) {
+        entry := arena_at(p.multi_discards, i)
+        callee := entry.name_off
+        index := entry.name_len
+        at := entry.ty
+        if (callee >= 0) {
+            sym := arena_at(p.fns, callee)
+            fid := nth_field(p, sym.ret_type, index)
+            if (fid >= 0) {
+                field := arena_at(p.fields, fid)
+                if (is_linear_type(p, field.ty)) {
+                    report_where(p.modules, p.src, at)
+                    report("this `_` drops a '")
+                    report_type_name(p, field.ty)
+                    report("', which is consumed exactly once; bind it to a name and consume it")
+                    frost_rt_recover_escape()
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
 // Everything an earlier parse left unresolved, now that every signature is
 // parsed: a literal that named no type, and a field of a list binding whose
 // callee was written later.
@@ -4864,7 +4939,8 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = -1,
             is_linear = result_is_linear(p, ok, bad), emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1 },
+            xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1,
+            is_multi = 0 },
     )
     result_ty := STRUCT_BASE + index
     arena_push(
@@ -4927,12 +5003,16 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             advance(p)
         }
         held := parse_type(p)
-        var name := name_off
-        var length := name_len
+        // A name says which value is which, and it is the field a `return` by
+        // name writes. A list that left one out had that field called `value0`,
+        // a spelling this compiler chose and the language never offered.
         if (name_off == (-1)) {
-            name = synth_numbered(p, "value", count)
-            length = 5 + digits_in(count)
+            report_where(p.modules, p.src, cur_off(p))
+            report("a return type list names every value; write `-> (name: T, name: T)`")
+            frost_rt_recover_escape()
         }
+        name := name_off
+        length := name_len
         field := arena_push(
             p.fields,
             StructField { name_off = name, name_len = length,
@@ -4962,7 +5042,8 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             name_len = 7 + digits_in(p.structs.count),
             field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = -1, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
+            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
+            is_multi = 1 },
     )
     p.multi_count = count
     STRUCT_BASE + index
@@ -5326,7 +5407,7 @@ predeclare_types :: fn(mut p: Parser) {
                         tparam_off = 0, tparam_len = 0, field_token = 0,
                         instance_id = -1, is_linear = 0, emitted = 0,
                         xparam_start = 0, xparam_count = 0,
-                        is_enum = holds_variants, declared = 0 },
+                        is_enum = holds_variants, declared = 0, is_multi = 0 },
                 )
             }
         }
@@ -5386,6 +5467,17 @@ settle_linear_types :: fn(mut p: Parser) {
             entry := arena_at(p.structs, i)
             head := entry.field_head
             was := entry.is_linear
+            // The struct a return type list stands for is left out. It is the
+            // one aggregate a program cannot hold: the parser builds it at a
+            // `return`, takes it apart at the binding that reads it, and reads
+            // every field exactly once on the way. So its obligation is the sum
+            // of its fields' obligations, and each of those lands on a name the
+            // binding introduced, which is tracked. Counted as a resource it was
+            // one nothing consumes, and a list carrying a `linear` value was
+            // refused however correctly the caller consumed it.
+            if (entry.is_multi == 1) {
+                was = 1
+            }
             if (was == 0 && holds_linear(p, head, 0) == 1) {
                 again := arena_at(p.structs, i)
                 again.is_linear = 1

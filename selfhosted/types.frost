@@ -454,6 +454,18 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     if (is_pointer(from) && is_aggregate(to) && pointee(p, from) == to) {
         return true
     }
+    // A parameter of array type is a borrow, so the name holds where the
+    // caller's array sits. It reaches a slice of the whole of itself the way
+    // the array written out does: the length a slice needs is part of the
+    // array's type, and the borrow still names that type. Asked of a borrow
+    // alone, so a raw pointer meets the rule below.
+    if (is_borrow(from) && is_array_ty(to) && is_slice_ty(p, to)) {
+        held := pointee(p, from)
+        if (is_array_ty(held) && is_slice_ty(p, held) == false
+            && array_element(p, held) == array_element(p, to)) {
+            return true
+        }
+    }
     // An array reaches a slice of its own element type and nothing else. Two
     // arrays that are not the same type were caught above. A bare pointer
     // reaches neither: a slice is an address and a length, and a pointer is the
@@ -467,6 +479,21 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     }
     if (is_struct_ty(from) || is_struct_ty(to)) {
         return false
+    }
+    // What is left is scalars and pointers. A pointer is an address and an
+    // address is a whole number, which is what a call into C hands over and
+    // what address arithmetic reads back, so a pointer and an integer reach
+    // each other. A float holds a different encoding of the same bits and a
+    // bool holds one of two values, so reading an address as either is a
+    // mistake the reference compiler names and this one took.
+    if (is_pointer(from) != is_pointer(to)) {
+        var held := to
+        if (is_pointer(to)) {
+            held = from
+        }
+        if (is_float(held) || held == TY_BOOL) {
+            return false
+        }
     }
     true
 }
