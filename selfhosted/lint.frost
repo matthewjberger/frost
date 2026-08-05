@@ -1,0 +1,56 @@
+// What `frost lint` reports, and it is what the bootstrap's `src/lint.rs`
+// reports, in the same words.
+//
+// Findings, not faults: a build never refuses on one. They are read off the
+// tables the passes already fill.
+
+import "core.frost"
+import "imports.frost"
+import "lexer.frost"
+import "names.frost"
+
+export lint_program
+
+// A function nothing reaches.
+//
+// `main` is a root, and every other name written anywhere but its own
+// declaration is reached. Counted over the tokens rather than the syntax,
+// because a name is reached in more ways than a call: `$handler` hands a
+// function to a generic, a table of function pointers names one, and an export
+// list names one. A wrong finding sends a reader to delete working code, so the
+// question asked is the conservative one.
+lint_program :: fn(mut p: Parser) -> i64 {
+    var found: i64 = 0
+    var index: i64 = 0
+    while (index < p.fns.count) {
+        sym := arena_at(p.fns, index)
+        if (sym.defined == 1 && sym.len > 0) {
+            if (mentions_of(p, sym.off, sym.len) <= 1
+                && str_range_eq(p.src, sym.off, sym.len, "main") == false) {
+                report_where(p.modules, p.src, sym.off)
+                report("'")
+                report_src(p.src, sym.off, sym.len)
+                report("' is never called, and nothing names it")
+                report("\n")
+                found = found + 1
+            }
+        }
+        index = index + 1
+    }
+    found
+}
+
+// How many times a name is written as an identifier.
+mentions_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    var count: i64 = 0
+    var index: i64 = 0
+    while (index < p.tokens.count) {
+        token := arena_at(p.tokens, index)
+        if (token.kind == TokenKind::Ident && token.len == len
+            && bytes_equal(p.src, token.off, off, len)) {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    count
+}

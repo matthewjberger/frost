@@ -29,6 +29,7 @@ Options :: struct {
     assemble: i64,
     testing: i64,
     audit_unsafe: i64,
+    linting: i64,
     debug_lines: i64,
     // Object files and libraries the link is given, in the order written, as
     // one string ready to hand the toolchain.
@@ -355,6 +356,7 @@ options_from_command_line :: fn() -> Options {
         assemble = 0,
         testing = 0,
         audit_unsafe = 0,
+        linting = 0,
         debug_lines = 0,
         libs = "",
         roots = arena_make($SearchRoot, 64),
@@ -368,6 +370,11 @@ options_from_command_line :: fn() -> Options {
     var index: i64 = 1
     while (index < count) {
         argument := frost_rt_arg_at(index)
+        if (index == 1 && cstr_eq(argument, "lint")) {
+            options.linting = 1
+            index = index + 1
+            continue
+        }
         if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
             options.help = 1
             return options
