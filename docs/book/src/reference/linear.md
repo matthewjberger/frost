@@ -85,3 +85,45 @@ about a path an abort takes; what it does not do is notice that you never wrote
 one. Owned resources should be `linear` types, which the compiler does check.
 `defer` is for the bookkeeping that has no owner to be consumed: restoring a
 saved index, resetting an arena to a mark, unwinding a flag around a call.
+
+## 9.3a `errdefer`
+
+`errdefer Stmt` runs `Stmt` where the function leaves through its failure set,
+and nowhere else. Everything 9.3 says about where one may be written, which
+exits it answers to, and when its arguments are read holds for it unchanged. A
+function with no failure set has no exit for one to name, and an `errdefer` in
+one is refused by both compilers with the same sentence.
+
+`defer` and `errdefer` share one list, so they run in the order they were
+written, last first, whichever kind each is. Two lists would have made the order
+between a `defer` and an `errdefer` depend on which list was drained first,
+which is a rule nobody would remember and nothing would remind them of.
+
+What it is for is the resource a `?` steps over:
+
+```frost
+work :: fn() -> i64 ! FileError {
+    f := open()?
+    errdefer close(f)
+    value := read(f)?      // leaves here on a failure, and `f` is closed
+    close(f)               // leaves here with an answer, and `f` is closed
+    value
+}
+```
+
+Without the `errdefer`, the second `?` hands a failure on with `f` still open,
+and there is nowhere to write the close: after the `?` is too late and before it
+is too early. A `defer close(f)` would close it on both paths and then the
+straight-line `close(f)` is a second consumption, which linearity refuses.
+
+That is what the checker is taught. An `errdefer` answers for the failure path
+alone: the value stays the straight-line path's to consume, so the `close(f)`
+below is the first consumption rather than the second, and a resource live at a
+`?` is no longer a leak. What it deliberately does not do is answer for the
+whole obligation. An `errdefer close(f)` with no `close(f)` below it leaves with
+an answer and the resource still open, and that is the ordinary refusal:
+
+```
+h := opened(1)
+^ linear value 'h' is never consumed
+```

@@ -219,7 +219,8 @@ impl Threader {
                 self.thread_expression(ast, place, provider)?;
                 self.thread_expression(ast, value, provider)?;
             }
-            Statement::Defer(inner) => {
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
                 self.thread_statement(ast, inner, provider)?;
             }
             Statement::For(variable, second, iterable, body) => {

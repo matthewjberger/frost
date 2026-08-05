@@ -212,7 +212,8 @@ fn walk_statement(
             walk_expression(ast, place, declared);
             walk_expression(ast, value, declared);
         }
-        Statement::Defer(inner) => walk_statement(ast, inner, declared),
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => walk_statement(ast, inner, declared),
         Statement::For(_, _, sequence, body) => {
             walk_expression(ast, sequence, declared);
             walk_block(ast, body, declared);

@@ -873,6 +873,7 @@ impl<'a> Parser<'a> {
             | Token::Var
             | Token::Return
             | Token::Defer
+            | Token::ErrDefer
             | Token::For
             | Token::While
             | Token::Break
@@ -913,6 +914,7 @@ impl<'a> Parser<'a> {
                 self.peek_nth(0),
                 Token::Return
                     | Token::Defer
+                    | Token::ErrDefer
                     | Token::For
                     | Token::While
                     | Token::With
@@ -941,7 +943,9 @@ impl<'a> Parser<'a> {
                 Some(self.parse_test_statement()?)
             }
             Token::Return => Some(self.parse_return_statement()?),
-            Token::Defer => Some(self.parse_defer_statement()?),
+            Token::Defer | Token::ErrDefer => {
+                Some(self.parse_defer_statement()?)
+            }
             Token::For => Some(self.parse_for_statement()?),
             Token::While => Some(self.parse_while_statement()?),
             Token::With => Some(self.parse_with_statement()?),
@@ -1167,13 +1171,18 @@ impl<'a> Parser<'a> {
 
     fn parse_defer_statement(&mut self) -> Result<StmtId> {
         let start = self.mark();
+        let on_failure = matches!(self.peek_nth(0), Token::ErrDefer);
+        let word = if on_failure { "errdefer" } else { "defer" };
         self.read_token();
-        let statement = self
-            .parse_statement()?
-            .ok_or_else(|| anyhow::anyhow!("Expected statement after defer"))?;
-        Ok(self
-            .ast
-            .push_stmt(Statement::Defer(statement), self.span_from(start)))
+        let statement = self.parse_statement()?.ok_or_else(|| {
+            anyhow::anyhow!("Expected statement after {word}")
+        })?;
+        let held = if on_failure {
+            Statement::ErrDefer(statement)
+        } else {
+            Statement::Defer(statement)
+        };
+        Ok(self.ast.push_stmt(held, self.span_from(start)))
     }
 
     fn parse_for_statement(&mut self) -> Result<StmtId> {

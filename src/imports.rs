@@ -1486,7 +1486,8 @@ impl Renamer {
                 self.expression(ast, target, scope);
                 self.expression(ast, value, scope);
             }
-            Statement::Defer(inner) => self.statement(ast, inner, scope),
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => self.statement(ast, inner, scope),
             Statement::For(variable, _, range, body) => {
                 self.expression(ast, range, scope);
                 scope.push(HashSet::new());

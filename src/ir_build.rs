@@ -1081,7 +1081,12 @@ impl IrBuilder {
             .ast
             .stmts_in(body)
             .iter()
-            .any(|s| matches!(function.ast.stmt(*s), Statement::Defer(_)));
+            .any(|s| {
+                matches!(
+                    function.ast.stmt(*s),
+                    Statement::Defer(_) | Statement::ErrDefer(_)
+                )
+            });
         if has_defers {
             function.lower_body_with_defers(body, &return_type)?;
         } else {
@@ -2427,6 +2432,9 @@ impl Expansion<'_> {
             Statement::Defer(inner) => {
                 Statement::Defer(self.statement(ast, inner)?)
             }
+            Statement::ErrDefer(inner) => {
+                Statement::ErrDefer(self.statement(ast, inner)?)
+            }
             Statement::For(variable, second, iterable, body) => Statement::For(
                 variable,
                 second,
@@ -2781,6 +2789,9 @@ fn rename_statement(
         Statement::Defer(inner) => {
             Statement::Defer(rename_statement(ast, inner, subst))
         }
+        Statement::ErrDefer(inner) => {
+            Statement::ErrDefer(rename_statement(ast, inner, subst))
+        }
         Statement::For(variable, second, iterable, body) => Statement::For(
             variable,
             second,
@@ -3029,7 +3040,8 @@ fn collect_instances_in_statement(
             collect_instances_in_expression(ast, *condition, out);
             collect_instances_in_block(ast, *body, out);
         }
-        Statement::Defer(inner) => {
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
             collect_instances_in_statement(ast, *inner, out);
         }
         // A constant whose value is not a function is that value wherever it is
@@ -3313,7 +3325,8 @@ fn collect_call_instances_in_statement(
             );
             collect_call_instances_in_block(ast, *body, env, discovery, out);
         }
-        Statement::Defer(inner) => {
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
             collect_call_instances_in_statement(
                 ast, *inner, env, discovery, out,
             );
@@ -3914,6 +3927,9 @@ fn substitute_statement(
         Statement::Defer(inner) => {
             Statement::Defer(substitute_statement(ast, inner, subst))
         }
+        Statement::ErrDefer(inner) => {
+            Statement::ErrDefer(substitute_statement(ast, inner, subst))
+        }
         Statement::Constant(name, value) => {
             Statement::Constant(name, substitute_expression(ast, value, subst))
         }
@@ -4224,6 +4240,18 @@ fn array_element_type(
     }
 }
 
+// Whether a `return` hands back a failure rather than an answer: the `Err` of an
+// enum the failure-set lowering made. The `?` form writes one of these and so
+// does a program handing a failure back itself, which is what makes this the
+// question rather than where the `return` came from.
+fn returns_a_failure(ast: &Ast, expression: ExprId) -> bool {
+    let Expression::EnumVariantInit(name, variant, _) = ast.expr(expression)
+    else {
+        return false;
+    };
+    ast.name(*variant) == "Err" && ast.is_failure_result(ast.name(*name))
+}
+
 // A deferred statement is lowered again at every exit and its names are resolved
 // there, so a name it mentions that is bound again after the `defer` reads as
 // that later binding rather than the one in scope where the `defer` was written.
@@ -4446,7 +4474,10 @@ struct FunctionLowering<'a> {
     loops: Vec<LoopTargets>,
     current: BlockId,
     return_type: Type,
-    active_defers: Vec<StmtId>,
+    // Each cleanup and whether it runs only where the function leaves through
+    // its failure set. One list rather than two, so they run in the order they
+    // were written, last first, whichever kind they are.
+    active_defers: Vec<(StmtId, bool)>,
     current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
@@ -4609,7 +4640,21 @@ impl<'a> FunctionLowering<'a> {
             let position = self.ast.stmt_position(*statement);
             self.current_position = position;
             match self.ast.stmt(*statement).clone() {
-                Statement::Defer(inner) => {
+                Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+                    let on_failure = matches!(
+                        self.ast.stmt(*statement),
+                        Statement::ErrDefer(_)
+                    );
+                    // An `errdefer` in a function that cannot fail names an
+                    // exit that function does not have.
+                    if on_failure && !self.answers_with_a_failure_set() {
+                        locate(
+                            Err(anyhow::anyhow!(
+                                "`errdefer` runs where a function leaves through its failure set, and this one has none; write `-> T ! E`, or `defer` to run it however the function leaves"
+                            )),
+                            position,
+                        )?;
+                    }
                     locate(
                         check_defer_names(
                             self.ast,
@@ -4618,7 +4663,7 @@ impl<'a> FunctionLowering<'a> {
                         ),
                         position,
                     )?;
-                    self.active_defers.push(inner);
+                    self.active_defers.push((inner, on_failure));
                 }
                 Statement::Expression(expression) if is_last => {
                     let (value, value_type) = locate(
@@ -4654,17 +4699,39 @@ impl<'a> FunctionLowering<'a> {
     }
 
     fn emit_return(&mut self, operand: Option<IrOperand>) -> Result<()> {
-        self.run_active_defers()?;
+        self.run_active_defers(false)?;
         self.set_terminator(IrTerminator::Return(operand));
         Ok(())
     }
 
-    fn run_active_defers(&mut self) -> Result<()> {
+    // The exit a failure takes: the `return` a `?` writes where the call it
+    // guards answered `Err`, and one a program writes itself.
+    fn emit_failure_return(
+        &mut self,
+        operand: Option<IrOperand>,
+    ) -> Result<()> {
+        self.run_active_defers(true)?;
+        self.set_terminator(IrTerminator::Return(operand));
+        Ok(())
+    }
+
+    fn run_active_defers(&mut self, failing: bool) -> Result<()> {
         let defers = self.active_defers.clone();
-        for deferred in defers.iter().rev() {
+        for (deferred, on_failure) in defers.iter().rev() {
+            if *on_failure && !failing {
+                continue;
+            }
             self.lower_statement(*deferred)?;
         }
         Ok(())
+    }
+
+    // Whether this function has a failure exit at all, which is what an
+    // `errdefer` names. The failure-set pass has already turned `-> T ! E` into
+    // the enum the function answers with, and recorded the ones it made.
+    fn answers_with_a_failure_set(&self) -> bool {
+        matches!(&self.return_type, Type::Enum(name) | Type::Struct(name)
+            if self.ast.is_failure_result(name))
     }
 
     fn lower_statement(&mut self, statement: StmtId) -> Result<()> {
@@ -4884,7 +4951,11 @@ impl<'a> FunctionLowering<'a> {
                     }
                     let coerced =
                         self.coerce(operand, &value_type, &return_type)?;
-                    self.emit_return(Some(coerced))?;
+                    if returns_a_failure(self.ast, expression) {
+                        self.emit_failure_return(Some(coerced))?;
+                    } else {
+                        self.emit_return(Some(coerced))?;
+                    }
                 }
                 Ok(())
             }
@@ -4904,7 +4975,8 @@ impl<'a> FunctionLowering<'a> {
             // reaching here is written inside a block. Named rather than left to
             // the catch-all below, which says a statement is unsupported and
             // gives a reader nothing to do about it.
-            Statement::Defer(_) => {
+            Statement::Defer(_)
+            | Statement::ErrDefer(_) => {
                 bail!(
                     "a `defer` belongs at the top level of a body, since it runs where the function leaves rather than where this block does"
                 )

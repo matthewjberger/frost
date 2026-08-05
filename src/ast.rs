@@ -274,6 +274,10 @@ pub struct Ast {
     // struct like any other: read off the spelling, such a declaration was
     // taken out of the linear closure and a resource in it went unconsumed.
     pub multi_return_structs: Vec<Symbol>,
+    // The enums a failure set was lowered to, by name. Recorded rather than
+    // recognized from the spelling, for the reason the list above is: a program
+    // declaring `__Result_0` is an enum like any other.
+    pub failure_results: Vec<Symbol>,
     pub symbol_list: Vec<Symbol>,
     pub symbols: SymbolTable,
     // One Position per token, the lexer's table carried through. Splicing
@@ -441,6 +445,10 @@ pub enum Statement {
     Flags(Symbol, crate::types::Type, Range32),
     TypeAlias(Symbol, crate::types::Type),
     Defer(StmtId),
+    // Cleanup that runs only where the function leaves through its failure
+    // set. Held apart from `Defer` rather than flagged, so every walk that
+    // treats the two alike says so by naming both.
+    ErrDefer(StmtId),
     Assignment(ExprId, ExprId),
     For(Symbol, Option<Symbol>, ExprId, Range32),
     While(ExprId, Range32),
@@ -796,6 +804,11 @@ impl Ast {
             .any(|held| self.name(*held) == name)
     }
 
+    /// Whether a name is one the failure-set lowering made, said the same way.
+    pub fn is_failure_result(&self, name: &str) -> bool {
+        self.failure_results.iter().any(|held| self.name(*held) == name)
+    }
+
     // The struct a return type list becomes. One per distinct list, named
     // after what it holds, so two functions returning the same list under the
     // same names share it and two that name their values differently do not.
@@ -1048,6 +1061,9 @@ impl<'a> Splicer<'a> {
             }
             Statement::Defer(inner) => {
                 Statement::Defer(self.statement(dest, inner, rename))
+            }
+            Statement::ErrDefer(inner) => {
+                Statement::ErrDefer(self.statement(dest, inner, rename))
             }
             Statement::Assignment(place, value) => Statement::Assignment(
                 self.expression(dest, place, rename),

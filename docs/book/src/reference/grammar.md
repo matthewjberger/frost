@@ -27,6 +27,7 @@ Statement =
       TopLevel
     | "return" ( Expr ( "," Expr )* )? ";"?
     | "defer" Statement
+    | "errdefer" Statement                    // only in a body with a failure set
     | "for" IDENT ( "," IDENT )? "in" ( Expr | LiveWalk ) Block
     | "while" "(" Expr ")" Block
     | "with" IDENT Block                      // a region, 8a
