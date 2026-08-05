@@ -4,7 +4,7 @@ import "core.frost"
 import "json.frost"
 import "lexer.frost"
 
-export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
+export json_reports, SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
     joined_path, join_path, module_at, report_where, line_of, column_of, file_of,
     resolve_imports, search_roots_from, manifest_roots, source_with_room,
     manifest_above
@@ -450,6 +450,12 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         && src[line_end] != CH_LF) {
         line_end = line_end + 1
     }
+    // A caller reading JSON gets the place as fields and the message as one
+    // string, so the record opens here and whatever ends the report closes it.
+    if (json_reports()) {
+        unsafe { frost_rt_json_place(entry.path, line, column, offset) }
+        return
+    }
     report_cstr(entry.path)
     report(":")
     frost_rt_error_int(line)
@@ -466,6 +472,25 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         space = space + 1
     }
     report("^ ")
+}
+
+// Whether this run writes its reports as JSON, asked of the command line
+// directly because a report may be raised before the arguments are read.
+json_reports :: fn() -> bool {
+    var index: i64 = 1
+    var count := frost_rt_arg_count()
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (cstr_eq(argument, "--diagnostics=json")) {
+            return true
+        }
+        if (cstr_eq(argument, "--diagnostics") && index + 1 < count
+            && cstr_eq(frost_rt_arg_at(index + 1), "json")) {
+            return true
+        }
+        index = index + 1
+    }
+    false
 }
 
 // The same position, written into the emitted program rather than to stderr,

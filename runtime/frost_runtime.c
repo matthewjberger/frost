@@ -605,6 +605,93 @@ int64_t frost_rt_test_summary(void) {
     return frost_rt_tests_failed;
 }
 
+
+/* Reports as JSON. While a record is open every piece of a message is held
+   rather than written, so the whole message can go out as one JSON string when
+   the record closes. A place opens a record; whatever ends the report closes
+   it. */
+static int frost_rt_json_on = 0;
+static int frost_rt_json_open = 0;
+static char *frost_rt_json_message = 0;
+static size_t frost_rt_json_length = 0;
+static size_t frost_rt_json_room = 0;
+static char frost_rt_json_file[1024];
+static int64_t frost_rt_json_line = 0;
+static int64_t frost_rt_json_column = 0;
+static int64_t frost_rt_json_offset = 0;
+
+void frost_rt_json_reports(void) { frost_rt_json_on = 1; }
+
+static void frost_rt_json_hold(const char *data, size_t length) {
+    if (frost_rt_json_length + length + 1 > frost_rt_json_room) {
+        size_t room = frost_rt_json_room * 2 + length + 256;
+        char *grown = (char *)realloc(frost_rt_json_message, room);
+        if (grown == 0) {
+            return;
+        }
+        frost_rt_json_message = grown;
+        frost_rt_json_room = room;
+    }
+    memcpy(frost_rt_json_message + frost_rt_json_length, data, length);
+    frost_rt_json_length += length;
+}
+
+/* Writes the open record, if there is one, as one object on one line. */
+void frost_rt_json_close(void) {
+    if (!frost_rt_json_on || (!frost_rt_json_open && frost_rt_json_length == 0)) {
+        return;
+    }
+    frost_rt_json_open = 0;
+    fputs("{\"file\":\"", stderr);
+    for (const char *at = frost_rt_json_file; *at; at++) {
+        if (*at == '\\' || *at == '\"') {
+            fputc('\\', stderr);
+        }
+        fputc(*at, stderr);
+    }
+    fprintf(stderr,
+            "\",\"line\":%lld,\"column\":%lld,"
+            "\"span\":[%lld,%lld],\"severity\":\"error\","
+            "\"message\":\"",
+            (long long)frost_rt_json_line, (long long)frost_rt_json_column,
+            (long long)frost_rt_json_offset, (long long)frost_rt_json_offset);
+    for (size_t at = 0; at < frost_rt_json_length; at++) {
+        unsigned char held = (unsigned char)frost_rt_json_message[at];
+        if (held == '\"' || held == '\\') {
+            fputc('\\', stderr);
+            fputc(held, stderr);
+        } else if (held == '\n') {
+            fputs("\\n", stderr);
+        } else if (held < 0x20) {
+            fprintf(stderr, "\\u%04x", held);
+        } else {
+            fputc(held, stderr);
+        }
+    }
+    fputs("\"}\n", stderr);
+    frost_rt_json_length = 0;
+    fflush(stderr);
+}
+
+/* Opens a record. Everything written after this belongs to its message. */
+void frost_rt_json_place(const char *path, int64_t line, int64_t column,
+                         int64_t offset) {
+    if (!frost_rt_json_on) {
+        return;
+    }
+    frost_rt_json_close();
+    size_t held = strlen(path);
+    if (held >= sizeof(frost_rt_json_file)) {
+        held = sizeof(frost_rt_json_file) - 1;
+    }
+    memcpy(frost_rt_json_file, path, held);
+    frost_rt_json_file[held] = 0;
+    frost_rt_json_line = line;
+    frost_rt_json_column = column;
+    frost_rt_json_offset = offset;
+    frost_rt_json_open = 1;
+}
+
 /* Parser recovery for the self-hosted compiler. A parse fault has to end
    the declaration it is in without ending the compile, or one bad
    declaration hides every diagnostic after it. The escape is the same
@@ -650,6 +737,12 @@ void frost_rt_recover_escape(void) {
     if (frost_rt_recover_depth == 0) {
         frost_rt_die();
     }
+    if (frost_rt_json_on) {
+        frost_rt_json_close();
+        frost_rt_recover_count++;
+        frost_rt_recover_depth--;
+        longjmp(frost_rt_recover_stack[frost_rt_recover_depth], 1);
+    }
     /* The newline frost_rt_die would have written, so a report composed
        piece by piece ends its line when the parse goes on instead. */
     fputc('\n', stderr);
@@ -667,6 +760,11 @@ void frost_rt_recover_escape(void) {
    a mark per call would be a setjmp per node of the program, which is what this
    is instead of. */
 void frost_rt_recover_note(void) {
+    if (frost_rt_json_on) {
+        frost_rt_json_close();
+        frost_rt_recover_count++;
+        return;
+    }
     fputc('\n', stderr);
     fflush(stderr);
     frost_rt_recover_count++;
@@ -722,18 +820,38 @@ void frost_rt_error(const char *text) {
 /* Write a counted run of bytes to stderr, so a diagnostic composed from a `str`
    is bounded by the length it carries rather than a NUL. */
 void frost_rt_error_bytes(const char *data, int64_t length) {
+    if (frost_rt_json_on) {
+        frost_rt_json_hold(data, (size_t)length);
+        return;
+    }
     fwrite(data, 1, (size_t)length, stderr);
 }
 
 void frost_rt_error_src(const char *text, int64_t offset, int64_t length) {
+    if (frost_rt_json_on) {
+        frost_rt_json_hold(text + offset, (size_t)length);
+        return;
+    }
     fwrite(text + offset, 1, (size_t)length, stderr);
 }
 
 void frost_rt_error_int(int64_t value) {
+    if (frost_rt_json_on) {
+        char held[32];
+        int written = snprintf(held, sizeof(held), "%lld", (long long)value);
+        if (written > 0) {
+            frost_rt_json_hold(held, (size_t)written);
+        }
+        return;
+    }
     fprintf(stderr, "%lld", (long long)value);
 }
 
 void frost_rt_die(void) {
+    if (frost_rt_json_on) {
+        frost_rt_json_close();
+        exit(1);
+    }
     fputc('\n', stderr);
     exit(1);
 }

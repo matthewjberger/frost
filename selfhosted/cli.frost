@@ -375,6 +375,14 @@ options_from_command_line :: fn() -> Options {
             index = index + 1
             continue
         }
+        if (cstr_eq(argument, "--diagnostics=json")) {
+            index = index + 1
+            continue
+        }
+        if (cstr_eq(argument, "--diagnostics")) {
+            index = index + 2
+            continue
+        }
         if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
             options.help = 1
             return options

@@ -21275,7 +21275,11 @@ fn both_compilers_format_the_corpus_the_same_way() {
     let theirs = work.join("selfhosted.frost");
     let mut differ = Vec::new();
     for file in &files {
-        let source = std::fs::read_to_string(file).unwrap();
+        let Ok(source) = std::fs::read_to_string(file) else {
+            // A file the walk saw and something else removed before it was
+            // read. Nothing to compare.
+            continue;
+        };
         std::fs::write(&mine, &source).unwrap();
         std::fs::write(&theirs, &source).unwrap();
         let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
@@ -21347,6 +21351,78 @@ fn frost_sources(directory: &std::path::Path) -> Vec<PathBuf> {
     }
     found.sort();
     found
+}
+
+// Both compilers write the same reports as JSON: the same schema, the same
+// places, the same words.
+#[test]
+fn both_compilers_write_the_same_json_reports() {
+    let Some(compiler) = build_self_hosted_compiler("jsonparity") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join(unique("frost_json_parity"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("names.frost");
+    std::fs::write(
+        &file,
+        "one :: fn() -> i64 {
+    bogus
+}
+         three :: fn() -> i64 { 3 }
+         two :: fn() -> i64 {
+    third
+}
+         main :: fn() -> i64 { one() + two() }
+",
+    )
+    .unwrap();
+
+    let records = |text: &str| -> Vec<(u64, u64, String)> {
+        let mut found: Vec<(u64, u64, String)> = text
+            .lines()
+            .filter(|line| line.starts_with('{'))
+            .filter_map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).ok()
+            })
+            .map(|held| {
+                (
+                    held["line"].as_u64().unwrap_or(0),
+                    held["column"].as_u64().unwrap_or(0),
+                    held["message"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+
+    let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--diagnostics=json")
+        .arg("--native")
+        .arg("-o")
+        .arg(directory.join("out.o"))
+        .arg(&file)
+        .output()
+        .unwrap();
+    let mine = records(&String::from_utf8_lossy(&ran.stderr));
+    let ran = Command::new(&compiler)
+        .env("FROST_INPUT", &file)
+        .arg("--diagnostics=json")
+        .arg("-o")
+        .arg(directory.join("out.c"))
+        .output()
+        .unwrap();
+    let theirs = records(&String::from_utf8_lossy(&ran.stderr));
+
+    assert_eq!(mine.len(), 2, "two names are not declared: {mine:?}");
+    assert!(
+        mine.iter()
+            .any(|(_, _, message)| message.contains("did you mean 'three'")),
+        "the nearest name is offered: {mine:?}"
+    );
+    assert_eq!(mine, theirs, "the two compilers write different reports");
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // Both compilers find the same things worth a look, in the same words. The
