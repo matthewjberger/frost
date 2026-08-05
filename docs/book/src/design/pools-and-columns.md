@@ -124,12 +124,12 @@ liveness lived only in the free list, in release order.
 
 `live_words` is that knowledge in the order a column is stored in, one bit per
 slot, set by `columns_insert` and cleared by `columns_release`. `for slot in
-live(c)` walks it: a word of zeroes passes over sixty-four slots on one test, a
+live_slots(c)` walks it: a word of zeroes passes over sixty-four slots on one test, a
 word with bits set gives up its lowest, clears it, and goes round. No slot is
 asked whether it holds an element and no empty slot is reached.
 
 ```frost
-for slot in live(c) {
+for slot in live_slots(c) {
     c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
 }
 ```

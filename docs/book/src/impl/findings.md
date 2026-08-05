@@ -347,7 +347,7 @@ The surface is two characters longer than the wrong loop:
 
 ```frost
 for slot in 0..N     { ... }
-for slot in live(c)  { ... }
+for slot in live_slots(c)  { ... }
 ```
 
 and it drops the requirement that `N` be in scope, which inside a generic is a

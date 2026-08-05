@@ -40,7 +40,7 @@ Statement =
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 
-`LiveWalk = "live" "(" Place ")"`, where `Place` is a name or a field of one
+`LiveWalk = "live_slots" "(" Place ")"`, where `Place` is a name or a field of one
 (10.1b). It is written only after the `in` of a `for`: it is the subject of a
 walk, so there is no value for it to be anywhere else.
 

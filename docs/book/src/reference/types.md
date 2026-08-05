@@ -148,7 +148,7 @@ one written out in the language.
 `columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
 elements of struct `T`, one array per field of `T` plus a generational free list
 and a record of which slots hold an element, addressed by `Handle<T>` the same
-way a pool is (chapter 10.1a) and walked by `for slot in live(c)` (10.1b).
+way a pool is (chapter 10.1a) and walked by `for slot in live_slots(c)` (10.1b).
 Unlike a pool it cannot be written as a library, since "one array per field of
 `T`" is not expressible over an arbitrary `T`.
 

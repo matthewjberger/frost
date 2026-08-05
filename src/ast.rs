@@ -1432,7 +1432,7 @@ impl<'a> Splicer<'a> {
     }
 }
 
-// The container a `live(c)` walks, when this expression is one. Every pass that
+// The container a `live_slots(c)` walks, when this expression is one. Every pass that
 // only needs the shape asks here; whether the program declares a function by
 // that name is a separate question, and the one pass that knows the answer asks
 // it there.
@@ -1443,7 +1443,7 @@ pub fn live_subject(ast: &Ast, expression: ExprId) -> Option<ExprId> {
     let Expression::Identifier(name) = ast.expr(*callee) else {
         return None;
     };
-    if ast.name(*name) != "live" || arguments.len() != 1 {
+    if ast.name(*name) != "live_slots" || arguments.len() != 1 {
         return None;
     }
     Some(ast.exprs_in(*arguments)[0])

@@ -122,6 +122,34 @@ pub fn shadowed_imports(
     reports
 }
 
+// Every name a file declares that the compiler already owns.
+//
+// A compiler name means one thing wherever it is written, and a program that
+// declares one gave a second meaning to a spelling nothing distinguishes. The
+// two compilers answered differently: the bootstrap let the declaration win and
+// said nothing, and the self-hosted compiler kept reading the name as its own,
+// so `slice_len(4)` was a call in one and a length in the other. Neither is a
+// choice a reader made, so the declaration is refused where it is written.
+pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
+    let mut reports = Vec::new();
+    for file in files {
+        let mut said = HashSet::new();
+        for name in &file.declared {
+            if !crate::ir_build::BUILTIN_FUNCTIONS.contains(&name.as_str())
+                || !said.insert(name.as_str())
+            {
+                continue;
+            }
+            reports.push(format!(
+                "{}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
+                file.module
+            ));
+        }
+    }
+    reports.sort();
+    reports
+}
+
 // Every name each file used that belongs to a module it did not import, as the
 // diagnostics saying so. Reported together, since one missing import usually
 // accounts for several names and fixing them one build at a time is the slow

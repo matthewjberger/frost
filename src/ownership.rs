@@ -2088,7 +2088,7 @@ impl MoveChecker<'_> {
                 Ok(false)
             }
             Statement::For(variable, second, range, body) => {
-                // `live(c)` reads the container's liveness and hands back slot
+                // `live_slots(c)` reads the container's liveness and hands back slot
                 // numbers, so the container is borrowed for the walk the way
                 // any other sequence is. Visiting it as a call would take the
                 // argument, and a walk does not consume what it walks.

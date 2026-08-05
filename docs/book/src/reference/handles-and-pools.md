@@ -57,17 +57,17 @@ them out at every construction was the worst part of using one, and the
 should not have to work out. Construct with `slab_new()` and then `slab_reset`,
 which is the contract a columns container already had.
 
-## 10.1b `for slot in live(c)`
+## 10.1b `for slot in live_slots(c)`
 
 `c.field` is every slot, released ones included, and nothing about it says which
 of them hold an element. `c[handle].field` is one slot and is checked. So the
 shortest loop over a column is the one that reads storage nobody put anything in,
 which is wasted work for an integration step and a wrong answer for a sum.
 
-`live(c)` is what that loop should have said:
+`live_slots(c)` is what that loop should have said:
 
 ```frost
-for slot in live(c) {
+for slot in live_slots(c) {
     c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
 }
 ```
@@ -77,17 +77,17 @@ scope. The body is unchanged: `slot` is a number, columns are indexed with it,
 and no generation is read, because the walk answered that question by finding
 the slot.
 
-`for rank, slot in live(c)` counts the elements as it goes, in the same order
+`for rank, slot in live_slots(c)` counts the elements as it goes, in the same order
 `for index, name in` reads in, which is what compacting into a packed buffer
 wants:
 
 ```frost
-for rank, slot in live(c) {
+for rank, slot in live_slots(c) {
     upload[rank] = c.position[slot]
 }
 ```
 
-`live(c)` is the subject of a `for` and may be written nowhere else. There is no
+`live_slots(c)` is the subject of a `for` and may be written nowhere else. There is no
 sequence value, nothing to bind, and nothing to hand on. Its subject is a name or
 a field of one, since the container is read where it stands rather than bound.
 A `Slab<T, N>` carries the same record and is walked the same way, with

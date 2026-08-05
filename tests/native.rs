@@ -10330,7 +10330,10 @@ const RUNTIME_SYMBOL_NAMES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 byte_at :: fn(text: str, index: i64) -> i64 { text[index] }
-str_len :: fn(n: i64) -> i64 { n * 2 }
+// `byte_set` rather than `str_len`, which the runtime also has: what this is
+// about is a runtime symbol, and a name the compiler owns cannot be declared at
+// all.
+byte_set :: fn(n: i64) -> i64 { n * 2 }
 die :: fn(n: i64) -> i64 { n + 1 }
 error :: fn(n: i64) -> i64 { n + 2 }
 slot :: fn(n: i64) -> i64 { n + 3 }
@@ -10347,7 +10350,7 @@ rt_slot :: fn(n: i64) -> i64 { n + 11 }
 
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", byte_at("hello", 1)) }
-    unsafe { printf("%lld\n", str_len(1)) }
+    unsafe { printf("%lld\n", byte_set(1)) }
     unsafe { printf("%lld\n", die(1) + error(1) + slot(1) + getenv(1)) }
     unsafe { printf("%lld\n", mem_set(1) + bounds_check(1) + check_index(1)) }
     unsafe { printf("%lld\n", assert_at(1) + print_i64(1) + heap_alloc(1)) }
@@ -16590,7 +16593,24 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
-    // `live(c)` written where a value goes. The slots it names are walked and
+    // A name the compiler owns, declared by a program. It used to be taken: the
+    // bootstrap let the declaration win and said nothing, and the self-hosted
+    // compiler kept reading the name as its own, so `slice_len(4)` was a call in
+    // one and a length in the other. One spelling cannot mean two things, so the
+    // declaration is refused where it is written rather than at a call that
+    // behaves oddly.
+    (
+        "a_declaration_of_a_compiler_name",
+        "import \"io.frost\"
+         slice_len :: fn(x: i64) -> i64 { x + 1 }
+         main :: fn() -> i64 {
+             print_int_line(slice_len(4))
+             0
+         }
+",
+        "is the compiler's own, and a name means one thing wherever it is written",
+    ),
+    // `live_slots(c)` written where a value goes. The slots it names are walked and
     // never held, so there is nothing for a binding to be given.
     (
         "a_live_walk_read_as_a_value",
@@ -16600,7 +16620,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {
              var c : columns<Cell, 8> = columns_new()
              columns_reset($Cell, $8, c)
-             held := live(c)
+             held := live_slots(c)
              print_int_line(held)
              0
          }
@@ -16616,7 +16636,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Cell :: struct { v: i64 }
          made :: fn() -> columns<Cell, 8> { columns_new() }
          main :: fn() -> i64 {
-             for slot in live(made()) { print_int_line(slot) }
+             for slot in live_slots(made()) { print_int_line(slot) }
              0
          }
 ",
@@ -20392,7 +20412,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              var total : i64 = 0
              var seen : i64 = 0
              var last : i64 = -1
-             for rank, slot in live(world) {
+             for rank, slot in live_slots(world) {
                  assert(slot > last)
                  assert(rank == seen)
                  last = slot
@@ -20452,11 +20472,11 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "77
 ",
     ),
-    // `for slot in live(c)` over a fragmented container. Every third slot is
+    // `for slot in live_slots(c)` over a fragmented container. Every third slot is
     // released, which takes out slot 63, the sign bit of the first liveness
     // word, and slot 64 is released on its own so the boundary between two
     // words is covered as well. The walk reaches the live slots in slot order
-    // and no others, and `for rank, slot in live(c)` counts them as it goes.
+    // and no others, and `for rank, slot in live_slots(c)` counts them as it goes.
     (
         "a_live_walk_reaches_the_slots_that_hold_an_element",
         "import \"io.frost\"
@@ -20483,7 +20503,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              var total : i64 = 0
              var seen : i64 = 0
              var last : i64 = -1
-             for rank, slot in live(c) {
+             for rank, slot in live_slots(c) {
                  assert(slot > last)
                  assert(rank == seen)
                  last = slot
@@ -20527,7 +20547,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  d = d + 1
              }
              var counted : i64 = 0
-             for slot in live(c) {
+             for slot in live_slots(c) {
                  if (c.v[slot] % 2 == 0) { continue }
                  if (c.v[slot] > 70) { break }
                  counted = counted + 1
@@ -20536,7 +20556,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              var empty : columns<Cell, 8> = columns_new()
              columns_reset($Cell, $8, empty)
              var none : i64 = 0
-             for slot in live(empty) { none = none + 1 }
+             for slot in live_slots(empty) { none = none + 1 }
              print_int_line(none)
              0
          }
