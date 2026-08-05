@@ -26,7 +26,7 @@ pinned by a test:
 | written | what it did | now |
 | --- | --- | --- |
 | `add(1 2)` — comma dropped | compiled, answered the same as `add(1, 2)` | refused |
-| a continuation line whose leading `+` was dropped | compiled, answered 10 where 30 was meant | refused |
+| a continuation line whose leading `+` was dropped | compiled, answered 10 where 30 was meant | the shape no longer exists |
 | `fn(v: Absent)` — a type name nothing declares | compiled | refused |
 
 None of those was found by reading the compiler. Each was found by writing the
@@ -71,6 +71,16 @@ the channel:
 - A name nothing declares carries the nearest name that does, when one name is
   nearer than every other.
 
+## A line break ends a statement
+
+The parse of a line never depends on the token that opens the next one. Outside
+brackets a line is a statement; inside brackets a line break says nothing. That
+is a property of the grammar rather than a check beside it, and it means no
+single token added, dropped or altered at a line boundary can silently change
+how many statements the surrounding text parses as — it preserves the meaning or
+it fails to parse. Held for every operator, through all three backends. See
+[Where a statement ends](../impl/line-boundaries.md).
+
 ## The name model
 
 There is one namespace, no overloading, no methods, no traits and no
@@ -112,9 +122,5 @@ neither `S` nor a type containing `S`. That is tested rather than hoped for.
 - Not that every call is determined by its own text. A call through a value is
   not, and the language keeps function values because the callback tables, the
   render graph and the ECS need them.
-- Not that the line-boundary rule is safe by construction. A leading operator
-  still continues the line above; the hazard that made it dangerous is refused
-  by a check standing next to the rule rather than removed from the grammar.
-  See [Where a statement ends](../impl/line-boundaries.md).
 - Not that any of this is validated at scale. The corpus is the compiler, the
   standard library and the examples. A large port is what would test it.

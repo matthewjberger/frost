@@ -694,6 +694,7 @@ main :: fn() -> i64 {
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
         type_check_names = 0,
+        bracket_depth = 0,
     }
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.

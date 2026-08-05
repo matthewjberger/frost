@@ -52,34 +52,61 @@ language deliberately does not have one.
 **(d) Explicit continuation marker.** A trailing `\` or similar. Unambiguous in
 both directions, and it is a token whose only job is to be dropped.
 
-**What was taken: keep the rule, and make the hazard fail to parse.** Every
-statement of a block begins at the same column. A statement indented past its
-neighbours reads as a continuation of the line above, so a continuation that
-parses as a statement of its own is refused:
+**What was taken: a line break ends a statement, and brackets are where an
+expression runs on.** Outside brackets a line cannot open with an operator that
+joins it to the line above; inside brackets a line break says nothing, which was
+already true. The 129 places in the tree that used the old form were wrapped in
+the brackets their expressions already needed, mechanically, by the migration
+kept in `tests/grammar.rs`.
 
-> this line is indented past the statement above it, so it reads as continuing
-> that line, and it begins a statement of its own. An expression broken over
-> lines carries the operator that joins them onto the second, or is written
-> inside brackets
+## The grammar property
 
-The whole corpus passes unchanged, in both compilers, because the formatter
-already writes every statement of a block at one column.
+> The parse of line N never depends on the token that opens line N+1.
 
-## What this is and is not
+By construction rather than by a check standing beside a rule. Outside brackets
+a line is a statement and the expression on it ends at the break, so nothing
+after it can change what it means. Inside brackets a line break carries no
+meaning at all, so there is nothing for a token to change.
 
-It closes the measured hazard: the dropped-operator edit no longer changes the
-statement count silently, it fails to parse. It does not establish the grammar
-property the strongest version of this asks for — *the parse of line N never
-depends on the leading token of line N+1* — because a leading `+` still
-continues the line above. The check is a guard standing next to the rule, not a
-replacement for it.
+## No mirror hazard
 
-Reaching the grammar property means design (c) or (d) and a corpus migration.
-The measured cost of not having it is now one refused program rather than one
-wrong answer, which is why the guard was worth landing on its own.
+Every single-token edit at a boundary, for every operator that could carry an
+expression across one, held by
+`no_operator_carries_an_expression_across_a_line_outside_brackets` and its
+neighbours:
 
-A statement that shares the line its block opens on sets no column, since it is
-indented relative to nothing:
+| edit | outside brackets | inside brackets |
+| --- | --- | --- |
+| add a leading operator | refused, naming the operator | a parse error |
+| drop a leading operator | the shape does not exist | a parse error |
+| drop a trailing operator | the shape does not exist | a parse error |
+| alter `+` to `-` | a statement whose value nothing reads, refused | a subtraction, which is an ordinary edit |
+
+Nothing in that table silently changes how many statements the surrounding text
+parses as. The trailing-operator hazard that ruled out design (a) does not arise
+because there are no trailing-operator continuations to drop.
+
+The same wrapped expression is run through the Cranelift backend, the C backend
+and the IR interpreter, and all three answer the same.
+
+## Wrapping
+
+Long expressions wrap freely inside any bracket, at any width:
+
+```frost
+kept :: fn(a: i64, b: i64, c: i64) -> bool {
+    (a > 0
+        && b > 0
+        && c > 0)
+}
+```
+
+The brackets are the cost. They are one character at each end of an expression
+that was already going to be parenthesised by anyone reading it twice.
+
+## A statement that shares its block's opening line
+
+Sets no column, since it is indented relative to nothing:
 
 ```frost
 main :: fn() -> i64 { print_int_line(1)

@@ -1531,7 +1531,7 @@ parse_mul :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_unary(p)
     var kind := cur(p)
-    while (kind == TokenKind::Star || kind == TokenKind::Slash || kind == TokenKind::Percent) {
+    while (joins_line(p) && (kind == TokenKind::Star || kind == TokenKind::Slash || kind == TokenKind::Percent)) {
         var op: i64 = OP_MUL
         if (kind == TokenKind::Slash) {
             op = OP_DIV
@@ -1555,8 +1555,8 @@ parse_add :: fn(mut p: Parser) -> i64 {
     // it from the statement above, since a statement ends at the line break and
     // `-x` is a statement of its own. A `+` has no prefix form, so a line that
     // opens with one can only be the continuation of the line above it.
-    while (kind == TokenKind::Plus
-        || (kind == TokenKind::Minus && on_same_line(p))) {
+    while (joins_line(p) && (kind == TokenKind::Plus
+            || (kind == TokenKind::Minus && on_same_line(p)))) {
         var op: i64 = OP_ADD
         if (kind == TokenKind::Minus) {
             op = OP_SUB
@@ -1579,7 +1579,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_add(p)
     var kind := cur(p)
-    while (kind == TokenKind::Shl || kind == TokenKind::Shr) {
+    while (joins_line(p) && (kind == TokenKind::Shl || kind == TokenKind::Shr)) {
         var op: i64 = OP_SHL
         if (kind == TokenKind::Shr) {
             op = OP_SHR
@@ -1595,7 +1595,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
 parse_bitand :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_shift(p)
-    while (cur(p) == TokenKind::Amp) {
+    while (joins_line(p) && (cur(p) == TokenKind::Amp)) {
         advance(p)
         right := parse_shift(p)
         left = new_node_at(p, NodeKind::Bin, left, right, OP_BITAND, start)
@@ -1606,7 +1606,7 @@ parse_bitand :: fn(mut p: Parser) -> i64 {
 parse_bitor :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_bitand(p)
-    while (cur(p) == TokenKind::Pipe) {
+    while (joins_line(p) && (cur(p) == TokenKind::Pipe)) {
         advance(p)
         right := parse_bitand(p)
         left = new_node_at(p, NodeKind::Bin, left, right, OP_BITOR, start)
@@ -1654,7 +1654,7 @@ parse_cmp :: fn(mut p: Parser) -> i64 {
 parse_and :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_cmp(p)
-    while (cur(p) == TokenKind::Andand) {
+    while (joins_line(p) && (cur(p) == TokenKind::Andand)) {
         advance(p)
         right := parse_cmp(p)
         left = new_node_at(p, NodeKind::Bin, left, right, OP_AND, start)
@@ -1665,7 +1665,7 @@ parse_and :: fn(mut p: Parser) -> i64 {
 parse_expr :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     var left := parse_and(p)
-    while (cur(p) == TokenKind::Oror) {
+    while (joins_line(p) && cur(p) == TokenKind::Oror) {
         advance(p)
         right := parse_and(p)
         left = new_node_at(p, NodeKind::Bin, left, right, OP_OR, start)
@@ -3490,6 +3490,20 @@ breaks_between :: fn(src: str, from: i64, to: i64) -> bool {
     false
 }
 
+// Whether a token joins the line it opens to the line above it. A `-` is not
+// one: it opens a statement by negating what follows.
+continues_an_expression :: fn(kind: TokenKind) -> bool {
+    (kind == TokenKind::Plus || kind == TokenKind::Star
+        || kind == TokenKind::Slash || kind == TokenKind::Percent
+        || kind == TokenKind::Andand || kind == TokenKind::Oror
+        || kind == TokenKind::Pipe || kind == TokenKind::Amp
+        || kind == TokenKind::Eqeq || kind == TokenKind::Ne
+        || kind == TokenKind::Lt || kind == TokenKind::Le
+        || kind == TokenKind::Gt || kind == TokenKind::Ge
+        || kind == TokenKind::Shl || kind == TokenKind::Shr
+        || kind == TokenKind::Dot)
+}
+
 parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
     var head: i64 = -1
     var tail: i64 = -1
@@ -3510,6 +3524,17 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
     while (cur(p) != terminator && cur(p) != TokenKind::Eof) {
         // Where this statement began, and whether it opened with a minus after
         // something else. Read before parsing, since parsing moves the cursor.
+        // A line break ends a statement, so an operator that opens a line has
+        // nothing above it to join to.
+        if (continues_an_expression(cur(p))) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a line cannot open with '")
+            report_src(p.src, cur_off(p), cur_len(p))
+            report("': a line break ends a statement, so there is nothing above for it to join to. An expression that runs over lines goes inside brackets, where a line break says nothing")
+            frost_rt_recover_note()
+            synchronize_statement(p, terminator)
+            continue
+        }
         opened_with_minus := head != (-1) && cur(p) == TokenKind::Minus
         minus_at := cur_off(p)
         // Every statement of a block begins at the same column. One indented

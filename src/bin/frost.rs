@@ -549,7 +549,9 @@ fn format_paths(arguments: &[String]) -> Result<bool> {
             .with_context(|| format!("writing {}", file.display()))?;
         println!("formatted {}", file.display());
     }
-    Ok(clean)
+    // Writing the files is the work, so doing it is success. Only `--check`
+    // answers with whether they were already what it writes.
+    Ok(clean || !check)
 }
 
 /// `frost api <prefix> [paths...]`: the exported surface a prefix names.

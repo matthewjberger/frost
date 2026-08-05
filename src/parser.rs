@@ -307,6 +307,9 @@ pub struct Parser<'a> {
     // read the same token for token, so where it is written is what tells them
     // apart.
     block_depth: usize,
+    // How many brackets are open. A line break inside one says nothing, so an
+    // expression may run over lines there and nowhere else.
+    bracket_depth: i32,
 }
 
 // Where a top-level declaration's value ends: at the head of the next one, or
@@ -489,6 +492,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             integer_constants: HashMap::new(),
             generic_types: std::collections::HashSet::new(),
             block_depth: 0,
+            bracket_depth: 0,
         };
         let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
             continue;
@@ -521,6 +525,7 @@ impl<'a> Parser<'a> {
             integer_constants: scan_integer_constants(tokens),
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
+            bracket_depth: 0,
         }
     }
 
@@ -547,6 +552,7 @@ impl<'a> Parser<'a> {
             integer_constants: scan_integer_constants(tokens),
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
+            bracket_depth: 0,
         }
     }
 
@@ -1968,7 +1974,30 @@ impl<'a> Parser<'a> {
                 // ends at the line break and `-x` is a statement of its own.
                 // The other operators have no prefix form, so a line that opens
                 // with one can only be the continuation of the line above it.
-                Token::Minus if !self.on_the_same_line() => break,
+                // A line break ends a statement, so an operator that opens a
+                // line has nothing above it to join to. Inside a bracket a
+                // break says nothing and the expression runs on.
+                Token::Plus
+                | Token::Minus
+                | Token::Slash
+                | Token::Asterisk
+                | Token::Percent
+                | Token::Equal
+                | Token::NotEqual
+                | Token::LessThan
+                | Token::LessThanOrEqual
+                | Token::GreaterThan
+                | Token::GreaterThanOrEqual
+                | Token::And
+                | Token::Or
+                | Token::Ampersand
+                | Token::Pipe
+                | Token::ShiftLeft
+                | Token::ShiftRight
+                    if !self.on_the_same_line() && self.bracket_depth == 0 =>
+                {
+                    break;
+                }
                 Token::Plus
                 | Token::Minus
                 | Token::Slash
@@ -3451,6 +3480,23 @@ impl<'a> Parser<'a> {
             // parsing moves the cursor.
             let opened_with_minus =
                 !statements.is_empty() && self.peek_nth(0) == &Token::Minus;
+            // A line outside brackets is a statement, so it cannot open with an
+            // operator that joins it to the line above. An expression that runs
+            // over lines is written inside the brackets it already needs, where
+            // a line break says nothing at all.
+            if position.line != previous_line
+                && continues_an_expression(self.peek_nth(0))
+            {
+                let written = self.peek_nth(0).to_string();
+                self.record_error(
+                    position,
+                    &anyhow::anyhow!(
+                        "a line cannot open with '{written}': a line break ends a statement, so there is nothing above for it to join to. An expression that runs over lines goes inside brackets, where a line break says nothing"
+                    ),
+                );
+                self.synchronize_in_block();
+                continue;
+            }
             // Every statement of a block begins at the same column. One
             // indented past its neighbours reads as a continuation of the line
             // above, and a continuation that parses as a statement of its own
@@ -3516,7 +3562,17 @@ impl<'a> Parser<'a> {
 
     fn read_token(&mut self) -> &Token {
         self.consumed += 1;
-        self.tokens.next().unwrap_or(&Token::EndOfFile)
+        let held = self.tokens.next().unwrap_or(&Token::EndOfFile);
+        match held {
+            Token::LeftParentheses | Token::LeftBracket => {
+                self.bracket_depth += 1
+            }
+            Token::RightParentheses | Token::RightBracket => {
+                self.bracket_depth -= 1
+            }
+            _ => {}
+        }
+        held
     }
 
     fn peek_nth(&self, n: usize) -> &Token {
@@ -3558,6 +3614,34 @@ impl<'a> Parser<'a> {
             .ast
             .push_expr(Expression::Unsafe(body), self.span_from(start)))
     }
+}
+
+/// Whether a token joins the line it opens to the line above it.
+///
+/// Every binary operator, and the `.` that reaches into a value. A `-` is not
+/// one: it opens a statement by negating what follows, which is the rule
+/// `opened_with_minus` is about.
+pub fn continues_an_expression(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Plus
+            | Token::Asterisk
+            | Token::Slash
+            | Token::Percent
+            | Token::And
+            | Token::Or
+            | Token::Pipe
+            | Token::Ampersand
+            | Token::Equal
+            | Token::NotEqual
+            | Token::LessThan
+            | Token::LessThanOrEqual
+            | Token::GreaterThan
+            | Token::GreaterThanOrEqual
+            | Token::ShiftLeft
+            | Token::ShiftRight
+            | Token::Dot
+    )
 }
 
 #[cfg(test)]
