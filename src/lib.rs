@@ -12,6 +12,8 @@ pub use diagnostic::{
 };
 mod fixes;
 pub use fixes::{Edit, byte_offset, edit_for};
+mod api;
+pub use api::{Exported, exported, nearest, sources};
 mod declared_types;
 pub use declared_types::check_declared_types;
 mod format;

@@ -28,6 +28,11 @@ pub struct Manifest {
     // is what leaves the standard library and a one-file program alone.
     #[serde(default)]
     pub layers: Vec<String>,
+    // The prefix a file's exported names must share, by the directory the file
+    // sits under. A flat namespace is navigated by prefix, so a family that
+    // does not share one cannot be asked for with `frost api`.
+    #[serde(default)]
+    pub prefixes: std::collections::BTreeMap<String, String>,
 }
 
 pub const MANIFEST_NAME: &str = "frost.json";

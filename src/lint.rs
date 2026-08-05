@@ -16,10 +16,12 @@ pub fn lint(
     roots: &[StmtId],
     exported: &[String],
     tokens: &[Token],
+    prefix: Option<&str>,
 ) -> Vec<Diagnostic> {
     let mut found = Vec::new();
     found.extend(idle_unsafe_blocks(ast, roots));
     found.extend(unreachable_functions(ast, roots, exported, tokens));
+    found.extend(stray_prefixes(ast, roots, exported, prefix));
     found.sort_by_key(|held| {
         (held.position.file, held.position.line, held.position.column)
     });
@@ -88,6 +90,45 @@ fn unreachable_functions(
     found
 }
 
+/// An exported name outside the prefix its directory declares.
+///
+/// A finding rather than a fault: the name is a convention, and a build that
+/// refuses on one blocks work that is otherwise correct. `frost lint` exits
+/// nonzero, which is what lets a project hold the line where it wants to.
+fn stray_prefixes(
+    ast: &Ast,
+    roots: &[StmtId],
+    exported: &[String],
+    prefix: Option<&str>,
+) -> Vec<Diagnostic> {
+    let Some(prefix) = prefix else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for statement in roots {
+        let (Statement::Constant(name, _)
+        | Statement::Struct(name, ..)
+        | Statement::Enum(name, ..)) = ast.stmt(*statement)
+        else {
+            continue;
+        };
+        let name = ast.name(*name);
+        if !exported.iter().any(|held| held == name) {
+            continue;
+        }
+        if name.starts_with(prefix) {
+            continue;
+        }
+        found.push(Diagnostic::new(
+            ast.stmt_position(*statement),
+            format!(
+                "'{name}' is exported from a directory whose names begin with '{prefix}', and it does not"
+            ),
+        ));
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,7 +141,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let module = parser.parse().unwrap();
         let exports: Vec<String> = parser.exports().to_vec();
-        lint(&module.ast, &module.roots, &exports, &tokens)
+        lint(&module.ast, &module.roots, &exports, &tokens, None)
             .iter()
             .map(|held| held.message.clone())
             .collect()
