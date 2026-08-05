@@ -608,6 +608,9 @@ fn rvalue_expr(
                 }
                 IrUnOp::Negate => format!("(-({expr}))"),
                 IrUnOp::Not => format!("(!({expr}))"),
+                IrUnOp::TrailingZeros => {
+                    format!("((int64_t)__builtin_ctzll((uint64_t)({expr})))")
+                }
             }
         }
         IrRvalue::Cast(operand, target) => {
@@ -802,10 +805,18 @@ fn checked_binary(op: IrBinOp, left: &str, right: &str, ty: &Type) -> String {
         }
         IrBinOp::Divide => call("div"),
         IrBinOp::Modulo => call("rem"),
-        IrBinOp::ShiftLeft | IrBinOp::ShiftRight => narrow(
+        // Shifted as a bit pattern, which is what a shift is here. Moving a one
+        // into the sign bit of a signed C type is undefined, and slot
+        // sixty-three of a liveness word is exactly that shift.
+        IrBinOp::ShiftLeft => narrow(
             format!(
-                "(({left}) {} frost_shift((int64_t)({right}), {bits}))",
-                binary_operator(op)
+                "(int64_t)((uint64_t)({left}) << frost_shift((int64_t)({right}), {bits}))"
+            ),
+            8,
+        ),
+        IrBinOp::ShiftRight => narrow(
+            format!(
+                "(({left}) >> frost_shift((int64_t)({right}), {bits}))"
             ),
             8,
         ),

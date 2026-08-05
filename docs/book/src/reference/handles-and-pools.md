@@ -47,8 +47,67 @@ element scatter `c[handle] = value` are compiler-supplied for the reason
 `pool[handle]` is (10.2): they select a column before indexing, which a
 second-class borrow cannot express. Everything else is a library,
 `std/columns.frost`, mirroring `std/slab.frost`. The reserved field names are
-`storage`, `generations`, `free_list`, and `free_count`. See
-[pools-and-columns.md](../design/pools-and-columns.md).
+`storage`, `generations`, `free_list`, `free_count`, `live_words`, and
+`live_count`. See [pools-and-columns.md](../design/pools-and-columns.md).
+
+## 10.1b `for slot in live(c)`
+
+`c.field` is every slot, released ones included, and nothing about it says which
+of them hold an element. `c[handle].field` is one slot and is checked. So the
+shortest loop over a column is the one that reads storage nobody put anything in,
+which is wasted work for an integration step and a wrong answer for a sum.
+
+`live(c)` is what that loop should have said:
+
+```frost
+for slot in live(c) {
+    c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
+}
+```
+
+Two characters longer than `for slot in 0..N`, and it does not need `N` in
+scope. The body is unchanged: `slot` is a number, columns are indexed with it,
+and no generation is read, because the walk answered that question by finding
+the slot.
+
+`for rank, slot in live(c)` counts the elements as it goes, in the same order
+`for index, name in` reads in, which is what compacting into a packed buffer
+wants:
+
+```frost
+for rank, slot in live(c) {
+    upload[rank] = c.position[slot]
+}
+```
+
+`live(c)` is the subject of a `for` and may be written nowhere else. There is no
+sequence value, nothing to bind, and nothing to hand on. Its subject is a name or
+a field of one, since the container is read where it stands rather than bound.
+
+The container records which slots hold an element as one bit each in
+`live_words`, set by `columns_insert` and cleared by `columns_release`. The walk
+reads those words: one that is zero passes over sixty-four slots on a single
+test, and one with bits set gives up its lowest, clears it, and goes round. No
+slot is asked whether it holds an element and no empty slot is reached. `break`
+and `continue` mean what they mean in any other loop.
+
+What the form cannot say, which is why the raw column walk stays:
+
+- A column as a contiguous slice. `c.position` is a `[]Vec3` over all `N` slots,
+  which is what a bulk copy, a GPU upload or a C call takes. A live walk hands
+  out one slot at a time and can never produce a run.
+- Any order but ascending, once. Reverse, stride, two-pointer, binary search over
+  a sorted column.
+- A neighbour. `c.x[slot - 1]` is writable, but that slot may hold nothing and
+  the walk does not say. A prefix sum or a finite difference belongs to a
+  container the program knows is packed.
+- Two containers in lockstep. There is no zip, and two walks have unrelated
+  bits. A parallel array outside the container indexed by the same `slot` is
+  fine, which is most of what zip is wanted for.
+- Inserting or releasing into the container being walked. That edits the words
+  the walk is reading.
+- A container that is never fragmented, where every word is full and the
+  per-word test buys nothing against `for slot in 0..N`.
 
 ## 10.2 `pool[handle]` is a place
 
@@ -79,13 +138,37 @@ increments its generation. A lookup whose handle generation does not match the
 slot's current generation aborts rather than returning the slot's new occupant,
 so a stale handle can never read or write freed-and-reused data.
 
-The generation occupies the top 32 bits of the handle and is read back
-sign-extended, so a slot's count may reach 2^31 - 1 and no further: past that
-the generation packed into a handle no longer equals the slot's own count, and
-the slot would hand out handles that were stale the moment they were made. A
-slot that reaches the bound is retired rather than returned to the free list, so
-the container loses one place and stays correct. Reaching it takes two billion
-releases of a single slot.
+The top 32 bits of a handle hold the container's number in the upper seven and
+the slot's generation in the lower twenty-four, and the two are compared as one
+word. So a slot's count may reach 2^24 - 2 and no further: one more would carry
+into the container's number and the slot would answer for a container it is not
+in. A slot that reaches the bound is retired rather than returned to the free
+list, so the container loses one place and stays correct. Reaching it takes
+sixteen million releases of a single slot.
+
+### A handle names its container
+
+A generation says a slot has been reused. It says nothing about which container
+the slot is in, and two containers of the same element type and capacity are the
+ordinary shape: `active` and `pending`, `current` and `next`. A handle from one
+used against the other has an index in range on both, and its generation matches
+whenever the two slots have been released the same number of times. Right after
+both are reset that is every slot, because every generation is zero. The state
+with no protection at all is the one a program starts in.
+
+`slab_reset` and `columns_reset` take a number for the container from
+`frost_rt_container_id` and stamp it into every generation, so a handle carries
+which container minted it. A deref against another container aborts, saying so.
+
+It costs nothing where a handle is read. The number sits in the same word as the
+generation, the deref already compares that word, and a handle is still an `i64`
+that converts freely. A container stores no handles, only `generations`, so no
+layout changes: `columns<T, N>` is what it was.
+
+Two containers share a number once in a hundred and twenty-seven, and a program
+that resets a container in a loop comes back round to the same one after that
+many. Where it is wrong it is wrong the way it was before, and everywhere else a
+handle that was silently read is an abort that names the reason.
 
 The direction of that failure is the point. The check compares the slot's
 ever-increasing count against a sign-extended 32-bit value, so a count past the

@@ -313,6 +313,10 @@ impl IrBinOp {
 pub enum IrUnOp {
     Negate,
     Not,
+    // How many zero bits sit below the lowest set bit. Answered for a nonzero
+    // operand only, which is what the live walk asks it, so the value on zero
+    // is whatever the target's instruction gives.
+    TrailingZeros,
 }
 
 #[derive(Debug, Clone)]

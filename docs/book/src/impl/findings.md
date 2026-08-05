@@ -318,3 +318,105 @@ The write reaches the caller's array, which is what `mut` means everywhere else
 in the language. All five backends agree on all six positions now, and the
 program above is in the same-language table under
 `an_array_parameter_is_sliced_where_the_caller_holds_it`.
+
+## A container that could not say which slots were filled
+
+`columns<T, N>` had two access forms and neither answered the question a system
+asks most: which slots hold an element. `c.field` is the whole `[N]` array,
+released slots included, unchecked. `c[handle].field` is one slot, checked. So
+the shortest loop to write, and the one a model writes from a spec, walks the
+capacity and reads storage nobody filled.
+
+The check exists per handle. The fast path was defined as the path around it.
+
+Reading the container to design a live walk turned up the sharper version: **the
+correct loop could not be written at all.** `columns_insert` does not touch
+`generations` and `columns_release` bumps it, so a slot at generation zero is one
+that was never filled as much as one that is live. Nothing distinguished them.
+Liveness existed in exactly one place, `free_list[0..free_count]`, which is in
+release order and would cost a scan per slot to consult. So a live walk needed
+new bookkeeping before it needed syntax.
+
+`live_words` is one bit per slot in slot order, which is the order a column is
+stored in. A dense list of live indices would also give a branchless walk, but it
+scrambles the order into a gather, and striding a column is the entire reason the
+container is structure-of-arrays. `N/8` bytes against `16N` for a dense list and
+its inverse.
+
+The surface is two characters longer than the wrong loop:
+
+```frost
+for slot in 0..N     { ... }
+for slot in live(c)  { ... }
+```
+
+and it drops the requirement that `N` be in scope, which inside a generic is a
+`$N` parameter threaded only to bound a loop.
+
+### The dense fast path was not worth its code
+
+The first design split the walk in two: a word of all ones ran a sixty-four trip
+counted loop with no bit arithmetic, and a partial word walked set bits. It was
+meant to make the common case the loop a hand-written packed walk emits.
+
+It costs a second copy of the body at every walk. And the vectorization it was
+supposed to enable does not happen: the body indexes columns with a value the
+compiler would have to prove affine through a bitset, which neither Cranelift nor
+the C backend does. What it actually bought was two ALU operations per element,
+neither of which branches.
+
+One loop shape now, in both compilers. Dead slots are still skipped sixty-four
+at a time and no element is asked whether it is live.
+
+### `break` decided the shape of the self-hosted walk
+
+The bootstrap builds the walk out of blocks, so `break` jumps to the exit block
+and leaves the whole thing. The self-hosted compiler writes a `for` out as source
+in the parser, where a `break` inside the inner of two loops leaves only that
+one, and there is no labelled break. A word loop holding a bit loop would have
+made `break` in the reader's body continue to the next word.
+
+So the self-hosted walk is one loop with the refill as a branch inside it. It
+pays a compare per element that is taken once in sixty-four, and `break` and
+`continue` mean what they mean anywhere else. Both compilers pass the same
+program in the same-language table, which is where that had to be settled.
+
+## A handle said which slot, never which container
+
+A `Handle<T>` carried a slot index and a generation. The generation catches a
+handle to a slot that has been released and refilled. It says nothing about which
+container the slot is in.
+
+Two containers of the same element type and the same capacity are the ordinary
+shape: `active` and `pending`, `current` and `next`, front and back. A handle from
+one used against the other has an index in range on both, and the generations
+match whenever the two slots have been released the same number of times.
+Differing capacities turn most such uses into a bounds abort, so the exposure was
+narrowest exactly where it is most likely to be written.
+
+The framing that decided it was reading `slab_reset`: it writes zero to every
+generation. So right after two containers are reset, **every** cross-container
+handle validates, on every slot. Not a coincidence in the tail, and not
+probabilistic: a guaranteed false accept, in the state every program starts in.
+
+The fix is seven bits taken from the generation and stamped into every entry of
+`generations` at reset, from a counter in the runtime. It costs:
+
+- **nothing per handle.** Still an `i64`, still converts freely.
+- **nothing per deref.** The number sits in the same word as the generation and
+  the deref already compares that word. A separate field on the container would
+  have cost a load, a shift and an or on every read.
+- **nothing in the layout.** A container stores no handles, only `generations`.
+  `columns<T, N>` is what it was.
+- **generation range**, from 2^31 to 2^24 releases of one slot. Sixteen million,
+  or seventy-seven hours at frame rate on a single slot, and the slot is retired
+  rather than corrupted when it gets there.
+
+Seven bits rather than eight because a packed handle has to stay positive: the
+generation is read back sign-extended, and an eighth bit would put a one in bit
+63 of the handle and make the comparison fail against its own container.
+
+What it does not catch: two containers that draw the same number, one time in a
+hundred and twenty-seven; a container reset in a loop, which comes back round
+after that many; and the `slab_slot` escape hatch, where a caller asks for a raw
+index once and indexes storage with it, which is checked by nothing by design.

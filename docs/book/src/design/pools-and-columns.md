@@ -72,7 +72,8 @@ slab's generational safety unchanged.
 
 `columns<T, N>` is a compiler-synthesized type. For a struct `T` with fields
 `f1..fn`, it lays out one `[N]` array per field, each named after the field, plus
-the same `generations` / `free_list` / `free_count` bookkeeping the slab carries:
+the same `generations` / `free_list` / `free_count` bookkeeping the slab
+carries, and a record of which slots hold an element:
 
 ```frost
 Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
@@ -81,7 +82,8 @@ Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
 //   { position:   [1024]Vec3,
 //     velocity:   [1024]Vec3,
 //     mass:       [1024]f32,
-//     generations:[1024]i64, free_list: [1024]i64, free_count: i64 }
+//     generations:[1024]i64, free_list: [1024]i64, free_count: i64,
+//     live_words:  [16]i64,   live_count: i64 }
 ```
 
 The layout cannot be written in library Frost, because "one array per field of
@@ -110,9 +112,36 @@ same as `std/slab.frost`, so moving a system from arrays-of-structs to
 structure-of-arrays is changing `Slab<T, N>` to `columns<T, N>` and the `slab_`
 prefix to `columns_`, and nothing else in the calling code.
 
-The reserved element-field names are `storage`, `generations`, `free_list`, and
-`free_count`, which would confuse the structural recognizer that tells a columns
-container from a slab. The one operation not provided is the whole-element gather
+### Walking the ones that hold something
+
+`c.field` is every slot and says nothing about which of them are filled;
+`c[handle].field` is one slot and is checked. So the shortest loop over a column
+is the one that reads storage nobody put anything in, which wastes work for an
+integration step and answers wrongly for a sum. Worse, the correct loop could not
+be written at all: an insert does not touch `generations`, so a slot at
+generation zero is one that was never filled as much as one that is live, and
+liveness lived only in the free list, in release order.
+
+`live_words` is that knowledge in the order a column is stored in, one bit per
+slot, set by `columns_insert` and cleared by `columns_release`. `for slot in
+live(c)` walks it: a word of zeroes passes over sixty-four slots on one test, a
+word with bits set gives up its lowest, clears it, and goes round. No slot is
+asked whether it holds an element and no empty slot is reached.
+
+```frost
+for slot in live(c) {
+    c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
+}
+```
+
+Two characters longer than `for slot in 0..N`, needing no `N` in scope, and the
+body is the body either way. The raw walk stays for the container a program knows
+is packed, for a column handed to C or a GPU as one contiguous run, and for any
+order but ascending. 10.1b lists what the walk cannot say.
+
+The reserved element-field names are `storage`, `generations`, `free_list`,
+`free_count`, `live_words`, and `live_count`, which would confuse the structural
+recognizer that tells a columns container from a slab. The one operation not provided is the whole-element gather
 `value := c[handle]`, because recovering a `T` from the separate columns needs
 the element type the layout does not store. Read the fields you want through
 `c[handle].field` instead.

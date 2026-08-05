@@ -745,6 +745,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::Ref
         || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Assert) {
         // Whether a field is reached through a raw pointer is the same
         // question indexing asks, and it has the same answer only here, so it
@@ -1134,6 +1135,7 @@ expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::PtrCast
         || kind == NodeKind::Cast || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Assert || kind == NodeKind::Ref) {
         return expr_consumes(p, left, off, len)
     }
@@ -1828,6 +1830,7 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Field || kind == NodeKind::Deref || kind == NodeKind::AddrOf
         || kind == NodeKind::Ref || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Assert) {
         walk_moves_expr(p, node.a)
         return
@@ -2534,6 +2537,7 @@ walk_runs_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::Ref
         || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Cast || kind == NodeKind::Assert) {
         walk_runs_expr(p, node.a)
         return
@@ -4424,7 +4428,8 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Float) {
         return TY_F64
     }
-    if (kind == NodeKind::SliceLen || kind == NodeKind::Sizeof) {
+    if (kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros || kind == NodeKind::Sizeof) {
         return TY_I64
     }
     frame_place_type(p, id)
@@ -4762,6 +4767,7 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Num || kind == NodeKind::Float
         || kind == NodeKind::StrLit || kind == NodeKind::TypeVal
         || kind == NodeKind::Bin || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Sizeof || kind == NodeKind::Assert) {
         return PROV_OUTLIVES
     }
@@ -5157,7 +5163,8 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
     } else if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::Ref
         || kind == NodeKind::PtrCast || kind == NodeKind::Cast
-        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
+        || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros || kind == NodeKind::Assert) {
         frame_judge_kept(p, node.a, pos)
     }
 }
@@ -5420,7 +5427,8 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     if (kind == NodeKind::Num || kind == NodeKind::Float
         || kind == NodeKind::StrLit || kind == NodeKind::Sizeof
-        || kind == NodeKind::SliceLen || kind == NodeKind::TypeVal
+        || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros || kind == NodeKind::TypeVal
         || kind == NodeKind::Bin) {
         return 0
     }
@@ -5647,7 +5655,8 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
     } else if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::Ref
         || kind == NodeKind::PtrCast || kind == NodeKind::Cast
-        || kind == NodeKind::SliceLen || kind == NodeKind::Assert) {
+        || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros || kind == NodeKind::Assert) {
         grew = grew | kept_walk_expr(p, node.a, params, fn_index)
     }
     grew

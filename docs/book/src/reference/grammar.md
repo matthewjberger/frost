@@ -27,7 +27,7 @@ Statement =
       TopLevel
     | "return" ( Expr ( "," Expr )* )? ";"?
     | "defer" Statement
-    | "for" IDENT ( "," IDENT )? "in" Expr Block
+    | "for" IDENT ( "," IDENT )? "in" ( Expr | LiveWalk ) Block
     | "while" "(" Expr ")" Block
     | "with" IDENT Block                      // a region, 8a
     | "break" ";"?
@@ -177,6 +177,10 @@ StructInit = IDENT "=" Expr ( "," IDENT "=" Expr )* ","?
 is the appropriate shape (a place for `^`, a bare identifier for `{`/`::`). The
 struct-literal `{` is disambiguated from a `match` body by checking that the
 token after `{` is not `case`.
+
+`LiveWalk = "live" "(" Place ")"`, where `Place` is a name or a field of one
+(10.1b). It is written only after the `in` of a `for`: it is the subject of a
+walk, so there is no value for it to be anywhere else.
 
 The `for` form of `Argument` is `g(T) for T in list` (11.1c): the expression is
 written once and the call takes one argument per element of the compile-time

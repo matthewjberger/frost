@@ -24,6 +24,11 @@ value is its trailing expression, when it has one.
 
   A name followed by `{` is a struct literal everywhere else, so the literal is
   not available in the `Expr` of a `for`, whose brace opens the body.
+
+  `for name in live(c) Block` walks the slots of a generational container that
+  hold an element, in slot order, and `for rank, name in live(c) Block` counts
+  them as it goes. `live(c)` is the subject of a `for` and may be written
+  nowhere else. See 10.1b.
 - `break` and `continue` are loop control.
 - `with`, `with name Block` names the allocation source every `uses` call inside
   the block draws from, and makes the block that source's region (8a).

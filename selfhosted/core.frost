@@ -221,6 +221,11 @@ NodeKind :: enum {
     Sizeof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
     SliceLen, Assert, Ref, SliceFrom,
+    // How many zero bits sit below the lowest set bit of an i64. The live walk
+    // is the only thing that builds one, and it builds it only for a word it
+    // has already found to be nonzero, so what a zero answers is whatever the
+    // target's own instruction says.
+    TrailingZeros,
     // Leaving a loop, and going round it again. Both are statements with
     // nothing under them: which loop they mean is the innermost one, decided
     // where they are emitted.

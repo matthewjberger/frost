@@ -1431,3 +1431,20 @@ impl<'a> Splicer<'a> {
         dest.push_expr(node, span)
     }
 }
+
+// The container a `live(c)` walks, when this expression is one. Every pass that
+// only needs the shape asks here; whether the program declares a function by
+// that name is a separate question, and the one pass that knows the answer asks
+// it there.
+pub fn live_subject(ast: &Ast, expression: ExprId) -> Option<ExprId> {
+    let Expression::Call(callee, arguments) = ast.expr(expression) else {
+        return None;
+    };
+    let Expression::Identifier(name) = ast.expr(*callee) else {
+        return None;
+    };
+    if ast.name(*name) != "live" || arguments.len() != 1 {
+        return None;
+    }
+    Some(ast.exprs_in(*arguments)[0])
+}

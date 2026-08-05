@@ -684,6 +684,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text("\")")
         return
     }
+    // Asked only of a word the walk has already found to be nonzero, which is
+    // the one input where the answer is not defined.
+    if (kind == NodeKind::TrailingZeros) {
+        emit_text("((int64_t)__builtin_ctzll((uint64_t)(")
+        emit_expr(p, node.a)
+        emit_text(")))")
+        return
+    }
     if (kind == NodeKind::SliceLen) {
         // An array's length is in its type, so this is a constant there and a
         // field read only for a slice, which carries its own.
@@ -856,15 +864,19 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     // A shift moves by less than the width of what it shifts, and the answer
     // then fits by construction, so the amount is what is answered for.
     if (op == OP_SHL || op == OP_SHR) {
-        emit_text("frost_narrow((")
         // The slot is signed, so an unsigned right shift has to say so or the
-        // sign bit is carried down instead of a zero.
-        if (signed) {
-            emit_text("frost_t[")
+        // sign bit is carried down instead of a zero. A left shift is done on
+        // the bit pattern whatever the type: moving a one into the sign bit of
+        // a signed C type is undefined, and slot sixty-three of a liveness word
+        // is exactly that shift.
+        unsigned_form := signed == false || op == OP_SHL
+        emit_text("frost_narrow((")
+        if (unsigned_form) {
+            emit_text("(int64_t)((uint64_t)frost_t[")
             frost_rt_emit_int(slot)
             emit_text("]")
         } else {
-            emit_text("(int64_t)((uint64_t)frost_t[")
+            emit_text("frost_t[")
             frost_rt_emit_int(slot)
             emit_text("]")
         }
@@ -874,7 +886,7 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
         emit_text("), ")
         frost_rt_emit_int(scalar_size(ty) * 8)
         emit_text("))")
-        if (signed == false) {
+        if (unsigned_form) {
             emit_text(")")
         }
         emit_text(", ")

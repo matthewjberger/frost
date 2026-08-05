@@ -571,6 +571,9 @@ fn unary(op: IrUnOp, value: Value, ty: &Type) -> Value {
             }
         }
         IrUnOp::Not => boolean(value.as_i64() == 0),
+        IrUnOp::TrailingZeros => {
+            Value::Int(value.as_i64().trailing_zeros() as i64)
+        }
     }
 }
 

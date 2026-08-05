@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use crate::ast::{
     Ast, EnumVariant, ExprId, Expression, Literal, NamedExpr, Parameter,
     Pattern, PatternId, Range32, ReturnKind, ReturnSignature, SignatureId,
-    Statement, StmtId, StructField, SwitchCase, Symbol, TokenSpan,
+    Statement, StmtId, StructField, SwitchCase, Symbol, TokenSpan, live_subject,
 };
 use crate::ast_display::{display_expr, display_stmt};
 use crate::ir::{
@@ -21,6 +21,7 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
     "cast",
     "flags_has",
+    "live",
     "ptr_cast",
     "ptr_to",
     "sizeof",
@@ -33,6 +34,27 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "wrap_mul",
     "wrap_sub",
 ];
+
+// The liveness bookkeeping a generational container carries beside its
+// generations and free list, named here because the synthesis writes it, the
+// library maintains it and the `for` walk reads it.
+pub const LIVE_WORDS: &str = "live_words";
+pub const LIVE_COUNT: &str = "live_count";
+const SLOTS_PER_WORD: usize = 64;
+
+// One word per sixty-four slots, and never a zero-length array, since a
+// container of no capacity still has to have the field to be laid out.
+pub fn live_word_count(capacity: usize) -> usize {
+    capacity.div_ceil(SLOTS_PER_WORD).max(1)
+}
+
+// A field of a columns container that belongs to the container rather than to
+// the element, so scattering an element into its slot passes over it.
+pub fn is_columns_bookkeeping(field: &str) -> bool {
+    matches!(field, "generations" | "free_list" | "free_count")
+        || field == LIVE_WORDS
+        || field == LIVE_COUNT
+}
 
 struct FunctionSignature {
     parameters: Vec<Type>,
@@ -3738,6 +3760,17 @@ fn expand_generic_structs(
                 Type::Array(Box::new(Type::I64), count),
             ));
             columns_fields.push(("free_count".to_string(), Type::I64));
+            // Which slots hold an element, one bit each, so `for i in live(c)`
+            // walks them in slot order and skips sixty-four dead slots at a
+            // time. The free list says which slots are free but not in an order
+            // that can be walked, and a generation of zero is a slot that was
+            // never filled as much as one that is. Appended, so every column
+            // above keeps the offset it had.
+            columns_fields.push((
+                LIVE_WORDS.to_string(),
+                Type::Array(Box::new(Type::I64), live_word_count(count)),
+            ));
+            columns_fields.push((LIVE_COUNT.to_string(), Type::I64));
             for (_, field_type) in &columns_fields {
                 collect_instances_in_type(field_type, &mut queue);
             }
@@ -5086,6 +5119,255 @@ impl<'a> FunctionLowering<'a> {
         self.element_address(base, index)
     }
 
+    // `for slot in live(c)`: the slots of a generational container that hold an
+    // element, in slot order. Which ones those are is a bit each in
+    // `live_words`, so a word of zeroes passes over sixty-four slots on one
+    // test, and a word with bits set gives up its lowest one at a time. No slot
+    // is asked whether it holds an element and no empty slot is reached, which
+    // is the whole difference from walking the capacity and testing.
+    //
+    // The slot is a number, so the body indexes columns with it directly and
+    // pays no generation check: the walk answered that question by finding the
+    // bit set. `for rank, slot in live(c)` counts the elements as it goes,
+    // which is what compacting into a packed buffer wants.
+    fn lower_for_live(
+        &mut self,
+        variable: &str,
+        second: Option<&str>,
+        container: ExprId,
+        body: Range32,
+    ) -> Result<()> {
+        // A name, or a field of one. The walk reads the container's liveness
+        // where it stands rather than binding it, so a subject that has to be
+        // worked out would be worked out once a word.
+        if !matches!(
+            self.ast.expr(container),
+            Expression::Identifier(_) | Expression::FieldAccess(..)
+        ) {
+            bail!(
+                "`live` walks a container that is named, not one that is worked out; bind it first and walk the name"
+            );
+        }
+        let Some(struct_name) = self.columns_shaped_base(container) else {
+            bail!(
+                "`live` walks a generational container, and this is not one; write `live(c)` where `c` is a `columns<T, N>`"
+            );
+        };
+        let (words_offset, word_count) = {
+            let layout =
+                self.builder.struct_layout(&struct_name).ok_or_else(|| {
+                    anyhow::anyhow!("unknown columns '{struct_name}'")
+                })?;
+            let words = layout.field(LIVE_WORDS).ok_or_else(|| {
+                anyhow::anyhow!("columns has no '{LIVE_WORDS}' field")
+            })?;
+            let Type::Array(_, count) = &words.ty else {
+                bail!("columns '{LIVE_WORDS}' is not an array");
+            };
+            (words.offset, *count)
+        };
+        let (struct_address, _) = self.struct_place(container)?;
+
+        // With two names the first counts the elements and the second is the
+        // slot, which is the order `for index, name in` already reads in.
+        let slot_name = second.unwrap_or(variable);
+        let rank = match second {
+            Some(_) => {
+                let rank = self.fresh_local(Type::I64, None);
+                self.emit(IrStatement::Assign(
+                    rank,
+                    IrRvalue::Use(IrOperand::Constant(IrConstant::Integer(
+                        0,
+                        Type::I64,
+                    ))),
+                ));
+                Some((variable, rank))
+            }
+            None => None,
+        };
+
+        let word = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            word,
+            IrRvalue::Use(IrOperand::Constant(IrConstant::Integer(
+                0,
+                Type::I64,
+            ))),
+        ));
+
+        let word_header = self.new_block();
+        let word_body = self.new_block();
+        let sparse_header = self.new_block();
+        let sparse_body = self.new_block();
+        let word_step = self.new_block();
+        let exit = self.new_block();
+
+        self.set_terminator(IrTerminator::Jump(word_header));
+
+        self.switch_to(word_header);
+        let more = self.fresh_local(Type::Bool, None);
+        self.emit(IrStatement::Assign(
+            more,
+            IrRvalue::Binary(
+                IrBinOp::LessThan,
+                IrOperand::Local(word),
+                IrOperand::Constant(IrConstant::Integer(
+                    word_count as i64,
+                    Type::I64,
+                )),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Branch {
+            condition: IrOperand::Local(more),
+            then_block: word_body,
+            else_block: exit,
+        });
+
+        self.switch_to(word_body);
+        let word_address = self.slab_field_element_address(
+            struct_address,
+            words_offset,
+            &Type::I64,
+            IrOperand::Local(word),
+        );
+        let bits = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            bits,
+            IrRvalue::Load {
+                address: word_address,
+                ty: Type::I64,
+            },
+        ));
+        let base = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            base,
+            IrRvalue::Binary(
+                IrBinOp::Multiply,
+                IrOperand::Local(word),
+                IrOperand::Constant(IrConstant::Integer(
+                    SLOTS_PER_WORD as i64,
+                    Type::I64,
+                )),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Jump(sparse_header));
+
+        self.switch_to(sparse_header);
+        let any = self.fresh_local(Type::Bool, None);
+        self.emit(IrStatement::Assign(
+            any,
+            IrRvalue::Binary(
+                IrBinOp::NotEqual,
+                IrOperand::Local(bits),
+                IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Branch {
+            condition: IrOperand::Local(any),
+            then_block: sparse_body,
+            else_block: word_step,
+        });
+
+        self.switch_to(sparse_body);
+        let bit = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            bit,
+            IrRvalue::Unary(IrUnOp::TrailingZeros, IrOperand::Local(bits)),
+        ));
+        // `bits & (bits - 1)` drops the bit just taken. The subtraction wraps
+        // because a word whose only live slot is the sixty-fourth is the
+        // lowest i64, and taking one from it is the overflow ordinary
+        // arithmetic refuses.
+        let lower = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            lower,
+            IrRvalue::Binary(
+                IrBinOp::WrappingSubtract,
+                IrOperand::Local(bits),
+                IrOperand::Constant(IrConstant::Integer(1, Type::I64)),
+            ),
+        ));
+        self.emit(IrStatement::Assign(
+            bits,
+            IrRvalue::Binary(
+                IrBinOp::BitwiseAnd,
+                IrOperand::Local(bits),
+                IrOperand::Local(lower),
+            ),
+        ));
+        let sparse_slot =
+            self.fresh_local(Type::I64, Some(slot_name.to_string()));
+        self.emit(IrStatement::Assign(
+            sparse_slot,
+            IrRvalue::Binary(
+                IrBinOp::Add,
+                IrOperand::Local(base),
+                IrOperand::Local(bit),
+            ),
+        ));
+        self.lower_live_body(
+            (slot_name, sparse_slot),
+            rank,
+            body,
+            LoopTargets {
+                continue_block: sparse_header,
+                break_block: exit,
+            },
+        )?;
+        self.set_terminator(IrTerminator::Jump(sparse_header));
+
+        self.switch_to(word_step);
+        self.emit(IrStatement::Assign(
+            word,
+            IrRvalue::Binary(
+                IrBinOp::Add,
+                IrOperand::Local(word),
+                IrOperand::Constant(IrConstant::Integer(1, Type::I64)),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Jump(word_header));
+
+        self.switch_to(exit);
+        Ok(())
+    }
+
+    // The body of a live walk, lowered once per path with the slot and the
+    // running count in scope. The count is taken and advanced before the body
+    // for the same reason the dense path advances its step there.
+    fn lower_live_body(
+        &mut self,
+        slot: (&str, LocalId),
+        rank: Option<(&str, LocalId)>,
+        body: Range32,
+        targets: LoopTargets,
+    ) -> Result<()> {
+        let (slot_name, slot) = slot;
+        self.push_scope();
+        self.define_variable(slot_name, slot);
+        if let Some((rank_name, rank)) = rank {
+            let taken =
+                self.fresh_local(Type::I64, Some(rank_name.to_string()));
+            self.emit(IrStatement::Assign(
+                taken,
+                IrRvalue::Use(IrOperand::Local(rank)),
+            ));
+            self.emit(IrStatement::Assign(
+                rank,
+                IrRvalue::Binary(
+                    IrBinOp::Add,
+                    IrOperand::Local(rank),
+                    IrOperand::Constant(IrConstant::Integer(1, Type::I64)),
+                ),
+            ));
+            self.define_variable(rank_name, taken);
+        }
+        self.loops.push(targets);
+        self.lower_block(body, None)?;
+        self.loops.pop();
+        self.pop_scope();
+        Ok(())
+    }
+
     fn lower_for(
         &mut self,
         variable: &str,
@@ -5093,6 +5375,11 @@ impl<'a> FunctionLowering<'a> {
         range: ExprId,
         body: Range32,
     ) -> Result<()> {
+        // `live(c)` is the subject of a `for` and nothing else, so it is read
+        // here rather than as an expression that could be held or handed on.
+        if let Some(container) = live_subject(self.ast, range) {
+            return self.lower_for_live(variable, second, container, body);
+        }
         let Expression::Range(start, end, inclusive) =
             self.ast.expr(range).clone()
         else {
@@ -5319,6 +5606,17 @@ impl<'a> FunctionLowering<'a> {
                         .contains_key("columns_new")
                 {
                     return self.lower_columns_new(expected);
+                }
+                // `live(c)` reaching here is one written somewhere other than
+                // after the `in` of a `for`, where it is the subject of the
+                // walk. There is no value it could be: the slots it names are
+                // walked, never held.
+                if let Expression::Identifier(name) = self.ast.expr(callee)
+                    && self.ast.name(*name) == "live"
+                {
+                    bail!(
+                        "`live(c)` is the subject of a `for` and nothing else; write `for slot in live(c)`"
+                    );
                 }
                 if let Some(answered) =
                     self.lower_type_builtin(callee, arguments, expected)?
@@ -8365,12 +8663,7 @@ impl<'a> FunctionLowering<'a> {
             layout
                 .fields
                 .iter()
-                .filter(|field| {
-                    !matches!(
-                        field.name.as_str(),
-                        "generations" | "free_list" | "free_count"
-                    )
-                })
+                .filter(|field| !is_columns_bookkeeping(&field.name))
                 .map(|field| field.name.clone())
                 .collect()
         };
