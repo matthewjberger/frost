@@ -1783,20 +1783,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
         advance(p)
         var length: i64 = -1
         if (cur(p) != TokenKind::Rbracket) {
-            if (cur(p) == TokenKind::Int) {
-                length = cur_val(p)
-            } else {
-                // A `[N]T` inside a generic body, where N is a value parameter,
-                // takes its length from the bound number. Otherwise the name is
-                // a module constant.
-                bound := value_binding_of(p, cur_off(p), cur_len(p))
-                if (bound >= 0) {
-                    length = bound
-                } else {
-                    length = const_value(p, cur_off(p), cur_len(p))
-                }
-            }
-            advance(p)
+            length = parse_size_expr(p)
         }
         advance(p)
         element := parse_type(p)
@@ -2848,6 +2835,82 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
     }
     (cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
         && peek_kind(p, 2) == TokenKind::Comma)
+}
+
+// An array's length: arithmetic over numbers, the constants a module declares,
+// and the size parameters a generic binds. It is arithmetic and nothing else,
+// so working one out is bounded by how it was written, the same bound every
+// other compile-time construct in the language has.
+//
+// A generic body is parsed once per instantiation with its parameters bound, so
+// every name in a length is a number by the time this reads it and the answer
+// is a number too. The bootstrap carries the unbound ones as written and works
+// them out when the generic is instantiated, which is the same language read
+// two ways.
+parse_size_expr :: fn(mut p: Parser) -> i64 {
+    var left := parse_size_term(p)
+    while (cur(p) == TokenKind::Plus || cur(p) == TokenKind::Minus) {
+        adding := cur(p) == TokenKind::Plus
+        advance(p)
+        right := parse_size_term(p)
+        if (adding) {
+            left = left + right
+        } else {
+            left = left - right
+        }
+    }
+    left
+}
+
+parse_size_term :: fn(mut p: Parser) -> i64 {
+    var left := parse_size_atom(p)
+    while (cur(p) == TokenKind::Star || cur(p) == TokenKind::Slash
+        || cur(p) == TokenKind::Percent) {
+        op := cur(p)
+        advance(p)
+        right := parse_size_atom(p)
+        if (op == TokenKind::Star) {
+            left = left * right
+        } else if (op == TokenKind::Slash) {
+            left = left / right
+        } else {
+            left = left % right
+        }
+    }
+    left
+}
+
+// A number, a name standing for one, or a bracketed length. Nothing else: a
+// call or a comparison in a length would be the compile-time interpreter the
+// language does without.
+parse_size_atom :: fn(mut p: Parser) -> i64 {
+    if (cur(p) == TokenKind::Lparen) {
+        advance(p)
+        inner := parse_size_expr(p)
+        advance(p)
+        return inner
+    }
+    if (cur(p) == TokenKind::Int) {
+        held := cur_val(p)
+        advance(p)
+        return held
+    }
+    if (cur(p) != TokenKind::Ident) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("an array's length is a number, a name standing for one, or ")
+        report("arithmetic over those")
+        frost_rt_recover_escape()
+    }
+    // A `[N]T` inside a generic body, where N is a value parameter, takes its
+    // length from the bound number. Otherwise the name is a module constant.
+    bound := value_binding_of(p, cur_off(p), cur_len(p))
+    if (bound >= 0) {
+        advance(p)
+        return bound
+    }
+    held := const_value(p, cur_off(p), cur_len(p))
+    advance(p)
+    held
 }
 
 // A second copy of a named place, node for node, so a walk this writes out can

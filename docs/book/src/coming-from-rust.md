@@ -513,12 +513,7 @@ import "slab.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 16],
-        generations = [0; 16],
-        free_list = [0; 16],
-        free_count = 0,
-    }
+    var world : Slab<Entity, 16> = slab_new()
     slab_reset($Entity, $16, world)
 
     hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
@@ -871,12 +866,7 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = Slab {
-        storage = [Entity { hp = 0, kind = Kind::Player }; 16],
-        generations = [0; 16],
-        free_list = [0; 16],
-        free_count = 0,
-    }
+    var world : Slab<Entity, 16> = slab_new()
     slab_reset($Entity, $16, world)
 
     player := slab_insert($Entity, $16, world,

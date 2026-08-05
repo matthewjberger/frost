@@ -6441,8 +6441,9 @@ check_calls :: fn(mut p: Parser) {
             // `columns_new` is a compiler builtin standing for a zeroed
             // container, so it has no defined symbol. The emitter recognizes
             // it by name. Its zero arguments still satisfy the arity check.
-            is_columns_new := str_range_eq(p.src, name_off, name_len,
-                "columns_new")
+            is_columns_new := (str_range_eq(p.src, name_off, name_len,
+                    "columns_new")
+                || str_range_eq(p.src, name_off, name_len, "slab_new"))
             // A call to a `$f` parameter inside the template it belongs to
             // names no function, since which function it is comes from the
             // call site. The instances of that template are in this arena too,

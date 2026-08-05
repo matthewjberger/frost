@@ -1294,7 +1294,8 @@ is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
         return false
     }
     sym := arena_at(p.fns, node.val)
-    str_range_eq(p.src, sym.off, sym.len, "columns_new")
+    (str_range_eq(p.src, sym.off, sym.len, "columns_new")
+        || str_range_eq(p.src, sym.off, sym.len, "slab_new"))
 }
 
 // Whether a columns field is the container's own bookkeeping rather than a

@@ -4,7 +4,11 @@ use crate::ast::{
     PatternId, Range32, ReturnKind, ReturnSignature, ReturnValue, Statement,
     StmtId, StructField, SwitchCase, Symbol, TokenSpan,
 };
-use crate::{lexer::Position, lexer::Token, types::Type};
+use crate::{
+    lexer::Position,
+    lexer::Token,
+    types::{SizeExpr, SizeOp, Type},
+};
 use anyhow::{Result, bail};
 use std::{
     collections::HashMap,
@@ -3246,6 +3250,59 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// An array's length: `+` and `-` over terms, left to right.
+    fn parse_size_expression(&mut self) -> Result<SizeExpr> {
+        let mut left = self.parse_size_term()?;
+        loop {
+            let op = match self.peek_nth(0) {
+                Token::Plus => SizeOp::Add,
+                Token::Minus => SizeOp::Subtract,
+                _ => return Ok(left),
+            };
+            self.read_token();
+            let right = self.parse_size_term()?;
+            left = SizeExpr::Binary(Box::new(left), op, Box::new(right));
+        }
+    }
+
+    fn parse_size_term(&mut self) -> Result<SizeExpr> {
+        let mut left = self.parse_size_atom()?;
+        loop {
+            let op = match self.peek_nth(0) {
+                Token::Asterisk => SizeOp::Multiply,
+                Token::Slash => SizeOp::Divide,
+                Token::Percent => SizeOp::Modulo,
+                _ => return Ok(left),
+            };
+            self.read_token();
+            let right = self.parse_size_atom()?;
+            left = SizeExpr::Binary(Box::new(left), op, Box::new(right));
+        }
+    }
+
+    /// A number, a name that stands for one, or a bracketed length. Nothing
+    /// else: a length is arithmetic, and a call or a comparison in one would be
+    /// the compile-time interpreter the language does without.
+    fn parse_size_atom(&mut self) -> Result<SizeExpr> {
+        match self.read_token().clone() {
+            Token::Integer(value) => Ok(SizeExpr::Number(value)),
+            Token::Identifier(name) => Ok(SizeExpr::Named(name)),
+            Token::LeftParentheses => {
+                let inner = self.parse_size_expression()?;
+                if !matches!(self.read_token(), Token::RightParentheses) {
+                    bail!("Expected ')' after an array length");
+                }
+                Ok(inner)
+            }
+            token => {
+                let written = token.to_string();
+                Err(self.at_consumed(format!(
+                    "an array's length is a number, a name standing for one, or arithmetic over those, and this is '{written}'"
+                )))
+            }
+        }
+    }
+
     fn parse_type(&mut self) -> Result<Type> {
         let base_type = match self.peek_nth(0) {
             Token::Caret => {
@@ -3281,31 +3338,35 @@ impl<'a> Parser<'a> {
                 if matches!(self.peek_nth(0), Token::RightBracket) {
                     self.read_token();
                     Type::Slice(Box::new(self.parse_type()?))
-                } else if let Token::Integer(size) = self.peek_nth(0) {
-                    let size = *size as usize;
-                    self.read_token();
+                } else if starts_size_expression(
+                    self.peek_nth(0),
+                    self.peek_nth(1),
+                ) {
+                    // A length is arithmetic over numbers, the constants a
+                    // module declares, and the size parameters a generic binds.
+                    // What is known is worked out here, so `[N]u8` where N is a
+                    // constant and `[8]u8` are the same type and nothing
+                    // downstream has to know the difference. What is not stays
+                    // written until the generic that binds it is instantiated.
+                    let size = self.parse_size_expression()?;
                     if !matches!(self.read_token(), Token::RightBracket) {
                         bail!("Expected ']' after array size");
                     }
-                    Type::Array(Box::new(self.parse_type()?), size)
-                } else if let Token::Identifier(size_param) = self.peek_nth(0)
-                    && matches!(self.peek_nth(1), Token::RightBracket)
-                {
-                    let size_param = size_param.to_string();
-                    self.read_token();
-                    self.read_token();
-                    // A name here is a constant when one goes by that name, and
-                    // a generic size parameter otherwise. A constant is folded
-                    // into the type, so `[N]u8` and `[8]u8` are the same type
-                    // and nothing downstream has to know the difference.
-                    let size = self.integer_constants.get(&size_param).copied();
-                    match size {
-                        Some(size) => {
-                            Type::Array(Box::new(self.parse_type()?), size)
+                    let constants = &self.integer_constants;
+                    let known = size
+                        .evaluate(&|name| {
+                            constants
+                                .get(name)
+                                .and_then(|held| i64::try_from(*held).ok())
+                        })
+                        .and_then(|value| usize::try_from(value).ok());
+                    match known {
+                        Some(known) => {
+                            Type::Array(Box::new(self.parse_type()?), known)
                         }
                         None => Type::ArrayGeneric(
                             Box::new(self.parse_type()?),
-                            size_param,
+                            size,
                         ),
                     }
                 } else {
@@ -3642,6 +3703,26 @@ impl<'a> Parser<'a> {
 /// Every binary operator, and the `.` that reaches into a value. A `-` is not
 /// one: it opens a statement by negating what follows, which is the rule
 /// `opened_with_minus` is about.
+/// Whether what follows a `[` is a length rather than the element type of the
+/// `[T; N]` form. A number or a name is one when what comes after it closes the
+/// bracket or continues the arithmetic; `[Vertex; 4]` writes a name too, and the
+/// `;` after it is what tells them apart.
+fn starts_size_expression(first: &Token, second: &Token) -> bool {
+    match first {
+        Token::LeftParentheses => true,
+        Token::Integer(_) | Token::Identifier(_) => matches!(
+            second,
+            Token::RightBracket
+                | Token::Plus
+                | Token::Minus
+                | Token::Asterisk
+                | Token::Slash
+                | Token::Percent
+        ),
+        _ => false,
+    }
+}
+
 pub fn continues_an_expression(token: &Token) -> bool {
     matches!(
         token,

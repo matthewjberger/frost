@@ -9045,10 +9045,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 4> = Slab {
-        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],
-        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,
-    }
+    var world : Slab<Entity, 4> = slab_new()
     reset(world)
     hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})
     foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})
@@ -9101,7 +9098,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    var w : Slab<Entity, 4> = Slab { storage=[Entity{hp=0},Entity{hp=0},Entity{hp=0},Entity{hp=0}], generations=[0,0,0,0], free_list=[0,0,0,0], free_count=0 }
+    var w : Slab<Entity, 4> = slab_new()
     reset(w)
     old : Handle<Entity> = insert(w, Entity{hp=100})
     release(w, old)
@@ -9151,10 +9148,7 @@ const SELFHOSTED_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    var world : Slab = Slab {\n",
-    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
-    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
-    "    }\n",
+    "    var world : Slab = slab_new()\n",
     "    reset(world)\n",
     "    hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})\n",
     "    foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})\n",
@@ -9204,10 +9198,7 @@ const SELFHOSTED_SLAB_STALE: &str = concat!(
     "    s.free_count = s.free_count + 1\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    var world : Slab = Slab {\n",
-    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
-    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
-    "    }\n",
+    "    var world : Slab = slab_new()\n",
     "    reset(world)\n",
     "    old : Handle<Entity> = insert(world, Entity{hp=100, mana=0})\n",
     "    release(world, old)\n",
@@ -9298,10 +9289,7 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    var world : Slab<Entity, 4> = Slab {\n",
-    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
-    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
-    "    }\n",
+    "    var world : Slab<Entity, 4> = slab_new()\n",
     "    slab_reset($Entity, $4, world)\n",
     "    hero := slab_insert($Entity, $4, world, Entity{hp=100, mana=30})\n",
     "    foe := slab_insert($Entity, $4, world, Entity{hp=40, mana=10})\n",
@@ -10173,15 +10161,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    var world : Slab = Slab {
-        storage = [
-            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
-        ],
-        generations = [0, 0, 0, 0],
-        free_list = [0, 0, 0, 0],
-        free_count = 0,
-    }
+    var world : Slab = slab_new()
     slab_reset(world)
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
     foe := slab_insert(world, Entity { hp = 40, mana = 10 })
@@ -10969,12 +10949,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", size_of($i64)) }
     unsafe { printf("%lld\n", size_of($Entity)) }
 
-    var world : Slab<Entity, 16> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 16],
-        free_list = [0; 16],
-        generations = [0; 16],
-        free_count = 0,
-    }
+    var world : Slab<Entity, 16> = slab_new()
     h := insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
     unsafe { printf("%lld\n", world[h].hp + world[h].mana) }
     0
@@ -11016,11 +10991,7 @@ main :: fn() -> i64 {
     inferred := Pair { first = 30, second = 12 }
     unsafe { printf("%lld\n", inferred.first + inferred.second) }
 
-    var pool : Slab<Pair<i64>, 4> = Slab {
-        storage = [zero_pair(); 4],
-        generations = [0; 4],
-        free_count = 0,
-    }
+    var pool : Slab<Pair<i64>, 4> = slab_new()
     h := insert($Pair<i64>, $4, pool, Pair { first = 3, second = 4 })
     unsafe { printf("%lld\n", pool[h].first + pool[h].second) }
     0
@@ -11437,12 +11408,7 @@ total :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 8> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 8],
-        generations = [0; 8],
-        free_list = [0; 8],
-        free_count = 0,
-    }
+    var world : Slab<Entity, 8> = slab_new()
     reset($Entity, $8, world)
 
     ha := insert($Entity, $8, world, Entity { hp = 50, mana = 10 })
@@ -12090,12 +12056,7 @@ index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 429496
 generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
 
 main :: fn() -> i64 {
-    var p : Slab<Entity, 8> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 8],
-        generations = [0; 8],
-        free_list = [0; 8],
-        free_count = 0,
-    }
+    var p : Slab<Entity, 8> = slab_new()
     reset($Entity, $8, p)
 
     ha := insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
@@ -16018,7 +15979,7 @@ zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 })) }
 
-    var pool : Slab<Pair<i64>, 4> = Slab { storage = [zero(); 4], count = 0 }
+    var pool : Slab<Pair<i64>, 4> = slab_new()
     h := insert($Pair<i64>, $4, pool, Pair { first = 10, second = 20 })
     unsafe { printf("%lld\n", pool.storage[h].first + pool.storage[h].second) }
     0
@@ -16537,12 +16498,7 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
                   File :: linear struct { fd: i64 }\n\
                   Node :: struct { file: File, hp: i64 }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   var pool : Slab<Node, 2> = Slab {\n\
-                  \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
-                  \x20       generations = [0; 2],\n\
-                  \x20       free_list = [0; 2],\n\
-                  \x20       free_count = 0,\n\
-                  \x20   }\n\
+                  \x20   var pool : Slab<Node, 2> = slab_new()\n\
                   \x20   0\n}\n";
     // The self-hosted half is in REFUSED_BY_BOTH.
     let bootstrap = bootstrap_refusal("poolboot", source);
@@ -16988,12 +16944,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var pool : Slab<Node, 2> = Slab {\n\
-         \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
-         \x20       generations = [0; 2],\n\
-         \x20       free_list = [0; 2],\n\
-         \x20       free_count = 0,\n\
-         \x20   }\n\
+         \x20   var pool : Slab<Node, 2> = slab_new()\n\
          \x20   0\n}\n",
         "is a pool of",
     ),
@@ -17008,7 +16959,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          fresh :: fn($T: Type, $N: usize, seed: $T) -> Slab<T, N> {\n\
-         \x20   Slab { storage = [seed; N], generations = [0; N] }\n}\n\
+         \x20   slab_new()\n}\n\
          main :: fn() -> i64 {\n\
          \x20   pool := fresh($Node, $2, Node { file = File { fd = 1 }, hp = 0 })\n\
          \x20   0\n}\n",
@@ -20378,6 +20329,87 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // An array's length is arithmetic over numbers, module constants, and the
+    // size parameters a generic binds. `Slab<T, N>` needs it: one liveness word
+    // per sixty-four slots is `[(N + 63) / 64]i64`, and a length that could only
+    // be a number or a name could not say it. The bootstrap carries a length
+    // whose names are still unbound as written and works it out where the
+    // generic is instantiated; the self-hosted compiler parses a body once per
+    // instantiation with the parameters bound, so it works it out on the spot.
+    (
+        "an_array_length_is_arithmetic",
+        "import \"io.frost\"
+         SIDE :: 6
+         Grid :: struct($N: usize) { cells: [N * N]i64, rows: [(N + 1) / 2]i64 }
+         filled :: fn($N: usize, mut g: Grid<N>) -> i64 {
+             var i : i64 = 0
+             while (i < N * N) { g.cells[i] = i  i = i + 1 }
+             var total : i64 = 0
+             for value in g.cells { total = total + value }
+             total
+         }
+         main :: fn() -> i64 {
+             var board : [SIDE * 2]i64 = [0; 12]
+             print_int_line(slice_len(board))
+             var g : Grid<4> = Grid<4> { cells = [0; 16], rows = [0; 2] }
+             print_int_line(filled($4, g))
+             print_int_line(slice_len(g.rows))
+             0
+         }
+",
+        "12
+120
+2
+",
+    ),
+    // A slab carries the same record of which slots are filled, so the same
+    // walk reads it. `slab_new()` is what a literal was: a slab has arrays
+    // whose lengths are worked out from `N`, and enumerating them at every
+    // construction was already the worst part of writing one.
+    (
+        "a_live_walk_reaches_a_slab_too",
+        "import \"io.frost\"
+         import \"slab.frost\"
+         Entity :: struct { hp: i64 }
+         main :: fn() -> i64 {
+             var world : Slab<Entity, 130> = slab_new()
+             slab_reset($Entity, $130, world)
+             var made : [130]Handle<Entity> = [0; 130]
+             var i : i64 = 0
+             while (i < 130) {
+                 made[i] = slab_insert($Entity, $130, world,
+                     Entity { hp = i })
+                 i = i + 1
+             }
+             var d : i64 = 0
+             while (d < 130) {
+                 if (d % 3 == 0) {
+                     assert(slab_release($Entity, $130, world, made[d]))
+                 }
+                 d = d + 1
+             }
+             assert(slab_release($Entity, $130, world, made[64]))
+             var total : i64 = 0
+             var seen : i64 = 0
+             var last : i64 = -1
+             for rank, slot in live(world) {
+                 assert(slot > last)
+                 assert(rank == seen)
+                 last = slot
+                 total = total + world.storage[slot].hp
+                 seen = seen + 1
+             }
+             print_int_line(seen)
+             print_int_line(world.live_count)
+             print_int_line(total)
+             0
+         }
+",
+        "85
+85
+5483
+",
+    ),
     // A handle carries which container it came from, not only which slot. Two
     // pools of the same element type and capacity accept each other's handles
     // otherwise: the slot is in range on both and the generations match, and
@@ -20390,20 +20422,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
-             var active : Slab<Entity, 4> = Slab {
-                 storage = [Entity { hp = 0 }, Entity { hp = 0 },
-                     Entity { hp = 0 }, Entity { hp = 0 }],
-                 generations = [0, 0, 0, 0],
-                 free_list = [0, 0, 0, 0],
-                 free_count = 0,
-             }
-             var pending : Slab<Entity, 4> = Slab {
-                 storage = [Entity { hp = 0 }, Entity { hp = 0 },
-                     Entity { hp = 0 }, Entity { hp = 0 }],
-                 generations = [0, 0, 0, 0],
-                 free_list = [0, 0, 0, 0],
-                 free_count = 0,
-             }
+             var active : Slab<Entity, 4> = slab_new()
+             var pending : Slab<Entity, 4> = slab_new()
              slab_reset($Entity, $4, active)
              slab_reset($Entity, $4, pending)
              a := slab_insert($Entity, $4, active, Entity { hp = 11 })

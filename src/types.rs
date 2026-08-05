@@ -1,5 +1,98 @@
 use std::fmt::Display;
 
+/// How long an array is, before the size parameters written in it are known.
+///
+/// A number, a name that stands for one, or arithmetic over those. It is
+/// arithmetic and nothing else: no call, no comparison, no name that is not a
+/// size. So working one out is bounded by how it was written, which is the same
+/// bound every other compile-time construct in the language has.
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash,
+)]
+pub enum SizeExpr {
+    Number(i64),
+    Named(String),
+    Binary(Box<SizeExpr>, SizeOp, Box<SizeExpr>),
+}
+
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+pub enum SizeOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+}
+
+impl SizeExpr {
+    /// The number this works out to, given what the names in it stand for, or
+    /// nothing when a name is still unbound or the arithmetic has no answer.
+    pub fn evaluate(
+        &self,
+        bound: &dyn Fn(&str) -> Option<i64>,
+    ) -> Option<i64> {
+        match self {
+            SizeExpr::Number(value) => Some(*value),
+            SizeExpr::Named(name) => bound(name),
+            SizeExpr::Binary(left, op, right) => {
+                let left = left.evaluate(bound)?;
+                let right = right.evaluate(bound)?;
+                match op {
+                    SizeOp::Add => left.checked_add(right),
+                    SizeOp::Subtract => left.checked_sub(right),
+                    SizeOp::Multiply => left.checked_mul(right),
+                    SizeOp::Divide => left.checked_div(right),
+                    SizeOp::Modulo => left.checked_rem(right),
+                }
+            }
+        }
+    }
+
+    /// The size parameters written in this, so a walk that collects what a
+    /// generic body depends on finds them.
+    pub fn names(&self, out: &mut Vec<String>) {
+        match self {
+            SizeExpr::Number(_) => {}
+            SizeExpr::Named(name) => out.push(name.clone()),
+            SizeExpr::Binary(left, _, right) => {
+                left.names(out);
+                right.names(out);
+            }
+        }
+    }
+}
+
+impl Display for SizeExpr {
+    /// Written back with every operation bracketed, so two spellings that mean
+    /// the same length read the same and the name an instance is mangled under
+    /// does not depend on how it was written.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SizeExpr::Number(value) => write!(f, "{value}"),
+            SizeExpr::Named(name) => write!(f, "{name}"),
+            SizeExpr::Binary(left, op, right) => {
+                let op = match op {
+                    SizeOp::Add => "+",
+                    SizeOp::Subtract => "-",
+                    SizeOp::Multiply => "*",
+                    SizeOp::Divide => "/",
+                    SizeOp::Modulo => "%",
+                };
+                write!(f, "({left} {op} {right})")
+            }
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum Type {
     I8,
@@ -21,7 +114,7 @@ pub enum Type {
     Ref(Box<Type>),
     RefMut(Box<Type>),
     Array(Box<Type>, usize),
-    ArrayGeneric(Box<Type>, String),
+    ArrayGeneric(Box<Type>, SizeExpr),
     ConstUsize(usize),
     // A function named at a call as a compile-time argument, so the body it is
     // substituted into calls it directly rather than through a pointer.

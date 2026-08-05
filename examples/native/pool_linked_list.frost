@@ -33,12 +33,7 @@ sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var p: Slab<Node, 16> = Slab {
-        storage = [Node { value = 0, next = 0 }; 16],
-        generations = [0; 16],
-        free_list = [0; 16],
-        free_count = 0,
-    }
+    var p: Slab<Node, 16> = slab_new()
     slab_reset($Node, $16, p)
 
     var head: i64 = -1

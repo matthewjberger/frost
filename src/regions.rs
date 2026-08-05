@@ -7,7 +7,7 @@ use crate::ast::{
 };
 use crate::lexer::Position;
 use crate::parser::{Diagnostic, ParamMode};
-use crate::types::Type;
+use crate::types::{SizeExpr, Type};
 
 // The region check. A region is the scope in which an arena is live: the body of
 // a `with arena { ... }` block, and the body of a `uses A` function (where the
@@ -2281,7 +2281,7 @@ impl Frame<'_> {
             }
             Expression::ArrayRepeat(inner, count) => Some(Type::ArrayGeneric(
                 Box::new(self.value_type(*inner).unwrap_or(Type::Unknown)),
-                ast.name(*count).to_string(),
+                SizeExpr::Named(ast.name(*count).to_string()),
             )),
             Expression::StructInit(name, _) => {
                 Some(Type::Struct(ast.name(*name).to_string()))
