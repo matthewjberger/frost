@@ -97,7 +97,9 @@ main :: fn() -> i64 {
     print_int_line(total) // 52
     print_int_line(strongest) // 30
 
-    // `_` takes a value the caller has no use for.
+    // `_` takes a value the caller has no use for. A call that can fail may not
+    // be written as a statement, so this is also how an answer is meant to go
+    // unread.
     _, best := tally(party)
     print_int_line(best) // 30
 

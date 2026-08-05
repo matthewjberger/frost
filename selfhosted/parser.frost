@@ -2089,7 +2089,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
             is_linear = holds_linear(p, field_head, template_linear),
             emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0,
-            declared = 1, is_multi = 0 },
+            declared = 1, is_multi = 0, is_result = 0 },
     )
     arena_push(
         p.instances,
@@ -2223,7 +2223,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
             is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
             instance_id = struct_index, is_linear = 0, emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 0 },
+            is_multi = 0, is_result = 0 },
     )
     STRUCT_BASE + struct_index
 }
@@ -2829,9 +2829,12 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
         return true
     }
     // A `_` opens the list the same way a name does, since a caller may want
-    // the second value and none of the first.
+    // the second value and none of the first. A list of one is a list, so
+    // `_ := call()` reads the same way and is how a caller says an answer was
+    // meant to go unread.
     if (cur(p) == TokenKind::Underscore
-        && peek_kind(p, 1) == TokenKind::Comma) {
+        && (peek_kind(p, 1) == TokenKind::Comma
+            || peek_kind(p, 1) == TokenKind::Coloneq)) {
         return true
     }
     (cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
@@ -4721,7 +4724,7 @@ parse_struct :: fn(mut p: Parser) {
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 0, declared = 1, is_multi = 0 })
+                is_enum = 0, declared = 1, is_multi = 0, is_result = 0 })
     } else {
         head := parse_struct_fields(p)
         record_struct(p, entry_index,
@@ -4730,7 +4733,7 @@ parse_struct :: fn(mut p: Parser) {
                 tparam_len = 0, field_token = 0, instance_id = -1,
                 is_linear = holds_linear(p, head, linear_flag), emitted = 0,
                 xparam_start = 0, xparam_count = 0, is_enum = 0,
-                declared = 1, is_multi = 0 })
+                declared = 1, is_multi = 0, is_result = 0 })
     }
 }
 
@@ -4905,7 +4908,7 @@ parse_enum :: fn(mut p: Parser) {
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 1, declared = 1, is_multi = 0 })
+                is_enum = 1, declared = 1, is_multi = 0, is_result = 0 })
         return
     }
     // The enum's own index is known before its body is, since a variant has to
@@ -4921,7 +4924,7 @@ parse_enum :: fn(mut p: Parser) {
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = -1,
             is_linear = linear_flag, emitted = 0, xparam_start = 0,
-            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0 })
+            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0, is_result = 0 })
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -5263,7 +5266,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             field_token = 0, instance_id = -1,
             is_linear = result_is_linear(p, ok, bad), emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1,
-            is_multi = 0 },
+            is_multi = 0, is_result = 1 },
     )
     result_ty := STRUCT_BASE + index
     arena_push(
@@ -5366,7 +5369,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = -1, is_linear = 0, emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 1 },
+            is_multi = 1, is_result = 0 },
     )
     p.multi_count = count
     STRUCT_BASE + index
@@ -5730,7 +5733,7 @@ predeclare_types :: fn(mut p: Parser) {
                         tparam_off = 0, tparam_len = 0, field_token = 0,
                         instance_id = -1, is_linear = 0, emitted = 0,
                         xparam_start = 0, xparam_count = 0,
-                        is_enum = holds_variants, declared = 0, is_multi = 0 },
+                        is_enum = holds_variants, declared = 0, is_multi = 0, is_result = 0 },
                 )
             }
         }
