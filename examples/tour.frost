@@ -53,6 +53,13 @@ Particle :: struct { x: i64 }
 Header :: packed struct { magic: u32, kind: u8, length: u32 }
 Block :: struct { flag: u8, weight: i64 align(16) }
 
+// A call written where a compile-time value is read is run before the program
+// is. Nothing marks the function: `round_up` is an ordinary one, and what says
+// this call is worked out early is that a constant is.
+round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
+
+LANES :: round_up(300, 64)
+
 close :: fn(move s: Session) -> i64 {
     s.id
 }
@@ -140,6 +147,7 @@ main :: fn() -> i64 {
     // the whole type.
     print_int_line(sizeof(Header)) // 9
     print_int_line(sizeof(Block)) // 32
+    print_int_line(LANES) // 320, worked out before this program ran
 
     s := Session { id = 7 }
     print_int_line(close(s)) // s cannot be named again

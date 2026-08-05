@@ -992,13 +992,15 @@ fn compile() -> Result<()> {
     // A generic type this file imports may be named in a literal here, so which
     // names can start one is settled from the files it imports as well as from
     // this one.
-    parser.also_generic(frost::imported_generic_types(
+    let imported = frost::imported_generic_types(
         &source,
         &base_dir,
         &roots,
         &layers,
         &project_root,
-    ));
+    );
+    parser.also_generic(imported.generic_types);
+    parser.also_const_functions(imported.const_functions);
     parser.preload_diagnostics(lexer.diagnostics_in_file(entry));
     // The reports themselves rather than the text they render as, so a caller
     // reading JSON gets the parse's faults as reports and the edits they carry.

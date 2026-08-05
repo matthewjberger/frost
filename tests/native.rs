@@ -4986,7 +4986,7 @@ fn the_tour_prints_what_its_comments_claim() {
     // still hold something, a handle from another container refused, and the
     // session's id handed back by the `move` that consumed it, with the two
     // stated layouts read off between them.
-    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n7\n");
+    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n7\n");
 }
 
 // The self-hosted compiler passes a struct to C by value too, through both of
@@ -6484,6 +6484,88 @@ fn a_stated_layout_crosses_a_module() {
             hosted, "9\n32\n0\n4\n5\n0\n16\n",
             "the two compilers disagreed"
         );
+    }
+}
+
+// A compile-time call names a function the file can name, which is what it
+// declares and what the files it imports export. The two compilers arrive at
+// that rule from opposite ends: the self-hosted compiler holds every module in
+// one token stream and asks the same visibility question every other name asks,
+// while the bootstrap lexes each imported file before the parse and keeps the
+// exported bodies. A private name in an imported module is in neither.
+#[test]
+fn a_compile_time_call_crosses_a_module() {
+    let directory = std::env::temp_dir().join("frost_const_module");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("sizes.frost"),
+        "export round_up, next_power_of_two\n\
+         round_up :: fn(value: i64, to: i64) -> i64 {\n\
+         \x20   (value + to - 1) / to * to\n}\n\
+         next_power_of_two :: fn(n: i64) -> i64 {\n\
+         \x20   var held : i64 = 1\n\
+         \x20   while (held < n) { held = held * 2 }\n\
+         \x20   held\n}\n",
+    )
+    .unwrap();
+    let root = directory.join("const_app.frost");
+    std::fs::write(
+        &root,
+        "import \"io.frost\"\nimport \"lib/sizes.frost\"\n\
+         LANES :: round_up(300, 64)\n\
+         Buffer :: struct { bytes: [next_power_of_two(300)]u8 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print_int_line(LANES)\n\
+         \x20   print_int_line(sizeof(Buffer))\n\
+         \x20   0\n}\n",
+    )
+    .unwrap();
+
+    if !linker_available() {
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "a compile-time call into an imported module did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+
+    let hosted = build_self_hosted_compiler("constmodule").map(|compiler| {
+        let hosted_exe =
+            directory.join(format!("hosted{}", std::env::consts::EXE_SUFFIX));
+        let emitted = Command::new(&compiler)
+            .arg("--link")
+            .arg("-o")
+            .arg(&hosted_exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler refused the imported call:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let ran = Command::new(&hosted_exe).output().unwrap();
+        let _ = std::fs::remove_file(&compiler);
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
+    });
+
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "320\n512\n");
+    if let Some(hosted) = hosted {
+        assert_eq!(hosted, "320\n512\n", "the two compilers disagreed");
     }
 }
 
@@ -17775,6 +17857,54 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "a `packed struct` pads no field",
     ),
+    // A compile-time call is worked out by running it, so one that reaches
+    // itself has no answer to work out.
+    (
+        "a_compile_time_call_that_reaches_itself",
+        "import \"io.frost\"\n\
+         loops :: fn(n: i64) -> i64 { if (n <= 0) { return 0 } loops(n - 1) + 1 }\n\
+         DEEP :: loops(4)\n\
+         main :: fn() -> i64 { print_int_line(DEEP) 0 }\n",
+        "reaches itself",
+    ),
+    // What a compile-time call may do is arithmetic over its arguments. A call
+    // into the world has nothing to answer with before the program runs, and
+    // the name it stops at is the one that reads it.
+    (
+        "a_compile_time_call_that_reads_the_world",
+        "import \"io.frost\"\n\
+         noisy :: fn(n: i64) -> i64 { print_int_line(n) n }\n\
+         SAID :: noisy(4)\n\
+         main :: fn() -> i64 { print_int_line(SAID) 0 }\n",
+        "is not a function this program declares",
+    ),
+    // A body may loop, so how long one takes is not read off the text. The
+    // bound is what says a compile finishes.
+    (
+        "a_compile_time_call_that_never_ends",
+        "import \"io.frost\"\n\
+         spin :: fn(n: i64) -> i64 {\n\
+         \x20   var i : i64 = 0\n\
+         \x20   while (i >= 0) { i = i + 1 }\n\
+         \x20   i\n}\n\
+         FOREVER :: spin(1)\n\
+         main :: fn() -> i64 { print_int_line(FOREVER) 0 }\n",
+        "took more than 1000000 steps",
+    ),
+    // A call is run where it is written, so every argument has to be known
+    // there. A generic binds its size parameter at the instantiation, which is
+    // later, so a call over one is refused and the parameter is named.
+    (
+        "a_compile_time_call_over_a_size_parameter",
+        "import \"io.frost\"\n\
+         twice :: fn(n: i64) -> i64 { n * 2 }\n\
+         Holder :: struct($N: usize) { cells: [twice(N)]i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var h : Holder<4> = Holder<4> { cells = [0; 8] }\n\
+         \x20   print_int_line(slice_len(h.cells))\n\
+         \x20   0\n}\n",
+        "has no value at compile time",
+    ),
 ];
 
 #[test]
@@ -22135,6 +22265,83 @@ main :: fn() -> i64 {
          }
 ",
         "10\n30\n",
+    ),
+    // A call written where a compile-time value is read is worked out before
+    // the program runs. What the vocabulary is, is the whole-number half of the
+    // language: parameters and locals, arithmetic and comparison, `if`,
+    // `while`, `return`, and calls to other functions written the same way. The
+    // two compilers reach it from opposite ends, which is why this is here: the
+    // bootstrap reads the callee's tokens into a parse of its own before the
+    // real one starts, and the self-hosted compiler walks the tokens directly,
+    // because a constant is read before any body is.
+    (
+        "a_compile_time_call_is_worked_out",
+        "import \"io.frost\"
+         round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
+         next_power_of_two :: fn(n: i64) -> i64 {
+             var held : i64 = 1
+             while (held < n) { held = held * 2 }
+             held
+         }
+         pick :: fn(n: i64) -> i64 {
+             if (n > 10) { return n * 2 }
+             n + 1
+         }
+         digits :: fn(n: i64) -> i64 {
+             var left := n
+             var seen : i64 = 0
+             while (true) {
+                 seen = seen + 1
+                 left = left / 10
+                 if (left == 0) { break }
+             }
+             seen
+         }
+         LANES :: round_up(300, 64)
+         SLOTS :: next_power_of_two(300)
+         SMALL :: pick(3)
+         BIG :: pick(30)
+         NESTED :: round_up(next_power_of_two(100), 64)
+         AROUND :: round_up(100, 64) * 2 + 1
+         WIDE :: digits(40325)
+         Buffer :: struct { bytes: [round_up(300, 64)]u8 }
+         main :: fn() -> i64 {
+             print_int_line(LANES)
+             print_int_line(SLOTS)
+             print_int_line(SMALL)
+             print_int_line(BIG)
+             print_int_line(NESTED)
+             print_int_line(AROUND)
+             print_int_line(WIDE)
+             print_int_line(sizeof(Buffer))
+             var held : [next_power_of_two(100)]i64 = [0; 128]
+             print_int_line(slice_len(held))
+             0
+         }
+",
+        "320\n512\n4\n60\n128\n257\n5\n320\n128\n",
+    ),
+    // The smallest i64 has no literal of its own: its magnitude is one past the
+    // largest, so a program writes it as one more than it plus one less and the
+    // fold answers with the number. Every backend then has to carry a value
+    // that has no spelling. The self-hosted assembler read the digits as a
+    // positive number and negated afterwards, which overflowed before the sign
+    // was applied; both C emitters wrote a literal C reads as unsigned and
+    // warns about. Found by the compiler compiling itself, after a constant of
+    // this shape went into its own source.
+    (
+        "the_smallest_whole_number_reaches_every_backend",
+        "import \"io.frost\"
+         SMALLEST :: -9223372036854775807 - 1
+         LARGEST :: 9223372036854775807
+         main :: fn() -> i64 {
+             print_int_line(SMALLEST)
+             print_int_line(LARGEST)
+             print_int_line(SMALLEST + 1)
+             0
+         }
+",
+        "-9223372036854775808\n9223372036854775807\n-9223372036854775807\n",
     ),
 ];
 

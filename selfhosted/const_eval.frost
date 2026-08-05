@@ -1,0 +1,912 @@
+// Working a call out where a compile-time value is read.
+//
+// A constant and an array length are needed before any body is parsed, so this
+// reads the callee straight off the tokens rather than off a tree. What it
+// understands is the whole-number half of the language: parameters and locals,
+// arithmetic and comparison, `if`, `while`, `return`, and calls to other
+// functions written the same way. Everything else is refused where it is
+// written, naming what stopped it.
+
+import "core.frost"
+import "lexer.frost"
+import "cursor.frost"
+import "imports.frost"
+import "names.frost"
+
+export record_const_functions, const_fn_index, const_call, const_arg_push,
+    const_arg_mark, const_call_ahead, const_expr_here, const_int, const_bool,
+    CONST_INT, CONST_BOOL
+
+// How far one evaluation may run. A body may loop, so how long it takes is not
+// read off the text, and this is what says a compile finishes.
+CONST_STEPS :: 1000000
+
+// How deep calls may nest. A function that reaches itself is refused by name,
+// so this is what catches a long chain of distinct functions.
+CONST_DEPTH :: 32
+
+CONST_INT :: 0
+CONST_BOOL :: 1
+
+// What a statement did: ran, left the call with a value, or left a loop.
+FLOW_RAN :: 0
+FLOW_LEFT :: 1
+FLOW_BROKE :: 2
+FLOW_CONTINUED :: 3
+// An expression statement, which is a value where it is the last one of a
+// block and nothing where it is not.
+FLOW_VALUE :: 4
+
+// Whether this is the smallest i64. Its magnitude is one past the largest, so
+// it is the one value whose negation has no answer, and it is asked for that
+// way rather than written down: a literal of it has no spelling that reads back
+// as itself.
+const_is_min :: fn(value: i64) -> bool {
+    value < 0 && wrap_sub(0, value) == value
+}
+
+const_int :: fn(value: i64) -> ConstValue {
+    ConstValue { kind = CONST_INT, value = value }
+}
+
+const_bool :: fn(held: bool) -> ConstValue {
+    var value: i64 = 0
+    if (held) { value = 1 }
+    ConstValue { kind = CONST_BOOL, value = value }
+}
+
+// Every top-level `name :: fn`, as the token its `fn` sits at. Collected once,
+// before any constant is read, because a constant may call a function written
+// below the line that calls it.
+record_const_functions :: fn(mut p: Parser) {
+    start := p.ti
+    var depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbrace || kind == TokenKind::Lparen
+            || kind == TokenKind::Lbracket) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace || kind == TokenKind::Rparen
+            || kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        } else if (depth == 0 && kind == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Coloncolon
+            && peek_kind(p, 2) == TokenKind::KwFn) {
+            arena_push(p.const_fns,
+                ConstFn { name_off = cur_off(p), name_len = cur_len(p),
+                    at = p.ti + 2 })
+        }
+        advance(p)
+    }
+    p.ti = start
+}
+
+// Which recorded function this name reaches from where it was written, or -1.
+// A file may name what it declares and what the files it imports export, which
+// is the rule every other name follows.
+const_fn_index :: fn(mut p: Parser, off: i64, len: i64, use_off: i64) -> i64 {
+    var i: i64 = 0
+    while (i < p.const_fns.count) {
+        entry := arena_at(p.const_fns, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)
+            && name_visible(p, entry.name_off, entry.name_len, use_off)) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Whether the declaration value the cursor stands at calls anything. A name
+// followed by `(` is a call and nothing else is, and the value ends where the
+// next declaration head begins.
+const_call_ahead :: fn(mut p: Parser) -> bool {
+    var ahead: i64 = 0
+    var depth: i64 = 0
+    while (peek_kind(p, ahead) != TokenKind::Eof) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
+            || kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+            || kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        } else if (depth == 0 && ahead > 0 && kind == TokenKind::Ident
+            && peek_kind(p, ahead + 1) == TokenKind::Coloncolon) {
+            return false
+        }
+        if (kind == TokenKind::Ident
+            && peek_kind(p, ahead + 1) == TokenKind::Lparen) {
+            return true
+        }
+        ahead = ahead + 1
+    }
+    false
+}
+
+// One expression worked out where the cursor stands, leaving the cursor past
+// it. This is what a length calling a function reads: the call is run where it
+// is written, so every argument has to be known there.
+const_expr_here :: fn(mut p: Parser, at: i64) -> ConstValue {
+    p.const_steps = 0
+    const_expr(p, at)
+}
+
+const_arg_mark :: fn(mut p: Parser) -> i64 {
+    p.const_args.count
+}
+
+const_arg_push :: fn(mut p: Parser, held: ConstValue) {
+    arena_push(p.const_args, held)
+}
+
+const_fault :: fn(mut p: Parser, at: i64) {
+    report_where(p.modules, p.src, at)
+}
+
+const_spend :: fn(mut p: Parser, at: i64) {
+    p.const_steps = p.const_steps + 1
+    if (p.const_steps > CONST_STEPS) {
+        const_fault(p, at)
+        report("working this out at compile time took more than ")
+        report_int(CONST_STEPS)
+        report(" steps, which is as far as it goes")
+        frost_rt_recover_escape()
+    }
+}
+
+// Run a recorded function over the arguments already on the stack, and answer
+// what it left with. The cursor is saved and put back, so a call worked out in
+// the middle of a parse leaves the parse where it was.
+const_call :: fn(mut p: Parser, index: i64, arg_start: i64, arg_count: i64,
+    at: i64) -> ConstValue {
+    entry := arena_at(p.const_fns, index)
+    name_off := entry.name_off
+    name_len := entry.name_len
+    body_at := entry.at
+    var i: i64 = 0
+    while (i < p.const_stack.count) {
+        held := arena_at(p.const_stack, i)
+        if (held.name_len == name_len
+            && bytes_equal(p.src, held.name_off, name_off, name_len)) {
+            const_fault(p, at)
+            report("'")
+            report_src(p.src, name_off, name_len)
+            report("' reaches itself, and a compile-time call is worked out ")
+            report("by running it, which never ends")
+            frost_rt_recover_escape()
+        }
+        i = i + 1
+    }
+    if (p.const_stack.count >= CONST_DEPTH) {
+        const_fault(p, at)
+        report("a compile-time call may nest ")
+        report_int(CONST_DEPTH)
+        report(" deep and '")
+        report_src(p.src, name_off, name_len)
+        report("' is deeper")
+        frost_rt_recover_escape()
+    }
+    saved := p.ti
+    locals_mark := p.const_locals.count
+    p.ti = body_at
+    advance(p)
+    // The parameters, bound to what the call handed over. A mode word or a
+    // `$` in front of one says the parameter is not a plain value, which is
+    // not something a compile-time call carries.
+    if (cur(p) != TokenKind::Lparen) {
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' is not a function this program declares, so there is ")
+        report("nothing to work out here")
+        frost_rt_recover_escape()
+    }
+    advance(p)
+    var taken: i64 = 0
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
+        if (cur(p) != TokenKind::Ident) {
+            const_fault(p, at)
+            report("'")
+            report_src(p.src, name_off, name_len)
+            report("' takes a parameter a compile-time call cannot hand over")
+            frost_rt_recover_escape()
+        }
+        param_off := cur_off(p)
+        param_len := cur_len(p)
+        advance(p)
+        if (cur(p) == TokenKind::Colon) {
+            advance(p)
+            const_skip_type(p)
+        }
+        if (taken < arg_count) {
+            given := arena_at(p.const_args, arg_start + taken)
+            arena_push(p.const_locals,
+                ConstLocal { name_off = param_off, name_len = param_len,
+                    kind = given.kind, value = given.value })
+        }
+        taken = taken + 1
+        if (cur(p) == TokenKind::Comma) {
+            advance(p)
+        }
+    }
+    advance(p)
+    if (taken != arg_count) {
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' takes ")
+        report_int(taken)
+        report(" arguments and ")
+        report_int(arg_count)
+        report(" were written")
+        frost_rt_recover_escape()
+    }
+    if (cur(p) == TokenKind::Arrow) {
+        advance(p)
+        const_skip_type(p)
+    }
+    if (cur(p) != TokenKind::Lbrace) {
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' is not a function this program declares, so there is ")
+        report("nothing to work out here")
+        frost_rt_recover_escape()
+    }
+    arena_push(p.const_stack,
+        ConstFrame { name_off = name_off, name_len = name_len })
+    answered := const_block(p, at)
+    p.const_stack.count = p.const_stack.count - 1
+    p.const_locals.count = locals_mark
+    p.ti = saved
+    p.const_args.count = arg_start
+    if (answered.flow != FLOW_LEFT) {
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' reached its end without a value, so there is nothing for ")
+        report("the constant to be")
+        frost_rt_recover_escape()
+    }
+    ConstValue { kind = answered.kind, value = answered.value }
+}
+
+// Past a type written after a `:` or an `->`, which a compile-time call reads
+// and does not use: what the arithmetic answers is decided by the values.
+const_skip_type :: fn(mut p: Parser) {
+    var depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbracket || kind == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        } else if (kind == TokenKind::Rparen) {
+            if (depth == 0) {
+                return
+            }
+            depth = depth - 1
+        } else if (depth == 0
+            && (kind == TokenKind::Comma || kind == TokenKind::Lbrace
+                || kind == TokenKind::Assign)) {
+            return
+        }
+        advance(p)
+    }
+}
+
+// The statements between `{` and `}`, with the cursor on the `{`. A block
+// answers with its trailing expression, so the last statement leaves with a
+// value where an earlier one would only have run.
+const_block :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    advance(p)
+    var answered := ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
+        const_spend(p, at)
+        held := const_stmt(p, at)
+        if (held.flow != FLOW_RAN && held.flow != FLOW_VALUE) {
+            const_skip_to_close(p)
+            advance(p)
+            return held
+        }
+        answered = held
+    }
+    advance(p)
+    if (answered.flow == FLOW_VALUE) {
+        return ConstFlow { flow = FLOW_LEFT, kind = answered.kind,
+            value = answered.value }
+    }
+    ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+}
+
+// Past the rest of the block the cursor is inside, leaving it on the `}`.
+const_skip_to_close :: fn(mut p: Parser) {
+    var depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace) {
+            if (depth == 0) {
+                return
+            }
+            depth = depth - 1
+        }
+        advance(p)
+    }
+}
+
+// Past a whole `{ ... }`, for the arm of an `if` that was not taken.
+const_skip_block :: fn(mut p: Parser) {
+    advance(p)
+    const_skip_to_close(p)
+    advance(p)
+}
+
+const_local_index :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    var i: i64 = p.const_locals.count
+    while (i > 0) {
+        i = i - 1
+        entry := arena_at(p.const_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return i
+        }
+    }
+    -1
+}
+
+const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    kind := cur(p)
+    if (kind == TokenKind::KwReturn) {
+        advance(p)
+        held := const_expr(p, at)
+        return ConstFlow { flow = FLOW_LEFT, kind = held.kind,
+            value = held.value }
+    }
+    if (kind == TokenKind::KwBreak) {
+        advance(p)
+        return ConstFlow { flow = FLOW_BROKE, kind = CONST_INT, value = 0 }
+    }
+    if (kind == TokenKind::KwContinue) {
+        advance(p)
+        return ConstFlow { flow = FLOW_CONTINUED, kind = CONST_INT, value = 0 }
+    }
+    if (kind == TokenKind::KwIf) {
+        return const_if(p, at)
+    }
+    if (kind == TokenKind::KwWhile) {
+        return const_while(p, at)
+    }
+    if (kind == TokenKind::Lbrace) {
+        return const_block(p, at)
+    }
+    // `var name : T = expr` and `name := expr` both bind. A `var` written
+    // without a type is the same binding with a word in front of it.
+    if (kind == TokenKind::KwVar) {
+        advance(p)
+        return const_bind(p, at)
+    }
+    if (kind == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloneq) {
+        return const_bind(p, at)
+    }
+    if (kind == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
+        return const_bind(p, at)
+    }
+    if (kind == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Assign) {
+        name_off := cur_off(p)
+        name_len := cur_len(p)
+        advance(p)
+        advance(p)
+        held := const_expr(p, at)
+        slot := const_local_index(p, name_off, name_len)
+        if (slot < 0) {
+            const_fault(p, at)
+            report("'")
+            report_src(p.src, name_off, name_len)
+            report("' is not a name this call knows, so there is nothing to ")
+            report("write to")
+            frost_rt_recover_escape()
+        }
+        entry := arena_at(p.const_locals, slot)
+        entry.kind = held.kind
+        entry.value = held.value
+        return ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+    }
+    held := const_expr(p, at)
+    ConstFlow { flow = FLOW_VALUE, kind = held.kind, value = held.value }
+}
+
+// `name := expr`, `name : T = expr`, with the cursor on the name.
+const_bind :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    if (cur(p) != TokenKind::Ident) {
+        const_fault(p, at)
+        report("this is not something a compile-time call may do")
+        frost_rt_recover_escape()
+    }
+    name_off := cur_off(p)
+    name_len := cur_len(p)
+    advance(p)
+    if (cur(p) == TokenKind::Colon) {
+        advance(p)
+        const_skip_type(p)
+    }
+    advance(p)
+    held := const_expr(p, at)
+    arena_push(p.const_locals,
+        ConstLocal { name_off = name_off, name_len = name_len,
+            kind = held.kind, value = held.value })
+    ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+}
+
+const_condition :: fn(mut p: Parser, at: i64, word: ^i8) -> bool {
+    advance(p)
+    held := const_expr(p, at)
+    advance(p)
+    if (held.kind != CONST_BOOL) {
+        const_fault(p, at)
+        report("an ")
+        report_cstr(word)
+        report(" is decided at compile time by asking its condition, which ")
+        report("has to be a yes or no")
+        frost_rt_recover_escape()
+    }
+    held.value == 1
+}
+
+const_if :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    advance(p)
+    holds := const_condition(p, at, "`if`")
+    var answered := ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+    if (holds) {
+        answered = const_block(p, at)
+    } else {
+        const_skip_block(p)
+    }
+    if (cur(p) == TokenKind::KwElse) {
+        advance(p)
+        if (holds) {
+            if (cur(p) == TokenKind::KwIf) {
+                const_skip_if(p)
+            } else {
+                const_skip_block(p)
+            }
+            return answered
+        }
+        if (cur(p) == TokenKind::KwIf) {
+            return const_if(p, at)
+        }
+        return const_block(p, at)
+    }
+    answered
+}
+
+// Past an `if` that was not taken, however many `else if` arms it carries.
+const_skip_if :: fn(mut p: Parser) {
+    advance(p)
+    advance(p)
+    var depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rparen) {
+            if (depth == 0) {
+                advance(p)
+                break
+            }
+            depth = depth - 1
+        }
+        advance(p)
+    }
+    const_skip_block(p)
+    if (cur(p) == TokenKind::KwElse) {
+        advance(p)
+        if (cur(p) == TokenKind::KwIf) {
+            const_skip_if(p)
+        } else {
+            const_skip_block(p)
+        }
+    }
+}
+
+const_while :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    head := p.ti
+    while (true) {
+        const_spend(p, at)
+        p.ti = head
+        advance(p)
+        holds := const_condition(p, at, "a `while`")
+        if (holds == false) {
+            const_skip_block(p)
+            return ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+        }
+        answered := const_block(p, at)
+        if (answered.flow == FLOW_LEFT) {
+            return answered
+        }
+        if (answered.flow == FLOW_BROKE) {
+            return ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+        }
+    }
+    ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0 }
+}
+
+// The expression grammar, level for level with the one the parser uses, so a
+// spelling means here what it means where the program runs.
+// `&&` and `||` answer without asking the right side when the left one settles
+// it, the way they do where the program runs. The tokens of the side that goes
+// unasked are still read, since that is what says where the expression ends,
+// and nothing is worked out while they are.
+const_expr :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_and(p, at)
+    while (cur(p) == TokenKind::Oror) {
+        advance(p)
+        settled := left.kind == CONST_BOOL && left.value == 1
+        if (settled) { p.const_quiet = p.const_quiet + 1 }
+        right := const_and(p, at)
+        if (settled) {
+            p.const_quiet = p.const_quiet - 1
+            left = const_bool(true)
+        } else {
+            left = const_bools(p, at, left, right, OP_OR)
+        }
+    }
+    left
+}
+
+const_and :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_cmp(p, at)
+    while (cur(p) == TokenKind::Andand) {
+        advance(p)
+        settled := left.kind == CONST_BOOL && left.value == 0
+        if (settled) { p.const_quiet = p.const_quiet + 1 }
+        right := const_cmp(p, at)
+        if (settled) {
+            p.const_quiet = p.const_quiet - 1
+            left = const_bool(false)
+        } else {
+            left = const_bools(p, at, left, right, OP_AND)
+        }
+    }
+    left
+}
+
+const_cmp :: fn(mut p: Parser, at: i64) -> ConstValue {
+    left := const_bitor(p, at)
+    kind := cur(p)
+    if (kind == TokenKind::Lt) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_LT)
+    }
+    if (kind == TokenKind::Le) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_LE)
+    }
+    if (kind == TokenKind::Gt) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_GT)
+    }
+    if (kind == TokenKind::Ge) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_GE)
+    }
+    if (kind == TokenKind::Eqeq) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_EQ)
+    }
+    if (kind == TokenKind::Ne) {
+        advance(p)
+        return const_compare(p, at, left, const_bitor(p, at), OP_NE)
+    }
+    left
+}
+
+const_bitor :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_bitand(p, at)
+    while (cur(p) == TokenKind::Pipe) {
+        advance(p)
+        right := const_bitand(p, at)
+        left = const_ints(p, at, left, right, OP_BITOR)
+    }
+    left
+}
+
+const_bitand :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_shift(p, at)
+    while (cur(p) == TokenKind::Amp) {
+        advance(p)
+        right := const_shift(p, at)
+        left = const_ints(p, at, left, right, OP_BITAND)
+    }
+    left
+}
+
+const_shift :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_add(p, at)
+    while (cur(p) == TokenKind::Shl || cur(p) == TokenKind::Shr) {
+        var op: i64 = OP_SHL
+        if (cur(p) == TokenKind::Shr) {
+            op = OP_SHR
+        }
+        advance(p)
+        right := const_add(p, at)
+        left = const_ints(p, at, left, right, op)
+    }
+    left
+}
+
+const_add :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_mul(p, at)
+    while (cur(p) == TokenKind::Plus || cur(p) == TokenKind::Minus) {
+        var op: i64 = OP_ADD
+        if (cur(p) == TokenKind::Minus) {
+            op = OP_SUB
+        }
+        advance(p)
+        right := const_mul(p, at)
+        left = const_ints(p, at, left, right, op)
+    }
+    left
+}
+
+const_mul :: fn(mut p: Parser, at: i64) -> ConstValue {
+    var left := const_unary(p, at)
+    while (cur(p) == TokenKind::Star || cur(p) == TokenKind::Slash
+        || cur(p) == TokenKind::Percent) {
+        var op: i64 = OP_MUL
+        if (cur(p) == TokenKind::Slash) {
+            op = OP_DIV
+        }
+        if (cur(p) == TokenKind::Percent) {
+            op = OP_MOD
+        }
+        advance(p)
+        right := const_unary(p, at)
+        left = const_ints(p, at, left, right, op)
+    }
+    left
+}
+
+const_unary :: fn(mut p: Parser, at: i64) -> ConstValue {
+    if (cur(p) == TokenKind::Minus) {
+        advance(p)
+        held := const_unary(p, at)
+        return const_ints(p, at, const_int(0), held, OP_SUB)
+    }
+    if (cur(p) == TokenKind::Bang) {
+        advance(p)
+        held := const_unary(p, at)
+        if (held.kind != CONST_BOOL) {
+            const_fault(p, at)
+            report("'!' has no meaning for a whole number")
+            frost_rt_recover_escape()
+        }
+        return const_bool(held.value == 0)
+    }
+    const_factor(p, at)
+}
+
+const_factor :: fn(mut p: Parser, at: i64) -> ConstValue {
+    const_spend(p, at)
+    kind := cur(p)
+    if (p.const_quiet > 0 && kind == TokenKind::Float) {
+        advance(p)
+        return const_int(0)
+    }
+    if (kind == TokenKind::Int) {
+        value := cur_val(p)
+        advance(p)
+        return const_int(value)
+    }
+    if (kind == TokenKind::Float) {
+        const_fault(p, at)
+        report("a compile-time value is a whole number or a yes or no, and ")
+        report("this is a number with a fraction")
+        frost_rt_recover_escape()
+    }
+    if (kind == TokenKind::Lparen) {
+        advance(p)
+        held := const_expr(p, at)
+        advance(p)
+        return held
+    }
+    if (kind == TokenKind::Ident) {
+        name_off := cur_off(p)
+        name_len := cur_len(p)
+        if (str_range_eq(p.src, name_off, name_len, "true")) {
+            advance(p)
+            return const_bool(true)
+        }
+        if (str_range_eq(p.src, name_off, name_len, "false")) {
+            advance(p)
+            return const_bool(false)
+        }
+        if (peek_kind(p, 1) == TokenKind::Lparen) {
+            return const_named_call(p, at, name_off, name_len)
+        }
+        slot := const_local_index(p, name_off, name_len)
+        if (slot >= 0) {
+            advance(p)
+            entry := arena_at(p.const_locals, slot)
+            return ConstValue { kind = entry.kind, value = entry.value }
+        }
+        if (is_const(p, name_off, name_len)) {
+            advance(p)
+            return const_int(const_value(p, name_off, name_len))
+        }
+        if (p.const_quiet > 0) {
+            advance(p)
+            return const_int(0)
+        }
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' has no value at compile time, so this cannot be worked out ")
+        report("before the program runs")
+        frost_rt_recover_escape()
+    }
+    const_fault(p, at)
+    report("this is not something a compile-time call may do")
+    frost_rt_recover_escape()
+    const_int(0)
+}
+
+const_named_call :: fn(mut p: Parser, at: i64, name_off: i64,
+    name_len: i64) -> ConstValue {
+    index := const_fn_index(p, name_off, name_len, name_off)
+    advance(p)
+    advance(p)
+    mark := p.const_args.count
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
+        held := const_expr(p, at)
+        arena_push(p.const_args, held)
+        if (cur(p) == TokenKind::Comma) {
+            advance(p)
+        }
+    }
+    advance(p)
+    count := p.const_args.count - mark
+    if (p.const_quiet > 0) {
+        p.const_args.count = mark
+        return const_int(0)
+    }
+    if (index < 0) {
+        const_fault(p, at)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' is not a function this program declares, so there is ")
+        report("nothing to work out here")
+        frost_rt_recover_escape()
+    }
+    saved := p.ti
+    answered := const_call(p, index, mark, count, at)
+    p.ti = saved
+    answered
+}
+
+const_bools :: fn(mut p: Parser, at: i64, left: ConstValue, right: ConstValue,
+    op: i64) -> ConstValue {
+    if (p.const_quiet > 0) {
+        return const_int(0)
+    }
+    if (left.kind != CONST_BOOL || right.kind != CONST_BOOL) {
+        const_fault(p, at)
+        report("'&&' and '||' join two yes-or-no answers")
+        frost_rt_recover_escape()
+    }
+    if (op == OP_AND) {
+        return const_bool(left.value == 1 && right.value == 1)
+    }
+    const_bool(left.value == 1 || right.value == 1)
+}
+
+const_compare :: fn(mut p: Parser, at: i64, left: ConstValue,
+    right: ConstValue, op: i64) -> ConstValue {
+    if (p.const_quiet > 0) {
+        return const_int(0)
+    }
+    if (left.kind != right.kind) {
+        const_fault(p, at)
+        report("this joins a whole number to a yes or no, and a compile-time ")
+        report("value is worked out over one kind at a time")
+        frost_rt_recover_escape()
+    }
+    if (left.kind == CONST_BOOL && op != OP_EQ && op != OP_NE) {
+        const_fault(p, at)
+        report("a yes or no is compared and nothing else")
+        frost_rt_recover_escape()
+    }
+    if (op == OP_LT) { return const_bool(left.value < right.value) }
+    if (op == OP_LE) { return const_bool(left.value <= right.value) }
+    if (op == OP_GT) { return const_bool(left.value > right.value) }
+    if (op == OP_GE) { return const_bool(left.value >= right.value) }
+    if (op == OP_EQ) { return const_bool(left.value == right.value) }
+    const_bool(left.value != right.value)
+}
+
+const_overflows :: fn(mut p: Parser, at: i64) {
+    const_fault(p, at)
+    report("this overflows an i64")
+    frost_rt_recover_escape()
+}
+
+const_ints :: fn(mut p: Parser, at: i64, left: ConstValue, right: ConstValue,
+    op: i64) -> ConstValue {
+    if (p.const_quiet > 0) {
+        return const_int(0)
+    }
+    if (left.kind != CONST_INT || right.kind != CONST_INT) {
+        const_fault(p, at)
+        report("this joins a whole number to a yes or no, and a compile-time ")
+        report("value is worked out over one kind at a time")
+        frost_rt_recover_escape()
+    }
+    a := left.value
+    b := right.value
+    if (op == OP_ADD) {
+        sum := wrap_add(a, b)
+        if ((a > 0 && b > 0 && sum < 0) || (a < 0 && b < 0 && sum >= 0)) {
+            const_overflows(p, at)
+        }
+        return const_int(sum)
+    }
+    if (op == OP_SUB) {
+        held := wrap_sub(a, b)
+        if ((a >= 0 && b < 0 && held < 0) || (a < 0 && b > 0 && held >= 0)) {
+            const_overflows(p, at)
+        }
+        return const_int(held)
+    }
+    if (op == OP_MUL) {
+        if (a == 0 || b == 0) {
+            return const_int(0)
+        }
+        if (a == (-1) && const_is_min(b)) {
+            const_overflows(p, at)
+        }
+        if (b == (-1) && const_is_min(a)) {
+            const_overflows(p, at)
+        }
+        held := wrap_mul(a, b)
+        if (held / b != a) {
+            const_overflows(p, at)
+        }
+        return const_int(held)
+    }
+    if (op == OP_DIV || op == OP_MOD) {
+        if (b == 0) {
+            const_fault(p, at)
+            report("this divides by zero")
+            frost_rt_recover_escape()
+        }
+        if (const_is_min(a) && b == (-1)) {
+            const_overflows(p, at)
+        }
+        if (op == OP_DIV) {
+            return const_int(a / b)
+        }
+        return const_int(a % b)
+    }
+    if (op == OP_SHL || op == OP_SHR) {
+        if (b < 0 || b > 63) {
+            const_overflows(p, at)
+        }
+        if (op == OP_SHL) {
+            return const_int(a << b)
+        }
+        return const_int(a >> b)
+    }
+    if (op == OP_BITAND) {
+        return const_int(a & b)
+    }
+    if (op == OP_BITOR) {
+        return const_int(a | b)
+    }
+    const_fault(p, at)
+    report("this operator has no compile-time answer for two whole numbers")
+    frost_rt_recover_escape()
+    const_int(0)
+}

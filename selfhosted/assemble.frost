@@ -269,13 +269,18 @@ read_number :: fn(src: str, at: i64) -> (value: i64, next: i64) {
         negative = true
         i = i + 1
     }
+    // Accumulated on the side the sign asks for. The smallest i64 has a
+    // magnitude one past the largest, so reading it as a positive number and
+    // negating afterwards overflows before the sign is ever applied.
     var value: i64 = 0
     while (i < str_len(src) && is_digit(src[i])) {
-        value = value * 10 + (src[i] - CH_0)
+        digit := src[i] - CH_0
+        if (negative) {
+            value = value * 10 - digit
+        } else {
+            value = value * 10 + digit
+        }
         i = i + 1
-    }
-    if (negative) {
-        value = -value
     }
     return value, i
 }

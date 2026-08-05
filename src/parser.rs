@@ -276,6 +276,10 @@ pub use crate::diagnostic::Diagnostic;
 
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
+    // The same tokens as a whole, which the constant scan reads. It runs over
+    // the file rather than along it, since a constant may name a function
+    // written below the line that calls it.
+    all_tokens: &'a [Token],
     // The arena every parse method pushes into. `parse` hands it out inside
     // the finished `Module`.
     ast: Ast,
@@ -303,6 +307,16 @@ pub struct Parser<'a> {
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
     integer_constants: HashMap<String, usize>,
+    // The same constants with what each one worked out to, and the machinery
+    // that works a call out. A length may call a function the file declares,
+    // and the answer has to be in hand where the length is read.
+    constant_values: HashMap<String, crate::const_eval::Value>,
+    folder: crate::const_eval::Folder<'a>,
+    // What the files this one imports export, as function bodies a
+    // compile-time call may read. Filled in before the parse, since the
+    // constants are worked out before it too.
+    imported_bodies: HashMap<String, std::rc::Rc<Vec<Token>>>,
+    settled: bool,
     // Every generic struct and enum declared in this file, by name. A literal
     // may say which instance it is, `Pair<i64, bool> { .. }`, and telling that
     // from the comparison `a < b` is a question of whether the name is one of
@@ -350,45 +364,6 @@ fn declaration_value_end(tokens: &[Token], start: usize) -> usize {
     tokens.len()
 }
 
-// An integer constant expression, evaluated over the constants already read.
-// The expression itself was parsed by the ordinary expression parser, so the
-// operators bind here exactly as they do everywhere else rather than by a
-// second precedence table written to agree with the first.
-fn evaluate_constant(
-    ast: &Ast,
-    expression: ExprId,
-    known: &HashMap<String, i64>,
-) -> Option<i64> {
-    match ast.expr(expression) {
-        Expression::Literal(Literal::Integer(value)) => Some(*value),
-        Expression::Identifier(name) => known.get(ast.name(*name)).copied(),
-        Expression::Prefix(Operator::Negate, inner) => {
-            evaluate_constant(ast, *inner, known)?.checked_neg()
-        }
-        Expression::Infix(left, operator, right) => {
-            let left = evaluate_constant(ast, *left, known)?;
-            let right = evaluate_constant(ast, *right, known)?;
-            match operator {
-                Operator::Add => left.checked_add(right),
-                Operator::Subtract => left.checked_sub(right),
-                Operator::Multiply => left.checked_mul(right),
-                Operator::Divide => left.checked_div(right),
-                Operator::Modulo => left.checked_rem(right),
-                Operator::ShiftLeft => u32::try_from(right)
-                    .ok()
-                    .and_then(|by| left.checked_shl(by)),
-                Operator::ShiftRight => u32::try_from(right)
-                    .ok()
-                    .and_then(|by| left.checked_shr(by)),
-                Operator::BitwiseAnd => Some(left & right),
-                Operator::BitwiseOr => Some(left | right),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 // Top-level constants that name an integer. The value has to be known here
 // because an array size is part of a type and a repeat count is expanded into
 // elements, both of which happen while parsing, so neither can wait for a later
@@ -425,7 +400,169 @@ pub fn scan_generic_types(
     names
 }
 
-fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
+// A parser over a run of tokens and nothing else, for reading one value back
+// out of the file it was written in. It knows no constants and no generic
+// types, so what it reads is what the tokens say.
+fn bare_parser(tokens: &[Token]) -> Parser<'_> {
+    Parser {
+        tokens: tokens.iter(),
+        all_tokens: tokens,
+        ast: Ast::default(),
+        linear_types: std::collections::HashSet::new(),
+        tests: Vec::new(),
+        exports: Vec::new(),
+        positions: &[],
+        consumed: 0,
+        discards: 0,
+        pending_angle_close: 0,
+        diagnostics: Vec::new(),
+        internal_types: false,
+        no_struct_literal: false,
+        integer_constants: HashMap::new(),
+        constant_values: HashMap::new(),
+        folder: crate::const_eval::Folder::new(
+            &[],
+            HashMap::new(),
+            HashMap::new(),
+        ),
+        imported_bodies: HashMap::new(),
+        settled: true,
+        generic_types: std::collections::HashSet::new(),
+        block_depth: 0,
+        bracket_depth: 0,
+    }
+}
+
+/// Every function a file exports, as the run of tokens its value occupies.
+/// A file that imports this one may call one where a compile-time value is
+/// read, and a private name it could not write is left out.
+pub fn exported_function_bodies(
+    tokens: &[Token],
+) -> HashMap<String, std::rc::Rc<Vec<Token>>> {
+    let exported = exported_names(tokens);
+    scan_function_bodies(tokens)
+        .into_iter()
+        .filter(|(name, _)| exported.contains(name))
+        .map(|(name, (start, end))| {
+            (name, std::rc::Rc::new(tokens[start..end].to_vec()))
+        })
+        .collect()
+}
+
+// The names on a file's `export` lines, read off the tokens because this runs
+// before the parse that would record them.
+fn exported_names(tokens: &[Token]) -> std::collections::HashSet<String> {
+    let mut found = std::collections::HashSet::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let Token::Identifier(word) = &tokens[index] else {
+            index += 1;
+            continue;
+        };
+        if word != "export" {
+            index += 1;
+            continue;
+        }
+        index += 1;
+        while let Some(Token::Identifier(name)) = tokens.get(index) {
+            found.insert(name.clone());
+            index += 1;
+            if !matches!(tokens.get(index), Some(Token::Comma)) {
+                break;
+            }
+            index += 1;
+        }
+    }
+    found
+}
+
+/// A function value read on its own, out of the tokens it was written in.
+///
+/// A constant may call a function declared below it, and the call is worked out
+/// before the parse that needs the number gets there, so the body has to be
+/// reachable without waiting for the parse to reach it.
+pub(crate) fn parse_function_value(tokens: &[Token]) -> Option<(Ast, ExprId)> {
+    let mut sub = bare_parser(tokens);
+    let expression = sub.parse_expression(Precedence::Lowest).ok()?;
+    // A function whose parameters carry types is a `Proc` and one written
+    // without them is a `Function`. Either is a body to read.
+    if !matches!(
+        sub.ast.expr(expression),
+        Expression::Function(..) | Expression::Proc(..)
+    ) {
+        return None;
+    }
+    Some((sub.ast, expression))
+}
+
+// Every top-level `name :: fn(...)`, as the token range its value occupies.
+// This is what a compile-time call reads, and it is collected off the tokens
+// because a constant may name a function written below it.
+fn scan_function_bodies(tokens: &[Token]) -> HashMap<String, (usize, usize)> {
+    let mut found = HashMap::new();
+    let mut depth = 0usize;
+    for index in 0..tokens.len() {
+        match &tokens[index] {
+            Token::LeftBrace | Token::LeftParentheses | Token::LeftBracket => {
+                depth += 1;
+                continue;
+            }
+            Token::RightBrace
+            | Token::RightParentheses
+            | Token::RightBracket => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        let Token::Identifier(name) = &tokens[index] else {
+            continue;
+        };
+        if !matches!(tokens.get(index + 1), Some(Token::DoubleColon)) {
+            continue;
+        }
+        if !matches!(tokens.get(index + 2), Some(Token::Function)) {
+            continue;
+        }
+        let end = declaration_value_end(tokens, index + 2);
+        found.insert(name.clone(), (index + 2, end));
+    }
+    found
+}
+
+// Whether this expression calls anything. A constant that does is one the
+// program asked to have worked out, so failing to work it out is a fault
+// rather than a constant left unfolded.
+fn holds_a_call(ast: &Ast, expression: ExprId) -> bool {
+    match ast.expr(expression) {
+        Expression::Call(..) => true,
+        Expression::Prefix(_, inner) => holds_a_call(ast, *inner),
+        Expression::Infix(left, _, right) => {
+            holds_a_call(ast, *left) || holds_a_call(ast, *right)
+        }
+        _ => false,
+    }
+}
+
+// Every top-level constant, with what it worked out to, the machinery that
+// works a call out, and whatever a constant asking for one broke on.
+//
+// The values are needed before the parse: an array size is part of a type and
+// a repeat count is expanded into elements, both while parsing, so neither can
+// wait for a later pass.
+type ConstantScan<'a> = (
+    HashMap<String, crate::const_eval::Value>,
+    crate::const_eval::Folder<'a>,
+    Vec<(usize, String)>,
+);
+
+fn scan_constants(
+    tokens: &[Token],
+    imported: HashMap<String, std::rc::Rc<Vec<Token>>>,
+) -> ConstantScan<'_> {
     // A name written as `$N` anywhere is a compile-time parameter, and inside
     // the declaration that takes it `[N]u8` means that parameter rather than a
     // constant of the same name. Rather than track where each is in scope, such
@@ -440,9 +577,15 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
         }
     }
 
+    let mut folder = crate::const_eval::Folder::new(
+        tokens,
+        scan_function_bodies(tokens),
+        imported,
+    );
     // In source order, so that a constant reading an earlier one sees it. The
     // scan runs before the parse, so "earlier" is the only order there is.
-    let mut values: HashMap<String, i64> = HashMap::new();
+    let mut values: HashMap<String, crate::const_eval::Value> = HashMap::new();
+    let mut faults = Vec::new();
     let mut depth = 0usize;
     for index in 0..tokens.len() {
         match &tokens[index] {
@@ -476,6 +619,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
                 Token::Integer(_)
                     | Token::LeftParentheses
                     | Token::Minus
+                    | Token::Float(_)
                     | Token::Identifier(_)
             )
         );
@@ -483,8 +627,61 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             continue;
         }
         let end = declaration_value_end(tokens, index + 2);
-        let mut sub = Parser {
-            tokens: tokens[index + 2..end].iter(),
+        let mut sub = bare_parser(&tokens[index + 2..end]);
+        let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
+            continue;
+        };
+        // A constant that calls something asked for the call to be worked out,
+        // so what stopped it is said here. One that does not is left out
+        // rather than half-read, which is what it always was: it then means
+        // what it always meant, and using it as a length is an error naming
+        // the length rather than an array of the wrong size.
+        let asked = holds_a_call(&sub.ast, expression);
+        match folder.expression(&sub.ast, expression, &values) {
+            Ok(value) => {
+                values.insert(name.clone(), value);
+            }
+            Err(reason) if asked => faults.push((index + 2, reason)),
+            Err(_) => {}
+        }
+    }
+    (values, folder, faults)
+}
+
+// What a constant asking to be worked out at compile time broke on, at the
+// token it was written at. The scan runs before the parse, so these are held
+// until the parse has somewhere to report them.
+fn constant_faults(
+    faults: &[(usize, String)],
+    positions: &[Position],
+) -> Vec<Diagnostic> {
+    faults
+        .iter()
+        .map(|(at, reason)| Diagnostic {
+            position: positions.get(*at).copied().unwrap_or_default(),
+            message: reason.clone(),
+            related: Vec::new(),
+        })
+        .collect()
+}
+
+fn integers_among(
+    values: &HashMap<String, crate::const_eval::Value>,
+) -> HashMap<String, usize> {
+    values
+        .iter()
+        .filter_map(|(name, value)| {
+            let held = value.integer()?;
+            usize::try_from(held).ok().map(|held| (name.clone(), held))
+        })
+        .collect()
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(tokens: &'a [Token]) -> Self {
+        Self {
+            tokens: tokens.iter(),
+            all_tokens: tokens,
             ast: Ast::default(),
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
@@ -497,44 +694,47 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
-            generic_types: std::collections::HashSet::new(),
-            block_depth: 0,
-            bracket_depth: 0,
-        };
-        let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
-            continue;
-        };
-        if let Some(value) = evaluate_constant(&sub.ast, expression, &values) {
-            values.insert(name.clone(), value);
-        }
-    }
-    values
-        .into_iter()
-        .filter(|(_, value)| *value >= 0)
-        .map(|(name, value)| (name, value as usize))
-        .collect()
-}
-
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
-        Self {
-            tokens: tokens.iter(),
-            ast: Ast::default(),
-            linear_types: std::collections::HashSet::new(),
-            tests: Vec::new(),
-            exports: Vec::new(),
-            positions: &[],
-            consumed: 0,
-            discards: 0,
-            pending_angle_close: 0,
-            diagnostics: Vec::new(),
-            internal_types: false,
-            no_struct_literal: false,
-            integer_constants: scan_integer_constants(tokens),
+            constant_values: HashMap::new(),
+            folder: crate::const_eval::Folder::new(
+                &[],
+                HashMap::new(),
+                HashMap::new(),
+            ),
+            imported_bodies: HashMap::new(),
+            settled: false,
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
             bracket_depth: 0,
         }
+    }
+
+    // Work out every top-level constant, once the imported bodies a call may
+    // read are in hand. Held until here rather than done where the parser is
+    // made, since what a file imports is added after that and a constant may
+    // call one of those.
+    fn settle_constants(&mut self) {
+        if self.settled {
+            return;
+        }
+        self.settled = true;
+        let imported = std::mem::take(&mut self.imported_bodies);
+        let (values, folder, faults) = scan_constants(self.all_tokens, imported);
+        self.integer_constants = integers_among(&values);
+        self.constant_values = values;
+        self.folder = folder;
+        let mut held = constant_faults(&faults, self.positions);
+        held.append(&mut self.diagnostics);
+        self.diagnostics = held;
+    }
+
+    /// The functions the files this one imports export, as bodies a
+    /// compile-time call may read.
+    pub fn also_const_functions(
+        &mut self,
+        bodies: HashMap<String, std::rc::Rc<Vec<Token>>>,
+    ) -> &mut Self {
+        self.imported_bodies.extend(bodies);
+        self
     }
 
     pub fn with_positions(
@@ -547,6 +747,7 @@ impl<'a> Parser<'a> {
         };
         Self {
             tokens: tokens.iter(),
+            all_tokens: tokens,
             ast,
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
@@ -558,7 +759,15 @@ impl<'a> Parser<'a> {
             diagnostics: Vec::new(),
             internal_types: false,
             no_struct_literal: false,
-            integer_constants: scan_integer_constants(tokens),
+            integer_constants: HashMap::new(),
+            constant_values: HashMap::new(),
+            folder: crate::const_eval::Folder::new(
+                &[],
+                HashMap::new(),
+                HashMap::new(),
+            ),
+            imported_bodies: HashMap::new(),
+            settled: false,
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
             bracket_depth: 0,
@@ -738,6 +947,7 @@ impl<'a> Parser<'a> {
     /// list holds one entry per error encountered, at the top level and inside
     /// function bodies alike.
     pub fn parse_recovering(&mut self) -> (Module, Vec<Diagnostic>) {
+        self.settle_constants();
         let mut roots = Vec::new();
         loop {
             let position = self.current_position().unwrap_or_default();
@@ -1844,9 +2054,28 @@ impl<'a> Parser<'a> {
                 self.span_from(start),
             ))
         } else {
-            let expression = self.parse_expression(Precedence::Lowest)?;
+            let mut expression = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
+            }
+            // A constant that calls something was worked out before the parse,
+            // and what it answered stands here in place of the call. Left as
+            // written it would be a call the program makes while it runs,
+            // which is a second meaning for one declaration.
+            if holds_a_call(&self.ast, expression)
+                && let Some(value) = self.constant_values.get(&identifier)
+            {
+                let literal = match *value {
+                    crate::const_eval::Value::Integer(held) => {
+                        Literal::Integer(held)
+                    }
+                    crate::const_eval::Value::Boolean(held) => {
+                        Literal::Boolean(held)
+                    }
+                };
+                let span = self.ast.expr_span(expression);
+                expression =
+                    self.ast.push_expr(Expression::Literal(literal), span);
             }
             let name = self.ast.intern(&identifier);
             Ok(self.ast.push_stmt(
@@ -3388,10 +3617,61 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A number, a name that stands for one, or a bracketed length. Nothing
-    /// else: a length is arithmetic, and a call or a comparison in one would be
-    /// the compile-time interpreter the language does without.
+    /// Whether a length here calls a function this file declares. `[Vertex; 4]`
+    /// names a type and never calls one, so the `(` is what tells the two
+    /// apart.
+    fn at_size_call(&self) -> bool {
+        let Token::Identifier(name) = self.peek_nth(0) else {
+            return false;
+        };
+        matches!(self.peek_nth(1), Token::LeftParentheses)
+            && self.folder.declares(name)
+    }
+
+    /// A call written where a compile-time value is read, and the number it
+    /// answers with. Every argument has to be known here, since this is where
+    /// the answer is needed; a size parameter a generic has not bound yet is
+    /// named rather than left half-worked-out.
+    fn parse_folded_call(&mut self) -> Result<i64> {
+        let at = self.mark();
+        let expression = self.parse_expression(Precedence::Lowest)?;
+        let Parser {
+            ast,
+            folder,
+            constant_values,
+            ..
+        } = self;
+        let answered = folder
+            .expression(ast, expression, constant_values)
+            .and_then(|value| {
+                value.integer().ok_or_else(|| {
+                    "a length is a whole number and this answers with something else"
+                        .to_string()
+                })
+            });
+        match answered {
+            Ok(value) => Ok(value),
+            Err(reason) => {
+                let position = self
+                    .positions
+                    .get(at as usize)
+                    .copied()
+                    .unwrap_or_default();
+                Err(anyhow::Error::new(crate::diagnostic::LocatedError {
+                    position,
+                    message: reason,
+                }))
+            }
+        }
+    }
+
+    /// A number, a name that stands for one, a call this file can work out, or
+    /// a bracketed length. A call is run here rather than left written down,
+    /// which is what keeps a length one thing rather than two.
     fn parse_size_atom(&mut self) -> Result<SizeExpr> {
+        if self.at_size_call() {
+            return Ok(SizeExpr::Number(self.parse_folded_call()?));
+        }
         match self.read_token().clone() {
             Token::Integer(value) => Ok(SizeExpr::Number(value)),
             Token::Identifier(name) => Ok(SizeExpr::Named(name)),
@@ -3446,10 +3726,12 @@ impl<'a> Parser<'a> {
                 if matches!(self.peek_nth(0), Token::RightBracket) {
                     self.read_token();
                     Type::Slice(Box::new(self.parse_type()?))
-                } else if starts_size_expression(
-                    self.peek_nth(0),
-                    self.peek_nth(1),
-                ) {
+                } else if self.at_size_call()
+                    || starts_size_expression(
+                        self.peek_nth(0),
+                        self.peek_nth(1),
+                    )
+                {
                     // A length is arithmetic over numbers, the constants a
                     // module declares, and the size parameters a generic binds.
                     // What is known is worked out here, so `[N]u8` where N is a

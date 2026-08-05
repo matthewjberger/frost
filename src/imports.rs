@@ -476,7 +476,7 @@ fn parse_module(
     source: &str,
     file: u32,
     path: &Path,
-    generics: HashSet<String>,
+    imported: Imported,
 ) -> Result<Box<ParsedModule>> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer
@@ -493,7 +493,8 @@ fn parse_module(
         expand_includes(tokens, positions, &directory_of(path))
             .with_context(|| format!("in {}", path.display()))?;
     let mut parser = Parser::with_positions(&tokens, &positions);
-    parser.also_generic(generics);
+    parser.also_generic(imported.generic_types);
+    parser.also_const_functions(imported.const_functions);
     parser.preload_diagnostics(lexer.diagnostics_in_file(file));
     let module = parser
         .parse()
@@ -1140,8 +1141,8 @@ pub fn imported_generic_types(
     roots: &[SearchRoot],
     layers: &[Layer],
     project_root: &Path,
-) -> HashSet<String> {
-    let mut names = HashSet::new();
+) -> Imported {
+    let mut found = Imported::default();
     let mut seen = HashSet::new();
     let scan = Scan {
         roots,
@@ -1149,9 +1150,23 @@ pub fn imported_generic_types(
         project_root,
     };
     for path in import_paths_in_source(source) {
-        collect_generic_types(base_dir, &path, &scan, &mut names, &mut seen);
+        collect_generic_types(base_dir, &path, &scan, &mut found, &mut seen);
+        // A compile-time call names a function this file can name, and an
+        // `import` is what says which those are. A file two imports away
+        // exports nothing to this one, so it is read for generic type names
+        // and for nothing else.
+        collect_const_functions(base_dir, &path, &scan, &mut found);
     }
-    names
+    found
+}
+
+/// What a file's imports offer the parse that has not happened yet: which
+/// names are generic types, and which functions a compile-time call may read.
+/// Both are read off the imported files' tokens, in the one walk over them.
+#[derive(Default)]
+pub struct Imported {
+    pub generic_types: HashSet<String>,
+    pub const_functions: HashMap<String, std::rc::Rc<Vec<Token>>>,
 }
 
 // What the walk above needs everywhere and reads nowhere, so the recursion
@@ -1166,10 +1181,10 @@ fn collect_generic_types(
     importing_dir: &Path,
     path: &str,
     scan: &Scan<'_>,
-    names: &mut HashSet<String>,
+    found: &mut Imported,
     seen: &mut HashSet<PathBuf>,
 ) {
-    let Some(found) = find_import(
+    let Some(located) = find_import(
         importing_dir,
         path,
         scan.roots,
@@ -1180,23 +1195,56 @@ fn collect_generic_types(
     .flatten() else {
         return;
     };
-    let key = found
+    let key = located
         .path
         .canonicalize()
-        .unwrap_or_else(|_| found.path.clone());
+        .unwrap_or_else(|_| located.path.clone());
     if !seen.insert(key.clone()) {
         return;
     }
-    let Ok(source) = fs::read_to_string(&found.path) else {
+    let Ok(source) = fs::read_to_string(&located.path) else {
         return;
     };
     let mut lexer = Lexer::new(&source);
     if let Ok(tokens) = lexer.tokenize() {
-        names.extend(crate::parser::scan_generic_types(&tokens));
+        found
+            .generic_types
+            .extend(crate::parser::scan_generic_types(&tokens));
     }
-    let directory = directory_of(&found.path);
+    let directory = directory_of(&located.path);
     for next in import_paths_in_source(&source) {
-        collect_generic_types(&directory, &next, scan, names, seen);
+        collect_generic_types(&directory, &next, scan, found, seen);
+    }
+}
+
+// What one imported file exports as a function body a compile-time call may
+// read. Only the file named on the `import` line, since that is what a program
+// may name.
+fn collect_const_functions(
+    importing_dir: &Path,
+    path: &str,
+    scan: &Scan<'_>,
+    found: &mut Imported,
+) {
+    let Some(located) = find_import(
+        importing_dir,
+        path,
+        scan.roots,
+        scan.layers,
+        scan.project_root,
+    )
+    .ok()
+    .flatten() else {
+        return;
+    };
+    let Ok(source) = fs::read_to_string(&located.path) else {
+        return;
+    };
+    let mut lexer = Lexer::new(&source);
+    if let Ok(tokens) = lexer.tokenize() {
+        found
+            .const_functions
+            .extend(crate::parser::exported_function_bodies(&tokens));
     }
 }
 
