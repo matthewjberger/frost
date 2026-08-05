@@ -269,6 +269,29 @@ struct's alignment is the widest its fields ask for, so a second form saying the
 same thing about the whole type would let a program write two answers to one
 question.
 
+## 11. A compile-time call is marked by where it is written
+
+Zig writes `comptime`, C++ writes `constexpr`, Jai writes `#run`. Frost writes
+nothing: `LANES :: round_up(300, 64)` is a constant, a constant is worked out
+before the program runs, and that is the whole rule.
+
+The alternative is a marker on the function, and a marker on a function is a
+second kind of function. `constexpr` says the body is *allowed* to run early,
+which means every library author has to decide, for every function, whether to
+promise it. A promise that can be made can be broken, so it becomes an ABI
+question, and the answer has been rewritten in three C++ standards.
+
+The position already carries the information. A constant's value and an array's
+length are the two places a compile-time value is read, and both were already
+worked out before the program ran; what changed is that the vocabulary there is
+now a call rather than only arithmetic. The same function is called normally
+wherever a program calls it normally.
+
+What that costs is that a call which cannot be worked out is a refusal rather
+than a fallback to running it later. That is the trade taken on purpose: falling
+back would mean `LANES` was a number in one place and a call in another, which
+is two meanings for one declaration.
+
 ## Honest tradeoffs
 
 A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`

@@ -107,6 +107,11 @@ ProcParam     = ParamMode? Type
 A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
 expression is a function literal (13.6).
 
+A constant's `Expr`, and an array's length, may call a function the file can
+name. Nothing in the grammar marks such a call: it is written as any call is,
+and where it stands is what says it is worked out before the program runs
+(5.2c).
+
 `value` (chapter 12) is a word rather than a keyword, so a parameter may still
 be named `value`. What tells the two apart is that a mode is followed by the
 parameter's name and a name is followed by its type.

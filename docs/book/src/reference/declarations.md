@@ -44,9 +44,10 @@ Meters :: distinct i64                // distinct type
 ```
 
 A value constant's `<expr>` is an integer constant expression: an integer
-literal, an earlier constant by name, or those combined with the integer
-operators `+ - * / % << >> & |` and parentheses, folded to a value at compile
-time. So `STRIDE :: POSITION + NORMAL + UV` and `MASK :: 1 << FLAG_BIT` name a
+literal, an earlier constant by name, a call the compiler works out (5.2c), or
+those combined with the integer operators `+ - * / % << >> & |` and
+parentheses, folded to a value at compile time. So
+`STRIDE :: POSITION + NORMAL + UV` and `MASK :: 1 << FLAG_BIT` name a
 computed value, and the result may be used where a compile-time integer is
 required, such as an array length `[STRIDE]f32`. A constant whose value is a
 single other name (`X :: Y`) is not written, since `Enum::Variant` shares that
@@ -283,6 +284,58 @@ assertion aborts.
 
 `-> (A, B) ! E` is rejected: a fallible function answers with one value or one
 failure. A function that wants both returns a struct it names.
+
+## 5.2c Calls the compiler works out
+
+A call written where a compile-time value is read is run before the program is.
+The two places one is read are a constant's value and an array's length.
+
+```frost
+round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
+
+next_power_of_two :: fn(n: i64) -> i64 {
+    var held: i64 = 1
+    while (held < n) { held = held * 2 }
+    held
+}
+
+LANES :: round_up(300, 64)                       // 320
+Table :: struct { slots: [next_power_of_two(300)]i64 }
+```
+
+The function is an ordinary one. Nothing marks it, and the same function is
+called while the program runs wherever a program calls it. What decides that a
+call is worked out early is where it is written.
+
+What such a call may do is the whole-number half of the language: parameters and
+locals, integer arithmetic and comparison, `if`, `while`, `break`, `continue`,
+`return`, a trailing expression, and calls to other functions written the same
+way. `&&` and `||` answer without asking the right side when the left one
+settles it, as they do where the program runs.
+
+Everything else is refused, naming what stopped it:
+
+- A function that reaches itself, directly or through others. Working the call
+  out means running it, and that never ends.
+- A call into the world. A function this program does not declare has no body to
+  read, so an `extern`, and anything that reaches one, stops the call. That is
+  what rules out reading a file, printing, or allocating.
+- A pointer, a struct, an array, an `unsafe` block, a `match`, a `for`, a
+  `defer`, a `?`. Each is named where it is written.
+- A number with a fraction. A compile-time value is a whole number or a yes or
+  no, since what one is for is a length, a capacity, a count or a branch, and
+  folding a fraction would mean two decimal-to-double readings having to agree
+  bit for bit.
+- More than a million steps, or calls nested deeper than thirty-two. A body may
+  loop, so how long one takes is not read off the text, and the bound is what
+  says a compile finishes.
+
+A call names a function the file can name: what it declares, and what the files
+it imports export. Every argument has to be known where the call is written, so
+a call over a generic's size parameter is refused and the parameter is named:
+the parameter is bound at the instantiation, which is later. Arithmetic over one
+still works, and `[(N + 63) / 64]i64` is how a length over a size parameter is
+written (3.2).
 
 ## 5.3 Externs and imports
 

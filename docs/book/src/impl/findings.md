@@ -528,3 +528,42 @@ did: `sizeof` agreed on all four while `offset_of` did not. The field walk that
 natural offsets after the layout code learned about packing. A grid of six
 structs printing `sizeof` and every `offset_of` through all four backends is
 what found it; a probe that printed sizes alone would have passed.
+
+## A constant is read before any body is, and both compilers had to work around it
+
+A call in a constant or an array length has to answer before the parse that
+needs the number gets there, and at that point no function body has been
+parsed. Neither compiler could reach for its own tree, and each went the other
+way round it.
+
+The bootstrap already scanned the tokens for constants before parsing, since an
+array size is part of a type. So the callee is parsed there too, out of its own
+token range, into an `Ast` of its own that nothing else ever sees. Reusing the
+ordinary expression parser on a slice of tokens is what made that cheap: a
+function literal is an expression, so `parse_expression` on
+`fn(a: i64) -> i64 { ... }` gives the body back. The one catch is that a
+function whose parameters carry types parses as `Proc` rather than `Function`,
+and a check for one of the two silently found no bodies at all.
+
+The self-hosted compiler holds every module in one token stream and reads
+constants in a first pass over it, so the callee's tokens are already there. It
+walks them directly, with a precedence chain level for level with the parser's.
+Parsing the body into nodes instead was the obvious idea and it is wrong: the
+self-hosted parser interns a global and notes a type-argument tuple as it reads
+a call, so a body read early would reorder tables the emitted output depends on.
+
+**The argument that was typed by a signature nobody had read.** The first
+attempt in the self-hosted compiler let the ordinary parser read the constant's
+value and folded the resulting tree. A call's arguments are read against the
+callee's declared parameter types, and at constant time the callee has no
+declared anything, so the literal `300` was typed by whatever the empty entry
+held and came out as a node the folder did not recognize. The value is read off
+the tokens now, and the parse of it never happens.
+
+**A fault that moves the cursor backwards loops forever.** A compile-time call
+sets the cursor to the callee's body and puts it back when it answers. A fault
+leaves through the escape rather than through the putting back, so the cursor
+stayed inside the callee. Recovery then synchronized from there, found the same
+declaration again, and reported one fault 262,000 times. Both recovery turns
+carry the cursor they began at now and only ever move it forward. The bug is
+older than the feature: any pass that moves the cursor and then faults had it.

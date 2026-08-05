@@ -725,6 +725,13 @@ fn operand_expr(function: &IrFunction, operand: &IrOperand) -> Result<String> {
 
 fn constant_expr(constant: &IrConstant) -> Result<String> {
     Ok(match constant {
+        // The smallest i64 has no C literal of its own: `-9223372036854775808`
+        // reads as a negation of a number one past the largest signed one, so
+        // C makes it unsigned and warns. Written as one more than it plus one
+        // less, both halves fit.
+        IrConstant::Integer(i64::MIN, _) => {
+            "(-9223372036854775807LL - 1)".to_string()
+        }
         IrConstant::Integer(value, _) => format!("{value}LL"),
         IrConstant::Float(value, Type::F32) => format!("((float){value:?})"),
         IrConstant::Float(value, _) => format!("((double){value:?})"),

@@ -4,6 +4,7 @@ mod ast;
 mod ast_display;
 mod build_cache;
 mod c_abi;
+mod const_eval;
 mod callbacks;
 mod diagnostic;
 pub use diagnostic::{

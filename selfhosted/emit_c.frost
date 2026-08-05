@@ -383,7 +383,15 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
 // `1 << 63` written without the suffix shifts a thirty-two bit one and answers
 // with whatever that host does. The suffix is what makes the literal the width
 // the language says it is.
+// The smallest i64 has no C literal of its own: `-9223372036854775808` reads as
+// a negation of a number one past the largest signed one, so C makes it
+// unsigned and warns. Written as one more than it plus one less, both halves
+// fit.
 emit_wide_int :: fn(value: i64) {
+    if (value < 0 && wrap_sub(0, value) == value) {
+        emit_text("(-9223372036854775807LL - 1)")
+        return
+    }
     frost_rt_emit_int(value)
     emit_text("LL")
 }

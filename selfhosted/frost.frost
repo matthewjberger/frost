@@ -32,6 +32,7 @@ import "lint.frost"
 import "lexer.frost"
 import "imports.frost"
 import "names.frost"
+import "const_eval.frost"
 import "types.frost"
 import "parser.frost"
 import "emit_c.frost"
@@ -538,6 +539,12 @@ main :: fn() -> i64 {
         asm_saved = 0,
         spill_depth = 0,
         consts = arena_make($ConstDef, 4096),
+        const_fns = arena_make($ConstFn, 4096),
+        const_locals = arena_make($ConstLocal, 256),
+        const_stack = arena_make($ConstFrame, 64),
+        const_args = arena_make($ConstValue, 256),
+        const_steps = 0,
+        const_quiet = 0,
         value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
         generic_fns = arena_make($GenericFn, 4096),

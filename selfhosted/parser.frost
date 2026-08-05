@@ -5,6 +5,7 @@ import "lexer.frost"
 import "cursor.frost"
 import "imports.frost"
 import "names.frost"
+import "const_eval.frost"
 import "types.frost"
 import "layout.frost"
 
@@ -2937,9 +2938,9 @@ parse_size_term :: fn(mut p: Parser) -> i64 {
     left
 }
 
-// A number, a name standing for one, or a bracketed length. Nothing else: a
-// call or a comparison in a length would be the compile-time interpreter the
-// language does without.
+// A number, a name standing for one, a call this program can work out, or a
+// bracketed length. A call is run here rather than left written down, which is
+// what keeps a length one thing rather than two.
 parse_size_atom :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Lparen) {
         advance(p)
@@ -2951,6 +2952,19 @@ parse_size_atom :: fn(mut p: Parser) -> i64 {
         held := cur_val(p)
         advance(p)
         return held
+    }
+    // `[Vertex; 4]` names a type and never calls one, so the `(` is what tells
+    // a length that calls something from a length that names one.
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Lparen) {
+        at := cur_off(p)
+        held := const_expr_here(p, at)
+        if (held.kind != CONST_INT) {
+            report_where(p.modules, p.src, at)
+            report("a length is a whole number and this answers with ")
+            report("something else")
+            frost_rt_recover_escape()
+        }
+        return held.value
     }
     if (cur(p) != TokenKind::Ident) {
         report_where(p.modules, p.src, cur_off(p))
@@ -3836,6 +3850,11 @@ StmtTurn :: struct {
     defer_depth: i64,
     expected_type: i64,
     statement: i64,
+    // Where the statement began, for the same reason the declaration turn
+    // carries it: a compile-time call reads a body elsewhere in the file, and
+    // a fault leaves through the escape rather than through the return that
+    // puts the cursor back.
+    ti: i64,
 }
 
 parse_stmt_guarded :: fn(raw: ^u8) {
@@ -3977,7 +3996,8 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             unsafe_depth = p.unsafe_depth,
             defer_depth = p.defer_depth,
             expected_type = p.expected_type,
-            statement = -1
+            statement = -1,
+            ti = p.ti
         }
         escaped := unsafe {
             frost_rt_recover_run(parse_stmt_guarded,
@@ -3989,6 +4009,10 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             p.unsafe_depth = turn.unsafe_depth
             p.defer_depth = turn.defer_depth
             p.expected_type = turn.expected_type
+            // Only ever forward, the way the declaration loop does it.
+            if (p.ti < turn.ti) {
+                p.ti = turn.ti
+            }
             synchronize_statement(p, terminator)
             while (cur(p) == TokenKind::Semi) {
                 advance(p)
@@ -5713,6 +5737,22 @@ parse_const :: fn(mut p: Parser) {
     name_length := cur_len(p)
     advance(p)
     advance(p)
+    // A value that calls something is worked out over the tokens rather than
+    // over a parse of them. The callee's signature has not been read yet, so
+    // reading the arguments against it would type them by a signature that is
+    // not there.
+    if (const_call_ahead(p)) {
+        at := cur_off(p)
+        held := const_expr_here(p, at)
+        if (held.kind != CONST_INT) {
+            report_where(p.modules, p.src, at)
+            report("a constant is a whole number and this answers with a yes ")
+            report("or no")
+            frost_rt_recover_escape()
+        }
+        register_const(p, name_offset, name_length, held.value)
+        return
+    }
     value_node := parse_expr(p)
     value := fold_const(p, value_node)
     register_const(p, name_offset, name_length, value)
@@ -5910,6 +5950,12 @@ at_const_declaration :: fn(mut p: Parser) -> bool {
     }
     if (third != TokenKind::Ident) {
         return false
+    }
+    // A call the compiler works out, `LANES :: round_up(300, 64)`. The `(`
+    // after the name is what says so, and whether the name reaches a function
+    // is settled where the call is run.
+    if (peek_kind(p, 3) == TokenKind::Lparen) {
+        return true
     }
     if (is_arith_op(peek_kind(p, 3))) {
         return true
@@ -6120,6 +6166,12 @@ RecoverTurn :: struct {
     block_depth: i64,
     unsafe_depth: i64,
     defer_depth: i64,
+    // Where the declaration began. A compile-time call moves the cursor into
+    // the body it is running and puts it back when it answers, and a fault
+    // leaves through the escape rather than through the putting back. Without
+    // this the cursor stayed inside that body, the next synchronize found the
+    // same declaration again, and the loop reported one fault forever.
+    ti: i64,
 }
 
 parse_declaration_guarded :: fn(raw: ^u8) {
@@ -6151,6 +6203,10 @@ synchronize_declaration :: fn(mut p: Parser) {
 parse_program :: fn(mut p: Parser) -> i64 {
     predeclare_types(p)
     start := p.ti
+    // Every function a compile-time call may run, before the constants that
+    // call one are read.
+    record_const_functions(p)
+    p.ti = start
     parse_constant_declarations(p)
     p.ti = start
     parse_type_declarations(p)
@@ -6166,7 +6222,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
             item = -1,
             block_depth = p.block_depth,
             unsafe_depth = p.unsafe_depth,
-            defer_depth = p.defer_depth
+            defer_depth = p.defer_depth,
+            ti = p.ti
         }
         escaped := unsafe {
             frost_rt_recover_run(parse_declaration_guarded,
@@ -6176,6 +6233,12 @@ parse_program :: fn(mut p: Parser) -> i64 {
             p.block_depth = turn.block_depth
             p.unsafe_depth = turn.unsafe_depth
             p.defer_depth = turn.defer_depth
+            // Only ever forward. A fault normally leaves the cursor further
+            // along than it began, and that is what the synchronize below
+            // reads; what this catches is a cursor left behind where it began.
+            if (p.ti < turn.ti) {
+                p.ti = turn.ti
+            }
             synchronize_declaration(p)
         } else if (turn.item != (-1)) {
             if (head == (-1)) {

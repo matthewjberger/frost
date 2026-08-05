@@ -22,7 +22,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     OP_WRAP_ADD, OP_WRAP_SUB, OP_WRAP_MUL,
     op_answers_truth,
     BORROW_FLAG, POINTER_BASE, INDIRECT_BASE, Parser, STRUCT_BASE, StructDef,
-    StructField, Sym, TokenKind, VariantFixup, FixupKind, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
+    StructField, Sym, TokenKind, VariantFixup, FixupKind,
+    ConstFn, ConstLocal, ConstFrame, ConstValue, ConstFlow, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
@@ -784,6 +785,43 @@ StructField :: struct {
 // What a fixup patches. `Literal` is an argument that named no type;
 // `MultiField` is one name of a list binding, whose field is called whatever
 // the callee's return type list called it.
+// A top-level function a compile-time call may run, as the token its `fn` sits
+// at. Recorded before any constant is read, since a constant may call one
+// written below the line that calls it.
+ConstFn :: struct {
+    name_off: i64,
+    name_len: i64,
+    at: i64,
+}
+
+// A parameter or a local while a compile-time call runs. `kind` says which of
+// the two things a compile-time value may be it holds, and `value` is the
+// number or the 0 or 1.
+ConstLocal :: struct {
+    name_off: i64,
+    name_len: i64,
+    kind: i64,
+    value: i64,
+}
+
+// A call being run, so one that reaches itself is caught by name.
+ConstFrame :: struct {
+    name_off: i64,
+    name_len: i64,
+}
+
+ConstValue :: struct {
+    kind: i64,
+    value: i64,
+}
+
+// What a statement did, and the value it left with where it left one.
+ConstFlow :: struct {
+    flow: i64,
+    kind: i64,
+    value: i64,
+}
+
 FixupKind :: enum { Literal, MultiField }
 
 VariantFixup :: struct {
@@ -1177,6 +1215,18 @@ Parser :: struct {
     fields: Arena<StructField>,
     locals: Arena<LocalVar>,
     consts: Arena<ConstDef>,
+    // What a compile-time call needs: every function one may run, the names in
+    // scope while one runs, which calls are running so one that reaches itself
+    // is caught, and the arguments waiting on a stack.
+    const_fns: Arena<ConstFn>,
+    const_locals: Arena<ConstLocal>,
+    const_stack: Arena<ConstFrame>,
+    const_args: Arena<ConstValue>,
+    // How far this evaluation has run, and how deep inside a side of `&&` or
+    // `||` the other side already settled, where the tokens are read and
+    // nothing is worked out.
+    const_steps: i64,
+    const_quiet: i64,
     // A constant whose value is a struct rather than an integer. `value` is the
     // node the literal parsed to, written out again at each use.
     value_consts: Arena<ConstDef>,
