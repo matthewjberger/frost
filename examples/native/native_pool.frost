@@ -73,17 +73,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    var world: Slab = Slab {
-        storage = [
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-        ],
-        generations = [0, 0, 0, 0],
-        free_list = [0, 0, 0, 0],
-        free_count = 0,
-    }
+    var world: Slab = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })

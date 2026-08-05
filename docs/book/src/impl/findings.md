@@ -420,3 +420,47 @@ What it does not catch: two containers that draw the same number, one time in a
 hundred and twenty-seven; a container reset in a loop, which comes back round
 after that many; and the `slab_slot` escape hatch, where a caller asks for a raw
 index once and indexes storage with it, which is checked by nothing by design.
+
+## An array's length had to become arithmetic
+
+`live_words` on a `columns<T, N>` is synthesized, so its length is worked out in
+the compiler. `Slab<T, N>` is library Frost, and a length could only be a number
+or a name standing for one. `[(N + 63) / 64]i64` is not writable that way, so the
+slab could not carry the same record and the two containers would have differed
+in what they guarantee. The reference says switching one for the other changes
+the container token and the prefix and nothing else; that sentence would have
+become false.
+
+So a length is arithmetic now: `+ - * / %` and brackets over numbers, module
+constants, and the size parameters a generic binds. Nothing else. No call, no
+comparison, no name that is not a size, which keeps it inside the bound every
+compile-time construct in the language has: what it costs is decided by how it
+was written.
+
+The two compilers hold it differently and that is the same language read twice.
+The bootstrap parses a length into a small tree and carries it in
+`Type::ArrayGeneric` until the generic that binds its names is instantiated,
+because a template's body is lowered once. The self-hosted compiler parses a
+generic body once per instantiation with the parameters already bound, so every
+name is a number by the time it reads one and the answer is a number too.
+
+### Adding a field to a library struct broke thirty-two literals
+
+Every `Slab { storage = ..., generations = ..., free_list = ..., free_count = 0 }`
+in the tree stopped compiling, and the fix could not be mechanical: the new
+array's length is `(N + 63) / 64`, a number the writer would have to work out per
+capacity.
+
+`slab_new()` is the answer, and it is the twin of the `columns_new()` that
+already existed for the same reason. A zeroed container of the type the context
+wants, then `slab_reset`. Every literal in the tree is one call now, which is
+what they should have been: enumerating four arrays to write zeros into them was
+the worst part of using a slab.
+
+### One divergence found on the way
+
+`slice_len` of a fixed array is its length, which the type already carries. The
+self-hosted compiler answered it, emitting the constant; the bootstrap refused
+with "expected a slice value". A `str` is a `[]u8` and an array coerces to a
+slice everywhere else, so the self-hosted side was right, and the bootstrap
+answers it now.

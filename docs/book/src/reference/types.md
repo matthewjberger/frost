@@ -138,6 +138,15 @@ itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
 provides the pieces to build one, not the pool itself, and `std/slab.frost` is
 one written out in the language.
 
+An array's length is arithmetic: a number, a name standing for one (a module
+constant or a size parameter a generic binds), or `+ - * / %` and brackets over
+those. `[(N + 63) / 64]i64` is one word of bits per sixty-four slots, which is
+what `Slab<T, N>` carries its liveness in. There is no call, no comparison and
+no name that is not a size, so working a length out is bounded by how it was
+written, the same bound every other compile-time construct has (11.4).
+
+`slice_len` of a fixed array is its length, which the type already says.
+
 `columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
 elements of struct `T`, one array per field of `T` plus a generational free list
 and a record of which slots hold an element, addressed by `Handle<T>` the same

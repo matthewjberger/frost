@@ -178,6 +178,12 @@ is the appropriate shape (a place for `^`, a bare identifier for `{`/`::`). The
 struct-literal `{` is disambiguated from a `match` body by checking that the
 token after `{` is not `case`.
 
+`SizeExpr = SizeTerm ( ("+" | "-") SizeTerm )*`,
+`SizeTerm = SizeAtom ( ("*" | "/" | "%") SizeAtom )*`,
+`SizeAtom = INTEGER | IDENT | "(" SizeExpr ")"`. A length is arithmetic and
+nothing else (3.4): the `[Type ";" INTEGER]` form is entered instead when the
+token after the `[` is followed by a `;`.
+
 `LiveWalk = "live" "(" Place ")"`, where `Place` is a name or a field of one
 (10.1b). It is written only after the `in` of a `for`: it is the subject of a
 walk, so there is no value for it to be anywhere else.
@@ -255,7 +261,7 @@ Type =
     | "^" Type                               // raw pointer
     | "ref" Type                             // returnable borrow (3.3)
     | "[" "]" Type                           // slice
-    | "[" INTEGER "]" Type                   // array (size first)
+    | "[" SizeExpr "]" Type                  // array (length first)
     | "[" Type ";" INTEGER "]"               // array (element first)
     | "fn" "(" ( ProcParam ( "," ProcParam )* )? ")" ( "->" Type )?
     | "distinct" Type

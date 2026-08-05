@@ -65,12 +65,7 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) {
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world: Slab<Entity, 4> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 4],
-        generations = [0; 4],
-        free_list = [0; 4],
-        free_count = 0,
-    }
+    var world: Slab<Entity, 4> = slab_new()
     slab_reset($Entity, $4, world)
 
     hero := slab_insert($Entity, $4, world, Entity { hp = 100, mana = 30 })

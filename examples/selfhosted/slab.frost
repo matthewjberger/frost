@@ -39,17 +39,7 @@ insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {
 }
 
 main :: fn() -> i64 {
-    var world: Slab = Slab {
-        storage = [
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 },
-        ],
-        generations = [0, 0, 0, 0],
-        free_list = [0, 0, 0, 0],
-        free_count = 0,
-    }
+    var world: Slab = slab_new()
     reset(world)
 
     hero := insert(world, Entity { hp = 100, mana = 30 })

@@ -50,6 +50,13 @@ second-class borrow cannot express. Everything else is a library,
 `storage`, `generations`, `free_list`, `free_count`, `live_words`, and
 `live_count`. See [pools-and-columns.md](../design/pools-and-columns.md).
 
+`slab_new()` is a zeroed `Slab<T, N>` of the type the context wants, the twin of
+`columns_new()`. A slab's arrays have lengths worked out from `N`, so writing
+them out at every construction was the worst part of using one, and the
+`live_words` array's length is `(N + 63) / 64`, which is a number a reader
+should not have to work out. Construct with `slab_new()` and then `slab_reset`,
+which is the contract a columns container already had.
+
 ## 10.1b `for slot in live(c)`
 
 `c.field` is every slot, released ones included, and nothing about it says which
@@ -83,6 +90,8 @@ for rank, slot in live(c) {
 `live(c)` is the subject of a `for` and may be written nowhere else. There is no
 sequence value, nothing to bind, and nothing to hand on. Its subject is a name or
 a field of one, since the container is read where it stands rather than bound.
+A `Slab<T, N>` carries the same record and is walked the same way, with
+`s.storage[slot]` where a columns container has `c.field[slot]`.
 
 The container records which slots hold an element as one bit each in
 `live_words`, set by `columns_insert` and cleared by `columns_release`. The walk

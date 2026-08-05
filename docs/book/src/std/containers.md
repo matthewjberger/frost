@@ -196,12 +196,7 @@ rule is section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md).
 
 ```frost
-var world : Slab<Entity, 8> = Slab {
-    storage = [Entity { hp = 0, mana = 0 }; 8],
-    generations = [0; 8],
-    free_list = [0; 8],
-    free_count = 0,
-}
+var world : Slab<Entity, 8> = slab_new()
 slab_reset($Entity, $8, world)
 
 h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })

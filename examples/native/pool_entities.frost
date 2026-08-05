@@ -21,12 +21,7 @@ generation_of :: fn(handle: Handle<Entity>) -> i64 { raw: i64 = handle raw >> 32
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    var p: Slab<Entity, 8> = Slab {
-        storage = [Entity { hp = 0, mana = 0 }; 8],
-        generations = [0; 8],
-        free_list = [0; 8],
-        free_count = 0,
-    }
+    var p: Slab<Entity, 8> = slab_new()
     slab_reset($Entity, $8, p)
 
     hero := slab_insert($Entity, $8, p, Entity { hp = 100, mana = 30 })

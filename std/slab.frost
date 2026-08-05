@@ -43,11 +43,18 @@ CONTAINER_SHIFT :: 24
 // Reaching it takes sixteen million releases of one slot.
 GENERATION_LIMIT :: 16777214
 
+// `live_words` is which slots hold an element, one bit each, in slot order. It
+// is what `for slot in live(s)` walks. The free list holds the same knowledge
+// inside out, and reading it back comes out in release order rather than the
+// order storage is laid out in; a generation of zero is a slot that was never
+// filled as much as one that is.
 Slab :: struct($T: Type, $N: usize) {
     storage: [N]T,
     generations: [N]i64,
     free_list: [N]i64,
     free_count: i64,
+    live_words: [(N + 63) / 64]i64,
+    live_count: i64,
 }
 
 // Every slot free, every generation back to zero, and the slab stamped with a
@@ -66,6 +73,12 @@ slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
         s.free_list[i] = N - 1 - i
         i = i + 1
     }
+    var w: i64 = 0
+    while (w < (N + 63) / 64) {
+        s.live_words[w] = 0
+        w = w + 1
+    }
+    s.live_count = 0
     s.free_count = N
 }
 
@@ -80,6 +93,8 @@ slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Han
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
+    s.live_words[index >> 6] = s.live_words[index >> 6] | (1 << (index & 63))
+    s.live_count = s.live_count + 1
     packed := (s.generations[index] << 32) | index
     packed
 }
@@ -131,6 +146,12 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) ->
     index := raw & 4294967295
     if (s.generations[index] != (raw >> 32)) { return false }
     s.generations[index] = s.generations[index] + 1
+    // Cleared before the retirement check, since a retired slot holds no
+    // element either and a walk that still reached it would read the one that
+    // was released.
+    bit := 1 << (index & 63)
+    s.live_words[index >> 6] = s.live_words[index >> 6] & (-1 - bit)
+    s.live_count = s.live_count - 1
     // A slot whose generation is spent is retired rather than reused. One more
     // release would carry the count into the container's number and the slot
     // would answer for a container it is not in.
@@ -149,12 +170,7 @@ SlabThing :: struct { hp: i64 }
 // which is what keeps the boundary honest: the check happens here or the caller
 // is told there is nothing to walk.
 test "a slot stands in for a handle until the handle goes stale" {
-    var s: Slab<SlabThing, 2> = Slab {
-        storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
-        generations = [0, 0],
-        free_list = [0, 0],
-        free_count = 0,
-    }
+    var s: Slab<SlabThing, 2> = slab_new()
     slab_reset($SlabThing, $2, s)
     held := slab_insert($SlabThing, $2, s, SlabThing { hp = 41 })
     slot := slab_slot($SlabThing, $2, s, held)
@@ -170,12 +186,7 @@ test "a slot stands in for a handle until the handle goes stale" {
 // generation rather than by two billion releases, which is the only way to reach
 // this in a test and is why the bound went unnoticed.
 test "a slot whose generation is spent is retired rather than reused" {
-    var s: Slab<SlabThing, 2> = Slab {
-        storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
-        generations = [0, 0],
-        free_list = [0, 0],
-        free_count = 0,
-    }
+    var s: Slab<SlabThing, 2> = slab_new()
     slab_reset($SlabThing, $2, s)
 
     first := slab_insert($SlabThing, $2, s, SlabThing { hp = 7 })

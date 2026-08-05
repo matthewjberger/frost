@@ -5,7 +5,7 @@ use crate::ast::{
 };
 use crate::lexer::Position;
 use crate::parser::Diagnostic;
-use crate::types::Type;
+use crate::types::{SizeExpr, Type};
 
 // Where the compiler's guarantees stop.
 //
@@ -575,7 +575,7 @@ impl Checker<'_> {
                     self.produced_type(*value).unwrap_or(Type::Unknown);
                 Some(Type::ArrayGeneric(
                     Box::new(element),
-                    ast.name(*count).to_string(),
+                    SizeExpr::Named(ast.name(*count).to_string()),
                 ))
             }
             Expression::Literal(Literal::String(_)) => Some(Type::Str),

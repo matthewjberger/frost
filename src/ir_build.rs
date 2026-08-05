@@ -1618,13 +1618,19 @@ pub(crate) fn substitute_type(
         Type::Array(inner, size) => {
             Type::Array(Box::new(substitute_type(inner, subst)), *size)
         }
-        Type::ArrayGeneric(inner, size_param) => {
+        Type::ArrayGeneric(inner, size) => {
             let inner = substitute_type(inner, subst);
-            match subst.get(size_param) {
-                Some(Type::ConstUsize(size)) => {
-                    Type::Array(Box::new(inner), *size)
-                }
-                _ => Type::ArrayGeneric(Box::new(inner), size_param.clone()),
+            // Every name in the length has to be bound before it is worked out:
+            // a length half known is still a length nobody can lay out.
+            let known = size
+                .evaluate(&|name| match subst.get(name) {
+                    Some(Type::ConstUsize(size)) => i64::try_from(*size).ok(),
+                    _ => None,
+                })
+                .and_then(|value| usize::try_from(value).ok());
+            match known {
+                Some(known) => Type::Array(Box::new(inner), known),
+                None => Type::ArrayGeneric(Box::new(inner), size.clone()),
             }
         }
         Type::Slice(inner) => {
@@ -5148,10 +5154,23 @@ impl<'a> FunctionLowering<'a> {
                 "`live` walks a container that is named, not one that is worked out; bind it first and walk the name"
             );
         }
-        let Some(struct_name) = self.columns_shaped_base(container) else {
-            bail!(
-                "`live` walks a generational container, and this is not one; write `live(c)` where `c` is a `columns<T, N>`"
-            );
+        // A container by shape rather than by name, the way a slab and a
+        // columns container are recognized everywhere else: what makes a walk
+        // possible is the record of which slots are filled, and a `Slab<T, N>`
+        // carries one as much as a `columns<T, N>` does.
+        let struct_name = match self.probe_type(container) {
+            Some(Type::Struct(name))
+                if self
+                    .builder
+                    .struct_layout(&name)
+                    .and_then(|layout| layout.field(LIVE_WORDS))
+                    .is_some() =>
+            {
+                name
+            }
+            _ => bail!(
+                "`live` walks a generational container, and this is not one; write `live(c)` where `c` is a `columns<T, N>` or a `Slab<T, N>`"
+            ),
         };
         let (words_offset, word_count) = {
             let layout =
@@ -5597,15 +5616,19 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::Call(callee, arguments) => {
                 if let Expression::Identifier(name) = self.ast.expr(callee)
-                    && self.ast.name(*name) == "columns_new"
-                    && self.resolve_variable("columns_new").is_none()
-                    && self.builder.signature("columns_new").is_none()
+                    && matches!(
+                        self.ast.name(*name),
+                        "columns_new" | "slab_new"
+                    )
+                    && self.resolve_variable(self.ast.name(*name)).is_none()
+                    && self.builder.signature(self.ast.name(*name)).is_none()
                     && !self
                         .builder
                         .generic_functions
-                        .contains_key("columns_new")
+                        .contains_key(self.ast.name(*name))
                 {
-                    return self.lower_columns_new(expected);
+                    let called = self.ast.name(*name).to_string();
+                    return self.lower_columns_new(&called, expected);
                 }
                 // `live(c)` reaching here is one written somewhere other than
                 // after the `in` of a `for`, where it is the subject of the
@@ -7896,6 +7919,19 @@ impl<'a> FunctionLowering<'a> {
         if arguments.len() != 1 {
             bail!("slice_len expects one argument");
         }
+        // A fixed array carries its length in its type, so this is a number
+        // worked out here rather than a field read. The self-hosted compiler
+        // answered it and the bootstrap refused, and an array that coerces to a
+        // slice everywhere else has a length here too.
+        if let Some(Type::Array(_, count)) = self.probe_type(arguments[0]) {
+            return Ok((
+                IrOperand::Constant(IrConstant::Integer(
+                    count as i64,
+                    Type::Usize,
+                )),
+                Type::Usize,
+            ));
+        }
         let base = self.slice_value_address(arguments[0])?;
         let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
         Ok((length, Type::Usize))
@@ -8739,15 +8775,32 @@ impl<'a> FunctionLowering<'a> {
     // has.
     fn lower_columns_new(
         &mut self,
+        called: &str,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
+        let slab = called == "slab_new";
+        let wanted = if slab { "Slab<T, N>" } else { "columns<T, N>" };
         let Some(Type::Struct(name)) = expected else {
             bail!(
-                "columns_new() needs a columns type from its context, e.g. `var c : columns<T, N> = columns_new()`"
+                "{called}() needs its type from the context, e.g. `var c : {wanted} = {called}()`"
             );
         };
-        if !name.starts_with("columns<") {
-            bail!("columns_new() initializes a columns type, not '{name}'");
+        // A columns container is known by its name, since the compiler is what
+        // made it. A slab is known by its shape, the way it is everywhere else,
+        // and by the name the standard library gives it, since an instance
+        // whose element is itself an instance has no layout to read yet at the
+        // point this is lowered.
+        let recognized = if slab {
+            name.starts_with("Slab<")
+                || self.builder.struct_layout(name).is_some_and(|layout| {
+                    layout.field("storage").is_some()
+                        && layout.field("generations").is_some()
+                })
+        } else {
+            name.starts_with("columns<")
+        };
+        if !recognized {
+            bail!("{called}() initializes a `{wanted}`, not '{name}'");
         }
         let ty = Type::Struct(name.clone());
         let size = self.builder.byte_size(&ty) as i64;
