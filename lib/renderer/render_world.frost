@@ -381,8 +381,8 @@ render_world_new :: fn(device: Device, room: i64, meshes: i64,
     // Both indirect and storage: the compute passes write it and the draws read
     // their arguments from it.
     var descriptor := buffer_descriptor_init()
-    descriptor.usage = BufferUsage::Indirect | BufferUsage::Storage
-        | BufferUsage::CopyDst
+    descriptor.usage = (BufferUsage::Indirect | BufferUsage::Storage
+        | BufferUsage::CopyDst)
     descriptor.size = total_slots * INDIRECT_BYTES
     indirect_buffer := device_create_buffer(device, ptr_to(descriptor))
 

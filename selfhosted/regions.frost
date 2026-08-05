@@ -1066,12 +1066,12 @@ expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         if (node.val == OP_AND || node.val == OP_OR) {
             return expr_consumes(p, left, off, len)
         }
-        return expr_consumes(p, left, off, len)
-            || expr_consumes(p, right, off, len)
+        return (expr_consumes(p, left, off, len)
+            || expr_consumes(p, right, off, len))
     }
     if (kind == NodeKind::Index || kind == NodeKind::SliceFrom) {
-        return expr_consumes(p, left, off, len)
-            || expr_consumes(p, right, off, len)
+        return (expr_consumes(p, left, off, len)
+            || expr_consumes(p, right, off, len))
     }
     if (kind == NodeKind::Field || kind == NodeKind::Deref
         || kind == NodeKind::AddrOf || kind == NodeKind::PtrCast
@@ -1082,9 +1082,9 @@ expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     // An `if` used as a value hands it on only where both arms do, the same
     // rule an `if` written as a statement answers to.
     if (kind == NodeKind::If) {
-        return right != (-1) && node.val != (-1)
+        return (right != (-1) && node.val != (-1)
             && consumes_block(p, right, off, len, true)
-            && consumes_block(p, node.val, off, len, true)
+            && consumes_block(p, node.val, off, len, true))
     }
     if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         return items_consume(p, left, off, len)
@@ -1269,8 +1269,8 @@ exits_without :: fn(mut p: Parser, id: i64, off: i64, len: i64,
         return true
     }
     if (kind == NodeKind::If) {
-        return branch_exits_without(p, node.b, off, len, loops)
-            || branch_exits_without(p, node.val, off, len, loops)
+        return (branch_exits_without(p, node.b, off, len, loops)
+            || branch_exits_without(p, node.val, off, len, loops))
     }
     if (kind == NodeKind::With) {
         return branch_exits_without(p, node.a, off, len, loops)
@@ -1472,8 +1472,8 @@ place_covers :: fn(mut p: Parser, outer: i64, inner: i64) -> bool {
 // the same reason. This is what refuses a write into storage that has gone, and
 // what cannot be told apart there is what has to be refused.
 place_maybe_within :: fn(mut p: Parser, inner: i64, outer: i64) -> bool {
-    place_depth(p, outer) <= place_depth(p, inner)
-        && places_overlap(p, outer, inner)
+    (place_depth(p, outer) <= place_depth(p, inner)
+        && places_overlap(p, outer, inner))
 }
 
 // The place already given away that this one is part of, or -1. Writing into
@@ -5330,8 +5330,8 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
         return answer_value_mask(p, child, params)
     }
     if (kind == NodeKind::SliceFrom) {
-        return answer_value_mask(p, child, params)
-            | answer_value_mask(p, node.b, params)
+        return (answer_value_mask(p, child, params)
+            | answer_value_mask(p, node.b, params))
     }
     if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         var found: i64 = 0
@@ -5344,8 +5344,8 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
         return found
     }
     if (kind == NodeKind::If) {
-        return answer_block_answer(p, node.b, params)
-            | answer_block_answer(p, node.val, params)
+        return (answer_block_answer(p, node.b, params)
+            | answer_block_answer(p, node.val, params))
     }
     if (kind == NodeKind::Match) {
         var found: i64 = 0
@@ -5445,15 +5445,15 @@ answer_walk_block :: fn(mut p: Parser, head: i64, params: i64,
         }
         if (kind == NodeKind::If) {
             found = found | answer_walk_block(p, node.b, params, answers_place)
-            found = found
-                | answer_walk_block(p, node.val, params, answers_place)
+            found = (found
+                | answer_walk_block(p, node.val, params, answers_place))
         }
         if (kind == NodeKind::Match) {
             var arm := node.b
             while (arm != (-1)) {
                 case_node := arena_at(p.arena, arm)
-                found = found
-                    | answer_walk_block(p, case_node.a, params, answers_place)
+                found = (found
+                    | answer_walk_block(p, case_node.a, params, answers_place))
                 arm = case_node.next
             }
         }
@@ -5559,9 +5559,9 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
                             var bit: i64 = 0
                             while (bit < KEPT_SLOTS) {
                                 if (held & (1 << bit) != 0) {
-                                    grew = grew
+                                    grew = (grew
                                         | kept_record(p, fn_index, bit,
-                                        receiving)
+                                            receiving))
                                 }
                                 bit = bit + 1
                             }

@@ -224,10 +224,10 @@ is_digit :: fn(b: i64) -> bool { b >= CH_0 && b <= CH_9 }
 // What may appear in a name: the letters, the digits, and the three punctuation
 // marks a generated label uses.
 is_name_byte :: fn(b: i64) -> bool {
-    (b >= CH_LOWER_A && b <= CH_LOWER_Z)
+    ((b >= CH_LOWER_A && b <= CH_LOWER_Z)
         || (b >= CH_UPPER_A && b <= CH_UPPER_Z)
         || is_digit(b)
-        || b == CH_UNDERSCORE || b == CH_DOT || b == CH_DOLLAR
+        || b == CH_UNDERSCORE || b == CH_DOT || b == CH_DOLLAR)
 }
 
 skip_spaces :: fn(src: str, at: i64) -> i64 {

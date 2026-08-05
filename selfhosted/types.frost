@@ -462,8 +462,8 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     // string literal, which `value_fits` answers for, since being a literal is a
     // question about the expression rather than about its type.
     if (is_array_ty(from) || is_array_ty(to)) {
-        return is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
-            && array_element(p, from) == array_element(p, to)
+        return (is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
+            && array_element(p, from) == array_element(p, to))
     }
     if (is_struct_ty(from) || is_struct_ty(to)) {
         return false
@@ -1260,14 +1260,14 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // ask it, a `where` clause at a call and an expansion-time `if` in an unrolled
 // body, and they ask the same one so the two cannot drift.
 is_type_predicate :: fn(src: str, off: i64, len: i64) -> bool {
-    str_range_eq(src, off, len, "is_numeric")
+    (str_range_eq(src, off, len, "is_numeric")
         || str_range_eq(src, off, len, "is_integer")
         || str_range_eq(src, off, len, "is_float")
         || str_range_eq(src, off, len, "is_struct")
         || str_range_eq(src, off, len, "is_array")
         || str_range_eq(src, off, len, "is_slice")
         || str_range_eq(src, off, len, "is_pointer")
-        || str_range_eq(src, off, len, "is_linear")
+        || str_range_eq(src, off, len, "is_linear"))
 }
 
 predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {

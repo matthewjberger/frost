@@ -14,8 +14,8 @@ is_radix_digit :: fn(c: i64, base: i64) -> bool {
     if (base == 2) {
         return c == CH_0 || c == CH_0 + 1
     }
-    is_digit(c) || (c >= CH_LOWER_A && c <= CH_LOWER_F)
-        || (c >= CH_UPPER_A && c <= CH_UPPER_F)
+    (is_digit(c) || (c >= CH_LOWER_A && c <= CH_LOWER_F)
+        || (c >= CH_UPPER_A && c <= CH_UPPER_F))
 }
 
 radix_digit :: fn(c: i64) -> i64 {
@@ -50,9 +50,9 @@ is_digit :: fn(c: i64) -> bool {
 }
 
 is_ident_start :: fn(c: i64) -> bool {
-    (c >= CH_LOWER_A && c <= CH_LOWER_Z)
+    ((c >= CH_LOWER_A && c <= CH_LOWER_Z)
         || (c >= CH_UPPER_A && c <= CH_UPPER_Z)
-        || c == CH_UNDERSCORE
+        || c == CH_UNDERSCORE)
 }
 
 is_ident_cont :: fn(c: i64) -> bool {

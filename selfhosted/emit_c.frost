@@ -102,8 +102,8 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
 // address until it is given one.
 is_place_node :: fn(mut p: Parser, id: i64) -> bool {
     kind := arena_at(p.arena, id).kind
-    kind == NodeKind::Var || kind == NodeKind::Field
-        || kind == NodeKind::Index || kind == NodeKind::Deref
+    (kind == NodeKind::Var || kind == NodeKind::Field
+        || kind == NodeKind::Index || kind == NodeKind::Deref)
 }
 
 emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
@@ -175,7 +175,7 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
 // such a name is prefixed. Every place a field name is written goes through
 // `emit_field_name`, which is what keeps the declaration and its uses agreeing.
 is_c_keyword :: fn(src: str, off: i64, len: i64) -> bool {
-    str_range_eq(src, off, len, "auto")
+    (str_range_eq(src, off, len, "auto")
         || str_range_eq(src, off, len, "bool")
         || str_range_eq(src, off, len, "break")
         || str_range_eq(src, off, len, "case")
@@ -209,7 +209,7 @@ is_c_keyword :: fn(src: str, off: i64, len: i64) -> bool {
         || str_range_eq(src, off, len, "unsigned")
         || str_range_eq(src, off, len, "void")
         || str_range_eq(src, off, len, "volatile")
-        || str_range_eq(src, off, len, "while")
+        || str_range_eq(src, off, len, "while"))
 }
 
 emit_field_name :: fn(mut p: Parser, off: i64, len: i64) {
@@ -810,8 +810,8 @@ arith_checked :: fn(mut p: Parser, op: i64, ty: i64) -> bool {
     if (is_integer(ty) == false) {
         return false
     }
-    op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV
-        || op == OP_MOD || op == OP_SHL || op == OP_SHR
+    (op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV
+        || op == OP_MOD || op == OP_SHL || op == OP_SHR)
 }
 
 // A 64-bit operation is checked where it is done, since there is no wider place
@@ -1087,12 +1087,12 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // Only where the parameter borrows. A generic taking its value
             // outright is handed the slice itself, and handing it an address
             // there is the wrong type rather than an extra indirection.
-            literal_slice := have_param == 1 && param_auto == 1
+            literal_slice := (have_param == 1 && param_auto == 1
                 && arena_at(p.arena, value).kind == NodeKind::StrLit
-                && is_array_ty(want_ty) && is_slice_ty(p, want_ty)
-            literal_value := have_param == 1 && param_auto != 1
+                && is_array_ty(want_ty) && is_slice_ty(p, want_ty))
+            literal_value := (have_param == 1 && param_auto != 1
                 && arena_at(p.arena, value).kind == NodeKind::StrLit
-                && is_array_ty(want_ty) && is_slice_ty(p, want_ty)
+                && is_array_ty(want_ty) && is_slice_ty(p, want_ty))
             if (literal_slice) {
                 emit_text("(&")
                 emit_coerced(p, value, want_ty)

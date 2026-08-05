@@ -89,8 +89,8 @@ object_room :: fn(mut unit: Assembly, section_count: i64, header_bytes: i64,
     // The header, one header and two symbol entries per section, the bytes of
     // every section, the fixups, the names, and room for the three debug names
     // in the string table.
-    20 + section_count * 40 + header_bytes + debug_bytes + reloc_bytes
-        + section_count * 2 * 18 + names + 64
+    (20 + section_count * 40 + header_bytes + debug_bytes + reloc_bytes
+        + section_count * 2 * 18 + names + 64)
 }
 
 // A section name of more than eight bytes cannot sit in the field, so the field

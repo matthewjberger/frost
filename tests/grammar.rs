@@ -194,3 +194,161 @@ fn the_corpus_is_formatted() {
         unformatted.join("\n")
     );
 }
+
+
+// Where a line opens with an operator while no bracket is open, and where the
+// expression it continues began.
+struct Continuation {
+    /// The byte the expression starts at, where an opening bracket goes.
+    opens: usize,
+    /// The byte after the last token of the run, where the closing one goes.
+    closes: usize,
+}
+
+fn continuations_outside_brackets(source: &str) -> Vec<Continuation> {
+    use frost::{Lexer, Token};
+    let mut lexer = Lexer::new(source);
+    let Ok(tokens) = lexer.tokenize() else {
+        return Vec::new();
+    };
+    let starts = lexer.positions().to_vec();
+    let ends = lexer.ends().to_vec();
+    let offset = |place: &frost::Position| -> usize {
+        let mut at = 0usize;
+        for (number, line) in source.split_inclusive('\n').enumerate() {
+            if number + 1 == place.line {
+                let within = line
+                    .char_indices()
+                    .nth(place.column.saturating_sub(1))
+                    .map(|(at, _)| at)
+                    .unwrap_or(line.len());
+                return at + within;
+            }
+            at += line.len();
+        }
+        source.len()
+    };
+
+    let continues = |token: &Token| {
+        matches!(
+            token,
+            Token::Plus
+                | Token::Asterisk
+                | Token::Slash
+                | Token::Percent
+                | Token::And
+                | Token::Or
+                | Token::Pipe
+                | Token::Ampersand
+                | Token::Equal
+                | Token::NotEqual
+                | Token::LessThan
+                | Token::LessThanOrEqual
+                | Token::GreaterThan
+                | Token::GreaterThanOrEqual
+                | Token::Dot
+        )
+    };
+
+    // The token each line begins at, and the bracket depth in front of it.
+    let mut depth = 0i32;
+    let mut depths = vec![0i32; tokens.len()];
+    let mut opens_line = vec![false; tokens.len()];
+    let mut previous = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        opens_line[index] = starts[index].line != previous;
+        previous = starts[index].line;
+        depths[index] = depth;
+        match token {
+            Token::LeftParentheses | Token::LeftBracket => depth += 1,
+            Token::RightParentheses | Token::RightBracket => depth -= 1,
+            _ => {}
+        }
+    }
+
+    let mut found = Vec::new();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        if !(opens_line[index] && continues(&tokens[index]) && depths[index] == 0)
+        {
+            index += 1;
+            continue;
+        }
+        // Back to the first token of the statement this continues: the last
+        // line opener that was not itself a continuation.
+        let mut head = index;
+        while head > 0 {
+            head -= 1;
+            if opens_line[head] && !continues(&tokens[head]) {
+                break;
+            }
+        }
+        // The expression begins after the last `:=`, `=` or `return` on that
+        // line; a block's trailing value begins at the line's first token.
+        let mut begins = head;
+        let mut at = head;
+        while at < tokens.len() && starts[at].line == starts[head].line {
+            if matches!(
+                tokens[at],
+                Token::ColonAssign | Token::Assign | Token::Return
+            ) {
+                begins = at + 1;
+            }
+            at += 1;
+        }
+        // Forward over every further continuation line of this run.
+        let mut last = index;
+        let mut ahead = index;
+        while ahead < tokens.len() {
+            if opens_line[ahead] && !continues(&tokens[ahead]) && ahead > index {
+                break;
+            }
+            if depths[ahead] == 0 && opens_line[ahead] && continues(&tokens[ahead])
+            {
+                last = ahead;
+            }
+            ahead += 1;
+        }
+        // The run ends at the token before the next one that opens a line with
+        // no bracket held open: everything up to there, nested calls and their
+        // own wrapped arguments included, belongs to this expression.
+        let mut end = last;
+        while end + 1 < tokens.len()
+            && !(opens_line[end + 1] && depths[end + 1] == 0)
+        {
+            end += 1;
+        }
+        found.push(Continuation {
+            opens: offset(&starts[begins]),
+            closes: offset(&ends[end]),
+        });
+        index = end + 1;
+    }
+    found
+}
+
+// Run once with `cargo test -r --test grammar -- --ignored migrate`. Kept as
+// the record of how the corpus was moved off leading-operator continuation.
+#[test]
+#[ignore]
+fn migrate_continuations_into_brackets() {
+    let mut moved = 0usize;
+    for file in corpus() {
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let found = continuations_outside_brackets(&source);
+        if found.is_empty() {
+            continue;
+        }
+        let mut text = source.clone();
+        // Latest first, so an earlier offset stays where it is.
+        for held in found.iter().rev() {
+            text.insert(held.closes, ')');
+            text.insert(held.opens, '(');
+        }
+        std::fs::write(&file, text).unwrap();
+        moved += found.len();
+    }
+    println!("wrapped {moved} continuations");
+}

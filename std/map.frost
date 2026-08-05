@@ -282,8 +282,8 @@ map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>)
 Cell :: struct { x: i64, y: i64 }
 
 cell_hash :: fn(c: Cell) -> i64 {
-    wrap_add(i64_hash(c.x), wrap_mul(i64_hash(c.y), 31))
-        & 4611686018427387903
+    (wrap_add(i64_hash(c.x), wrap_mul(i64_hash(c.y), 31))
+        & 4611686018427387903)
 }
 
 cell_same :: fn(a: Cell, b: Cell) -> bool {

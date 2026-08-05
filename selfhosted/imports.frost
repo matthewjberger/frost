@@ -173,8 +173,8 @@ MAX_PATH_STEPS :: 64
 // Whether the segment written at `start` is itself a `..`, which nothing above
 // it can cancel: `../../a` keeps both.
 is_parent_step :: fn(out: ^i8, start: i64, at: i64) -> bool {
-    at - start == 2 && byte_at(out, start) == CH_DOT
-        && byte_at(out, start + 1) == CH_DOT
+    (at - start == 2 && byte_at(out, start) == CH_DOT
+        && byte_at(out, start + 1) == CH_DOT)
 }
 
 // An import is found beside the file that named it first, then under

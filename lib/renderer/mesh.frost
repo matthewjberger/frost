@@ -318,8 +318,8 @@ mesh_slot :: fn(cache: MeshCache, index: i64) -> MeshSlot {
 }
 
 mesh_slot_alive :: fn(cache: MeshCache, held: MeshSlot) -> bool {
-    mesh_cache_live(cache, held.index)
-        && cache.generations[held.index] == held.generation
+    (mesh_cache_live(cache, held.index)
+        && cache.generations[held.index] == held.generation)
 }
 
 // Two triangles over four corners, wound counter-clockwise seen from outside,
