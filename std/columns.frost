@@ -21,13 +21,26 @@ export columns_reset, columns_full, columns_insert, columns_alive,
 
 // Every slot free, every generation back to zero. Built with `columns_new()`
 // and then reset, since construction cannot run code.
+//
+// `live_words` and `live_count` are the container's record of which slots hold
+// an element, one bit per slot, and they are what `for slot in live(c)` walks.
+// The free list says the same thing inside out, but a walk of it comes out in
+// release order rather than slot order, which is the order a column is stored
+// in.
 columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
+    stamp := frost_rt_container_id() << CONTAINER_SHIFT
     var i: i64 = 0
     while (i < N) {
-        c.generations[i] = 0
+        c.generations[i] = stamp
         c.free_list[i] = N - 1 - i
         i = i + 1
     }
+    var w: i64 = 0
+    while (w < (N + 63) / 64) {
+        c.live_words[w] = 0
+        w = w + 1
+    }
+    c.live_count = 0
     c.free_count = N
 }
 
@@ -43,6 +56,8 @@ columns_insert :: fn($T: Type, $N: usize, mut c: columns<T, N>, move value: $T)
     index := c.free_list[c.free_count]
     handle: Handle<T> = (c.generations[index] << 32) | index
     c[handle] = value
+    c.live_words[index >> 6] = c.live_words[index >> 6] | (1 << (index & 63))
+    c.live_count = c.live_count + 1
     handle
 }
 
@@ -63,9 +78,15 @@ columns_release :: fn($T: Type, $N: usize, mut c: columns<T, N>,
         return false
     }
     c.generations[index] = c.generations[index] + 1
+    // Cleared before the retirement check, since a retired slot holds no
+    // element either and a walk that still visited it would read the one that
+    // was released.
+    bit := 1 << (index & 63)
+    c.live_words[index >> 6] = c.live_words[index >> 6] & (-1 - bit)
+    c.live_count = c.live_count - 1
     // The handle scheme is the slab's, so its generation bound is too: a spent
     // slot is retired rather than handed out again. See GENERATION_LIMIT.
-    if (c.generations[index] > GENERATION_LIMIT) {
+    if ((c.generations[index] & 16777215) > GENERATION_LIMIT) {
         return true
     }
     c.free_list[c.free_count] = index

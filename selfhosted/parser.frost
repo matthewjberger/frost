@@ -559,6 +559,15 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (str_range_eq(p.src, offset, length, "wrap_mul")) {
             return parse_wrapping(p, OP_WRAP_MUL)
         }
+        // Reaching `live` here is one written somewhere other than after the
+        // `in` of a `for`, where it is the subject of the walk. There is no
+        // value it could be: the slots it names are walked, never held.
+        if (str_range_eq(p.src, offset, length, "live")) {
+            report_where(p.modules, p.src, offset)
+            report("`live(c)` is the subject of a `for` and nothing else; ")
+            report("write `for slot in live(c)`")
+            frost_rt_recover_escape()
+        }
         if (str_range_eq(p.src, offset, length, "slice_len")
             || str_range_eq(p.src, offset, length, "str_len")) {
             advance(p)
@@ -2103,6 +2112,16 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     STRUCT_BASE + struct_index
 }
 
+// One liveness word per sixty-four slots, and never a zero-length array, since
+// a container of no capacity still has to have the field to be laid out.
+live_word_count :: fn(capacity: i64) -> i64 {
+    words := (capacity + 63) / 64
+    if (words < 1) {
+        return 1
+    }
+    words
+}
+
 // The columns container for element `element` at capacity `count`, synthesized
 // once and deduped after. It is a struct with one `[count]field` array per
 // field of `element`, named after the field, plus the generational bookkeeping
@@ -2184,6 +2203,30 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
             ty = TY_I64, next = -1, variant = -1 },
     )
     set_field_next(p, tail, count_node)
+    tail = count_node
+    // Which slots hold an element, one bit each, so `for slot in live(c)` walks
+    // them in slot order and passes over sixty-four dead slots on one test. The
+    // free list holds the same knowledge inside out, but reading it back comes
+    // out in release order rather than the order a column is stored in, and a
+    // generation of zero is a slot that was never filled as much as one that
+    // is. Appended, so every column above keeps the offset it had.
+    words_col := array_of(p, TY_I64, live_word_count(count))
+    words_off := synth_literal(p, "live_words")
+    words_node := arena_push(
+        p.fields,
+        StructField { name_off = words_off,
+            name_len = cstr_len("live_words"),
+            ty = words_col, next = -1, variant = -1 },
+    )
+    set_field_next(p, tail, words_node)
+    tail = words_node
+    live_off := synth_literal(p, "live_count")
+    live_node := arena_push(
+        p.fields,
+        StructField { name_off = live_off, name_len = cstr_len("live_count"),
+            ty = TY_I64, next = -1, variant = -1 },
+    )
+    set_field_next(p, tail, live_node)
 
     struct_index := p.structs.count
     arena_push(
@@ -2807,6 +2850,188 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
         && peek_kind(p, 2) == TokenKind::Comma)
 }
 
+// A second copy of a named place, node for node, so a walk this writes out can
+// read the same storage twice without two passes meeting one node down two
+// paths. Only the shapes `live` accepts as a subject: a name, and a field of
+// one.
+clone_place :: fn(mut p: Parser, node_id: i64) -> i64 {
+    held := arena_at(p.arena, node_id)
+    kind := held.kind
+    base := held.a
+    name_off := held.b
+    name_len := held.c
+    val := held.val
+    at := held.pos
+    if (kind == NodeKind::Var) {
+        return new_named_node_at(p, NodeKind::Var, 0, val, name_len, at)
+    }
+    if (kind == NodeKind::Field) {
+        return new_field_node(p, clone_place(p, base), name_off, name_len)
+    }
+    node_id
+}
+
+// `for slot in live(c) { ... }`, with the cursor on the body's opening brace.
+//
+// The container records which of its slots hold an element as one bit each in
+// `live_words`, so this is written out as a walk of those bits: a word that is
+// zero passes over sixty-four slots on one test, and a word with bits set gives
+// up its lowest one at a time. No slot is asked whether it holds an element and
+// no empty slot is reached, which is the difference from walking the capacity
+// and testing.
+//
+// It is one loop rather than a loop over words holding a loop over bits,
+// because `break` in the reader's body means leaving the walk, and a `break`
+// written inside the inner of two loops leaves only that one. What that costs
+// is a compare per element that is taken once every sixty-four times.
+//
+// `for rank, slot in live(c)` counts the elements as it goes, which is what
+// compacting into a packed buffer wants.
+parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
+    item_off: i64, item_len: i64, has_index: i64, container: i64) -> i64 {
+    held := arena_at(p.arena, container)
+    kind := held.kind
+    at := held.pos
+    if (kind != NodeKind::Var && kind != NodeKind::Field) {
+        report_where(p.modules, p.src, at)
+        report("`live` walks a container that is named, not one that is ")
+        report("worked out; bind it first and walk the name")
+        frost_rt_recover_escape()
+    }
+    unique := p.arena.count
+
+    word_off := synth_numbered(p, "__live_w", unique)
+    word_len := 8 + digits_in(unique)
+    bind_word := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
+        word_off, word_len, -1)
+
+    bits_off := synth_numbered(p, "__live_bits", unique)
+    bits_len := 11 + digits_in(unique)
+    bind_bits := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
+        bits_off, bits_len, -1)
+
+    base_off := synth_numbered(p, "__live_base", unique)
+    base_len := 11 + digits_in(unique)
+    bind_base := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
+        base_off, base_len, -1)
+
+    // The container is read here and nowhere else in the walk, so a name that
+    // stands for storage is not copied and nothing is evaluated twice.
+    words_name := synth_literal(p, "live_words")
+    words_field := new_field_node(p, container, words_name,
+        cstr_len("live_words"))
+    count_off := synth_numbered(p, "__live_n", unique)
+    count_len := 8 + digits_in(unique)
+    bind_count := new_let_node(p,
+        new_unary(p, NodeKind::SliceLen, words_field), count_off, count_len,
+        -1)
+
+    var rank_off: i64 = 0
+    var rank_len: i64 = 0
+    var bind_rank: i64 = -1
+    if (has_index == 1) {
+        rank_off = synth_numbered(p, "__live_rank", unique)
+        rank_len = 11 + digits_in(unique)
+        bind_rank = new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
+            rank_off, rank_len, -1)
+    }
+
+    // More to walk while the word in hand still has a bit set, or there is
+    // another word to take.
+    bits_live := new_node(p, NodeKind::Bin,
+        new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
+        new_node(p, NodeKind::Num, 0, 0, 0), OP_NE)
+    words_left := new_node(p, NodeKind::Bin,
+        new_named_node(p, NodeKind::Var, 0, word_off, word_len),
+        new_named_node(p, NodeKind::Var, 0, count_off, count_len), OP_LT)
+    condition := new_node(p, NodeKind::Bin, bits_live, words_left, OP_OR)
+
+    // Taking the next word, when the one in hand is spent.
+    words_again := new_field_node(p,
+        clone_place(p, container), words_name, cstr_len("live_words"))
+    take_bits := new_node(p, NodeKind::Assign,
+        new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
+        new_index(p, words_again,
+            new_named_node(p, NodeKind::Var, 0, word_off, word_len), at), 0)
+    take_base := new_node(p, NodeKind::Assign,
+        new_named_node(p, NodeKind::Var, 0, base_off, base_len),
+        new_node(p, NodeKind::Bin,
+            new_named_node(p, NodeKind::Var, 0, word_off, word_len),
+            new_node(p, NodeKind::Num, 0, 0, 64), OP_MUL), 0)
+    bump_word := new_node(p, NodeKind::Assign,
+        new_named_node(p, NodeKind::Var, 0, word_off, word_len),
+        new_node(p, NodeKind::Bin,
+            new_named_node(p, NodeKind::Var, 0, word_off, word_len),
+            new_node(p, NodeKind::Num, 0, 0, 1), OP_ADD), 0)
+    again := new_node(p, NodeKind::Continue, 0, 0, 0)
+    set_next(p, take_bits, take_base)
+    set_next(p, take_base, bump_word)
+    set_next(p, bump_word, again)
+    spent := new_node(p, NodeKind::Bin,
+        new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
+        new_node(p, NodeKind::Num, 0, 0, 0), OP_EQ)
+    refill := new_node(p, NodeKind::If, spent, take_bits, -1)
+
+    // The lowest slot the word still names, and the word with that bit gone.
+    bit_off := synth_numbered(p, "__live_bit", unique)
+    bit_len := 10 + digits_in(unique)
+    bind_bit := new_let_node(p,
+        new_unary(p, NodeKind::TrailingZeros,
+            new_named_node(p, NodeKind::Var, 0, bits_off, bits_len)),
+        bit_off, bit_len, -1)
+    // Cleared before the reader's body, so a `continue` cannot leave the walk
+    // reading the same slot for ever.
+    one_bit := new_node(p, NodeKind::Bin,
+        new_node(p, NodeKind::Num, 0, 0, 1),
+        new_named_node(p, NodeKind::Var, 0, bit_off, bit_len), OP_SHL)
+    without := new_node(p, NodeKind::Bin,
+        new_node(p, NodeKind::Num, 0, 0, -1), one_bit, OP_SUB)
+    drop_bit := new_node(p, NodeKind::Assign,
+        new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
+        new_node(p, NodeKind::Bin,
+            new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
+            without, OP_BITAND), 0)
+    bind_slot := new_let_node(p,
+        new_node(p, NodeKind::Bin,
+            new_named_node(p, NodeKind::Var, 0, base_off, base_len),
+            new_named_node(p, NodeKind::Var, 0, bit_off, bit_len), OP_ADD),
+        item_off, item_len, -1)
+
+    set_next(p, refill, bind_bit)
+    set_next(p, bind_bit, drop_bit)
+    set_next(p, drop_bit, bind_slot)
+    var tail := bind_slot
+    if (has_index == 1) {
+        take_rank := new_let_node(p,
+            new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
+            first_off, first_len, -1)
+        bump_rank := new_node(p, NodeKind::Assign,
+            new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
+            new_node(p, NodeKind::Bin,
+                new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
+                new_node(p, NodeKind::Num, 0, 0, 1), OP_ADD), 0)
+        set_next(p, tail, take_rank)
+        set_next(p, take_rank, bump_rank)
+        tail = bump_rank
+    }
+
+    body := parse_block(p)
+    set_next(p, tail, body)
+
+    loop := new_node(p, NodeKind::While, condition, refill, 0)
+    set_while_preamble(p, loop, -1)
+    set_next(p, bind_word, bind_bits)
+    set_next(p, bind_bits, bind_base)
+    set_next(p, bind_base, bind_count)
+    if (has_index == 1) {
+        set_next(p, bind_count, bind_rank)
+        set_next(p, bind_rank, loop)
+    } else {
+        set_next(p, bind_count, loop)
+    }
+    bind_word
+}
+
 // `for i in a..b { ... }`, written out as the counted loop it stands for, with
 // the cursor on the body's opening brace. The reader's name is the counter
 // itself, so nothing is indexed and no element is bound. The bound is read into
@@ -3179,6 +3404,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             walked := parse_type(p)
             advance(p)
             return unroll_fields(p, item_off, item_len, walked)
+        }
+        // `for slot in live(c)` walks the slots of a generational container
+        // that hold an element, in slot order, and nothing else.
+        if (str_range_eq(p.src, cur_off(p), cur_len(p), "live")
+            && peek_kind(p, 1) == TokenKind::Lparen) {
+            advance(p)
+            advance(p)
+            held_lit := p.no_struct_lit
+            p.no_struct_lit = false
+            container := parse_expr(p)
+            p.no_struct_lit = held_lit
+            advance(p)
+            return parse_for_live(p, first_off, first_len, item_off, item_len,
+                has_index, container)
         }
         // A name followed by a brace is a struct literal everywhere else, and
         // the brace here opens the body, so the literal is not available.

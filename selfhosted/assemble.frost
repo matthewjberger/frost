@@ -105,6 +105,10 @@ M_SHRQ :: 43
 M_CVTSI2SSQ :: 44
 M_CVTTSS2SIQ :: 45
 M_MULQ :: 46
+// The index of the lowest set bit. Emitted only for a word the live walk has
+// already found to be nonzero, which is the one operand the instruction leaves
+// the destination undefined for.
+M_BSFQ :: 47
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -576,6 +580,7 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "pushq")) { return M_PUSHQ, 0 }
     if (bytes_same(src, off, len, "jmp")) { return M_JMP, 0 }
     if (bytes_same(src, off, len, "imulq")) { return M_IMULQ, 0 }
+    if (bytes_same(src, off, len, "bsfq")) { return M_BSFQ, 0 }
     if (bytes_same(src, off, len, "idivq")) { return M_IDIVQ, 0 }
     if (bytes_same(src, off, len, "divq")) { return M_DIVQ, 0 }
     if (bytes_same(src, off, len, "mulq")) { return M_MULQ, 0 }
@@ -1078,6 +1083,13 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             return
         }
         emit_reg_rm(unit, 0, 1, 15, 175, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    // `0F BC /r`, the same two-byte shape as `imulq` between registers: the
+    // destination is the reg field and the source the r/m.
+    if (op == M_BSFQ) {
+        emit_reg_rm(unit, 0, 1, 15, 188, reg_code(b_reg), OPND_REG,
             reg_code(a_reg), 0, 0)
         return
     }

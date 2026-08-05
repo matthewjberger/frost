@@ -14,20 +14,34 @@
 // an i64 at the ABI.
 
 export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_slot,
-    slab_release, GENERATION_LIMIT
+    slab_release, GENERATION_LIMIT, CONTAINER_SHIFT, frost_rt_container_id
 
-// The highest generation a slot can carry. A handle packs the generation into
-// the top 32 bits of an i64, and reading it back sign-extends, so a generation
-// of 2^31 comes back negative and no longer equals the slot's own count. Past
-// that point the slot would hand out handles that were stale the moment they
-// were made, and the program would abort on a handle it had just been given.
+frost_rt_container_id :: safe extern fn() -> i64
+
+// The top 32 bits of a handle are the container's number and the slot's
+// generation together, seven bits and twenty-four. Comparing them is one
+// comparison, which is why the container's number costs nothing where a handle
+// is read: the check that was already there catches both.
 //
-// A slot that reaches this is retired instead: it is not returned to the free
-// list, so the slab loses one place and stays correct. Every handle to it is
-// already stale by the ordinary rule, which is the answer that keeps a
-// long-running program running rather than stopping it on a number nobody
-// wrote down. Reaching it takes two billion releases of one slot.
-GENERATION_LIMIT :: 2147483647
+// What the container's number is for is that a generation says a slot has been
+// reused and says nothing about which container the slot is in. Two pools of
+// the same element type and capacity, which is what `active` and `pending` are,
+// accept each other's handles: the slot is in range on both and the generations
+// coincide. They coincide most reliably right after both are reset, when every
+// generation is zero, so the state with no protection at all is the one a
+// program starts in.
+CONTAINER_SHIFT :: 24
+
+// The highest generation a slot can carry. Above this the count would carry
+// into the container's number and the slot would start answering for a
+// different container.
+//
+// A slot that reaches this is retired: it is not returned to the free list, so
+// the slab loses one place and stays correct. Every handle to it is already
+// stale by the ordinary rule, which is the answer that keeps a long-running
+// program running rather than stopping it on a number nobody wrote down.
+// Reaching it takes sixteen million releases of one slot.
+GENERATION_LIMIT :: 16777214
 
 Slab :: struct($T: Type, $N: usize) {
     storage: [N]T,
@@ -36,12 +50,19 @@ Slab :: struct($T: Type, $N: usize) {
     free_count: i64,
 }
 
-// Every slot free, every generation back to zero. A slab is created with its
-// arrays written out and then reset, since construction cannot run code.
+// Every slot free, every generation back to zero, and the slab stamped with a
+// number of its own. A slab is created with its arrays written out and then
+// reset, since construction cannot run code.
+//
+// The number is taken here rather than at construction for the same reason: it
+// is the first point that runs code. A slab reset twice is a different
+// container each time, and the handles from before the reset stop reading,
+// which is what a reset means.
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
+    stamp := frost_rt_container_id() << CONTAINER_SHIFT
     var i: i64 = 0
     while (i < N) {
-        s.generations[i] = 0
+        s.generations[i] = stamp
         s.free_list[i] = N - 1 - i
         i = i + 1
     }
@@ -110,9 +131,10 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) ->
     index := raw & 4294967295
     if (s.generations[index] != (raw >> 32)) { return false }
     s.generations[index] = s.generations[index] + 1
-    // A slot whose generation is spent is retired rather than reused. Handing it
-    // out again would give the caller a handle its own check rejects.
-    if (s.generations[index] > GENERATION_LIMIT) {
+    // A slot whose generation is spent is retired rather than reused. One more
+    // release would carry the count into the container's number and the slot
+    // would answer for a container it is not in.
+    if ((s.generations[index] & 16777215) > GENERATION_LIMIT) {
         return true
     }
     s.free_list[s.free_count] = index
@@ -159,9 +181,11 @@ test "a slot whose generation is spent is retired rather than reused" {
     first := slab_insert($SlabThing, $2, s, SlabThing { hp = 7 })
     raw: i64 = first
     index := raw & 4294967295
+    stamp := s.generations[index] & (-16777216)
     // One short of the bound: the release puts the slot back and the handle it
-    // then hands out is one its own check accepts.
-    s.generations[index] = GENERATION_LIMIT - 1
+    // then hands out is one its own check accepts. The slab's own number is
+    // kept, since a slot that changed it would be a slot in another container.
+    s.generations[index] = stamp | (GENERATION_LIMIT - 1)
     assert(slab_release($SlabThing, $2, s, (s.generations[index] << 32) | index))
     assert(s.free_count == 2)
     again := slab_insert($SlabThing, $2, s, SlabThing { hp = 8 })
@@ -171,7 +195,7 @@ test "a slot whose generation is spent is retired rather than reused" {
     // slab has one fewer place rather than a handle that is stale on arrival.
     raw_again: i64 = again
     spent := raw_again & 4294967295
-    s.generations[spent] = GENERATION_LIMIT
+    s.generations[spent] = stamp | GENERATION_LIMIT
     before := s.free_count
     assert(slab_release($SlabThing, $2, s,
             (s.generations[spent] << 32) | spent))

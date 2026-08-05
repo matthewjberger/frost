@@ -254,6 +254,7 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
     }
     if (kind == NodeKind::Deref || kind == NodeKind::Cast
         || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::TrailingZeros
         || kind == NodeKind::Assert) {
         asm_scan_expr(p, node.a, false)
         return
@@ -2057,6 +2058,14 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm_i("subq $", shadow, ", %rsp")
         asm("call frost_rt_assert_at")
         asm_i("addq $", shadow, ", %rsp")
+        return
+    }
+    // `bsfq` answers the index of the lowest set bit. The walk that builds this
+    // asks it only of a word it has already found to be nonzero, which is the
+    // one input the instruction leaves undefined.
+    if (kind == NodeKind::TrailingZeros) {
+        emit_asm_expr(p, node.a)
+        asm("bsfq %rax, %rax")
         return
     }
     if (kind == NodeKind::SliceLen) {

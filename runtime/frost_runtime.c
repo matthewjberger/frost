@@ -324,11 +324,40 @@ int64_t frost_rt_check_size(int64_t count, int64_t width) {
 
 void frost_rt_generation_check(int64_t stored, int64_t expected) {
     if (stored != expected) {
-        fprintf(stderr,
-                "frost: stale handle, slot generation %lld but handle expected %lld\n",
-                (long long)stored, (long long)expected);
+        if ((stored >> 24) != (expected >> 24)) {
+            fprintf(stderr,
+                    "frost: handle from another container, this one is %lld and the handle names %lld\n",
+                    (long long)(stored >> 24), (long long)(expected >> 24));
+        } else {
+            fprintf(stderr,
+                    "frost: stale handle, slot generation %lld but handle expected %lld\n",
+                    (long long)(stored & 0xffffff),
+                    (long long)(expected & 0xffffff));
+        }
         frost_rt_stop();
     }
+}
+
+/* A number for one container, so a handle carries which container it came from
+   and not only which slot. A generation catches a handle to a slot that has been
+   reused; it says nothing about two containers of the same element type and
+   capacity, where a slot is in range on both and the generations coincide. They
+   coincide most often right after both are reset, when every generation is
+   zero, so the case with no protection at all is the one a program starts in.
+
+   The number is a count rather than anything derived from the container, since
+   a container is a plain value that may live in a frame, a static or inside
+   another struct, and there is no allocation to take an identity from. Seven
+   bits, which is what fits above the generation while a packed handle stays
+   positive, so two containers reset one after the other always differ and the
+   hundred and twenty-eighth comes back round. Never zero: a container whose
+   storage is zeroed but which was never reset holds zero, and a handle from a
+   reset container must not read against one. */
+static int64_t frost_rt_container_counter = 0;
+
+int64_t frost_rt_container_id(void) {
+    frost_rt_container_counter = frost_rt_container_counter + 1;
+    return (frost_rt_container_counter % 127) + 1;
 }
 
 /* Validate a handle against a slab and answer with the slot it names. The low

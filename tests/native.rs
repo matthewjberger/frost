@@ -16634,6 +16634,38 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // `live(c)` written where a value goes. The slots it names are walked and
+    // never held, so there is nothing for a binding to be given.
+    (
+        "a_live_walk_read_as_a_value",
+        "import \"io.frost\"
+         import \"columns.frost\"
+         Cell :: struct { v: i64 }
+         main :: fn() -> i64 {
+             var c : columns<Cell, 8> = columns_new()
+             columns_reset($Cell, $8, c)
+             held := live(c)
+             print_int_line(held)
+             0
+         }
+",
+        "is the subject of a `for` and nothing else",
+    ),
+    // A subject the walk would have to work out. The container is read where it
+    // stands rather than bound, so a call there would run once a word.
+    (
+        "a_live_walk_over_a_computed_container",
+        "import \"io.frost\"
+         import \"columns.frost\"
+         Cell :: struct { v: i64 }
+         made :: fn() -> columns<Cell, 8> { columns_new() }
+         main :: fn() -> i64 {
+             for slot in live(made()) { print_int_line(slot) }
+             0
+         }
+",
+        "walks a container that is named",
+    ),
     // A struct a program declared whose name happens to start the way the
     // multiple-return lowering names the ones it synthesizes. The bootstrap
     // told them apart by that prefix, so this one was taken out of the linear
@@ -20346,6 +20378,153 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A handle carries which container it came from, not only which slot. Two
+    // pools of the same element type and capacity accept each other's handles
+    // otherwise: the slot is in range on both and the generations match, and
+    // right after a reset every generation is zero, so the pair below was the
+    // case with no protection at all rather than the unlucky one.
+    (
+        "a_handle_names_the_container_it_came_from",
+        "import \"io.frost\"
+         import \"slab.frost\"
+         import \"columns.frost\"
+         Entity :: struct { hp: i64 }
+         main :: fn() -> i64 {
+             var active : Slab<Entity, 4> = Slab {
+                 storage = [Entity { hp = 0 }, Entity { hp = 0 },
+                     Entity { hp = 0 }, Entity { hp = 0 }],
+                 generations = [0, 0, 0, 0],
+                 free_list = [0, 0, 0, 0],
+                 free_count = 0,
+             }
+             var pending : Slab<Entity, 4> = Slab {
+                 storage = [Entity { hp = 0 }, Entity { hp = 0 },
+                     Entity { hp = 0 }, Entity { hp = 0 }],
+                 generations = [0, 0, 0, 0],
+                 free_list = [0, 0, 0, 0],
+                 free_count = 0,
+             }
+             slab_reset($Entity, $4, active)
+             slab_reset($Entity, $4, pending)
+             a := slab_insert($Entity, $4, active, Entity { hp = 11 })
+             b := slab_insert($Entity, $4, pending, Entity { hp = 22 })
+             assert(slab_alive($Entity, $4, active, a))
+             assert(slab_alive($Entity, $4, pending, b))
+             assert(slab_alive($Entity, $4, active, b) == false)
+             assert(slab_alive($Entity, $4, pending, a) == false)
+             assert(slab_slot($Entity, $4, active, b) == (-1))
+             assert(slab_release($Entity, $4, active, a))
+             assert(slab_alive($Entity, $4, active, a) == false)
+             var one : columns<Entity, 4> = columns_new()
+             var two : columns<Entity, 4> = columns_new()
+             columns_reset($Entity, $4, one)
+             columns_reset($Entity, $4, two)
+             p := columns_insert($Entity, $4, one, Entity { hp = 33 })
+             q := columns_insert($Entity, $4, two, Entity { hp = 44 })
+             assert(columns_alive($Entity, $4, one, p))
+             assert(columns_alive($Entity, $4, two, q))
+             assert(columns_alive($Entity, $4, one, q) == false)
+             assert(columns_alive($Entity, $4, two, p) == false)
+             print_int_line(one[p].hp + two[q].hp)
+             0
+         }
+",
+        "77
+",
+    ),
+    // `for slot in live(c)` over a fragmented container. Every third slot is
+    // released, which takes out slot 63, the sign bit of the first liveness
+    // word, and slot 64 is released on its own so the boundary between two
+    // words is covered as well. The walk reaches the live slots in slot order
+    // and no others, and `for rank, slot in live(c)` counts them as it goes.
+    (
+        "a_live_walk_reaches_the_slots_that_hold_an_element",
+        "import \"io.frost\"
+         import \"columns.frost\"
+         Particle :: struct { x: i64, y: i64 }
+         main :: fn() -> i64 {
+             var c : columns<Particle, 130> = columns_new()
+             columns_reset($Particle, $130, c)
+             var made : [130]Handle<Particle> = [0; 130]
+             var i : i64 = 0
+             while (i < 130) {
+                 made[i] = columns_insert($Particle, $130, c,
+                     Particle { x = i, y = 0 })
+                 i = i + 1
+             }
+             var d : i64 = 0
+             while (d < 130) {
+                 if (d % 3 == 0) {
+                     assert(columns_release($Particle, $130, c, made[d]))
+                 }
+                 d = d + 1
+             }
+             assert(columns_release($Particle, $130, c, made[64]))
+             var total : i64 = 0
+             var seen : i64 = 0
+             var last : i64 = -1
+             for rank, slot in live(c) {
+                 assert(slot > last)
+                 assert(rank == seen)
+                 last = slot
+                 total = total + c.x[slot]
+                 seen = seen + 1
+             }
+             print_int_line(seen)
+             print_int_line(c.live_count)
+             print_int_line(total)
+             0
+         }
+",
+        "85
+85
+5483
+",
+    ),
+    // `break` leaves the walk and `continue` takes the next live slot, which is
+    // what they mean in any other loop. The bootstrap builds the walk out of
+    // blocks and the self-hosted compiler writes it out as one loop, so this is
+    // where those two have to agree.
+    (
+        "a_live_walk_breaks_and_continues_like_any_loop",
+        "import \"io.frost\"
+         import \"columns.frost\"
+         Cell :: struct { v: i64 }
+         main :: fn() -> i64 {
+             var c : columns<Cell, 96> = columns_new()
+             columns_reset($Cell, $96, c)
+             var made : [96]Handle<Cell> = [0; 96]
+             var i : i64 = 0
+             while (i < 96) {
+                 made[i] = columns_insert($Cell, $96, c, Cell { v = i })
+                 i = i + 1
+             }
+             var d : i64 = 0
+             while (d < 96) {
+                 if (d % 5 == 0) {
+                     assert(columns_release($Cell, $96, c, made[d]))
+                 }
+                 d = d + 1
+             }
+             var counted : i64 = 0
+             for slot in live(c) {
+                 if (c.v[slot] % 2 == 0) { continue }
+                 if (c.v[slot] > 70) { break }
+                 counted = counted + 1
+             }
+             print_int_line(counted)
+             var empty : columns<Cell, 8> = columns_new()
+             columns_reset($Cell, $8, empty)
+             var none : i64 = 0
+             for slot in live(empty) { none = none + 1 }
+             print_int_line(none)
+             0
+         }
+",
+        "28
+0
+",
+    ),
     // A `str` is a `[]u8` (3.2), so `slice_len` reads its length like any other
     // slice, and an array of bytes reaching a `str` is the same coercion an
     // array of anything else makes. The bootstrap asked for `Type::Slice` alone

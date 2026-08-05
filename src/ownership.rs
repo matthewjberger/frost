@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 
 use crate::ast::{
     Ast, ExprId, Expression, Literal, Parameter, Range32, Statement, StmtId,
+    live_subject,
 };
 use crate::ast_display::display_expr;
 use crate::lexer::Position;
@@ -2086,9 +2087,19 @@ impl MoveChecker<'_> {
                 self.check_loop_body(*body)?;
                 Ok(false)
             }
-            Statement::For(variable, _, range, body) => {
-                self.visit(*range, false)?;
+            Statement::For(variable, second, range, body) => {
+                // `live(c)` reads the container's liveness and hands back slot
+                // numbers, so the container is borrowed for the walk the way
+                // any other sequence is. Visiting it as a call would take the
+                // argument, and a walk does not consume what it walks.
+                match live_subject(ast, *range) {
+                    Some(container) => self.visit(container, false)?,
+                    None => self.visit(*range, false)?,
+                }
                 self.note_binding(ast.name(*variable), Some(Type::I64));
+                if let Some(second) = second {
+                    self.note_binding(ast.name(*second), Some(Type::I64));
+                }
                 self.check_loop_body(*body)?;
                 Ok(false)
             }

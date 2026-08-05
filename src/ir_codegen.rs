@@ -1134,6 +1134,7 @@ impl Translator<'_, '_> {
                         }
                     }
                     IrUnOp::Not => self.builder.ins().bxor_imm(value, 1),
+                    IrUnOp::TrailingZeros => self.builder.ins().ctz(value),
                 })
             }
             IrRvalue::Binary(op, left, right) => {

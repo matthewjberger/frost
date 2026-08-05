@@ -1297,13 +1297,15 @@ is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
     str_range_eq(p.src, sym.off, sym.len, "columns_new")
 }
 
-// Whether a columns field is the container's own generational bookkeeping
-// rather than a column of the element. A scatter or gather touches only the
-// element columns, skipping these three.
+// Whether a columns field is the container's own bookkeeping rather than a
+// column of the element. A scatter or gather touches only the element columns,
+// skipping these.
 is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     (str_range_eq(p.src, off, len, "generations")
         || str_range_eq(p.src, off, len, "free_list")
-        || str_range_eq(p.src, off, len, "free_count"))
+        || str_range_eq(p.src, off, len, "free_count")
+        || str_range_eq(p.src, off, len, "live_words")
+        || str_range_eq(p.src, off, len, "live_count"))
 }
 
 // An already-synthesized columns container for element `element` at capacity

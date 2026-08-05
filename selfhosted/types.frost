@@ -756,7 +756,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return t
     }
-    if (kind == NodeKind::SliceLen) {
+    if (kind == NodeKind::SliceLen || kind == NodeKind::TrailingZeros) {
         return TY_I64
     }
     if (kind == NodeKind::Assert) {
