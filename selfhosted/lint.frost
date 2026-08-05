@@ -9,7 +9,7 @@ import "imports.frost"
 import "lexer.frost"
 import "names.frost"
 
-export lint_program
+export lint_program, nearest_name
 
 // A function nothing reaches.
 //
@@ -38,6 +38,79 @@ lint_program :: fn(mut p: Parser) -> i64 {
         index = index + 1
     }
     found
+}
+
+// The declared name nearest to one that is not declared, or -1 when no name is
+// near enough or two are equally near. A guess a reader takes without checking
+// is worse than no suggestion, so an ambiguous one is withheld.
+//
+// Answers the index into the symbol table, since the name itself is a range in
+// the source.
+nearest_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    var best: i64 = -1
+    var best_distance: i64 = 0
+    var ties: i64 = 0
+    var index: i64 = 0
+    while (index < p.fns.count) {
+        sym := arena_at(p.fns, index)
+        if (sym.len > 0 && bytes_equal(p.src, sym.off, off, len) == false) {
+            held := name_distance(p.src, sym.off, sym.len, off, len)
+            // Near enough to be a misspelling rather than a different word.
+            if (held * 3 <= len * 2) {
+                if (best < 0 || held < best_distance) {
+                    best = index
+                    best_distance = held
+                    ties = 1
+                } else if (held == best_distance) {
+                    ties = ties + 1
+                }
+            }
+        }
+        index = index + 1
+    }
+    if (ties != 1) {
+        return -1
+    }
+    best
+}
+
+// How many single-character edits turn one name into the other.
+name_distance :: fn(src: str, a_off: i64, a_len: i64, b_off: i64,
+    b_len: i64) -> i64 {
+    if (a_len > 64 || b_len > 64) {
+        return 999
+    }
+    var row: [65]i64 = [0; 65]
+    var j: i64 = 0
+    while (j <= b_len) {
+        row[j] = j
+        j = j + 1
+    }
+    var i: i64 = 0
+    while (i < a_len) {
+        var previous := row[0]
+        row[0] = i + 1
+        j = 0
+        while (j < b_len) {
+            var cost: i64 = 1
+            if (src[a_off + i] == src[b_off + j]) {
+                cost = 0
+            }
+            replaced := previous + cost
+            previous = row[j + 1]
+            var best := row[j] + 1
+            if (row[j + 1] + 1 < best) {
+                best = row[j + 1] + 1
+            }
+            if (replaced < best) {
+                best = replaced
+            }
+            row[j + 1] = best
+            j = j + 1
+        }
+        i = i + 1
+    }
+    row[b_len]
 }
 
 // How many times a name is written as an identifier.

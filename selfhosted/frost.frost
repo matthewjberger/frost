@@ -377,6 +377,9 @@ asm_debug_names_wanted :: fn() -> i64 {
 }
 
 main :: fn() -> i64 {
+    if (json_reports()) {
+        frost_rt_json_reports()
+    }
     // `fmt` is read off the arguments before the flags, since the compiler has
     // taken a file as its first argument since before it took anything else.
     if (frost_rt_arg_count() > 1

@@ -42,6 +42,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     frost_rt_read_file, frost_rt_remove_file, frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
+    frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
     frost_rt_recover_failures
 
 // The runtime's allocator rather than the C library's, so a request that cannot
@@ -193,6 +194,11 @@ frost_rt_recover_escape :: safe extern fn()
 // What a check whose state does not cross the thing it checks uses, so one run
 // names every call it found wrong rather than the first.
 frost_rt_recover_note :: safe extern fn()
+// Reports as JSON: one object per report, one report per line. A place opens a
+// record and whatever ends the report closes it.
+frost_rt_json_reports :: safe extern fn()
+frost_rt_json_place :: extern fn(path: ^i8, line: i64, column: i64, offset: i64)
+frost_rt_json_close :: safe extern fn()
 frost_rt_recover_failures :: safe extern fn() -> i64
 frost_rt_remove_file :: extern fn(path: ^i8) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
