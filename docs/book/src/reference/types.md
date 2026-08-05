@@ -70,11 +70,18 @@ and the diagnostic names the pointer.
   exactly as a struct does, `Option :: enum($T: Type) { None, Some { value: T } }`,
   and instantiates the same way (chapter 11).
 - Fixed arrays `[N]T` are `N` contiguous `T`. The length is part of the type
-  and every index is bounds-checked (10.4).
+  and every index is bounds-checked (10.4). It is arithmetic: a number, a name
+  standing for one (a module constant, or a size parameter a generic binds), or
+  `+ - * / %` and brackets over those. `[(N + 63) / 64]i64` is one word of bits
+  per sixty-four slots, which is what `Slab<T, N>` carries its liveness in
+  (10.1b). There is no call, no comparison, and no name that is not a size, so
+  what working a length out costs is decided by how it was written, the bound
+  every other compile-time construct has (11.4).
 - Slices `[]T` are a pointer/length view of a run of `T`, sixteen bytes and a
   copy value, the same fat-pointer shape as `str` (which is `[]u8`). An array
   coerces to a slice of the whole array, `s[i]` is bounds-checked against the
   runtime length (10.4), and `slice_len(s)` reads the length in constant time.
+  `slice_len` of a fixed array is its length too, which its type already says.
   A parameter of array type is a borrow of the caller's array (chapter 8), so
   the slice made from one views the caller's storage: a write through it lands
   in the argument, and handing the slice back out of the call is a view of
@@ -137,15 +144,6 @@ A pool is not a built-in type. It is an ordinary struct a program writes for
 itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
 provides the pieces to build one, not the pool itself, and `std/slab.frost` is
 one written out in the language.
-
-An array's length is arithmetic: a number, a name standing for one (a module
-constant or a size parameter a generic binds), or `+ - * / %` and brackets over
-those. `[(N + 63) / 64]i64` is one word of bits per sixty-four slots, which is
-what `Slab<T, N>` carries its liveness in. There is no call, no comparison and
-no name that is not a size, so working a length out is bounded by how it was
-written, the same bound every other compile-time construct has (11.4).
-
-`slice_len` of a fixed array is its length, which the type already says.
 
 `columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
 elements of struct `T`, one array per field of `T` plus a generational free list

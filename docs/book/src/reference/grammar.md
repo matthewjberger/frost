@@ -40,6 +40,10 @@ Statement =
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 
+`LiveWalk = "live" "(" Place ")"`, where `Place` is a name or a field of one
+(10.1b). It is written only after the `in` of a `for`: it is the subject of a
+walk, so there is no value for it to be anywhere else.
+
 ```
 MultiNames = MultiName ( "," MultiName )+
 MultiName  = "var"? IDENT | "_"
@@ -178,16 +182,6 @@ is the appropriate shape (a place for `^`, a bare identifier for `{`/`::`). The
 struct-literal `{` is disambiguated from a `match` body by checking that the
 token after `{` is not `case`.
 
-`SizeExpr = SizeTerm ( ("+" | "-") SizeTerm )*`,
-`SizeTerm = SizeAtom ( ("*" | "/" | "%") SizeAtom )*`,
-`SizeAtom = INTEGER | IDENT | "(" SizeExpr ")"`. A length is arithmetic and
-nothing else (3.4): the `[Type ";" INTEGER]` form is entered instead when the
-token after the `[` is followed by a `;`.
-
-`LiveWalk = "live" "(" Place ")"`, where `Place` is a name or a field of one
-(10.1b). It is written only after the `in` of a `for`: it is the subject of a
-walk, so there is no value for it to be anywhere else.
-
 The `for` form of `Argument` is `g(T) for T in list` (11.1c): the expression is
 written once and the call takes one argument per element of the compile-time
 list, with the named variable standing for that element. An argument list is the
@@ -270,6 +264,17 @@ Type =
     | IDENT                                  // named type
     | "$" IDENT                              // type parameter
 ```
+
+A length is a `SizeExpr`, which is arithmetic and nothing else (3.2):
+
+```
+SizeExpr = SizeTerm ( ( "+" | "-" ) SizeTerm )*
+SizeTerm = SizeAtom ( ( "*" | "/" | "%" ) SizeAtom )*
+SizeAtom = INTEGER | IDENT | "(" SizeExpr ")"
+```
+
+The two array forms are told apart by what follows the token after the `[`: a
+`;` there means the element type was written first.
 
 A type is a single prefix-constructed form. Nesting comes from the recursive
 constructors (`^`, `ref`, `[]`, `distinct`, `fn`), not a postfix loop. Closing
