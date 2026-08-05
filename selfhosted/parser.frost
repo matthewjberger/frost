@@ -559,13 +559,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (str_range_eq(p.src, offset, length, "wrap_mul")) {
             return parse_wrapping(p, OP_WRAP_MUL)
         }
-        // Reaching `live` here is one written somewhere other than after the
+        // Reaching `live_slots` here is one written somewhere other than after
         // `in` of a `for`, where it is the subject of the walk. There is no
         // value it could be: the slots it names are walked, never held.
-        if (str_range_eq(p.src, offset, length, "live")) {
+        if (str_range_eq(p.src, offset, length, "live_slots")) {
             report_where(p.modules, p.src, offset)
-            report("`live(c)` is the subject of a `for` and nothing else; ")
-            report("write `for slot in live(c)`")
+            report("`live_slots(c)` is the subject of a `for` and nothing else; ")
+            report("write `for slot in live_slots(c)`")
             frost_rt_recover_escape()
         }
         if (str_range_eq(p.src, offset, length, "slice_len")
@@ -2191,7 +2191,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     )
     set_field_next(p, tail, count_node)
     tail = count_node
-    // Which slots hold an element, one bit each, so `for slot in live(c)` walks
+    // Which slots hold an element, one bit each, so `for slot in live_slots(c)` walks
     // them in slot order and passes over sixty-four dead slots on one test. The
     // free list holds the same knowledge inside out, but reading it back comes
     // out in release order rather than the order a column is stored in, and a
@@ -2915,8 +2915,8 @@ parse_size_atom :: fn(mut p: Parser) -> i64 {
 
 // A second copy of a named place, node for node, so a walk this writes out can
 // read the same storage twice without two passes meeting one node down two
-// paths. Only the shapes `live` accepts as a subject: a name, and a field of
-// one.
+// paths. Only the shapes `live_slots` takes as a subject: a name, and a field
+// of one.
 clone_place :: fn(mut p: Parser, node_id: i64) -> i64 {
     held := arena_at(p.arena, node_id)
     kind := held.kind
@@ -2934,7 +2934,7 @@ clone_place :: fn(mut p: Parser, node_id: i64) -> i64 {
     node_id
 }
 
-// `for slot in live(c) { ... }`, with the cursor on the body's opening brace.
+// `for slot in live_slots(c) { ... }`, with the cursor on the body's opening brace.
 //
 // The container records which of its slots hold an element as one bit each in
 // `live_words`, so this is written out as a walk of those bits: a word that is
@@ -2948,7 +2948,7 @@ clone_place :: fn(mut p: Parser, node_id: i64) -> i64 {
 // written inside the inner of two loops leaves only that one. What that costs
 // is a compare per element that is taken once every sixty-four times.
 //
-// `for rank, slot in live(c)` counts the elements as it goes, which is what
+// `for rank, slot in live_slots(c)` counts the elements as it goes, which is what
 // compacting into a packed buffer wants.
 parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
     item_off: i64, item_len: i64, has_index: i64, container: i64) -> i64 {
@@ -2957,8 +2957,8 @@ parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
     at := held.pos
     if (kind != NodeKind::Var && kind != NodeKind::Field) {
         report_where(p.modules, p.src, at)
-        report("`live` walks a container that is named, not one that is ")
-        report("worked out; bind it first and walk the name")
+        report("`live_slots` walks a container that is named, not one that ")
+        report("is worked out; bind it first and walk the name")
         frost_rt_recover_escape()
     }
     unique := p.arena.count
@@ -3468,9 +3468,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             advance(p)
             return unroll_fields(p, item_off, item_len, walked)
         }
-        // `for slot in live(c)` walks the slots of a generational container
+        // `for slot in live_slots(c)` walks the slots of a generational container
         // that hold an element, in slot order, and nothing else.
-        if (str_range_eq(p.src, cur_off(p), cur_len(p), "live")
+        if (str_range_eq(p.src, cur_off(p), cur_len(p), "live_slots")
             && peek_kind(p, 1) == TokenKind::Lparen) {
             advance(p)
             advance(p)

@@ -21,7 +21,7 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
     "cast",
     "flags_has",
-    "live",
+    "live_slots",
     "ptr_cast",
     "ptr_to",
     "sizeof",
@@ -3766,7 +3766,7 @@ fn expand_generic_structs(
                 Type::Array(Box::new(Type::I64), count),
             ));
             columns_fields.push(("free_count".to_string(), Type::I64));
-            // Which slots hold an element, one bit each, so `for i in live(c)`
+            // Which slots hold an element, one bit each, so `for i in live_slots(c)`
             // walks them in slot order and skips sixty-four dead slots at a
             // time. The free list says which slots are free but not in an order
             // that can be walked, and a generation of zero is a slot that was
@@ -5125,7 +5125,7 @@ impl<'a> FunctionLowering<'a> {
         self.element_address(base, index)
     }
 
-    // `for slot in live(c)`: the slots of a generational container that hold an
+    // `for slot in live_slots(c)`: the slots of a generational container that hold an
     // element, in slot order. Which ones those are is a bit each in
     // `live_words`, so a word of zeroes passes over sixty-four slots on one
     // test, and a word with bits set gives up its lowest one at a time. No slot
@@ -5134,7 +5134,7 @@ impl<'a> FunctionLowering<'a> {
     //
     // The slot is a number, so the body indexes columns with it directly and
     // pays no generation check: the walk answered that question by finding the
-    // bit set. `for rank, slot in live(c)` counts the elements as it goes,
+    // bit set. `for rank, slot in live_slots(c)` counts the elements as it goes,
     // which is what compacting into a packed buffer wants.
     fn lower_for_live(
         &mut self,
@@ -5151,7 +5151,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::Identifier(_) | Expression::FieldAccess(..)
         ) {
             bail!(
-                "`live` walks a container that is named, not one that is worked out; bind it first and walk the name"
+                "`live_slots` walks a container that is named, not one that is worked out; bind it first and walk the name"
             );
         }
         // A container by shape rather than by name, the way a slab and a
@@ -5169,7 +5169,7 @@ impl<'a> FunctionLowering<'a> {
                 name
             }
             _ => bail!(
-                "`live` walks a generational container, and this is not one; write `live(c)` where `c` is a `columns<T, N>` or a `Slab<T, N>`"
+                "`live_slots` walks a generational container, and this is not one; write `live_slots(c)` where `c` is a `columns<T, N>` or a `Slab<T, N>`"
             ),
         };
         let (words_offset, word_count) = {
@@ -5394,7 +5394,7 @@ impl<'a> FunctionLowering<'a> {
         range: ExprId,
         body: Range32,
     ) -> Result<()> {
-        // `live(c)` is the subject of a `for` and nothing else, so it is read
+        // `live_slots(c)` is the subject of a `for` and nothing else, so it is read
         // here rather than as an expression that could be held or handed on.
         if let Some(container) = live_subject(self.ast, range) {
             return self.lower_for_live(variable, second, container, body);
@@ -5630,15 +5630,15 @@ impl<'a> FunctionLowering<'a> {
                     let called = self.ast.name(*name).to_string();
                     return self.lower_columns_new(&called, expected);
                 }
-                // `live(c)` reaching here is one written somewhere other than
+                // `live_slots(c)` reaching here is one written somewhere other than
                 // after the `in` of a `for`, where it is the subject of the
                 // walk. There is no value it could be: the slots it names are
                 // walked, never held.
                 if let Expression::Identifier(name) = self.ast.expr(callee)
-                    && self.ast.name(*name) == "live"
+                    && self.ast.name(*name) == "live_slots"
                 {
                     bail!(
-                        "`live(c)` is the subject of a `for` and nothing else; write `for slot in live(c)`"
+                        "`live_slots(c)` is the subject of a `for` and nothing else; write `for slot in live_slots(c)`"
                     );
                 }
                 if let Some(answered) =

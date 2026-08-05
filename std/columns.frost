@@ -23,8 +23,8 @@ export columns_reset, columns_full, columns_insert, columns_alive,
 // and then reset, since construction cannot run code.
 //
 // `live_words` and `live_count` are the container's record of which slots hold
-// an element, one bit per slot, and they are what `for slot in live(c)` walks.
-// The free list says the same thing inside out, but a walk of it comes out in
+// an element, one bit per slot, and they are what `for slot in live_slots(c)`
+// walks. The free list says the same thing inside out, but a walk of it is in
 // release order rather than slot order, which is the order a column is stored
 // in.
 columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {

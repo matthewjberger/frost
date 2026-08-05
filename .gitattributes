@@ -4,6 +4,12 @@
 # on the first line it meets one.
 *.sh text eol=lf
 
+# Frost sources are what the formatter writes, and it writes line feeds. A
+# checkout that rewrites them to carriage returns makes every file differ from
+# its own formatting, so `the_corpus_is_formatted` fails on a tree nobody
+# edited. Said outright rather than left to the host's `core.autocrlf`.
+*.frost text eol=lf
+
 # The two runtime libraries the graphics examples load, in the tree so a
 # checkout builds without fetching anything. Said outright rather than left to
 # content sniffing, since a line ending rewritten inside one is a library that

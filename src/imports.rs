@@ -12,7 +12,9 @@ use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
 };
-use crate::import_visibility::{FileNames, shadowed_imports, unimported_names};
+use crate::import_visibility::{
+    FileNames, declared_compiler_names, shadowed_imports, unimported_names,
+};
 use crate::interface::ModuleInterface;
 use crate::layers::Layer;
 use crate::lexer::Lexer;
@@ -392,6 +394,15 @@ pub fn resolve_imports_cached(
         bail!(
             "an import says what a file may name, and these name what they did not import:\n{}",
             reports.join("\n")
+        );
+    }
+    let reports = declared_compiler_names(&walk.files);
+    if !reports.is_empty() {
+        bail!(
+            "a name the compiler owns means one thing, and these declare another:
+{}",
+            reports.join("
+")
         );
     }
     let reports = shadowed_imports(&walk.files, &walk.module_exports);
