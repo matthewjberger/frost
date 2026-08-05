@@ -1,0 +1,605 @@
+// What `frost fmt` writes, and it is what the bootstrap's `src/format.rs`
+// writes, byte for byte.
+//
+// Which line a token is on is meaning in this language: a `+` at a line break
+// continues the expression above it and a leading `-` opens a new statement. So
+// an expression is never rewrapped. What is settled is the space inside a line,
+// the indentation in front of it, how many blank lines may sit between two of
+// them, the brace that opens a block, and the newline a file ends with.
+//
+// A token carries the byte range it was read from, so the gaps between one
+// token's range and the next are exactly the whitespace and the comments the
+// token stream drops.
+
+import "core.frost"
+import "lexer.frost"
+
+export format_source
+
+// What a token is doing, where the token alone does not say. `Arena<64>` holds
+// the tokens of `a < b > c`, `^` is a pointer type in front of a type and a read
+// behind a value, `[N]u8` is a type where `xs[i]` is an index, and `::` declares
+// a name where `NodeKind::Var` reaches into a type for one.
+ROLE_PLAIN :: 0
+ROLE_TYPE_ARG_OPEN :: 1
+ROLE_TYPE_ARG_CLOSE :: 2
+ROLE_POINTER_TYPE :: 3
+ROLE_TYPE_BRACKET_OPEN :: 4
+ROLE_TYPE_BRACKET_CLOSE :: 5
+ROLE_DECLARES :: 6
+
+// Whether a token can end a value, which separates a read from a type and a
+// subtraction from a negation.
+ends_a_value :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::Ident || kind == TokenKind::Int
+        || kind == TokenKind::Float || kind == TokenKind::Str
+        || kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+        || kind == TokenKind::Rbrace
+}
+
+// Whether a token can begin a type.
+begins_a_type :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::Ident || kind == TokenKind::Caret
+        || kind == TokenKind::Lbracket || kind == TokenKind::KwFn
+        || kind == TokenKind::Dollar || kind == TokenKind::KwRef
+}
+
+// Whether a token opens or closes a nesting level.
+nesting_of :: fn(kind: TokenKind) -> i64 {
+    if (kind == TokenKind::Lbrace || kind == TokenKind::Lparen
+        || kind == TokenKind::Lbracket) {
+        return 1
+    }
+    if (kind == TokenKind::Rbrace || kind == TokenKind::Rparen
+        || kind == TokenKind::Rbracket) {
+        return -1
+    }
+    0
+}
+
+// Where a token's text begins and ends in the source. A string literal records
+// the range inside its quotes, and the quotes are part of what was written.
+token_start :: fn(mut tokens: Arena<Token>, index: i64) -> i64 {
+    token := arena_at(tokens, index)
+    if (token.kind == TokenKind::Str) {
+        return token.off - 1
+    }
+    token.off
+}
+
+token_end :: fn(mut tokens: Arena<Token>, index: i64) -> i64 {
+    token := arena_at(tokens, index)
+    if (token.kind == TokenKind::Str) {
+        return token.off + token.len + 1
+    }
+    token.off + token.len
+}
+
+kind_at :: fn(mut tokens: Arena<Token>, index: i64) -> TokenKind {
+    if (index < 0 || index >= tokens.count) {
+        return TokenKind::Eof
+    }
+    arena_at(tokens, index).kind
+}
+
+// Where the bracket opened at `open` closes.
+matching_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
+    var depth: i64 = 0
+    var index := open
+    while (index < tokens.count) {
+        depth = depth + nesting_of(kind_at(tokens, index))
+        if (depth == 0) {
+            return index
+        }
+        index = index + 1
+    }
+    -1
+}
+
+// Where a run of type arguments opened at `open` closes, or -1 when the run
+// holds something no type argument can be.
+type_arguments_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
+    var depth: i64 = 0
+    var index := open
+    while (index < tokens.count) {
+        kind := kind_at(tokens, index)
+        if (kind == TokenKind::Lt) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Gt) {
+            depth = depth - 1
+            if (depth == 0) {
+                return index
+            }
+        } else if (kind != TokenKind::Ident && kind != TokenKind::Int
+            && kind != TokenKind::Comma && kind != TokenKind::Caret
+            && kind != TokenKind::Lbracket && kind != TokenKind::Rbracket
+            && kind != TokenKind::Dollar) {
+            return -1
+        }
+        index = index + 1
+    }
+    -1
+}
+
+// Whether a line beginning with this token continues the line above.
+continues_a_line :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::Plus || kind == TokenKind::Star
+        || kind == TokenKind::Slash || kind == TokenKind::Percent
+        || kind == TokenKind::Andand || kind == TokenKind::Oror
+        || kind == TokenKind::Dot || kind == TokenKind::Eqeq
+        || kind == TokenKind::Ne || kind == TokenKind::Lt
+        || kind == TokenKind::Le || kind == TokenKind::Gt
+        || kind == TokenKind::Ge || kind == TokenKind::Amp
+        || kind == TokenKind::Pipe
+        || kind == TokenKind::Arrow || kind == TokenKind::Question
+}
+
+// Whether a line opens a declaration, which at the top level is the only thing
+// that is not a continuation of the line above.
+opens_a_declaration :: fn(kind: TokenKind, next: TokenKind) -> bool {
+    if (kind == TokenKind::KwImport || kind == TokenKind::KwExport
+        || kind == TokenKind::KwTest) {
+        return true
+    }
+    kind == TokenKind::Ident && next == TokenKind::Coloncolon
+}
+
+// Whether these two tokens have a space between them.
+spaced :: fn(before: TokenKind, left: TokenKind, left_role: i64,
+    right: TokenKind, right_role: i64) -> bool {
+    if (left == TokenKind::Coloncolon) {
+        return left_role == ROLE_DECLARES
+    }
+    if (right == TokenKind::Coloncolon) {
+        return right_role == ROLE_DECLARES
+    }
+    if (left_role == ROLE_TYPE_ARG_OPEN || right_role == ROLE_TYPE_ARG_OPEN
+        || left_role == ROLE_TYPE_ARG_CLOSE
+        || right_role == ROLE_TYPE_ARG_CLOSE) {
+        if (left_role == ROLE_TYPE_ARG_CLOSE) {
+            if (right == TokenKind::Lparen || right == TokenKind::Lbracket
+                || right == TokenKind::Rparen || right == TokenKind::Comma
+                || right == TokenKind::Semi || right == TokenKind::Colon
+                || right_role == ROLE_TYPE_ARG_OPEN) {
+                return false
+            }
+            return true
+        }
+        return false
+    }
+    if (left_role == ROLE_POINTER_TYPE) {
+        return false
+    }
+    if (left == TokenKind::Caret && right_role != ROLE_POINTER_TYPE) {
+        if (right == TokenKind::Rparen || right == TokenKind::Rbracket
+            || right == TokenKind::Comma || right == TokenKind::Semi
+            || right == TokenKind::Colon || right == TokenKind::Lparen
+            || right == TokenKind::Lbracket || right == TokenKind::Dot) {
+            return false
+        }
+        return true
+    }
+    if (right == TokenKind::Caret && right_role != ROLE_POINTER_TYPE) {
+        return false
+    }
+    if (left_role == ROLE_TYPE_BRACKET_OPEN
+        || right_role == ROLE_TYPE_BRACKET_CLOSE
+        || left_role == ROLE_TYPE_BRACKET_CLOSE) {
+        return right == TokenKind::Lbrace
+    }
+    if (right == TokenKind::Rparen || right == TokenKind::Rbracket
+        || right == TokenKind::Comma || right == TokenKind::Semi
+        || right == TokenKind::Colon) {
+        return false
+    }
+    // A literal opening directly inside a bracket keeps a space, so the two
+    // openers do not run together: `[ { hp = 1 }, { hp = 2 } ]`.
+    if (left == TokenKind::Lparen || left == TokenKind::Lbracket) {
+        return right == TokenKind::Lbrace
+    }
+    if (right == TokenKind::Lparen || right == TokenKind::Lbracket) {
+        if (left == TokenKind::Ident || left == TokenKind::Rparen
+            || left == TokenKind::Rbracket || left == TokenKind::KwFn
+            || left == TokenKind::KwStruct) {
+            return false
+        }
+        return true
+    }
+    if ((left == TokenKind::Minus || left == TokenKind::Bang)
+        && ends_a_value(before) == false) {
+        return false
+    }
+    if (left == TokenKind::Dot || right == TokenKind::Dot) {
+        return false
+    }
+    if (left == TokenKind::Dollar) {
+        return false
+    }
+    if (left == TokenKind::Lbrace && right == TokenKind::Rbrace) {
+        return false
+    }
+    true
+}
+
+// The column the line holding an offset begins its text at.
+line_indent_at :: fn(src: str, off: i64) -> i64 {
+    var start := off
+    while (start > 0 && src[start - 1] != CH_LF) {
+        start = start - 1
+    }
+    var first := start
+    while (first < off && (src[first] == CH_SPACE || src[first] == CH_TAB)) {
+        first = first + 1
+    }
+    first - start
+}
+
+emit_spaces :: fn(count: i64) {
+    var written: i64 = 0
+    while (written < count) {
+        emit_text(" ")
+        written = written + 1
+    }
+}
+
+// The one rendering of a source, written to the emit stream.
+format_source :: fn(src: str, length: i64) {
+    var tokens := arena_make($Token, 262144)
+    tokenize(src, length, tokens)
+    // The end marker is not a token of the program, and rendering it would put
+    // an indent and a line after the last thing written.
+    while (tokens.count > 0
+        && arena_at(tokens, tokens.count - 1).kind == TokenKind::Eof) {
+        tokens.count = tokens.count - 1
+    }
+    if (tokens.count == 0) {
+        emit_trailing_comments(src, 0, length, 0)
+        return
+    }
+
+    // Which tokens open their line, and the brace depth in front of each.
+    var opens_line := arena_make($LocalVar, 262144)
+    var index: i64 = 0
+    var previous_end: i64 = 0
+    var braces_before: i64 = 0
+    while (index < tokens.count) {
+        token := arena_at(tokens, index)
+        var opens: i64 = 0
+        if (index == 0 || breaks_in(src, previous_end, token_start(tokens, index))) {
+            opens = 1
+        }
+        if (token.kind == TokenKind::Rbrace) {
+            braces_before = braces_before - 1
+        }
+        arena_push(opens_line, LocalVar { name_off = opens,
+                name_len = braces_before, ty = 0, slot = 0 })
+        if (token.kind == TokenKind::Lbrace) {
+            braces_before = braces_before + 1
+        }
+        previous_end = token_end(tokens, index)
+        index = index + 1
+    }
+
+    roles := settle_roles(tokens, opens_line)
+
+    var braces: i64 = 0
+    var brackets: i64 = 0
+    var at_line_start: bool = true
+    var previous_opened: bool = false
+    var at: i64 = 0
+    index = 0
+    while (index < tokens.count) {
+        token := arena_at(tokens, index)
+        gap_from := at
+        gap_to := token_start(tokens, index)
+        at = token_end(tokens, index)
+
+        var line_depth := braces
+        if (nesting_of(token.kind) < 0) {
+            line_depth = braces - 1
+        }
+
+        joins := joins_the_line_above(src, tokens, index, gap_from, gap_to)
+        outcome := write_gap(src, gap_from, gap_to, line_depth, joins, index,
+            at_line_start)
+        at_line_start = outcome.at_line_start
+
+        var opens_this_line: bool = false
+        if (joins) {
+            emit_text(" ")
+        } else if (at_line_start) {
+            var open_braces := braces
+            if (token.kind == TokenKind::Rbrace) {
+                open_braces = braces - 1
+            }
+            var open_brackets := brackets
+            if (token.kind == TokenKind::Rparen
+                || token.kind == TokenKind::Rbracket) {
+                open_brackets = brackets - 1
+            }
+            var running_on: i64 = 0
+            if (open_brackets > 0) {
+                running_on = open_brackets
+            } else if (open_braces == 0) {
+                closes := token.kind == TokenKind::Rbrace
+                    || token.kind == TokenKind::Lbrace
+                if (closes == false
+                    && opens_a_declaration(token.kind,
+                        kind_at(tokens, index + 1)) == false) {
+                    running_on = 1
+                }
+            } else if (continues_a_line(token.kind)) {
+                running_on = 1
+            }
+            var wanted := open_braces
+            if (wanted < 0) {
+                wanted = 0
+            }
+            if (running_on > 0) {
+                wanted = wanted + running_on
+            }
+            emit_spaces(wanted * 4)
+            opens_this_line = true
+        } else if (index > 0) {
+            var before := TokenKind::Eof
+            if (previous_opened == false && index >= 2) {
+                before = kind_at(tokens, index - 2)
+            }
+            if (spaced(before, kind_at(tokens, index - 1),
+                    role_at(roles, index - 1), token.kind, role_at(roles, index))) {
+                emit_text(" ")
+            }
+        }
+        emit_src(src, gap_to, at - gap_to)
+        at_line_start = false
+        previous_opened = opens_this_line
+        braces = braces + brace_step(token.kind)
+        brackets = brackets + bracket_step(token.kind)
+        index = index + 1
+    }
+    emit_trailing_comments(src, at, length, braces)
+}
+
+brace_step :: fn(kind: TokenKind) -> i64 {
+    if (kind == TokenKind::Lbrace) { return 1 }
+    if (kind == TokenKind::Rbrace) { return -1 }
+    0
+}
+
+bracket_step :: fn(kind: TokenKind) -> i64 {
+    if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) { return 1 }
+    if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) { return -1 }
+    0
+}
+
+role_at :: fn(mut roles: Arena<LocalVar>, index: i64) -> i64 {
+    if (index < 0 || index >= roles.count) {
+        return ROLE_PLAIN
+    }
+    arena_at(roles, index).name_off
+}
+
+// The job each token is doing.
+settle_roles :: fn(mut tokens: Arena<Token>, mut opens: Arena<LocalVar>)
+    -> Arena<LocalVar> {
+    var roles := arena_make($LocalVar, 262144)
+    var index: i64 = 0
+    while (index < tokens.count) {
+        arena_push(roles, LocalVar { name_off = ROLE_PLAIN, name_len = 0,
+                ty = 0, slot = 0 })
+        index = index + 1
+    }
+    index = 0
+    while (index < tokens.count) {
+        kind := kind_at(tokens, index)
+        previous := kind_at(tokens, index - 1)
+        if (kind == TokenKind::Coloncolon && index >= 1
+            && arena_at(opens, index - 1).name_off == 1
+            && arena_at(opens, index).name_len == 0
+            && previous == TokenKind::Ident) {
+            set_role(roles, index, ROLE_DECLARES)
+        } else if (kind == TokenKind::Lt && previous == TokenKind::Ident) {
+            close := type_arguments_close(tokens, index)
+            if (close >= 0) {
+                set_role(roles, index, ROLE_TYPE_ARG_OPEN)
+                set_role(roles, close, ROLE_TYPE_ARG_CLOSE)
+            }
+        } else if (kind == TokenKind::Caret && ends_a_value(previous) == false) {
+            set_role(roles, index, ROLE_POINTER_TYPE)
+        } else if (kind == TokenKind::Lbracket
+            && ends_a_value(previous) == false) {
+            close := matching_close(tokens, index)
+            if (close >= 0 && begins_a_type(kind_at(tokens, close + 1))) {
+                set_role(roles, index, ROLE_TYPE_BRACKET_OPEN)
+                set_role(roles, close, ROLE_TYPE_BRACKET_CLOSE)
+            }
+        }
+        index = index + 1
+    }
+    roles
+}
+
+set_role :: fn(mut roles: Arena<LocalVar>, index: i64, role: i64) {
+    if (index < 0 || index >= roles.count) {
+        return
+    }
+    entry := arena_at(roles, index)
+    entry.name_off = role
+}
+
+// Whether a line break sits between two offsets.
+breaks_in :: fn(src: str, from: i64, to: i64) -> bool {
+    var index := from
+    while (index < to) {
+        if (src[index] == CH_LF) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
+// Whether a comment sits between two offsets.
+comment_in :: fn(src: str, from: i64, to: i64) -> bool {
+    var index := from
+    while (index + 1 < to) {
+        if (src[index] == CH_SLASH && src[index + 1] == CH_SLASH) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
+// A brace that opens a block sits at the end of the line that says what the
+// block is for, and an `else` sits beside the brace closing the arm above it.
+joins_the_line_above :: fn(src: str, mut tokens: Arena<Token>, index: i64,
+    gap_from: i64, gap_to: i64) -> bool {
+    if (index == 0 || comment_in(src, gap_from, gap_to)) {
+        return false
+    }
+    if (breaks_in(src, gap_from, gap_to) == false) {
+        return false
+    }
+    kind := kind_at(tokens, index)
+    previous := kind_at(tokens, index - 1)
+    if (kind == TokenKind::Lbrace) {
+        return previous != TokenKind::Lbrace && previous != TokenKind::Rbrace
+            && previous != TokenKind::Semi && previous != TokenKind::Comma
+    }
+    if (kind == TokenKind::KwElse) {
+        return previous == TokenKind::Rbrace
+    }
+    false
+}
+
+// Where the line stands once a gap has been written.
+GapOutcome :: struct {
+    at_line_start: bool,
+}
+
+// The whitespace and the comments between two tokens: the newlines kept, one
+// blank line at most, and each comment on the line it was written on.
+write_gap :: fn(src: str, from: i64, to: i64, line_depth: i64, joins: bool,
+    index: i64, at_line_start: bool) -> GapOutcome {
+    var outcome := GapOutcome { at_line_start = at_line_start }
+    var breaks: i64 = 0
+    var starting := at_line_start
+    var pos := from
+    while (pos < to) {
+        if (src[pos] == CH_LF) {
+            if (joins == false) {
+                if (breaks < 2 || index == 0) {
+                    emit_text("\n")
+                }
+                starting = true
+            }
+            breaks = breaks + 1
+            pos = pos + 1
+        } else if (pos + 1 < to && src[pos] == CH_SLASH
+            && src[pos + 1] == CH_SLASH) {
+            var end := pos
+            while (end < to && src[end] != CH_LF) {
+                end = end + 1
+            }
+            var stop := end
+            while (stop > pos
+                && (src[stop - 1] == CH_SPACE || src[stop - 1] == CH_TAB
+                    || src[stop - 1] == CH_CR)) {
+                stop = stop - 1
+            }
+            if (starting) {
+                emit_spaces(line_depth * 4)
+            } else {
+                emit_text(" ")
+            }
+            emit_src(src, pos, stop - pos)
+            starting = false
+            breaks = 0
+            pos = end
+        } else {
+            pos = pos + 1
+        }
+    }
+    outcome.at_line_start = starting
+    outcome
+}
+
+// Whatever followed the last token, and the newline every file ends with. The
+// region is walked only as far as the last comment in it, so the blank lines
+// after that comment are not written and the file ends with one newline.
+emit_trailing_comments :: fn(src: str, from: i64, to: i64, braces: i64) {
+    stop := last_comment_end(src, from, to)
+    var breaks: i64 = 0
+    var starting: bool = true
+    var pos := from
+    while (pos < stop) {
+        if (src[pos] == CH_LF) {
+            if (breaks < 2) {
+                emit_text("
+")
+            }
+            breaks = breaks + 1
+            starting = true
+            pos = pos + 1
+        } else if (pos + 1 < stop && src[pos] == CH_SLASH
+            && src[pos + 1] == CH_SLASH) {
+            var end := pos
+            while (end < stop && src[end] != CH_LF) {
+                end = end + 1
+            }
+            var trimmed := end
+            while (trimmed > pos
+                && (src[trimmed - 1] == CH_SPACE || src[trimmed - 1] == CH_TAB
+                    || src[trimmed - 1] == CH_CR)) {
+                trimmed = trimmed - 1
+            }
+            if (starting) {
+                emit_spaces(braces * 4)
+            } else {
+                emit_text(" ")
+            }
+            emit_src(src, pos, trimmed - pos)
+            starting = false
+            breaks = 0
+            pos = end
+        } else {
+            pos = pos + 1
+        }
+    }
+    emit_text("
+")
+}
+
+// Where the last comment in a region ends, or the start of the region when it
+// holds none.
+last_comment_end :: fn(src: str, from: i64, to: i64) -> i64 {
+    var found := from
+    var pos := from
+    while (pos + 1 < to) {
+        if (src[pos] == CH_SLASH && src[pos + 1] == CH_SLASH) {
+            var end := pos
+            while (end < to && src[end] != CH_LF) {
+                end = end + 1
+            }
+            found = end
+            pos = end
+        } else {
+            pos = pos + 1
+        }
+    }
+    found
+}
+
+// A run of source bytes, written as it stands.
+emit_src :: fn(src: str, offset: i64, length: i64) {
+    var index: i64 = 0
+    while (index < length) {
+        emit_char_of(src, offset + index)
+        index = index + 1
+    }
+}
+
+emit_char_of :: fn(src: str, at: i64) {
+    frost_rt_emit_char(cast($i64, src[at]))
+}
