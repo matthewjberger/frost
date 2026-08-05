@@ -274,6 +274,11 @@ pub struct Ast {
     // struct like any other: read off the spelling, such a declaration was
     // taken out of the linear closure and a resource in it went unconsumed.
     pub multi_return_structs: Vec<Symbol>,
+    // The structs a declaration said to pack: every field at the next byte,
+    // nothing padded, and an alignment of one. Recorded where the declaration
+    // is read rather than carried on the statement, so the walks that only pass
+    // a struct through learn nothing new.
+    pub packed_structs: Vec<Symbol>,
     // The enums a failure set was lowered to, by name. Recorded rather than
     // recognized from the spelling, for the reason the list above is: a program
     // declaring `__Result_0` is an enum like any other.
@@ -328,6 +333,10 @@ pub struct MultiBinding {
 pub struct StructField {
     pub name: Symbol,
     pub field_type: crate::types::Type,
+    // What the field was told to start at a multiple of, where a declaration
+    // said so. A layout the program stated rather than one worked out from the
+    // type, which is the only reason it is here and not in the type.
+    pub align: Option<usize>,
 }
 
 // A variant's fields are a run in `struct_fields`; a unit variant records
@@ -805,6 +814,11 @@ impl Ast {
     }
 
     /// Whether a name is one the failure-set lowering made, said the same way.
+    /// Whether a declaration said to pack this struct.
+    pub fn is_packed_struct(&self, name: &str) -> bool {
+        self.packed_structs.iter().any(|held| self.name(*held) == name)
+    }
+
     pub fn is_failure_result(&self, name: &str) -> bool {
         self.failure_results.iter().any(|held| self.name(*held) == name)
     }
@@ -1016,11 +1030,23 @@ impl<'a> Splicer<'a> {
             Statement::Expression(value) => {
                 Statement::Expression(self.expression(dest, value, rename))
             }
-            Statement::Struct(name, type_params, fields) => Statement::Struct(
-                self.symbol(dest, name, rename),
-                self.symbols(dest, type_params, rename),
-                self.fields(dest, fields, rename),
-            ),
+            Statement::Struct(name, type_params, fields) => {
+                let copied = self.symbol(dest, name, rename);
+                // Packing is part of the declaration, so it crosses with the
+                // struct. Left behind, a `packed struct` read out of an import
+                // is laid out as an ordinary one, and the two compilers would
+                // have disagreed about a type neither had been told about.
+                if self.source.is_packed_struct(self.source.name(name))
+                    && !dest.is_packed_struct(dest.name(copied))
+                {
+                    dest.packed_structs.push(copied);
+                }
+                Statement::Struct(
+                    copied,
+                    self.symbols(dest, type_params, rename),
+                    self.fields(dest, fields, rename),
+                )
+            }
             Statement::Enum(name, type_params, variants) => {
                 let name = self.symbol(dest, name, rename);
                 let type_params = self.symbols(dest, type_params, rename);
@@ -1203,6 +1229,9 @@ impl<'a> Splicer<'a> {
             .map(|field| StructField {
                 name: self.symbol(dest, field.name, rename),
                 field_type: field.field_type,
+                // A stated alignment is part of the declaration, so it crosses
+                // with the field rather than being worked out again.
+                align: field.align,
             })
             .collect();
         dest.add_struct_fields(copied)

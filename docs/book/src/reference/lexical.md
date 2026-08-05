@@ -88,6 +88,8 @@ as an ordinary identifier. `test` is read only at the start of a top-level test
 declaration (5.4) and `export` only on a top-level export line (5.5). `flags`
 is read as a declaration only when a scalar type and a brace follow it (3.6b),
 and `value` only as a parameter mode, where a name follows it (chapter 12).
+`packed` marks a declaration only where `struct` follows it, and `align` marks
+a field's alignment only where `(` follows it (3.2a).
 `Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
 identifier recognized in that position, unlike the lowercase keyword `type`.
 The type builtins `sizeof`, `typename` and `type_id` are ordinary names read

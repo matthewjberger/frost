@@ -63,7 +63,8 @@ and the diagnostic names the pointer.
 ## 3.2 Aggregate types
 
 - Structs `Name`, declared `Name :: struct { field: T, ... }`, are exactly
-  their fields in declaration order, with natural alignment.
+  their fields in declaration order, with natural alignment. A declaration may
+  state the layout instead of taking it (3.2a).
 - Enums `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
   are a discriminant plus the active variant's payload. Variants may be unit or
   carry named fields, and one enum may mix both. An enum takes type parameters
@@ -95,6 +96,41 @@ boundaries unless passed by borrow, with no `Copy` derive.
 
 Frost has no visibility modifiers. There is no `pub` and no private. Every struct
 field is public and reachable, and there is nothing to specify.
+
+## 3.2a Stated layout
+
+A struct takes its layout from its fields, and two forms let a declaration state
+one instead. A wire format, a file header and a GPU uniform block are each a
+layout something else already decided, and matching one by choosing field
+widths until `sizeof` agrees is a guess that holds until a field is added.
+
+```frost
+Header :: packed struct { magic: u32, kind: u8, length: u32 }
+Uniform :: struct { time: f32, view: Matrix4 align(16) }
+```
+
+`packed struct` puts every field at the next byte and gives the type an
+alignment of one. `Header` above is nine bytes, at offsets 0, 4 and 5.
+
+`align(N)` after a field's type is what that field starts at a multiple of,
+instead of what its type would ask for. A struct's own alignment is the widest
+any of its fields asks for, so `align(16)` on a field also gives the struct that
+alignment, and there is no second form saying the same thing about the whole
+declaration.
+
+Both are refused where they would mean nothing. `align(N)` takes a power of two,
+since an address is a multiple of one or of nothing. `align` inside a
+`packed struct` is refused: packed pads no field and `align` asks for this one
+to be padded, so a declaration writing both says two things that cannot hold
+together.
+
+`packed` and `align` are words rather than keywords (2.4). A local, a field and
+a parameter may still be called either; what marks the declaration is the
+`struct` after `packed`, and what marks the field form is the `(` after `align`.
+
+A stated layout reaches every backend. Both compilers compute the offsets and
+both C emitters carry them, so `sizeof`, `offset_of` and a read through a field
+answer the same on all of them.
 
 ## 3.3 Borrows and pointer types
 

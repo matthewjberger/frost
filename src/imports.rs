@@ -1355,6 +1355,13 @@ impl Renamer {
             }
             Statement::Struct(name, _, fields) => {
                 if let Some(mangled) = self.plain(ast, name) {
+                    // Packing is recorded against the name, so the record has
+                    // to move with it. Left behind, a `packed struct` from a
+                    // module is laid out as an ordinary one wherever it is
+                    // read, and nothing says the two disagree.
+                    if ast.packed_structs.contains(&name) {
+                        ast.packed_structs.push(mangled);
+                    }
                     let Statement::Struct(held, _, _) =
                         &mut ast.statements[id.0 as usize]
                     else {

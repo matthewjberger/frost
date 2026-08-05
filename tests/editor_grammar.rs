@@ -6,10 +6,12 @@ const GRAMMAR: &str = concat!(
 );
 
 const CONTEXTUAL: &[&str] = &[
+    "align",
     "export",
     "false",
     "flags",
     "include_str",
+    "packed",
     "test",
     "true",
     "value",
@@ -22,8 +24,9 @@ const BUILTIN_TYPES: &[&str] = &[
 
 const FUNCTION_MARKERS: &[&str] = &["extern", "inline", "safe", "unsafe"];
 
-const TYPE_HEAD_WORDS: &[&str] =
-    &["distinct", "enum", "flags", "linear", "struct", "type"];
+const TYPE_HEAD_WORDS: &[&str] = &[
+    "distinct", "enum", "flags", "linear", "packed", "struct", "type",
+];
 
 fn collect_matches(value: &serde_json::Value, into: &mut Vec<String>) {
     match value {

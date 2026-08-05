@@ -437,6 +437,12 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         if (str_range_eq(p.src, offset, length, "sizeof")) {
             advance(p)
+            // A `$` here says the name is a type rather than a value, the way
+            // `cast` and `typename` take one. The type it names is read after
+            // it, so a declared type written with a `$` is that type.
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
             // `sizeof(field)` is the width of what that field holds. A field
             // reads as a named type here, so which of the two it is comes from
             // whether a `for` over `fields(T)` bound the name.
@@ -1929,7 +1935,51 @@ parse_type_annotation :: fn(mut p: Parser) -> i64 {
 
 // Parse `{ field : Type, ... }` into a linked list of fields, returning the head.
 // Field types resolve under any active type-parameter binding.
-parse_struct_fields :: fn(mut p: Parser) -> i64 {
+// `align(N)` after a field's type: the field starts at a multiple of N.
+//
+// A struct's own alignment is the widest its fields ask for, so this is also
+// how a struct is given one, and there is no second form saying the same thing
+// about the whole declaration. The word is not a keyword, so a field may still
+// be called `align`; the `(` after it is what marks the form.
+parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
+    if (cur(p) != TokenKind::Ident || peek_is_word(p, 0, "align") == false
+        || peek_kind(p, 1) != TokenKind::Lparen) {
+        return 0
+    }
+    advance(p)
+    advance(p)
+    if (cur(p) != TokenKind::Int) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("`align` takes a number, which is what a field starts at a multiple of")
+        frost_rt_recover_escape()
+    }
+    value := cur_val(p)
+    at := cur_off(p)
+    advance(p)
+    if (value <= 0 || (value & (value - 1)) != 0) {
+        report_where(p.modules, p.src, at)
+        report("`align` takes a power of two, and ")
+        report_int(value)
+        report(" is not one; an address is a multiple of a power of two or of nothing")
+        frost_rt_recover_escape()
+    }
+    // `packed` says no field is padded and `align` says this one is, so a
+    // declaration writing both says two things that cannot both hold.
+    if (packed == 1) {
+        report_where(p.modules, p.src, at)
+        report("a `packed struct` pads no field, and `align` asks for this one to be padded; drop one of the two")
+        frost_rt_recover_escape()
+    }
+    if (cur(p) != TokenKind::Rparen) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("Expected ')' after the alignment")
+        frost_rt_recover_escape()
+    }
+    advance(p)
+    value
+}
+
+parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
     advance(p)
     var head: i64 = -1
     var tail: i64 = -1
@@ -1938,10 +1988,11 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
         field_length := cur_len(p)
         advance(p)
         field_ty := parse_type_annotation(p)
+        field_align := parse_field_alignment(p, packed)
         field := arena_push(
             p.fields,
             StructField { name_off = field_offset, name_len = field_length,
-                ty = field_ty, next = -1, variant = -1 },
+                ty = field_ty, next = -1, variant = -1, align = field_align },
         )
         if (head == (-1)) {
             head = field
@@ -2045,6 +2096,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     name_off := template.name_off
     name_len := template.name_len
     template_linear := template.is_linear
+    template_packed := template.is_packed
     tparam_off := template.tparam_off
     tparam_len := template.tparam_len
     xparam_start := template.xparam_start
@@ -2072,7 +2124,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     if (is_enum == 1) {
         field_head = parse_enum_body(p, STRUCT_BASE + p.structs.count)
     } else {
-        field_head = parse_struct_fields(p)
+        field_head = parse_struct_fields(p, template_packed)
     }
     p.gbindings.count = mark
     p.ti = saved_ti
@@ -2089,7 +2141,8 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
             is_linear = holds_linear(p, field_head, template_linear),
             emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0,
-            declared = 1, is_multi = 0, is_result = 0 },
+            declared = 1, is_multi = 0, is_result = 0,
+            is_packed = template_packed },
     )
     arena_push(
         p.instances,
@@ -2147,7 +2200,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         node := arena_push(
             p.fields,
             StructField { name_off = field_name_off, name_len = field_name_len,
-                ty = col_ty, next = -1, variant = -1 },
+                ty = col_ty, next = -1, variant = -1, align = 0 },
         )
         if (head == (-1)) {
             head = node
@@ -2165,7 +2218,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = gen_off,
             name_len = cstr_len("generations"),
-            ty = i64_col, next = -1, variant = -1 },
+            ty = i64_col, next = -1, variant = -1, align = 0 },
     )
     if (head == (-1)) {
         head = gen_node
@@ -2179,7 +2232,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = free_off,
             name_len = cstr_len("free_list"),
-            ty = i64_col, next = -1, variant = -1 },
+            ty = i64_col, next = -1, variant = -1, align = 0 },
     )
     set_field_next(p, tail, free_node)
     tail = free_node
@@ -2188,7 +2241,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = count_off,
             name_len = cstr_len("free_count"),
-            ty = TY_I64, next = -1, variant = -1 },
+            ty = TY_I64, next = -1, variant = -1, align = 0 },
     )
     set_field_next(p, tail, count_node)
     tail = count_node
@@ -2204,7 +2257,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = words_off,
             name_len = cstr_len("live_words"),
-            ty = words_col, next = -1, variant = -1 },
+            ty = words_col, next = -1, variant = -1, align = 0 },
     )
     set_field_next(p, tail, words_node)
     tail = words_node
@@ -2212,7 +2265,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     live_node := arena_push(
         p.fields,
         StructField { name_off = live_off, name_len = cstr_len("live_count"),
-            ty = TY_I64, next = -1, variant = -1 },
+            ty = TY_I64, next = -1, variant = -1, align = 0 },
     )
     set_field_next(p, tail, live_node)
 
@@ -2223,7 +2276,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
             is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
             instance_id = struct_index, is_linear = 0, emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 0, is_result = 0 },
+            is_multi = 0, is_result = 0, is_packed = 0 },
     )
     STRUCT_BASE + struct_index
 }
@@ -4049,6 +4102,7 @@ unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
     var head: i64 = -1
     var tail: i64 = -1
     def := arena_at(p.structs, struct_index_of(walked))
+    packed := def.is_packed
     var fid := def.field_head
     var running: i64 = 0
     var any: i64 = 0
@@ -4056,7 +4110,8 @@ unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
         field := arena_at(p.fields, fid)
         field_ty := field.ty
         next_field := field.next
-        running = align_up(running, align_of(p, field_ty))
+        running = align_up(running,
+            field_align(p, packed, field.align, field_ty))
         at := running
         running = running + type_size(p, field_ty)
         p.ti = body_start
@@ -4677,6 +4732,14 @@ parse_struct :: fn(mut p: Parser) {
         linear_flag = 1
         advance(p)
     }
+    // `Name :: packed struct { ... }` puts every field at the next byte. The
+    // word is not a keyword, so a local, a field and a parameter may all still
+    // be called `packed`; the `struct` after it is what marks the declaration.
+    var packed_flag: i64 = 0
+    if (at_packed_struct(p, 0)) {
+        packed_flag = 1
+        advance(p)
+    }
     advance(p)
     if (cur(p) == TokenKind::Lparen) {
         advance(p)
@@ -4724,16 +4787,18 @@ parse_struct :: fn(mut p: Parser) {
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 0, declared = 1, is_multi = 0, is_result = 0 })
+                is_enum = 0, declared = 1, is_multi = 0, is_result = 0,
+                is_packed = packed_flag })
     } else {
-        head := parse_struct_fields(p)
+        head := parse_struct_fields(p, packed_flag)
         record_struct(p, entry_index,
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = -1,
                 is_linear = holds_linear(p, head, linear_flag), emitted = 0,
                 xparam_start = 0, xparam_count = 0, is_enum = 0,
-                declared = 1, is_multi = 0, is_result = 0 })
+                declared = 1, is_multi = 0, is_result = 0,
+                is_packed = packed_flag })
     }
 }
 
@@ -4804,7 +4869,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     tag_field := arena_push(
         p.fields,
         StructField { name_off = p.name_tag, name_len = 3, ty = TY_I32,
-            next = -1, variant = -1 },
+            next = -1, variant = -1, align = 0 },
     )
     var tail := tag_field
     var tag: i64 = 0
@@ -4830,7 +4895,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
                     p.fields,
                     StructField { name_off = qualified,
                         name_len = variant_len + field_len + 1, ty = field_ty,
-                        next = -1, variant = tag },
+                        next = -1, variant = tag, align = 0 },
                 )
                 set_next_field(p, tail, field)
                 tail = field
@@ -4908,7 +4973,7 @@ parse_enum :: fn(mut p: Parser) {
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = -1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 1, declared = 1, is_multi = 0, is_result = 0 })
+                is_enum = 1, declared = 1, is_multi = 0, is_result = 0, is_packed = 0 })
         return
     }
     // The enum's own index is known before its body is, since a variant has to
@@ -4924,7 +4989,7 @@ parse_enum :: fn(mut p: Parser) {
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = -1,
             is_linear = linear_flag, emitted = 0, xparam_start = 0,
-            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0, is_result = 0 })
+            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0, is_result = 0, is_packed = 0 })
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -5244,17 +5309,17 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     tag := arena_push(
         p.fields,
         StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
-            next = -1, variant = -1 },
+            next = -1, variant = -1, align = 0 },
     )
     value := arena_push(
         p.fields,
         StructField { name_off = p.name_ok_value, name_len = 8, ty = ok,
-            next = -1, variant = -1 },
+            next = -1, variant = -1, align = 0 },
     )
     bad_field := arena_push(
         p.fields,
         StructField { name_off = p.name_err_error, name_len = 9, ty = bad,
-            next = -1, variant = -1 },
+            next = -1, variant = -1, align = 0 },
     )
     set_next_field(p, tag, value)
     set_next_field(p, value, bad_field)
@@ -5266,7 +5331,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             field_token = 0, instance_id = -1,
             is_linear = result_is_linear(p, ok, bad), emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1,
-            is_multi = 0, is_result = 1 },
+            is_multi = 0, is_result = 1, is_packed = 0 },
     )
     result_ty := STRUCT_BASE + index
     arena_push(
@@ -5342,7 +5407,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
         field := arena_push(
             p.fields,
             StructField { name_off = name, name_len = length,
-                ty = held, next = -1, variant = -1 },
+                ty = held, next = -1, variant = -1, align = 0 },
         )
         if (head == (-1)) {
             head = field
@@ -5369,7 +5434,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = -1, is_linear = 0, emitted = 0,
             xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 1, is_result = 0 },
+            is_multi = 1, is_result = 0, is_packed = 0 },
     )
     p.multi_count = count
     STRUCT_BASE + index
@@ -5716,6 +5781,9 @@ predeclare_types :: fn(mut p: Parser) {
             if (peek_kind(p, at) == TokenKind::KwLinear) {
                 at = at + 1
             }
+            if (at_packed_struct(p, at)) {
+                at = at + 1
+            }
             named := peek_kind(p, at)
             if (named == TokenKind::KwStruct || named == TokenKind::KwEnum) {
                 var generic: i64 = 0
@@ -5733,7 +5801,7 @@ predeclare_types :: fn(mut p: Parser) {
                         tparam_off = 0, tparam_len = 0, field_token = 0,
                         instance_id = -1, is_linear = 0, emitted = 0,
                         xparam_start = 0, xparam_count = 0,
-                        is_enum = holds_variants, declared = 0, is_multi = 0, is_result = 0 },
+                        is_enum = holds_variants, declared = 0, is_multi = 0, is_result = 0, is_packed = 0 },
                 )
             }
         }
@@ -5775,6 +5843,7 @@ record_struct :: fn(mut p: Parser, index: i64, made: StructDef) -> i64 {
     entry.xparam_start = made.xparam_start
     entry.xparam_count = made.xparam_count
     entry.is_enum = made.is_enum
+    entry.is_packed = made.is_packed
     entry.declared = 1
     index
 }
@@ -5854,6 +5923,13 @@ at_const_declaration :: fn(mut p: Parser) -> bool {
     is_const(p, peek_off(p, 2), peek_len(p, 2))
 }
 
+// Whether `packed struct` stands this far along. `packed` is a word rather
+// than a keyword, so the `struct` after it is what says this is a declaration
+// head and not a name.
+at_packed_struct :: fn(mut p: Parser, at: i64) -> bool {
+    peek_is_word(p, at, "packed") && peek_kind(p, at + 1) == TokenKind::KwStruct
+}
+
 // Whether the declaration here introduces a type rather than a value.
 at_type_declaration :: fn(mut p: Parser) -> bool {
     if (cur(p) != TokenKind::Ident || peek_kind(p, 1) != TokenKind::Coloncolon) {
@@ -5862,6 +5938,9 @@ at_type_declaration :: fn(mut p: Parser) -> bool {
     third := peek_kind(p, 2)
     if (third == TokenKind::KwEnum || third == TokenKind::KwStruct
         || third == TokenKind::KwLinear || third == TokenKind::KwDistinct) {
+        return true
+    }
+    if (at_packed_struct(p, 2)) {
         return true
     }
     (third == TokenKind::Ident && peek_is_word(p, 2, "flags")
@@ -5912,7 +5991,8 @@ parse_type_declarations :: fn(mut p: Parser) {
                     && peek_kind(p, 3) == TokenKind::KwEnum)) {
                 parse_enum(p)
             } else if (third == TokenKind::KwStruct
-                || third == TokenKind::KwLinear) {
+                || third == TokenKind::KwLinear
+                || at_packed_struct(p, 2)) {
                 parse_struct(p)
             } else if (third == TokenKind::KwDistinct) {
                 parse_distinct(p)

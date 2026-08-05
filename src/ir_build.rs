@@ -1294,6 +1294,13 @@ impl IrBuilder {
             .unwrap_or(0)
     }
 
+    /// The width of a type, or nothing where none was worked out. `byte_size`
+    /// answers zero there, which a program cannot tell from a real zero, so
+    /// anything reporting a width to a reader asks this instead.
+    fn measured_size(&self, ty: &Type) -> Option<usize> {
+        size_and_align(ty, &self.structs, &self.enums).map(|(size, _)| size)
+    }
+
     fn type_is_linear(&self, ty: &Type) -> bool {
         ty.is_linear_with(&self.linear)
     }
@@ -3720,6 +3727,7 @@ fn expand_generic_structs(
                             .map(|(field_name, field_type)| StructField {
                                 name: ast.intern(field_name),
                                 field_type: field_type.clone(),
+                                align: None,
                             })
                             .collect();
                         ast.add_struct_fields(entries)
@@ -3798,6 +3806,7 @@ fn expand_generic_structs(
                 .map(|(field_name, field_type)| StructField {
                     name: ast.intern(field_name),
                     field_type: field_type.clone(),
+                    align: None,
                 })
                 .collect();
             let name = ast.intern(&instance);
@@ -3832,6 +3841,7 @@ fn expand_generic_structs(
             .map(|(field_name, field_type)| StructField {
                 name: ast.intern(field_name),
                 field_type: field_type.clone(),
+                align: None,
             })
             .collect();
         let name = ast.intern(&instance);
@@ -4314,9 +4324,13 @@ fn compute_layouts(ast: &Ast, statements: &[StmtId]) -> LayoutMaps {
             if structs.contains_key(*name) {
                 continue;
             }
-            if let Some(layout) =
-                try_struct_layout(ast, ast.fields_in(*fields), &structs, &enums)
-            {
+            if let Some(layout) = try_struct_layout(
+                ast,
+                ast.fields_in(*fields),
+                &structs,
+                &enums,
+                ast.is_packed_struct(name),
+            ) {
                 structs.insert((*name).to_string(), layout);
                 progress = true;
             }
@@ -4347,13 +4361,22 @@ fn try_struct_layout(
     fields: &[StructField],
     structs: &HashMap<String, StructLayout>,
     enums: &HashMap<String, EnumLayout>,
+    packed: bool,
 ) -> Option<StructLayout> {
     let mut offset = 0;
     let mut align = 1;
     let mut field_layouts = Vec::with_capacity(fields.len());
     for field in fields {
-        let (field_size, field_align) =
+        let (field_size, natural) =
             size_and_align(&field.field_type, structs, enums)?;
+        // Packed means every field at the next byte. A stated alignment is what
+        // the field starts at a multiple of instead of what its type would ask
+        // for; anything else is the type's own answer.
+        let field_align = match (packed, field.align) {
+            (true, _) => 1,
+            (false, Some(stated)) => stated,
+            (false, None) => natural,
+        };
         offset = round_up(offset, field_align);
         field_layouts.push(FieldLayout {
             name: ast.name(field.name).to_string(),
@@ -6417,10 +6440,34 @@ impl<'a> FunctionLowering<'a> {
         let Expression::TypeValue(ty) = self.ast.expr(arguments[0]) else {
             return Ok(None);
         };
-        let ty = ty.clone();
+        // `$P` on a concrete type reads as a constant named at a call, since
+        // that is what a `$` argument is everywhere else. Where the name is a
+        // type the program declared, it is that type: `sizeof($P)` measured
+        // zero and `sizeof(P)` measured sixteen for the same struct.
+        let ty = match ty.clone() {
+            Type::TypeParam(named) | Type::ConstValue(named)
+                if self.builder.struct_layout(&named).is_some() =>
+            {
+                Type::Struct(named)
+            }
+            Type::TypeParam(named) | Type::ConstValue(named)
+                if self.builder.enum_layout(&named).is_some() =>
+            {
+                Type::Enum(named)
+            }
+            held => held,
+        };
         Ok(Some(match name.as_str() {
             "sizeof" => {
-                let size = self.builder.byte_size(&ty) as i64;
+                // A type nothing was laid out for measured zero, which a
+                // program cannot tell from a real zero. `sizeof($P)` on an
+                // ordinary struct answered 0 while `sizeof(P)` answered 16.
+                let Some(size) = self.builder.measured_size(&ty) else {
+                    bail!(
+                        "`sizeof` has no layout for '{ty}', so there is no width to give"
+                    );
+                };
+                let size = size as i64;
                 (
                     IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
                     Type::I64,

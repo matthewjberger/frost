@@ -74,7 +74,7 @@ mode, and a local that is reassigned is declared with `var`.
 
 ```
 ConstBody =
-      "linear"? "struct" GenericParams? "{" StructFields? "}"
+      "linear"? "packed"? "struct" GenericParams? "{" StructFields? "}"
     | "linear"? "enum" GenericParams? "{" EnumVariants? "}"
     | "distinct" Type
     | "flags" IntegerType "{" FlagBits? "}"
@@ -87,7 +87,7 @@ GenericParams = "(" TypeParam ( "," TypeParam )* ")"
 TypeParam     = "$" IDENT ":" ( "Type" | "type" )
 
 StructFields  = StructField ( "," StructField )* ","?
-StructField   = IDENT ":" Type
+StructField   = IDENT ":" Type ( "align" "(" INTEGER ")" )?
 
 EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
 EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
@@ -110,6 +110,10 @@ expression is a function literal (13.6).
 `value` (chapter 12) is a word rather than a keyword, so a parameter may still
 be named `value`. What tells the two apart is that a mode is followed by the
 parameter's name and a name is followed by its type.
+
+`packed` and `align` (3.2a) are words too. `packed` marks the declaration only
+where `struct` follows it, and `align` marks the field's alignment only where
+`(` follows it, so a local, a field and a parameter may still be called either.
 
 `args: $...` takes no type, since its length and its element types arrive with
 each call, and it is last, because anything after it would have nothing to say

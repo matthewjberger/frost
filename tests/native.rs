@@ -4984,8 +4984,9 @@ fn the_tour_prints_what_its_comments_claim() {
     // walked by `for` and answered for in two values, the strongest again with
     // the total discarded, the columns container walked over the slots that
     // still hold something, a handle from another container refused, and the
-    // session's id handed back by the `move` that consumed it.
-    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n7\n");
+    // session's id handed back by the `move` that consumed it, with the two
+    // stated layouts read off between them.
+    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n7\n");
 }
 
 // The self-hosted compiler passes a struct to C by value too, through both of
@@ -6401,6 +6402,88 @@ fn a_constant_may_stand_for_one_from_another_module() {
     assert_eq!(output, "46\n");
     if let Some(hosted) = hosted {
         assert_eq!(hosted, "46\n", "the two compilers disagreed");
+    }
+}
+
+// A stated layout crosses a module boundary. Every top-level name is mangled
+// when a module is spliced, and packing is recorded against the name, so the
+// record has to be renamed with it: left behind, the `packed struct` below was
+// laid out as an ordinary one and answered twelve where the file declaring it
+// answered nine, with nothing saying the two disagreed. A stated `align`
+// travels on the field and never had the fault, which is what makes the pair
+// worth printing together.
+#[test]
+fn a_stated_layout_crosses_a_module() {
+    let directory = std::env::temp_dir().join("frost_layout_module");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("shape.frost"),
+        "export Header, Block\n\
+         Header :: packed struct { magic: u32, kind: u8, length: u32 }\n\
+         Block :: struct { flag: u8, weight: i64 align(16) }\n",
+    )
+    .unwrap();
+    let root = directory.join("layout_app.frost");
+    std::fs::write(
+        &root,
+        "import \"io.frost\"\nimport \"lib/shape.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print_int_line(sizeof(Header))\n\
+         \x20   print_int_line(sizeof(Block))\n\
+         \x20   for field in fields(Header) { print_int_line(offset_of(field)) }\n\
+         \x20   for field in fields(Block) { print_int_line(offset_of(field)) }\n\
+         \x20   0\n}\n",
+    )
+    .unwrap();
+
+    if !linker_available() {
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "a stated layout in an imported module did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+
+    let hosted = build_self_hosted_compiler("layoutmodule").map(|compiler| {
+        let hosted_exe =
+            directory.join(format!("hosted{}", std::env::consts::EXE_SUFFIX));
+        let emitted = Command::new(&compiler)
+            .arg("--link")
+            .arg("-o")
+            .arg(&hosted_exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler refused the imported layout:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let ran = Command::new(&hosted_exe).output().unwrap();
+        let _ = std::fs::remove_file(&compiler);
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
+    });
+
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "9\n32\n0\n4\n5\n0\n16\n");
+    if let Some(hosted) = hosted {
+        assert_eq!(
+            hosted, "9\n32\n0\n4\n5\n0\n16\n",
+            "the two compilers disagreed"
+        );
     }
 }
 
@@ -17670,6 +17753,28 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "may not outlive the arena",
     ),
+    // An address is a multiple of a power of two or of nothing, so a field
+    // asking to start at a multiple of three is asking for a layout no machine
+    // has.
+    (
+        "an_alignment_that_is_not_a_power_of_two",
+        "Odd :: struct { a: u8, b: i64 align(3) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print_int_line(sizeof(Odd))\n\
+         \x20   0\n}\n",
+        "`align` takes a power of two, and 3 is not one",
+    ),
+    // `packed` says no field is padded and `align` says this one is. A
+    // declaration writing both says two things that cannot both hold, so it is
+    // refused rather than one of them quietly winning.
+    (
+        "an_alignment_inside_a_packed_struct",
+        "Both :: packed struct { a: u8, b: i64 align(8) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print_int_line(sizeof(Both))\n\
+         \x20   0\n}\n",
+        "a `packed struct` pads no field",
+    ),
 ];
 
 #[test]
@@ -20395,6 +20500,27 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `$P` on a type the program declared reads as a type parameter, since a
+    // `$` argument is one everywhere else. `sizeof` measured that as nothing
+    // and answered zero, which a program cannot tell from a real zero, so
+    // `sizeof($P)` said 0 and `sizeof(P)` said 16 about one struct.
+    (
+        "a_dollar_on_a_declared_type_is_that_type",
+        "import \"io.frost\"
+         P :: struct { a: i64, b: i64 }
+         Side :: enum { Left, Right }
+         main :: fn() -> i64 {
+             print_int_line(sizeof($P))
+             print_int_line(sizeof(P))
+             print_int_line(sizeof($Side))
+             0
+         }
+",
+        "16
+16
+4
+",
+    ),
     // `_ :=` says an answer was meant to go unread, which is the one way past
     // the rule above. A list of one is a list, so it reads the way the `_` in a
     // longer binding list does, and what it binds is storage under a name no
@@ -21940,6 +22066,75 @@ main :: fn() -> i64 {
          \x20   print_int_line(grid[1][1])\n\
          \x20   0\n}\n",
         "3\n99\n2\n55\n10\n",
+    ),
+    // A stated layout. `packed struct` puts every field at the next byte and
+    // gives the type an alignment of one; `align(N)` after a field's type is
+    // what that field starts at a multiple of, and the widest one is the
+    // struct's own. The grid is here because four backends compute these: the
+    // bootstrap lays every struct out itself and its C emitter writes the
+    // offsets it worked out, while the self-hosted compiler lays them out for
+    // its assembly and hands C the declaration with the attributes that say
+    // the same thing. A number they disagree on is a program that reads the
+    // wrong bytes on one of them and nothing else would say so.
+    (
+        "a_stated_layout_is_the_layout",
+        "import \"io.frost\"
+         Plain :: struct { a: u8, b: i64, c: u8 }
+         Tight :: packed struct { a: u8, b: i64, c: u8 }
+         Wide :: struct { a: u8, b: i64 align(16), c: u8 }
+         Mixed :: packed struct { a: u16, b: u32, c: u8, d: f64 }
+         Holder :: struct { one: Tight, two: u8 }
+         Spread :: struct { a: u8 align(4), b: u8 align(8), c: u8 align(32) }
+         walk :: fn($T: Type) {
+             print_int_line(sizeof($T))
+             for field in fields(T) { print_int_line(offset_of(field)) }
+         }
+         main :: fn() -> i64 {
+             walk($Plain)
+             walk($Tight)
+             walk($Wide)
+             walk($Mixed)
+             walk($Holder)
+             walk($Spread)
+             t := Tight { a = 1, b = 300, c = 5 }
+             print_int_line(t.a + t.b + t.c)
+             w := Wide { a = 2, b = 400, c = 6 }
+             print_int_line(w.a + w.b + w.c)
+             var row : [4]Tight = [Tight { a = 0, b = 0, c = 0 }; 4]
+             row[3] = t
+             print_int_line(row[3].b)
+             0
+         }
+",
+        "24\n0\n8\n16\n\
+         10\n0\n1\n9\n\
+         32\n0\n16\n24\n\
+         15\n0\n2\n6\n7\n\
+         11\n0\n10\n\
+         64\n0\n8\n32\n\
+         306\n408\n300\n",
+    ),
+    // `packed` and `align` are words rather than keywords, so a local, a field
+    // and a parameter may still be called either. What marks the declaration is
+    // the `struct` after `packed`, and what marks the field form is the `(`
+    // after `align`, neither of which a name is ever followed by. Both had been
+    // keywords for one commit and `std/slab.frost` stopped compiling, which is
+    // what says a keyword is the wrong shape for these two.
+    (
+        "packed_and_align_are_still_names",
+        "import \"io.frost\"
+         Held :: struct { packed: i64, align: i64 }
+         squeeze :: fn(packed: i64, align: i64) -> i64 { packed + align }
+         main :: fn() -> i64 {
+             packed := 7
+             align := 3
+             h := Held { packed = 10, align = 20 }
+             print_int_line(squeeze(packed, align))
+             print_int_line(h.packed + h.align)
+             0
+         }
+",
+        "10\n30\n",
     ),
 ];
 

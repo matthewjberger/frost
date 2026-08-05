@@ -485,3 +485,46 @@ The diagnostic was its own defect. "an arena of 4096 ran out of room" named
 neither the arena nor the cause, and a dozen arenas are made at that size, so
 the number named every one of them and none of them. It names the element type
 now, which is what tells them apart.
+
+## A word that is reserved is a word a program cannot use
+
+`packed` and `align` went in as keywords, and `std/slab.frost` stopped
+compiling at line 98:
+
+```frost
+packed := (s.generations[index] << 32) | index
+```
+
+The name is the right one for what it holds, and the layout feature has no
+claim on it. Both words are contextual now, read by the shape after them: the
+`struct` after `packed` and the `(` after `align`. Nothing else in the language
+follows a name with either.
+
+That is the fourth word to arrive as a keyword and leave as one: `flags`,
+`value`, `test` and `export` each read this way already. The rule the tree now
+holds to is that a marker word is contextual unless it opens a statement, since
+a marker sits in a position an expression cannot reach and the token after it
+says which it is.
+
+`tests/editor_grammar.rs` cross-checks the highlighter against
+`frost::KEYWORD_NAMES`, so a word that leaves the keyword table has to join the
+`CONTEXTUAL` list there or the grammar reads as drifted. That test is what
+catches the half-finished version of this change.
+
+## Four backends compute a layout and three of them by hand
+
+A stated layout has to reach every emitter, and they get there differently. The
+bootstrap lays every struct out in `try_struct_layout` and its C emitter writes
+the offsets it worked out, so nothing about the C reveals that a struct was
+packed. The self-hosted compiler lays out for its assembly backend in
+`selfhosted/layout.frost` and hands its C backend a real `struct` declaration,
+so that one needs `__attribute__((packed))` and `__attribute__((aligned(N)))`
+to say the same thing to the C compiler.
+
+Three separate implementations of one rule is where a divergence hides, and one
+did: `sizeof` agreed on all four while `offset_of` did not. The field walk that
+`for field in fields(T)` unrolls computes offsets of its own, in
+`unroll_fields`, rather than asking the layout code, so it kept answering the
+natural offsets after the layout code learned about packing. A grid of six
+structs printing `sizeof` and every `offset_of` through all four backends is
+what found it; a probe that printed sizes alone would have passed.

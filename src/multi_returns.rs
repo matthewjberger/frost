@@ -51,6 +51,7 @@ pub fn lower_multiple_returns(
             fields.push(StructField {
                 name: ast.intern(&field_name),
                 field_type,
+                align: None,
             });
         }
         let fields = ast.add_struct_fields(fields);
