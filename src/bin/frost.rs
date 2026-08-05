@@ -17,9 +17,19 @@ use frost::{
     run_module, strip_unsafe_fns,
 };
 
+// The words that are read off the arguments before clap sees them, listed here
+// because clap cannot know about them and a reader who cannot see one in `--help`
+// concludes it does not exist.
+const SUBCOMMANDS: &str = "Words read before the options, each taking files or directories:
+  fmt <path>...     write each file the way the formatter renders it, `-` for stdin
+  lint <path>...    findings a build does not refuse on: `--diagnostics=json` for one object a line
+  fix <file>        apply the fixes the diagnostics offered
+  api <prefix>      the exported surface under a name prefix, with signatures";
+
 #[derive(Parser)]
 #[command(name = "frost")]
 #[command(about = "The Frost programming language")]
+#[command(after_help = SUBCOMMANDS)]
 struct Cli {
     file: String,
 
