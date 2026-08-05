@@ -892,3 +892,15 @@ bump-patch-version:
     echo ""
     echo "Version bumped and tagged! To push, run:"
     echo "  just push-version"
+
+# What the edit-compile loop costs, as numbers that can be re-run
+[windows]
+bench-loop:
+    powershell -ExecutionPolicy Bypass -File bench/loop.ps1
+
+# What the edit-compile loop costs, as numbers that can be re-run
+[unix]
+bench-loop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "bench/loop.ps1 is the Windows measurement; a POSIX one is not written yet"

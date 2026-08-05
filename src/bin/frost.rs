@@ -356,6 +356,72 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// The quote a report puts around a name.
+const QUOTE: char = 0x27 as char;
+
+/// A name that is not there, answered with the nearest one that is.
+///
+/// The suggestion rides on the report as an edit, so a reader applying edits
+/// gets it and a reader reading them sees what was meant. Only an unambiguous
+/// nearest name is offered.
+fn suggest_names(
+    program: &Module,
+    roots: &[frost::StmtId],
+    collected: &mut [frost::Diagnostic],
+) {
+    // An imported name is carried under a private tag, so the names compared
+    // against are the ones a reader writes.
+    let mut held: Vec<String> = Vec::new();
+    for statement in roots {
+        match program.ast.stmt(*statement) {
+            Statement::Constant(name, _)
+            | Statement::Struct(name, ..)
+            | Statement::Enum(name, ..)
+            | Statement::Flags(name, ..)
+            | Statement::TypeAlias(name, _)
+            | Statement::Extern { name, .. }
+            | Statement::Declared { name, .. } => {
+                held.push(frost::demangle_private_names(
+                    program.ast.name(*name),
+                ));
+            }
+            _ => {}
+        }
+    }
+    let known: Vec<&str> = held.iter().map(String::as_str).collect();
+    for report in collected.iter_mut() {
+        let Some(wanted) = names_a_missing_name(&report.message) else {
+            continue;
+        };
+        let Some(near) = frost::nearest(&wanted, &known) else {
+            continue;
+        };
+        report.message = format!("{} (did you mean '{near}'?)", report.message);
+    }
+}
+
+/// The name a report says is not there, out of the reports that say so.
+fn names_a_missing_name(message: &str) -> Option<String> {
+    for opening in [
+        "unknown variable '",
+        "unknown struct '",
+        "call to undefined function '",
+        "unknown function '",
+    ] {
+        if let Some(rest) = message.split_once(opening)
+            && let Some((name, _)) = rest.1.split_once(QUOTE)
+        {
+            return Some(name.to_string());
+        }
+    }
+    if let Some(rest) = message.split_once("' is not a type this program")
+        && let Some(at) = rest.0.rfind(QUOTE)
+    {
+        return Some(rest.0[at + 1..].to_string());
+    }
+    None
+}
+
 /// Everything the run collected, as the one error a refused compile prints.
 fn refuse(collected: &[frost::Diagnostic]) -> Result<()> {
     if collected.is_empty() {
@@ -425,6 +491,7 @@ fn lowered_and_checked(
         faults.extend(frost::check_module_recovering(&module));
         faults.extend(frost::check_linearity_recovering(&module));
     }
+    suggest_names(program, &program.roots.clone(), &mut faults);
     refuse(&faults)?;
     Ok(module)
 }
@@ -483,6 +550,52 @@ fn format_paths(arguments: &[String]) -> Result<bool> {
         println!("formatted {}", file.display());
     }
     Ok(clean)
+}
+
+/// `frost api <prefix> [paths...]`: the exported surface a prefix names.
+///
+/// A flat namespace has no `.` to narrow a guess with, and a prefix is what a
+/// family is named by here, so this is the narrowing asked for directly.
+fn print_api(arguments: &[String]) -> Result<bool> {
+    let json = arguments.iter().any(|held| held == "--diagnostics=json")
+        || arguments.iter().any(|held| held == "--json");
+    let named: Vec<&String> = arguments
+        .iter()
+        .filter(|held| !held.starts_with("--"))
+        .collect();
+    let Some(prefix) = named.first() else {
+        bail!("frost api: which prefix?");
+    };
+    let mut files = Vec::new();
+    if named.len() > 1 {
+        for path in &named[1..] {
+            let path = Path::new(path);
+            if path.is_dir() {
+                files.extend(frost::sources(path));
+            } else {
+                files.push(path.to_path_buf());
+            }
+        }
+    } else {
+        files = frost::sources(Path::new("."));
+    }
+    let found = frost::exported(&files, prefix);
+    if json {
+        for held in &found {
+            println!(
+                "{}",
+                serde_json::to_string(held).unwrap_or_else(|_| String::new())
+            );
+        }
+    } else {
+        for held in &found {
+            println!("{}:{}", held.file, held.line);
+            println!("{}", held.signature);
+            println!();
+        }
+        println!("{} exported name(s) beginning with '{prefix}'", found.len());
+    }
+    Ok(true)
 }
 
 /// `frost lint <paths...>`: report what is worth looking at, and refuse nothing.
@@ -568,11 +681,30 @@ fn lint_paths(arguments: &[String]) -> Result<bool> {
             continue;
         };
         let whole = resolved.program;
-        let found: Vec<frost::Diagnostic> =
-            frost::lint(&whole.ast, &whole.roots, &exports, &tokens)
-                .into_iter()
-                .filter(|held| held.position.file == entry)
-                .collect();
+        // The prefix this file's directory declares, if the project declares
+        // one for it.
+        let mut wanted: Option<String> = None;
+        if let Ok(Some((manifest, directory))) = Manifest::find_upward(&project)
+        {
+            let here = file.canonicalize().unwrap_or_else(|_| file.clone());
+            for (under, prefix) in &manifest.prefixes {
+                let root = directory.join(under);
+                let root = root.canonicalize().unwrap_or(root);
+                if here.starts_with(&root) {
+                    wanted = Some(prefix.clone());
+                }
+            }
+        }
+        let found: Vec<frost::Diagnostic> = frost::lint(
+            &whole.ast,
+            &whole.roots,
+            &exports,
+            &tokens,
+            wanted.as_deref(),
+        )
+        .into_iter()
+        .filter(|held| held.position.file == entry)
+        .collect();
         if found.is_empty() {
             continue;
         }
@@ -705,6 +837,15 @@ fn main() -> std::process::ExitCode {
         return match format_paths(&arguments[1..]) {
             Ok(true) => std::process::ExitCode::SUCCESS,
             Ok(false) => std::process::ExitCode::FAILURE,
+            Err(error) => {
+                eprint!("{}", frost::render_diagnostic(&error));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    if arguments.first().is_some_and(|held| held == "api") {
+        return match print_api(&arguments[1..]) {
+            Ok(_) => std::process::ExitCode::SUCCESS,
             Err(error) => {
                 eprint!("{}", frost::render_diagnostic(&error));
                 std::process::ExitCode::FAILURE
