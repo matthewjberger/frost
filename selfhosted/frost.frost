@@ -28,6 +28,7 @@
 import "core.frost"
 import "cli.frost"
 import "format.frost"
+import "lint.frost"
 import "lexer.frost"
 import "imports.frost"
 import "names.frost"
@@ -765,6 +766,12 @@ main :: fn() -> i64 {
     // the locals are known. It writes the answer onto the node and this reads
     // it.
     check_unsafety(parser)
+
+    // `frost lint <file>` says what is worth a look and refuses nothing, so it
+    // runs after the checks and before anything is emitted.
+    if (options.linting == 1) {
+        return lint_program(parser)
+    }
 
     // An editor's question about a checked program, answered instead of a
     // build. The program was parsed and checked exactly as a build would

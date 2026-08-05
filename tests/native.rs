@@ -21251,3 +21251,155 @@ fn the_default_configuration_audits_unsafe_operations() {
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&exe);
 }
+
+// Both compilers render a file the same way, over the whole corpus.
+//
+// Run in one process against one build of each compiler rather than as a shell
+// loop, so a rule changed in one and not the other is named in seconds and the
+// file it differs on is printed with the two lines beside each other.
+#[test]
+fn both_compilers_format_the_corpus_the_same_way() {
+    let Some(compiler) = build_self_hosted_compiler("fmtparity") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for directory in ["std", "lib", "selfhosted", "examples", "tools"] {
+        files.extend(frost_sources(&root.join(directory)));
+    }
+    assert!(files.len() > 100, "the corpus should be the whole tree");
+
+    let work = std::env::temp_dir().join(unique("frost_fmt_parity"));
+    std::fs::create_dir_all(&work).unwrap();
+    let mine = work.join("bootstrap.frost");
+    let theirs = work.join("selfhosted.frost");
+    let mut differ = Vec::new();
+    for file in &files {
+        let source = std::fs::read_to_string(file).unwrap();
+        std::fs::write(&mine, &source).unwrap();
+        std::fs::write(&theirs, &source).unwrap();
+        let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("fmt")
+            .arg(&mine)
+            .output()
+            .unwrap();
+        assert!(
+            ran.status.success(),
+            "the bootstrap could not format {}",
+            file.display()
+        );
+        let ran = Command::new(&compiler)
+            .arg("fmt")
+            .arg(&theirs)
+            .output()
+            .unwrap();
+        assert!(
+            ran.status.success(),
+            "the self-hosted compiler could not format {}",
+            file.display()
+        );
+        let left = std::fs::read_to_string(&mine).unwrap();
+        let right = std::fs::read_to_string(&theirs).unwrap();
+        if left != right {
+            let at = left
+                .lines()
+                .zip(right.lines())
+                .position(|(one, other)| one != other);
+            let shown = match at {
+                Some(at) => format!(
+                    "line {}:\n  bootstrap:   {:?}\n  self-hosted: {:?}",
+                    at + 1,
+                    left.lines().nth(at).unwrap_or(""),
+                    right.lines().nth(at).unwrap_or("")
+                ),
+                None => "one is longer than the other".to_string(),
+            };
+            differ.push(format!("{}\n{shown}", file.display()));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        differ.is_empty(),
+        "{} of {} files render differently:\n{}",
+        differ.len(),
+        files.len(),
+        differ.join("\n\n")
+    );
+}
+
+// Every `.frost` file under a directory.
+fn frost_sources(directory: &std::path::Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![directory.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "frost") {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+// Both compilers find the same things worth a look, in the same words. The
+// order follows which walk found each, which each compiler runs in its own
+// order, so the findings are compared as a set the way the fault lines are.
+#[test]
+fn both_compilers_lint_the_same_way() {
+    let Some(compiler) = build_self_hosted_compiler("lintparity") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join(unique("frost_lint_parity"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("findings.frost");
+    std::fs::write(
+        &file,
+        "unused :: fn() -> i64 { 1 }\n\
+         reached :: fn() -> i64 { 2 }\n\
+         main :: fn() -> i64 { unsafe { reached() } }\n",
+    )
+    .unwrap();
+
+    let said = |output: std::process::Output| -> Vec<String> {
+        let text = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        let mut found: Vec<String> = text
+            .lines()
+            .filter_map(|line| line.split_once("^ "))
+            .map(|(_, message)| message.trim().to_string())
+            .collect();
+        found.sort();
+        found
+    };
+
+    let mine = said(
+        Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("lint")
+            .arg(&file)
+            .output()
+            .unwrap(),
+    );
+    let theirs = said(
+        Command::new(&compiler)
+            .arg("lint")
+            .arg(&file)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        mine.len(),
+        2,
+        "the file has an unreached function and an idle block: {mine:?}"
+    );
+    assert_eq!(mine, theirs, "the two compilers report different findings");
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&compiler);
+}
