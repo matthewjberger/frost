@@ -48,9 +48,8 @@ print_str(" of ")
 print_int_line(entity.max)
 ```
 
-Each writer is a few lines of ordinary Frost over one runtime call, and the
-library is the whole story: there is no print statement in the language
-([text-and-io.md](std/text-and-io.md)).
+Each writer is a few lines of ordinary Frost over one runtime call. Printing
+lives entirely in the library ([text-and-io.md](std/text-and-io.md)).
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
@@ -84,17 +83,19 @@ divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
 quotient, remainder := divide(17, 5)      // 3 and 2
 ```
 
-Naming the values is optional and worth it whenever two of them share a type. A
-named list can also be returned by name rather than by order, as in
-`return { high = value / 256, low = value % 256 }`.
+Every value in the list carries a name, which says which is which and is the
+field a `return` by name writes:
+`return { high = value / 256, low = value % 256 }`. Returning by name is what
+keeps two values of one type from being swapped; returning by order is shorter
+and reads well where a function is a table of answers.
 
 There is no tuple type behind any of that. `(i64, i64)` is a return type list
 and nothing else: it cannot be stored in a field, passed as an argument, or
 bound to one name. A program that wants to pass a pair around declares a struct,
-so every aggregate has a name its author chose. A returned name is not a
-variable either: there is nothing to assign to it and no bare `return` that
-hands back whatever it holds, so what a function answers with is always written
-at the `return`. The full rules are 5.2a of
+so every aggregate has a name its author chose. A name in the list is a label
+for one of the values: there is nothing to assign to it and no bare `return`
+that hands back whatever it holds, so what a function answers with is always
+written at the `return`. The full rules are 5.2a of
 [declarations.md](reference/declarations.md).
 
 ## Structs and enums, plain data
@@ -208,11 +209,11 @@ A `ref T` is a checked address: reading and writing through it needs no
 other container. Chapter 3.3 of [types.md](reference/types.md) has the rule and
 chapter 8 of [ownership.md](reference/ownership.md) has the checks.
 
-A slice is not held that way. `[]T` is an address with a length beside it and an
-ordinary storable type, so a struct field may hold one, which is what a parser
-holding views into a buffer it does not own is made of. What keeps a stored
-slice honest is not the type but the frame and region checks, which refuse a
-function that answers with a view whose storage they cannot trace. See
+A slice is storable. `[]T` is an address with a length beside it and an ordinary
+type, so a struct field may hold one, which is what a parser holding views into
+a buffer it does not own is made of. The frame and region checks are what keep a
+stored slice honest: they refuse a function that answers with a view whose
+storage they cannot trace. See
 [memory-safety.md](design/memory-safety.md).
 
 Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
@@ -295,9 +296,9 @@ Long-lived data lives in a slab and is referenced by a `Handle<T>`, a small
 copyable value, not a pointer. A freed-and-reused slot bumps its generation, so
 an old handle can never read the new occupant.
 
-A slab is not a language type. `std/slab.frost` is an ordinary Frost library:
-storage, a free list, generation counters, and the packing of a slot index and a
-generation into one handle, all written out. What the compiler supplies is the
+The slab lives in the library. `std/slab.frost` is ordinary Frost: storage, a
+free list, generation counters, and the packing of a slot index and a generation
+into one handle, all written out. What the compiler supplies is the
 one piece that cannot be written where borrows are second-class, the place
 `world[handle]`, which it offers because the struct is slab-shaped (a `storage`
 array beside a parallel `generations` array).
@@ -513,9 +514,9 @@ main :: fn() -> i64 {
 }
 ```
 
-The `for` is not a loop. The body is compiled once per element with `value`
-standing for that element, so what runs is three writes of three different
-types. The `if` over what a type is gets its answer at expansion time, and the
+The `for` is unrolled where it is written. The body is compiled once per element
+with `value` standing for that element, so what runs is three writes of three
+different types. The `if` over what a type is gets its answer at expansion time, and the
 branch that cannot run is dropped before anything checks it, which is what lets
 one body serve elements of different types.
 
@@ -548,12 +549,12 @@ main :: fn() -> i64 {
 }
 ```
 
-The `for` is not a loop here either: the body is compiled once per field. `T`
+This `for` is unrolled too: the body is compiled once per field. `T`
 may be a type parameter, so one description serves every type a call names, and
 the table cannot drift from the struct because it is not written twice.
 
-A field is not a value. `offset_of`, `sizeof` and the type predicates are what
-may be asked of one, and naming it anywhere else is an error. There is no
+A field is a name to ask questions of. `offset_of`, `sizeof` and the type
+predicates are what may be asked, and naming a field anywhere else is an error. There is no
 reading a field's name, which is what keeps this a layout question rather than a
 second language for asking about types (11.1d of
 [generics.md](reference/generics.md)).

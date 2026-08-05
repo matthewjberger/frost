@@ -665,6 +665,8 @@ main :: fn() -> i64 {
         failure_ty = -1,
         multi_ty = -1,
         multi_count = 0,
+        multi_calls = arena_make($LocalVar, 1024),
+        multi_discards = arena_make($LocalVar, 1024),
         variants = arena_make($Variant, 4096),
         match_count = 0,
         case_variant = -1,
@@ -730,6 +732,9 @@ main :: fn() -> i64 {
     // Every `.Variant` an argument left unresolved, now that every signature is
     // parsed.
     resolve_variant_fixups(parser)
+    // The resources a `_` would drop, once every declaration has said whether
+    // it holds one.
+    check_discarded_resources(parser)
     // Which generics to emit is a fixpoint rather than one pass. Parsing an
     // instance creates the calls its body makes, and one of those may name an
     // argument tuple nothing had asked for: a sort taking a comparison calls a

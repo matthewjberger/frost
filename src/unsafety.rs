@@ -111,9 +111,23 @@ fn walk_unsafety(ast: &Ast, roots: &[StmtId], audit: bool) -> Vec<Diagnostic> {
                     .returns
                     .insert(ast.name(*name).to_string(), return_type.clone());
             }
+            // A module compiled on an earlier run arrives as a declaration
+            // read back from its interface rather than as the constant its
+            // source spells, so a function answering with several values is
+            // known here only by this arm. Without the list, a destructure of
+            // one bound every name to no type and the index rule refused
+            // `view[0]` on the second `--incremental` build of a program the
+            // first build took.
             Statement::Declared {
                 name, return_sig, ..
             } => {
+                if let Some(held) =
+                    signature_returns(ast, ast.signature(*return_sig))
+                {
+                    checker
+                        .multi_returns
+                        .insert(ast.name(*name).to_string(), held);
+                }
                 if let Some(ty) =
                     ast.signature_to_type(ast.signature(*return_sig))
                 {
@@ -272,31 +286,40 @@ fn strip_expression(ast: &mut Ast, expression: ExprId) {
     }
 }
 
-/// What a named constant answers with, where the constant is a function. An
-/// `unsafe fn` wraps the function it marks, so the signature is one level in.
-/// The types a function answering with several values hands back, in order.
+/// The types a return type list holds, in order.
 ///
 /// The multiple-return lowering runs after this pass, so the struct those
 /// values become does not exist yet and the list is read off the signature.
+fn signature_returns(
+    ast: &Ast,
+    signature: &crate::ast::ReturnSignature,
+) -> Option<Vec<Type>> {
+    match &signature.kind {
+        ReturnKind::Multiple(values) => Some(
+            ast.return_values_in(*values)
+                .iter()
+                .map(|one| one.value_type.clone())
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// The same list, where the function is a named constant's value. An
+/// `unsafe fn` wraps the function it marks, so the signature is one level in.
 fn declared_returns(ast: &Ast, value: ExprId) -> Option<Vec<Type>> {
     match ast.expr(value) {
         Expression::Function(_, return_sig, _)
         | Expression::Proc(_, return_sig, _) => {
-            match &ast.signature(*return_sig).kind {
-                ReturnKind::Multiple(values) => Some(
-                    ast.return_values_in(*values)
-                        .iter()
-                        .map(|one| one.value_type.clone())
-                        .collect(),
-                ),
-                _ => None,
-            }
+            signature_returns(ast, ast.signature(*return_sig))
         }
         Expression::UnsafeFn(inner) => declared_returns(ast, *inner),
         _ => None,
     }
 }
 
+/// What a named constant answers with, where the constant is a function. An
+/// `unsafe fn` wraps the function it marks, so the signature is one level in.
 fn declared_return(ast: &Ast, value: ExprId) -> Option<Type> {
     match ast.expr(value) {
         Expression::Function(_, return_sig, _)

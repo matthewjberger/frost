@@ -25,9 +25,9 @@ pinned by a test:
 
 | written | what it did | now |
 | --- | --- | --- |
-| `add(1 2)` — comma dropped | compiled, answered the same as `add(1, 2)` | refused |
+| `add(1 2)`, comma dropped | compiled, answered the same as `add(1, 2)` | refused |
 | a continuation line whose leading `+` was dropped | compiled, answered 10 where 30 was meant | the shape no longer exists |
-| `fn(v: Absent)` — a type name nothing declares | compiled | refused |
+| `fn(v: Absent)`, a type name nothing declares | compiled | refused |
 
 None of those was found by reading the compiler. Each was found by writing the
 smallest program that would expose it and running it, which is the loop this
@@ -77,7 +77,7 @@ The parse of a line never depends on the token that opens the next one. Outside
 brackets a line is a statement; inside brackets a line break says nothing. That
 is a property of the grammar rather than a check beside it, and it means no
 single token added, dropped or altered at a line boundary can silently change
-how many statements the surrounding text parses as — it preserves the meaning or
+how many statements the surrounding text parses as. It preserves the meaning or
 it fails to parse. Held for every operator, through all three backends. See
 [Where a statement ends](../impl/line-boundaries.md).
 
@@ -88,7 +88,7 @@ inheritance. A call written as a name is fully determined by the text of the
 call site: the name is the callee.
 
 That claim is scoped, and the scope is measured rather than asserted. A call
-whose callee is an *expression* — a parameter, a local, a struct field — names a
+whose callee is an *expression* (a parameter, a local, a struct field) names a
 value, and what that value is, is a dataflow question like any other. All four
 forms compile and run today. See [What the probes found](../impl/findings.md).
 
@@ -98,10 +98,10 @@ text or JSON.
 
 ## Where this sits
 
-The combination is C's name model — one flat namespace, a call site that names
-its callee — with C's failure severity removed and C's diagnostics replaced.
-Nothing else occupies that spot. It is not a claim to be the most greppable
-language; greppability is a property of the name model, and C already had it.
+The combination is C's name model (one flat namespace, a call site that names
+its callee) with C's failure severity removed and C's diagnostics replaced.
+Nothing else occupies that spot. Greppability comes with the name model, and C
+already had it.
 What C did not have is that a wrong guess fails to compile instead of corrupting
 memory, and that the compiler hands back an edit.
 

@@ -213,7 +213,7 @@ assembly backend would need vector registers, a vector ABI and per-instruction
 emission, and it is the portable-and-fast path rather than the peak one. The
 vocabulary is also the wrong shape for this language, since shuffles, blends and
 masks are open-ended and target-specific where every other vocabulary here is
-closed. A program that truly needs intrinsics writes the kernel in C and calls
+closed. A program that needs intrinsics writes the kernel in C and calls
 it, which the FFI already carries. Revisit when a measured Frost program says
 vector width is its limit, and check first whether the C compiler vectorized it
 and why not.

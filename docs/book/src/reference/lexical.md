@@ -52,7 +52,9 @@ IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
 ```
 
 The single underscore `_` is a distinct token, the wildcard, and is not a
-binding name.
+binding name. It stands in a `match` arm that covers the rest (7.4) and in a
+binding list for a value the caller has no use for (5.2a). Everywhere else it
+has nowhere to parse: `_ := 5` is refused and `_` is not an expression.
 
 ## 2.4 Keywords
 

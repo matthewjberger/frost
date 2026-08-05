@@ -420,6 +420,11 @@ TokenKind :: enum {
     Semi,
     KwFor,
     KwIn,
+    // The lone `_`, which is the wildcard and never a name. Its own kind
+    // rather than an identifier, so a match arm reads it as the default and a
+    // binding list reads it as a value the caller wants no name for, and
+    // `_ := 5` has nowhere to parse.
+    Underscore,
     Illegal,
 }
 
@@ -580,6 +585,11 @@ StructDef :: struct {
     // same thing as one naming a type declared above it. The body fills the
     // entry in when the declaration is reached.
     declared: i64,
+    // Whether this is the struct a return type list stands for. Such a struct
+    // has a name only the compiler knows, so a value of one may not stand on
+    // its own: a `return` builds it and a list of names takes it apart, and the
+    // checks holding it to that ask this.
+    is_multi: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete
@@ -1459,6 +1469,16 @@ Parser :: struct {
     // against.
     multi_ty: i64,
     multi_count: i64,
+    // Every call whose values a list of names binds, by node. A call answering
+    // with a list is allowed here and nowhere else: the struct behind the list
+    // is not a type a program can write, so letting the value stand on its own
+    // would hand a program one under a name only the compiler knows.
+    multi_calls: Arena<LocalVar>,
+    // Every `_` written in a binding list: which call it takes from, which of
+    // that call's values, and where it stands. Checked once the resources are
+    // settled, since a struct holding one is one and that answer is not in
+    // until every declaration has been read.
+    multi_discards: Arena<LocalVar>,
     variants: Arena<Variant>,
     match_count: i64,
     // Which entry of `variants` the case just parsed named, so a match can tell

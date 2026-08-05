@@ -28,7 +28,7 @@ things that grow worst are the two that most want bounding:
   incremental rebuild does not exist. Touching a leaf costs the same as a clean
   build.
 
-Invisible at five thousand lines. The whole story at five hundred thousand.
+Invisible at five thousand lines. The dominant cost at five hundred thousand.
 
 ## What a module is
 
@@ -95,8 +95,9 @@ The last one on the list is the one that decides the flavour of the whole design
 A generic's body is part of its interface. There is no way around it while
 monomorphization is the only implementation of generics. The caller is what
 chooses the type arguments, so the caller is what has to instantiate the template.
-This is the same bargain C++ headers and Rust `#[inline]`/generic MIR make, and it
-means an interface is not merely a list of signatures.
+This is the same bargain C++ headers and Rust `#[inline]`/generic MIR make, and
+it puts the bodies of exported generics in the interface alongside the
+signatures.
 
 That has one consequence worth stating plainly rather than discovering later.
 Changing a generic's body is a change to the module's interface, and every

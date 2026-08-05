@@ -251,8 +251,9 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
     }
     sym := arena_at(p.fns, fn_index)
     report_where(p.modules, p.src, at)
+    report("'")
     report_src(p.src, sym.off, sym.len)
-    report(" is declared `where ")
+    report("' is declared `where ")
     var i: i64 = gfn.bound_token
     while (i < p.tokens.count) {
         token := arena_at(p.tokens, i)
@@ -650,6 +651,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::Call) {
+        check_multi_call_bound(p, id, node.val, node.pos)
         check_call_arguments(p, node.a, node.val, node.c)
         return
     }
@@ -754,6 +756,62 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         check_types_expr(p, node.a)
         return
     }
+}
+
+// Whether a type is the struct a return type list stands for. Such a struct
+// carries a name this compiler chose, so a program has no way to write it down
+// and a value of one has to be taken apart where it is made.
+is_multi_struct :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    held := struct_index_of(ty)
+    if (held < 0 || held >= p.structs.count) {
+        return false
+    }
+    def := arena_at(p.structs, held)
+    def.is_multi == 1
+}
+
+// How many values a return type list holds, which is one field of its struct
+// per value.
+multi_value_count :: fn(mut p: Parser, ty: i64) -> i64 {
+    def := arena_at(p.structs, struct_index_of(ty))
+    var fid := def.field_head
+    var count: i64 = 0
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        fid = field.next
+        count = count + 1
+    }
+    count
+}
+
+// A call answering with a return type list is bound by a list of names, which
+// is the one place the struct behind the list comes apart again. The parser
+// records that call as it reads the binding; every other call to such a
+// function would leave a program holding a value of a type it cannot name, so
+// it is refused where it stands.
+check_multi_call_bound :: fn(mut p: Parser, id: i64, fn_index: i64, at: i64) {
+    sym := arena_at(p.fns, fn_index)
+    if (is_multi_struct(p, sym.ret_type) == false) {
+        return
+    }
+    var i: i64 = 0
+    while (i < p.multi_calls.count) {
+        entry := arena_at(p.multi_calls, i)
+        if (entry.name_off == id) {
+            return
+        }
+        i = i + 1
+    }
+    report_where(p.modules, p.src, at)
+    report("'")
+    report_src(p.src, sym.off, sym.len)
+    report("' returns ")
+    report_int(multi_value_count(p, sym.ret_type))
+    report(" values, so its call is bound by a list of names")
+    frost_rt_recover_escape()
 }
 
 // Each argument against the parameter it lands in. A borrowed parameter is a

@@ -76,16 +76,16 @@ quotient, remainder := divide(17, 5)      // 3 and 2
 The list holds two or more values. `-> T` is how one value is returned and
 `-> (T)` is an error that says so.
 
-**Naming the values.** A value may be written `name: Type`, and a list names all
-of its values or none of them:
+**Naming the values.** Every value is written `name: Type`, and a list that
+leaves one out is an error:
 
 ```
-divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64)   // named
-divide :: fn(a: i64, b: i64) -> (i64, i64)                        // not
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64)   // the form
+divide :: fn(a: i64, b: i64) -> (i64, i64)                        // an error
 ```
 
-A name says which value is which at the definition, which is the whole reason to
-have one, and it is also the field name a `return` can write:
+A name says which value is which at the definition, and it is the field name a
+`return` can write:
 
 ```
 split :: fn(value: i64) -> (high: i64, low: i64) {
@@ -95,13 +95,16 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 
 That is the inferred literal of 6.5 over the struct the list becomes, so the
 `return` reads the way the signature does and cannot silently swap two values of
-the same type. A `return` by name in a function whose list names nothing is an
-error, since there would be no field names to write. Two names the same in one
-list is also an error.
+the same type. Two names the same in one list is an error.
 
-A name is not a variable. It is not in scope in the body, there is nothing to
-assign to it, and there is no bare `return` that hands back whatever the names
-hold. That is Go's naked return and Odin's implicit result, and it is the hidden
+Both forms of `return` stay. Returning by name is what a function whose values
+share a type wants; returning by order is what a function that is a table of
+answers wants, and `mnemonic_of` in `selfhosted/assemble.frost` is forty-five
+lines of `return M_ADDQ, 0`.
+
+A name in the list is a label for one of the values. It is out of scope in the
+body, there is nothing to assign to it, and there is no bare `return` that hands
+back whatever the names hold. That is Go's naked return and Odin's implicit result, and it is the hidden
 control flow [philosophy.md](../design/philosophy.md) rules out: what a function answers
 with is written at the `return` that answers.
 
@@ -118,6 +121,36 @@ magnitude, var negative := classify(value)
 negative = false
 ```
 
+A `_` takes a value the caller has no use for. The list binds one name per value
+the call answers with, so without it a caller wanting only the first has to
+invent a name for the rest, and that name is a live binding somebody can read by
+mistake. Any number of them may sit in one list, in any position:
+
+```
+high, _ := split(4096)
+_, low := split(770)
+```
+
+A `_` may not take a resource. A `linear` value is consumed exactly once
+(chapter 9), so it has to land on a name and be consumed there, and dropping one
+is refused where the `_` is written:
+
+```
+this `_` drops a 'File', which is consumed exactly once; bind it to a name and
+consume it
+```
+
+`_` is the wildcard token of 2.3 and never a binding name, so `_ := 5` has
+nowhere to parse and `_` is not an expression. A single value is discarded by
+calling and binding nothing, which is what a call written as a statement already
+says, so there is one spelling for it rather than two.
+
+The struct a list becomes holds a resource when one of its values does, and it
+is the one aggregate that carries no obligation of its own: the lowering builds
+it at the `return`, takes it apart at the binding, and reads every field exactly
+once, so what it owes is what its fields owe and each of those lands on a name
+the binding introduced.
+
 **There is no tuple type.** The list is not a value, cannot be named, stored in
 a field, passed as an argument, or returned from anything but the function that
 declares it, and `(A, B)` is not a type anywhere else in the grammar. A call
@@ -128,8 +161,7 @@ what keeps the layout of every value in a program something the reader named
 around declares a struct and gets a name for it.
 
 What the compiler does with the list is give it one struct, whose fields are the
-names the signature gave, or `value0`, `value1` and so on in order when it gave
-none. The signature becomes a plain return of
+names the signature gave. The signature becomes a plain return of
 that struct, the `return` becomes a literal of it, and the binding becomes the
 call bound to a temporary and one field read per name. Nothing after the front
 end sees a return type list, which is why every backend and the C ABI handle one

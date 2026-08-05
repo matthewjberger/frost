@@ -42,7 +42,7 @@ Statement =
 
 ```
 MultiNames = MultiName ( "," MultiName )+
-MultiName  = "var"? IDENT
+MultiName  = "var"? IDENT | "_"
 
 ImportRenames = "(" IDENT "as" IDENT ( "," IDENT "as" IDENT )* ","? ")"
 ExportLine    = "export" IDENT ( "," IDENT )*
@@ -217,7 +217,7 @@ ReturnType  = "->" ( Type ( "!" Type )? | ReturnList )
 UsesClause  = "uses" Type ( "," Type )*
 WhereClause = "where" Expr
 ReturnList  = "(" ReturnValue "," ReturnValue ( "," ReturnValue )* ")"
-ReturnValue = ( IDENT ":" )? Type
+ReturnValue = IDENT ":" Type
 ```
 
 Every part of a `ReturnSig` is optional and they are read in that order, so
@@ -225,7 +225,7 @@ Every part of a `ReturnSig` is optional and they are read in that order, so
 are both signatures.
 
 A `ReturnList` is the return type list of 5.2a. It holds two or more values,
-names all of them or none, and does not combine with the `!` of a failure set.
+names every one of them, and does not combine with the `!` of a failure set.
 
 A `UsesClause` draws one allocation capability per type (8a). Each is an
 implicit parameter the body reaches by the type's own name with the first letter

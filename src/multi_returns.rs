@@ -22,11 +22,13 @@ use std::collections::{BTreeMap, HashMap};
 pub fn lower_multiple_returns(
     ast: &mut Ast,
     roots: &mut Vec<StmtId>,
+    linear: &std::collections::HashSet<String>,
 ) -> Result<()> {
     let mut lowering = Lowering {
         signatures: HashMap::new(),
         structs: BTreeMap::new(),
         counter: 0,
+        linear: linear.clone(),
     };
     lowering.collect_signatures(ast, roots)?;
     if lowering.signatures.is_empty() {
@@ -53,6 +55,9 @@ pub fn lower_multiple_returns(
         }
         let fields = ast.add_struct_fields(fields);
         let name = ast.intern(&name);
+        // Written down here, so every pass that has to tell this struct from
+        // one a program declared asks the lowering that made it.
+        ast.multi_return_structs.push(name);
         roots.push(ast.push_stmt(
             Statement::Struct(name, Range32::EMPTY, fields),
             TokenSpan::NONE,
@@ -66,6 +71,10 @@ struct Lowering {
     signatures: HashMap<String, Range32>,
     structs: BTreeMap<String, Range32>,
     counter: usize,
+    // Every type that has to be consumed, so a `_` taking one is refused where
+    // it is written rather than by the linearity walk, which by then is looking
+    // at the storage this pass gave it and would name that.
+    linear: std::collections::HashSet<String>,
 }
 
 impl Lowering {
@@ -253,15 +262,6 @@ impl Lowering {
                     && ast.name(*name).is_empty()
                 {
                     let fields = *fields;
-                    if ast
-                        .return_values_in(types)
-                        .iter()
-                        .any(|held| held.name.is_none())
-                    {
-                        bail!(
-                            "this `return` names its values and the signature does not; name them there too, or list the values in order"
-                        );
-                    }
                     for field in ast.named_in(fields).to_vec() {
                         self.check_expression(ast, field.value, returns)?;
                     }
@@ -383,9 +383,33 @@ impl Lowering {
             let base = ast.push_expr(Expression::Identifier(temporary), span);
             let access =
                 ast.push_expr(Expression::FieldAccess(base, field), span);
+            // A `_` still reads its field into storage of its own, under a name
+            // no source can spell and a fresh one per discard, so two in one
+            // block are two locals.
+            let mut name = binding.name;
+            if ast.name(name) == "_" {
+                // A resource is refused here rather than by the linearity walk.
+                // That walk runs on what this pass left behind, so it would
+                // name the storage below and point a reader at a name nothing
+                // in the program spells.
+                let held = ast
+                    .return_values_in(types)
+                    .get(index)
+                    .map(|value| value.value_type.clone());
+                if let Some(held) = held
+                    && held.is_linear_with(&self.linear)
+                {
+                    bail!(
+                        "this `_` drops a '{held}', which is consumed exactly once; bind it to a name and consume it"
+                    );
+                }
+                let held = format!("__discard{}", self.counter);
+                self.counter += 1;
+                name = ast.intern(&held);
+            }
             expanded.push(ast.push_stmt(
                 Statement::Let {
-                    name: binding.name,
+                    name,
                     type_annotation: None,
                     value: access,
                     mutable: binding.mutable,

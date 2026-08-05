@@ -1,8 +1,8 @@
 # Allocation strategy
 
-The pool is one allocator, not the whole story. A data-oriented language needs a
-small, layered set of them, and the pool is the fixed-size-recycling member of
-that set. This is the layer model and the reasoning behind it. How to write an
+A data-oriented language needs a small, layered set of allocators, and the pool
+is the fixed-size-recycling member of that set. This chapter is the layer model
+and the reasoning behind it. How to write an
 allocation source, what `uses` and `with` mean, and what the region check
 refuses are in the reference chapter on
 [allocation and regions](../reference/allocation-and-regions.md).

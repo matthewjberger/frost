@@ -1281,7 +1281,7 @@ impl IrBuilder {
 /// The statements are the ones specialization forms as well as the ones the
 /// source writes, since a call that answers with an instantiation makes one
 /// without anyone naming it.
-fn linear_with_holders(
+pub fn linear_with_holders(
     declared: &HashSet<String>,
     ast: &Ast,
     statements: &[StmtId],
@@ -1328,6 +1328,17 @@ fn linear_with_holders(
             // asks about a name that was never going to be inserted and reports
             // growth on every round for ever.
             if held.contains(name) || held.contains(Type::template_of(name)) {
+                continue;
+            }
+            // The struct a return type list stands for is left out. It is the
+            // one aggregate a program cannot hold: the lowering builds it at a
+            // `return`, takes it apart at the binding that reads it, and reads
+            // every field exactly once on the way. So its obligation is the sum
+            // of its fields' obligations, and each of those lands on a name the
+            // binding introduced, which is tracked. Counted as a resource it
+            // was one nothing consumes, and a list carrying a `linear` value
+            // was refused however correctly the caller consumed it.
+            if ast.is_multi_return_struct(name) {
                 continue;
             }
             let holds = field_types.iter().any(|ty| ty.is_linear_with(&held));
@@ -5183,6 +5194,27 @@ impl<'a> FunctionLowering<'a> {
             }
             _ => expression,
         };
+        // An array that names storage becomes a slice of that storage, rather
+        // than of a copy of it. Reading the name first and slicing what came
+        // back is the same thing for a local, whose value is the storage, and a
+        // different thing for a parameter, which param-mode lowering turned
+        // into a pointer: reading one copies the caller's array into the frame,
+        // so a write through the slice reached the copy and a slice handed back
+        // pointed into a frame that was gone. The self-hosted compiler slices
+        // in place, and this is what agrees with it.
+        if let Some(wanted) = expected
+            && let Some(element) = slice_element_wanted(wanted)
+            && is_place_expression(self.ast, expression)
+            && let Some(Type::Array(held, count)) = self.probe_type(expression)
+            && *held == element
+        {
+            let (address, _) = self.place_address(expression)?;
+            let slice = self.build_slice_from_address(address, &held, count);
+            // The type the context asked for, which is `str` where it wanted
+            // one. Rebuilding `[]u8` from the element instead reported a type
+            // the annotation never named.
+            return Ok((slice, wanted.clone()));
+        }
         match self.ast.expr(expression).clone() {
             Expression::Literal(literal) => {
                 self.lower_literal(&literal, expected)
@@ -7474,12 +7506,18 @@ impl<'a> FunctionLowering<'a> {
         // param-mode lowering turns into a deref of a pointer to the slice.
         // `place_address` walks all three, so recognizing the slice is what was
         // missing, not addressing it.
-        if matches!(self.probe_type(expression), Some(Type::Slice(_))) {
+        // A `str` is a `[]u8` (3.2), so its length is read the same way. Asking
+        // for `Type::Slice` alone refused `slice_len(text)` here and took it in
+        // the self-hosted compiler, which holds the two as one type.
+        if matches!(
+            self.probe_type(expression),
+            Some(Type::Slice(_) | Type::Str)
+        ) {
             let (address, _) = self.place_address(expression)?;
             return Ok(address);
         }
         let (operand, value_type) = self.lower_expression(expression, None)?;
-        let Type::Slice(_) = value_type else {
+        let (Type::Slice(_) | Type::Str) = value_type else {
             bail!("expected a slice value, found {value_type}");
         };
         let IrOperand::Local(local) = operand else {

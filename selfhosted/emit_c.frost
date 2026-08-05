@@ -166,6 +166,23 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
         emit_text(" }")
         return
     }
+    // The same slice, where the array is reached through an address rather than
+    // held: a parameter of array type is a borrow, so what the name holds is
+    // where the caller's array is. The length is the one the array's type
+    // carries either way. Without this the address was written where a slice
+    // belongs and what read it for a length read whatever sat beside it.
+    if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)
+        && is_array_ty(pointee(p, have))
+        && is_slice_ty(p, pointee(p, have)) == false) {
+        emit_text("(")
+        emit_ctype(p, want)
+        emit_text("){ (*")
+        emit_expr(p, value)
+        emit_text(").items, ")
+        frost_rt_emit_int(array_length(p, pointee(p, have)))
+        emit_text(" }")
+        return
+    }
     emit_expr(p, value)
 }
 
@@ -1049,10 +1066,14 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // A string literal is already a pointer, so the rule above
                 // leaves it alone, but a `str` parameter wants a slice built
                 // from it and handed over by address like any other aggregate.
+                // An array reached through a borrow is the same shape: the
+                // argument is an address and the parameter wants the slice made
+                // from it. Only an argument that is already a slice is passed
+                // through, since there is nothing left to build.
                 if (param_auto == 1 && is_pointer(param_ty)
                     && is_slice_ty(p, pointee(p, param_ty))
                     && is_pointer(arg_ty)
-                    && is_array_ty(pointee(p, arg_ty)) == false) {
+                    && is_slice_ty(p, pointee(p, arg_ty)) == false) {
                     borrow = 1
                 }
                 // A generic call whose instance could not be resolved has no
