@@ -464,3 +464,24 @@ self-hosted compiler answered it, emitting the constant; the bootstrap refused
 with "expected a slice value". A `str` is a `[]u8` and an array coerces to a
 slice everywhere else, so the self-hosted side was right, and the bootstrap
 answers it now.
+
+## Asking a node its type is not free
+
+The unused-result rule needs to know whether a statement answers with a failure.
+The obvious way is to ask the call node its type, and it is wrong: that walk
+instantiates a generic to work the answer out, so a check running over every
+statement builds types nothing else ever wanted. `std/ecs.frost` ran an arena
+out of room compiling under it.
+
+Read off what the callee was declared to answer with instead. It is a table
+lookup, it needs no instantiation, and for this question it is the same answer.
+
+The general shape, for the checks still to be written: a walk that visits
+everything must not call anything that can *create*. Recording a fact where it
+is made and reading it back is the pattern, the same one the multiple-return
+structs and the failure-set enums already use for a different reason.
+
+The diagnostic was its own defect. "an arena of 4096 ran out of room" named
+neither the arena nor the cause, and a dozen arenas are made at that size, so
+the number named every one of them and none of them. It names the element type
+now, which is what tells them apart.
