@@ -4960,7 +4960,19 @@ impl<'a> FunctionLowering<'a> {
                 Ok(())
             }
             Statement::Expression(expression) => {
-                self.lower_expression(expression, None)?;
+                let (_, answered) = self.lower_expression(expression, None)?;
+                // A call that can fail answers with which of the two happened,
+                // and a statement reads neither. Left alone it is a failure the
+                // program stepped over, which is the one thing a failure set
+                // exists to stop. `_ :=` is how a caller says the answer was
+                // meant to go unread.
+                if let Type::Enum(name) = &answered
+                    && self.ast.is_failure_result(name)
+                {
+                    bail!(
+                        "this can fail and nothing reads whether it did; write `?` to hand the failure up, `match` to answer it here, or `_ :=` to say it was meant to go unread"
+                    );
+                }
                 Ok(())
             }
             Statement::While(condition, body) => {

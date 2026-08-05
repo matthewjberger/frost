@@ -36,6 +36,7 @@ Statement =
     | "var" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
     | "ref" IDENT ":=" Expr ";"?             // bind a borrow of a place (5.1)
     | MultiNames ":=" Expr ";"?              // several values from one call
+    | "_" ":=" Expr ";"?                     // an answer meant to go unread
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment

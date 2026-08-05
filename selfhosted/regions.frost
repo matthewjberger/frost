@@ -568,6 +568,32 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::ExprStmt) {
         check_types_expr(p, node.a)
+        // A call that can fail answers with which of the two happened, and a
+        // statement reads neither. Left alone it is a failure the program
+        // stepped over, which is the one thing a failure set exists to stop.
+        // The last statement of a body is the value the function answers with
+        // rather than one it dropped, and a fallible function wraps that value
+        // in the very struct this is looking for.
+        // Read off what the callee was declared to answer with rather than
+        // asking the call node its type: that walk instantiates a generic to
+        // work the answer out, and a statement nobody reads is not a reason to
+        // make a type the program never asked for.
+        inner_node := arena_at(p.arena, node.a)
+        if (node.next != (-1) && inner_node.kind == NodeKind::Call
+            && inner_node.val >= 0 && inner_node.val < p.fns.count) {
+            answered := arena_at(p.fns, inner_node.val).ret_type
+            if (is_struct_ty(answered)) {
+                def := arena_at(p.structs, struct_index_of(answered))
+                if (def.is_result == 1) {
+                    report_where(p.modules, p.src, inner_node.pos)
+                    report("this can fail and nothing reads whether it did; ")
+                    report("write `?` to hand the failure up, `match` to ")
+                    report("answer it here, or `_ :=` to say it was meant to ")
+                    report("go unread")
+                    frost_rt_recover_escape()
+                }
+            }
+        }
         return
     }
     if (kind == NodeKind::If) {

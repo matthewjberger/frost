@@ -49,5 +49,18 @@ value is its trailing expression, when it has one.
   body that leaves with an answer without consuming it is the ordinary leak
   (chapter 9).
 
+A call that can fail answers with which of the two happened, and an expression
+statement reads neither, so one written that way is refused. `?` hands the
+failure up, `match` answers it there, and `_ := call()` says the answer was
+meant to go unread. The rule reaches every fallible call rather than only one
+holding a resource, where linearity used to be what caught it: a failure nobody
+reads is the same fault whether or not there is anything to leak. A call that
+cannot fail is not covered, since its answer is a value rather than a question.
+
+`_ := Expr` evaluates the expression and binds nothing anyone can name. A list
+of one is a list, so it reads the way the `_` in a longer binding list does
+(5.1a), and what it binds is storage under a name no source can spell: a
+resource taken this way is still owed a consumer.
+
 There is no print statement. Writing output is `import "io.frost"` and a call,
 one writer per type ([text-and-io.md](../std/text-and-io.md)).

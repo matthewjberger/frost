@@ -13724,7 +13724,7 @@ fn an_ignored_fallible_call_that_holds_a_resource_is_refused() {
                   \x20   if (n < 0) { return Denied { code = n } }\n\
                   \x20   File { fd = n }\n}\n\
                   close :: fn(move f: File) -> i64 { f.fd }\n\
-                  main :: fn() -> i64 { open(3)  0 }\n";
+                  main :: fn() -> i64 { _ := open(3)  0 }\n";
     let message = compile_error("linfaildrop", source);
     assert!(
         message.contains("linear"),
@@ -16595,6 +16595,25 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A call that can fail answers with which of the two happened, and a
+    // statement reads neither. The rule used to reach only a call holding a
+    // resource, where linearity caught it; a failure nobody reads is the same
+    // fault whether or not there is anything to leak.
+    (
+        "a_fallible_answer_nobody_reads",
+        "import \"io.frost\"
+         Blocked :: struct { at: i64 }
+         step :: fn(n: i64) -> i64 ! Blocked {
+             if (n < 0) { return { at = n } }
+             n * 2
+         }
+         main :: fn() -> i64 {
+             step(3)
+             0
+         }
+",
+        "this can fail and nothing reads whether it did",
+    ),
     // An `errdefer` in a function that cannot fail names an exit that function
     // does not have.
     (
@@ -16739,17 +16758,6 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // name, so this has nowhere to parse. The self-hosted lexer had no token
     // for it at all: `_` fell into the identifier rule, so `_ := 5` bound a
     // readable local called `_` that a second one silently shadowed.
-    (
-        "an_underscore_bound_as_a_name",
-        "import \"io.frost\"
-         main :: fn() -> i64 {
-             _ := 5
-             print_int_line(1)
-             0
-         }
-",
-        "expected a statement, found '_'",
-    ),
     // `_` read back. Same cause, and the reason the one above matters: under
     // the self-hosted compiler this printed 5.
     (
@@ -20387,6 +20395,27 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `_ :=` says an answer was meant to go unread, which is the one way past
+    // the rule above. A list of one is a list, so it reads the way the `_` in a
+    // longer binding list does, and what it binds is storage under a name no
+    // source can spell: a resource taken this way is still owed a consumer.
+    (
+        "a_discard_takes_an_answer_nobody_wants",
+        "import \"io.frost\"
+         Blocked :: struct { at: i64 }
+         step :: fn(n: i64) -> i64 ! Blocked {
+             if (n < 0) { return { at = n } }
+             n * 2
+         }
+         main :: fn() -> i64 {
+             _ := step(3)
+             print_int_line(1)
+             0
+         }
+",
+        "1
+",
+    ),
     // `errdefer` runs where the function leaves through its failure set and
     // nowhere else, and it shares one list with `defer`, so the two run in the
     // order they were written, last first. On the way out with an answer the

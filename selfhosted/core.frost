@@ -596,6 +596,9 @@ StructDef :: struct {
     // its own: a `return` builds it and a list of names takes it apart, and the
     // checks holding it to that ask this.
     is_multi: i64,
+    // Whether the failure-set lowering made this struct, so a call answering
+    // with one is known by what made it rather than by its spelling.
+    is_result: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete

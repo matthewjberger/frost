@@ -284,6 +284,8 @@ pub struct Parser<'a> {
     exports: Vec<String>,
     positions: &'a [Position],
     consumed: usize,
+    // How many `_ :=` this file has taken, so each binds a name of its own.
+    discards: usize,
     pending_angle_close: usize,
     diagnostics: Vec<Diagnostic>,
     // Monomorphization names a specialization by rendering its type arguments
@@ -489,6 +491,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             exports: Vec::new(),
             positions: &[],
             consumed: 0,
+            discards: 0,
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
@@ -522,6 +525,7 @@ impl<'a> Parser<'a> {
             exports: Vec::new(),
             positions: &[],
             consumed: 0,
+            discards: 0,
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
@@ -549,6 +553,7 @@ impl<'a> Parser<'a> {
             exports: Vec::new(),
             positions,
             consumed: 0,
+            discards: 0,
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
@@ -1005,6 +1010,15 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_declaration(false)?)
             }
+            // `_ := call()` takes an answer the caller has no use for. A list of
+            // one is a list, so it reads the way the `_` in a longer one does,
+            // and it is the only way to say an answer was meant to go unread.
+            Token::Underscore
+                if self.block_depth > 0
+                    && matches!(self.peek_nth(1), Token::ColonAssign) =>
+            {
+                Some(self.parse_discard_declaration()?)
+            }
             Token::Identifier(_)
                 if self.block_depth > 0
                     && matches!(self.peek_nth(1), Token::Colon)
@@ -1167,6 +1181,28 @@ impl<'a> Parser<'a> {
         Ok(self
             .ast
             .push_stmt(Statement::Import(path, renames), self.span_from(start)))
+    }
+
+    /// `_ := expr`, which evaluates the expression and binds nothing anyone can
+    /// name. The binding is real so what it holds is still owed a consumption
+    /// where it is a resource; what the `_` says is only that no name reads it.
+    fn parse_discard_declaration(&mut self) -> Result<StmtId> {
+        let start = self.mark();
+        self.read_token();
+        self.read_token();
+        let value = self.parse_expression(Precedence::Lowest)?;
+        let name = format!("__discard{}", self.discards);
+        self.discards += 1;
+        let name = self.ast.intern(&name);
+        Ok(self.ast.push_stmt(
+            Statement::Let {
+                name,
+                type_annotation: None,
+                value,
+                mutable: false,
+            },
+            self.span_from(start),
+        ))
     }
 
     fn parse_defer_statement(&mut self) -> Result<StmtId> {
