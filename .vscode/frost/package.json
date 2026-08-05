@@ -56,7 +56,7 @@
         "frost.compilerPath": {
           "type": "string",
           "default": "frost",
-          "description": "The frost compiler the formatter runs. A name is looked up on PATH."
+          "description": "The frost compiler the formatter and the linter run. A name is looked up on PATH."
         }
       }
     },
