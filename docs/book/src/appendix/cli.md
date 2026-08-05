@@ -209,3 +209,59 @@ ones worth reaching for:
 
 `just` on its own lists every recipe, including the version and release ones
 left out here.
+
+## Subcommands
+
+Read from the first argument, before any flag. `frost <file.frost>` and every
+flag above are unchanged by them.
+
+### `frost fmt <paths...>`
+
+Writes the one rendering of every file named. A directory is every `.frost` file
+under it, and `-` is standard input, whose rendering goes to standard output.
+`--check` writes nothing, names the files that are not already formatted, and
+exits nonzero.
+
+The rendering settles the space inside a line, the indentation in front of it,
+how many blank lines sit between two of them, the brace that opens a block, and
+the newline a file ends with. It never moves a token to another line, because
+which line a token is on is meaning here. See
+[Where a statement ends](../impl/line-boundaries.md).
+
+Both compilers write the same bytes, which a test over the whole corpus holds.
+
+### `frost lint <paths...>`
+
+Reports what is worth a look and refuses nothing. A build is unchanged by a
+finding; `frost lint` exits nonzero when it finds any, which is what lets a
+project hold a tree to none of them.
+
+- an `unsafe` block that holds nothing unchecked
+- a function nothing reaches
+- an exported name outside the prefix its directory declares, where `frost.json`
+  declares one under `prefixes`
+
+### `frost fix <file>`
+
+Applies every edit the reports carry that can be applied unread. The edits are
+read back out of `--diagnostics=json`, so anything it applies is something a
+reader could have applied by hand from the same output.
+
+### `frost api <prefix> [paths...]`
+
+Prints the exported names beginning with a prefix, each with its signature as it
+was written. `--json` writes one object per name. With no paths it walks the
+directory it is run in.
+
+A flat namespace has no `.` to narrow a guess with, and a prefix is what a
+family is named by here, so this is that narrowing asked for directly.
+
+## Diagnostics as JSON
+
+`--diagnostics=json` writes one report per line as an object: the file, the line
+and column, the same place as a byte offset, the severity, the message, the
+other places the report is about, and the edit that answers it where there is
+one. Both compilers write the same records.
+
+A report about a name nothing declares carries the nearest declared name, when
+one name is nearer than every other.

@@ -43,6 +43,7 @@
 - [Allocation strategy](design/allocators.md)
 - [Callbacks with a typed context](design/callbacks.md)
 
+- [Writing Frost with a model](design/cost-of-error.md)
 ---
 
 # The standard library
@@ -68,6 +69,8 @@
 - [The self-hosted compiler](impl/self-hosted.md)
 - [C compatibility](impl/c-compatibility.md)
 
+- [What the probes found](impl/findings.md)
+- [Where a statement ends](impl/line-boundaries.md)
 ---
 
 # What is left
