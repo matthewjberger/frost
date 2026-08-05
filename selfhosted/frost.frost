@@ -27,6 +27,7 @@
 
 import "core.frost"
 import "cli.frost"
+import "format.frost"
 import "lexer.frost"
 import "imports.frost"
 import "names.frost"
@@ -375,6 +376,12 @@ asm_debug_names_wanted :: fn() -> i64 {
 }
 
 main :: fn() -> i64 {
+    // `fmt` is read off the arguments before the flags, since the compiler has
+    // taken a file as its first argument since before it took anything else.
+    if (frost_rt_arg_count() > 1
+        && cstr_eq(frost_rt_arg_at(1), "fmt")) {
+        return format_command()
+    }
     options := options_from_command_line()
     if (options.help == 1) {
         usage()
@@ -872,4 +879,83 @@ main :: fn() -> i64 {
         return link_with_toolchain(emit_path, executable, options)
     }
     0
+}
+
+// `frost fmt <paths...>`: write the one rendering of every file named, or with
+// `--check` write nothing and name the files that are not already it.
+format_command :: fn() -> i64 {
+    check: bool = false
+    var index: i64 = 2
+    var count := frost_rt_arg_count()
+    while (index < count) {
+        if (cstr_eq(frost_rt_arg_at(index), "--check")) {
+            check = true
+        }
+        index = index + 1
+    }
+    var refused: i64 = 0
+    index = 2
+    while (index < count) {
+        path := frost_rt_arg_at(index)
+        if (cstr_eq(path, "--check") == false) {
+            refused = refused + format_one(path, check)
+        }
+        index = index + 1
+    }
+    refused
+}
+
+// One file: read it, render it into memory, and either write it back or say it
+// differs. Rendering into memory rather than over the file is what lets
+// `--check` ask without writing.
+format_one :: fn(path: ^i8, check: bool) -> i64 {
+    raw := unsafe { frost_rt_read_file(path) }
+    if (cstr_len(raw) == 0) {
+        return 0
+    }
+    src := cstr_slice(raw)
+    length := cstr_len(raw)
+    emit_to_memory()
+    format_source(src, length)
+    written := emit_memory_text()
+    if (same_text(src, length, written)) {
+        return 0
+    }
+    if (check) {
+        report_cstr(path)
+        report("\n")
+        return 1
+    }
+    if (unsafe { frost_rt_emit_open(path) } == 0) {
+        report("frost fmt: cannot write ")
+        report_cstr(path)
+        report("\n")
+        return 1
+    }
+    report_text(written)
+    frost_rt_emit_close()
+    0
+}
+
+report_text :: fn(text: str) {
+    var index: i64 = 0
+    var length := str_len(text)
+    while (index < length) {
+        frost_rt_emit_char(cast($i64, text[index]))
+        index = index + 1
+    }
+}
+
+same_text :: fn(src: str, length: i64, written: str) -> bool {
+    if (str_len(written) != length) {
+        return false
+    }
+    var index: i64 = 0
+    while (index < length) {
+        if (src[index] != written[index]) {
+            return false
+        }
+        index = index + 1
+    }
+    true
 }

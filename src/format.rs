@@ -385,8 +385,10 @@ fn spaced(
     ) {
         return false;
     }
+    // A literal opening directly inside a bracket keeps a space, so the two
+    // openers do not run together: `[ { hp = 1 }, { hp = 2 } ]`.
     if matches!(left, Token::LeftParentheses | Token::LeftBracket) {
-        return false;
+        return matches!(right, Token::LeftBrace);
     }
     if matches!(right, Token::LeftParentheses | Token::LeftBracket) {
         // A name or a closing bracket in front of an open one is a call or an
