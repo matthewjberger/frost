@@ -4,6 +4,7 @@
 //   frost examples/tour.frost
 
 import "io.frost"
+import "columns.frost"
 
 Kind :: enum { Hero, Monster { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
@@ -41,6 +42,9 @@ tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
 // is a compile error rather than a leak found later.
 Session :: linear struct { id: i64 }
 
+// One element of the columns container below.
+Particle :: struct { x: i64 }
+
 close :: fn(move s: Session) -> i64 {
     s.id
 }
@@ -56,8 +60,14 @@ strike :: fn(e: Entity) -> i64 ! Blocked {
     attack(e)
 }
 
+// `errdefer` runs only where a failure leaves, which is what closes the session
+// on the path the `?` takes. The other path consumes it as usual, and the
+// checker knows the two are different paths rather than a double consumption.
 round :: fn(e: Entity) -> i64 ! Blocked {
+    s := Session { id = 3 }
+    errdefer close(s)
     hit := strike(e) ?
+    close(s)
     hit * 2
 }
 
@@ -86,6 +96,35 @@ main :: fn() -> i64 {
     total, strongest := tally(party)
     print_int_line(total) // 52
     print_int_line(strongest) // 30
+
+    // `_` takes a value the caller has no use for.
+    _, best := tally(party)
+    print_int_line(best) // 30
+
+    // A columns container stores each field of `Particle` in its own array, so
+    // a pass over one field strides it rather than stepping over the rest.
+    // `live_slots` walks the slots that hold an element, in slot order, and
+    // never reaches one that was released.
+    var swarm: columns<Particle, 8> = columns_new()
+    columns_reset($Particle, $8, swarm)
+    var made: [8]Handle<Particle> = [0; 8]
+    var i: i64 = 0
+    while (i < 8) {
+        made[i] = columns_insert($Particle, $8, swarm, Particle { x = i })
+        i = i + 1
+    }
+    assert(columns_release($Particle, $8, swarm, made[2]))
+    var walked: i64 = 0
+    for slot in live_slots(swarm) {
+        walked = walked + swarm.x[slot]
+    }
+    print_int_line(walked) // 26, the 0..7 that are still there without the 2
+
+    // A handle carries which container it came from, so one from another pool
+    // of the same shape is refused rather than read.
+    var spare: columns<Particle, 8> = columns_new()
+    columns_reset($Particle, $8, spare)
+    print_int_line(cast($i64, columns_alive($Particle, $8, spare, made[0]))) // 0
 
     s := Session { id = 7 }
     print_int_line(close(s)) // s cannot be named again

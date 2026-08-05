@@ -192,7 +192,8 @@ pub fn display_stmt(ast: &Ast, statement: StmtId) -> String {
         Statement::TypeAlias(name, typ) => {
             format!("{} :: {};", ast.name(*name), typ)
         }
-        Statement::Defer(inner) => {
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
             format!("defer {}", display_stmt(ast, *inner))
         }
         Statement::Assignment(lhs, rhs) => {

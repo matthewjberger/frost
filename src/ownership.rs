@@ -1107,7 +1107,8 @@ impl RunWalk<'_> {
                 self.walk_block(*body);
             }
             Statement::With(_, body) => self.walk_block(*body),
-            Statement::Defer(inner) => self.walk_statement(*inner),
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => self.walk_statement(*inner),
             _ => {}
         }
     }
@@ -1266,6 +1267,7 @@ fn run_function<'a>(
         stale: HashMap::new(),
         replacements: 0,
         in_defer: false,
+        in_errdefer: false,
         reports: Vec::new(),
         reported: HashSet::new(),
         moved_at: HashMap::new(),
@@ -1286,6 +1288,12 @@ enum MoveState {
     Moved,
     MaybeMoved,
     Deferred,
+    // Consumed where the function leaves through its failure set, and there
+    // only. The obligation is answered for, which is what makes a resource live
+    // at a `?` no longer a leak, and the value is still the straight-line
+    // path's to consume, which is why a later `close` is a consumption rather
+    // than a second one.
+    FailureDeferred,
 }
 
 fn join_state(left: MoveState, right: MoveState) -> MoveState {
@@ -1348,6 +1356,9 @@ struct MoveChecker<'a> {
     /// what the top of the loop reads on the turn after.
     replacements: usize,
     in_defer: bool,
+    // Whether the cleanup being walked is one that runs on the failure path
+    // alone, which is what tells the two states apart.
+    in_errdefer: bool,
     reports: Vec<crate::diagnostic::Diagnostic>,
     // The raw text of what has already been said. Past a move the state stays
     // moved, so every later mention of that name fails the same way, and the
@@ -1798,6 +1809,7 @@ impl MoveChecker<'_> {
         let (state, blamed) = self.state_of_place(path, &key);
         match state {
             MoveState::Live => {}
+            MoveState::FailureDeferred => {}
             MoveState::Deferred if consuming => {
                 bail!(
                     "value '{blamed}' is already scheduled for consumption by a later defer; it cannot be moved again"
@@ -1809,7 +1821,9 @@ impl MoveChecker<'_> {
             }
         }
         if consuming {
-            let consumed = if self.in_defer {
+            let consumed = if self.in_errdefer {
+                MoveState::FailureDeferred
+            } else if self.in_defer {
                 MoveState::Deferred
             } else {
                 self.moved_at.insert(key.clone(), self.at);
@@ -1857,7 +1871,9 @@ impl MoveChecker<'_> {
             if held != MoveState::Live {
                 bail!("use of moved value '{blamed}'");
             }
-            let consumed = if self.in_defer {
+            let consumed = if self.in_errdefer {
+                MoveState::FailureDeferred
+            } else if self.in_defer {
                 MoveState::Deferred
             } else {
                 if matches!(state, MoveState::Moved | MoveState::MaybeMoved) {
@@ -2111,6 +2127,17 @@ impl MoveChecker<'_> {
                 result?;
                 Ok(false)
             }
+            Statement::ErrDefer(inner) => {
+                let was_in_defer = self.in_defer;
+                let was_on_failure = self.in_errdefer;
+                self.in_defer = true;
+                self.in_errdefer = true;
+                let result = self.check_statement(*inner);
+                self.in_defer = was_in_defer;
+                self.in_errdefer = was_on_failure;
+                result?;
+                Ok(false)
+            }
             Statement::Break | Statement::Continue => Ok(true),
             // The allocation-sources lowering runs before this check and leaves
             // no `with` behind, and the multiple-return lowering leaves no
@@ -2343,9 +2370,14 @@ impl MoveChecker<'_> {
                     );
                 }
                 match self.state_of(name) {
-                    MoveState::Live => {
+                    // A value whose failure path is covered is still the
+                    // straight-line path's to consume, so this reads as `Live`
+                    // does and answers the obligation either way.
+                    MoveState::Live | MoveState::FailureDeferred => {
                         if moving && self.is_move_variable(name) {
-                            let consumed = if self.in_defer {
+                            let consumed = if self.in_errdefer {
+                                MoveState::FailureDeferred
+                            } else if self.in_defer {
                                 MoveState::Deferred
                             } else {
                                 self.moved_at.insert(name.to_string(), self.at);
@@ -2475,7 +2507,9 @@ impl MoveChecker<'_> {
                         && let Some(path) = self.borrow_place(*argument)
                     {
                         let key = self.place_key(&path);
-                        let consumed = if self.in_defer {
+                        let consumed = if self.in_errdefer {
+                            MoveState::FailureDeferred
+                        } else if self.in_defer {
                             MoveState::Deferred
                         } else {
                             self.moved_at.insert(key.clone(), self.at);

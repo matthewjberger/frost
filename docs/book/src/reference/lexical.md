@@ -62,8 +62,8 @@ Reserved words of the specified language, the keyword table of `src/lexer.rs`
 in full:
 
 ```
-break case continue defer distinct else enum extern fn for if import
-in inline linear match move mut ref return safe struct
+break case continue defer distinct else enum errdefer extern fn for if
+import in inline linear match move mut ref return safe struct
 type unsafe uses var where while with
 ```
 

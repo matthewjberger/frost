@@ -1041,6 +1041,7 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         p,
         new_result_value(p, p.result_ty, 1, p.name_err_error, 9, carried),
         cur_off(p),
+        1,
     )
     guard := new_node(p, NodeKind::If, failed, hand_on, -1)
     arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0, slot = 0 })
@@ -2389,7 +2390,7 @@ return_block_tail :: fn(mut p: Parser, head: i64) -> i64 {
     }
     // Through the road a written `return` takes, so a branch that answers runs
     // what the function deferred the way every other exit does.
-    made := defer_before_return(p, value, at)
+    made := defer_before_return(p, value, at, 0)
     if (previous == (-1)) {
         return made
     }
@@ -3355,7 +3356,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // reads as: it would run where the function leaves rather than where the
     // block does, and one written in a loop would run once, after the loop, with
     // whatever the loop left behind rather than once a turn.
-    if (kind == TokenKind::KwDefer) {
+    if (kind == TokenKind::KwDefer || kind == TokenKind::KwErrDefer) {
+        on_failure := 0
+        if (kind == TokenKind::KwErrDefer) {
+            on_failure = 1
+        }
+        // An `errdefer` in a function that cannot fail names an exit that
+        // function does not have.
+        if (on_failure == 1 && p.result_ty == (-1)) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("`errdefer` runs where a function leaves through its ")
+            report("failure set, and this one has none; write `-> T ! E`, or ")
+            report("`defer` to run it however the function leaves")
+            frost_rt_recover_escape()
+        }
         if (p.block_depth != p.defer_depth) {
             report_where(p.modules, p.src, cur_off(p))
             report("a `defer` belongs at the top level of a body, since it runs where the function leaves rather than where this block does")
@@ -3370,13 +3384,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         parse_stmt(p)
         arena_push(p.defers,
             LocalVar { name_off = started, name_len = p.ti, ty = bound,
-                slot = 0 })
+                slot = on_failure })
         return nothing_statement(p)
     }
     if (kind == TokenKind::KwReturn) {
         advance(p)
         if (cur(p) == TokenKind::Rbrace) {
-            return defer_before_return(p, -1, start)
+            return defer_before_return(p, -1, start, 0)
         }
         saved_expected := p.expected_type
         saved_alt := p.expected_alt
@@ -3391,7 +3405,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (p.result_ty != (-1)) {
             value = wrap_result(p, value)
         }
-        return defer_before_return(p, value, start)
+        return defer_before_return(p, value, start, 0)
     }
     if (kind == TokenKind::KwIf) {
         // An `if` over what a type is has an answer here, and the branch that
@@ -3791,6 +3805,7 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
         if (kind == TokenKind::KwReturn || kind == TokenKind::KwIf
             || kind == TokenKind::KwWhile || kind == TokenKind::KwFor
             || kind == TokenKind::KwMatch || kind == TokenKind::KwDefer
+            || kind == TokenKind::KwErrDefer
             || kind == TokenKind::KwBreak || kind == TokenKind::KwContinue
             || kind == TokenKind::KwMut || kind == TokenKind::KwVar
             || kind == TokenKind::KwRef
@@ -4132,13 +4147,18 @@ check_defer_shadowing :: fn(mut p: Parser) {
 // is made by reading those tokens once more rather than by copying nodes, which
 // is the road a compile-time `for` already takes over its body. The last one
 // deferred is the first one run, so the walk goes back down the list.
-defer_copies :: fn(mut p: Parser) -> i64 {
+defer_copies :: fn(mut p: Parser, failing: i64) -> i64 {
     saved := p.ti
     var head: i64 = -1
     var k := p.defers.count
     while (k > p.defer_base) {
         k = k - 1
         site := arena_at(p.defers, k)
+        // One that answers only to a failure is passed over at every other
+        // exit, which is the whole of what tells the two apart.
+        if (site.slot == 1 && failing == 0) {
+            continue
+        }
         p.ti = site.name_off
         head = append_node(p, head, parse_stmt(p))
     }
@@ -4149,7 +4169,8 @@ defer_copies :: fn(mut p: Parser) -> i64 {
 // A `return`, with whatever was deferred run in front of it. The value is worked
 // out first and bound to a name, because a deferred statement runs after the
 // answer is settled and must not be able to change what is handed back.
-defer_before_return :: fn(mut p: Parser, value: i64, start: i64) -> i64 {
+defer_before_return :: fn(mut p: Parser, value: i64, start: i64,
+    failing: i64) -> i64 {
     if (p.defers.count <= p.defer_base) {
         return new_node_at(p, NodeKind::Return, value, 0, 0, start)
     }
@@ -4163,7 +4184,7 @@ defer_before_return :: fn(mut p: Parser, value: i64, start: i64) -> i64 {
         answer = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
     }
-    head = append_node(p, head, defer_copies(p))
+    head = append_node(p, head, defer_copies(p, failing))
     append_node(p, head, new_node_at(p, NodeKind::Return, answer, 0, 0, start))
 }
 
@@ -4196,7 +4217,7 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
         return body
     }
     if (node.kind != NodeKind::ExprStmt || ret == TY_VOID) {
-        return append_node(p, body, defer_copies(p))
+        return append_node(p, body, defer_copies(p, 0))
     }
     value := node.a
     at := node.pos
@@ -4206,7 +4227,7 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
     bind := new_let_node(p, value, name_off, name_len, -1)
     reader := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
         name_off)
-    var tail := append_node(p, bind, defer_copies(p))
+    var tail := append_node(p, bind, defer_copies(p, 0))
     tail = append_node(p, tail,
         new_unary_at(p, NodeKind::ExprStmt, reader, at))
     if (previous == (-1)) {

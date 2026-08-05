@@ -123,7 +123,8 @@ fn find_regions(
             Statement::While(_, body) | Statement::For(_, _, _, body) => {
                 find_regions(ast, *body, signatures, diagnostics);
             }
-            Statement::Defer(inner) => {
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
                 if let Statement::With(arena, body) = ast.stmt(*inner) {
                     let mut region = Region::new(
                         ast,
@@ -340,7 +341,8 @@ impl<'a> Region<'a> {
             }
             // A deferred statement runs at scope exit, inside the region
             // still, so what it writes is written from in here.
-            Statement::Defer(inner) => {
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
                 self.check_statement(*inner, at);
             }
             // The multiple-return lowering runs before this check, so this
@@ -1860,7 +1862,8 @@ impl Frame<'_> {
                 }
                 self.check(*body, false);
             }
-            Statement::Defer(inner) => {
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
                 self.check_statement(*inner, false, at);
             }
             Statement::Expression(value) => {

@@ -386,6 +386,7 @@ TokenKind :: enum {
     KwRef,
     KwInline,
     KwDefer,
+    KwErrDefer,
     Lparen,
     Rparen,
     Lbrace,

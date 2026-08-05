@@ -4981,9 +4981,11 @@ fn the_tour_prints_what_its_comments_claim() {
         return;
     };
     // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, the party
-    // walked by `for` and answered for in two values, and the session's id
-    // handed back by the `move` that consumed it.
-    assert_eq!(output, "100\n10\n20\n52\n30\n7\n");
+    // walked by `for` and answered for in two values, the strongest again with
+    // the total discarded, the columns container walked over the slots that
+    // still hold something, a handle from another container refused, and the
+    // session's id handed back by the `move` that consumed it.
+    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n7\n");
 }
 
 // The self-hosted compiler passes a struct to C by value too, through both of
@@ -16593,6 +16595,42 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // An `errdefer` in a function that cannot fail names an exit that function
+    // does not have.
+    (
+        "an_errdefer_without_a_failure_set",
+        "import \"io.frost\"
+         work :: fn() -> i64 {
+             errdefer print_int_line(9)
+             7
+         }
+         main :: fn() -> i64 { print_int_line(work())  0 }
+",
+        "runs where a function leaves through its failure set, and this one has none",
+    ),
+    // What an `errdefer` covers is the failure path alone, so the value is
+    // still the straight-line path's to consume and a body that never does
+    // leaks on the way out with an answer.
+    (
+        "an_errdefer_does_not_answer_for_the_straight_line",
+        "import \"io.frost\"
+         FileError :: enum { Missing }
+         Held :: linear struct { id: i64 }
+         close :: fn(move h: Held) { print_int_line(h.id) }
+         opened :: fn(id: i64) -> Held { Held { id = id } }
+         work :: fn() -> i64 ! FileError {
+             h := opened(1)
+             errdefer close(h)
+             7
+         }
+         main :: fn() -> i64 { print_int_line(1)  0 }
+",
+        // The two word the leak differently, which is a divergence of its own
+        // and older than this: the bootstrap says which paths, the self-hosted
+        // compiler says it plainly. What both say is the same fault about the
+        // same name.
+        "linear value 'h' is",
+    ),
     // A name the compiler owns, declared by a program. It used to be taken: the
     // bootstrap let the declaration win and said nothing, and the self-hosted
     // compiler kept reading the name as its own, so `slice_len(4)` was a call in
@@ -20349,6 +20387,50 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `errdefer` runs where the function leaves through its failure set and
+    // nowhere else, and it shares one list with `defer`, so the two run in the
+    // order they were written, last first. On the way out with an answer the
+    // body's own `close` runs and the `errdefer` does not; on the way out with
+    // a failure the `errdefer` runs and the body's `close` is never reached.
+    (
+        "an_errdefer_runs_only_where_a_failure_leaves",
+        "import \"io.frost\"
+         FileError :: enum { Missing }
+         Held :: linear struct { id: i64 }
+         close :: fn(move h: Held) { print_int_line(h.id) }
+         opened :: fn(id: i64) -> Held { Held { id = id } }
+         step :: fn(fail: bool) -> i64 ! FileError {
+             if (fail) { return FileError::Missing }
+             7
+         }
+         work :: fn(fail: bool) -> i64 ! FileError {
+             h := opened(1)
+             defer print_int_line(100)
+             errdefer close(h)
+             value := step(fail)?
+             close(h)
+             value
+         }
+         main :: fn() -> i64 {
+             match (work(false)) {
+                 case .Ok { value }: print_int_line(value)
+                 case .Err { error }: print_int_line(-1)
+             }
+             match (work(true)) {
+                 case .Ok { value }: print_int_line(value)
+                 case .Err { error }: print_int_line(-2)
+             }
+             0
+         }
+",
+        "1
+100
+7
+1
+100
+-2
+",
+    ),
     // An array's length is arithmetic over numbers, module constants, and the
     // size parameters a generic binds. `Slab<T, N>` needs it: one liveness word
     // per sixty-four slots is `[(N + 63) / 64]i64`, and a length that could only

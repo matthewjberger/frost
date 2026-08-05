@@ -194,6 +194,9 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         if (str_range_eq(src, off, len, "distinct")) {
             return TokenKind::KwDistinct
         }
+        if (str_range_eq(src, off, len, "errdefer")) {
+            return TokenKind::KwErrDefer
+        }
     }
     TokenKind::Ident
 }

@@ -36,6 +36,18 @@ value is its trailing expression, when it has one.
 - `defer`, `defer Stmt` runs `Stmt` where the function leaves, last deferred
   first. Only at the top level of a function body, and not run by `break` or
   `continue` (chapter 9.3).
+- `errdefer`, `errdefer Stmt` runs `Stmt` where the function leaves through its
+  failure set, and nowhere else. Same rule about the top level of a body, same
+  exits, and one list with `defer`, so the two run in the order they were
+  written, last first, whichever kind each is. A function with no failure set
+  has no exit for one to name, so an `errdefer` in one is refused.
+
+  What it is for is the resource a `?` steps over. `f := open()?` followed by
+  `errdefer close(f)` says the failure path closes `f`; the straight-line path
+  still owes a consumption, so the body's own `close(f)` is the first one rather
+  than a second. An `errdefer` on its own does not answer for a resource, and a
+  body that leaves with an answer without consuming it is the ordinary leak
+  (chapter 9).
 
 There is no print statement. Writing output is `import "io.frost"` and a call,
 one writer per type ([text-and-io.md](../std/text-and-io.md)).

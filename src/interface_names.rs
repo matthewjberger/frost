@@ -91,7 +91,8 @@ pub(crate) fn names_in_statement(
             names_in_expression(ast, *place, out);
             names_in_expression(ast, *value, out);
         }
-        Statement::Defer(inner) => names_in_statement(ast, *inner, out),
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => names_in_statement(ast, *inner, out),
         Statement::For(_, _, iterable, body) => {
             names_in_expression(ast, *iterable, out);
             names_in_block(ast, *body, out);

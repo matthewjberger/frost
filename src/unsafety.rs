@@ -213,7 +213,8 @@ fn strip_statement(ast: &mut Ast, statement: StmtId) {
             strip_block(ast, body);
         }
         Statement::With(_, body) => strip_block(ast, body),
-        Statement::Defer(inner) => strip_statement(ast, inner),
+        Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => strip_statement(ast, inner),
         _ => {}
     }
 }
@@ -651,7 +652,8 @@ impl Checker<'_> {
                 self.expression(*place, at);
                 self.expression(*value, at);
             }
-            Statement::Defer(inner) => {
+            Statement::Defer(inner)
+            | Statement::ErrDefer(inner) => {
                 self.statement_at(*inner, at);
             }
             // Two names bind the index and then the element, so the first is an
