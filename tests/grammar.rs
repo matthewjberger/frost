@@ -195,7 +195,6 @@ fn the_corpus_is_formatted() {
     );
 }
 
-
 // Where a line opens with an operator while no bracket is open, and where the
 // expression it continues began.
 struct Continuation {
@@ -269,7 +268,9 @@ fn continuations_outside_brackets(source: &str) -> Vec<Continuation> {
     let mut found = Vec::new();
     let mut index = 0usize;
     while index < tokens.len() {
-        if !(opens_line[index] && continues(&tokens[index]) && depths[index] == 0)
+        if !(opens_line[index]
+            && continues(&tokens[index])
+            && depths[index] == 0)
         {
             index += 1;
             continue;
@@ -300,10 +301,13 @@ fn continuations_outside_brackets(source: &str) -> Vec<Continuation> {
         let mut last = index;
         let mut ahead = index;
         while ahead < tokens.len() {
-            if opens_line[ahead] && !continues(&tokens[ahead]) && ahead > index {
+            if opens_line[ahead] && !continues(&tokens[ahead]) && ahead > index
+            {
                 break;
             }
-            if depths[ahead] == 0 && opens_line[ahead] && continues(&tokens[ahead])
+            if depths[ahead] == 0
+                && opens_line[ahead]
+                && continues(&tokens[ahead])
             {
                 last = ahead;
             }

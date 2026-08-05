@@ -3,7 +3,7 @@
 import "core.frost"
 import "lexer.frost"
 
-export advance, cur, cur_len, cur_off, cur_val, on_same_line, peek_kind,
+export joins_line, advance, cur, cur_len, cur_off, cur_val, on_same_line, peek_kind,
     peek_is_word, peek_off, peek_len
 
 // Whether the token `offset` ahead is written as the given word. Reading a
@@ -61,7 +61,20 @@ cur_val :: fn(mut p: Parser) -> i64 {
 }
 
 advance :: fn(mut p: Parser) {
+    kind := cur(p)
+    if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) {
+        p.bracket_depth = p.bracket_depth + 1
+    }
+    if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) {
+        p.bracket_depth = p.bracket_depth - 1
+    }
     p.ti = p.ti + 1
+}
+
+// Whether an operator here joins the line above. A line break ends a statement,
+// so it joins nothing, unless a bracket is open where a break says nothing.
+joins_line :: fn(mut p: Parser) -> bool {
+    on_same_line(p) || p.bracket_depth > 0
 }
 
 // Whether the token here began on the line the one before it ended on. A `(` or

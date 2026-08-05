@@ -21479,3 +21479,111 @@ fn both_compilers_lint_the_same_way() {
     let _ = std::fs::remove_dir_all(&directory);
     let _ = std::fs::remove_file(&compiler);
 }
+
+// The line-boundary grammar, held against every operator that could carry an
+// expression across a break.
+//
+// The property: the parse of a line never depends on the token that opens the
+// next one. Outside brackets a line is a statement and nothing after it can
+// change that; inside brackets a line break says nothing at all. So no single
+// token added, dropped or altered at a boundary can silently change how many
+// statements the surrounding text parses as. It preserves meaning or it fails.
+const JOINING_OPERATORS: &[&str] = &[
+    "+", "*", "/", "%", "&&", "||", "|", "&", "==", "!=", "<", "<=", ">", ">=",
+    "<<", ">>",
+];
+
+#[test]
+fn no_operator_carries_an_expression_across_a_line_outside_brackets() {
+    for operator in JOINING_OPERATORS {
+        // Added leading token: refused, and in the same words by both.
+        let source = format!(
+            "main :: fn() -> i64 {{\n    x := 10\n        {operator} 3\n    x\n}}\n"
+        );
+        let said =
+            bootstrap_refusal(&format!("join{}", operator.len()), &source);
+        assert!(
+            said.contains("a line cannot open with"),
+            "'{operator}' opening a line was accepted:\n{said}"
+        );
+    }
+}
+
+// Inside brackets the same expression is one expression, and dropping the
+// operator that joins it fails to parse rather than answering differently.
+#[test]
+fn a_dropped_operator_inside_brackets_does_not_parse() {
+    let joined = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+                  \x20   x := (10\n        + 3)\n\
+                  \x20   print_int_line(x)\n    0\n}\n";
+    let dropped = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+                   \x20   x := (10\n        3)\n\
+                   \x20   print_int_line(x)\n    0\n}\n";
+    let directory = std::env::temp_dir().join(unique("frost_join"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("joined.frost");
+    std::fs::write(&file, joined).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(directory.join("joined.o"))
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "the joined form should compile");
+    let said = bootstrap_refusal("joindropped", dropped);
+    assert!(
+        said.contains("expected") || said.contains("cannot"),
+        "dropping the operator inside brackets should not parse:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+// The same programs through the other two backends, so the rule is the
+// language's and not one backend's reading of it.
+#[test]
+fn the_line_rule_is_the_same_through_every_backend() {
+    let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+                  \x20   x := (10\n        + 3\n        + 7)\n\
+                  \x20   print_int_line(x)\n    0\n}\n";
+    let directory = std::env::temp_dir().join(unique("frost_backends"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("wrapped.frost");
+    std::fs::write(&file, source).unwrap();
+
+    let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--run-ir")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+        "20\n",
+        "the IR interpreter"
+    );
+    if linker_available() {
+        for backend in [vec![], vec!["--emit-c"]] {
+            let exe = directory.join(format!(
+                "wrapped{}{}",
+                backend.len(),
+                std::env::consts::EXE_SUFFIX
+            ));
+            let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+                .args(&backend)
+                .arg("--link")
+                .arg("-o")
+                .arg(&exe)
+                .arg(&file)
+                .output()
+                .unwrap();
+            assert!(built.status.success(), "{backend:?} did not build");
+            let ran = Command::new(&exe).output().unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+                "20\n",
+                "{backend:?}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}

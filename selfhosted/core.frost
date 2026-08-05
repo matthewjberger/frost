@@ -1515,6 +1515,9 @@ Parser :: struct {
     // declarations are being read, since a name declared further down the file
     // is not yet in the table.
     type_check_names: i64,
+    // How many brackets are open, so an expression knows whether a line break
+    // between its parts says anything.
+    bracket_depth: i64,
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
