@@ -243,6 +243,32 @@ pair around without anyone naming the aggregate. The two compilers also derive
 different names and share the struct on different terms, so exposing it means
 picking one and rewriting the other.
 
+## 10. A stated layout is a word, not a sigil or an attribute
+
+`packed struct` and `field: T align(16)` say what the memory looks like. Three
+spellings were available and the surface already answers which one to take.
+
+An attribute, `#[repr(packed)]`, needs a second grammar with its own bracket, and
+that grammar then invites everything else that could be attached to a
+declaration. Frost has no attributes and adding one for a single feature buys a
+whole namespace nobody asked for.
+
+A sigil is shorter and unreadable. `~struct` is a symbol a reader has to look up,
+and it collides with the rule that a symbol in Frost is an operator.
+
+A word costs nothing. `packed` sits where `linear` sits, which is the position
+every marker on a type declaration already takes, so a reader who knows one
+knows the other. Neither word is reserved: `packed` marks the declaration only
+where `struct` follows it, and `align` only where `(` follows it. Making them
+keywords was tried for one commit and `std/slab.frost`, which has a local called
+`packed`, stopped compiling. The shape after a word is what says what it means,
+which is how `flags`, `value`, `test` and `export` already read.
+
+There is one form for alignment, on a field, and none for the declaration. A
+struct's alignment is the widest its fields ask for, so a second form saying the
+same thing about the whole type would let a program write two answers to one
+question.
+
 ## Honest tradeoffs
 
 A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`

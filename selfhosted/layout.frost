@@ -4,8 +4,8 @@
 import "core.frost"
 import "names.frost"
 
-export align_of, align_up, alloc_temp, field_offset, is_unsigned, payload_base,
-    scalar_size, type_size
+export align_of, align_up, alloc_temp, field_align, field_offset, is_unsigned,
+    payload_base, scalar_size, type_size
 
 // What the C compiler would compute, because the two backends have to agree.
 // A scalar is as wide as its name says, a pointer is a word, and a struct is
@@ -44,6 +44,20 @@ align_up :: fn(offset: i64, alignment: i64) -> i64 {
     (offset + alignment - 1) / alignment * alignment
 }
 
+// What a field starts at a multiple of. A `packed struct` pads nothing, so
+// every one of its fields starts at the next byte. A stated `align(N)` is what
+// the field asks for instead of what its type would; anything else is the
+// type's own answer.
+field_align :: fn(mut p: Parser, packed: i64, stated: i64, ty: i64) -> i64 {
+    if (packed == 1) {
+        return 1
+    }
+    if (stated > 0) {
+        return stated
+    }
+    align_of(p, ty)
+}
+
 align_of :: fn(mut p: Parser, ty: i64) -> i64 {
     if (is_array_ty(ty)) {
         // A slice is a pointer beside a length, so it aligns like a word. A
@@ -57,11 +71,12 @@ align_of :: fn(mut p: Parser, ty: i64) -> i64 {
         return scalar_size(ty)
     }
     def := arena_at(p.structs, struct_index_of(ty))
+    packed := def.is_packed
     var fid := def.field_head
     var widest: i64 = 1
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
-        one := align_of(p, field.ty)
+        one := field_align(p, packed, field.align, field.ty)
         if (one > widest) {
             widest = one
         }
@@ -104,6 +119,7 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
         return scalar_size(ty)
     }
     def := arena_at(p.structs, struct_index_of(ty))
+    packed := def.is_packed
     base := payload_base(p, def.field_head)
     var fid := def.field_head
     var total: i64 = 0
@@ -112,7 +128,8 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.variant < 0) {
-            total = (align_up(total, align_of(p, field.ty))
+            total = (align_up(total,
+                    field_align(p, packed, field.align, field.ty))
                 + type_size(p, field.ty))
         } else {
             if (field.variant != carried) {
@@ -139,6 +156,7 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
         return 0
     }
     def := arena_at(p.structs, struct_index_of(base))
+    packed := def.is_packed
     start := payload_base(p, def.field_head)
     var fid := def.field_head
     var running: i64 = 0
@@ -149,7 +167,8 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
             carried = field.variant
             running = start
         }
-        running = align_up(running, align_of(p, field.ty))
+        running = align_up(running,
+            field_align(p, packed, field.align, field.ty))
         if (field.name_len == len
             && bytes_equal(p.src, field.name_off, off, len)) {
             return running

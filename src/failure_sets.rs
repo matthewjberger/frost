@@ -230,10 +230,12 @@ impl Lowerer {
         let ok_fields = ast.add_struct_fields(vec![StructField {
             name: value_field,
             field_type: value.clone(),
+            align: None,
         }]);
         let err_fields = ast.add_struct_fields(vec![StructField {
             name: error_field,
             field_type: error.clone(),
+            align: None,
         }]);
         let variants = ast.add_enum_variants(&[
             EnumVariant {

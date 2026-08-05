@@ -1046,6 +1046,15 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
+            // `Tight :: packed struct { .. }`. The word is not a keyword
+            // either, so what says this is a declaration is the `struct` that
+            // has to follow it.
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::DoubleColon)
+                    && self.at_packed_struct(2) =>
+            {
+                Some(self.parse_constant_or_struct_statement()?)
+            }
             // A constant that is a struct value, such as
             // `i64_ordering :: Ordering<i64> { less = i64_less }`, and a
             // constant that is another name, `DEPTH :: TEXTURE_DEPTH24`.
@@ -1203,6 +1212,44 @@ impl<'a> Parser<'a> {
             },
             self.span_from(start),
         ))
+    }
+
+    /// `align(N)` after a field's type: the field starts at a multiple of N.
+    ///
+    /// A struct's own alignment is the widest its fields ask for, so this is
+    /// also how a struct is given one, and there is no second form saying the
+    /// same thing about the whole declaration.
+    fn parse_field_alignment(&mut self, packed: bool) -> Result<Option<usize>> {
+        if !self.at_field_alignment() {
+            return Ok(None);
+        }
+        self.read_token();
+        if !matches!(self.read_token(), Token::LeftParentheses) {
+            bail!("Expected '(' after `align`");
+        }
+        let Token::Integer(value) = self.read_token().clone() else {
+            return Err(self.at_consumed(
+                "`align` takes a number, which is what a field starts at a multiple of"
+                    .to_string(),
+            ));
+        };
+        if value <= 0 || (value & (value - 1)) != 0 {
+            return Err(self.at_consumed(format!(
+                "`align` takes a power of two, and {value} is not one; an address is a multiple of a power of two or of nothing"
+            )));
+        }
+        // `packed` says no field is padded and `align` says this one is, so a
+        // declaration writing both says two things that cannot both hold.
+        if packed {
+            return Err(self.at_consumed(
+                "a `packed struct` pads no field, and `align` asks for this one to be padded; drop one of the two"
+                    .to_string(),
+            ));
+        }
+        if !matches!(self.read_token(), Token::RightParentheses) {
+            bail!("Expected ')' after the alignment");
+        }
+        Ok(Some(value as usize))
     }
 
     fn parse_defer_statement(&mut self) -> Result<StmtId> {
@@ -1510,8 +1557,19 @@ impl<'a> Parser<'a> {
             self.linear_types.insert(identifier.clone());
         }
 
+        // `packed struct` reads beside `linear struct`: a word before the
+        // keyword, which is what every other marker on a declaration is.
+        let packed = self.at_packed_struct(0);
+        if packed {
+            self.read_token();
+        }
+
         if matches!(self.peek_nth(0), Token::Struct) {
             self.read_token();
+            if packed {
+                let symbol = self.ast.intern(&identifier);
+                self.ast.packed_structs.push(symbol);
+            }
             let type_params = self.parse_generic_params()?;
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after struct");
@@ -1524,10 +1582,12 @@ impl<'a> Parser<'a> {
                         bail!("Expected ':' after field name");
                     }
                     let field_type = self.parse_type()?;
+                    let field_align = self.parse_field_alignment(packed)?;
                     let field_name = self.ast.intern(&field_name);
                     fields.push(StructField {
                         name: field_name,
                         field_type,
+                        align: field_align,
                     });
                 }
                 if matches!(self.peek_nth(0), Token::Comma) {
@@ -1578,6 +1638,9 @@ impl<'a> Parser<'a> {
                         variant_fields.push(StructField {
                             name: field_name,
                             field_type,
+                            // A variant's payload is laid out by the enum, not
+                            // by a declaration, so there is nothing to state.
+                            align: None,
                         });
                         if matches!(self.peek_nth(0), Token::Comma) {
                             self.read_token();
@@ -3712,6 +3775,22 @@ impl<'a> Parser<'a> {
     // expression has: the word, a scalar type, and then a brace. A
     // representation that is not an integer is let through here so that the
     // declaration itself is what says so.
+    // `packed` is a word rather than a keyword, so a local, a field and a
+    // parameter may all still be called `packed`, and one is: `slab_get` names
+    // its packed handle that. The `struct` after it is what marks the
+    // declaration.
+    // `align` is a word too, so a field may be called `align`. What tells the
+    // marker apart is the `(` after it, which the next field's `:` is not.
+    fn at_field_alignment(&self) -> bool {
+        matches!(self.peek_nth(0), Token::Identifier(word) if word == "align")
+            && matches!(self.peek_nth(1), Token::LeftParentheses)
+    }
+
+    fn at_packed_struct(&self, offset: usize) -> bool {
+        matches!(self.peek_nth(offset), Token::Identifier(word) if word == "packed")
+            && matches!(self.peek_nth(offset + 1), Token::Struct)
+    }
+
     fn at_flags_declaration(&self, offset: usize) -> bool {
         matches!(self.peek_nth(offset), Token::Identifier(word) if word == "flags")
             && matches!(self.peek_nth(offset + 2), Token::LeftBrace)

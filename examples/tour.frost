@@ -45,6 +45,14 @@ Session :: linear struct { id: i64 }
 // One element of the columns container below.
 Particle :: struct { x: i64 }
 
+// A declaration may state its layout rather than take the one its fields
+// imply. `packed struct` puts every field at the next byte, and `align(N)`
+// after a field's type is what that field starts at a multiple of. Neither
+// word is reserved: the `struct` after `packed` and the `(` after `align` are
+// what mark them.
+Header :: packed struct { magic: u32, kind: u8, length: u32 }
+Block :: struct { flag: u8, weight: i64 align(16) }
+
 close :: fn(move s: Session) -> i64 {
     s.id
 }
@@ -127,6 +135,11 @@ main :: fn() -> i64 {
     var spare: columns<Particle, 8> = columns_new()
     columns_reset($Particle, $8, spare)
     print_int_line(cast($i64, columns_alive($Particle, $8, spare, made[0]))) // 0
+
+    // Nine bytes rather than twelve, and the widest field's request decides
+    // the whole type.
+    print_int_line(sizeof(Header)) // 9
+    print_int_line(sizeof(Block)) // 32
 
     s := Session { id = 7 }
     print_int_line(close(s)) // s cannot be named again

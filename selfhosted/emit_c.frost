@@ -1640,6 +1640,15 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
         emit_ctype(p, fty)
         emit_text(" ")
         emit_field_name(p, off, len)
+        // C lays this struct out, so a stated alignment has to reach it as one
+        // C knows. A member's `aligned` gives the member that minimum and the
+        // struct at least as much, which is what the assembly backend computes
+        // for the same declaration.
+        if (field.align > 0) {
+            emit_text(" __attribute__((aligned(")
+            frost_rt_emit_int(field.align)
+            emit_text(")))")
+        }
         emit_text(";\n")
         fid = next_field
     }
@@ -1649,7 +1658,11 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
     if (opened == 1) {
         emit_text("};\n")
     }
-    emit_text("};\n")
+    if (def.is_packed == 1) {
+        emit_text("} __attribute__((packed));\n")
+    } else {
+        emit_text("};\n")
+    }
 }
 
 // Emit every struct and array definition in dependency order. Structs are the
