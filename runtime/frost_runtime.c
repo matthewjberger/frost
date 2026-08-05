@@ -353,11 +353,21 @@ void frost_rt_generation_check(int64_t stored, int64_t expected) {
    hundred and twenty-eighth comes back round. Never zero: a container whose
    storage is zeroed but which was never reset holds zero, and a handle from a
    reset container must not read against one. */
+/* Counted atomically, because a program spawns threads and two of them resetting
+   a container each is exactly the case where two containers must not draw the
+   same number. A plain increment can read, add and store around another thread
+   doing the same, and hand both the number this exists to keep apart. */
 static int64_t frost_rt_container_counter = 0;
 
 int64_t frost_rt_container_id(void) {
-    frost_rt_container_counter = frost_rt_container_counter + 1;
-    return (frost_rt_container_counter % 127) + 1;
+#if defined(_MSC_VER)
+    int64_t drawn = InterlockedIncrement64(
+        (volatile LONG64 *)&frost_rt_container_counter);
+#else
+    int64_t drawn =
+        __atomic_add_fetch(&frost_rt_container_counter, 1, __ATOMIC_RELAXED);
+#endif
+    return (drawn % 127) + 1;
 }
 
 /* Validate a handle against a slab and answer with the slot it names. The low

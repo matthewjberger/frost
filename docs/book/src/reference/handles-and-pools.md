@@ -174,6 +174,9 @@ generation, the deref already compares that word, and a handle is still an `i64`
 that converts freely. A container stores no handles, only `generations`, so no
 layout changes: `columns<T, N>` is what it was.
 
+The number is drawn atomically, since a program spawns threads and two of them
+each resetting a container is the case the number exists for.
+
 Two containers share a number once in a hundred and twenty-seven, and a program
 that resets a container in a loop comes back round to the same one after that
 many. Where it is wrong it is wrong the way it was before, and everywhere else a
