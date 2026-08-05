@@ -10,6 +10,17 @@
 # edited. Said outright rather than left to the host's `core.autocrlf`.
 *.frost text eol=lf
 
+# The same for everything else the tree's own tools write: `cargo fmt` writes
+# line feeds, so does the book, so does the runtime. A checkout that rewrites
+# them makes every file differ from what its formatter would produce.
+*.rs text eol=lf
+*.md text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+
 # The two runtime libraries the graphics examples load, in the tree so a
 # checkout builds without fetching anything. Said outright rather than left to
 # content sniffing, since a line ending rewritten inside one is a library that
