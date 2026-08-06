@@ -331,6 +331,16 @@ whole shape of the match. Both stay decidable: the covered set of an
 alternative list is the union of its parts, and a span covers what it names, so
 the rule about covering every variant goes on counting.
 
+The same axis settled three older questions the same way. A name in a pattern
+is the value it stands for, never a binding: `case CH_0:` next to
+`case CH_0..=CH_9:` cannot mean compare in one and bind in the other, and `_`
+is the arm that covers the rest. A decimal and a piece of text are refused,
+because covering one of the reals is a claim nobody can act on and text is
+compared rather than counted. And an arm is read against the union of every arm
+above it, which is what a reader does looking down the arms, so an arm nothing
+reaches is named where it is written whether one earlier arm took its values or
+three did between them.
+
 ### Guards, weighed against the same bar and declined
 
 A guard, `case n if n > 5:`, fails that bar in three ways at once.

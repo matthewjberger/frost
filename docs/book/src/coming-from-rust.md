@@ -51,7 +51,8 @@ surprises.
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }` |
 | `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
 | `A \| B => ..` and `1..=9 => ..` | `case .A \| .B:` and `case 1..=9:` |
-| `n if n > 5 => ..` | `case _: if (n > 5) { .. }` |
+| `n if n > 5 => ..` | `case _: if (x > 5) { .. }` |
+| `n => ..` (bind the value) | `case _:` and read the matched name |
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `for x in &xs { }` | `for x in xs { }` |
@@ -309,8 +310,16 @@ fizz :: fn(i: i64) -> i64 {
 Or-patterns and range patterns carry over as they read in Rust: `case .Left |
 .Right:` runs one body for either variant, and `case 1..10:` or `case 'a'..='z'`
 written out as numbers covers a span. Guards do not exist: an `if` inside the
-arm is the spelling, and 15.2 says why. An alternative may not bind payload
-fields, and a range never removes the need for a `case _`.
+arm is the spelling, and 13 of [syntax.md](design/syntax.md) says why. An
+alternative may not bind payload fields, and a range never removes the need for
+a `case _`.
+
+One thing that does not carry over: a bare name is not a binding. `case n:` in
+Rust catches everything and names it; in Frost a name in a pattern is the value
+it stands for, so `case CH_0:` compares against that constant and a name
+standing for no constant is refused. `_` is the arm that covers the rest, and
+the matched value already has a name to read. Decimals and strings are refused
+in a pattern too, since what a `case` covers is a set a reader can count.
 
 Matching a value of a `linear` type consumes it (see below). There is no
 `#[derive(Debug)]`, `PartialEq`, or the rest. Equality is written, and printing

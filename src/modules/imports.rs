@@ -1855,7 +1855,6 @@ impl Renamer {
                     self.pattern(ast, pattern, scope);
                 }
             }
-            Pattern::Identifier(name) => self.bind(scope, name),
             Pattern::Wildcard
             | Pattern::Literal(_)
             | Pattern::Range { .. } => {}

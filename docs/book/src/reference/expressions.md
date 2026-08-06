@@ -167,11 +167,21 @@ or the closing `}` begins. Patterns:
 - Variant, shorthand, `.Variant` or `.Variant { field, field }`, binding each
   named field to a same-named local.
 - Variant, qualified, `Enum::Variant` with the same optional field list.
-- Value, an integer, float, string, or boolean literal (`case 90:`).
+- Value, a whole number or a boolean (`case 90:`, `case true:`), or a name a
+  `::` declaration settled on a whole number (`case CH_0:`).
 - Range, `a..b` half-open or `a..=b` inclusive, over whole numbers.
 - Tuple, `( P, P, ... )`.
-- Binding, a bare identifier.
 - Wildcard, `_`.
+
+A name in a pattern is the value it stands for, and a name that stands for no
+constant is refused. `_` is the arm that covers the rest, and the only one:
+`case CH_0:` and `case CH_0..=CH_9:` read the one name the one way, which they
+did not when a name bound whatever was matched instead.
+
+What a `case` covers is a set a reader can count, so a decimal and a piece of
+text are both refused. A decimal covers one of the reals, which is a claim
+nobody can act on, and text is compared rather than counted; `if (x == 1.5)`
+and `if (x == "hi")` are the spellings.
 
 An arm may name several patterns separated by `|`, and its body runs for any of
 them:
@@ -224,11 +234,13 @@ is countable, and what a match over whole numbers covers is not: proving that a
 run of spans leaves nothing out is analysis this language does not carry, so
 the arm naming the rest is what says the match is finished.
 
-An arm every value of which an earlier arm already takes is refused where it is
-written. What counts as already taken is read one span against one span, so an
-arm two earlier spans cover between them, and neither on its own, goes on
-standing: the rule is one a reader works out at the arms rather than one the
-compiler alone can see.
+An arm every value of which the arms above it already take is refused where it
+is written. What an arm covers is the union of what its alternatives name, and
+it is read against the union of every arm above it, which is the question a
+reader asks looking down the arms: `case 1..5:`, `case 5..10:`, `case 3..7:`
+refuses the third, because between them the first two take every value it has.
+Since `_` covers everything, an arm below one is refused by that same rule
+rather than by a rule of its own.
 
 An alternative and a range are both refused inside a tuple pattern, which
 compares one value per part.

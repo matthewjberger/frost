@@ -476,7 +476,6 @@ fn auto_borrow_call(
 // The names a pattern binds in the arm it belongs to.
 fn pattern_bindings(ast: &Ast, pattern: PatternId) -> Vec<Symbol> {
     match ast.pattern(pattern) {
-        Pattern::Identifier(name) => vec![*name],
         Pattern::EnumVariant { bindings, .. } => ast
             .pattern_bindings_in(*bindings)
             .iter()

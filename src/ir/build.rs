@@ -104,6 +104,33 @@ struct FlagsLayout {
     bits: HashMap<String, i64>,
 }
 
+// An arm nothing reaches, whatever it was that took its values first.
+const UNREACHABLE_CASE: &str =
+    "this case is covered by an earlier one, so nothing reaches it";
+
+// Whether `spans` between them hold every number from `low` to `high`.
+//
+// Walked rather than merged: stand at the lowest number wanted, jump to the far
+// end of the widest span covering it, and repeat. A step that finds no span
+// standing on its number is a number nobody covered, and every step that does
+// find one moves strictly right, so this ends.
+fn covers(spans: &[(i64, i64)], low: i64, high: i64) -> bool {
+    let mut at = low;
+    loop {
+        let mut reach: Option<i64> = None;
+        for (from, to) in spans {
+            if *from <= at && at <= *to && reach.is_none_or(|held| *to > held) {
+                reach = Some(*to);
+            }
+        }
+        let Some(reach) = reach else { return false };
+        if reach >= high {
+            return true;
+        }
+        at = reach + 1;
+    }
+}
+
 // What a match's arms compare against. An enum leaves the tag and the enum's
 // name, anything else leaves the value and its type, and which of the two a
 // pattern reaches for is what tells a pattern apart from the value it was
@@ -9729,7 +9756,7 @@ impl<'a> FunctionLowering<'a> {
         let catches_rest = cases.iter().any(|case| {
             matches!(
                 self.ast.pattern(case.pattern),
-                Pattern::Wildcard | Pattern::Identifier(_)
+                Pattern::Wildcard
             )
         });
         if catches_rest {
@@ -9802,39 +9829,43 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
-    /// An arm every value of which an earlier arm already takes.
+    /// An arm every value of which the arms above it already take.
     ///
-    /// Read one span at a time against one earlier span at a time, which is
-    /// what makes the answer something a reader can work out at the arms: an
-    /// arm two earlier arms cover between them, and neither on its own, goes on
-    /// standing. Refusing that would need the union of every span written
-    /// above, and a rule nobody can run in their head is a rule that surprises.
+    /// What an arm covers is the union of what its alternatives name, and what
+    /// it is read against is the union of every arm above it. That is the
+    /// question a reader asks looking down the arms, so it is the one the
+    /// compiler answers: `case 1..5:`, `case 5..10:`, `case 3..7:` refuses the
+    /// third, because between them the first two take every value it has.
+    ///
+    /// `_` covers everything, so an arm below one is refused by this rule
+    /// rather than by a rule of its own.
     fn check_reachable(&self, cases: &[SwitchCase]) -> Result<()> {
         let mut variants: HashSet<String> = HashSet::new();
         let mut spans: Vec<(i64, i64)> = Vec::new();
+        let mut everything = false;
         for case in cases {
+            if everything {
+                bail!(UNREACHABLE_CASE);
+            }
+            if matches!(self.ast.pattern(case.pattern), Pattern::Wildcard) {
+                everything = true;
+                continue;
+            }
+
             let mut mine = HashSet::new();
             self.gather_variants(case.pattern, &mut mine);
             if !mine.is_empty() && mine.iter().all(|name| variants.contains(name))
             {
-                bail!(
-                    "this case is covered by an earlier one, so nothing reaches it"
-                );
+                bail!(UNREACHABLE_CASE);
             }
             variants.extend(mine);
 
             let mut ours = Vec::new();
             self.gather_spans(case.pattern, &mut ours);
             if !ours.is_empty()
-                && ours.iter().all(|(low, high)| {
-                    spans
-                        .iter()
-                        .any(|(from, to)| from <= low && high <= to)
-                })
+                && ours.iter().all(|(low, high)| covers(&spans, *low, *high))
             {
-                bail!(
-                    "this case is covered by an earlier one, so nothing reaches it"
-                );
+                bail!(UNREACHABLE_CASE);
             }
             spans.extend(ours);
         }
@@ -9857,7 +9888,7 @@ impl<'a> FunctionLowering<'a> {
             scalar,
         } = *subject;
         match self.ast.pattern(pattern).clone() {
-            Pattern::Wildcard | Pattern::Identifier(_) => {
+            Pattern::Wildcard => {
                 self.set_terminator(IrTerminator::Jump(success));
             }
             Pattern::Literal(literal) => {
@@ -10096,7 +10127,6 @@ impl<'a> FunctionLowering<'a> {
                 case.pattern,
                 enum_address.as_ref(),
                 enum_name.as_deref(),
-                scalar.as_ref(),
             )?;
             let (value, value_type) = self.lower_block(case.body, expected)?;
             // An arm that returns, breaks, or continues yields no value and has
@@ -10209,6 +10239,25 @@ impl<'a> FunctionLowering<'a> {
             values.push(self.lower_expression(*element, None)?);
         }
 
+        // A tuple arm naming `_` in every part covers everything, the same as a
+        // bare `case _`, so the arms below one are the same unreachable arms
+        // `check_reachable` refuses in a match on one value.
+        let mut everything = false;
+        for case in cases {
+            if everything {
+                bail!(UNREACHABLE_CASE);
+            }
+            let parts: Vec<PatternId> = match self.ast.pattern(case.pattern) {
+                Pattern::Tuple(patterns) => {
+                    self.ast.patterns_in(*patterns).to_vec()
+                }
+                _ => Vec::new(),
+            };
+            everything = parts.iter().all(|held| {
+                matches!(self.ast.pattern(*held), Pattern::Wildcard)
+            });
+        }
+
         let merge = self.new_block();
         let mut result_local: Option<LocalId> = None;
         let mut result_type = Type::Void;
@@ -10222,7 +10271,7 @@ impl<'a> FunctionLowering<'a> {
                 Pattern::Tuple(patterns) => {
                     self.ast.patterns_in(*patterns).to_vec()
                 }
-                Pattern::Wildcard | Pattern::Identifier(_) => Vec::new(),
+                Pattern::Wildcard => Vec::new(),
                 _ => {
                     let written = crate::ast_display::display_pattern(
                         self.ast,
@@ -10281,19 +10330,6 @@ impl<'a> FunctionLowering<'a> {
 
             self.switch_to(case_block);
             self.push_scope();
-            for (pattern, (value, value_type)) in
-                patterns.iter().zip(values.iter())
-            {
-                if let Pattern::Identifier(name) = self.ast.pattern(*pattern) {
-                    let name = self.ast.name(*name).to_string();
-                    let value = value.clone();
-                    let value_type = value_type.clone();
-                    let bound = self
-                        .fresh_local(value_type.clone(), Some(name.clone()));
-                    self.emit(IrStatement::Assign(bound, IrRvalue::Use(value)));
-                    self.define_variable(&name, bound);
-                }
-            }
             let (value, value_type) = self.lower_block(case.body, expected)?;
             // An arm that returns, breaks, or continues yields no value and has
             // already set its terminator, so it contributes nothing to merge.
@@ -10358,7 +10394,6 @@ impl<'a> FunctionLowering<'a> {
         pattern: PatternId,
         enum_address: Option<&IrOperand>,
         enum_name: Option<&str>,
-        scalar: Option<&(IrOperand, Type)>,
     ) -> Result<()> {
         match self.ast.pattern(pattern).clone() {
             Pattern::EnumVariant {
@@ -10440,18 +10475,6 @@ impl<'a> FunctionLowering<'a> {
                     // this a linear field could not be consumed by the arm
                     // that named it, which is the only way to consume one.
                     self.mark_owned(bound);
-                }
-                Ok(())
-            }
-            Pattern::Identifier(name) => {
-                let name = self.ast.name(name).to_string();
-                if let Some((value, value_type)) = scalar {
-                    let value = value.clone();
-                    let value_type = value_type.clone();
-                    let bound = self
-                        .fresh_local(value_type.clone(), Some(name.clone()));
-                    self.emit(IrStatement::Assign(bound, IrRvalue::Use(value)));
-                    self.define_variable(&name, bound);
                 }
                 Ok(())
             }
