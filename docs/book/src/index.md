@@ -3,24 +3,26 @@
 A data-oriented systems language that is memory-safe with no garbage collector
 and no lifetimes, and compiles itself.
 
-A Frost program is plain data and free functions that transform it. There are no
-classes and nothing is allocated behind your back. It compiles to native code
-through Cranelift or to portable C, and the compiler is written in Frost.
+A Frost program is plain data and free functions that transform it. Every
+allocation is one the program asked for. It compiles to native code through
+Cranelift or to portable C, and the compiler is written in Frost.
 
 ## Borrows are parameter modes
 
-A borrow is what a parameter mode means, so there is no reference type to write
-and no lifetime to describe.
+A parameter mode is the whole of what a borrow is.
 
 ```frost,sketch
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
 
 `mut` borrows for the call and mutates in place. An unmarked parameter borrows
-to read. `move` takes ownership. There is no `&` anywhere in the language, so a
-borrow has nothing to be stored in and nowhere to escape to. That one rule is
-why Frost needs no lifetime annotations, and the rest of the design grows from
-it.
+to read. `move` takes ownership. A borrow lasts for the call and has no spelling
+of its own, so there is nothing to store one in and nothing to annotate.
+
+That rule costs one thing: anything that outlives a call needs some other way to
+be named, which is what pools and generational handles are for. The one borrow a
+program does write down is `ref T`, returnable and checked at the frame and the
+region, so an accessor can hand back a place rather than a copy.
 
 | in place of | Frost has |
 | --- | --- |
