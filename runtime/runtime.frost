@@ -1,0 +1,73 @@
+// The Frost half of the runtime. Everything a program calls that is not the
+// program is here, except what genuinely cannot be written in Frost, which
+// stays in `frost_runtime.c` beside this and says why.
+//
+// Each function here is written as `extern fn` with a body, which is what makes
+// it keep the name it was written under: emitted code calls
+// `frost_rt_check_index` by that name, and a function the compiler named would
+// answer to nothing. See 12.5a of the reference.
+//
+// Two rules hold everything in this file:
+//
+//   - Nothing here may need what it provides. A bounds check that indexes
+//     something calls itself; arithmetic that can overflow calls the trap that
+//     may be running already. So the bodies use comparisons and whole numbers
+//     and nothing else.
+//   - What it bottoms out in is the C stub, declared below. Those declarations
+//     are the whole of this file's contact with C.
+
+// Writing a fault out, and ending the process once it is written. Both are in
+// the stub: the first because a handler may run where stdio cannot be reached,
+// the second because it prints a backtrace the platform has to be asked for.
+frost_rt_error :: safe extern fn(text: ^i8)
+frost_rt_error_int :: safe extern fn(value: i64)
+frost_rt_die :: safe extern fn()
+
+// An index against the run it reaches into, answering with the index so an
+// access checks inline: `data[frost_rt_check_index(i, len)]`.
+//
+// One comparison would do it in C, where a negative index read as unsigned is
+// enormous. Two say it here, because Frost has the comparison it means and a
+// reader should not have to know the cast to see that a negative index is
+// caught.
+frost_rt_check_index :: extern fn(index: i64, length: i64) -> i64 {
+    if (index < 0 || index >= length) {
+        frost_rt_error("frost: index ")
+        frost_rt_error_int(index)
+        frost_rt_error(" out of bounds for length ")
+        frost_rt_error_int(length)
+        frost_rt_error("\n")
+        frost_rt_die()
+    }
+    index
+}
+
+// The same question asked where nothing is answered with: the emitted code for
+// a write through an index calls this and then does the write.
+frost_rt_bounds_check :: extern fn(index: i64, length: i64) {
+    if (index < 0 || index >= length) {
+        frost_rt_error("frost: index ")
+        frost_rt_error_int(index)
+        frost_rt_error(" out of bounds for length ")
+        frost_rt_error_int(length)
+        frost_rt_error("\n")
+        frost_rt_die()
+    }
+}
+
+// A slice's length, answered for where the slice is built rather than at each
+// access: `slice_from` is the one place a slice comes from, and a length is
+// settled once while an access happens in a loop.
+//
+// Trusting the pointer and the run behind it is what makes the primitive
+// unchecked. A negative count is not an unverifiable claim but a meaningless
+// one, so it is refused here.
+frost_rt_check_length :: extern fn(length: i64) -> i64 {
+    if (length < 0) {
+        frost_rt_error("frost: a slice cannot be ")
+        frost_rt_error_int(length)
+        frost_rt_error(" elements long\n")
+        frost_rt_die()
+    }
+    length
+}
