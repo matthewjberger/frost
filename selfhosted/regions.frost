@@ -5431,9 +5431,19 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     // A place read by value copies what is there. Whatever views the copy holds
     // point where they already pointed, so the container is not named by it.
+    //
+    // A field that is itself a view is the same case and the common one: the
+    // `[]T` inside a container points at storage somebody else owns, so an
+    // accessor answering with it names that storage and not the container.
+    // Reading it as naming the container refused every accessor called on a
+    // local one, `fixed_slice` and `vec_slice` among them.
     if (kind == NodeKind::Field || kind == NodeKind::Index) {
         held := frame_place_type(p, id)
         if (held >= 0 && type_holds_view(p, held, FRAME_TYPE_DEPTH) == false) {
+            return 0
+        }
+        if (held >= 0 && p.mask_views_copy == 1
+            && type_is_direct_view(p, held)) {
             return 0
         }
         if (answer_reaches_inline(p, id)) {
@@ -5810,6 +5820,7 @@ settle_kept :: fn(mut p: Parser) {
                 params := sym.params
                 p.walk_types.count = 0
                 p.answer_locals.count = 0
+                p.mask_views_copy = 0
                 frame_seed_types(p, params)
                 grew = grew | kept_walk_block(p, node.a, params, node.val)
             }
@@ -5839,6 +5850,7 @@ settle_answer_sources :: fn(mut p: Parser) {
                 answers_place := is_borrow(sym.ret_type)
                 p.walk_types.count = 0
                 p.answer_locals.count = 0
+                p.mask_views_copy = 1
                 frame_seed_types(p, params)
                 // A function handing back a place reaches it through bindings
                 // this walk does not follow closely enough to narrow, so it

@@ -10,6 +10,7 @@
 - [A tour of Frost](tour.md)
 - [Coming from Rust](coming-from-rust.md)
 - [Patterns, and what to write instead](patterns.md)
+- [Writing an allocator](writing-an-allocator.md)
 
 ---
 

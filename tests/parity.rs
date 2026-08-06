@@ -1631,6 +1631,31 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "region: a pointer into arena 'scratch' escapes its region by being \
          stored outside it; it may not outlive the arena",
     ),
+    // An accessor answering with a view of the run its container holds is the
+    // shape every container is built on, and calling one on a local is honest:
+    // the run belongs to whoever carved it. One that hands back a view of the
+    // container's own bytes is not, and the difference is the field's type.
+    (
+        "an_accessor_answering_with_the_containers_own_bytes",
+        "Holder :: struct($T: Type) { storage: []T, len: i64 }
+         hold :: fn($T: Type, storage: []T) -> Holder<T> {
+             Holder { storage = storage, len = 3 }
+         }
+         bad :: fn($T: Type, h: Holder<T>) -> []i64 {
+             unsafe { slice_from($i64, ptr_to(h.len), 1) }
+         }
+         gather :: fn(run: []i64) -> []i64 {
+             var kept := hold($i64, run)
+             bad($i64, kept)
+         }
+         main :: fn() -> i64 {
+             var backing : [4]i64 = [1, 2, 3, 4]
+             gather(backing)[0]
+         }
+",
+        "region: a pointer into the frame of 'gather' is the call's answer; \
+         the storage it names dies when the call returns",
+    ),
     // A compile-time parameter is written at the call, one `$` argument each.
     // Leaving one out lines every value argument up against the parameter
     // beside the one it was written for, which is a mistake worth naming as

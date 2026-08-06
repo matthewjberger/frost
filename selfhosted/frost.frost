@@ -655,6 +655,7 @@ main :: fn() -> i64 {
         // One mask per parameter of every function, which is what says
         // who holds a pointer handed to a call for as long as it lives.
         kept_masks = arena_make($AnswerMask, 131072),
+        mask_views_copy = 0,
         answer_locals = arena_make($LocalVar, 4096),
         frame_places = arena_make($LocalVar, 4096),
         walk_types = arena_make($LocalVar, 4096),
