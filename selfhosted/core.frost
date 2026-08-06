@@ -1603,6 +1603,9 @@ Parser :: struct {
     // whether it covered every variant of the enum it switched on. -1 when the
     // variant did not resolve, which is an uninstantiated generic template.
     case_variant: i64,
+    // The bindings the variant pattern just parsed opened, as a statement list
+    // the arm's body is hung off. -1 where the pattern named no fields.
+    case_bindings: i64,
     type_args: Arena<TypeArg>,
     pending: Arena<LocalVar>,
     try_count: i64,

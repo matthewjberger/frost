@@ -1233,6 +1233,22 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     }
 }
 
+// The name a match compares its value out of. A node id is unique, so two
+// matches in one function name two values.
+emit_match_value :: fn(id: i64) {
+    emit_text("__mv")
+    frost_rt_emit_int(id)
+}
+
+// What one arm compares that value against.
+emit_case_test :: fn(mut p: Parser, match_id: i64, cid: i64) {
+    cnode := arena_at(p.arena, cid)
+    value := cnode.val
+    emit_match_value(match_id)
+    emit_text(" == ")
+    frost_rt_emit_int(value)
+}
+
 emit_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
@@ -1305,28 +1321,48 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text(";\n")
         return
     }
+    // A chain of comparisons rather than a `switch`. C's `break` leaves a
+    // switch, and Frost's leaves the loop around it, so an arm holding one
+    // meant two things: the assembly backend and the bootstrap left the loop
+    // and this one left the match and went round again.
+    //
+    // The value is compared once, out of a name of its own, since the arms of
+    // a match on a call would otherwise call it once each. An arm that matches
+    // everything closes the chain, so nothing after it is written: nothing
+    // reaches it.
     if (kind == NodeKind::Match) {
         scrutinee := node.a
         cases := node.b
-        emit_text("switch (")
+        emit_text("{\n")
+        subject_ty := type_of(p, scrutinee)
+        emit_ctype(p, subject_ty)
+        emit_text(" ")
+        emit_match_value(id)
+        emit_text(" = ")
         emit_expr(p, scrutinee)
-        emit_text(") {\n")
+        emit_text(";\n")
         var cid := cases
-        while (cid != (-1)) {
+        var written: i64 = 0
+        var closed: i64 = 0
+        while (cid != (-1) && closed == 0) {
             cnode := arena_at(p.arena, cid)
             is_default := cnode.c
-            value := cnode.val
             body := cnode.a
             next_case := cnode.next
-            if (is_default == 1) {
-                emit_text("default: {\n")
-            } else {
-                emit_text("case ")
-                frost_rt_emit_int(value)
-                emit_text(": {\n")
+            if (written == 1) {
+                emit_text("else ")
             }
+            if (is_default == 1) {
+                closed = 1
+            } else {
+                emit_text("if (")
+                emit_case_test(p, id, cid)
+                emit_text(") ")
+            }
+            emit_text("{\n")
             emit_list(p, body)
-            emit_text("} break;\n")
+            emit_text("}\n")
+            written = 1
             cid = next_case
         }
         emit_text("}\n")

@@ -680,6 +680,7 @@ main :: fn() -> i64 {
         variants = arena_make($Variant, 4096),
         match_count = 0,
         case_variant = -1,
+        case_bindings = -1,
         type_args = arena_make($TypeArg, 4096),
         pending = arena_make($LocalVar, 4096),
         try_count = 0,

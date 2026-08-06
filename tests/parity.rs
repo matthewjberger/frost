@@ -3340,6 +3340,58 @@ main :: fn() -> i64 {
          11\n14\n17\n20\n\
          2\n0.625\n16\n55\n60\n4\n",
     ),
+    // `Enum::Variant` and `.Variant` name one variant. The self-hosted parser
+    // read only the second, so the first left the enum name standing as an
+    // expression and the arm was refused for a reason that had nothing to do
+    // with the program: '4' is not a type this program declares.
+    (
+        "a_qualified_variant_pattern_names_the_same_variant",
+        "import \"io.frost\"
+         Step :: enum { Left, Right, Up }
+         which :: fn(k: Step) -> i64 {
+             match k {
+                 case Step::Left: 4
+                 case Step::Up: 6
+                 case _: 5
+             }
+         }
+         main :: fn() -> i64 {
+             print_int_line(which(Step::Left))
+             print_int_line(which(Step::Right))
+             print_int_line(which(Step::Up))
+             0
+         }
+",
+        "4
+5
+6
+",
+    ),
+    // A `break` in a match arm leaves the loop around the match. The
+    // self-hosted C backend wrote the match as a `switch`, and C's `break`
+    // leaves one of those, so the loop went round again: the bootstrap and the
+    // assembly backend stopped at 2 and this one printed 3 and 4 as well.
+    (
+        "a_break_in_a_match_arm_leaves_the_loop",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             var i : i64 = 0
+             while (i < 5) {
+                 match i {
+                     case 2: { break }
+                     case _: { print_int_line(i) }
+                 }
+                 i = i + 1
+             }
+             print_int_line(99)
+             0
+         }
+",
+        "0
+1
+99
+",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler through one of its
