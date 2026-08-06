@@ -32,6 +32,8 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 | exceptions and `Result` plumbing | failure sets, `-> T ! E` and `?` |
 | dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
 | classes and methods | plain structs and free functions |
+| a `const fn` promise | any function, worked out where a constant reads it |
+| a vector type and its intrinsics | `[4]f32`, with the operators once per lane |
 
 ## The language at a glance
 

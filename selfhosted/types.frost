@@ -12,7 +12,8 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
     parse_call_type_args,
-    is_type_predicate, predicate_holds, record_parse_local,
+    is_type_predicate, predicate_holds, record_parse_local, untyped_literal,
+    parse_local_type,
     parse_local_type, parse_param_type, field_binding_of,
     fn_proc_type, bundle_field_fn,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
@@ -838,6 +839,13 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         left := type_of(p, node.a)
         right := type_of(p, node.b)
+        // Two vectors answer with a vector. The operation is done once per
+        // lane, and what comes out is as wide as what went in, so a borrow the
+        // operand arrived as is read through here.
+        held := vector_of(p, left)
+        if (held >= 0) {
+            return held
+        }
         // Arithmetic on a distinct type answers with that type. Adding two
         // lengths gives a length, and the sum can go back where either came
         // from, which is the whole reason to have named the type.

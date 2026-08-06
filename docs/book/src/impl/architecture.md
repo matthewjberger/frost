@@ -215,6 +215,15 @@ Working today, verified by running native binaries (`tests/native.rs`):
   runtime indices, and borrowed array parameters (e.g. `sum(a: [5]i64)`). Every
   index is bounds-checked against the statically-known length. An out-of-range
   index aborts (see [memory-safety.md](../design/memory-safety.md)).
+- Vectors: the arithmetic operators over a fixed array of numbers, once per
+  lane, with a number on either side standing in every lane. The bootstrap
+  writes the lanes out in the IR, so all three of its backends carry it with
+  the code they already had and the C compiler folds the run back into packed
+  instructions. The self-hosted compiler leaves a float vector as one node and
+  its assembly backend emits `movups` and the packed arithmetic sixteen bytes
+  at a time; a vector of whole numbers is written out lane by lane there too,
+  because an overflow aborts and names where, and a packed add cannot say which
+  lane it was.
 - Enums and tagged unions: construction, and `match` over a value or a
   reference with enum-variant patterns (binding payload fields), integer
   literal patterns, identifier binding, and wildcard.

@@ -109,6 +109,17 @@ M_MULQ :: 46
 // already found to be nonzero, which is the one operand the instruction leaves
 // the destination undefined for.
 M_BSFQ :: 47
+// The packed single- and double-precision arithmetic: one instruction over
+// four floats or two doubles, which is what elementwise arithmetic over a
+// vector of them becomes.
+M_ADDPS :: 48
+M_SUBPS :: 49
+M_MULPS :: 50
+M_DIVPS :: 51
+M_ADDPD :: 52
+M_SUBPD :: 53
+M_MULPD :: 54
+M_DIVPD :: 55
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -608,6 +619,14 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "ucomisd")) { return M_UCOMISD, 0 }
     if (bytes_same(src, off, len, "movapd")) { return M_MOVAPD, 0 }
     if (bytes_same(src, off, len, "movups")) { return M_MOVUPS, 0 }
+    if (bytes_same(src, off, len, "addps")) { return M_ADDPS, 0 }
+    if (bytes_same(src, off, len, "subps")) { return M_SUBPS, 0 }
+    if (bytes_same(src, off, len, "mulps")) { return M_MULPS, 0 }
+    if (bytes_same(src, off, len, "divps")) { return M_DIVPS, 0 }
+    if (bytes_same(src, off, len, "addpd")) { return M_ADDPD, 0 }
+    if (bytes_same(src, off, len, "subpd")) { return M_SUBPD, 0 }
+    if (bytes_same(src, off, len, "mulpd")) { return M_MULPD, 0 }
+    if (bytes_same(src, off, len, "divpd")) { return M_DIVPD, 0 }
     if (bytes_same(src, off, len, "cvtsi2sdq")) { return M_CVTSI2SDQ, 0 }
     if (bytes_same(src, off, len, "cvttsd2siq")) { return M_CVTTSD2SIQ, 0 }
     if (bytes_same(src, off, len, "cvtsi2ssq")) { return M_CVTSI2SSQ, 0 }
@@ -1204,6 +1223,23 @@ encode_arith :: fn(mut unit: Assembly, digit: i64, a_kind: i64, a_reg: i64,
 // but for the two that cross banks.
 encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
     here: i64) {
+    // The packed forms differ from the scalar ones only in the prefix: none at
+    // all for four singles, 0x66 for two doubles, and the same opcode byte.
+    if (op == M_ADDPS || op == M_SUBPS || op == M_MULPS || op == M_DIVPS
+        || op == M_ADDPD || op == M_SUBPD || op == M_MULPD || op == M_DIVPD) {
+        var prefix: i64 = 0
+        if (op == M_ADDPD || op == M_SUBPD || op == M_MULPD
+            || op == M_DIVPD) {
+            prefix = 102
+        }
+        var opcode: i64 = 88
+        if (op == M_SUBPS || op == M_SUBPD) { opcode = 92 }
+        if (op == M_MULPS || op == M_MULPD) { opcode = 89 }
+        if (op == M_DIVPS || op == M_DIVPD) { opcode = 94 }
+        emit_reg_rm(unit, prefix, 0, 15, opcode, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
     if (op == M_ADDSD) {
         emit_reg_rm(unit, 242, 0, 15, 88, reg_code(b_reg), OPND_REG,
             reg_code(a_reg), 0, 0)

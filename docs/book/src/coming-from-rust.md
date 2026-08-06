@@ -76,6 +76,10 @@ surprises.
 | a trait method a generic calls | `$f: fn(..) -> ..` compile-time parameter |
 | `foo::<u32>()` (turbofish) | `foo($u32, ..)` |
 | `extern "C" { .. }` | `name :: extern fn(..) -> ..` |
+| `#[repr(packed)]` | `Name :: packed struct { .. }`, and `field: T align(16)` |
+| `const fn f(..)` at a `const` | any `fn`, worked out where a constant reads it |
+| `Simd<f32, 4>` / `@Vector(4, f32)` | `[4]f32`, and `a + b` is once per lane |
+| `a.wrapping_add(b)` | `wrap_add(a, b)` |
 
 ## Declarations and bindings
 
@@ -203,12 +207,19 @@ The scalar types are what you expect. They are `i8`, `i16`, `i32`, `i64`,
 `isize`, their unsigned `u*` counterparts, `f32`, `f64`, and `bool`. These are
 all copy types.
 
-The difference that will bite first is that arithmetic wraps at the type width
-with two's-complement semantics, and is never checked for overflow. Rust panics on
-overflow in debug and wraps in release. Frost always wraps, like Rust's
-`wrapping_add` family. A `u8` holding `200` plus `100` is `44`, and an `i32` at
-`2000000000` doubled is `-294967296`. Do not rely on overflow being caught.
-(There are no `_` digit separators, either.)
+Integer arithmetic that leaves the range of the type it is computed at aborts
+and says where, on every backend. Rust panics in debug and wraps in release;
+Frost does the same thing in both, so a build that ran is a build whose
+arithmetic held. `wrap_add`, `wrap_sub` and `wrap_mul` keep the low bits, for a
+hash or a counter where leaving the range is what was wanted, and they are the
+analogue of Rust's `wrapping_*` family. (There are no `_` digit separators.)
+
+A fixed array of numbers takes the arithmetic operators, once per lane:
+`a + b` over two `[4]f32` is four adds, and `a * 2.0` is that number in every
+lane. There is no vector type; `[4]f32` is the array Frost already had, which is
+the difference from Rust's `Simd<f32, 4>` and Zig's `@Vector`. The length is a
+power of two and the whole thing is at most a register's sixty-four bytes, so an
+operator is never a loop the reader did not write.
 
 Mixed-width integer arithmetic is permitted, with the narrower operand widening
 to the wider one, so `an_i32 + an_i64` is an `i64`. This is looser than Rust,
@@ -748,12 +759,24 @@ printall :: fn(args: $...) {
 printall(1, 2.5, "three")
 ```
 
+A call written where a compile-time value is read is worked out before the
+program runs, which is where `const fn` lands. Nothing marks the function:
+`LANES :: round_up(300, 64)` and `[next_power_of_two(300)]u8` call ordinary
+functions, and what says the call is early is that a constant and an array
+length are. Rust asks the author to promise `const` on the definition; Frost
+reads the position instead, so no function has two kinds.
+
+What such a call may do is the whole-number half of the language, and everything
+else is refused where it is written: a function that reaches itself, a call into
+the world, a pointer or a struct, a number with a fraction, and a bound of a
+million steps. There is no falling back to running it later, since that would
+make one declaration a number in one place and a call in another.
+
 What is deliberately missing is everything that would make this a language of
 its own: no compile-time string parsing, no recursion, no unbounded loop, and
 nothing that reads the world. Every construct walks a list whose length the call
-fixed, so expansion costs what the program's text costs. There is nothing here
-that corresponds to `const fn`, and nothing that corresponds to a procedural
-macro.
+fixed, or a body whose steps are bounded, so expansion costs what the program's
+text costs. There is nothing that corresponds to a procedural macro.
 
 ## Calling C
 

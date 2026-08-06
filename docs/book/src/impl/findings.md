@@ -567,3 +567,45 @@ stayed inside the callee. Recovery then synchronized from there, found the same
 declaration again, and reported one fault 262,000 times. Both recovery turns
 carry the cursor they began at now and only ever move it forward. The bug is
 older than the feature: any pass that moves the cursor and then faults had it.
+
+## The two compilers vectorize at opposite ends of the pipeline
+
+Elementwise arithmetic over a fixed array of numbers is one language rule and
+two implementations that share nothing.
+
+The bootstrap writes the lanes out in its IR: a fresh local of the vector type,
+then a load, an operation and a store per lane. Every one of its three backends
+then carries it with the code it already had, and the C compiler folds the run
+back into `mulps` and `addps` at `-O2`, which is what a check of the emitted
+assembly shows.
+
+The self-hosted compiler splits on the element type. A vector of whole numbers
+becomes an array literal of lane expressions at parse time, because an overflow
+aborts and says where, and a packed add has no way to say which lane it was. A
+vector of floats stays one `Bin` node, and the assembly backend emits `movups`
+and the packed arithmetic sixteen bytes at a time. That split is why the
+assembler grew `addps`, `subps`, `mulps`, `divps` and their `pd` forms: eight
+mnemonics whose encoding differs from the scalar ones only in the prefix.
+
+### A parse-time question needs a parse-time answer
+
+`type_of` reads the local table the *walks* build, and during the parse that
+table is empty: every name answers `i64`. The parser keeps its own table, and
+what the vector rules ask has to go to that one. Three separate places had to
+learn: a name, an index of one, and an operator over two of them.
+
+The failure is quiet. A vector operation whose operands read as `i64` is an
+integer add, and the program compiles and prints nonsense. It showed up as
+`6` becoming `1.6352e+12`, and the same shape came back twice more, once for a
+nested expression and once for a parameter, which arrives as a borrow and so is
+not an array until the borrow is read through.
+
+### A diagnostic that names a type is a diagnostic the two can differ on
+
+The first wording was `'{type}' and '{type}' do not go together`, and the two
+compilers render a fixed array differently: `[4]f32` in the bootstrap and
+`[]f32` in the self-hosted, whose renderer does not print a length. The
+diagnostic says `a vector of 4 f32` now, built from the length and the element
+rather than handed to a type renderer. A sentence a reader sees is one sentence
+in one language, so where the two would render it differently, neither renders
+it.

@@ -474,6 +474,30 @@ impl Checker<'_> {
                 },
                 _ => None,
             },
+            // A vector negates lane by lane and stays what it was.
+            Expression::Prefix(crate::parser::Operator::Negate, inner) => {
+                match self.type_of(*inner) {
+                    Some(Type::Array(element, count)) => {
+                        Some(Type::Array(element, count))
+                    }
+                    _ => None,
+                }
+            }
+            // Two vectors answer with a vector, and a vector beside a number
+            // answers with the vector. Without this the result of `a + b` has
+            // no type here and indexing it falls to the refusal.
+            Expression::Infix(left, _, right) => {
+                let held = self.type_of(*left);
+                if matches!(held, Some(Type::Array(..))) {
+                    return held;
+                }
+                match self.type_of(*right) {
+                    Some(Type::Array(element, count)) => {
+                        Some(Type::Array(element, count))
+                    }
+                    _ => None,
+                }
+            }
             // `ref name := place` binds a borrow, so what it holds is the type
             // of the place it names. Without this a `ref` local has no type at
             // all and every field and element reached through one falls to the

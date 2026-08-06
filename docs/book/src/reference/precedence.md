@@ -20,20 +20,25 @@ is normative and matches the reference parser's precedence mapping.
 | Prefix | `-` `!` | unary |
 | Call / Index / Access | `f(...)` `a[i]` `.` `^` `::` | tightest |
 
+An operator over a fixed array of numbers is done once per lane (3.2b). The
+precedence is the same either way: what changes is how many times the operation
+happens, not how the expression groups.
+
 ## 14.2 Keywords
 
 Specified language, matching the keyword table of `src/lexer.rs` (2.4):
 
 ```
-break case continue defer distinct else enum extern fn for if import
-in inline linear match move mut ref return safe struct
+break case continue defer distinct else enum errdefer extern fn for if
+import in inline linear match move mut ref return safe struct
 type unsafe uses var where while with
 ```
 
 The primitive type names `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64
 bool str` and the boolean literals `true` and `false` are predeclared
 identifiers (2.4). The wildcard is `_`. `test`, `export`, `flags` and `value`
-are contextual, and so is the capitalized `Type` of `$T: Type`.
+are contextual, and so are `packed`, `align` and the capitalized `Type` of
+`$T: Type`.
 
 ## 14.3 String escapes
 

@@ -2130,6 +2130,14 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         lower_enum_compare(p, id)
         bin := arena_at(p.arena, id)
         op := bin.val
+        // Two vectors of floats, one packed instruction per sixteen bytes.
+        // Elementwise arithmetic is what a vector register is for, and this is
+        // the one backend that decides its own instructions.
+        answered := type_of(p, id)
+        if (is_array_ty(answered) && is_slice_ty(p, answered) == false) {
+            emit_asm_packed(p, bin.a, op, bin.b, answered)
+            return
+        }
         left_ty := type_of(p, bin.a)
         right_ty := type_of(p, bin.b)
         if (is_float(left_ty) || is_float(right_ty)) {
@@ -2266,6 +2274,51 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
 
 // Build an array into a temporary and answer with its address, the way a struct
 // literal does, since both are aggregates reached by address here.
+// Two vectors of floats, sixteen bytes at a time. Both sides are aggregates,
+// so each answers with the address of its storage; the left one is put away in
+// a slot while the right is worked out, since working it out takes the
+// register the address is in.
+emit_asm_packed :: fn(mut p: Parser, left: i64, op: i64, right: i64,
+    vector: i64) {
+    element := array_element(p, vector)
+    width := type_size(p, vector)
+    held := alloc_temp(p, 8)
+    slot := alloc_temp(p, width)
+    emit_asm_expr(p, left)
+    asm_i("movq %rax, ", held, "(%rbp)")
+    emit_asm_expr(p, right)
+    asm_i("movq ", held, "(%rbp), %r11")
+    var at: i64 = 0
+    while (at < width) {
+        asm_i("movups ", at, "(%r11), %xmm0")
+        asm_i("movups ", at, "(%rax), %xmm1")
+        emit_text("    ")
+        emit_packed_op(op, element)
+        emit_text(" %xmm1, %xmm0
+")
+        asm_i("movups %xmm0, ", slot + at, "(%rbp)")
+        at = at + 16
+    }
+    asm_i("leaq ", slot, "(%rbp), %rax")
+}
+
+// The packed mnemonic for one operation, written out rather than answered
+// with: a `str` a call hands back has no place of its own, and the emitters
+// read a name they were given rather than one they made.
+emit_packed_op :: fn(op: i64, element: i64) {
+    if (element == TY_F32) {
+        if (op == OP_ADD) { emit_text("addps") return }
+        if (op == OP_SUB) { emit_text("subps") return }
+        if (op == OP_MUL) { emit_text("mulps") return }
+        emit_text("divps")
+        return
+    }
+    if (op == OP_ADD) { emit_text("addpd") return }
+    if (op == OP_SUB) { emit_text("subpd") return }
+    if (op == OP_MUL) { emit_text("mulpd") return }
+    emit_text("divpd")
+}
+
 emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     array_ty := type_of(p, id)

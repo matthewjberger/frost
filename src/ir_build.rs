@@ -5954,6 +5954,18 @@ impl<'a> FunctionLowering<'a> {
         match operator {
             Operator::Negate => {
                 let (value, ty) = self.lower_expression(operand, expected)?;
+                // A vector negates lane by lane, which is zero minus it, the
+                // same shape every other elementwise operation takes.
+                if let Some((element, _)) = lanes_of(&ty) {
+                    let zero = self.zero_of(&element);
+                    if let Some(answered) = self.lower_elementwise(
+                        IrBinOp::Subtract,
+                        (&zero, &element),
+                        (&value, &ty),
+                    )? {
+                        return Ok(answered);
+                    }
+                }
                 let result = self.fresh_local(ty.clone(), None);
                 self.emit(IrStatement::Assign(
                     result,
@@ -6100,6 +6112,16 @@ impl<'a> FunctionLowering<'a> {
                 ));
                 return Ok((IrOperand::Local(result), Type::Bool));
             }
+            // Two vectors are compared lane by lane nowhere: what a
+            // comparison answers is one yes or no, and a vector of them is a
+            // mask, which is a type this language does not have.
+            if lanes_of(&left_type).is_some() || lanes_of(&right_type).is_some()
+            {
+                bail!(
+                    "'{}' is not something two vectors answer; a vector takes '+', '-', '*' and '/', and one of whole numbers takes '%', '&', '|', '<<' and '>>' as well",
+                    operator_text(binop)
+                );
+            }
             let operand_type = unify(&left_type, &right_type);
             let left_final =
                 self.coerce(left_operand, &left_type, &operand_type)?;
@@ -6113,15 +6135,48 @@ impl<'a> FunctionLowering<'a> {
             return Ok((IrOperand::Local(result), Type::Bool));
         }
 
-        let (left_operand, left_type) =
-            self.lower_expression(left, expected)?;
-        let (right_operand, right_type) =
-            self.lower_expression(right, Some(&left_type))?;
+        // A number written beside a vector is that number in every lane, so it
+        // takes the element's type rather than the vector's, whichever side it
+        // is written on. Without this a bare `2.0` was an `f64` beside a
+        // `[4]f32` and the two had nothing in common.
+        // A number written beside a vector is that number in every lane, so it
+        // takes the element's type rather than the vector's, whichever side it
+        // is written on. Where nothing is expected here the right side is
+        // lowered first, since only it can say what the number should be;
+        // where something is expected, that is the answer and the order stays
+        // as it was.
+        let wanted = expected.map(lane_type);
+        let (left_operand, left_type, right_operand, right_type) = if expected
+            .is_none()
+            && is_bare_number(self.ast, left)
+            && !is_bare_number(self.ast, right)
+        {
+            let (right_operand, right_type) =
+                self.lower_expression(right, None)?;
+            let held = lane_type(&right_type);
+            let (left_operand, left_type) =
+                self.lower_expression(left, Some(&held))?;
+            (left_operand, left_type, right_operand, right_type)
+        } else {
+            let (left_operand, left_type) =
+                self.lower_expression(left, wanted.as_ref())?;
+            let held = lane_type(&left_type);
+            let (right_operand, right_type) =
+                self.lower_expression(right, Some(&held))?;
+            (left_operand, left_type, right_operand, right_type)
+        };
         self.check_flags_operator(
             binop,
             (left, &left_type),
             (right, &right_type),
         )?;
+        if let Some(answered) = self.lower_elementwise(
+            binop,
+            (&left_operand, &left_type),
+            (&right_operand, &right_type),
+        )? {
+            return Ok(answered);
+        }
         let result_type = unify(&left_type, &right_type);
         // An expression built out of literals is a literal, so it folds here
         // and the number that comes out takes the same range check a written
@@ -6150,6 +6205,167 @@ impl<'a> FunctionLowering<'a> {
             IrRvalue::Binary(binop, left_final, right_final),
         ));
         Ok((IrOperand::Local(result), result_type))
+    }
+
+    // Elementwise arithmetic over a fixed array of numbers, which is what a
+    // vector register holds. `a + b` over two `[4]f32` is four adds, so what an
+    // element does is what a number does: a float lane rounds as one number
+    // does, and an integer lane aborts on overflow and says where.
+    //
+    // Answers nothing when neither side is a vector, so an ordinary operator
+    // goes on meaning what it did.
+    fn lower_elementwise(
+        &mut self,
+        binop: IrBinOp,
+        left: (&IrOperand, &Type),
+        right: (&IrOperand, &Type),
+    ) -> Result<Option<(IrOperand, Type)>> {
+        let (left_operand, left_type) = left;
+        let (right_operand, right_type) = right;
+        let shape = lanes_of(left_type).or_else(|| lanes_of(right_type));
+        let Some((element, count)) = shape else {
+            return Ok(None);
+        };
+        let vector = Type::Array(Box::new(element.clone()), count);
+        for held in [left_type, right_type] {
+            let held = through_borrow(held);
+            if held != &vector && held != &element {
+                bail!(
+                    "{} and {} do not go together; elementwise arithmetic is over two of one vector type, or a vector and a number of its element type",
+                    describe_operand(&vector),
+                    describe_operand(held)
+                );
+            }
+        }
+        self.check_vector_shape(&element, count)?;
+        if !matches!(
+            binop,
+            IrBinOp::Add | IrBinOp::Subtract | IrBinOp::Multiply
+                | IrBinOp::Divide
+        ) && !(element.is_integer()
+            && matches!(
+                binop,
+                IrBinOp::Modulo
+                    | IrBinOp::BitwiseAnd
+                    | IrBinOp::BitwiseOr
+                    | IrBinOp::ShiftLeft
+                    | IrBinOp::ShiftRight
+            ))
+        {
+            bail!(
+                "'{}' is not something two vectors answer; a vector takes '+', '-', '*' and '/', and one of whole numbers takes '%', '&', '|', '<<' and '>>' as well",
+                operator_text(binop)
+            );
+        }
+        let width = self.builder.byte_size(&element);
+        let result = self.fresh_local(vector.clone(), None);
+        self.mark_in_memory(result);
+        let left_lanes = self.lane_source(left_operand, left_type, &element)?;
+        let right_lanes =
+            self.lane_source(right_operand, right_type, &element)?;
+        for lane in 0..count {
+            let left_value = self.lane_value(&left_lanes, lane, &element)?;
+            let right_value = self.lane_value(&right_lanes, lane, &element)?;
+            let computed = self.fresh_local(element.clone(), None);
+            self.emit(IrStatement::Assign(
+                computed,
+                IrRvalue::Binary(binop, left_value, right_value),
+            ));
+            let destination =
+                self.fresh_local(Type::Ptr(Box::new(element.clone())), None);
+            self.emit(IrStatement::Assign(
+                destination,
+                IrRvalue::AddressOf {
+                    local: result,
+                    offset: lane * width,
+                },
+            ));
+            self.emit(IrStatement::Store {
+                address: IrOperand::Local(destination),
+                value: IrOperand::Local(computed),
+            });
+        }
+        Ok(Some((IrOperand::Local(result), vector)))
+    }
+
+    // The number nothing, at a given type, which is what a lane is subtracted
+    // from to negate it.
+    fn zero_of(&self, ty: &Type) -> IrOperand {
+        if ty.is_float() {
+            return IrOperand::Constant(IrConstant::Float(0.0, ty.clone()));
+        }
+        IrOperand::Constant(IrConstant::Integer(0, ty.clone()))
+    }
+
+    // What a vector has to be for its lanes to be a register's worth: a length
+    // that is a power of two, and a width a machine has a register for.
+    fn check_vector_shape(&self, element: &Type, count: usize) -> Result<()> {
+        if !count.is_power_of_two() {
+            bail!(
+                "elementwise arithmetic is over a vector whose length is a power of two, and {count} is not one"
+            );
+        }
+        let bytes = self.builder.byte_size(element) * count;
+        if bytes > VECTOR_LIMIT {
+            bail!(
+                "elementwise arithmetic is over a vector of at most {VECTOR_LIMIT} bytes, which is a register's worth, and this one is {bytes}"
+            );
+        }
+        Ok(())
+    }
+
+    // Where a side's lanes are read from: the address of its storage, or the
+    // number itself where a number stands for every lane.
+    fn lane_source(
+        &mut self,
+        operand: &IrOperand,
+        ty: &Type,
+        element: &Type,
+    ) -> Result<LaneSource> {
+        if through_borrow(ty) == element {
+            return Ok(LaneSource::Broadcast(operand.clone()));
+        }
+        match ty {
+            Type::Array(..) => {
+                let IrOperand::Local(local) = operand else {
+                    bail!("a vector is read out of a place, and this is not one");
+                };
+                let address = self.address_of_local(*local, ty);
+                Ok(LaneSource::At(address))
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner)
+                if matches!(**inner, Type::Array(..)) =>
+            {
+                Ok(LaneSource::At(operand.clone()))
+            }
+            held => bail!("'{held}' is not a vector"),
+        }
+    }
+
+    fn lane_value(
+        &mut self,
+        source: &LaneSource,
+        lane: usize,
+        element: &Type,
+    ) -> Result<IrOperand> {
+        match source {
+            LaneSource::Broadcast(operand) => Ok(operand.clone()),
+            LaneSource::At(address) => {
+                let width = self.builder.byte_size(element);
+                let at =
+                    self.fresh_local(Type::Ptr(Box::new(element.clone())), None);
+                self.emit(IrStatement::Assign(
+                    at,
+                    IrRvalue::FieldAddress {
+                        base: address.clone(),
+                        offset: lane * width,
+                    },
+                ));
+                let (value, _) =
+                    self.load_from(IrOperand::Local(at), element.clone())?;
+                Ok(value)
+            }
+        }
     }
 
     // The flags type either side of an operator names, looking through a
@@ -10359,6 +10575,67 @@ fn needs_cast(from: &Type, to: &Type) -> bool {
 // the wider. A literal has no width of its own and has already taken the other
 // side's by the time this runs, since the right operand is lowered with the
 // left's type as its expectation.
+/// How wide a vector may be, in bytes. A register's worth: `[16]f32` is one
+/// AVX-512 register and `[4]f64` is half of one, and a length past this is a
+/// loop the reader would not see written down.
+const VECTOR_LIMIT: usize = 64;
+
+// Where the lanes of one side of an elementwise operation come from.
+enum LaneSource {
+    /// A number, which stands in every lane.
+    Broadcast(IrOperand),
+    /// The address the vector's storage begins at.
+    At(IrOperand),
+}
+
+// The element type and length of a vector, looking through a borrow the way
+// every other question about a type does. Answers nothing for anything that is
+// not a fixed array of numbers, which is what makes an ordinary operator go on
+// meaning what it did.
+fn lanes_of(ty: &Type) -> Option<(Type, usize)> {
+    let held = match ty {
+        Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner) => inner,
+        held => held,
+    };
+    let Type::Array(element, count) = held else {
+        return None;
+    };
+    if !element.is_integer() && !element.is_float() {
+        return None;
+    }
+    Some(((**element).clone(), *count))
+}
+
+// What the other side of an operator is expected to be: a vector's element
+// type, so a number beside one is that number in every lane, and otherwise the
+// type itself.
+fn lane_type(ty: &Type) -> Type {
+    match lanes_of(ty) {
+        Some((element, _)) => element,
+        None => ty.clone(),
+    }
+}
+
+// A type as one side of an elementwise operation reads: a vector by its length
+// and element, anything else by its own name. Written out here rather than by
+// each compiler's type renderer, since the two render a fixed array's length
+// differently and a diagnostic is one sentence in one language.
+fn describe_operand(ty: &Type) -> String {
+    match ty {
+        Type::Array(element, count) => {
+            format!("a vector of {count} {element}")
+        }
+        held => format!("a {held}"),
+    }
+}
+
+fn through_borrow(ty: &Type) -> &Type {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner) => inner,
+        held => held,
+    }
+}
+
 fn unify(left: &Type, right: &Type) -> Type {
     if left == right {
         return left.clone();

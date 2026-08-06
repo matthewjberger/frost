@@ -4986,7 +4986,10 @@ fn the_tour_prints_what_its_comments_claim() {
     // still hold something, a handle from another container refused, and the
     // session's id handed back by the `move` that consumed it, with the two
     // stated layouts read off between them.
-    assert_eq!(output, "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n7\n");
+    assert_eq!(
+        output,
+        "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n72\n7\n"
+    );
 }
 
 // The self-hosted compiler passes a struct to C by value too, through both of
@@ -17905,6 +17908,71 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "has no value at compile time",
     ),
+    // A vector's lanes are a register's worth, so the length is a power of two.
+    (
+        "a_vector_whose_length_is_not_a_power_of_two",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [3]f32 = [1.0, 2.0, 3.0]\n\
+         \x20   b : [3]f32 = [1.0, 2.0, 3.0]\n\
+         \x20   c := a + b\n\
+         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   0\n}\n",
+        "elementwise arithmetic is over a vector whose length is a power of two",
+    ),
+    // Past a register's width the operation is a loop, and a loop the reader
+    // does not see written down is what an operator may not be.
+    (
+        "a_vector_wider_than_a_register",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [32]f64 = [1.0; 32]\n\
+         \x20   b : [32]f64 = [2.0; 32]\n\
+         \x20   c := a + b\n\
+         \x20   print_f64_line(c[0])\n\
+         \x20   0\n}\n",
+        "elementwise arithmetic is over a vector of at most 64 bytes",
+    ),
+    // Two vectors of different types have no lane-for-lane meaning, and the
+    // diagnostic names both by their length and element rather than by
+    // whichever spelling each compiler's type renderer reaches for.
+    (
+        "two_vectors_of_different_types",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   b : [4]f64 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   c := a + b\n\
+         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   0\n}\n",
+        "a vector of 4 f32 and a vector of 4 f64 do not go together",
+    ),
+    // A vector of floats takes the four arithmetic operators. The bitwise ones
+    // are a question about bits, which a float does not answer.
+    (
+        "a_bitwise_operator_over_a_vector_of_floats",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   b : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   c := a & b\n\
+         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   0\n}\n",
+        "'&' is not something two vectors answer",
+    ),
+    // What a comparison answers is one yes or no. A vector of them is a mask,
+    // which is a type this language does not have, so two vectors are compared
+    // nowhere.
+    (
+        "two_vectors_compared",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   b : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
+         \x20   if (a == b) { print_int_line(1) }\n\
+         \x20   0\n}\n",
+        "'==' is not something two vectors answer",
+    ),
 ];
 
 #[test]
@@ -22342,6 +22410,68 @@ main :: fn() -> i64 {
          }
 ",
         "-9223372036854775808\n9223372036854775807\n-9223372036854775807\n",
+    ),
+    // Elementwise arithmetic over a fixed array of numbers, which is what a
+    // vector register holds. `a + b` is one operation per lane, so what a lane
+    // does is what a number does, and a number written beside a vector is that
+    // number in every lane. The grid covers both element widths, both float
+    // and whole-number lanes, a vector that is a parameter (which arrives as a
+    // borrow), one that a call answered with, and nesting, because the two
+    // compilers get here differently: the bootstrap writes the lanes out in its
+    // IR, and the self-hosted compiler leaves a float vector as one operation
+    // and emits packed instructions for it.
+    (
+        "arithmetic_over_a_vector_is_done_once_per_lane",
+        "import \"io.frost\"
+         blend :: fn(a: [4]f32, b: [4]f32) -> [4]f32 { a * b + a }
+         ramp :: fn(k: f32) -> [4]f32 { [k, k * 2.0, k * 3.0, k * 4.0] }
+         show :: fn(v: [4]f32) {
+             var i : i64 = 0
+             while (i < 4) {
+                 print_f64_line(cast($f64, v[i]))
+                 i = i + 1
+             }
+         }
+         main :: fn() -> i64 {
+             a : [4]f32 = [1.0, 2.0, 3.0, 4.0]
+             b : [4]f32 = [5.0, 6.0, 7.0, 8.0]
+             show(a + b)
+             show(b - a)
+             show(a * 2.0)
+             show(2.0 * a)
+             show(-a)
+             show(blend(a, b))
+             show(ramp(1.0) + ramp(2.0))
+             show((a + b) * 2.0 - a)
+             d : [2]f64 = [1.5, 2.5]
+             e : [2]f64 = [0.5, 4.0]
+             sum := d + e
+             quotient := d / e
+             print_f64_line(sum[0])
+             print_f64_line(quotient[1])
+             wide : [8]f32 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+             doubled := wide * 2.0
+             print_f64_line(cast($f64, doubled[7]))
+             var w : [4]i32 = [1, 2, 3, 4]
+             var x : [4]i32 = [10, 20, 30, 40]
+             y := w + x
+             z := x * 2
+             q := x & 12
+             print_int_line(cast($i64, y[0]) + cast($i64, y[3]))
+             print_int_line(cast($i64, z[2]))
+             print_int_line(cast($i64, q[1]))
+             0
+         }
+",
+        "6\n8\n10\n12\n\
+         4\n4\n4\n4\n\
+         2\n4\n6\n8\n\
+         2\n4\n6\n8\n\
+         -1\n-2\n-3\n-4\n\
+         6\n14\n24\n36\n\
+         3\n6\n9\n12\n\
+         11\n14\n17\n20\n\
+         2\n0.625\n16\n55\n60\n4\n",
     ),
 ];
 
