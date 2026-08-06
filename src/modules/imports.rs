@@ -8,15 +8,15 @@ use crate::ast::{
     Ast, ExprId, Expression, Module, Pattern, PatternId, Range32, ReturnKind,
     SignatureId, Splicer, Statement, StmtId, TokenSpan, splice_positions,
 };
-use crate::build_cache::{
+use crate::modules::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
 };
-use crate::import_visibility::{
+use crate::modules::import_visibility::{
     FileNames, declared_compiler_names, shadowed_imports, unimported_names,
 };
-use crate::interface::ModuleInterface;
-use crate::layers::Layer;
+use crate::modules::interface::ModuleInterface;
+use crate::modules::layers::Layer;
 use crate::lexer::Lexer;
 use crate::lexer::Token;
 use crate::parser::Parser;
@@ -100,7 +100,7 @@ fn find_import(
     // that is. A path spelling its way back up and down again resolves to the
     // same file and is weighed the same.
     if let Some(complaint) =
-        crate::layers::reaching_upward(layers, importing_dir, &found.path)
+        crate::modules::layers::reaching_upward(layers, importing_dir, &found.path)
     {
         bail!("{complaint}");
     }
@@ -257,7 +257,7 @@ pub struct Resolved {
     pub tests: Vec<(String, String)>,
     // One per imported module, and empty unless interface checking is on. The
     // compiler does not build from these yet.
-    pub interfaces: Vec<crate::interface::ModuleInterface>,
+    pub interfaces: Vec<crate::modules::interface::ModuleInterface>,
     // One per imported module, and empty without a build cache. What the driver
     // needs to link a module's cached object instead of compiling it, and to
     // write back what it did compile.
@@ -430,7 +430,7 @@ pub fn resolve_imports_cached(
                 tag: planned.tag,
                 module: planned.module.clone(),
                 record: ModuleRecord {
-                    format_version: crate::build_cache::CACHE_FORMAT,
+                    format_version: crate::modules::build_cache::CACHE_FORMAT,
                     module: planned.module,
                     source_hash: planned.source_hash,
                     imports: planned.imports,
@@ -966,7 +966,7 @@ impl Walk<'_> {
             let offset = splice_positions(&mut contribution.ast, &held.ast);
             let splicer = Splicer::new(&held.ast, offset);
             for statement in &held.roots {
-                let copied = match crate::build_cache::push_as_declaration(
+                let copied = match crate::modules::build_cache::push_as_declaration(
                     &mut contribution.ast,
                     &splicer,
                     *statement,
@@ -1029,8 +1029,8 @@ impl Walk<'_> {
 
         // The interface is derived at the one place a module is parsed, which is what keeps it
         // from drifting out of step with the source it describes.
-        if crate::interface::interfaces_are_checked()
-            || crate::interface::built_from_interfaces()
+        if crate::modules::interface::interfaces_are_checked()
+            || crate::modules::interface::built_from_interfaces()
         {
             let interface = ModuleInterface::of(
                 module_name,
@@ -1058,14 +1058,14 @@ fn check_and_reduce(
     module: &mut Module,
     interfaces: &mut Vec<ModuleInterface>,
 ) -> Result<()> {
-    if !crate::interface::interfaces_are_checked()
-        && !crate::interface::built_from_interfaces()
+    if !crate::modules::interface::interfaces_are_checked()
+        && !crate::modules::interface::built_from_interfaces()
     {
         return Ok(());
     }
-    crate::interface::check_interface_round_trip(interface)?;
-    crate::interface::check_interface_covers_exports(interface)?;
-    crate::interface::check_interface_is_closed(
+    crate::modules::interface::check_interface_round_trip(interface)?;
+    crate::modules::interface::check_interface_covers_exports(interface)?;
+    crate::modules::interface::check_interface_is_closed(
         interface,
         &module.ast,
         &module.roots,
@@ -1082,7 +1082,7 @@ fn check_and_reduce(
     // to be reached. Everything else the module declared is replaced by the
     // interface's view of it, so anything it kept private and nothing reaches
     // is gone.
-    if crate::interface::built_from_interfaces() {
+    if crate::modules::interface::built_from_interfaces() {
         let mut rebuilt = Module::default();
         for statement in &module.roots {
             if matches!(module.ast.stmt(*statement), Statement::Import(..)) {

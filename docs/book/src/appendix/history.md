@@ -202,7 +202,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
     into equal chunks.)*
 13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
     parameter bound to a function signature is a callback registration:
-    `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the
+    `src/lower/callbacks.rs` checks the declaration, `src/check/regions.rs` holds the
     registration to the frame that holds its context, and `src/ir/build.rs`
     passes the handler's address and the context's address. There is no
     trampoline and no cast, because a `mut` parameter is already a pointer and
@@ -229,14 +229,14 @@ It sat under "Linearity checking on the IR" and every item was marked done.
 
 1. Make symbol names a property of the module. *Done.* The tag is an FNV-1a
    hash of the module's path relative to the project root, computed in
-   `module_tag` in `src/imports.rs`. FNV is written out rather than taken from
+   `module_tag` in `src/modules/imports.rs`. FNV is written out rather than taken from
    the standard library because the hash has to mean the same thing in every
    build of the compiler, and `DefaultHasher` promises only consistency within
    one version. The test compiles the same module reached first in one program
    and second in another and compares the tags, and it was checked against both
    failure modes: a traversal-order counter fails it, and so does a constant.
 2. Write the interface out and read it back, while still compiling the whole
-   program. *Done.* `src/interface.rs` derives a `ModuleInterface` at the one
+   program. *Done.* `src/modules/interface.rs` derives a `ModuleInterface` at the one
    place a module is parsed, which is what stops it drifting from the source it
    describes. Three checks run under `FROST_CHECK_INTERFACES`, which the test
    suite sets on every compilation: it survives a JSON round trip, it declares
@@ -416,7 +416,7 @@ whatever compiles its output. In dependency order:
      assembly. When a stage fails, check which one before assuming the emitter
      crashed.
 4. Allocation sources. Done. `uses A` on a function and `with a { }` around
-   a call, mirroring `src/allocation_sources.rs`.
+   a call, mirroring `src/lower/allocation_sources.rs`.
 
    The capability is an implicit trailing parameter that borrows its source, so
    after parsing the function is ordinary and only the call sites know to supply
@@ -434,7 +434,7 @@ whatever compiles its output. In dependency order:
    lower to `int64_t` whatever it returned, so it could not return a pointer.
    It now emits its declared return type.
 
-5. Regions. Done, mirroring `src/regions.rs`. A `with` block is a region and
+5. Regions. Done, mirroring `src/check/regions.rs`. A `with` block is a region and
    a raw pointer derived from its arena may not be stored outside the block or
    returned. A binding declared inside may hold one, since it dies with the
    block, and reading through it is the point.

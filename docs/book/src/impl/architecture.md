@@ -16,13 +16,13 @@ Source (.frost)
    Parser           src/parser.rs       -> AST
       |
       v
-   Import resolver  src/imports.rs      -> one flat, module-scoped AST
-      |                                    src/interface.rs derives and checks
+   Import resolver  src/modules/imports.rs      -> one flat, module-scoped AST
+      |                                    src/modules/interface.rs derives and checks
       |                                    each module's interface alongside
       |                                    src/source_map.rs records which file
       |                                    each position came from
       v
-   Ownership check  src/ownership.rs
+   Ownership check  src/check/ownership.rs
       |
       v
    Typed IR         src/ir.rs, src/ir/build.rs, src/ir/typecheck.rs
@@ -78,14 +78,14 @@ collect what they find (`src/diagnostic.rs`). A program with any diagnostic
 is still refused before a backend writes a word: tolerance is about reporting
 more, never about accepting more. The self-hosted compiler does the same
 with a runtime recovery mark, and a harness test holds the two to the same
-faults, on the same lines, in the same words. `src/query.rs` answers what an
+faults, on the same lines, in the same words. `src/tools/query.rs` answers what an
 editor asks of a checked program (symbols, definitions, fields, local types)
 from the same arenas and IR the build reads; the self-hosted compiler
 answers the same questions through `FROST_QUERY`.
 
 ## Modules
 
-`src/imports.rs` reads each imported file once, renames the top-level names the
+`src/modules/imports.rs` reads each imported file once, renames the top-level names the
 file does not `export`, and splices the result into one statement list. A
 module's private names are tagged `__m<tag>_<name>`, where the tag is an FNV-1a
 hash of the module's path relative to the project root, so a module's symbols
@@ -103,13 +103,13 @@ the reader wrote, so an error inside a stamped-out body leads with the line they
 wrote rather than a line in a template they may not own, and never shows a
 mangled symbol.
 
-`src/interface.rs` derives what a caller would need to compile against a module
+`src/modules/interface.rs` derives what a caller would need to compile against a module
 without seeing the rest of it, and checks it. The checks run under
 `FROST_CHECK_INTERFACES`, which the test suite sets on every compilation, and
 the whole suite runs a second time under `FROST_BUILD_FROM_INTERFACES`, which
 reduces every imported module to its interface.
 
-`src/build_cache.rs` is what makes that pay. Under `--incremental` it keeps a
+`src/modules/build_cache.rs` is what makes that pay. Under `--incremental` it keeps a
 record and an object per module, and a module whose own source and whose
 imported interfaces are unchanged is neither parsed nor code generated: it
 contributes what the record already holds and its object is linked.
@@ -310,16 +310,16 @@ Frost is being reshaped toward a data-oriented language with:
 - Parameter modes rather than reference syntax: unmarked reads, `mut`
   writes, `move` takes ownership, and the compiler inserts the borrow at the
   call. `&`/`&mut` are not surface syntax, so a borrow has nowhere to be stored
-  and is second-class by construction (`src/param_modes.rs`).
+  and is second-class by construction (`src/lower/param_modes.rs`).
 - Regions without lifetimes: a `with arena { }` block owns an arena, and a
   raw pointer into it may not outlive the block. A function's frame is checked
   the same way, so a pointer or slice naming a local cannot be returned
-  (`src/regions.rs`).
+  (`src/check/regions.rs`).
 - Allocation sources: `uses A, B` draws allocation capabilities, threaded as
   implicit parameters and supplied by the `with` blocks that provide them,
-  matched by the name each is reached by (`src/allocation_sources.rs`).
+  matched by the name each is reached by (`src/lower/allocation_sources.rs`).
 - Failure sets: `-> T ! E` says how a function fails and `?` hands a failure
-  on, desugared to an ordinary enum and match (`src/failure_sets.rs`).
+  on, desugared to an ordinary enum and match (`src/lower/failure_sets.rs`).
 - Compile-time arguments: `$T` for types, `$N` for values, and `$f` for a
   function, so a generic algorithm calls its comparator directly rather than
   through a pointer. A function argument may declare the signature it needs
@@ -334,7 +334,7 @@ Frost is being reshaped toward a data-oriented language with:
 
 ## Ownership checking
 
-`src/ownership.rs` runs after parsing, over one top-level item at a time. The
+`src/check/ownership.rs` runs after parsing, over one top-level item at a time. The
 rules it enforces are the language's rather than the pass's:
 [ownership.md](../reference/ownership.md) has second-class borrows, mutable
 exclusivity and the move rule, and [linear.md](../reference/linear.md) has
@@ -342,7 +342,7 @@ consume-exactly-once. What this pass does with them:
 
 - It refuses a reference in a struct field or an enum variant's field, and a
   reference returned from an `extern`. A reference returned from a Frost
-  function is allowed, because the frame-escape check in `src/regions.rs` holds
+  function is allowed, because the frame-escape check in `src/check/regions.rs` holds
   it to storage that outlives the call. The reference types the pass sees at all
   are synthesized by `lower_param_modes`, since the surface has none.
 - It checks the arguments of each call against each other, reporting a variable

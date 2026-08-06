@@ -123,7 +123,7 @@ pub fn grouped(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
         }
         seen.push((place.clone(), claim.clone()));
         let same_words = kept.iter_mut().find(|held| {
-            claim_of(held) == claim && crate::fixes::edit_for(held).is_none()
+            claim_of(held) == claim && crate::tools::fixes::edit_for(held).is_none()
         });
         match same_words {
             Some(held) => {
@@ -257,7 +257,7 @@ fn offset_in(path: &Option<String>, line: usize, column: usize) -> usize {
     let Ok(source) = std::fs::read_to_string(&on_disk) else {
         return 0;
     };
-    crate::fixes::byte_offset(&source, line, column).unwrap_or(0)
+    crate::tools::fixes::byte_offset(&source, line, column).unwrap_or(0)
 }
 
 /// One report, as the object a program reads.
@@ -279,7 +279,7 @@ pub fn as_report(diagnostic: &Diagnostic, severity: &'static str) -> Report {
             }
         })
         .collect();
-    let fix = crate::fixes::edit_for(diagnostic).map(|edit| {
+    let fix = crate::tools::fixes::edit_for(diagnostic).map(|edit| {
         let named = crate::source_map::name_of(edit.position.file)
             .or_else(|| file.clone());
         let start = offset_in(&named, edit.position.line, edit.position.column);

@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use crate::ast::{
     Ast, ExprId, Expression, Pattern, PatternId, Range32, Statement, StmtId,
 };
-use crate::interface_names::names_in_statement;
+use crate::modules::interface_names::names_in_statement;
 
 // What one file wrote: the module it is, what it declares, what it imports, and
 // the names it uses. The imports are canonical paths, since the same file

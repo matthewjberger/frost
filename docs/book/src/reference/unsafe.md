@@ -21,7 +21,7 @@ unsafe { Stmt* }
 ```
 
 Four things belong inside one, and each is a compile error outside one
-(`src/unsafety.rs`, and `check_unsafety` in `selfhosted/regions.frost`).
+(`src/check/unsafety.rs`, and `check_unsafety` in `selfhosted/regions.frost`).
 
 - Reaching through a raw pointer: `p^`, `p^.field`, and `p[i]` where `p` is a
   `^T`. A `^T` carries no length and no proof that what it names is live.

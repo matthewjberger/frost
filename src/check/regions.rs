@@ -569,7 +569,7 @@ pub fn check_frame_escapes_recovering(
     // and is safe, because `check_linearity` forces the registration to be
     // consumed in the function that made it and this check stops it leaving
     // that function by any other road.
-    let registrations = crate::callbacks::callback_registrations(ast, roots);
+    let registrations = crate::lower::callbacks::callback_registrations(ast, roots);
     let fields = collect_field_types(ast, roots);
     let views = collect_view_returns(ast, roots, &fields);
     let externs: HashSet<String> = roots
@@ -1729,7 +1729,7 @@ struct Frame<'a> {
     answers: Option<Type>,
     // Callback registrations in the program, and which argument of each is the
     // context whose storage it keeps.
-    registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
+    registrations: &'a HashMap<String, crate::lower::callbacks::CallbackShape>,
     // Which parameter of each call keeps which other, so an argument naming
     // this frame is judged where it is handed over.
     kept: &'a HashMap<String, Vec<HashSet<usize>>>,

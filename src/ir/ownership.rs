@@ -258,7 +258,7 @@ fn located(
 ) -> Diagnostic {
     Diagnostic::new(
         function.locals[local].position,
-        crate::imports::demangle_private_names(&message),
+        crate::modules::imports::demangle_private_names(&message),
     )
 }
 

@@ -141,7 +141,7 @@ live, and that is what makes it a region.
 ## 8a.5 What the region check refuses
 
 A view carved out of an arena is region-bound, a `[]T` and a `str` as much as a
-`^T`, and the check (`src/regions.rs`) is a flow question rather than a lifetime
+`^T`, and the check (`src/check/regions.rs`) is a flow question rather than a lifetime
 system. Frost has
 no global arenas and no closures, so a `^T` can only point into an arena the
 function was handed directly, which makes provenance something a walk over the
@@ -201,7 +201,7 @@ it may not outlive the arena
 ```
 
 This is the arena half of 8.2. The frame half is checked beside it, in
-`src/regions.rs` and in `check_frame_escapes` in `selfhosted/regions.frost`, and
+`src/check/regions.rs` and in `check_frame_escapes` in `selfhosted/regions.frost`, and
 refused on the same grounds, with one difference in where the burden sits. The
 arena check asks whether a pointer is known to come from the region and refuses
 it when it is; the frame check asks whether a view is known to come from

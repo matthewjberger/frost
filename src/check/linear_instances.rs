@@ -125,7 +125,7 @@ pub(crate) fn check_pooled_resources(
 /// import gives a private declaration, and a reader wrote neither, so it is put
 /// back the way every other diagnostic puts it back.
 fn pool_report(instance: &str, element: &Type) -> String {
-    let named = crate::imports::demangle_private_names(&format!(
+    let named = crate::modules::imports::demangle_private_names(&format!(
         "'{instance}' is a pool of '{element}'"
     ));
     format!(

@@ -1,7 +1,7 @@
 # 8. Ownership and borrowing
 
 Frost is memory-safe without a garbage collector and without lifetimes. The
-borrow rules run after parsing (`src/ownership.rs`).
+borrow rules run after parsing (`src/check/ownership.rs`).
 
 ## 8.1 Copy and move
 
