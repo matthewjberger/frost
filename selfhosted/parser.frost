@@ -2607,7 +2607,32 @@ subject_enum_of :: fn(mut p: Parser, scrutinee: i64) -> i64 {
     ty
 }
 
-parse_variant_case :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
+// Whether a case pattern `offset` tokens along names a variant. Both spellings
+// name the same one: `.Name` reads the enum off what is being matched, and
+// `Enum::Name` writes that enum out. Which enum a match is over is settled by
+// its subject either way, so the two mean the same thing everywhere.
+at_variant_case :: fn(mut p: Parser, offset: i64) -> bool {
+    if (peek_kind(p, offset) == TokenKind::Dot) {
+        return true
+    }
+    (peek_kind(p, offset) == TokenKind::Ident
+        && peek_kind(p, offset + 1) == TokenKind::Coloncolon)
+}
+
+// Past whichever of the two a case pattern was written with, leaving the
+// cursor on the variant name.
+skip_variant_qualifier :: fn(mut p: Parser) {
+    advance(p)
+    if (cur(p) == TokenKind::Coloncolon) {
+        advance(p)
+    }
+}
+
+// The `.Name` or `.Name { fields }` of one case, up to but not past the `:` or
+// the `|` after it. Answers with the variant's tag, leaves which entry of
+// `p.variants` it named in `p.case_variant`, and the bindings its fields opened
+// in `p.case_bindings`.
+parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
@@ -2661,13 +2686,8 @@ parse_variant_case :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
         }
         advance(p)
     }
-    advance(p)
-    body := parse_arm(p)
-    if (bindings == (-1)) {
-        return new_case(p, body, tag, 0)
-    }
-    set_next(p, tail, body)
-    new_case(p, bindings, tag, 0)
+    p.case_bindings = bindings
+    tag
 }
 
 // Turn each arm's trailing expression into an assignment to the name standing
@@ -3016,7 +3036,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
     // first, since the arms read fields out of it too.
     var subject: i64 = -1
     var subject_enum: i64 = -1
-    if (peek_kind(p, 1) == TokenKind::Dot) {
+    if (at_variant_case(p, 1)) {
         subject_enum = subject_enum_of(p, scrutinee)
         name_off := synth_numbered(p, "__match", p.match_count)
         name_len := 7 + digits_in(p.match_count)
@@ -3042,8 +3062,8 @@ parse_match :: fn(mut p: Parser) -> i64 {
         var is_default: i64 = 0
         var value: i64 = 0
         var case_node: i64 = -1
-        if (cur(p) == TokenKind::Dot) {
-            advance(p)
+        if (at_variant_case(p, 0)) {
+            skip_variant_qualifier(p)
             // The enum an earlier arm settled on, so arms after the
             // first are read within it and a name two enums share is
             // the one this match is over.
@@ -3051,7 +3071,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
             if (within == (-1)) {
                 within = match_enum
             }
-            case_node = parse_variant_case(p, subject, within)
+            tag := parse_variant_pattern(p, subject, within)
             index := p.case_variant
             if (index < 0) {
                 checkable = 0
@@ -3064,6 +3084,10 @@ parse_match :: fn(mut p: Parser) -> i64 {
                     checkable = 0
                 }
             }
+            bindings := p.case_bindings
+            advance(p)
+            body := parse_arm(p)
+            case_node = new_case(p, append_node(p, bindings, body), tag, 0)
         } else {
             if (cur(p) == TokenKind::Int) {
                 value = cur_val(p)
