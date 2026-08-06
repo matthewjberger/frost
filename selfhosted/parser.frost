@@ -1608,6 +1608,18 @@ parse_time_type :: fn(mut p: Parser, value: i64) -> i64 {
     -1
 }
 
+// The type an assignment's place gives the value beside it, which is the
+// context `phase = .Draining` reads its enum out of and `h = { a = 2 }` reads
+// its struct out of. A `mut` parameter travels as an address, and the name
+// stands for what it points at.
+assign_context :: fn(mut p: Parser, place: i64) -> i64 {
+    ty := parse_time_type(p, place)
+    if (ty >= 0 && is_borrow(ty) && is_aggregate(pointee(p, ty))) {
+        return pointee(p, ty)
+    }
+    ty
+}
+
 // Whether this type is a run of numbers a vector register holds: a fixed array
 // of an integer or a float. A slice is not one, since its length is decided
 // where the program runs.
@@ -3904,7 +3916,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             expr := parse_expr(p)
             if (cur(p) == TokenKind::Assign) {
                 advance(p)
+                saved_expected := p.expected_type
+                p.expected_type = assign_context(p, expr)
                 value := parse_expr(p)
+                p.expected_type = saved_expected
                 return new_node_at(p, NodeKind::Assign, expr, value, 0, start)
             }
             return new_unary(p, NodeKind::ExprStmt, expr)
@@ -4378,7 +4393,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     expr := parse_expr(p)
     if (cur(p) == TokenKind::Assign) {
         advance(p)
+        // The place is the context the value is read in, the same way an
+        // annotation is, so `phase = .Draining` names its enum by the place it
+        // lands in and a struct literal leaves out its name there too.
+        saved_expected := p.expected_type
+        p.expected_type = assign_context(p, expr)
         value := parse_expr(p)
+        p.expected_type = saved_expected
         return new_node_at(p, NodeKind::Assign, expr, value, 0, start)
     }
     new_unary(p, NodeKind::ExprStmt, expr)

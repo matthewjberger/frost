@@ -3844,6 +3844,52 @@ main :: fn() -> i64 {
 0
 ",
     ),
+    // A literal on the right of an `=` takes its type from the place on the
+    // left, the way one beside an annotation takes it from there. The
+    // self-hosted compiler resolves an inferred literal while it parses, out of
+    // the type the context expects, and the assignment path set no expectation
+    // at all: every one of these was refused there and taken by the bootstrap.
+    // A `mut` parameter is in because it travels as an address, so the place is
+    // what it points at rather than the pointer.
+    (
+        "a_literal_takes_its_type_from_the_place_it_lands_in",
+        "import \"io.frost\"
+         Phase :: enum { Opening, Streaming { sent: i64 }, Draining }
+         Holder :: struct { phase: Phase, mark: i64 }
+         Point :: struct { x: i64, y: i64 }
+         begin :: fn(mut h: Holder) { h.phase = .Streaming { sent = 4 } }
+         reading :: fn(p: Phase) -> i64 {
+             match p {
+                 case .Opening: 0
+                 case .Streaming { sent }: sent
+                 case .Draining: 9
+             }
+         }
+         main :: fn() -> i64 {
+             var loose: Phase = .Opening
+             loose = .Draining
+             print_int_line(reading(loose))
+             var h: Holder = { phase = .Opening, mark = 1 }
+             h.phase = .Draining
+             print_int_line(reading(h.phase))
+             begin(h)
+             print_int_line(reading(h.phase))
+             var p: Point = { x = 1, y = 2 }
+             p = { x = 5, y = 6 }
+             print_int_line(p.x + p.y)
+             var row: [2]Point = [{ x = 1, y = 1 }, { x = 2, y = 2 }]
+             row[1] = { x = 7, y = 8 }
+             print_int_line(row[1].x + row[1].y)
+             0
+         }
+",
+        "9
+9
+4
+11
+15
+",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler through one of its
