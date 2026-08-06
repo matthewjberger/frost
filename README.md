@@ -15,173 +15,169 @@ anything written against it today may need editing tomorrow.
 
 ## The language in one program
 
-A server's connection table, which is most of the language doing one job.
+A dungeon crawl: a turn loop, a torch that has to be put out, and most of the
+language doing one job.
 
 ```frost
-// Every top-level declaration is `name :: value`, and a file's exports are one
-// `export` line.
+// A dungeon crawl. Every top-level declaration is `name :: value`, and a file's
+// exports are one `export` line.
 import "io.frost"
-import "slab.frost"
+
+ROOMS :: 3
 
 // A tagged enum. A variant carries a payload where it has one to carry.
-Phase :: enum { Opening, Streaming { sent: i64 }, Draining }
+Move :: enum { Look, Go { to: i64 }, Swing, Rest }
 
-Connection :: struct { id: i64, budget: i64, phase: Phase }
+Monster :: struct { name: str, hp: i64, bite: i64 }
+
+Hero :: struct { hp: i64, blade: i64, room: i64 }
 
 // A `linear` value is consumed exactly once on every path out, counted when the
-// program is built, so a listener nobody shuts down is a compile error.
-Listener :: linear struct { port: i64 }
+// program is built, so a torch nobody puts out is a compile error.
+Torch :: linear struct { turns: i64 }
 
-listen :: fn(port: i64) -> Listener { { port = port } }
+light :: fn(turns: i64) -> Torch { { turns = turns } }
 
 // `move` is what consumes it, and the name cannot be read again after the call.
-shutdown :: fn(move l: Listener) -> i64 { l.port }
+douse :: fn(move t: Torch) -> i64 { t.turns }
 
-// How accepting fails, and `-> T ! E` below is where that is declared.
-Full :: struct { capacity: i64 }
+// How walking fails. The `-> T ! E` below is where that is declared.
+NoExit :: struct { from: i64 }
 
-// The table holds four connections. What comes back is a `Handle<Connection>`,
-// a copy value that goes stale when the slot it names is released.
-accept :: fn(mut table: Slab<Connection, 4>, id: i64, budget: i64)
-    -> Handle<Connection> ! Full
-{
-    if (slab_full($Connection, $4, table)) {
-        return { capacity = 4 }
+exit_to :: fn(from: i64, to: i64) -> i64 ! NoExit {
+    if (to < 0 || to >= ROOMS) {
+        return { from = from }
     }
-    slab_insert($Connection, $4, table,
-        Connection { id = id, budget = budget, phase = .Opening })
+    to
 }
 
-// `?` hands a failure to the caller rather than reading it here.
-accept_all :: fn(mut table: Slab<Connection, 4>,
-    mut held: []Handle<Connection>, count: i64) -> i64 ! Full
-{
-    for index in 0..count {
-        held[index] = accept(table, 100 + index, index + 1) ?
-    }
-    count
-}
-
-// `mut` borrows for the call and writes the caller's value. `match` covers
-// every variant and binds the payload of the one it took, and a variant on the
-// right of an `=` leaves out its enum because the place already carries it.
-advance :: fn(mut c: Connection) -> bool {
-    match c.phase {
-        case .Opening: {
-            c.phase = .Streaming { sent = 0 }
-            false
-        }
-        case .Streaming { sent }: {
-            if (sent < c.budget) {
-                c.phase = .Streaming { sent = sent + 1 }
-            } else {
-                c.phase = .Draining
-            }
-            false
-        }
-        case .Draining: true
-    }
-}
-
-// An unmarked parameter borrows to read.
-sent_of :: fn(c: Connection) -> i64 {
-    match c.phase {
-        case .Opening: 0
-        case .Streaming { sent }: sent
-        case .Draining: c.budget
-    }
+// `mut` borrows for the call and writes the caller's value. `?` hands a failure
+// to the caller rather than reading it here.
+walk :: fn(mut hero: Hero, to: i64) -> i64 ! NoExit {
+    room := exit_to(hero.room, to) ?
+    hero.room = room
+    room
 }
 
 // A function answers with several values through a return type list. There is
 // no tuple type behind it: the names say which value is which.
-step :: fn(mut table: Slab<Connection, 4>, mut held: []Handle<Connection>)
-    -> (closed: i64, live: i64)
-{
-    var closed: i64 = 0
-    var live: i64 = 0
-    for handle in held {
-        // A handle whose slot was released answers false here, so the loop
-        // never reads whatever moved in behind it.
-        if (slab_alive($Connection, $4, table, handle)) {
-            if (advance(table[handle])) {
-                slab_release($Connection, $4, table, handle)
-                closed = closed + 1
-            } else {
-                live = live + 1
-            }
-        }
+trade :: fn(mut hero: Hero, mut foe: Monster) -> (dealt: i64, taken: i64) {
+    foe.hp = foe.hp - hero.blade
+    if (foe.hp < 0) { foe.hp = 0 }
+    var taken: i64 = 0
+    if (foe.hp > 0) {
+        taken = foe.bite
+        hero.hp = hero.hp - taken
     }
-    return { closed = closed, live = live }
+    return { dealt = hero.blade, taken = taken }
+}
+
+// An unmarked parameter borrows to read.
+report :: fn(foe: Monster, dealt: i64, taken: i64) {
+    print_str("  you hit ")
+    print_str(foe.name)
+    print_str(" for ")
+    print_int(dealt)
+    if (foe.hp == 0) {
+        print_str_line(" and it falls")
+        return
+    }
+    print_str(" and take ")
+    print_int(taken)
+    print_str_line(" back")
 }
 
 main :: fn() -> i64 {
-    listener := listen(8080)
+    torch := light(6)
 
-    var table: Slab<Connection, 4> = slab_new()
-    slab_reset($Connection, $4, table)
+    var hero: Hero = { hp = 30, blade = 6, room = 0 }
+    var here: [ROOMS]Monster = [
+        { name = "the dark", hp = 0, bite = 0 },
+        { name = "a rat", hp = 8, bite = 3 },
+        { name = "a wight", hp = 20, bite = 7 },
+    ]
 
-    var held: [4]Handle<Connection> = [0; 4]
-    match accept_all(table, held, 4) {
-        case .Ok { value }: print_int_line(value)             // 4
-        case .Err { error }: print_int_line(error.capacity)
+    // A literal leaves out a type the context already carries, and a variant
+    // leaves out its enum.
+    plan: [8]Move = [ .Look, .Go { to = 1 }, .Swing, .Swing,
+        .Go { to = 9 }, .Go { to = 2 }, .Swing, .Rest ]
+
+    // `for` walks an array or a slice with no iterator to implement, and
+    // `match` covers every variant and binds the payload of the one it took.
+    for step in plan {
+        match step {
+            case .Look: {
+                print_str("you are in room ")
+                print_int(hero.room)
+                print_str(" with ")
+                print_str_line(here[hero.room].name)
+            }
+            case .Go { to }: {
+                match walk(hero, to) {
+                    case .Ok { value }: {
+                        print_str("you walk into room ")
+                        print_int_line(value)
+                    }
+                    case .Err { error }: {
+                        print_str("no way out of room ")
+                        print_int_line(error.from)
+                    }
+                }
+            }
+            case .Swing: {
+                dealt, taken := trade(hero, here[hero.room])
+                report(here[hero.room], dealt, taken)
+            }
+            case .Rest: {
+                hero.hp = hero.hp + 4
+                print_str("you rest, and are back to ")
+                print_int_line(hero.hp)
+            }
+        }
     }
 
-    // Four is what the table holds, so the fifth is turned away.
-    match accept(table, 104, 1) {
-        case .Ok { value }: print_int_line(value)
-        case .Err { error }: print_int_line(error.capacity)   // 4
-    }
-
-    var closed: i64 = 0
-    var live: i64 = 0
-    for round in 0..3 {
-        shut, still := step(table, held)   // both values, bound by name
-        closed = closed + shut
-        live = still
-    }
-    print_int_line(live)                                      // 4
-
-    // The walk reaches the slots holding a connection and no others, so the
-    // body indexes storage with a number and checks no generation.
-    var sent: i64 = 0
-    for slot in live_slots(table) {
-        sent = sent + sent_of(table.storage[slot])
-    }
-    print_int_line(sent)                                      // 7
-
-    for round in 0..4 {
-        shut, still := step(table, held)
-        closed = closed + shut
-        live = still
-    }
-    print_int_line(closed)                                    // 4
-    print_int_line(live)                                      // 0
-
-    // Releasing the slot moved its generation on, so every handle to it is
-    // stale from here to the end of the program.
-    print_int_line(slab_alive($Connection, $4, table, held[0]))   // 0
-
-    print_int_line(shutdown(listener))                        // 8080
+    print_str("you leave with ")
+    print_int(hero.hp)
+    print_str(" hit points and a torch good for ")
+    print_int(douse(torch))
+    print_str_line(" more turns")
     0
 }
 ```
 
-Past this screen: generics monomorphize over types, values, and functions, so
-`sort($i64, $ascending, xs)` calls directly; a `with` block is an arena whose
-pointers cannot outlive it; `columns<T, N>` stores a struct as one array per
-field; `distinct i64` is the same bits under a type of its own; `[4]f32` takes
-the arithmetic operators once per lane; a call written where a constant is read
-runs before the program does; `defer` runs where the function leaves; and
-`test` blocks run under `--test`. [`examples/tour.frost`](examples/tour.frost)
-is the official tour, a runnable program the suite compiles and checks:
+It prints a transcript:
+
+```
+you are in room 0 with the dark
+you walk into room 1
+  you hit a rat for 6 and take 3 back
+  you hit a rat for 6 and it falls
+no way out of room 1
+you walk into room 2
+  you hit a wight for 6 and take 7 back
+you rest, and are back to 24
+you leave with 24 hit points and a torch good for 6 more turns
+```
+
+Past this screen: a monster that outlives the turn it was made in lives in a
+pool and travels as a generational `Handle<Monster>`, a copy value that goes
+stale rather than dangling; generics monomorphize over types, values, and
+functions, so `sort($i64, $ascending, xs)` calls directly; a `with` block is an
+arena whose pointers cannot outlive it; `columns<T, N>` stores a struct as one
+array per field; `distinct i64` is the same bits under a type of its own;
+`[4]f32` takes the arithmetic operators once per lane; a call written where a
+constant is read runs before the program does; `defer` runs where the function
+leaves; and `test` blocks run under `--test`.
+[`examples/tour.frost`](examples/tour.frost) is the official tour, a runnable
+program the suite compiles and checks:
 
 ```bash
 frost examples/tour.frost          # compile, link, and run
 ```
 
 The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is
-built on those handles, and [`just app scene`](docs/book/src/std/ecs.md) runs
-it: entities in an ECS, two passes, depth deciding what is in front.
+built on those pools, and [`just app scene`](docs/book/src/std/ecs.md) runs it:
+entities in an ECS, two passes, depth deciding what is in front.
 
 ## Borrows are parameter modes
 
@@ -192,10 +188,10 @@ own, so there is nothing to store one in and nothing to annotate.
 
 That rule costs one thing, and paying it is most of what makes a Frost program
 look the way it does. Anything that outlives a call needs some other way to be
-named, which is why the connections above live in a pool and travel as
-`Handle<Connection>`. The one borrow a program does write down is `ref T`,
-returnable and checked at the frame and the region, so an accessor can hand
-back a place rather than a copy.
+named, so a program that keeps its monsters past the turn loop puts them in a
+pool and passes a `Handle<Monster>` around instead. The one borrow a program
+does write down is `ref T`, returnable and checked at the frame and the region,
+so an accessor can hand back a place rather than a copy.
 
 | in place of | Frost has |
 | --- | --- |
