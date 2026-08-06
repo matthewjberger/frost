@@ -36,6 +36,15 @@ They are plain data, passed and returned by value like any other struct. A `Mat4
 is its sixteen floats in a single array field, and a `Quat` stores its vector
 part in `x, y, z` with the scalar part in `w`.
 
+## A note on the language's own vectors
+
+`Vec2`, `Vec3` and `Vec4` here are structs with named components, which is what
+reads well at a call site: `v.x` says which one it is. The language separately
+gives a fixed array of numbers the arithmetic operators, once per lane
+(3.2b of the reference), so `[4]f32` is what a program reaches for where the
+lanes are anonymous and the arithmetic is the point. The two do not compete: one
+names its components and the other is a register's worth of numbers.
+
 ## Vectors
 
 `vec2`, `vec3`, and `vec4` construct a vector from its components. The operations

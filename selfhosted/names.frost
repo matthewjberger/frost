@@ -17,7 +17,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     report_type_name, report_distinct_note, written_number,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
-    is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
+    is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_indirect, pointer_to, borrow_of,
     is_integer,
     is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
@@ -997,6 +997,20 @@ is_pointer :: fn(ty: i64) -> bool {
 // A borrow carries the flag. A raw pointer is indirect without it. An
 // indirection over a distinct type carries the same difference in the low bit
 // of its code, so this answers for one without reading the table.
+// The vector a type is, looking through the borrow an aggregate parameter
+// arrives as, or -1 for anything that is not one. A slice is not one: its
+// length is decided where the program runs, and a vector's is in its type.
+vector_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    var held := ty
+    if (is_borrow(held) || is_pointer(held)) {
+        held = pointee(p, held)
+    }
+    if (is_array_ty(held) == false || is_slice_ty(p, held)) {
+        return -1
+    }
+    held
+}
+
 is_borrow :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
     if (is_indirect(held)) {

@@ -825,6 +825,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     op := bin.val
     right := bin.b
     ty := type_of(p, id)
+    // Two vectors, done lane by lane. A statement expression is what lets an
+    // array come out of an expression in C; the operands are named first, so
+    // each is evaluated once however many lanes read it. The C compiler folds
+    // the run of lanes back into packed instructions.
+    if (is_array_ty(ty) && is_slice_ty(p, ty) == false) {
+        emit_vector_bin(p, left, op, right, ty)
+        return
+    }
     if (arith_checked(p, op, ty)) {
         emit_checked_bin(p, left, op, right, ty)
         return
@@ -834,6 +842,38 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     emit_op(op)
     emit_expr(p, right)
     emit_text(")")
+}
+
+// Two vectors as a statement expression: the operands under names of their
+// own, then one lane at a time into a result of the same type.
+emit_vector_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64,
+    ty: i64) {
+    count := array_length(p, ty)
+    emit_text("({ ")
+    emit_ctype(p, ty)
+    emit_text(" __va = (")
+    emit_coerced(p, left, ty)
+    emit_text("); ")
+    emit_ctype(p, ty)
+    emit_text(" __vb = (")
+    emit_coerced(p, right, ty)
+    emit_text("); ")
+    emit_ctype(p, ty)
+    emit_text(" __vr; ")
+    var lane: i64 = 0
+    while (lane < count) {
+        emit_text("__vr.items[")
+        frost_rt_emit_int(lane)
+        emit_text("] = __va.items[")
+        frost_rt_emit_int(lane)
+        emit_text("]")
+        emit_op(op)
+        emit_text("__vb.items[")
+        frost_rt_emit_int(lane)
+        emit_text("]; ")
+        lane = lane + 1
+    }
+    emit_text("__vr; })")
 }
 
 // Whether an operation can leave the range of the type it is computed at. A

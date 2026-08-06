@@ -292,6 +292,31 @@ than a fallback to running it later. That is the trade taken on purpose: falling
 back would mean `LANES` was a number in one place and a call in another, which
 is two meanings for one declaration.
 
+## 12. A vector is an array, not a type of its own
+
+Zig writes `@Vector(4, f32)`, Odin writes `#simd[4]f32`, Rust writes
+`Simd<f32, 4>`. Frost writes `[4]f32`, which is the array it already had.
+
+A separate vector type would need its own layout rule, its own ABI answer, its
+own coercion to and from the array it is shaped like, and a spelling. Every one
+of those is a place for the two to disagree. The array already answers all four,
+and a fixed array of numbers is exactly what a vector register holds, so the
+type carries no information the array did not.
+
+What the separate type buys elsewhere is a place to hang the operators without
+giving arrays elementwise arithmetic. Frost gives arrays the arithmetic instead,
+which costs nothing: `+` over two arrays was an error, so no program changes
+meaning.
+
+Two rules keep it from becoming a hidden loop. The length is a power of two and
+the whole vector is at most sixty-four bytes, which is a register's worth. Past
+that an operator would be a loop the reader never wrote, and hidden control flow
+is what this document rules out everywhere else.
+
+The trade is that a program wanting elementwise arithmetic over a thousand
+numbers writes the loop. That is the same trade the length rule makes, and the
+loop is the thing that was going to happen either way.
+
 ## Honest tradeoffs
 
 A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`

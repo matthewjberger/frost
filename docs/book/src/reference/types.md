@@ -133,6 +133,44 @@ A stated layout reaches every backend. Both compilers compute the offsets and
 both C emitters carry them, so `sizeof`, `offset_of` and a read through a field
 answer the same on all of them.
 
+## 3.2b Vectors
+
+A fixed array of numbers is what a vector register holds, so the arithmetic
+operators are defined over one, once per lane:
+
+```frost
+a : [4]f32 = [1.0, 2.0, 3.0, 4.0]
+b : [4]f32 = [5.0, 6.0, 7.0, 8.0]
+sum := a + b            // [6.0, 8.0, 10.0, 12.0]
+scaled := a * 2.0       // [2.0, 4.0, 6.0, 8.0]
+flipped := -a           // [-1.0, -2.0, -3.0, -4.0]
+```
+
+There is no vector type and no marker. `[4]f32` is the fixed array of 3.2, and
+what makes `a + b` elementwise is that the two sides are arrays of numbers.
+
+`+`, `-`, `*` and `/` are defined for any numeric element; `%`, `&`, `|`, `<<`
+and `>>` are defined where the element is a whole number. Unary `-` negates
+every lane. A number written on either side is that number in every lane. Two
+vectors are compared nowhere: a comparison answers one yes or no, and a vector
+of them is a mask, which is a type this language does not have.
+
+A lane does what the number would do. A float lane rounds as one `f32` does, and
+a whole-number lane aborts on overflow and says where (10.4), which is why a
+vector of whole numbers is written out lane by lane rather than becoming one
+packed instruction: a packed add has no way to say which lane overflowed.
+
+The shape is held to a register's worth. The length is a power of two, and the
+whole vector is at most 64 bytes. Both are refused where they do not hold,
+naming the length or the width: past a register the operation is a loop, and a
+loop the reader does not see written down is not what an operator may be.
+
+What a lane becomes is the backend's business. The self-hosted compiler's
+assembly backend emits `addps`, `subps`, `mulps` and `divps` for a vector of
+`f32`, and the `pd` forms for one of `f64`, sixteen bytes at a time. Both C
+backends write the lanes out and the C compiler folds them back: `a * b + a`
+over `[4]f32` comes out of `gcc -O2` as `mulps` and `addps`.
+
 ## 3.3 Borrows and pointer types
 
 A borrow is mostly not a type a program writes. It is what a parameter mode

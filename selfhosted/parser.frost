@@ -1534,7 +1534,7 @@ parse_unary :: fn(mut p: Parser) -> i64 {
         }
         operand := parse_unary(p)
         zero := new_node_at(p, NodeKind::Num, 0, 0, 0, start)
-        return new_node_at(p, NodeKind::Bin, zero, operand, OP_SUB, start)
+        return new_arith(p, zero, operand, OP_SUB, start)
     }
     if (kind == TokenKind::Bang) {
         advance(p)
@@ -1543,6 +1543,291 @@ parse_unary :: fn(mut p: Parser) -> i64 {
         return new_node_at(p, NodeKind::Bin, operand, zero, OP_EQ, start)
     }
     parse_factor(p)
+}
+
+// The width a vector may be, in bytes. A register's worth: `[16]f32` is one
+// AVX-512 register and `[4]f64` is half of one, and a length past this is a
+// loop the reader would not see written down.
+VECTOR_LIMIT :: 64
+
+// The type a value has while the declaration is still being parsed, or -1
+// where nothing here says.
+//
+// This never asks `type_of`. That walk instantiates a generic to work an answer
+// out, and this one runs at every arithmetic operator in the program, so asking
+// it built types nothing had asked for and filled an arena. Every shape below
+// is a table lookup, and the shapes a vector can arrive as are the ones it
+// knows: a name, an element of one, a field of one, an operator over two, a
+// literal, and what a function was declared to answer with.
+parse_time_type :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    kind := node.kind
+    if (kind == NodeKind::Var) {
+        return parse_local_type(p, node.val, node.c)
+    }
+    if (kind == NodeKind::Index) {
+        base := parse_time_type(p, node.a)
+        if (is_array_ty(base)) {
+            return array_element(p, base)
+        }
+        return -1
+    }
+    if (kind == NodeKind::Field) {
+        base := parse_time_type(p, node.a)
+        if (base < 0) {
+            return -1
+        }
+        return field_type_by_range(p, base, node.val, node.c)
+    }
+    if (kind == NodeKind::ArrayLit) {
+        if (node.val != 0) {
+            return array_of(p, node.val - 1, node.c)
+        }
+        return -1
+    }
+    if (kind == NodeKind::Call) {
+        callee := arena_at(p.fns, node.val)
+        return callee.ret_type
+    }
+    // An operator over a vector answers with that vector, and the operands are
+    // still names the walks have not seen, so the question goes to them.
+    if (kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
+        left := vector_of(p, parse_time_type(p, node.a))
+        if (left >= 0) {
+            return left
+        }
+        return vector_of(p, parse_time_type(p, node.b))
+    }
+    -1
+}
+
+// Whether this type is a run of numbers a vector register holds: a fixed array
+// of an integer or a float. A slice is not one, since its length is decided
+// where the program runs.
+is_vector_ty :: fn(mut p: Parser, ty: i64) -> bool {
+    held := vector_of(p, ty)
+    if (held < 0) {
+        return false
+    }
+    element := array_element(p, held)
+    is_integer(element) || is_float(element)
+}
+
+vector_op_text :: fn(op: i64) -> ^i8 {
+    if (op == OP_ADD) { return "+" }
+    if (op == OP_SUB) { return "-" }
+    if (op == OP_MUL) { return "*" }
+    if (op == OP_DIV) { return "/" }
+    if (op == OP_MOD) { return "%" }
+    if (op == OP_BITAND) { return "&" }
+    if (op == OP_BITOR) { return "|" }
+    if (op == OP_SHL) { return "<<" }
+    if (op == OP_SHR) { return ">>" }
+    if (op == OP_LT) { return "<" }
+    if (op == OP_LE) { return "<=" }
+    if (op == OP_GT) { return ">" }
+    if (op == OP_GE) { return ">=" }
+    if (op == OP_EQ) { return "==" }
+    "!="
+}
+
+// One side of an elementwise operation, bound to a name so its lanes are read
+// out of one place. A call written there is made once, which is what a lane
+// per read of the expression would not give.
+hold_vector_operand :: fn(mut p: Parser, value: i64, ty: i64) -> i64 {
+    held := arena_at(p.arena, value)
+    if (held.kind == NodeKind::Var || held.kind == NodeKind::Field) {
+        return value
+    }
+    name_off := synth_numbered(p, "__lane", p.match_count)
+    name_len := 6 + digits_in(p.match_count)
+    p.match_count = p.match_count + 1
+    bind := new_let_node(p, value, name_off, name_len, ty)
+    arena_push(p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    record_parse_local(p, name_off, name_len, ty, value)
+    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
+}
+
+// Two sides that do not go together. A vector reads by its length and element
+// and anything else by its own name, written out here rather than by the type
+// renderer, since the two compilers render a fixed array's length differently
+// and a diagnostic is one sentence in one language.
+report_mismatch :: fn(mut p: Parser, start: i64, vector: i64, other: i64) {
+    report_where(p.modules, p.src, start)
+    report_operand(p, vector)
+    report(" and ")
+    report_operand(p, other)
+    report(" do not go together; elementwise arithmetic is over two of one ")
+    report("vector type, or a vector and a number of its element type")
+    frost_rt_recover_escape()
+}
+
+report_operand :: fn(mut p: Parser, ty: i64) {
+    held := vector_of(p, ty)
+    if (held < 0) {
+        report("a ")
+        report_type_name(p, ty)
+        return
+    }
+    report("a vector of ")
+    report_int(array_length(p, held))
+    report(" ")
+    report_type_name(p, array_element(p, held))
+}
+
+// An arithmetic operator over two values, where a vector on either side means
+// the operation is done once per lane.
+//
+// `a + b` over two `[4]f32` is four adds, so what a lane does is what a number
+// does: a float rounds as one number does, and a whole number aborts on
+// overflow and says where. The lanes are written out as an array literal bound
+// to a name, so every backend carries this with the code it already has.
+new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
+    start: i64) -> i64 {
+    left_ty := parse_time_type(p, left)
+    right_ty := parse_time_type(p, right)
+    left_vector := is_vector_ty(p, left_ty)
+    right_vector := is_vector_ty(p, right_ty)
+    if (left_vector == false && right_vector == false) {
+        return new_node_at(p, NodeKind::Bin, left, right, op, start)
+    }
+    var vector := vector_of(p, left_ty)
+    if (left_vector == false) {
+        vector = vector_of(p, right_ty)
+    }
+    element := array_element(p, vector)
+    count := array_length(p, vector)
+    if (left_vector && right_vector
+        && vector_of(p, left_ty) != vector_of(p, right_ty)) {
+        report_mismatch(p, start, vector, vector_of(p, right_ty))
+    }
+    if (left_vector == false && left_ty != element
+        && untyped_literal(p, left) == false) {
+        report_mismatch(p, start, vector, left_ty)
+    }
+    if (right_vector == false && right_ty != element
+        && untyped_literal(p, right) == false) {
+        report_mismatch(p, start, vector, right_ty)
+    }
+    if (count <= 0 || (count & (count - 1)) != 0) {
+        report_where(p.modules, p.src, start)
+        report("elementwise arithmetic is over a vector whose length is a ")
+        report("power of two, and ")
+        report_int(count)
+        report(" is not one")
+        frost_rt_recover_escape()
+    }
+    bytes := type_size(p, element) * count
+    if (bytes > VECTOR_LIMIT) {
+        report_where(p.modules, p.src, start)
+        report("elementwise arithmetic is over a vector of at most ")
+        report_int(VECTOR_LIMIT)
+        report(" bytes, which is a register's worth, and this one is ")
+        report_int(bytes)
+        frost_rt_recover_escape()
+    }
+    whole := is_integer(element)
+    arithmetic := op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV
+    bitwise := (op == OP_MOD || op == OP_BITAND || op == OP_BITOR
+        || op == OP_SHL || op == OP_SHR)
+    if (arithmetic == false && (whole == false || bitwise == false)) {
+        report_where(p.modules, p.src, start)
+        report("'")
+        report_cstr(vector_op_text(op))
+        report("' is not something two vectors answer; a vector takes '+', ")
+        report("'-', '*' and '/', and one of whole numbers takes '%', '&', ")
+        report("'|', '<<' and '>>' as well")
+        frost_rt_recover_escape()
+    }
+    // A float vector stays one operation, which is what a packed instruction
+    // is. A vector of whole numbers is written out lane by lane, because an
+    // overflow aborts and says which lane it was, and a packed add has no way
+    // to say that.
+    if (whole == false && bytes % 16 == 0) {
+        left_side := vector_operand(p, left, left_vector, vector, element,
+            count)
+        right_side := vector_operand(p, right, right_vector, vector, element,
+            count)
+        return new_node_at(p, NodeKind::Bin, left_side, right_side, op, start)
+    }
+    var lhs := left
+    var rhs := right
+    if (left_vector) {
+        lhs = hold_vector_operand(p, left, left_ty)
+    }
+    if (right_vector) {
+        rhs = hold_vector_operand(p, right, right_ty)
+    }
+    var head: i64 = -1
+    var tail: i64 = -1
+    var lane: i64 = 0
+    while (lane < count) {
+        var a := lhs
+        var b := rhs
+        if (left_vector) {
+            a = new_index(p, clone_place(p, lhs),
+                new_node_at(p, NodeKind::Num, 0, 0, lane, start), start)
+        }
+        if (right_vector) {
+            b = new_index(p, clone_place(p, rhs),
+                new_node_at(p, NodeKind::Num, 0, 0, lane, start), start)
+        }
+        computed := new_node_at(p, NodeKind::Bin, a, b, op, start)
+        item := new_node(p, NodeKind::Arg, computed, 0, 0)
+        if (head == (-1)) {
+            head = item
+        } else {
+            set_next(p, tail, item)
+        }
+        tail = item
+        lane = lane + 1
+    }
+    made := new_node(p, NodeKind::ArrayLit, head, 0, 0)
+    literal := arena_at(p.arena, made)
+    literal.c = count
+    literal.val = element + 1
+    bind_vector(p, made, vector)
+}
+
+// A name bound to a vector value, so what follows reads it out of one place.
+bind_vector :: fn(mut p: Parser, value: i64, vector: i64) -> i64 {
+    name_off := synth_numbered(p, "__lane", p.match_count)
+    name_len := 6 + digits_in(p.match_count)
+    p.match_count = p.match_count + 1
+    bind := new_let_node(p, value, name_off, name_len, vector)
+    arena_push(p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    record_parse_local(p, name_off, name_len, vector, value)
+    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
+}
+
+// One side of a packed operation as a vector. A number written beside a vector
+// is that number in every lane, which is a literal of N copies rather than an
+// instruction of its own.
+vector_operand :: fn(mut p: Parser, value: i64, is_vector: bool,
+    vector: i64, element: i64, count: i64) -> i64 {
+    if (is_vector) {
+        return value
+    }
+    var head: i64 = -1
+    var tail: i64 = -1
+    var lane: i64 = 0
+    while (lane < count) {
+        item := new_node(p, NodeKind::Arg, value, 0, 0)
+        if (head == (-1)) {
+            head = item
+        } else {
+            set_next(p, tail, item)
+        }
+        tail = item
+        lane = lane + 1
+    }
+    made := new_node(p, NodeKind::ArrayLit, head, 0, 0)
+    literal := arena_at(p.arena, made)
+    literal.c = count
+    literal.val = element + 1
+    bind_vector(p, made, vector)
 }
 
 parse_mul :: fn(mut p: Parser) -> i64 {
@@ -1559,7 +1844,7 @@ parse_mul :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_unary(p)
-        left = new_node_at(p, NodeKind::Bin, left, right, op, start)
+        left = new_arith(p, left, right, op, start)
         kind = cur(p)
     }
     left
@@ -1581,7 +1866,7 @@ parse_add :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_mul(p)
-        left = new_node_at(p, NodeKind::Bin, left, right, op, start)
+        left = new_arith(p, left, right, op, start)
         kind = cur(p)
     }
     left
@@ -1604,7 +1889,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_add(p)
-        left = new_node_at(p, NodeKind::Bin, left, right, op, start)
+        left = new_arith(p, left, right, op, start)
         kind = cur(p)
     }
     left
@@ -1616,7 +1901,7 @@ parse_bitand :: fn(mut p: Parser) -> i64 {
     while (joins_line(p) && (cur(p) == TokenKind::Amp)) {
         advance(p)
         right := parse_shift(p)
-        left = new_node_at(p, NodeKind::Bin, left, right, OP_BITAND, start)
+        left = new_arith(p, left, right, OP_BITAND, start)
     }
     left
 }
@@ -1627,7 +1912,7 @@ parse_bitor :: fn(mut p: Parser) -> i64 {
     while (joins_line(p) && (cur(p) == TokenKind::Pipe)) {
         advance(p)
         right := parse_bitand(p)
-        left = new_node_at(p, NodeKind::Bin, left, right, OP_BITOR, start)
+        left = new_arith(p, left, right, OP_BITOR, start)
     }
     left
 }
@@ -1639,32 +1924,32 @@ parse_cmp :: fn(mut p: Parser) -> i64 {
     if (kind == TokenKind::Lt) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_LT, start)
+        return new_arith(p, left, right, OP_LT, start)
     }
     if (kind == TokenKind::Le) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_LE, start)
+        return new_arith(p, left, right, OP_LE, start)
     }
     if (kind == TokenKind::Gt) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_GT, start)
+        return new_arith(p, left, right, OP_GT, start)
     }
     if (kind == TokenKind::Ge) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_GE, start)
+        return new_arith(p, left, right, OP_GE, start)
     }
     if (kind == TokenKind::Eqeq) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_EQ, start)
+        return new_arith(p, left, right, OP_EQ, start)
     }
     if (kind == TokenKind::Ne) {
         advance(p)
         right := parse_bitor(p)
-        return new_node_at(p, NodeKind::Bin, left, right, OP_NE, start)
+        return new_arith(p, left, right, OP_NE, start)
     }
     left
 }
