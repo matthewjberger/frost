@@ -1567,6 +1567,11 @@ Parser :: struct {
     // against what will still be holding it.
     kept_masks: Arena<AnswerMask>,
     answer_locals: Arena<LocalVar>,
+    // Whether the walk filling these masks is asking what a function's answer
+    // names, where reading a field that is itself a view copies the view and
+    // names what it pointed at, or asking what a call keeps, where that same
+    // read is how a caller writes into the run a container holds.
+    mask_views_copy: i64,
     // For a local that borrows rather than owning storage, where the place it
     // names lives. `ref x := place` binds one, and so does a binding taken from
     // a call answering with a `ref`.

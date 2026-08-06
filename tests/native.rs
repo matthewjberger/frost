@@ -8612,6 +8612,7 @@ const STD_MODULES: &[(&str, &str)] = &[
 const SHARED_EXAMPLES: &[&str] = &[
     "native/allocator.frost",
     "native/arena.frost",
+    "native/custom_allocator.frost",
     "native/dynamic_arena.frost",
     "native/entity_system.frost",
     "native/game_world.frost",

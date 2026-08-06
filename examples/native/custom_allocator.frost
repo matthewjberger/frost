@@ -1,0 +1,131 @@
+// Writing an allocator, end to end. Nothing here is a compiler feature: `Bump`
+// is an ordinary struct, the carve is ordinary Frost, and the only things the
+// compiler supplies are `ptr_to`, `ptr_cast` and `slice_from`. What the
+// language adds is `uses`, which lets a function declare that it draws from an
+// allocation source without taking it as a parameter, and `with`, which says
+// where that source comes from and how long what it hands out may live.
+//
+// The four pieces, in the order they appear below:
+//
+//   1. the allocator: backing bytes, and how far into them the next value goes
+//   2. the carve: bytes out, a typed `[]T` back, so what is built on it is
+//      bounds-checked
+//   3. `uses Bump<1024>` on a function that allocates, and `with scratch` at
+//      the caller that supplies it
+//   4. a container over a carved run, and the mark that takes it all back
+//
+// The run `gather` answers with views the arena, which a `uses` function is
+// allowed to hand back: the arena belongs to the caller, so the caller's `with`
+// block is where that view's life is checked. Assigning `kept` to a binding
+// declared outside the block is refused, and the book's chapter on writing an
+// allocator shows the message.
+//
+//   frost examples/native/custom_allocator.frost
+
+import "io.frost"
+import "mem.frost"
+import "fixed.frost"
+
+// 1. The allocator. A `[N]u8` of backing bytes and the offset the next value
+// starts at, both inside the struct, so a `Bump<1024>` is 1024 bytes plus a
+// number and nothing under it allocates.
+Bump :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+// Where the allocator is now, to roll back to later.
+bump_mark :: fn($N: usize, b: Bump<N>) -> i64 {
+    b.offset
+}
+
+// Everything carved since the mark, taken back in one step. Nothing is written
+// and nothing is run: the bytes stay as they were and the next carve takes
+// them again.
+bump_reset :: fn($N: usize, mut b: Bump<N>, mark: i64) {
+    assert(mark >= 0 && mark <= b.offset)
+    b.offset = mark
+}
+
+bump_used :: fn($N: usize, b: Bump<N>) -> i64 {
+    b.offset
+}
+
+// 2. The carve. Room for `count` elements of `T`, taken from the front of what
+// is left, handed back as a slice rather than a pointer so every access
+// through it is bounds-checked.
+//
+// `slice_range` answers for the run against the buffer, so asking for more than
+// is left aborts here rather than handing back a view that reaches past the
+// end. The reinterpret from bytes to `T` is the one unchecked step, and it is
+// the only `unsafe` block in the file.
+//
+// The run starts at the next multiple of 8, which is what every type this
+// program carves is aligned to. There is no `alignof` to ask, so an allocator
+// for types that want more than 8 needs the alignment written into it.
+bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
+    start := (b.offset + 7) / 8 * 8
+    width := count * sizeof(T)
+    bytes := slice_range($u8, b.data, start, width)
+    b.offset = start + width
+    unsafe { slice_from($T, ptr_cast($T, ptr_to(bytes[0])), count) }
+}
+
+// 3. A function that draws the source. `uses Bump<1024>` says so in the
+// signature, and the body reaches the allocator as `bump`: the type's own name
+// with the first letter lowercased. No parameter is written for it and none is
+// passed at the call.
+//
+// The `[]i64` this answers with views the arena, which a `uses` function may
+// hand back. The arena belongs to whoever supplied it, so the `with` block at
+// the caller is where that view is held to the arena's life.
+gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
+    // 4. A container over the run. `Fixed<T>` is a growable array over storage
+    // it does not own, so it fills the run and never allocates.
+    var kept := fixed_over($i64, bump_carve($i64, $1024, bump, slice_len(world)))
+    for value in world {
+        if (value > over) {
+            fixed_push($i64, kept, value)
+        }
+    }
+    fixed_slice($i64, kept)
+}
+
+total_of :: fn(values: []i64) -> i64 {
+    var total: i64 = 0
+    for value in values {
+        total = total + value
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    var scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
+    var world: [6]i64 = [3, 9, 4, 12, 7, 1]
+    var round: i64 = 0
+    while (round < 3) {
+        mark := bump_mark($1024, scratch)
+        // `with` says which allocator the calls inside draw from, and the block
+        // is also the region: what `gather` carved may not outlive it.
+        with scratch {
+            kept := gather(world, round * 3)
+            print_str("over ")
+            print_int(round * 3)
+            print_str(": ")
+            print_int(slice_len(kept))
+            print_str(" values totalling ")
+            print_int(total_of(kept))
+            print_str(", ")
+            print_int(bump_used($1024, scratch))
+            print_str(" bytes out")
+            print_str("\n")
+        }
+        // The whole round's storage, back in one step. Nothing was freed one
+        // value at a time, and the next round carves the same bytes again.
+        bump_reset($1024, scratch, mark)
+        round = round + 1
+    }
+    print_str("still out: ")
+    print_int_line(bump_used($1024, scratch))
+    0
+}

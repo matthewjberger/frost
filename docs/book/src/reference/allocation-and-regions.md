@@ -16,15 +16,21 @@ it.
 `uses` follows the return type in a signature (13.6), and takes one or more
 types:
 
-```frost,sketch
+```frost
 Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 
+alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + 8
+    unsafe { ptr_cast($i64, slot) }
+}
+
 make_two :: fn() -> i64 uses Arena<256> {
-    p := alloc_int(arena)
-    p^ = 10
-    q := alloc_int(arena)
-    q^ = 32
-    p^ + q^
+    p := alloc_int($256, arena)
+    unsafe { p^ = 10 }
+    q := alloc_int($256, arena)
+    unsafe { q^ = 32 }
+    unsafe { p^ + q^ }
 }
 ```
 
@@ -174,14 +180,22 @@ being returned; being assigned to a place rooted outside the region; and being
 the block's trailing expression, since that value flows to the enclosing
 scope.
 
-```frost,sketch
+```frost,refused
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+
+alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + 8
+    unsafe { ptr_cast($i64, slot) }
+}
+
 main :: fn() -> i64 {
     var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
     var escaped : ^i64 = ptr_to(arena.offset)
     with arena {
-        escaped = alloc_int(arena)     // error: escapes its region
+        escaped = alloc_int($256, arena)     // error: escapes its region
     }
-    escaped^
+    unsafe { escaped^ }
 }
 ```
 
@@ -194,11 +208,18 @@ pointer is allowed, because the caller's `with` block is where that pointer's
 region actually is and the check runs there. Writing one into a parameter is
 not, since the parameter belongs to a frame that outlives this one:
 
-```frost,sketch
+```frost,refused
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 Reg :: struct { ptr: ^i64 }
 
+alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + 8
+    unsafe { ptr_cast($i64, slot) }
+}
+
 stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
-    r.ptr = alloc_int(arena)      // error: escapes its region
+    r.ptr = alloc_int($256, arena)      // error: escapes its region
     0
 }
 ```
@@ -258,6 +279,20 @@ storage the walk cannot trace is refused, so a road nobody wrote down is a
 refusal rather than a leak. What that costs is measured:
 across the standard library, the self-hosted compiler and the examples it refuses
 nothing, and both compilers refuse the same programs.
+
+## 8a.5b What `uses` cannot say
+
+The type after `uses` is concrete. `uses Arena<256>` names one allocator type at
+one size, and there is no way to write "whatever allocator my caller has", so a
+library function cannot declare one: it would be choosing its caller's arena
+type for it. That is why `std/arena.frost` takes `mut a: Arena<N>` as an
+ordinary parameter and leaves `uses` to the program, which knows which allocator
+it built. Nothing is lost by that at a call site inside a `with` block, since
+the region check keys off the block rather than off `uses`.
+
+[Writing an allocator](../writing-an-allocator.md) is the worked version of this
+chapter: one program that declares an allocator, carves from it, draws it
+through `uses`, supplies it with `with`, and shows the refusal.
 
 ## 8a.6 What this is not
 

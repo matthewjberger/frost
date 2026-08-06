@@ -1006,6 +1006,17 @@ struct Answers<'a> {
     // names that parameter's storage, where copying a value out of one does
     // not.
     answers_place: bool,
+    // Whether reading a field that is itself a view copies the view rather than
+    // naming the value it came out of. That is what the answer question wants:
+    // the `[]T` inside a container points at storage somebody else owns, so an
+    // accessor answering with it names that storage and not the container.
+    //
+    // The keep question wants the opposite reading of the same expression. A
+    // view read out of a container is how a caller writes into the run the
+    // container holds, so `held := v.storage` followed by `held[i] = value`
+    // does put the value in `v`, and losing that let a view of a local go into
+    // a caller's `Vec` unremarked.
+    views_copy: bool,
 }
 
 /// Which parameters a function's answer can name the storage of.
@@ -1074,6 +1085,7 @@ fn collect_answer_sources(
                 sources: &sources,
                 externs,
                 answers_place: one.answers_place,
+                views_copy: true,
             };
             let mut environment: HashMap<String, HashSet<usize>> =
                 HashMap::new();
@@ -1222,6 +1234,7 @@ fn collect_kept_parameters(
                 sources,
                 externs,
                 answers_place: one.answers_place,
+                views_copy: false,
             };
             let mut environment: HashMap<String, HashSet<usize>> =
                 HashMap::new();
@@ -1621,10 +1634,17 @@ fn expression_sources(
         // A place read by value copies what is there. Whatever views the copy
         // holds point where they already pointed, so the container it came out
         // of is not named by the answer.
+        //
+        // A field that *is* a view is the same case and the common one: the
+        // `[]T` inside a container points at storage somebody else owns, so an
+        // accessor answering with it names that storage and not the container.
+        // Reading it as naming the container refused every accessor called on
+        // a local one, `fixed_slice` and `vec_slice` among them.
         Expression::FieldAccess(base, _) | Expression::Index(base, _) => {
             match declared_place_type(expression, walk) {
                 Some(ty)
-                    if !holds_view(&ty, walk.fields, &mut HashSet::new()) =>
+                    if !holds_view(&ty, walk.fields, &mut HashSet::new())
+                        || (walk.views_copy && is_direct_view(&ty)) =>
                 {
                     HashSet::new()
                 }
@@ -2120,6 +2140,8 @@ impl Frame<'_> {
                     })
                 });
                 if escapes {
+                    let name =
+                        crate::modules::imports::demangle_private_names(name);
                     self.escape(
                         &format!(
                             "handed to '{name}', which keeps it in something \
