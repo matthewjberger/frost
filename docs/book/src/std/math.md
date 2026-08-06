@@ -117,7 +117,7 @@ results as scaled integers so the Cranelift and C backends agree on the output
 byte for byte. The test `self_hosted_standard_library_math` compiles the library
 through the self-hosted compiler on both backends.
 
-```frost
+```frost,sketch
 import "io.frost"
 import "math.frost"
 

@@ -17,7 +17,7 @@ anything written against it today may need editing tomorrow.
 
 A borrow is what a parameter mode means, so there is no reference type to write and no lifetime to describe.
 
-```frost
+```frost,sketch
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
 

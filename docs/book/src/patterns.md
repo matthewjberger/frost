@@ -12,7 +12,7 @@ Each one is written from something that happened in this repository, and the
 
 **Antipattern.**
 
-```frost
+```frost,sketch
 PLAIN    :: 0
 COMMENT  :: 1
 KEYWORD  :: 2
@@ -39,7 +39,7 @@ comment above them and everyone remembering.
 
 **Instead.**
 
-```frost
+```frost,sketch
 Class :: enum { Plain, Comment, Keyword, Type, Function, Number, String, Punct }
 
 colour_of :: fn(class: Class) -> str {
@@ -53,7 +53,7 @@ and the set has a name.
 
 **Where an ordering matters, match rather than fall through.**
 
-```frost
+```frost,sketch
 // Antipattern: a stage the chain does not name silently sorts as the last one.
 stage_order :: fn(s: Stage) -> i64 {
     if (s == Stage::First) { return 0 }
@@ -79,7 +79,7 @@ remember, and the loop that used it can read the bound off the systems it has.
 
 **Antipattern.** The same run of constants, with `|` between them:
 
-```frost
+```frost,sketch
 INIT_VIDEO   :: 32
 INIT_AUDIO   :: 16
 WINDOW_RESIZABLE :: 32
@@ -93,7 +93,7 @@ an enum holds exactly one alternative, and this holds several.
 
 **Instead.**
 
-```frost
+```frost,sketch
 InitFlags :: flags u32 {
     Audio  = 16,
     Video  = 32,
@@ -149,7 +149,7 @@ belongs and the first anyone hears of it is a crash inside a driver.
 
 **Instead.**
 
-```frost
+```frost,sketch
 Device :: distinct ^u8
 Buffer :: distinct ^u8
 
@@ -168,7 +168,7 @@ rather than as "these cannot be forged".
 
 **Antipattern.**
 
-```frost
+```frost,sketch
 device_create_buffer :: fn(handle: ^u8, descriptor: ^u8) -> ^u8 {
     unsafe { wgpuDeviceCreateBuffer(handle, descriptor) }
 }
@@ -182,7 +182,7 @@ the danger.
 
 **Instead**, a wrapper earns the name by narrowing the signature:
 
-```frost
+```frost,sketch
 // The count decides the size, and what comes back carries its length.
 heap_slice :: fn($T: Type, count: i64) -> []T
 
@@ -234,7 +234,7 @@ Linearity catches a value nobody consumed. It does not catch a free that gives
 back less than it took, because that is one function's arithmetic rather than a
 program's shape:
 
-```frost
+```frost,sketch
 // Antipattern: freeing a column allocated three replacement blocks so that a
 // freed column could be reused. Every caller threw the column away.
 column_free :: fn(mut c: Column) {
@@ -268,7 +268,7 @@ what the test measures is the loop rather than the one-time setup.
 
 **Antipattern.**
 
-```frost
+```frost,sketch
 table := vec_slice($Table, world.tables)[slot.table]
 ```
 
@@ -277,7 +277,7 @@ they hold the same storage.
 
 **Instead.**
 
-```frost
+```frost,sketch
 ref table := vec_slice($Table, world.tables)[slot.table]
 ```
 
@@ -287,7 +287,7 @@ how the sixteen of them in the ECS were found.
 
 Related: binding a *local* struct to a second name moves it.
 
-```frost
+```frost,sketch
 root := ecs_spawn(world)
 var parent := root          // root is gone from here on
 var parent := Entity { id = root.id, generation = root.generation }   // instead
@@ -297,7 +297,7 @@ Binding a *parameter* to a name is the other way round: it copies, so writing
 through the binding does not reach the caller. That is what makes a function
 like `mask_with` read the way it should.
 
-```frost
+```frost,sketch
 mask_with :: fn(m: Mask, index: i64) -> Mask {
     var out := m                  // a copy of the caller's mask
     out.words[index / 64] = ...
@@ -309,7 +309,7 @@ mask_with :: fn(m: Mask, index: i64) -> Mask {
 
 **Antipattern.**
 
-```frost
+```frost,sketch
 print_cstr :: fn(text: ^i8)
 fs_read :: fn(path: ^i8) -> ReadResult
 ```
@@ -319,7 +319,7 @@ needs no `unsafe` to make the promise, so the danger is invisible at both ends.
 
 **Instead**, take a `str`, which carries its length:
 
-```frost
+```frost,sketch
 print_str :: fn(text: str)
 fs_read :: fn(path: str) -> ReadResult
 ```
@@ -333,7 +333,7 @@ untyped context.
 
 **Antipattern.**
 
-```frost
+```frost,sketch
 for_each1 :: fn($A: Type, $body: fn(mut []A, i64), ...)
 for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64), ...)
 for_each3 :: fn($A: Type, $B: Type, $C: Type, ...)
@@ -345,7 +345,7 @@ idea, and a ceiling nobody chose.
 
 **Instead**, a compile-time list decides the arity:
 
-```frost
+```frost,sketch
 for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     for T in types {
         query_with(q, component_of($T, world))

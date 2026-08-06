@@ -202,7 +202,7 @@ put in it.
 **What the compiler makes of it.** The signature becomes one enum with two
 variants:
 
-```frost
+```frost,sketch
 Result :: enum { Ok { value: T }, Err { error: E } }
 ```
 
@@ -230,7 +230,7 @@ type is the failure, and anything else is the value:
 with, or an immediate return of its failure from the function the `?` is
 written in:
 
-```frost
+```frost,sketch
 number :: fn(text: str) -> i64 ! Parse {
     var total : i64 = 0
     var index : i64 = 0
@@ -252,7 +252,7 @@ declares.
 **Reading the answer.** The caller matches, and a match on an enum covers every
 variant (6.7):
 
-```frost
+```frost,sketch
 match number(text) {
     case .Ok { value }: { print_int_line(value) }
     case .Err { error }: { print_int_line(error.at) }
@@ -264,7 +264,7 @@ linear, so it must be consumed, and matching it is what consumes it (chapter 9).
 Ignoring a call that answers with one is refused, since the resource would be
 dropped where nothing named it.
 
-```frost
+```frost,sketch
 open :: fn(n: i64) -> File ! Denied { ... }
 
 use_it :: fn(n: i64) -> i64 {
@@ -414,7 +414,7 @@ diamond of imports.
 Top-level items are private to their file by default. A file lists what it offers
 with an `export` line at the top.
 
-```frost
+```frost,sketch
 export area, Shape
 
 Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }

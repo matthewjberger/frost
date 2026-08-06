@@ -38,7 +38,7 @@ What does help:
 An `extern` is arbitrary C, so a call to one is refused outside an `unsafe`
 block, alongside the other two operations the language cannot check:
 
-```frost
+```frost,sketch
 count :: fn(text: ^i8) -> i64 {
     unsafe { strlen(text) }
 }

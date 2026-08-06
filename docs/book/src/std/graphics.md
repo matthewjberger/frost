@@ -57,7 +57,7 @@ reads every import in `lib/` and fails on one that names a layer above. A
 crossing is visible where it is written, because reaching another layer is a
 path and reaching a neighbour is a bare name:
 
-```frost
+```frost,sketch
 import "wgpu.frost"              // beside it, in the same layer
 import "../platform/sdl.frost"   // a layer below, and it says so
 ```
@@ -104,7 +104,7 @@ value and the kind is read out of them.
 Flags are `flags` types rather than enums, because SDL's flags are bits and a
 call takes several at once:
 
-```frost
+```frost,sketch
 window_create("Frost", 960, 540,
     WindowFlags::Resizable | WindowFlags::HighPixelDensity)
 ```
@@ -169,7 +169,7 @@ member becomes two fields, a `_count` and a pointer, named the way the header
 names them. Every struct also gets a `<name>_init()` returning a zeroed one, so
 a program names only the fields it means:
 
-```frost
+```frost,sketch
 var configuration := surface_configuration_init()
 configuration.device = device
 configuration.format = surface_format
@@ -237,7 +237,7 @@ Everything past the triangle draws through `graph.frost`. A pass is a name, a
 function and the state it records with, and it declares three things: the colour
 target it writes, the depth target it writes, and the resources it reads.
 
-```frost
+```frost,sketch
 var g := graph_new(device, 3, 2)
 screen := graph_backbuffer(g)
 map := graph_depth(g, "shadow map", 1024, 1024, DEPTH_FORMAT)
@@ -297,7 +297,7 @@ first is finished with before the second is started. A chain of post-process
 steps costs two textures however long it gets, because each step reads the one
 before and writes the next:
 
-```frost
+```frost,sketch
 first  := graph_transient_color(g, "first", 64, 64, format)
 middle := graph_transient_color(g, "middle", 64, 64, format)
 last   := graph_transient_color(g, "last", 64, 64, format)
@@ -364,6 +364,7 @@ the other is where two of the layers meet.
 two components and no more:
 
 ```frost
+import "math.frost"
 Model :: struct { matrix: Mat4 }
 Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 ```
@@ -381,6 +382,7 @@ two components above; nothing on the renderer's side reaches back.
 `world_prepare` registers both of those along with the two the far side owns:
 
 ```frost
+import "math.frost"
 Placement :: struct { position: Vec3, scale: Vec3 }
 Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
 ```
@@ -398,7 +400,7 @@ holds the window, the event queue and the clock; `Input` is the state a poll
 left behind, and `platform_input` hands out a copy. That copy is what a loop
 puts in the world:
 
-```frost
+```frost,sketch
 world_input(world, platform_input(p))
 schedule_run(frame_schedule, world, ANY_STATE)
 write_frame(queue, frame_uniform, world_camera(world), width(p), height(p))
@@ -420,7 +422,7 @@ back to write the frame uniform.
 
 Then `scene_sync` walks the world once and leaves a `DrawList` behind:
 
-```frost
+```frost,sketch
 scene_sync(world, list, slot_table, device, queue, registry, cache,
     all_drawn(model, drawn))
 ```
@@ -434,7 +436,7 @@ stops knowing how many things there are.
 
 What a pass walks is flat:
 
-```frost
+```frost,sketch
 list := unsafe { s^.list^ }
 var index : i64 = 0
 while (index < draw_list_count(list)) {
@@ -459,7 +461,7 @@ a pass records every item it is handed.
 `gltf.frost` reads a binary glTF into geometry, materials and a tree of nodes,
 and `gltf_spawn` turns that into entities:
 
-```frost
+```frost,sketch
 var held := gltf_read("lib/engine/assets/shapes.glb")
 root := gltf_spawn(world, held, device, queue, registry, cache, ids)
 gltf_free(held)
@@ -503,7 +505,7 @@ on the first window resize with `Invalid surface`.
 Rust reaches for `Drop` here. Frost has no destructors, and what it has instead
 is the obligation on the type:
 
-```frost
+```frost,sketch
 Frame :: linear struct {
     texture: SurfaceTexture,
     view: TextureView,
@@ -518,7 +520,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) { ... }
 `move`, so the pairing is checked rather than remembered. Marking the type was
 enough to make all four demos stop compiling, each on the same shape:
 
-```frost
+```frost,sketch
 var f := renderer_begin(r)
 if (frame_ok(f)) {
     graph_run(graph, f)

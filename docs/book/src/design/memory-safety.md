@@ -130,7 +130,7 @@ never be stored. Mostly it is not even a type a program writes. It is what a
 *parameter mode* means. `x: T` borrows to read, `mut x: T` borrows to mutate,
 `move x: T` takes ownership, and the call site writes no sigil at all.
 
-```frost
+```frost,sketch
 read  :: fn(x: i64) -> i64 { x }        // borrowed to read
 bump  :: fn(mut x: i64) { x = x + 1 }   // borrowed to mutate in place
 eat   :: fn(move p: Point) -> i64 { p.x }
@@ -178,7 +178,7 @@ The rule above is about a borrow outliving the *frame* behind it. A view of a
 container has a second way to go wrong, which no scope can express: the frame
 lives, the container lives, and the block moves.
 
-```frost
+```frost,sketch
 view := vec_slice($i64, v)
 vec_push($i64, v, 1)         // fills, so the block is replaced
 print_int_line(view[0])      // refused: it names the old one
@@ -253,7 +253,7 @@ the type it is represented by is. A move-typed value is *consumed* when it is:
 
 Using it afterward is a use-after-move error:
 
-```frost
+```frost,sketch
 p := Point { x = 1, y = 2 }
 a := take(p)      // p moved into take
 b := take(p)      // error: use of moved value 'p'
@@ -411,7 +411,7 @@ generation)` pair, which is plain copyable data you *can* freely store and retur
   generation. If they differ, the handle is stale. `slab_alive` answers
   false, and reading `world[h]` aborts rather than returning the new occupant.
 
-```frost
+```frost,sketch
 h := slab_insert($Entity, $8, world, entity)    // slot 0, generation 0
 slab_release($Entity, $8, world, h)             // slot 0 now generation 1
 slab_insert($Entity, $8, world, other)          // reuses slot 0 at generation 1
@@ -450,7 +450,7 @@ A fixed-size array `[N]T` carries its length `N` in its type, so every index
 expression `a[i]` is compiled with a check against that known length before the
 address is computed:
 
-```frost
+```frost,inside
 arr := [10, 20, 30]
 arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
 ```
@@ -498,7 +498,7 @@ and the count-times-size arithmetic repeated wherever it is easy to get wrong.
 containers that contains an `unsafe` block. It hands back a slice rather than a
 pointer:
 
-```frost
+```frost,sketch
 keys := heap_slice($i64, capacity)     // []i64, not ^i64
 ```
 

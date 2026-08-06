@@ -16,7 +16,7 @@ it.
 `uses` follows the return type in a signature (13.6), and takes one or more
 types:
 
-```frost
+```frost,sketch
 Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 
 make_two :: fn() -> i64 uses Arena<256> {
@@ -49,7 +49,7 @@ signature.
 Deriving the name from the type is what lets a function drawing two sources tell
 them apart:
 
-```frost
+```frost,sketch
 Scratch :: struct($N: usize) { data: [N]u8, offset: i64 }
 
 take_arena :: fn(mut a: Arena<256>) -> i64 {
@@ -112,7 +112,7 @@ The identifier names a variable the enclosing scope already owns and can write.
 other value is, and the block only says which calls inside it are supplied from
 it.
 
-```frost
+```frost,sketch
 main :: fn() -> i64 {
     var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
     var result : i64 = 0
@@ -126,7 +126,7 @@ main :: fn() -> i64 {
 
 Blocks nest, and a call inside both is supplied by the inner one:
 
-```frost
+```frost,sketch
 with arena {
     with scratch {
         result = forwards()        // draws both, by name
@@ -164,7 +164,7 @@ being returned; being assigned to a place rooted outside the region; and being
 the block's trailing expression, since that value flows to the enclosing
 scope.
 
-```frost
+```frost,sketch
 main :: fn() -> i64 {
     var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
     var escaped : ^i64 = ptr_to(arena.offset)
@@ -184,7 +184,7 @@ pointer is allowed, because the caller's `with` block is where that pointer's
 region actually is and the check runs there. Writing one into a parameter is
 not, since the parameter belongs to a frame that outlives this one:
 
-```frost
+```frost,sketch
 Reg :: struct { ptr: ^i64 }
 
 stash :: fn(mut r: Reg) -> i64 uses Arena<256> {

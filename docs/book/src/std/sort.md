@@ -42,7 +42,7 @@ and the six comparison functions they are built from: `i64_less`, `i64_greater`,
 `i64_equal`, `f64_less`, `f64_greater`, `f64_equal`. A key of any other type is
 a fifth constant, written where it is needed:
 
-```frost
+```frost,sketch
 by_hp :: fn(a: Unit, b: Unit) -> bool { a.hp < b.hp }
 same_hp :: fn(a: Unit, b: Unit) -> bool { a.hp == b.hp }
 weakest_first :: Ordering<Unit> { less = by_hp, equal = same_hp }
@@ -50,7 +50,7 @@ weakest_first :: Ordering<Unit> { less = by_hp, equal = same_hp }
 
 ## The sort takes it at compile time
 
-```frost
+```frost,sketch
 sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T)
 sort_vec :: fn($T: Type, $ops: Ordering<T>, mut v: Vec<T>)
 ```
@@ -60,7 +60,7 @@ folds to a direct call to whichever function that constant's field names. The
 comparison ends up inside the loop. Nothing is stored, nothing is dispatched,
 and the sorted slice never holds a function pointer.
 
-```frost
+```frost,sketch
 var items := [5, 2, 9, 1, 7]
 sort($i64, $i64_ascending, items)     // 1 2 5 7 9
 sort($i64, $i64_descending, items)    // 9 7 5 2 1
@@ -70,7 +70,7 @@ sort($i64, $i64_descending, items)    // 9 7 5 2 1
 through `vec_slice`, so a vector with room for sixty-four and three elements in
 it sorts three.
 
-```frost
+```frost,sketch
 var v := vec_new($i64, 4)
 vec_push($i64, v, 3)
 vec_push($i64, v, 1)

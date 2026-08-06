@@ -18,7 +18,7 @@ lowering (char buffers, mangled names) without owing anyone a stable ABI.
 An `extern fn` declares a function implemented outside Frost, linked at build
 time. It is available on both native backends (Cranelift and C).
 
-```frost
+```frost,sketch
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 malloc :: extern fn(size: i64) -> ^u8
 free   :: extern fn(ptr: ^u8)

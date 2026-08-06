@@ -60,7 +60,7 @@ This is the same shape as `MAX :: 10`. The right-hand side,
 The binding just names it. So the anonymous form falls out of the grammar. Delete
 the name and what remains is already a legal expression.
 
-```frost
+```frost,sketch
 apply(fn(a: i64, b: i64) -> i64 { a + b }, 3, 4)
 
 callbacks := [
@@ -162,7 +162,7 @@ of the ugliest corners of Rust's grammar.
 A function that answers with several values is written four ways over its
 lifetime:
 
-```frost
+```frost,sketch
 split :: fn(value: i64) -> (high: i64, low: i64) {   // the type list
     return value / 256, value % 256                  // by order
     return { high = value / 256, low = value % 256 } // by name
@@ -224,7 +224,7 @@ aggregate whose fields a person had not named.
 
 At the other end, `_` takes a value the caller has no use for:
 
-```frost
+```frost,sketch
 high, _ := split(4096)
 _, low := split(770)
 ```

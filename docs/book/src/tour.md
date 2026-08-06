@@ -41,7 +41,7 @@ writers, named for what they write: `print_int_line`, `print_str_line`,
 `print_f64_line`, `print_bool_line`, and the no-newline forms beside them, so a
 line built from several values is several calls:
 
-```frost
+```frost,sketch
 print_str("hp ")
 print_int(entity.hp)
 print_str(" of ")
@@ -57,7 +57,7 @@ are all value (copy) types. Control flow is `if`/`else` (an expression),
 
 A `for` walks a range, and it walks a sequence the same way:
 
-```frost
+```frost,sketch
 var total : i64 = 0
 for value in numbers {          // a slice, an array, or a `str`
     total = total + value
@@ -75,7 +75,7 @@ happens once however many elements it answers with.
 A function that answers with more than one value declares a return type list,
 and the caller binds the values by name:
 
-```frost
+```frost,sketch
 divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
@@ -133,7 +133,7 @@ Structs pass and return by value, and `match` binds payload fields.
 A variant can leave its enum out wherever the type is already stated, which is
 the construction counterpart of the `case .Circle` an arm writes:
 
-```frost
+```frost,sketch
 s : Shape = .Circle { radius = 4 }                    // the annotation says which
 print_int_line(area(.Rect { width = 4, height = 5 })) // the parameter does
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return
@@ -142,7 +142,7 @@ round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return
 A struct literal leaves its name out the same way, and the two nest, each inner
 literal taking its type from the field it fills:
 
-```frost
+```frost,sketch
 p : Point = { x = 3, y = 4 }
 ```
 
@@ -162,7 +162,7 @@ parameter, written on its declaration, and the call site says nothing:
 | write | `mut p: Point` | borrowed to mutate in place |
 | move | `move p: Point` | ownership transferred |
 
-```frost
+```frost,sketch
 import "io.frost"
 
 scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
@@ -187,7 +187,7 @@ The explicit, checked exception is `ref T`. `ref name := place` binds a borrow
 of a place rather than a copy of it, and a function may answer with one, which
 is what lets a container hand back an element instead of a copy of it:
 
-```frost
+```frost,sketch
 import "io.frost"
 
 at :: fn(points: []Point, index: i64) -> ref Point {
@@ -226,6 +226,7 @@ is a compile error. A `linear` type must be consumed exactly once, which is
 how Frost replaces destructors:
 
 ```frost
+import "io.frost"
 File :: linear struct { fd: i64 }
 open  :: fn(n: i64) -> File { File { fd = n } }
 close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
@@ -272,7 +273,7 @@ implement, no backtrace, no allocation, and no boxing. The compiler turns the
 signature into one enum with two variants, `Ok { value }` and `Err { error }`,
 which is where the names come from at the match:
 
-```frost
+```frost,sketch
 match number(text) {
     case .Ok { value }: { print_int_line(value) }
     case .Err { error }: { print_int_line(error.at) }
@@ -392,7 +393,7 @@ type parameter. When a type parameter can't be inferred from a value argument
 (for example a function that only uses `sizeof(T)`), declare it as `$T: Type`
 and pass the type explicitly with a leading `$`:
 
-```frost
+```frost,sketch
 bytes_for :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 
 main :: fn() -> i64 {
@@ -424,6 +425,7 @@ parameter can state the signature it requires, and the call inside the
 specialization is direct rather than through a pointer:
 
 ```frost
+import "io.frost"
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
@@ -441,7 +443,7 @@ main :: fn() -> i64 {
 When several operations travel together, they go in a struct whose fields are
 functions. That is a capability bundle, and it is what stands in for a trait:
 
-```frost
+```frost,sketch
 Ordering :: struct($T: Type) {
     less: fn(T, T) -> bool,
     equal: fn(T, T) -> bool,
@@ -529,6 +531,7 @@ those numbers out to lay the struct out, so write the table over them rather
 than beside them:
 
 ```frost
+import "math.frost"
 import "io.frost"
 
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }

@@ -16,7 +16,7 @@ A line break does decide one thing. A token that opens a line and could begin a
 statement of its own does begin one rather than continuing the line above. Three
 tokens are in that position, `(`, `[`, and `-`, so
 
-```frost
+```frost,sketch
 table := tables[slot.table]
 (table.mask & mask) != 0
 
@@ -29,7 +29,7 @@ is four statements: no call of the first line's value, and no subtraction from
 only be a continuation and is read as one. To spell a subtraction across a line
 break, put the `-` at the end of the first line:
 
-```frost
+```frost,sketch
 held := count -
     total
 ```

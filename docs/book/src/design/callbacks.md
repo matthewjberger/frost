@@ -77,7 +77,7 @@ in the position it is written. The context contributes the `void*`, in
 the position it is written. So the declaration is written in the order C wants
 and the mapping needs no further rule:
 
-```frost
+```frost,sketch
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
@@ -93,7 +93,7 @@ not what identifies it. Being the one parameter the handler can write is. So
 both of these are registrations, and the second is the order wgpu-native and
 most modern C APIs take:
 
-```frost
+```frost,sketch
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 request  :: extern fn($handler: fn(i32, i64, mut Ctx), move ctx: Ctx) -> i64
 ```
@@ -110,7 +110,7 @@ them the library is being asked to keep.
 Registration moves it in, unregistration moves it back out, and the registration
 is a `linear` value. Not a borrow.
 
-```frost
+```frost,sketch
 Ctx          :: struct { hits: i64 }
 Registration :: linear struct { token: i64 }
 

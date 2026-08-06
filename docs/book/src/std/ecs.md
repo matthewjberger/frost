@@ -92,7 +92,7 @@ keeps a column contiguous.
 
 A query is a cursor over the tables holding a set of components:
 
-```frost
+```frost,sketch
 var q := query_begin(world, position | velocity)
 while (query_next(world, q)) {
     var p := query_column($Position, world, q, position)
@@ -110,7 +110,7 @@ a compile-time list of types, so there is no arity to name and no limit: the
 list drives the mask a table is matched against and the column each element
 reads through, and a `for` over it unrolls both where the call is written.
 
-```frost
+```frost,sketch
 integrate :: fn(mut p: []Position, mut v: []Velocity, count: i64) {
     var i : i64 = 0
     while (i < count) {
@@ -131,7 +131,7 @@ rather than with the indices they were given.
 
 What a query asks for beyond the components its body reads:
 
-```frost
+```frost,sketch
 var f := no_filters()
 f = filter_without(f, frozen)             // table level
 f = filter_changed(f, velocity, last_run) // row level
@@ -157,7 +157,7 @@ Every row carries two ticks: when it was last written, and when the entity
 holding it was first given the component. The world's clock is advanced by the
 program, once a frame, so everything written during a frame shares one time.
 
-```frost
+```frost,sketch
 watermark := ecs_tick(world)
 ... systems run ...
 
@@ -185,7 +185,7 @@ A resource is a value the whole world shares: the renderer's device, the input
 state, the frame's time. It is a component with one row and no entity, stored as
 a column of one and reached through the same typed slice.
 
-```frost
+```frost,sketch
 time := ecs_resource_register($Time, world)
 ecs_resource_set($Time, world, time, time_new())
 held := ecs_resource($Time, world, time)
@@ -204,7 +204,7 @@ anyone else: what comes back owns what it holds, so a system that only meant to
 look at a `Hierarchy` would be left with vectors to free. `ecs_resource_ref`
 answers with a borrow, reading it where it lives and owning nothing.
 
-```frost
+```frost,sketch
 tree := ecs_resource_register($Hierarchy, world)
 ecs_resource_set($Hierarchy, world, tree, hierarchy_new())
 
@@ -227,7 +227,7 @@ sending one is a push of bytes and reading them is a slice. A reader keeps its
 own place by sequence number rather than by index, so clearing the channel
 neither repeats what a reader saw nor hides what it did not:
 
-```frost
+```frost,sketch
 var damage := events_new($Damage)
 var renderer := reader_new()
 events_send($Damage, damage, Damage { amount = 3 })
@@ -246,7 +246,7 @@ flipped in a loop without the migration a component would cost. The generation
 is stored beside the mark, so a tag left on a despawned id is not read as a mark
 on the entity that gets that id next.
 
-```frost
+```frost,sketch
 var selected := tag_new()
 tag_add(selected, entity)
 if (tag_has(selected, entity)) { ... }
@@ -257,7 +257,7 @@ if (tag_has(selected, entity)) { ... }
 A structural change made while a query is walking would move the rows the walk
 is holding, so it is queued and applied when the walk is done:
 
-```frost
+```frost,sketch
 var queued := commands_new()
 ... during the walk ...
 commands_despawn(queued, entities[i])
@@ -272,7 +272,7 @@ because it is a relation between entities. Three arrays indexed by entity id
 give a tree walked without allocating per node: the parent, the first child, and
 the next sibling.
 
-```frost
+```frost,sketch
 var tree := hierarchy_new()
 hierarchy_attach(tree, wheel, car)
 var child := hierarchy_first_child(tree, car)
@@ -289,7 +289,7 @@ A system is a function of the world. A schedule is a list of them with a stage
 each, run in ascending stage order, so ordering is a number rather than a graph
 of declared dependencies:
 
-```frost
+```frost,sketch
 var frame := schedule_new()
 schedule_add(frame, Stage::First, read_input)
 schedule_add(frame, Stage::Update, integrate)
