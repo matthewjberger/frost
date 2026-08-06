@@ -11,5 +11,5 @@ and expression has a compile-time type.
   an aggregate where a reference is expected, or the reverse, is an error.
 
 Type checking runs on the typed intermediate representation after lowering
-(`src/ir_typecheck.rs`). It validates operand types, call arity, and that a
+(`src/ir/typecheck.rs`). It validates operand types, call arity, and that a
 function declaring a return answers with a value on every path.

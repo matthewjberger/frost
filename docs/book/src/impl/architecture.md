@@ -25,15 +25,15 @@ Source (.frost)
    Ownership check  src/ownership.rs
       |
       v
-   Typed IR         src/ir.rs, src/ir_build.rs, src/ir_typecheck.rs
+   Typed IR         src/ir.rs, src/ir/build.rs, src/ir/typecheck.rs
       |
       v
-   Linearity check  src/ir_ownership.rs   (dataflow over the IR CFG)
+   Linearity check  src/ir/ownership.rs   (dataflow over the IR CFG)
       |
       +--------------------+--------------------+
       v                    v                    v
   Cranelift            Portable C           IR interpreter
-  src/ir_codegen.rs    src/ir_c.rs          src/ir_interp.rs
+  src/ir/codegen.rs    src/ir/c.rs          src/ir/interp.rs
       |                    |                    |
       v                    v                    v
   object -> exe        C -> exe             direct run
@@ -123,7 +123,7 @@ what stamps out the template. See
 
 ## Code generation is parallel
 
-`src/ir_codegen.rs` builds and compiles each function on its own thread, then
+`src/ir/codegen.rs` builds and compiles each function on its own thread, then
 defines them into the object serially, since a module is one mutable thing.
 Functions are handed out from a shared atomic cursor rather than split into
 equal chunks, because cost per function varies by more than an order of
@@ -149,7 +149,7 @@ spirit of a compiler "middle end" (MIR):
   slots. `&`, `&mut`, and `^` (dereference) lower to address-of, load, and
   store.
 
-Lowering (`src/ir_build.rs`) folds light bidirectional type inference into the
+Lowering (`src/ir/build.rs`) folds light bidirectional type inference into the
 translation so each value carries a real type. Anything outside the supported
 subset fails loudly with a `native backend: ...` error rather than emitting
 incorrect code.
@@ -173,8 +173,8 @@ and is why the two are described separately in
 
 ## Native backends
 
-`src/ir_codegen.rs` emits a relocatable object from the IR via Cranelift and
-links it with the system C toolchain. `src/ir_c.rs` emits portable C from the
+`src/ir/codegen.rs` emits a relocatable object from the IR via Cranelift and
+links it with the system C toolchain. `src/ir/c.rs` emits portable C from the
 same IR (`--emit-c`), which the system C compiler builds. Both use the
 correct type and operation for each value because the IR is fully typed, and
 `tests/native.rs` checks that the two backends agree on every program.
@@ -369,7 +369,7 @@ check that makes it exactly once, is discharged on the IR.
 
 ## Linearity checking on the IR
 
-`src/ir_ownership.rs` discharges the "consumed exactly once" discipline as a
+`src/ir/ownership.rs` discharges the "consumed exactly once" discipline as a
 dataflow pass over each function's control-flow graph, which is where the design
 always intended ownership to be checked. Lowering marks a local as linear when
 its type is a `linear` struct or enum, emits an `own` marker where such a value

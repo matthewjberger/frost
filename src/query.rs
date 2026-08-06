@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn the_type_of_a_local_answers_from_the_lowered_ir() {
         let (mut module, linear) = parsed(SOURCE);
-        let lowered = crate::ir_build::build_module(
+        let lowered = crate::ir::build::build_module(
             &mut module.ast,
             &module.roots,
             &linear,

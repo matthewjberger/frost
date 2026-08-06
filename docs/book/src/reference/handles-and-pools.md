@@ -122,7 +122,7 @@ What the form cannot say, which is why the raw column walk stays:
 
 Which struct is a pool is decided by shape, not by a declaration. A struct is
 slab-shaped when it declares a `storage` array and a parallel `generations`
-array (`slab_shaped_base`, `src/ir_build.rs`), and indexing one by a `Handle<T>`
+array (`slab_shaped_base`, `src/ir/build.rs`), and indexing one by a `Handle<T>`
 is generated inline rather than lowered to a call:
 
 - the handle is read back as the `i64` it is at the ABI, its low 32 bits the

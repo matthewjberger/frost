@@ -2999,7 +2999,7 @@ fn infer_type(
             if subst.is_empty() {
                 return Some(signature.result.clone());
             }
-            Some(crate::ir_build::substitute_type(&signature.result, &subst))
+            Some(crate::ir::build::substitute_type(&signature.result, &subst))
         }
         _ => None,
     }

@@ -1,3 +1,13 @@
+// The typed intermediate representation, and the passes over it. Everything
+// after the front end reads this: the checks that hold a program to its types
+// and its ownership, and the three backends that turn it into a program.
+pub(crate) mod build;
+pub(crate) mod c;
+pub(crate) mod codegen;
+pub(crate) mod interp;
+pub(crate) mod ownership;
+pub(crate) mod typecheck;
+
 use std::fmt::{self, Display, Formatter};
 
 use crate::lexer::Position;
