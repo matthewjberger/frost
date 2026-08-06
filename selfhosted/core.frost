@@ -1,7 +1,9 @@
 // Externs, the constant tables, the node and symbol records, the arena, and
 // the Parser that every pass threads through itself.
 
-export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
+export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
+    ARRAY_BASE, Arena, ArrayDef,
+    CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     CH_COMMA, CH_CR, CH_DOLLAR, CH_DOT, CH_DQUOTE, CH_EQ, CH_GT, CH_LBRACE,
     CH_LBRACKET, CH_LF, CH_LOWER_A, CH_LOWER_N, CH_LOWER_T, CH_LOWER_Z,
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
@@ -236,7 +238,26 @@ NodeKind :: enum {
     // where the callee is any expression of function-pointer type. `a` is that
     // expression and `b` is the argument list.
     CallPtr,
+    // One of the patterns a `case` names. `val` is the lower end of what it
+    // covers, `b` the upper, `c` says which of the three spellings was
+    // written, and `a` is the variant table entry where a name wrote it and -1
+    // where a number did. They hang off `Case.b` in the order they were
+    // written, and nothing walks them but the emitters.
+    CaseAlt,
 }
+
+// What one `case` alternative covers. A single value covers itself, and the two
+// range spellings mean what they do after `in`.
+ALT_VALUE :: 0
+ALT_HALF_OPEN :: 1
+ALT_INCLUSIVE :: 2
+
+// What a CaseAlt's `a` holds where it is not a variant table entry. A number
+// wrote the alternative, or a name did and the enum it belongs to does not
+// exist yet, which is every variant inside a generic template: that parse is
+// thrown away and re-done per instance, where the name resolves.
+ALT_NUMBER :: -1
+ALT_UNRESOLVED :: -2
 
 // Type codes. A type is one i64. The primitives are small constants. A struct is
 // STRUCT_BASE plus its table index. A pointer to a type T (also how a borrow

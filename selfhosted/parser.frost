@@ -2690,6 +2690,164 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
     tag
 }
 
+// Whether what the cursor is on opens a whole number: one written out, one
+// under a minus, or a name a `::` declaration settled on a number. A name is
+// read this way only where a `..` follows it, since everywhere else a name in a
+// case position stands for whatever was matched.
+at_case_number :: fn(mut p: Parser) -> bool {
+    k := cur(p)
+    if (k == TokenKind::Int) {
+        return true
+    }
+    if (k == TokenKind::Minus) {
+        return peek_kind(p, 1) == TokenKind::Int
+    }
+    after := peek_kind(p, 1)
+    opens_span := after == TokenKind::Dotdot || after == TokenKind::Dotdoteq
+    // A decimal stands for a value of its own everywhere else in a case, so it
+    // is read here only where it opens a span, which is where the span itself
+    // says what is wrong with it.
+    if (k == TokenKind::Float) {
+        return opens_span
+    }
+    if (k == TokenKind::Ident) {
+        if (opens_span == false) {
+            return false
+        }
+        return is_const(p, cur_off(p), cur_len(p))
+    }
+    false
+}
+
+// One end of a span.
+parse_case_bound :: fn(mut p: Parser) -> i64 {
+    var sign: i64 = 1
+    if (cur(p) == TokenKind::Minus) {
+        sign = -1
+        advance(p)
+    }
+    if (cur(p) == TokenKind::Int) {
+        held := cur_val(p)
+        advance(p)
+        return sign * held
+    }
+    if (cur(p) == TokenKind::Ident && is_const(p, cur_off(p), cur_len(p))) {
+        held := const_value(p, cur_off(p), cur_len(p))
+        advance(p)
+        return sign * held
+    }
+    report_where(p.modules, p.src, cur_off(p))
+    if (cur(p) == TokenKind::Float) {
+        report("a case range runs between whole numbers, and a decimal is not one")
+    } else {
+        report("a case range runs between whole numbers, and this bound is not one")
+    }
+    frost_rt_recover_escape()
+    0
+}
+
+// The number or span one alternative of a `case` covers, as a CaseAlt node.
+parse_case_number :: fn(mut p: Parser) -> i64 {
+    at := cur_off(p)
+    low := parse_case_bound(p)
+    if (cur(p) != TokenKind::Dotdot && cur(p) != TokenKind::Dotdoteq) {
+        return new_case_alt(p, low, low, ALT_VALUE, ALT_NUMBER)
+    }
+    var form := ALT_HALF_OPEN
+    if (cur(p) == TokenKind::Dotdoteq) {
+        form = ALT_INCLUSIVE
+    }
+    advance(p)
+    high := parse_case_bound(p)
+    var holds := low < high
+    if (form == ALT_INCLUSIVE) {
+        holds = low <= high
+    }
+    if (holds == false) {
+        report_where(p.modules, p.src, at)
+        report("the case range ")
+        report_int(low)
+        if (form == ALT_INCLUSIVE) {
+            report("..=")
+        } else {
+            report("..")
+        }
+        report_int(high)
+        report(" covers nothing")
+        frost_rt_recover_escape()
+    }
+    new_case_alt(p, low, high, form, ALT_NUMBER)
+}
+
+// Which of the three an alternative is: a number, a variant that resolved, or
+// a variant that did not. Two alternatives are compared only where both are
+// the same one of the first two, since a number and a variant are never one
+// thing however their spans line up, and a variant that did not resolve stands
+// for whatever the instance settles it to.
+alt_family :: fn(mut p: Parser, alt: i64) -> i64 {
+    node := arena_at(p.arena, alt)
+    if (node.a == ALT_NUMBER) {
+        return 0
+    }
+    if (node.a == ALT_UNRESOLVED) {
+        return -1
+    }
+    1
+}
+
+// Whether two alternatives of one case name the same thing.
+alts_are_one :: fn(mut p: Parser, left: i64, right: i64) -> bool {
+    family := alt_family(p, left)
+    if (family < 0 || family != alt_family(p, right)) {
+        return false
+    }
+    a := arena_at(p.arena, left)
+    a_low := a.val
+    a_high := a.b
+    a_form := a.c
+    b := arena_at(p.arena, right)
+    a_low == b.val && a_high == b.b && a_form == b.c
+}
+
+// Whether an earlier alternative takes every value this one covers. Read one
+// span against one span, so what an arm covers is something a reader works out
+// at the arms: an arm two earlier spans cover between them, and neither on its
+// own, goes on standing.
+alt_is_within :: fn(mut p: Parser, held: i64, earlier: i64) -> bool {
+    family := alt_family(p, held)
+    if (family < 0 || family != alt_family(p, earlier)) {
+        return false
+    }
+    low := alt_low(p, held)
+    high := alt_high(p, held)
+    alt_low(p, earlier) <= low && high <= alt_high(p, earlier)
+}
+
+// Whether every value an arm covers is already taken by an arm above it.
+case_is_shadowed :: fn(mut p: Parser, head: i64, alts: i64) -> bool {
+    var held := alts
+    while (held != (-1)) {
+        var found: bool = false
+        var cid := head
+        while (cid != (-1) && found == false) {
+            cnode := arena_at(p.arena, cid)
+            var earlier := cnode.b
+            cid = cnode.next
+            while (earlier != (-1) && found == false) {
+                if (alt_is_within(p, held, earlier)) {
+                    found = true
+                }
+                earlier = node_next(p, earlier)
+            }
+        }
+        if (found == false) {
+            return false
+        }
+        held = node_next(p, held)
+    }
+    alts != (-1)
+}
+
 // Turn each arm's trailing expression into an assignment to the name standing
 // for the match's value. An arm that already does something else is left as it
 // is, since it was not producing a value in the first place.
@@ -2965,6 +3123,12 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
             advance(p)
             var index: i64 = 0
             while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
+                if (cur(p) == TokenKind::Pipe || cur(p) == TokenKind::Dotdot
+                    || cur(p) == TokenKind::Dotdoteq) {
+                    report_where(p.modules, p.src, cur_off(p))
+                    report("a tuple case compares one value per part, so an alternative or a range belongs in a match on one value")
+                    frost_rt_recover_escape()
+                }
                 if (cur(p) == TokenKind::Int) {
                     wanted := cur_val(p)
                     advance(p)
@@ -3062,46 +3226,93 @@ parse_match :: fn(mut p: Parser) -> i64 {
         var is_default: i64 = 0
         var value: i64 = 0
         var case_node: i64 = -1
-        if (at_variant_case(p, 0)) {
-            skip_variant_qualifier(p)
-            // The enum an earlier arm settled on, so arms after the
-            // first are read within it and a name two enums share is
-            // the one this match is over.
-            var within := subject_enum
-            if (within == (-1)) {
-                within = match_enum
-            }
-            tag := parse_variant_pattern(p, subject, within)
-            index := p.case_variant
-            if (index < 0) {
-                checkable = 0
-            } else {
-                entry := arena_at(p.variants, index)
-                match_enum = entry.enum_ty
-                if (entry.tag >= 0 && entry.tag < 63) {
-                    covered = covered | (1 << entry.tag)
-                } else {
-                    checkable = 0
+        var alts: i64 = -1
+        var bindings: i64 = -1
+        var written: i64 = 0
+        var reading: bool = true
+        // An arm names one pattern or several joined by `|`, and the body runs
+        // for any of them. What the arm covers is their union, which is what
+        // keeps the rule about covering every variant a matter of counting.
+        while (reading) {
+            reading = false
+            var alt: i64 = -1
+            if (at_variant_case(p, 0)) {
+                skip_variant_qualifier(p)
+                // The enum an earlier arm settled on, so arms after the
+                // first are read within it and a name two enums share is
+                // the one this match is over.
+                var within := subject_enum
+                if (within == (-1)) {
+                    within = match_enum
                 }
-            }
-            bindings := p.case_bindings
-            advance(p)
-            body := parse_arm(p)
-            case_node = new_case(p, append_node(p, bindings, body), tag, 0)
-        } else {
-            if (cur(p) == TokenKind::Int) {
-                value = cur_val(p)
-                advance(p)
+                tag := parse_variant_pattern(p, subject, within)
+                index := p.case_variant
+                if (index < 0) {
+                    checkable = 0
+                } else {
+                    entry := arena_at(p.variants, index)
+                    match_enum = entry.enum_ty
+                    if (entry.tag >= 0 && entry.tag < 63) {
+                        covered = covered | (1 << entry.tag)
+                    } else {
+                        checkable = 0
+                    }
+                }
+                if (p.case_bindings != (-1)) {
+                    if (written > 0 || cur(p) == TokenKind::Pipe) {
+                        report_where(p.modules, p.src, cur_off(p))
+                        report("an alternative binding payload fields holds one name to two shapes, so give it a case of its own")
+                        frost_rt_recover_escape()
+                    }
+                    bindings = p.case_bindings
+                }
+                value = tag
+                var entry_of := index
+                if (entry_of < 0) {
+                    entry_of = ALT_UNRESOLVED
+                }
+                alt = new_case_alt(p, tag, tag, ALT_VALUE, entry_of)
+            } else if (at_case_number(p)) {
+                alt = parse_case_number(p)
+                value = alt_low(p, alt)
             } else {
                 is_default = 1
                 advance(p)
             }
-            advance(p)
-            body := parse_arm(p)
-            case_node = new_case(p, body, value, is_default)
-            if (is_default == 1) {
-                saw_default = 1
+            if (alt != (-1)) {
+                var seen := alts
+                while (seen != (-1)) {
+                    if (alts_are_one(p, alt, seen)) {
+                        report_where(p.modules, p.src, cur_off(p))
+                        report("this alternative repeats one the same case already names")
+                        frost_rt_recover_escape()
+                    }
+                    seen = node_next(p, seen)
+                }
+                alts = append_node(p, alts, alt)
             }
+            written = written + 1
+            if (cur(p) == TokenKind::Pipe) {
+                advance(p)
+                reading = true
+            }
+        }
+        if (is_default == 1 && written > 1) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("this alternative covers everything on its own, so give it a case of its own")
+            frost_rt_recover_escape()
+        }
+        if (case_is_shadowed(p, head, alts)) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("this case is covered by an earlier one, so nothing reaches it")
+            frost_rt_recover_escape()
+        }
+        advance(p)
+        body := parse_arm(p)
+        case_node = new_case(p, append_node(p, bindings, body), value,
+            is_default, alts)
+        if (is_default == 1) {
+            saw_default = 1
         }
         if (head == (-1)) {
             head = case_node

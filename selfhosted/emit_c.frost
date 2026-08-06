@@ -1240,13 +1240,42 @@ emit_match_value :: fn(id: i64) {
     frost_rt_emit_int(id)
 }
 
-// What one arm compares that value against.
+// What one arm compares that value against: an `or` of one test per pattern
+// the arm names, and a span written out as the two comparisons it stands for.
 emit_case_test :: fn(mut p: Parser, match_id: i64, cid: i64) {
-    cnode := arena_at(p.arena, cid)
-    value := cnode.val
-    emit_match_value(match_id)
-    emit_text(" == ")
-    frost_rt_emit_int(value)
+    var alt := case_alts(p, cid)
+    var written: i64 = 0
+    while (alt != (-1)) {
+        anode := arena_at(p.arena, alt)
+        form := anode.c
+        low := anode.val
+        high := anode.b
+        next_alt := anode.next
+        if (written == 1) {
+            emit_text(" || ")
+        }
+        if (form == ALT_VALUE) {
+            emit_match_value(match_id)
+            emit_text(" == ")
+            frost_rt_emit_int(low)
+        } else {
+            emit_text("(")
+            emit_match_value(match_id)
+            emit_text(" >= ")
+            frost_rt_emit_int(low)
+            emit_text(" && ")
+            emit_match_value(match_id)
+            if (form == ALT_INCLUSIVE) {
+                emit_text(" <= ")
+            } else {
+                emit_text(" < ")
+            }
+            frost_rt_emit_int(high)
+            emit_text(")")
+        }
+        written = 1
+        alt = next_alt
+    }
 }
 
 emit_stmt :: fn(mut p: Parser, id: i64) {

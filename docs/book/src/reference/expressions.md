@@ -168,12 +168,74 @@ or the closing `}` begins. Patterns:
   named field to a same-named local.
 - Variant, qualified, `Enum::Variant` with the same optional field list.
 - Value, an integer, float, string, or boolean literal (`case 90:`).
+- Range, `a..b` half-open or `a..=b` inclusive, over whole numbers.
 - Tuple, `( P, P, ... )`.
 - Binding, a bare identifier.
 - Wildcard, `_`.
 
+An arm may name several patterns separated by `|`, and its body runs for any of
+them:
+
+```frost
+Step :: enum { Left, Right, Up, Down }
+
+sideways :: fn(k: Step) -> i64 {
+    match k {
+        case .Left | .Right: 1
+        case .Up: 2
+        case _: 0
+    }
+}
+```
+
+What such an arm covers is the union of its alternatives, so the rule that
+every variant is covered goes on counting. Three shapes may not be an
+alternative. A variant pattern binding payload fields may not, because two
+variants hold two shapes and a name reading a field out of them would mean two
+things; give it an arm of its own. `_` and a bare identifier may not, because
+each already covers everything and the alternatives beside it would say
+nothing.
+
+A range arm covers a span of whole numbers, with the two spellings meaning what
+they do after `in` (6.9). Both ends are whole numbers, written out or named by
+a `::` declaration, which is the one position where a name in a pattern stands
+for a value rather than binding what was matched:
+
+```frost
+CH_0 :: 48
+CH_9 :: 57
+CH_UPPER_A :: 65
+CH_UPPER_Z :: 90
+CH_LOWER_A :: 97
+CH_LOWER_Z :: 122
+
+kind_of :: fn(c: i64) -> i64 {
+    match c {
+        case CH_LOWER_A..=CH_LOWER_Z | CH_UPPER_A..=CH_UPPER_Z: 1
+        case CH_0..=CH_9: 2
+        case 0 | 5..10: 3
+        case _: 0
+    }
+}
+```
+
+A range never removes the need for a `case _`. What a match over an enum covers
+is countable, and what a match over whole numbers covers is not: proving that a
+run of spans leaves nothing out is analysis this language does not carry, so
+the arm naming the rest is what says the match is finished.
+
+An arm every value of which an earlier arm already takes is refused where it is
+written. What counts as already taken is read one span against one span, so an
+arm two earlier spans cover between them, and neither on its own, goes on
+standing: the rule is one a reader works out at the arms rather than one the
+compiler alone can see.
+
+An alternative and a range are both refused inside a tuple pattern, which
+compares one value per part.
+
 `match` works over a value or a reference. Matching a value of a `linear` type
-consumes it (chapter 9).
+consumes it (chapter 9). An arm consumes it once however many patterns the arm
+names, since the alternatives are one arm.
 
 ## 6.8 `sizeof`, `cast`, `typename`, and `unsafe`
 

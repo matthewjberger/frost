@@ -317,6 +317,48 @@ The trade is that a program wanting elementwise arithmetic over a thousand
 numbers writes the loop. That is the same trade the length rule makes, and the
 loop is the thing that was going to happen either way.
 
+## 13. A `case` says what it covers, and nothing else
+
+An arm may name several patterns joined by `|`, and an arm over whole numbers
+may name a span. Both were added on one axis: a match's coverage should be
+readable at its arms.
+
+The span is where that shows. Without it the way to write `case 1..10:` is a
+wildcard arm holding an `if`, which is an arm that misstates its own coverage:
+the wildcard claims everything else while the body splits it invisibly. `case
+1..10:` puts the span where coverage lives, so a grep over `case` shows the
+whole shape of the match. Both stay decidable: the covered set of an
+alternative list is the union of its parts, and a span covers what it names, so
+the rule about covering every variant goes on counting.
+
+### Guards, weighed against the same bar and declined
+
+A guard, `case n if n > 5:`, fails that bar in three ways at once.
+
+It puts an arbitrary expression in pattern position, so every walk in both
+compilers that enumerates what a program contains would have to learn to walk
+one. That is the hole shape the old `print` statement was, and closing it took a
+release.
+
+It breaks countable coverage. A guarded arm covers nothing provably, so the rule
+that every variant is covered would have to ignore guarded arms, which turns
+one rule into two: what a match covers, and what a match covers when you squint.
+
+And it opens a question with no good answer: what may a guard read of a linear
+scrutinee before an arm has committed to consuming it.
+
+The spelling that exists is an `if` inside the arm. It is one line, and it keeps
+the condition where the rest of the language keeps conditions, which is inside
+control flow rather than beside a pattern.
+
+### Deep destructuring, likewise
+
+`case .Line { start: .Point { x } }` trades one flat binding list for nesting.
+The second `match`, or a `.` on the bound field, spells the same thing, and it
+keeps every access something a grep for the field name finds. Nesting hides
+those accesses inside a pattern, which is the one place in the language nobody
+greps for a field.
+
 ## Honest tradeoffs
 
 A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`

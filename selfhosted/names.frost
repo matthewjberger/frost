@@ -24,7 +24,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
-    mark_defined, mark_extern, mark_inline, new_case, new_field_init,
+    mark_defined, mark_extern, mark_inline, new_case, new_case_alt,
+    case_alts, alt_low, alt_high, new_field_init,
     new_field_node,
     new_func_node, new_index, new_let_node, new_named_node,
     new_named_node_at, new_node, new_node_at,
@@ -1659,11 +1660,45 @@ new_type_node :: fn(mut p: Parser, kind: NodeKind, expr: i64, ty: i64) -> i64 {
 }
 
 // One arm of a match: `a` is the body statement, `val` the integer pattern, and
-// `c` a flag marking the `_` default arm.
-new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
+// `c` a flag marking the `_` default arm. `b` is the list of patterns the arm
+// names, and -1 where it names none, which is the `_` arm.
+new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64,
+    alts: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::Case, a = body, b = 0, c = is_default, val = value,
-            next = -1, pos = cur_off(p) },
+        Node { kind = NodeKind::Case, a = body, b = alts, c = is_default,
+            val = value, next = -1, pos = cur_off(p) },
     )
+}
+
+// One of the patterns a `case` names: the span `low` to `high` under the
+// spelling `form`, from the variant `entry` where a name wrote it.
+new_case_alt :: fn(mut p: Parser, low: i64, high: i64, form: i64,
+    entry: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NodeKind::CaseAlt, a = entry, b = high, c = form,
+            val = low, next = -1, pos = cur_off(p) },
+    )
+}
+
+// The patterns one arm names.
+case_alts :: fn(mut p: Parser, cid: i64) -> i64 {
+    node := arena_at(p.arena, cid)
+    node.b
+}
+
+// The lower and upper ends one alternative covers, both inside. A half-open
+// span stops one short of what was written.
+alt_low :: fn(mut p: Parser, alt: i64) -> i64 {
+    node := arena_at(p.arena, alt)
+    node.val
+}
+
+alt_high :: fn(mut p: Parser, alt: i64) -> i64 {
+    node := arena_at(p.arena, alt)
+    if (node.c == ALT_HALF_OPEN) {
+        return node.b - 1
+    }
+    node.b
 }

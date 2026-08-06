@@ -54,7 +54,13 @@ IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
 The single underscore `_` is a distinct token, the wildcard, and is not a
 binding name. It stands in a `match` arm that covers the rest (7.4) and in a
 binding list for a value the caller has no use for (5.2a). Everywhere else it
-has nowhere to parse: `_ := 5` is refused and `_` is not an expression.
+has nowhere to parse: `_ := 5` is refused and `_` is not an expression. It is
+also refused as one alternative of a `case` naming several, since an
+alternative covering everything leaves the others saying nothing (6.7).
+
+`..`, `..=` and `|` carry their usual meanings inside a `case` pattern: the
+first two open a span of whole numbers and the third joins alternatives (6.7).
+No token is new there, so nothing about lexing changes.
 
 ## 2.4 Keywords
 

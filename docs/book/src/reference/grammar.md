@@ -206,14 +206,29 @@ IfExpr    = "if" "(" Expr ")" Block ( "else" Block )?
 MatchExpr = "match" Expr "{" MatchArm* "}"
 MatchArm  = "case" Pattern ":" ( Block | Expr )
 
-Pattern =
+Pattern    = PatternAlt ( "|" PatternAlt )*
+PatternAlt =
       "_"
-    | INTEGER | FLOAT | STRING | "true" | "false"
+    | Bound ( ( ".." | "..=" ) Bound )?
+    | FLOAT | STRING | "true" | "false"
     | "." IDENT ( "{" IDENT ( "," IDENT )* "}" )?
     | IDENT "::" IDENT ( "{" IDENT ( "," IDENT )* "}" )?
-    | "(" Pattern ( "," Pattern )* ")"
+    | "(" PatternAlt ( "," PatternAlt )* ")"
     | IDENT
+Bound      = "-"? ( INTEGER | IDENT )        // a whole number, written or named
 ```
+
+An arm naming several patterns runs its body for any of them, and what it
+covers is their union. Three shapes may not be one of those alternatives: a
+variant pattern binding payload fields (two variants hold two shapes, so a name
+reading a field would mean two things), `_`, and a bare identifier (each already
+covers everything, so the others would say nothing). A `|` and a range are also
+refused inside a tuple pattern, which compares one value per part.
+
+`Bound` reads a name only where a `..` or `..=` follows it, and only where a
+`::` declaration settled that name on a whole number. Everywhere else a name in
+a pattern binds what was matched. An empty or backwards range is refused where
+it is written.
 
 ## 13.6 Parenthesized groups and function literals
 

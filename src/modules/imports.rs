@@ -1849,14 +1849,16 @@ impl Renamer {
                     self.bind(scope, binding);
                 }
             }
-            Pattern::Tuple(patterns) => {
+            Pattern::Tuple(patterns) | Pattern::Or(patterns) => {
                 for index in patterns.indices() {
                     let pattern = ast.pattern_list[index];
                     self.pattern(ast, pattern, scope);
                 }
             }
             Pattern::Identifier(name) => self.bind(scope, name),
-            Pattern::Wildcard | Pattern::Literal(_) => {}
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::Range { .. } => {}
         }
     }
 
