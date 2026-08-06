@@ -7,21 +7,195 @@
 
 **A data-oriented systems language that is memory-safe with no garbage collector and no lifetimes, and compiles itself.**
 
-A Frost program is plain data and free functions that transform it. There are no classes and nothing is allocated behind your back. It compiles to native code through Cranelift or to portable C, and the compiler is written in Frost.
+A Frost program is plain data and free functions that transform it. Every allocation is one the program asked for. It compiles to native code through Cranelift or to portable C, and the compiler is written in Frost.
 
 Frost is under construction. It compiles itself and everything shown below runs,
 but the surface still changes between commits and there is no tagged release, so
 anything written against it today may need editing tomorrow.
 
-## Borrows are parameter modes
+## The language in one program
 
-A borrow is what a parameter mode means, so there is no reference type to write and no lifetime to describe.
+A server's connection table, which is most of the language doing one job.
 
-```frost,sketch
-wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
+```frost
+// Every top-level declaration is `name :: value`, and a file's exports are one
+// `export` line.
+import "io.frost"
+import "slab.frost"
+
+// A tagged enum. A variant carries a payload where it has one to carry.
+Phase :: enum { Opening, Streaming { sent: i64 }, Draining }
+
+Connection :: struct { id: i64, budget: i64, phase: Phase }
+
+// A `linear` value is consumed exactly once on every path out, counted when the
+// program is built, so a listener nobody shuts down is a compile error.
+Listener :: linear struct { port: i64 }
+
+listen :: fn(port: i64) -> Listener { { port = port } }
+
+// `move` is what consumes it, and the name cannot be read again after the call.
+shutdown :: fn(move l: Listener) -> i64 { l.port }
+
+// How accepting fails, and `-> T ! E` below is where that is declared.
+Full :: struct { capacity: i64 }
+
+// The table holds four connections. What comes back is a `Handle<Connection>`,
+// a copy value that goes stale when the slot it names is released.
+accept :: fn(mut table: Slab<Connection, 4>, id: i64, budget: i64)
+    -> Handle<Connection> ! Full
+{
+    if (slab_full($Connection, $4, table)) {
+        return { capacity = 4 }
+    }
+    slab_insert($Connection, $4, table,
+        Connection { id = id, budget = budget, phase = .Opening })
+}
+
+// `?` hands a failure to the caller rather than reading it here.
+accept_all :: fn(mut table: Slab<Connection, 4>,
+    mut held: []Handle<Connection>, count: i64) -> i64 ! Full
+{
+    for index in 0..count {
+        held[index] = accept(table, 100 + index, index + 1) ?
+    }
+    count
+}
+
+// `mut` borrows for the call and writes the caller's value. `match` covers
+// every variant and binds the payload of the one it took, and a variant on the
+// right of an `=` leaves out its enum because the place already carries it.
+advance :: fn(mut c: Connection) -> bool {
+    match c.phase {
+        case .Opening: {
+            c.phase = .Streaming { sent = 0 }
+            false
+        }
+        case .Streaming { sent }: {
+            if (sent < c.budget) {
+                c.phase = .Streaming { sent = sent + 1 }
+            } else {
+                c.phase = .Draining
+            }
+            false
+        }
+        case .Draining: true
+    }
+}
+
+// An unmarked parameter borrows to read.
+sent_of :: fn(c: Connection) -> i64 {
+    match c.phase {
+        case .Opening: 0
+        case .Streaming { sent }: sent
+        case .Draining: c.budget
+    }
+}
+
+// A function answers with several values through a return type list. There is
+// no tuple type behind it: the names say which value is which.
+step :: fn(mut table: Slab<Connection, 4>, mut held: []Handle<Connection>)
+    -> (closed: i64, live: i64)
+{
+    var closed: i64 = 0
+    var live: i64 = 0
+    for handle in held {
+        // A handle whose slot was released answers false here, so the loop
+        // never reads whatever moved in behind it.
+        if (slab_alive($Connection, $4, table, handle)) {
+            if (advance(table[handle])) {
+                slab_release($Connection, $4, table, handle)
+                closed = closed + 1
+            } else {
+                live = live + 1
+            }
+        }
+    }
+    return { closed = closed, live = live }
+}
+
+main :: fn() -> i64 {
+    listener := listen(8080)
+
+    var table: Slab<Connection, 4> = slab_new()
+    slab_reset($Connection, $4, table)
+
+    var held: [4]Handle<Connection> = [0; 4]
+    match accept_all(table, held, 4) {
+        case .Ok { value }: print_int_line(value)             // 4
+        case .Err { error }: print_int_line(error.capacity)
+    }
+
+    // Four is what the table holds, so the fifth is turned away.
+    match accept(table, 104, 1) {
+        case .Ok { value }: print_int_line(value)
+        case .Err { error }: print_int_line(error.capacity)   // 4
+    }
+
+    var closed: i64 = 0
+    var live: i64 = 0
+    for round in 0..3 {
+        shut, still := step(table, held)   // both values, bound by name
+        closed = closed + shut
+        live = still
+    }
+    print_int_line(live)                                      // 4
+
+    // The walk reaches the slots holding a connection and no others, so the
+    // body indexes storage with a number and checks no generation.
+    var sent: i64 = 0
+    for slot in live_slots(table) {
+        sent = sent + sent_of(table.storage[slot])
+    }
+    print_int_line(sent)                                      // 7
+
+    for round in 0..4 {
+        shut, still := step(table, held)
+        closed = closed + shut
+        live = still
+    }
+    print_int_line(closed)                                    // 4
+    print_int_line(live)                                      // 0
+
+    // Releasing the slot moved its generation on, so every handle to it is
+    // stale from here to the end of the program.
+    print_int_line(slab_alive($Connection, $4, table, held[0]))   // 0
+
+    print_int_line(shutdown(listener))                        // 8080
+    0
+}
 ```
 
-`mut` borrows for the call and mutates in place. An unmarked parameter borrows to read. `move` takes ownership. There is no `&` anywhere in the language, so a borrow has nothing to be stored in and nowhere to escape to. That one rule is why Frost needs no lifetime annotations, and the rest of the design grows from it.
+Past this screen: generics monomorphize over types, values, and functions, so
+`sort($i64, $ascending, xs)` calls directly; a `with` block is an arena whose
+pointers cannot outlive it; `columns<T, N>` stores a struct as one array per
+field; `distinct i64` is the same bits under a type of its own; `[4]f32` takes
+the arithmetic operators once per lane; a call written where a constant is read
+runs before the program does; `defer` runs where the function leaves; and
+`test` blocks run under `--test`. [`examples/tour.frost`](examples/tour.frost)
+is the official tour, a runnable program the suite compiles and checks:
+
+```bash
+frost examples/tour.frost          # compile, link, and run
+```
+
+The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is
+built on those handles, and [`just app scene`](docs/book/src/std/ecs.md) runs
+it: entities in an ECS, two passes, depth deciding what is in front.
+
+## Borrows are parameter modes
+
+A parameter mode is the whole of what a borrow is. `mut` borrows for the call
+and writes the caller's value, an unmarked parameter borrows to read, and
+`move` takes ownership. A borrow lasts for the call and has no spelling of its
+own, so there is nothing to store one in and nothing to annotate.
+
+That rule costs one thing, and paying it is most of what makes a Frost program
+look the way it does. Anything that outlives a call needs some other way to be
+named, which is why the connections above live in a pool and travel as
+`Handle<Connection>`. The one borrow a program does write down is `ref T`,
+returnable and checked at the frame and the region, so an accessor can hand
+back a place rather than a copy.
 
 | in place of | Frost has |
 | --- | --- |
@@ -35,110 +209,26 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 | a `const fn` promise | any function, worked out where a constant reads it |
 | a vector type and its intrinsics | `[4]f32`, with the operators once per lane |
 
-## The language at a glance
+## What it does
 
-```frost
-// A program is data and free functions. Every top-level declaration is
-// `name :: value`, and a file's exports are one `export` line.
-import "io.frost"
+Generics monomorphize over types, values, and functions, so a call in an inner
+loop is direct rather than going through a pointer. A `for` walks a range or a
+sequence as the index-and-bound loop it stands for. A literal leaves out a type
+the context already carries, and every field keeps its name, because the name
+is what says where the value lands. A region check keeps a pointer from
+outliving the block or the stack frame it points into, and a constant can be a
+folded expression or a call worked out before the program runs. There are no
+visibility modifiers and no methods.
 
-MAX_HEALTH :: 100                    // a constant, folded where it is named
-Meters :: distinct i64               // same bits, different type; no unwrapping
+It calls C without a binding layer. An `extern fn` links against a C library with the natural ABI, including one that returns a struct by value and one that takes a Frost function as a callback with a typed context.
 
-Kind :: enum { Hero, Monster { damage: i64 } }
-Entity :: struct { hp: i64, kind: Kind }
+One typed intermediate representation feeds three backends, a Cranelift native path, a portable C path, and a small interpreter. A differential test runs every program through all three and checks the answers match, so a lowering bug shows up as a disagreement rather than as a wrong binary.
 
-// An unmarked parameter borrows to read. `mut` borrows and writes the
-// caller's value. `move` takes ownership. The call site writes nothing,
-// there is no `&` anywhere, and nothing a borrow could escape into exists,
-// which is why there are no lifetimes to annotate.
-heal :: fn(mut e: Entity, amount: i64) {
-    e.hp = e.hp + amount
-}
+The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
 
-attack :: fn(e: Entity) -> i64 {
-    // `match` binds the payload and has to cover every variant.
-    match e.kind {
-        case .Hero: 10
-        case .Monster { damage }: damage
-    }
-}
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
 
-// A function answers with several values through a return type list.
-// There is no tuple type; the names say which value is which.
-tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
-    var sum : i64 = 0                // `var` declares an assignable local
-    var best : i64 = 0
-    for held in party {              // walks a slice, array, or str; no iterator
-        hit := attack(held)          // `:=` binds, immutable by default
-        sum = sum + hit
-        if (hit > best) { best = hit }
-    }
-    return { total = sum, strongest = best }
-}
-
-// A `linear` value must be consumed exactly once on every path out,
-// or the program does not build. `move` is what consumes it.
-Session :: linear struct { id: i64 }
-close :: fn(move s: Session) -> i64 { s.id }
-
-// `-> T ! E` says how a function fails, and `?` hands the failure up.
-Blocked :: struct { at: i64 }
-strike :: fn(e: Entity) -> i64 ! Blocked {
-    if (e.hp <= 0) { return { at = e.hp } }
-    attack(e)
-}
-round :: fn(e: Entity) -> i64 ! Blocked {
-    hit := strike(e)?
-    hit * 2
-}
-
-// Generics monomorphize over types, integers, and functions, so the
-// inner-loop call is direct. `$f` with a signature is the whole bound story.
-descending :: fn(a: i64, b: i64) -> bool { a > b }
-best_of :: fn($T: Type, $before: fn(T, T) -> bool, move a: $T, move b: $T) -> $T {
-    var kept := a
-    if (before(b, kept)) { kept = b }
-    kept
-}
-
-// C links without a binding layer, and calling it is gated by `unsafe`.
-strlen :: extern fn(s: ^i8) -> i64
-
-main :: fn() -> i64 {
-    var hero : Entity = { hp = 90, kind = .Hero }  // the context names the type
-    heal(hero, 10)                                 // borrowed and changed
-    print_int_line(hero.hp)                        // 100
-
-    party : [2]Entity = [hero, { hp = 40, kind = .Monster { damage = 12 } }]
-    total, strongest := tally(party)               // both values, bound by name
-    print_int_line(total)                          // 22
-    print_int_line(strongest)                      // 12
-
-    s := Session { id = 7 }
-    print_int_line(close(s))                       // s cannot be named again
-
-    print_int_line(best_of($i64, $descending, 3, 9))   // 9
-    print_int_line(sizeof(Entity))                 // a compile-time constant
-    print_int_line(unsafe { strlen("hello") })     // 5
-    0
-}
-```
-
-Past this screen: long-lived data lives in pools named by generational
-`Handle`s, small copy values that go stale rather than dangling; a `with` block
-is an arena whose pointers cannot outlive it; `columns<T, N>` stores a struct
-as one array per field; `defer` runs where the function leaves; and `test`
-blocks run under `--test`. [`examples/tour.frost`](examples/tour.frost) is the
-official tour, a runnable program the suite compiles and checks:
-
-```bash
-frost examples/tour.frost          # compile, link, and run
-```
-
-The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is
-built on those handles, and [`just app scene`](docs/book/src/std/ecs.md) runs
-it: entities in an ECS, two passes, depth deciding what is in front.
+The engine is ordinary Frost too. [`lib/`](lib) is a window and input layer over SDL3, a renderer over wgpu with a render graph that orders passes by the resources between them, and an `App` a program composes plugins into. A plugin is a `fn(mut App)`, systems run in stages, a pass carries its own typed state, and no example in the tree says `unsafe`.
 
 ## Documentation
 
@@ -155,20 +245,6 @@ same ground for someone who already thinks in ownership and borrows.
 [Patterns](docs/book/src/patterns.md) is what to write instead, once the syntax
 is familiar. The [language reference](docs/book/src/reference/conformance.md) is
 normative, and [the roadmap](docs/book/src/roadmap.md) is what is left.
-
-## What it does
-
-The language has structs and tagged enums, `match` with payload and tuple patterns that has to cover every variant or say what the rest do, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A `for` walks a range or a sequence as the index-and-bound loop it stands for, a function answers with several values through a return type list rather than a tuple type, and a literal leaves out a type the context already carries, while every field keeps its name because the name is what says where the value lands. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
-
-It calls C without a binding layer. An `extern fn` links against a C library with the natural ABI, including one that returns a struct by value and one that takes a Frost function as a callback with a typed context.
-
-One typed intermediate representation feeds three backends, a Cranelift native path, a portable C path, and a small interpreter. A differential test runs every program through all three and checks the answers match, so a lowering bug shows up as a disagreement rather than as a wrong binary.
-
-The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
-
-The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
-
-The engine is ordinary Frost too. [`lib/`](lib) is a window and input layer over SDL3, a renderer over wgpu with a render graph that orders passes by the resources between them, and an `App` a program composes plugins into. A plugin is a `fn(mut App)`, systems run in stages, a pass carries its own typed state, and no example in the tree says `unsafe`.
 
 ## Getting started
 
