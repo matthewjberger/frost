@@ -313,6 +313,34 @@ locals, integer arithmetic and comparison, `if`, `while`, `break`, `continue`,
 way. `&&` and `||` answer without asking the right side when the left one
 settles it, as they do where the program runs.
 
+A value may also be a run of values, a set of named ones, or a run of bytes,
+which is what a lookup table decided before the program runs is made of:
+
+```frost
+Point :: struct { x: i64, y: i64 }
+
+TABLE  :: [1, 2, 4, 8]
+ORIGIN :: Point { x = 3, y = 4 }
+NAME   :: "hello"
+
+SLOTS  :: TABLE[2]        // 4
+DOWN   :: ORIGIN.y        // 4
+LETTER :: NAME[1]         // 101, the byte
+WIDTH  :: str_len(NAME)   // 5
+
+Sized :: struct { bytes: [TABLE[3]]u8 }
+```
+
+An array literal, a struct literal, a string literal, `[value; n]`, an index, a
+field, and `str_len` and `slice_len` over one are all worked out. An index is
+checked where it is written, so reading past the end is a compile error naming
+the index and the length rather than an abort the program was going to reach.
+
+A run is *held* by the compiler once it is worked out, rather than read back
+out of the tokens each time it is named. An element may itself be a call, so
+re-reading would run it once per index; and a value has to outlive the names
+that built it, which a position in the token stream does not.
+
 Everything else is refused, naming what stopped it:
 
 - A function that reaches itself, directly or through others. Working the call
@@ -320,8 +348,8 @@ Everything else is refused, naming what stopped it:
 - A call into the world. A function this program does not declare has no body to
   read, so an `extern`, and anything that reaches one, stops the call. That is
   what rules out reading a file, printing, or allocating.
-- A pointer, a struct, an array, an `unsafe` block, a `match`, a `for`, a
-  `defer`, a `?`. Each is named where it is written.
+- A pointer, an `unsafe` block, a `match`, a `for`, a `defer`, a `?`. Each is
+  named where it is written.
 - A number with a fraction. A compile-time value is a whole number or a yes or
   no, since what one is for is a length, a capacity, a count or a branch, and
   folding a fraction would mean two decimal-to-double readings having to agree
@@ -331,11 +359,29 @@ Everything else is refused, naming what stopped it:
   says a compile finishes.
 
 A call names a function the file can name: what it declares, and what the files
-it imports export. Every argument has to be known where the call is written, so
-a call over a generic's size parameter is refused and the parameter is named:
-the parameter is bound at the instantiation, which is later. Arithmetic over one
-still works, and `[(N + 63) / 64]i64` is how a length over a size parameter is
-written (3.2).
+it imports export.
+
+`wrap_add`, `wrap_sub` and `wrap_mul` are worked out here too. They are the way
+a value leaves its range on purpose, and a hash folded before the program runs
+comes out the same as one computed while it does.
+
+A compile-time number is read in three places and a call may stand in all of
+them: a constant's value, an array's length, and the value argument a generic
+takes, whether written in a type (`Slab<Entity, next_power_of_two(300)>`) or at
+a call (`slab_insert($Entity, $next_power_of_two(300), ...)`).
+
+Every argument has to be known where the call is written. So a call over a
+generic's own size parameter, `Grid :: struct($N: usize) { cells: [pow2(N)]i64 }`,
+is refused and the parameter is named: `N` is bound at the instantiation, which
+is later than the declaration the call is written in. Two things make that the
+right answer rather than a gap to close. The caller-side form already works,
+and it is the one that comes up: `Grid<pow2(300)>` hands the rounded number in.
+And carrying an unevaluated call inside a length would put it in the mangled
+name an instance goes by and in the interface a separately compiled module
+publishes, so the spelling would have to stay stable across every future version
+of the compiler, for a form whose caller-side twin is already there. Arithmetic
+over a size parameter keeps working, and `[(N + 63) / 64]i64` is how a length
+over one is written (3.2).
 
 ## 5.3 Externs and imports
 

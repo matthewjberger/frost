@@ -533,12 +533,16 @@ fn scan_function_bodies(tokens: &[Token]) -> HashMap<String, (usize, usize)> {
     found
 }
 
-// Whether this expression calls anything. A constant that does is one the
-// program asked to have worked out, so failing to work it out is a fault
-// rather than a constant left unfolded.
+// Whether this expression asks to be worked out: it calls something, reads an
+// item out of a run, or reads a field. A constant that does is one the program
+// asked the compiler to settle, so failing to settle it is a fault rather than
+// a constant left unfolded. In particular an index past the end is refused
+// where it is written rather than left to abort while the program runs.
 fn holds_a_call(ast: &Ast, expression: ExprId) -> bool {
     match ast.expr(expression) {
-        Expression::Call(..) => true,
+        Expression::Call(..)
+        | Expression::Index(..)
+        | Expression::FieldAccess(..) => true,
         Expression::Prefix(_, inner) => holds_a_call(ast, *inner),
         Expression::Infix(left, _, right) => {
             holds_a_call(ast, *left) || holds_a_call(ast, *right)
@@ -618,6 +622,8 @@ fn scan_constants(
             Some(
                 Token::Integer(_)
                     | Token::LeftParentheses
+                    | Token::LeftBracket
+                    | Token::StringLiteral(_)
                     | Token::Minus
                     | Token::Float(_)
                     | Token::Identifier(_)
@@ -2062,17 +2068,21 @@ impl<'a> Parser<'a> {
             // and what it answered stands here in place of the call. Left as
             // written it would be a call the program makes while it runs,
             // which is a second meaning for one declaration.
+            // An aggregate keeps the expression it was written as: what stands
+            // here has to be something a program can hold, and the value the
+            // folder worked out is for the compile-time positions that read it.
             if holds_a_call(&self.ast, expression)
                 && let Some(value) = self.constant_values.get(&identifier)
-            {
-                let literal = match *value {
+                && let Some(literal) = match value {
                     crate::const_eval::Value::Integer(held) => {
-                        Literal::Integer(held)
+                        Some(Literal::Integer(*held))
                     }
                     crate::const_eval::Value::Boolean(held) => {
-                        Literal::Boolean(held)
+                        Some(Literal::Boolean(*held))
                     }
-                };
+                    _ => None,
+                }
+            {
                 let span = self.ast.expr_span(expression);
                 expression =
                     self.ast.push_expr(Expression::Literal(literal), span);
@@ -3617,15 +3627,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether a length here calls a function this file declares. `[Vertex; 4]`
-    /// names a type and never calls one, so the `(` is what tells the two
-    /// apart.
+    /// Whether a length here is worked out rather than named: a call to a
+    /// function this file declares, or an item read out of a constant that
+    /// holds a run of them. `[Vertex; 4]` names a type and does neither, so
+    /// what follows the name is what tells them apart.
     fn at_size_call(&self) -> bool {
         let Token::Identifier(name) = self.peek_nth(0) else {
             return false;
         };
-        matches!(self.peek_nth(1), Token::LeftParentheses)
-            && self.folder.declares(name)
+        if matches!(self.peek_nth(1), Token::LeftParentheses) {
+            return self.folder.declares(name);
+        }
+        matches!(self.peek_nth(1), Token::LeftBracket | Token::Dot)
+            && self.constant_values.contains_key(name)
     }
 
     /// A call written where a compile-time value is read, and the number it
@@ -3634,7 +3648,11 @@ impl<'a> Parser<'a> {
     /// named rather than left half-worked-out.
     fn parse_folded_call(&mut self) -> Result<i64> {
         let at = self.mark();
-        let expression = self.parse_expression(Precedence::Lowest)?;
+        // The call and nothing after it. A `>` past one closes the generic
+        // arguments it is written inside, and read as an expression it is a
+        // comparison instead; the arithmetic around a length is the size
+        // parser's, which is what calls this.
+        let expression = self.parse_expression(Precedence::Prefix)?;
         let Parser {
             ast,
             folder,
@@ -3856,6 +3874,19 @@ impl<'a> Parser<'a> {
                 let value = *value as usize;
                 self.read_token();
                 Type::ConstUsize(value)
+            }
+            // A call where a type is read is a compile-time number: the
+            // argument of `columns<T, N>`, or the `$N` a generic takes at a
+            // call. Both reach here, so working it out here is what makes one
+            // rule out of two positions.
+            Token::Identifier(_) if self.at_size_call() => {
+                let value = self.parse_folded_call()?;
+                let Ok(held) = usize::try_from(value) else {
+                    bail!(
+                        "a compile-time size is a whole number that is not negative, and this answers with {value}"
+                    );
+                };
+                Type::ConstUsize(held)
             }
             Token::Identifier(name) => {
                 let name = name.to_string();

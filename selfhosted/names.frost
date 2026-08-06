@@ -395,7 +395,8 @@ alias_for :: fn(mut p: Parser, off: i64, len: i64) -> (start: i64,
 register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
     arena_push(
         p.consts,
-        ConstDef { name_off = offset, name_len = length, value = value },
+        ConstDef { name_off = offset, name_len = length, value = value,
+            kind = CONST_INT, count = 0 },
     )
 }
 

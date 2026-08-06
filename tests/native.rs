@@ -4988,7 +4988,7 @@ fn the_tour_prints_what_its_comments_claim() {
     // stated layouts read off between them.
     assert_eq!(
         output,
-        "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n72\n7\n"
+        "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n32\n72\n7\n"
     );
 }
 
@@ -17908,6 +17908,29 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "has no value at compile time",
     ),
+    // An index is checked where it is written. Reading past the end of a run
+    // the compiler worked out is a compile error naming the index and the
+    // length, not an abort the program was going to reach.
+    (
+        "a_compile_time_index_past_the_end",
+        "import \"io.frost\"\n\
+         TABLE :: [1, 2, 4, 8]\n\
+         OUT :: TABLE[9]\n\
+         main :: fn() -> i64 { print_int_line(OUT) 0 }\n",
+        "this reads item 9 of a run of 4, whose items are numbered 0 to 3",
+    ),
+    // A field that is not there. Every field is named at the literal, so what
+    // a field reads is decided without a layout, and a name nothing there
+    // carries is said where it is written.
+    (
+        "a_compile_time_field_that_is_not_there",
+        "import \"io.frost\"\n\
+         Point :: struct { x: i64, y: i64 }\n\
+         ORIGIN :: Point { x = 3, y = 4 }\n\
+         DEPTH :: ORIGIN.z\n\
+         main :: fn() -> i64 { print_int_line(DEPTH) 0 }\n",
+        "this has no field called 'z'",
+    ),
     // A vector's lanes are a register's worth, so the length is a power of two.
     (
         "a_vector_whose_length_is_not_a_power_of_two",
@@ -18005,6 +18028,169 @@ fn both_compilers_refuse_the_same_programs() {
         );
     }
     let _ = std::fs::remove_file(&compiler);
+}
+
+// Where the range ends is one answer, and two things have to give it: the fold
+// that runs a call before the program does, and the arithmetic the program runs.
+// Each row is an operation over two written numbers, with what it answers where
+// it stays inside the range and nothing where it leaves. Each is compiled twice:
+// once as a constant, which the fold settles, and once over values the compiler
+// cannot see through, which the machine settles. A row where the two disagree is
+// a program that builds and then aborts, or one refused for arithmetic that
+// would have held.
+//
+// The pairs straddle the line on both sides on purpose: every row that leaves
+// the range has a neighbour one step inside it.
+const RANGE_EDGE: &[(&str, &str, &str, &str, Option<i64>)] = &[
+    ("add_at_the_top", "a + b", "9223372036854775807", "0", Some(i64::MAX)),
+    ("add_past_the_top", "a + b", "9223372036854775807", "1", None),
+    (
+        "add_at_the_bottom",
+        "a + b",
+        "-9223372036854775807 - 1",
+        "0",
+        Some(i64::MIN),
+    ),
+    ("add_past_the_bottom", "a + b", "-9223372036854775807 - 1", "-1", None),
+    ("subtract_at_the_bottom", "a - b", "-9223372036854775807", "1", Some(i64::MIN)),
+    (
+        "subtract_past_the_bottom",
+        "a - b",
+        "-9223372036854775807 - 1",
+        "1",
+        None,
+    ),
+    ("multiply_inside", "a * b", "4611686018427387903", "2", Some(9223372036854775806)),
+    ("multiply_past_the_top", "a * b", "4611686018427387904", "2", None),
+    ("multiply_the_bottom_by_one", "a * b", "-9223372036854775807 - 1", "1", Some(i64::MIN)),
+    ("multiply_the_bottom_by_minus_one", "a * b", "-9223372036854775807 - 1", "-1", None),
+    ("divide_the_bottom_by_one", "a / b", "-9223372036854775807 - 1", "1", Some(i64::MIN)),
+    ("divide_the_bottom_by_minus_one", "a / b", "-9223372036854775807 - 1", "-1", None),
+    ("divide_by_a_number", "a / b", "7", "2", Some(3)),
+    ("divide_by_nothing", "a / b", "7", "0", None),
+    ("remainder_by_a_number", "a % b", "7", "2", Some(1)),
+    ("remainder_by_nothing", "a % b", "7", "0", None),
+    ("remainder_of_the_bottom_by_minus_one", "a % b", "-9223372036854775807 - 1", "-1", Some(0)),
+    ("shift_to_the_sign_bit", "a << b", "1", "63", Some(i64::MIN)),
+    ("shift_past_the_width", "a << b", "1", "64", None),
+    ("shift_right_inside", "a >> b", "1024", "3", Some(128)),
+    ("shift_right_past_the_width", "a >> b", "1024", "64", None),
+];
+
+fn range_edge_folded(operation: &str, left: &str, right: &str) -> String {
+    format!(
+        "import \"io.frost\"\n\
+         step :: fn(a: i64, b: i64) -> i64 {{ {operation} }}\n\
+         EDGE :: step({left}, {right})\n\
+         main :: fn() -> i64 {{ print_int_line(EDGE) 0 }}\n"
+    )
+}
+
+fn range_edge_run(operation: &str, left: &str, right: &str) -> String {
+    format!(
+        "import \"io.frost\"\n\
+         step :: fn(a: i64, b: i64) -> i64 {{ {operation} }}\n\
+         main :: fn() -> i64 {{\n\
+         \x20   var a : i64 = {left}\n\
+         \x20   var b : i64 = {right}\n\
+         \x20   print_int_line(step(a, b))\n\
+         \x20   0\n}}\n"
+    )
+}
+
+#[test]
+fn the_fold_and_the_machine_agree_about_where_the_range_ends() {
+    if !linker_available() {
+        return;
+    }
+    let hosted = build_self_hosted_compiler("rangeedge");
+    let directory = std::env::temp_dir();
+    for (name, operation, left, right, answer) in RANGE_EDGE {
+        let folded = range_edge_folded(operation, left, right);
+        let run = range_edge_run(operation, left, right);
+
+        // What the fold says, on both compilers.
+        let source = directory.join(format!("frost_edge_{name}.frost"));
+        std::fs::write(&source, &folded).unwrap();
+        let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("-o")
+            .arg(directory.join(format!("frost_edge_{name}.o")))
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert_eq!(
+            bootstrap.status.success(),
+            answer.is_some(),
+            "the bootstrap's fold put {name} on the wrong side of the line:\n{}",
+            String::from_utf8_lossy(&bootstrap.stderr)
+        );
+        if let Some(compiler) = &hosted {
+            let held = Command::new(compiler)
+                .env("FROST_INPUT", &source)
+                .output()
+                .unwrap();
+            assert_eq!(
+                held.status.success(),
+                answer.is_some(),
+                "the self-hosted fold put {name} on the wrong side of the line:\n{}",
+                String::from_utf8_lossy(&held.stderr)
+            );
+        }
+        let _ = std::fs::remove_file(&source);
+
+        // What the machine says, running the same arithmetic over values the
+        // compiler cannot see through.
+        let Some(output) = compile_and_run_unaudited_allowing_failure(
+            &format!("edge{name}"),
+            &run,
+        ) else {
+            continue;
+        };
+        match answer {
+            Some(wanted) => assert_eq!(
+                output.trim(),
+                wanted.to_string(),
+                "running {name} answered differently from the fold"
+            ),
+            None => assert!(
+                output.is_empty(),
+                "running {name} answered '{output}' where the fold refused it"
+            ),
+        }
+    }
+    if let Some(compiler) = hosted {
+        let _ = std::fs::remove_file(compiler);
+    }
+}
+
+// Build and run a program that is expected to abort, so the abort is the
+// answer rather than a failure of the harness. Nothing on stdout is what an
+// abort before the first print looks like.
+fn compile_and_run_unaudited_allowing_failure(
+    label: &str,
+    source: &str,
+) -> Option<String> {
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_{label}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let exe = directory
+        .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    assert!(
+        built.status.success(),
+        "{label} did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let _ = std::fs::remove_file(&exe);
+    Some(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"))
 }
 
 // What the bootstrap said when it would not compile a program.
@@ -22410,6 +22596,113 @@ main :: fn() -> i64 {
          }
 ",
         "-9223372036854775808\n9223372036854775807\n-9223372036854775807\n",
+    ),
+    // What a compile-time call may hold, past a number: a run of values, a set
+    // of named ones, and a run of bytes. Each is held by the evaluator rather
+    // than read back out of the tokens, since an element may itself be a call
+    // and a value has to outlive the names that built it. `[TABLE[3]]u8` is the
+    // point of the whole thing: a lookup table decided before the program runs
+    // and a length read out of it.
+    (
+        "a_compile_time_value_may_be_a_run_of_values",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         TABLE :: [1, 2, 4, 8]
+         ORIGIN :: Point { x = 3, y = 4 }
+         NAME :: \"hello\"
+         SLOTS :: TABLE[2]
+         DOWN :: ORIGIN.y
+         LETTER :: NAME[1]
+         WIDTH :: str_len(NAME)
+         pick :: fn(i: i64) -> i64 {
+             held := [3, 5, 7, 11, 13]
+             held[i]
+         }
+         total :: fn() -> i64 {
+             held := [1, 2, 3, 4]
+             var sum : i64 = 0
+             var i : i64 = 0
+             while (i < 4) { sum = sum + held[i]  i = i + 1 }
+             sum
+         }
+         corner :: fn() -> i64 {
+             p := Point { x = 10, y = 20 }
+             p.x + p.y
+         }
+         repeated :: fn() -> i64 {
+             held := [7; 5]
+             held[4] + slice_len(held)
+         }
+         CHOSEN :: pick(3)
+         SUM :: total()
+         CORNER :: corner()
+         REPEATED :: repeated()
+         Sized :: struct { bytes: [TABLE[3]]u8 }
+         main :: fn() -> i64 {
+             print_int_line(SLOTS)
+             print_int_line(DOWN)
+             print_int_line(LETTER)
+             print_int_line(WIDTH)
+             print_int_line(CHOSEN)
+             print_int_line(SUM)
+             print_int_line(CORNER)
+             print_int_line(REPEATED)
+             print_int_line(sizeof(Sized))
+             print_int_line(TABLE[1])
+             print_int_line(ORIGIN.x)
+             0
+         }
+",
+        "4\n4\n101\n5\n11\n10\n30\n12\n8\n2\n3\n",
+    ),
+    // The three that keep the low bits are worked out before the program runs
+    // too. They exist so a value may leave its range on purpose, so a hash
+    // folded here has to come out the same as one computed while the program
+    // runs.
+    (
+        "the_wrapping_operations_fold",
+        "import \"io.frost\"
+         mixed :: fn(a: i64) -> i64 { wrap_mul(a, 2654435761) }
+         rolled :: fn(a: i64) -> i64 { wrap_add(a, 1) }
+         backed :: fn(a: i64) -> i64 { wrap_sub(a, 1) }
+         MIX :: mixed(9223372036854775807)
+         ROLL :: rolled(9223372036854775807)
+         BACK :: backed(-9223372036854775807 - 1)
+         main :: fn() -> i64 {
+             print_int_line(MIX)
+             print_int_line(ROLL)
+             print_int_line(BACK)
+             var a : i64 = 9223372036854775807
+             print_int_line(wrap_mul(a, 2654435761))
+             0
+         }
+",
+        "9223372034200340047\n-9223372036854775808\n9223372036854775807\n9223372034200340047\n",
+    ),
+    // A compile-time number is read in three places, and a call may stand in
+    // all of them: a constant's value, an array's length, and the value
+    // argument a generic takes, whether written in a type or at a call.
+    (
+        "a_call_stands_where_a_compile_time_number_is_read",
+        "import \"io.frost\"
+         import \"columns.frost\"
+         pow2 :: fn(n: i64) -> i64 {
+             var held : i64 = 1
+             while (held < n) { held = held * 2 }
+             held
+         }
+         Particle :: struct { x: i64 }
+         Buffer :: struct { bytes: [pow2(5)]u8 }
+         main :: fn() -> i64 {
+             var c : columns<Particle, pow2(5)> = columns_new()
+             columns_reset($Particle, $pow2(5), c)
+             h := columns_insert($Particle, $pow2(5), c, Particle { x = 7 })
+             print_int_line(c[h].x)
+             print_int_line(sizeof(Buffer))
+             0
+         }
+",
+        "7\n8\n",
     ),
     // Elementwise arithmetic over a fixed array of numbers, which is what a
     // vector register holds. `a + b` is one operation per lane, so what a lane

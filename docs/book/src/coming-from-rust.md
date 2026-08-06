@@ -766,9 +766,14 @@ functions, and what says the call is early is that a constant and an array
 length are. Rust asks the author to promise `const` on the definition; Frost
 reads the position instead, so no function has two kinds.
 
-What such a call may do is the whole-number half of the language, and everything
-else is refused where it is written: a function that reaches itself, a call into
-the world, a pointer or a struct, a number with a fraction, and a bound of a
+What such a call may do is the whole-number half of the language, plus the three
+things built out of it: a run of values, a set of named ones, and a run of bytes.
+So a lookup table is decided before the program runs, and `TABLE[2]` reads out of
+it with the index checked where it is written. `wrap_add`, `wrap_sub` and
+`wrap_mul` fold too, which is Rust's `wrapping_*` family in a `const fn`.
+
+Everything else is refused where it is written: a function that reaches itself,
+a call into the world, a pointer, a number with a fraction, and a bound of a
 million steps. There is no falling back to running it later, since that would
 make one declaration a number in one place and a call in another.
 

@@ -609,3 +609,51 @@ diagnostic says `a vector of 4 f32` now, built from the length and the element
 rather than handed to a type renderer. A sentence a reader sees is one sentence
 in one language, so where the two would render it differently, neither renders
 it.
+
+## The fold and the machine disagreed about one expression
+
+The wording of the compile-time refusal and the runtime abort matched, and that
+proved nothing about the behaviour. A table of twenty-one expressions that
+straddle the edge of the range on both sides, each compiled twice, is what
+proves it: once as a constant, which the fold settles, and once over values the
+compiler cannot see through, which the machine settles. A row where the two
+disagree is a program that builds and then aborts, or one refused for arithmetic
+that would have held.
+
+One row disagreed. `MIN % -1` is nothing, and every backend answers nothing,
+because only the *quotient* leaves the range. The fold refused it, because both
+evaluators had been written against the shape of Rust's `checked_rem`, which
+answers nothing for that pair for the quotient's sake. The fold answers zero now.
+
+Matching wording is what a shared substring in the refusal table checks, and it
+is worth having. It is not the same claim as matching behaviour, and only one of
+the two can be checked by reading.
+
+## A constant that is more than a number needs a table of its own
+
+A compile-time value grew past an integer: a run of values, a set of named ones,
+a run of bytes. The self-hosted compiler records constants in `p.consts`, which
+every other pass reads as a number, so recording an aggregate there emitted the
+index of its first item wherever the name was written. `TABLE[2]` printed a
+pointer-sized number at runtime and nothing said why.
+
+Aggregates live in `const_aggregates` now, which only the evaluator reads. The
+shape of the mistake is the one worth remembering: widening a value kind is not
+the same as widening the table that holds it, and the readers of that table are
+what decide whether it can be widened at all.
+
+The same declaration is then read twice, once by the constants pass for its
+compile-time value and once by the value-constant pass for what the program
+emits. That is not a duplication to remove: the two answer different questions
+about the same text, and a constant that folds to a number needs only the first
+while one that folds to a run needs both.
+
+### A fold that might fail needs a try, not a refusal
+
+`TABLE :: [1, 2, 4, 8]` folds. `defaults :: Config { on = handler }` does not,
+and it was legal before any of this. So the constants pass distinguishes a value
+that *asked* to be worked out, one holding a call, an index or a field, from one
+that merely might be: the first is refused where it fails and the second is
+tried quietly and left for the pass that emits it. The bootstrap gets the try
+free from `Result`; the self-hosted compiler needed a flag and a quiet mode,
+since its faults leave through an escape rather than through a return.
