@@ -656,6 +656,23 @@ bench-asm:
 test:
     cargo test -p frost -- --nocapture
 
+# Runs all tests, the five binaries at once (Windows)
+#
+# Cargo runs one test binary after another, and none of them saturates the
+# machine on its own: the work is compilers and C toolchains in child
+# processes, and one binary reaches about five times its serial speed on
+# sixteen cores. Started together they fill what each leaves idle, which is
+# most of the difference between this and `just test`. Same binaries, same
+# tests, same everything the suite proves.
+[windows]
+test-fast:
+    @cargo test -r -p frost --no-run 2>&1 | Out-Null; $binaries = @("native", "parity", "fuzz", "grammar", "doctests", "editor_grammar"); $jobs = @(); foreach ($name in $binaries) { $exe = (Get-ChildItem target/release/deps/$name-*.exe | Where-Object { $_.Name -notmatch "\.d$" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1); if ($exe) { $jobs += Start-Job -ArgumentList $exe.FullName, $name, $PWD.Path -ScriptBlock { param($path, $label, $root) Set-Location $root; $output = & $path 2>&1; [pscustomobject]@{ label = $label; code = $LASTEXITCODE; text = ($output | Select-String "^test result|FAILED|panicked at") -join "`n" } } } }; $results = $jobs | Wait-Job | Receive-Job; $failed = 0; foreach ($result in $results) { Write-Host ("== " + $result.label); Write-Host $result.text; if ($result.code -ne 0) { $failed = 1 } }; if ($failed -eq 1) { throw "tests failed" }
+
+# Runs all tests, the five binaries at once (Unix)
+[unix]
+test-fast:
+    @cargo test -r -p frost --no-run >/dev/null 2>&1;     pids="";     for name in native parity fuzz grammar doctests editor_grammar; do         exe=$(ls -t target/release/deps/$name-* 2>/dev/null | grep -v '\.d$' | head -1);         if [ -n "$exe" ]; then "$exe" > "/tmp/frost_$name.log" 2>&1 & pids="$pids $!:$name"; fi;     done;     failed=0;     for entry in $pids; do         pid=${entry%%:*}; name=${entry##*:};         if ! wait "$pid"; then failed=1; fi;         echo "== $name"; grep -E "^test result|FAILED|panicked at" "/tmp/frost_$name.log" || true;     done;     exit $failed
+
 # Random programs through all five oracles, for as many seeds as you ask for.
 # `just test` runs sixty of these; this is the same generator turned up, for
 # hunting rather than for gating. `FROST_FUZZ_FROM` starts somewhere other than

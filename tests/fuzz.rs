@@ -866,7 +866,4 @@ fn every_compiler_agrees_on_random_programs() {
             "the self-hosted C backend disagrees on seed {seed}:\n{source}"
         );
     }
-    if let Some(compiler) = hosted {
-        let _ = std::fs::remove_file(&compiler);
-    }
 }

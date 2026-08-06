@@ -1779,7 +1779,6 @@ fn both_compilers_refuse_the_same_programs() {
             "the self-hosted compiler did not say '{wanted}' about {name}:\n{hosted}"
         );
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // Where the range ends is one answer, and two things have to give it: the fold
@@ -4202,5 +4201,4 @@ fn both_compilers_agree_on_these_programs() {
             );
         }
     }
-    let _ = std::fs::remove_file(&compiler);
 }
