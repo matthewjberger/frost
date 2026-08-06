@@ -18,28 +18,39 @@ const DEPTH_LIMIT: usize = 32;
 
 /// What a compile-time expression works out to.
 ///
-/// A whole number or a yes or no, and nothing else. What a compile-time value
-/// is for is a length, a capacity, a count or a branch, and folding a fraction
-/// would mean two decimal-to-double readings having to agree bit for bit,
-/// which is a guarantee neither compiler makes anywhere else.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A whole number, a yes or no, and the three things built out of those: a run
+/// of them, a set of named ones, and a run of bytes. No fraction: folding one
+/// would mean two decimal-to-double readings having to agree bit for bit, which
+/// is a guarantee neither compiler makes anywhere else.
+///
+/// An aggregate is *held* rather than read back out of the tokens each time.
+/// An element may itself be a call, so re-reading would re-run it once per
+/// index; and a value has to outlive the names that built it, which a position
+/// in the token stream does not.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Integer(i64),
     Boolean(bool),
+    Array(Rc<Vec<Value>>),
+    Record(Rc<Vec<(String, Value)>>),
+    Text(Rc<String>),
 }
 
 impl Value {
-    pub fn integer(self) -> Option<i64> {
+    pub fn integer(&self) -> Option<i64> {
         match self {
-            Value::Integer(held) => Some(held),
+            Value::Integer(held) => Some(*held),
             _ => None,
         }
     }
 
-    fn describe(self) -> &'static str {
+    fn describe(&self) -> &'static str {
         match self {
             Value::Integer(_) => "a whole number",
             Value::Boolean(_) => "a yes or no",
+            Value::Array(_) => "a run of values",
+            Value::Record(_) => "a set of named values",
+            Value::Text(_) => "a run of bytes",
         }
     }
 }
@@ -356,6 +367,97 @@ impl<'a> Folder<'a> {
             Expression::Literal(Literal::Float(_) | Literal::Float32(_)) => {
                 Err(FRACTION.to_string())
             }
+            Expression::Literal(Literal::String(held)) => {
+                Ok(Value::Text(Rc::new(held.clone())))
+            }
+            // A run of values written out. Each element is worked out once,
+            // here, and what comes out is held: an element may itself be a
+            // call, and reading the run again would run it again.
+            Expression::Literal(Literal::Array(elements)) => {
+                let mut held = Vec::new();
+                for element in ast.exprs_in(*elements).to_vec() {
+                    held.push(self.value(ast, element, locals, stack)?);
+                }
+                Ok(Value::Array(Rc::new(held)))
+            }
+            // `[value; n]`, the same value n times. The count is written as a
+            // number or as a constant standing for one, which is how the
+            // parser reads it everywhere else.
+            Expression::ArrayRepeat(inner, count) => {
+                let held = self.value(ast, *inner, locals, stack)?;
+                let written = ast.name(*count);
+                let Some(count) = written
+                    .parse::<i64>()
+                    .ok()
+                    .or_else(|| locals.get(written)?.integer())
+                else {
+                    return Err(format!(
+                        "'{written}' is not a count this can work out"
+                    ));
+                };
+                let Ok(count) = usize::try_from(count) else {
+                    return Err(format!(
+                        "a run is written {count} long, and a length is not negative"
+                    ));
+                };
+                for _ in 0..count {
+                    self.spend()?;
+                }
+                Ok(Value::Array(Rc::new(vec![held; count])))
+            }
+            // A set of named values. Every field is named at the literal, so
+            // what a field reads is decided here without a layout.
+            Expression::StructInit(_, initializers) => {
+                let mut held = Vec::new();
+                for named in ast.named_in(*initializers).to_vec() {
+                    let value = self.value(ast, named.value, locals, stack)?;
+                    held.push((ast.name(named.name).to_string(), value));
+                }
+                Ok(Value::Record(Rc::new(held)))
+            }
+            Expression::Index(base, index) => {
+                let base = self.value(ast, *base, locals, stack)?;
+                let Value::Integer(index) =
+                    self.value(ast, *index, locals, stack)?
+                else {
+                    return Err(
+                        "what is read out of a run is named by a whole number"
+                            .to_string(),
+                    );
+                };
+                match &base {
+                    Value::Array(items) => {
+                        let at = in_range(index, items.len())?;
+                        Ok(items[at].clone())
+                    }
+                    Value::Text(held) => {
+                        let bytes = held.as_bytes();
+                        let at = in_range(index, bytes.len())?;
+                        Ok(Value::Integer(bytes[at] as i64))
+                    }
+                    held => Err(format!(
+                        "{} is not something an index reads",
+                        held.describe()
+                    )),
+                }
+            }
+            Expression::FieldAccess(base, field) => {
+                let base = self.value(ast, *base, locals, stack)?;
+                let name = ast.name(*field);
+                let Value::Record(fields) = &base else {
+                    return Err(format!(
+                        "{} has no field to read",
+                        base.describe()
+                    ));
+                };
+                fields
+                    .iter()
+                    .find(|(held, _)| held == name)
+                    .map(|(_, value)| value.clone())
+                    .ok_or_else(|| {
+                        format!("this has no field called '{name}'")
+                    })
+            }
             Expression::Boolean(held) => Ok(Value::Boolean(*held)),
             Expression::Literal(Literal::Boolean(held)) => {
                 Ok(Value::Boolean(*held))
@@ -367,7 +469,7 @@ impl<'a> Folder<'a> {
                     "false" => return Ok(Value::Boolean(false)),
                     _ => {}
                 }
-                locals.get(name).copied().ok_or_else(|| {
+                locals.get(name).cloned().ok_or_else(|| {
                     format!(
                         "'{name}' has no value at compile time, so this cannot be worked out before the program runs"
                     )
@@ -447,6 +549,13 @@ impl<'a> Folder<'a> {
                 for argument in ast.exprs_in(*arguments).to_vec() {
                     held.push(self.value(ast, argument, locals, stack)?);
                 }
+                // The three that keep the low bits. They exist so a value may
+                // leave its range on purpose, and a hash worked out before the
+                // program runs has to come out the same as one worked out
+                // while it does.
+                if let Some(answered) = builtin(&name, &held)? {
+                    return Ok(answered);
+                }
                 self.call(&name, held, stack)
             }
             held => Err(format!(
@@ -454,6 +563,54 @@ impl<'a> Folder<'a> {
                 describe_expression(held)
             )),
         }
+    }
+}
+
+// `wrap_add`, `wrap_sub` and `wrap_mul`, which are builtins the parser reads at
+// a call rather than functions a program declares. Answers nothing for any
+// other name, so an ordinary call goes on being one.
+fn builtin(name: &str, given: &[Value]) -> Result<Option<Value>, String> {
+    if matches!(name, "str_len" | "slice_len") {
+        return match given {
+            [Value::Text(held)] => {
+                Ok(Some(Value::Integer(held.len() as i64)))
+            }
+            [Value::Array(items)] => {
+                Ok(Some(Value::Integer(items.len() as i64)))
+            }
+            _ => Err(format!("'{name}' reads the length of a run, and this is not one")),
+        };
+    }
+    if !matches!(name, "wrap_add" | "wrap_sub" | "wrap_mul") {
+        return Ok(None);
+    }
+    let [Value::Integer(left), Value::Integer(right)] = given else {
+        return Err(format!(
+            "'{name}' keeps the low bits of two whole numbers, and this is not two of them"
+        ));
+    };
+    Ok(Some(Value::Integer(match name {
+        "wrap_add" => left.wrapping_add(*right),
+        "wrap_sub" => left.wrapping_sub(*right),
+        _ => left.wrapping_mul(*right),
+    })))
+}
+
+// Where an index lands, or what is wrong with it. Bounds are decided here,
+// where the index is written, so reading past the end is a compile error rather
+// than an abort the program was going to reach.
+fn in_range(index: i64, count: usize) -> Result<usize, String> {
+    if count == 0 {
+        return Err(format!(
+            "this reads item {index} of a run of nothing, which has no items"
+        ));
+    }
+    let last = count - 1;
+    match usize::try_from(index) {
+        Ok(at) if at < count => Ok(at),
+        _ => Err(format!(
+            "this reads item {index} of a run of {count}, whose items are numbered 0 to {last}"
+        )),
     }
 }
 
@@ -503,6 +660,11 @@ fn integers(
             left.checked_div(right)
                 .ok_or_else(|| "this divides by zero".to_string())?,
         ),
+        // The remainder of the smallest by minus one is nothing, and that is
+        // what the machine answers. Only the quotient leaves the range, so
+        // refusing the remainder here would refuse arithmetic the program
+        // would have carried out.
+        Operator::Modulo if right == -1 => Value::Integer(0),
         Operator::Modulo => Value::Integer(
             left.checked_rem(right)
                 .ok_or_else(|| "this divides by zero".to_string())?,

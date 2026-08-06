@@ -23,7 +23,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     op_answers_truth,
     BORROW_FLAG, POINTER_BASE, INDIRECT_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind,
-    ConstFn, ConstLocal, ConstFrame, ConstValue, ConstFlow, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
+    ConstFn, ConstLocal, ConstFrame, ConstValue, ConstItem, ConstFlow,
+    CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
@@ -552,6 +553,12 @@ ConstDef :: struct {
     name_off: i64,
     name_len: i64,
     value: i64,
+    // What the compile-time evaluator worked the value out to, for a constant
+    // that is more than a number. A plain integer leaves these at CONST_INT
+    // and zero, and every reader that wants the number goes on reading
+    // `value`.
+    kind: i64,
+    count: i64,
 }
 
 // A lexed token. `off`/`len` are the byte range in the source (used to intern
@@ -802,6 +809,7 @@ ConstLocal :: struct {
     name_len: i64,
     kind: i64,
     value: i64,
+    count: i64,
 }
 
 // A call being run, so one that reaches itself is caught by name.
@@ -810,9 +818,39 @@ ConstFrame :: struct {
     name_len: i64,
 }
 
+// The five things a compile-time value may be. Held in `core` rather than
+// beside the evaluator because the constant table carries one and every file
+// that reads that table needs the names.
+CONST_INT :: 0
+CONST_BOOL :: 1
+CONST_ARRAY :: 2
+CONST_RECORD :: 3
+CONST_TEXT :: 4
+
+// What a compile-time expression works out to. `kind` says which of the five
+// things it is; `value` is the number, the 0 or 1, the byte offset of a run of
+// bytes, or where a run of items starts in `const_items`; `count` is how many
+// items or bytes there are.
+//
+// An aggregate is held rather than read back out of the tokens each time. An
+// element may itself be a call, so re-reading would run it once per index, and
+// a value has to outlive the names that built it, which a position in the
+// token stream does not.
 ConstValue :: struct {
     kind: i64,
     value: i64,
+    count: i64,
+}
+
+// One item of a held aggregate. A run of values leaves the name empty; a set of
+// named ones carries the field's name, so what a field reads is decided without
+// a layout.
+ConstItem :: struct {
+    name_off: i64,
+    name_len: i64,
+    kind: i64,
+    value: i64,
+    count: i64,
 }
 
 // What a statement did, and the value it left with where it left one.
@@ -820,6 +858,7 @@ ConstFlow :: struct {
     flow: i64,
     kind: i64,
     value: i64,
+    count: i64,
 }
 
 FixupKind :: enum { Literal, MultiField }
@@ -1222,11 +1261,23 @@ Parser :: struct {
     const_locals: Arena<ConstLocal>,
     const_stack: Arena<ConstFrame>,
     const_args: Arena<ConstValue>,
+    // Every item of every aggregate the evaluator has worked out. A value
+    // names its own run by where it starts and how many there are.
+    const_items: Arena<ConstItem>,
+    // A constant that is more than a number: a run, a set of named values, or
+    // a run of bytes. Held apart from `consts`, which every other pass reads
+    // as a number, so nothing outside the evaluator ever sees one.
+    const_aggregates: Arena<ConstDef>,
     // How far this evaluation has run, and how deep inside a side of `&&` or
     // `||` the other side already settled, where the tokens are read and
     // nothing is worked out.
     const_steps: i64,
     const_quiet: i64,
+    // Whether the fold under way ran into something it could not work out. A
+    // constant that asked to be folded is refused where it is written; one
+    // that only might be foldable is tried quietly, and this is what says the
+    // try came to nothing.
+    const_failed: i64,
     // A constant whose value is a struct rather than an integer. `value` is the
     // node the literal parsed to, written out again at each use.
     value_consts: Arena<ConstDef>,

@@ -279,6 +279,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_type_node(p, NodeKind::TypeVal, 0, value)
         }
+        // `$round_up(3, 4)` is the same argument written as a call, worked out
+        // here, which is what makes a compile-time number one thing wherever
+        // it is read.
+        if (at_const_call(p)) {
+            value := CONST_BASE + const_size_here(p)
+            return new_type_node(p, NodeKind::TypeVal, 0, value)
+        }
         // `$compare` names a function rather than a type, and is carried as
         // FN_BASE plus its index the way a type argument carries a type code.
         // The name is interned rather than looked up, since the function it
@@ -1384,7 +1391,7 @@ splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
         if (element.is_type == 1) {
             arena_push(p.type_aliases,
                 ConstDef { name_off = item_off, name_len = item_len,
-                    value = element_ty })
+                    value = element_ty, kind = CONST_INT, count = 0 })
         } else {
             name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
                 k)
@@ -2088,6 +2095,12 @@ parse_type :: fn(mut p: Parser) -> i64 {
         }
         return made
     }
+    // A call where a type is read is a compile-time number: the argument of
+    // `Slab<T, N>`, or the `$N` a generic takes at a call. Both reach here, so
+    // working it out here is what makes one rule out of two positions.
+    if (at_const_call(p)) {
+        return CONST_BASE + const_size_here(p)
+    }
     var dollar: i64 = 0
     if (cur(p) == TokenKind::Dollar) {
         advance(p)
@@ -2116,7 +2129,9 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 advance(p)
             }
             var n: i64 = 0
-            if (cur(p) == TokenKind::Int) {
+            if (at_const_call(p)) {
+                n = const_size_here(p)
+            } else if (cur(p) == TokenKind::Int) {
                 n = cur_val(p)
                 advance(p)
             } else {
@@ -3223,6 +3238,28 @@ parse_size_term :: fn(mut p: Parser) -> i64 {
     left
 }
 
+// One compile-time number a call answers with, where the cursor stands on the
+// call. The same answer wherever a compile-time number is read: an array's
+// length, a generic's value argument, and the `$N` a call hands over.
+const_size_here :: fn(mut p: Parser) -> i64 {
+    at := cur_off(p)
+    held := const_call_here(p, at)
+    if (held.kind != CONST_INT) {
+        report_where(p.modules, p.src, at)
+        report("a compile-time size is a whole number and this answers with ")
+        report("something else")
+        frost_rt_recover_escape()
+    }
+    if (held.value < 0) {
+        report_where(p.modules, p.src, at)
+        report("a compile-time size is a whole number that is not negative, ")
+        report("and this answers with ")
+        report_int(held.value)
+        frost_rt_recover_escape()
+    }
+    held.value
+}
+
 // A number, a name standing for one, a call this program can work out, or a
 // bracketed length. A call is run here rather than left written down, which is
 // what keeps a length one thing rather than two.
@@ -3240,16 +3277,8 @@ parse_size_atom :: fn(mut p: Parser) -> i64 {
     }
     // `[Vertex; 4]` names a type and never calls one, so the `(` is what tells
     // a length that calls something from a length that names one.
-    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Lparen) {
-        at := cur_off(p)
-        held := const_expr_here(p, at)
-        if (held.kind != CONST_INT) {
-            report_where(p.modules, p.src, at)
-            report("a length is a whole number and this answers with ")
-            report("something else")
-            frost_rt_recover_escape()
-        }
-        return held.value
+    if (at_const_call(p)) {
+        return const_size_here(p)
     }
     if (cur(p) != TokenKind::Ident) {
         report_where(p.modules, p.src, cur_off(p))
@@ -4635,7 +4664,7 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         if (element_is_type == 1) {
             arena_push(p.type_aliases,
                 ConstDef { name_off = item_off, name_len = item_len,
-                    value = element_ty })
+                    value = element_ty, kind = CONST_INT, count = 0 })
         } else {
             name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
                 k)
@@ -5949,7 +5978,8 @@ parse_distinct :: fn(mut p: Parser) {
     arena_push(
         p.type_aliases,
         ConstDef { name_off = name_offset, name_len = name_length,
-            value = distinct_type(inner, p.type_aliases.count) },
+            value = distinct_type(inner, p.type_aliases.count),
+            kind = CONST_INT, count = 0 },
     )
 }
 
@@ -5976,7 +6006,7 @@ parse_flags :: fn(mut p: Parser) {
     arena_push(
         p.type_aliases,
         ConstDef { name_off = name_offset, name_len = name_length,
-            value = ty },
+            value = ty, kind = CONST_INT, count = 0 },
     )
     advance(p)
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
@@ -6013,7 +6043,7 @@ parse_value_const :: fn(mut p: Parser) {
     arena_push(
         p.value_consts,
         ConstDef { name_off = name_offset, name_len = name_length,
-            value = value },
+            value = value, kind = CONST_INT, count = 0 },
     )
 }
 
@@ -6026,21 +6056,53 @@ parse_const :: fn(mut p: Parser) {
     // over a parse of them. The callee's signature has not been read yet, so
     // reading the arguments against it would type them by a signature that is
     // not there.
-    if (const_call_ahead(p)) {
+    // A value that calls something, reads an item out of a run, or reads a
+    // field is worked out over the tokens rather than over a parse of them.
+    // The callee's signature has not been read yet, so reading the arguments
+    // against it would type them by a signature that is not there.
+    //
+    // A shape that only might fold, a run or a set of named values written
+    // out, is tried quietly: what comes of it is recorded where it worked and
+    // the declaration is left for the value-constant pass where it did not.
+    if (const_fold_ahead(p) || const_call_ahead(p)) {
         at := cur_off(p)
-        held := const_expr_here(p, at)
-        if (held.kind != CONST_INT) {
-            report_where(p.modules, p.src, at)
-            report("a constant is a whole number and this answers with a yes ")
-            report("or no")
-            frost_rt_recover_escape()
+        resume := p.ti
+        asked := const_asks_folding(p)
+        if (asked == false) {
+            p.const_quiet = p.const_quiet + 1
         }
-        register_const(p, name_offset, name_length, held.value)
+        p.const_failed = 0
+        held := const_expr_here(p, at)
+        if (asked == false) {
+            p.const_quiet = p.const_quiet - 1
+        }
+        if (p.const_failed == 0) {
+            register_const_value(p, name_offset, name_length, held)
+            return
+        }
+        p.ti = resume
+        skip_declaration(p)
         return
     }
     value_node := parse_expr(p)
     value := fold_const(p, value_node)
     register_const(p, name_offset, name_length, value)
+}
+
+// A constant whatever kind it turned out to be. A whole number lands in the
+// table every other reader already looks at; the rest carry their kind beside
+// it, and only the compile-time evaluator reads those.
+register_const_value :: fn(mut p: Parser, off: i64, len: i64,
+    held: ConstValue) {
+    if (held.kind == CONST_INT) {
+        register_const(p, off, len, held.value)
+        return
+    }
+    arena_push(
+        p.const_aggregates,
+        ConstDef { name_off = off, name_len = len, value = held.value,
+            kind = held.kind, count = held.count },
+    )
 }
 
 // `test "name" { ... }`. The body becomes an ordinary function under a name the
@@ -6236,13 +6298,16 @@ at_const_declaration :: fn(mut p: Parser) -> bool {
     if (third != TokenKind::Ident) {
         return false
     }
-    // A call the compiler works out, `LANES :: round_up(300, 64)`. The `(`
-    // after the name is what says so, and whether the name reaches a function
-    // is settled where the call is run.
-    if (peek_kind(p, 3) == TokenKind::Lparen) {
+    // A call the compiler works out, `LANES :: round_up(300, 64)`, an item of
+    // a run, `SLOTS :: TABLE[2]`, or a field of a set of named values,
+    // `Y :: ORIGIN.y`. What follows the name is what says so, and whether the
+    // name reaches anything is settled where the value is worked out.
+    fourth := peek_kind(p, 3)
+    if (fourth == TokenKind::Lparen || fourth == TokenKind::Lbracket
+        || fourth == TokenKind::Dot) {
         return true
     }
-    if (is_arith_op(peek_kind(p, 3))) {
+    if (is_arith_op(fourth)) {
         return true
     }
     // `DEPTH :: TEXTURE_DEPTH24`, a name standing for a name. What follows used
@@ -6278,6 +6343,23 @@ at_type_declaration :: fn(mut p: Parser) -> bool {
         && peek_kind(p, 4) == TokenKind::Lbrace)
 }
 
+// Whether the declaration here is one the compile-time evaluator should try,
+// over and above the integer constants. A run, a run of bytes, or a set of
+// named values: each is worked out where it can be, and left for the
+// value-constant pass where it cannot.
+at_folded_declaration :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident
+        || peek_kind(p, 1) != TokenKind::Coloncolon) {
+        return false
+    }
+    third := peek_kind(p, 2)
+    if (third == TokenKind::Lbracket || third == TokenKind::Str) {
+        return true
+    }
+    (third == TokenKind::Ident && peek_kind(p, 3) == TokenKind::Lbrace
+        && is_type_name(p, peek_off(p, 2), peek_len(p, 2)))
+}
+
 // Advance past the declaration here without reading it, which is what lets one
 // walk of the file take the type declarations and the next take the rest.
 skip_declaration :: fn(mut p: Parser) {
@@ -6300,7 +6382,7 @@ skip_declaration :: fn(mut p: Parser) {
 // by one.
 parse_constant_declarations :: fn(mut p: Parser) {
     while (cur(p) != TokenKind::Eof) {
-        if (at_const_declaration(p)) {
+        if (at_const_declaration(p) || at_folded_declaration(p)) {
             parse_const(p)
         } else {
             skip_declaration(p)
