@@ -510,13 +510,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             emit_text(")")
             return
         }
-        sym := arena_at(p.fns, fn_index)
-        if (sym.is_extern == 1) {
-            emit_source(p.src, sym.off, sym.len)
-        } else {
-            emit_text("mf_")
-            frost_rt_emit_int(fn_index)
-        }
+        emit_fn_symbol(p, fn_index)
         emit_text("(")
         emit_args(p, args, fn_index)
         emit_text(")")
@@ -1584,8 +1578,8 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
             } else {
                 emit_ctype(p, sym.ret_type)
             }
-            emit_text(" mf_")
-            frost_rt_emit_int(fn_index)
+            emit_text(" ")
+            emit_fn_symbol(p, fn_index)
             emit_text("(")
             emit_param_signature(p, params)
             emit_text(");\n")
@@ -1897,8 +1891,8 @@ emit_function :: fn(mut p: Parser, id: i64) {
         } else {
             emit_ctype(p, sym.ret_type)
         }
-        emit_text(" mf_")
-        frost_rt_emit_int(fn_index)
+        emit_text(" ")
+        emit_fn_symbol(p, fn_index)
         emit_text("(")
         emit_param_signature(p, params)
         emit_text(") {\n")
@@ -1949,6 +1943,20 @@ emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
         emit_text("_t")
         frost_rt_emit_int(arg)
     }
+}
+
+// What a function is called in the emitted C. A C library's name, and a
+// function written as `extern fn` with a body, are both spelled the way they
+// were written, because something outside this translation unit names them.
+// Everything else is `mf_<index>`, which cannot collide with anything.
+emit_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    if (sym.is_extern == 1 || sym.keeps_name == 1) {
+        emit_source(p.src, sym.off, sym.len)
+        return
+    }
+    emit_text("mf_")
+    frost_rt_emit_int(fn_index)
 }
 
 // The mangled name of a monomorphization: `mf_<index>` then every argument in

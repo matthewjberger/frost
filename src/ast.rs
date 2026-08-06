@@ -283,6 +283,10 @@ pub struct Ast {
     // recognized from the spelling, for the reason the list above is: a program
     // declaring `__Result_0` is an enum like any other.
     pub failure_results: Vec<Symbol>,
+    // The functions written as `extern fn` with a body, which are emitted under
+    // the name they were written under rather than under one the compiler
+    // chose. A caller in C names them, which is the whole point of the form.
+    pub exported_symbols: Vec<Symbol>,
     pub symbol_list: Vec<Symbol>,
     pub symbols: SymbolTable,
     // One Position per token, the lexer's table carried through. Splicing
@@ -825,6 +829,21 @@ impl Ast {
     }
 
     /// Whether a name is one the failure-set lowering made, said the same way.
+    /// Record a function as keeping the name it was written under.
+    pub fn note_exported_symbol(&mut self, name: Symbol) {
+        if !self.exported_symbols.contains(&name) {
+            self.exported_symbols.push(name);
+        }
+    }
+
+    /// Whether a function keeps the name it was written under, which is what an
+    /// `extern fn` with a body asks for.
+    pub fn is_exported_symbol(&self, name: &str) -> bool {
+        self.exported_symbols
+            .iter()
+            .any(|held| self.name(*held) == name)
+    }
+
     /// Whether a declaration said to pack this struct.
     pub fn is_packed_struct(&self, name: &str) -> bool {
         self.packed_structs
@@ -1035,10 +1054,20 @@ impl<'a> Splicer<'a> {
                 let value = self.expression(dest, value, rename);
                 Statement::LetMultiple(dest.add_bindings(&copied), value)
             }
-            Statement::Constant(name, value) => Statement::Constant(
-                self.symbol(dest, name, rename),
-                self.expression(dest, value, rename),
-            ),
+            Statement::Constant(name, value) => {
+                let copied = self.symbol(dest, name, rename);
+                // Keeping its own name is part of the declaration, so it
+                // crosses with the function. Left behind, a runtime function
+                // read out of an import is emitted under a name of the
+                // compiler's choosing and nothing links against it.
+                if self.source.is_exported_symbol(self.source.name(name)) {
+                    dest.note_exported_symbol(copied);
+                }
+                Statement::Constant(
+                    copied,
+                    self.expression(dest, value, rename),
+                )
+            }
             Statement::Return(value) => {
                 Statement::Return(self.expression(dest, value, rename))
             }

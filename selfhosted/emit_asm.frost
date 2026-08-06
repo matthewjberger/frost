@@ -2842,12 +2842,7 @@ emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
         emit_asm_mono_name(p, fn_index, arg, p.call_xarg_start,
             p.call_xarg_count)
     } else {
-        if (sym.is_extern == 1) {
-            emit_source(p.src, sym.off, sym.len)
-        } else {
-            emit_text("mf_")
-            frost_rt_emit_int(fn_index)
-        }
+        emit_asm_fn_symbol(p, fn_index)
     }
     emit_text("\n")
     asm_i("addq $", restore, ", %rsp")
@@ -3482,14 +3477,26 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
         emit_text("main\n")
         emit_text("main:\n")
     } else {
-        emit_text("mf_")
-        frost_rt_emit_int(fn_index)
+        emit_asm_fn_symbol(p, fn_index)
         emit_text("\n")
-        emit_text("mf_")
-        frost_rt_emit_int(fn_index)
+        emit_asm_fn_symbol(p, fn_index)
         emit_text(":\n")
     }
     emit_asm_frame(p, body, params, ret)
+}
+
+// What a function is called in the emitted assembly. A C library's name, and a
+// function written as `extern fn` with a body, are both spelled the way they
+// were written, because something outside this object names them. Everything
+// else is `mf_<index>`. The C backend's rule, said the same way.
+emit_asm_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    if (sym.is_extern == 1 || sym.keeps_name == 1) {
+        emit_source(p.src, sym.off, sym.len)
+        return
+    }
+    emit_text("mf_")
+    frost_rt_emit_int(fn_index)
 }
 
 // One argument's contribution to a mangled name, the assembly backend's copy of

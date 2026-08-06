@@ -771,6 +771,7 @@ mod tests {
                 entry: 0,
                 module: 0,
                 local: false,
+                keeps_name: false,
                 instantiated: None,
             }],
         }
@@ -861,6 +862,7 @@ mod tests {
             entry: 0,
             module: 0,
             local: false,
+            keeps_name: false,
             instantiated: None,
         });
         let reports = check_module_recovering(&module);

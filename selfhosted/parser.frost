@@ -6237,6 +6237,25 @@ parse_extern :: fn(mut p: Parser) -> i64 {
         ret = parse_type(p)
     }
     set_ret_type(p, fn_index, ret)
+    // A body makes this a definition rather than a declaration: the function is
+    // written here and keeps the name it was written under, where an ordinary
+    // one is emitted as `mf_<index>`. That is what lets Frost supply a symbol C
+    // already calls by name, which is what the runtime is.
+    if (cur(p) == TokenKind::Lbrace) {
+        clear_extern(p, fn_index)
+        mark_keeps_name(p, fn_index)
+        p.type_param_off = 0
+        p.type_param_len = 0
+        p.saw_type_param = 0
+        p.tparam_is_slot = 0
+        p.tparam_called = 0
+        p.bound_token = -1
+        p.decl_pack_off = 0
+        p.decl_pack_len = 0
+        p.decl_pack_fixed = 0
+        body := parse_block(p)
+        return new_func_node(p, body, params, fn_index, 0)
+    }
     arena_push(
         p.arena,
         Node { kind = NodeKind::Extern, a = 0, b = params, c = ret, val = fn_index,

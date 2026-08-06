@@ -37,7 +37,11 @@ impl Externs {
     }
 }
 
-// A Frost function's C name. The prefix is `frost_u_` rather than `frost_`
+// A Frost function's C name. A function written as `extern fn` with a body
+// keeps the name it was written under, because a C caller names it; that is
+// what the set below holds beside the declarations.
+//
+// The prefix is `frost_u_` rather than `frost_`
 // because the runtime owns `frost_rt_`: two fixed prefixes that differ at the
 // same position cannot collide whatever a function is called, where a single
 // shared prefix made every runtime symbol a name users could not use. A Frost
@@ -62,6 +66,16 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
         value_parameters: HashMap::new(),
     };
     externs.insert(BOUNDS_CHECK);
+    for function in &module.functions {
+        if function.keeps_name {
+            externs.insert(&function.name);
+        }
+    }
+    for function in &module.imported {
+        if function.keeps_name {
+            externs.insert(&function.name);
+        }
+    }
 
     // The runtime names this file declares itself, from the runtime's own
     // header rather than from whatever a program said about them. A program may

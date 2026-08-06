@@ -544,6 +544,10 @@ Sym :: struct {
     // `inline fn`: the C backend forces this one inline. The assembly backend
     // ignores it.
     is_inline: i64,
+    // `extern fn` with a body: the function is written here and emitted under
+    // the name it was written under, because a C caller names it. Every other
+    // function is emitted as `mf_<index>`.
+    keeps_name: i64,
     ret_type: i64,
     params: i64,
     defined: i64,

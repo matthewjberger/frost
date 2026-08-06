@@ -24,7 +24,9 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
-    mark_defined, mark_extern, mark_inline, new_case, new_case_alt,
+    clear_extern, mark_defined, mark_extern, mark_inline, mark_keeps_name,
+    new_case,
+    new_case_alt,
     case_alts, alt_low, alt_high, new_field_init,
     new_field_node,
     new_func_node, new_index, new_let_node, new_named_node,
@@ -231,7 +233,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     arena_push(
         p.fns,
         Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
-            is_inline = 0, ret_type = TY_I64,
+            is_inline = 0, keeps_name = 0, ret_type = TY_I64,
             params = -1, defined = 0, cap_start = 0, cap_count = 0 },
     )
 }
@@ -247,6 +249,20 @@ mark_defined :: fn(mut p: Parser, fn_index: i64) {
 mark_extern :: fn(mut p: Parser, fn_index: i64) {
     entry := arena_at(p.fns, fn_index)
     entry.is_extern = 1
+}
+
+// The declaration turned out to carry a body, so this name is not a C library's
+// after all: it is written here and only its spelling is C's.
+clear_extern :: fn(mut p: Parser, fn_index: i64) {
+    entry := arena_at(p.fns, fn_index)
+    entry.is_extern = 0
+}
+
+// `extern fn` with a body: written here, and emitted under the name it was
+// written under so a C caller finds it.
+mark_keeps_name :: fn(mut p: Parser, fn_index: i64) {
+    entry := arena_at(p.fns, fn_index)
+    entry.keeps_name = 1
 }
 
 // `safe extern fn`: the author vouched for this one, so its calls are not gated.
