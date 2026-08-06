@@ -27,22 +27,16 @@ pub const TEST_PREFIX: &str = "__frost_test_";
 // can claim a set that the arm it sits on cannot mean, and both compilers word
 // them the same because a program refused here is refused by the language
 // rather than by whichever compiler read it.
-const CATCH_ALL_ALTERNATIVE: &str =
-    "this alternative covers everything on its own, so give it a case of its own";
-const BINDING_ALTERNATIVE: &str =
-    "an alternative binding payload fields holds one name to two shapes, so give it a case of its own";
-const TUPLE_PART: &str =
-    "a tuple case compares one value per part, so an alternative or a range belongs in a match on one value";
+const CATCH_ALL_ALTERNATIVE: &str = "this alternative covers everything on its own, so give it a case of its own";
+const BINDING_ALTERNATIVE: &str = "an alternative binding payload fields holds one name to two shapes, so give it a case of its own";
+const TUPLE_PART: &str = "a tuple case compares one value per part, so an alternative or a range belongs in a match on one value";
 const NOT_A_BOUND: &str =
     "a case range runs between whole numbers, and this bound is not one";
 const REPEATED_ALTERNATIVE: &str =
     "this alternative repeats one the same case already names";
-const DECIMAL_PATTERN: &str =
-    "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`";
-const TEXT_PATTERN: &str =
-    "a case matches whole numbers, booleans and variants, so text belongs in an `if`";
-const NAME_PATTERN: &str =
-    "a name in a case is the value it stands for, and this one names no constant; `_` is the case that covers the rest";
+const DECIMAL_PATTERN: &str = "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`";
+const TEXT_PATTERN: &str = "a case matches whole numbers, booleans and variants, so text belongs in an `if`";
+const NAME_PATTERN: &str = "a name in a case is the value it stands for, and this one names no constant; `_` is the case that covers the rest";
 
 // How a parameter takes its argument. `read` (the default) is a shared borrow,
 // `mut` an exclusive borrow, `move` takes ownership. These are the surface. A
@@ -745,7 +739,8 @@ impl<'a> Parser<'a> {
         }
         self.settled = true;
         let imported = std::mem::take(&mut self.imported_bodies);
-        let (values, folder, faults) = scan_constants(self.all_tokens, imported);
+        let (values, folder, faults) =
+            scan_constants(self.all_tokens, imported);
         self.integer_constants = integers_among(&values);
         self.constant_values = values;
         self.folder = folder;

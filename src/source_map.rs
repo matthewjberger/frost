@@ -100,7 +100,8 @@ pub fn locate<T>(
     position: crate::lexer::Position,
 ) -> anyhow::Result<T> {
     result.map_err(|error| {
-        let text = crate::modules::imports::demangle_private_names(&error.to_string());
+        let text =
+            crate::modules::imports::demangle_private_names(&error.to_string());
         if position == crate::lexer::Position::default()
             || text.starts_with("at ")
         {

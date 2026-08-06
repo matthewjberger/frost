@@ -9,8 +9,7 @@ use std::rc::Rc;
 const STEP_LIMIT: u64 = 1_000_000;
 
 /// What a compile-time call is told when a fraction turns up in one.
-const FRACTION: &str =
-    "a compile-time value is a whole number or a yes or no, and this is a number with a fraction";
+const FRACTION: &str = "a compile-time value is a whole number or a yes or no, and this is a number with a fraction";
 
 /// How deep calls may nest. A function that reaches itself is refused by name,
 /// so this is what catches a long chain of distinct functions.
@@ -294,27 +293,25 @@ impl<'a> Folder<'a> {
                 let held = self.value(ast, *value, locals, stack)?;
                 Ok(Flow::Value(held))
             }
-            Statement::While(condition, body) => {
-                loop {
-                    self.spend()?;
-                    let Value::Boolean(holds) =
-                        self.value(ast, *condition, locals, stack)?
-                    else {
-                        return Err(
+            Statement::While(condition, body) => loop {
+                self.spend()?;
+                let Value::Boolean(holds) =
+                    self.value(ast, *condition, locals, stack)?
+                else {
+                    return Err(
                             "a `while` is run at compile time by asking its condition, which has to be a yes or no"
                                 .to_string(),
                         );
-                    };
-                    if !holds {
-                        return Ok(Flow::Ran);
-                    }
-                    match self.block(ast, *body, locals, stack)? {
-                        Flow::Ran | Flow::Value(_) | Flow::Continued => {}
-                        Flow::Broke => return Ok(Flow::Ran),
-                        Flow::Left(value) => return Ok(Flow::Left(value)),
-                    }
+                };
+                if !holds {
+                    return Ok(Flow::Ran);
                 }
-            }
+                match self.block(ast, *body, locals, stack)? {
+                    Flow::Ran | Flow::Value(_) | Flow::Continued => {}
+                    Flow::Broke => return Ok(Flow::Ran),
+                    Flow::Left(value) => return Ok(Flow::Left(value)),
+                }
+            },
             Statement::Break => Ok(Flow::Broke),
             Statement::Continue => Ok(Flow::Continued),
             held => Err(format!(
@@ -336,7 +333,8 @@ impl<'a> Folder<'a> {
             then,
             otherwise,
         } = arms;
-        let Value::Boolean(holds) = self.value(ast, condition, locals, stack)?
+        let Value::Boolean(holds) =
+            self.value(ast, condition, locals, stack)?
         else {
             return Err(
                 "an `if` is decided at compile time by asking its condition, which has to be a yes or no"
@@ -454,9 +452,7 @@ impl<'a> Folder<'a> {
                     .iter()
                     .find(|(held, _)| held == name)
                     .map(|(_, value)| value.clone())
-                    .ok_or_else(|| {
-                        format!("this has no field called '{name}'")
-                    })
+                    .ok_or_else(|| format!("this has no field called '{name}'"))
             }
             Expression::Boolean(held) => Ok(Value::Boolean(*held)),
             Expression::Literal(Literal::Boolean(held)) => {
@@ -481,13 +477,19 @@ impl<'a> Folder<'a> {
                         .checked_neg()
                         .map(Value::Integer)
                         .ok_or_else(|| "negating this overflows".to_string()),
-                    held => Err(format!("'-' has no meaning for {}", held.describe())),
+                    held => Err(format!(
+                        "'-' has no meaning for {}",
+                        held.describe()
+                    )),
                 }
             }
             Expression::Prefix(Operator::Not, inner) => {
                 match self.value(ast, *inner, locals, stack)? {
                     Value::Boolean(held) => Ok(Value::Boolean(!held)),
-                    held => Err(format!("'!' has no meaning for {}", held.describe())),
+                    held => Err(format!(
+                        "'!' has no meaning for {}",
+                        held.describe()
+                    )),
                 }
             }
             Expression::Infix(left, operator, right) => {
@@ -497,10 +499,8 @@ impl<'a> Folder<'a> {
                     let Value::Boolean(first) =
                         self.value(ast, *left, locals, stack)?
                     else {
-                        return Err(
-                            "'&&' and '||' join two yes-or-no answers"
-                                .to_string(),
-                        );
+                        return Err("'&&' and '||' join two yes-or-no answers"
+                            .to_string());
                     };
                     if matches!(operator, Operator::And) && !first {
                         return Ok(Value::Boolean(false));
@@ -511,10 +511,8 @@ impl<'a> Folder<'a> {
                     let Value::Boolean(second) =
                         self.value(ast, *right, locals, stack)?
                     else {
-                        return Err(
-                            "'&&' and '||' join two yes-or-no answers"
-                                .to_string(),
-                        );
+                        return Err("'&&' and '||' join two yes-or-no answers"
+                            .to_string());
                     };
                     return Ok(Value::Boolean(second));
                 }
@@ -572,13 +570,13 @@ impl<'a> Folder<'a> {
 fn builtin(name: &str, given: &[Value]) -> Result<Option<Value>, String> {
     if matches!(name, "str_len" | "slice_len") {
         return match given {
-            [Value::Text(held)] => {
-                Ok(Some(Value::Integer(held.len() as i64)))
-            }
+            [Value::Text(held)] => Ok(Some(Value::Integer(held.len() as i64))),
             [Value::Array(items)] => {
                 Ok(Some(Value::Integer(items.len() as i64)))
             }
-            _ => Err(format!("'{name}' reads the length of a run, and this is not one")),
+            _ => Err(format!(
+                "'{name}' reads the length of a run, and this is not one"
+            )),
         };
     }
     if !matches!(name, "wrap_add" | "wrap_sub" | "wrap_mul") {
@@ -623,15 +621,11 @@ fn combine(
         (Value::Integer(left), Value::Integer(right)) => {
             integers(left, operator, right)
         }
-        (Value::Boolean(left), Value::Boolean(right)) => {
-            match operator {
-                Operator::Equal => Ok(Value::Boolean(left == right)),
-                Operator::NotEqual => Ok(Value::Boolean(left != right)),
-                _ => Err(
-                    "a yes or no is compared and nothing else".to_string()
-                ),
-            }
-        }
+        (Value::Boolean(left), Value::Boolean(right)) => match operator {
+            Operator::Equal => Ok(Value::Boolean(left == right)),
+            Operator::NotEqual => Ok(Value::Boolean(left != right)),
+            _ => Err("a yes or no is compared and nothing else".to_string()),
+        },
         (left, right) => Err(format!(
             "this joins {} to {}, and a compile-time value is worked out over one kind at a time",
             left.describe(),

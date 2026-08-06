@@ -822,9 +822,7 @@ fn checked_binary(op: IrBinOp, left: &str, right: &str, ty: &Type) -> String {
             8,
         ),
         IrBinOp::ShiftRight => narrow(
-            format!(
-                "(({left}) >> frost_shift((int64_t)({right}), {bits}))"
-            ),
+            format!("(({left}) >> frost_shift((int64_t)({right}), {bits}))"),
             8,
         ),
         _ => format!("({left} {} {right})", binary_operator(op)),

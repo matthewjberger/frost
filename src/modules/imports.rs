@@ -8,6 +8,8 @@ use crate::ast::{
     Ast, ExprId, Expression, Module, Pattern, PatternId, Range32, ReturnKind,
     SignatureId, Splicer, Statement, StmtId, TokenSpan, splice_positions,
 };
+use crate::lexer::Lexer;
+use crate::lexer::Token;
 use crate::modules::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
@@ -17,8 +19,6 @@ use crate::modules::import_visibility::{
 };
 use crate::modules::interface::ModuleInterface;
 use crate::modules::layers::Layer;
-use crate::lexer::Lexer;
-use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::parser::TEST_PREFIX;
 use crate::types::Type;
@@ -99,9 +99,11 @@ fn find_import(
     // the import, so it is asked here, where resolution has settled which file
     // that is. A path spelling its way back up and down again resolves to the
     // same file and is weighed the same.
-    if let Some(complaint) =
-        crate::modules::layers::reaching_upward(layers, importing_dir, &found.path)
-    {
+    if let Some(complaint) = crate::modules::layers::reaching_upward(
+        layers,
+        importing_dir,
+        &found.path,
+    ) {
         bail!("{complaint}");
     }
     Ok(Some(found))
@@ -966,18 +968,19 @@ impl Walk<'_> {
             let offset = splice_positions(&mut contribution.ast, &held.ast);
             let splicer = Splicer::new(&held.ast, offset);
             for statement in &held.roots {
-                let copied = match crate::modules::build_cache::push_as_declaration(
-                    &mut contribution.ast,
-                    &splicer,
-                    *statement,
-                ) {
-                    Some(declared) => declared,
-                    None => splicer.statement(
+                let copied =
+                    match crate::modules::build_cache::push_as_declaration(
                         &mut contribution.ast,
+                        &splicer,
                         *statement,
-                        &mut |name| name.to_string(),
-                    ),
-                };
+                    ) {
+                        Some(declared) => declared,
+                        None => splicer.statement(
+                            &mut contribution.ast,
+                            *statement,
+                            &mut |name| name.to_string(),
+                        ),
+                    };
                 contribution.roots.push(copied);
             }
             let exports = interface.exports.into_iter().collect();
@@ -1541,8 +1544,9 @@ impl Renamer {
                 self.expression(ast, target, scope);
                 self.expression(ast, value, scope);
             }
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => self.statement(ast, inner, scope),
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+                self.statement(ast, inner, scope)
+            }
             Statement::For(variable, _, range, body) => {
                 self.expression(ast, range, scope);
                 scope.push(HashSet::new());
@@ -1855,9 +1859,8 @@ impl Renamer {
                     self.pattern(ast, pattern, scope);
                 }
             }
-            Pattern::Wildcard
-            | Pattern::Literal(_)
-            | Pattern::Range { .. } => {}
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {
+            }
         }
     }
 

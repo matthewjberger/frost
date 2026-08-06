@@ -287,8 +287,7 @@ impl Lowering {
                 self.check_expression(ast, place, returns)?;
                 self.check_expression(ast, value, returns)
             }
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
                 self.rewrite_statement(ast, inner, returns)
             }
             Statement::For(_, _, sequence, body) => {

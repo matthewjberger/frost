@@ -827,11 +827,15 @@ impl Ast {
     /// Whether a name is one the failure-set lowering made, said the same way.
     /// Whether a declaration said to pack this struct.
     pub fn is_packed_struct(&self, name: &str) -> bool {
-        self.packed_structs.iter().any(|held| self.name(*held) == name)
+        self.packed_structs
+            .iter()
+            .any(|held| self.name(*held) == name)
     }
 
     pub fn is_failure_result(&self, name: &str) -> bool {
-        self.failure_results.iter().any(|held| self.name(*held) == name)
+        self.failure_results
+            .iter()
+            .any(|held| self.name(*held) == name)
     }
 
     // The struct a return type list becomes. One per distinct list, named

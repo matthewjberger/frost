@@ -242,8 +242,9 @@ pub(crate) fn bound_in_statement(
             bound_in_expression(ast, *place, out);
             bound_in_expression(ast, *value, out);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => bound_in_statement(ast, *inner, out),
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+            bound_in_statement(ast, *inner, out)
+        }
         Statement::For(first, second, sequence, body) => {
             out.insert(ast.name(*first).to_string());
             if let Some(second) = second {

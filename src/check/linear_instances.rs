@@ -558,8 +558,9 @@ fn walk_statement(
             walk_expression(ast, *place, found, at);
             walk_expression(ast, *value, found, at);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => walk_statement(ast, *inner, found, at),
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+            walk_statement(ast, *inner, found, at)
+        }
         Statement::For(_, _, sequence, body) => {
             walk_expression(ast, *sequence, found, at);
             walk_block(ast, *body, found);
