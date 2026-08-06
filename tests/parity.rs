@@ -3724,6 +3724,50 @@ main :: fn() -> i64 {
 99
 ",
     ),
+    // A case bound past what a compare carries in its four bytes. The assembly
+    // backend wrote `cmpq $imm, %rax` whatever the number was: `as` refused the
+    // instruction outright, and the compiler's own assembler wrote the low half
+    // and produced a program that compared against a different number, so this
+    // answered 0 and 1 the wrong way round there and correctly everywhere else.
+    // The bounds straddle the edge on both sides on purpose.
+    (
+        "a_case_bound_wider_than_an_immediate",
+        "import \"io.frost\"
+         LOW :: 4000000000
+         HIGH :: 6000000000
+         f :: fn(x: i64) -> i64 {
+             match x {
+                 case LOW..HIGH: 1
+                 case 2147483647: 2
+                 case 2147483648: 3
+                 case -2147483648: 4
+                 case -2147483649: 5
+                 case 9223372036854775807: 6
+                 case _: 0
+             }
+         }
+         main :: fn() -> i64 {
+             print_int_line(f(4000000000))
+             print_int_line(f(5999999999))
+             print_int_line(f(6000000000))
+             print_int_line(f(2147483647))
+             print_int_line(f(2147483648))
+             print_int_line(f(-2147483648))
+             print_int_line(f(-2147483649))
+             print_int_line(f(9223372036854775807))
+             0
+         }
+",
+        "1
+1
+0
+2
+3
+4
+5
+6
+",
+    ),
     // An arm may name several patterns, and an arm over whole numbers may name
     // a span. The two compose because both are covered sets: `0 | 5..10` is one
     // number and one span, and the body runs for any value either takes.

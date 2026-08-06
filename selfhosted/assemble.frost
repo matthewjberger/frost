@@ -776,6 +776,19 @@ text_word64 :: fn(mut unit: Assembly, value: i64) {
     text_word32(unit, value >> 32)
 }
 
+// An immediate the instruction carries in four bytes, which the processor reads
+// back sign-extended to eight. A number needing more than those four has
+// nowhere to go, so it is refused rather than written narrow: writing the low
+// half of it produces an instruction that assembles, runs, and compares against
+// a different number than the one in the source. `as` refuses the same
+// instruction, which is how this was found.
+text_imm32 :: fn(mut unit: Assembly, value: i64, here: i64) {
+    if (value < (-2147483648) || value > 2147483647) {
+        assemble_fail(unit, "an immediate too wide for the four bytes this instruction carries", here)
+    }
+    text_word32(unit, value)
+}
+
 fits_in_byte :: fn(value: i64) -> bool { value >= -128 && value <= 127 }
 
 fits_in_word32 :: fn(value: i64) -> bool {
@@ -1102,7 +1115,7 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             } else {
                 emit_reg_rm(unit, 0, 1, 0, 105, reg_code(b_reg), OPND_REG,
                     reg_code(b_reg), 0, 0)
-                text_word32(unit, a_disp)
+                text_imm32(unit, a_disp, here)
             }
             return
         }
@@ -1204,11 +1217,11 @@ encode_arith :: fn(mut unit: Assembly, digit: i64, a_kind: i64, a_reg: i64,
         if (b_kind == OPND_REG && reg_code(b_reg) == 0) {
             text_byte(unit, 72)
             text_byte(unit, arith_acc_opcode(digit))
-            text_word32(unit, a_disp)
+            text_imm32(unit, a_disp, here)
             return
         }
         emit_reg_rm(unit, 0, 1, 0, 129, digit, b_kind, reg_code(b_reg), b_disp, 0)
-        text_word32(unit, a_disp)
+        text_imm32(unit, a_disp, here)
         return
     }
     if (a_kind != OPND_REG) {
@@ -1384,7 +1397,7 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
             text_byte(unit, value)
             text_byte(unit, value >> 8)
         } else {
-            text_word32(unit, value)
+            text_imm32(unit, value, here)
         }
         return
     }
