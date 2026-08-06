@@ -9,12 +9,12 @@ its own thesis. It lives in Frost.
 A slab is a Frost struct with Frost operations over it, generic over element
 type and capacity: `std/slab.frost`, with the same thing written out longhand in
 `examples/native/generic_slab.frost`. Every example and every test uses it.
-`runtime/frost_runtime.c` defines no `pool_new`, `pool_alloc`, `pool_get`,
-`pool_contains`, `pool_free`, `pool_destroy`, `handle_index` or
-`handle_generation`, and the compiler emits no implicit `pool_get` when a
-`Handle` indexes something that is not slab-shaped. What is left of the runtime
-is about a hundred lines: bounds and generation aborts, assertions, and IO
-helpers.
+The runtime defines no `pool_new`, `pool_alloc`, `pool_get`, `pool_contains`,
+`pool_free`, `pool_destroy`, `handle_index` or `handle_generation`, and the
+compiler emits no implicit `pool_get` when a `Handle` indexes something that is
+not slab-shaped. What is left of the runtime is the bounds and generation
+aborts, the assertions and the IO helpers, and the aborts are Frost too
+(`runtime/runtime.frost`).
 
 A struct is recognized as slab-shaped by having a `storage` array beside a
 parallel `generations` array, and `p[handle]` against one compiles to inline

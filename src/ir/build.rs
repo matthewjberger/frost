@@ -8091,14 +8091,19 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), pointee))
     }
 
+    // A `str` is a `[]u8` (3.2), so `str_len` reads the length of either. Asking
+    // for `Type::Str` alone refused `str_len(bytes)` here and took it in the
+    // self-hosted compiler, which holds the two as one type. That is the same
+    // fault `slice_value_address` below had, at the fourth site in this compiler
+    // to be told that a str is a byte slice.
     fn str_value_address(&mut self, expression: ExprId) -> Result<IrOperand> {
-        if matches!(self.probe_type(expression), Some(Type::Str)) {
+        if is_byte_run(self.probe_type(expression).as_ref()) {
             let (address, _) = self.place_address(expression)?;
             return Ok(address);
         }
         let (operand, value_type) =
             self.lower_expression(expression, Some(&Type::Str))?;
-        if value_type != Type::Str {
+        if !is_byte_run(Some(&value_type)) {
             bail!("expected a str value, found {value_type}");
         }
         let IrOperand::Local(local) = operand else {
@@ -10837,6 +10842,16 @@ fn describe_operand(ty: &Type) -> String {
             format!("a vector of {count} {element}")
         }
         held => format!("a {held}"),
+    }
+}
+
+// Whether a type is a run of bytes, which is what `str_len` is asked about. A
+// `str` is a `[]u8` (3.2), so both spellings answer yes and nothing else does.
+fn is_byte_run(ty: Option<&Type>) -> bool {
+    match ty {
+        Some(Type::Str) => true,
+        Some(Type::Slice(element)) => **element == Type::U8,
+        _ => false,
     }
 }
 

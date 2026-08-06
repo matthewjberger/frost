@@ -216,10 +216,15 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     }
 
     runtime_object := cached_runtime_object(executable)
+    frost_runtime := cached_frost_runtime_object(executable)
     var command := join_two(
         join_two(
-            join_two(join_two(join_two(c_compiler(), objects), " "),
-                runtime_object),
+            join_two(
+                join_two(
+                    join_two(join_two(join_two(c_compiler(), objects), " "),
+                        runtime_object),
+                    " "),
+                frost_runtime),
             " -o "),
         executable)
     command = join_two(command, options.libs)
@@ -232,6 +237,8 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         report("\n")
         report("frost: the runtime linked was ")
         report_cstr(runtime_source())
+        report(" and ")
+        report_cstr(frost_runtime_source())
         report("\n")
         frost_rt_die()
     }
@@ -282,17 +289,20 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
     write_object(unit, object, output)
 }
 
-// Hand what was compiled to the linker, along with the C runtime every program
+// Hand what was compiled to the linker, along with the runtime every program
 // needs, and remove what it read. `unit` is an object where this compiler
 // assembled its own output and assembly or C where it did not, and the
 // toolchain takes any of the three.
 //
-// Every program links the C runtime: it holds the bounds check an index
-// compiles to, the assertion, the string and error emitters, and the test
-// runner a `--test` build needs. FROST_RUNTIME says where it is for a checkout
-// that is not the working directory.
+// The runtime is two objects because it is two files: the checks an index and a
+// slice compile to are Frost, in `runtime.frost`, and what they bottom out in is
+// the C stub beside it, which also holds the assertion, the emitters and the
+// test runner a `--test` build needs. FROST_RUNTIME and FROST_RUNTIME_FROST say
+// where they are for a checkout that is not the working directory.
 link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
-    extra := join_two(" ", cached_runtime_object(executable))
+    extra := join_two(
+        join_two(join_two(" ", cached_runtime_object(executable)), " "),
+        cached_frost_runtime_object(executable))
     var base := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), " "), unit), extra),
@@ -334,6 +344,8 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
         // is the thing that distinguishes them and the linker never says it.
         report("frost: the runtime linked was ")
         report_cstr(runtime_source())
+        report(" and ")
+        report_cstr(frost_runtime_source())
         report("\n")
         frost_rt_die()
     }
@@ -703,6 +715,7 @@ main :: fn() -> i64 {
         indirects = arena_make($Indirect, 4096),
         tests = arena_make($TestCase, 4096),
         testing = options.testing,
+        runtime_names = compiling_the_runtime(input_path),
         audit_unsafe = options.audit_unsafe,
         debug_lines = options.debug_lines,
         asm_debug_names = asm_debug_names_wanted(),

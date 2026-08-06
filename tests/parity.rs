@@ -1689,6 +1689,86 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "region: a pointer into the frame of 'grab' is the call's answer; the \
          storage it names dies when the call returns",
     ),
+    // The runtime is linked into every program and keeps the names it was
+    // written under, so a program defining one of them would replace what every
+    // program calls. The runtime is the one file that may, and it is the one
+    // file the compiler resolved as the runtime.
+    (
+        "a_definition_in_the_runtimes_name_space",
+        "frost_rt_check_index :: extern fn(index: i64, length: i64) -> i64 {
+             index
+         }
+         main :: fn() -> i64 { 0 }
+",
+        "'frost_rt_check_index' keeps the name it is written under, and \
+         'frost_rt_' and 'frost_u_' are the runtime's and the compiler's own, \
+         so a definition here would replace what every program calls",
+    ),
+    // A length is read off a run, so what it is asked about has to be one. A
+    // struct has none beside it, and reading one off it takes its first word
+    // for the count and then bounds-checks every access through the view
+    // against whatever happened to be there.
+    (
+        "a_length_asked_of_a_struct",
+        "import \"io.frost\"
+         Held :: struct { text: str, count: i64 }
+         main :: fn() -> i64 {
+             held := Held { text = \"hello\", count = 3 }
+             print_int_line(str_len(held))
+             0
+         }
+",
+        "expected a str value, found Held",
+    ),
+    // `str_len` asks for a run of bytes. A run of something else has a length,
+    // which is what `slice_len` is for, but it is not text.
+    (
+        "a_text_length_asked_of_a_run_of_numbers",
+        "import \"io.frost\"
+         look :: fn(view: []i64) -> i64 { str_len(view) }
+         main :: fn() -> i64 {
+             var run: [4]i64 = [1; 4]
+             print_int_line(look(run))
+             0
+         }
+",
+        "expected a str value, found []i64",
+    ),
+    // A pointer is a run's address with nothing beside it saying how long the
+    // run is, so no length can be read off one.
+    (
+        "a_text_length_asked_of_a_pointer",
+        "import \"io.frost\"
+         look :: fn(raw: ^i8) -> i64 { str_len(raw) }
+         main :: fn() -> i64 { print_int_line(unsafe { look(\"hi\") })  0 }
+",
+        "expected a str value, found ^i8",
+    ),
+    (
+        "a_slice_length_asked_of_a_struct",
+        "import \"io.frost\"
+         Held :: struct { text: str, count: i64 }
+         main :: fn() -> i64 {
+             held := Held { text = \"hello\", count = 3 }
+             print_int_line(slice_len(held))
+             0
+         }
+",
+        "expected a slice value, found Held",
+    ),
+    // The compiler's own name space is refused by the same rule and in the same
+    // words, since a C backend names an ordinary function into it.
+    (
+        "a_definition_in_the_compilers_name_space",
+        "frost_u_helper :: extern fn(value: i64) -> i64 {
+             value + 1
+         }
+         main :: fn() -> i64 { 0 }
+",
+        "'frost_u_helper' keeps the name it is written under, and \
+         'frost_rt_' and 'frost_u_' are the runtime's and the compiler's own, \
+         so a definition here would replace what every program calls",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held
@@ -2035,6 +2115,24 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
 ",
         "40\n7\n",
+    ),
+    // A `str` is a `[]u8` (3.2), so `str_len` reads either spelling and
+    // `slice_len` reads a run of anything, a `str` included. Both compilers had
+    // sites that only half believed it: one refused `slice_len` on text and the
+    // other refused `str_len` on bytes.
+    (
+        "a_length_reads_a_str_and_a_byte_run_alike",
+        "import \"io.frost\"
+         text_length :: fn(view: []u8) -> i64 { str_len(view) }
+         run_length :: fn(view: str) -> i64 { slice_len(view) }
+         main :: fn() -> i64 {
+             print_int_line(text_length(\"hello\"))
+             print_int_line(run_length(\"hi\"))
+             print_int_line(str_len(\"four\"))
+             0
+         }
+",
+        "5\n2\n4\n",
     ),
     // `$P` on a type the program declared reads as a type parameter, since a
     // `$` argument is one everywhere else. `sizeof` measured that as nothing

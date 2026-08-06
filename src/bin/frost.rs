@@ -989,6 +989,11 @@ fn compile() -> Result<()> {
     let (roots, layers) = search_roots(&cli, &project_root)?;
 
     let mut parser = FrostParser::with_positions(&tokens, &positions);
+    // The runtime is the one file that may define names in the runtime's own
+    // name space, and it is the one this compiler resolved as the runtime.
+    if is_the_runtime(&cli.file) {
+        parser.compiling_the_runtime();
+    }
     // A generic type this file imports may be named in a literal here, so which
     // names can start one is settled from the files it imports as well as from
     // this one.
@@ -1420,8 +1425,118 @@ fn compile() -> Result<()> {
 }
 
 const RUNTIME_SOURCE: &str = include_str!("../../runtime/frost_runtime.c");
+const RUNTIME_FROST_SOURCE: &str = include_str!("../../runtime/runtime.frost");
 const FREESTANDING_SOURCE: &str =
     include_str!("../../runtime/frost_freestanding.c");
+
+/// What the copy of the runtime compiled into this binary hashes to. The
+/// stand-in file is named for it, so every process derives the same path from
+/// the same bytes and one of them can be recognised as the runtime by the
+/// others.
+fn frost_runtime_key() -> u64 {
+    let mut hasher = DefaultHasher::new();
+    RUNTIME_FROST_SOURCE.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Where the Frost half of the runtime is.
+///
+/// FROST_RUNTIME_FROST names it. Otherwise it is looked for beside the compiler
+/// and then up the directories a checkout puts it under, which is the search the
+/// self-hosted compiler does and the search the standard library gets, so a
+/// compiler run from somewhere other than where it was built still finds it.
+/// Found nowhere, the copy compiled into this binary stands in.
+fn frost_runtime_path() -> PathBuf {
+    if let Ok(named) = std::env::var("FROST_RUNTIME_FROST")
+        && !named.is_empty()
+    {
+        return PathBuf::from(named);
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        let mut directory = executable.parent().map(Path::to_path_buf);
+        for _ in 0..3 {
+            let Some(here) = directory else {
+                break;
+            };
+            let candidate = here.join("runtime").join("runtime.frost");
+            if candidate.exists() {
+                return candidate;
+            }
+            directory = here.parent().map(Path::to_path_buf);
+        }
+    }
+    std::env::temp_dir()
+        .join(format!("frost_runtime_{:016x}.frost", frost_runtime_key()))
+}
+
+/// Whether the file being compiled is that runtime, which is the one file that
+/// may define names in the runtime's own name space.
+fn is_the_runtime(file: &str) -> bool {
+    let wanted = frost_runtime_path();
+    let here = Path::new(file);
+    match (here.canonicalize(), wanted.canonicalize()) {
+        (Ok(here), Ok(wanted)) => here == wanted,
+        _ => here == wanted,
+    }
+}
+
+/// The Frost half of the runtime, compiled into an object every link puts
+/// beside the C stub's.
+///
+/// Cached the way the C half is, keyed on the source, so it is built once and
+/// linked thereafter. Compiled by running this compiler again rather than by
+/// calling into the passes directly, for the same reason the self-hosted one
+/// does it that way: reaching an object from a path is what the command line
+/// already is, and a second way in would be a second thing to keep in step with
+/// the checks the first one runs.
+///
+/// `--native` writes an object and links nothing, so a build of the runtime
+/// never asks for a runtime and the recursion is one level deep.
+fn frost_runtime_object() -> Result<PathBuf> {
+    let key = frost_runtime_key();
+
+    let directory = std::env::temp_dir();
+    let cached = directory.join(format!("frost_runtime_frost_{key:016x}.o"));
+    if cached.exists() {
+        return Ok(cached);
+    }
+
+    let source_path = frost_runtime_path();
+    if !source_path.exists() {
+        fs::write(&source_path, RUNTIME_FROST_SOURCE).with_context(|| {
+            format!("Failed to write the runtime: {}", source_path.display())
+        })?;
+    }
+    let pending = directory.join(format!(
+        "frost_runtime_frost_{key:016x}_{}.o",
+        std::process::id()
+    ));
+    let compiler = std::env::current_exe()
+        .context("finding the compiler to build the runtime with")?;
+    let output = Command::new(&compiler)
+        .arg("--native")
+        .arg("-o")
+        .arg(&pending)
+        .arg(&source_path)
+        .output()
+        .context("Failed to compile the Frost runtime")?;
+    if !output.status.success() {
+        bail!(
+            "The Frost runtime failed to compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // A rename is atomic, so builds racing to fill the cache all end up with the
+    // same object rather than a half-written one.
+    if fs::rename(&pending, &cached).is_err() {
+        fs::copy(&pending, &cached).with_context(|| {
+            format!("Failed to cache the runtime: {}", cached.display())
+        })?;
+        fs::remove_file(&pending).ok();
+    }
+    Ok(cached)
+}
 
 fn write_runtime_source_named(source: &str, name: &str) -> Result<PathBuf> {
     let path =
@@ -1512,6 +1627,7 @@ fn compile_c(
     })?;
 
     let runtime_path = runtime_object(compiler, false)?;
+    let frost_runtime_path = frost_runtime_object()?;
 
     // The C is an intermediate, so it is compiled the way an intermediate
     // should be. Without this the C path ran unoptimized while the Cranelift
@@ -1530,6 +1646,7 @@ fn compile_c(
         cmd.arg("/O2");
         cmd.arg(c_path);
         cmd.arg(&runtime_path);
+        cmd.arg(&frost_runtime_path);
         cmd.arg(format!("/Fe:{}", exe_path));
         for lib in extra_libs {
             cmd.arg(lib);
@@ -1541,6 +1658,7 @@ fn compile_c(
         cmd.arg("-fno-strict-aliasing");
         cmd.arg(c_path);
         cmd.arg(&runtime_path);
+        cmd.arg(&frost_runtime_path);
         cmd.arg("-o");
         cmd.arg(exe_path);
         for lib in extra_libs {
@@ -1626,12 +1744,23 @@ fn link_executable(
     }
 
     let runtime_path = runtime_object(linker, freestanding)?;
+    // A freestanding link has no libc, and the Frost half of the runtime reports
+    // through stdio, so that target keeps its own silent copies of the checks in
+    // `frost_freestanding.c` and this object is not what it links.
+    let frost_runtime_path = if freestanding {
+        None
+    } else {
+        Some(frost_runtime_object()?)
+    };
 
     let mut cmd = Command::new(linker);
 
     if linker == "cl" {
         cmd.args(object_paths);
         cmd.arg(&runtime_path);
+        if let Some(path) = &frost_runtime_path {
+            cmd.arg(path);
+        }
         cmd.arg(format!("/Fe:{}", exe_path));
         for lib in extra_libs {
             cmd.arg(lib);
@@ -1642,6 +1771,9 @@ fn link_executable(
         }
         cmd.args(object_paths);
         cmd.arg(&runtime_path);
+        if let Some(path) = &frost_runtime_path {
+            cmd.arg(path);
+        }
         cmd.arg("-o");
         cmd.arg(exe_path);
         for lib in extra_libs {

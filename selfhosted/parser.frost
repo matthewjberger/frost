@@ -584,10 +584,23 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         if (str_range_eq(p.src, offset, length, "slice_len")
             || str_range_eq(p.src, offset, length, "str_len")) {
+            // Which of the two words was written, so the check on the operand
+            // says what the bootstrap says. A node this compiler made itself,
+            // for a `for` over a run or for a live walk, carries 0 and is not
+            // checked: it is not a call anybody wrote and its subject is
+            // whatever the loop was given.
+            var written: i64 = 1
+            if (str_range_eq(p.src, offset, length, "str_len")) {
+                written = 2
+            }
             advance(p)
             inner := parse_expr(p)
             advance(p)
-            return new_unary(p, NodeKind::SliceLen, inner)
+            return arena_push(
+                p.arena,
+                Node { kind = NodeKind::SliceLen, a = inner, b = 0, c = 0,
+                    val = written, next = -1, pos = offset },
+            )
         }
         // `cast($u8, n)`: a conversion the reader asked for. Written the way
         // `ptr_cast` and `slice_from` are, so it needs no keyword and no new
@@ -6204,6 +6217,43 @@ new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
     new_struct_lit(p, result_ty, tag_init)
 }
 
+// Whether the source at `offset` begins with `text`, for the two name spaces a
+// program may not define into.
+starts_with_name :: fn(src: str, offset: i64, length: i64, text: str) -> bool {
+    wanted := str_len(text)
+    if (length < wanted) {
+        return false
+    }
+    var k: i64 = 0
+    while (k < wanted) {
+        if (src[offset + k] != text[k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// A name-keeping definition is emitted under the name it was written under, so
+// two of them by one name are one symbol, and the runtime is linked into every
+// program. `frost_rt_` is what the runtime emits and `frost_u_` is what the
+// bootstrap's C backend names an ordinary function, so a program defining
+// either would replace something every program calls.
+refuse_reserved_name :: fn(mut p: Parser, offset: i64, length: i64) {
+    if (p.runtime_names == 1) {
+        return
+    }
+    if (starts_with_name(p.src, offset, length, "frost_rt_") == false
+        && starts_with_name(p.src, offset, length, "frost_u_") == false) {
+        return
+    }
+    report_where(p.modules, p.src, offset)
+    report("'")
+    report_src(p.src, offset, length)
+    report("' keeps the name it is written under, and 'frost_rt_' and 'frost_u_' are the runtime's and the compiler's own, so a definition here would replace what every program calls")
+    frost_rt_recover_escape()
+}
+
 // An extern declaration `name :: extern fn(params) -> ret`. The name is marked
 // extern so calls emit it verbatim, and the node carries params and return type
 // so a C prototype can be emitted. `val` is the fn index, `b` the params, `c`
@@ -6242,6 +6292,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     // one is emitted as `mf_<index>`. That is what lets Frost supply a symbol C
     // already calls by name, which is what the runtime is.
     if (cur(p) == TokenKind::Lbrace) {
+        refuse_reserved_name(p, name_offset, name_length)
         clear_extern(p, fn_index)
         mark_keeps_name(p, fn_index)
         p.type_param_off = 0

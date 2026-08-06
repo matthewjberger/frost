@@ -666,12 +666,70 @@ check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
     frost_rt_recover_escape()
 }
 
+// What `slice_len` and `str_len` were handed. A length is read off a run, so the
+// subject has to be one. A struct is not: it has no length beside it, so reading
+// one off it takes its first word for the count and then bounds-checks every
+// access through the view against whatever happened to be there. Neither is a
+// pointer, which is a run's address with nothing saying how long the run is.
+//
+// `str_len` asks for a run of bytes and `slice_len` for a run of anything. A
+// `str` is a `[]u8` (3.2), so `str_len` takes either spelling and refuses a run
+// of something else.
+//
+// A text constant is written out where it is used, so what it stands for is the
+// literal and the literal is a run of bytes. That is the same question both
+// emitters ask a `SliceLen` node, and asking it here is what keeps a constant
+// naming a string from reading as the `^i8` it is emitted as.
+//
+// Only a call somebody wrote is checked. The nodes this compiler makes for a
+// `for` and for a live walk carry 0 and are left alone, since their subject is
+// whatever the loop was given and the loop settled that already.
+check_length_subject :: fn(mut p: Parser, inner: i64, written: i64, at: i64) {
+    if (written == 0 || inner < 0) {
+        return
+    }
+    held := arena_at(p.arena, constant_node(p, inner))
+    if (held.kind == NodeKind::StrLit) {
+        return
+    }
+    var ty := type_of(p, inner)
+    if (ty < 0) {
+        return
+    }
+    // A run handed to a call by reference is a pointer to one here, which is
+    // what a borrowed or `mut` parameter carrying a `str` reads as. The length
+    // is read through it the same way, so what it points at is the subject. A
+    // pointer to anything else is not: a `^i8` is a run's address with nothing
+    // beside it saying how long the run is.
+    if (is_pointer(ty) && is_array_ty(pointee(p, ty))) {
+        ty = pointee(p, ty)
+    }
+    if (is_array_ty(ty)) {
+        // A run of anything answers `slice_len`. Only `str_len` asks what the
+        // elements are.
+        if (written == 1 || array_element(p, ty) == TY_U8) {
+            return
+        }
+    }
+    report_where(p.modules, p.src, at)
+    if (written == 2) {
+        report("expected a str value, found ")
+    } else {
+        report("expected a slice value, found ")
+    }
+    report_type_name(p, ty)
+    frost_rt_recover_escape()
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
     }
     node := arena_at(p.arena, id)
     kind := node.kind
+    if (kind == NodeKind::SliceLen) {
+        check_length_subject(p, node.a, node.val, node.pos)
+    }
     if (kind == NodeKind::Var) {
         check_name_known(p, node.val, node.c)
         return

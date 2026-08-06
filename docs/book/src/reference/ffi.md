@@ -161,6 +161,25 @@ This is what lets Frost supply a symbol something else already calls: a
 callback a C library takes by name rather than by pointer, an entry point a
 platform expects, and the compiler's own runtime.
 
+Two name spaces are not yours to define into. A name beginning with `frost_rt_`
+is the runtime's and one beginning with `frost_u_` is the compiler's, and a
+definition keeping either would replace something every program calls, since the
+runtime is linked into every program:
+
+```frost,refused
+frost_rt_check_index :: extern fn(index: i64, length: i64) -> i64 {
+    index
+}
+```
+
+> 'frost_rt_check_index' keeps the name it is written under, and 'frost_rt_' and
+> 'frost_u_' are the runtime's and the compiler's own, so a definition here would
+> replace what every program calls
+
+The rule is about definitions, not declarations: `frost_rt_die :: safe extern
+fn()` says the runtime has one and calls it, which is what a Frost program that
+wants to end the way a failed check ends does.
+
 ## 12.6 Callbacks
 
 An `extern` whose parameter list has a `$` parameter bound to a function

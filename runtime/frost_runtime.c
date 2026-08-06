@@ -85,8 +85,12 @@ static void frost_rt_backtrace(void) {
 }
 
 /* Every check that ends the process goes through here, so the trace is printed
-   once and in one place rather than remembered at each call to abort. */
-static void frost_rt_stop(void) {
+   once and in one place rather than remembered at each call to abort.
+
+   Not static: the checks themselves are written in Frost now, in
+   `runtime.frost` beside this, and this is what they end on. Asking the
+   platform for a backtrace is the reason it stays here. */
+void frost_rt_stop(void) {
     frost_rt_backtrace();
     fflush(stderr);
     abort();
@@ -210,134 +214,6 @@ __declspec(allocate(".CRT$XCU")) void(__cdecl *frost_rt_arm_slot)(void) =
     frost_rt_arm_at_start;
 #endif
 
-void frost_rt_bounds_check(int64_t index, int64_t length) {
-    if ((uint64_t)index >= (uint64_t)length) {
-        fprintf(stderr,
-                "frost: index %lld out of bounds for length %lld\n",
-                (long long)index, (long long)length);
-        frost_rt_stop();
-    }
-}
-
-/* Bounds-check and answer with the index, so an array or slice access can be
-   checked inline in an expression: `data[frost_rt_check_index(i, len)]`. */
-int64_t frost_rt_check_index(int64_t index, int64_t length) {
-    frost_rt_bounds_check(index, length);
-    return index;
-}
-
-/* A slice's length is the whole of what its bounds check has to go on, and that
-   check compares unsigned so that one comparison answers for a negative index as
-   well as for one past the end. The same cast reads a negative *length* as
-   enormous, which would let every index through and leave the slice unchecked.
-
-   A length is answered for where the slice is built rather than at each access,
-   because `slice_from` is the one place a slice comes from and a length is
-   settled once while an access happens in a loop. Trusting the pointer and the
-   run behind it is what makes the primitive unchecked; a negative count is not
-   an unverifiable claim but a meaningless one, so it is refused here. */
-int64_t frost_rt_check_length(int64_t length) {
-    if (length < 0) {
-        fprintf(stderr,
-                "frost: a slice cannot be %lld elements long\n",
-                (long long)length);
-        frost_rt_stop();
-    }
-    return length;
-}
-
-/* Arithmetic that cannot answer.
-
-   An integer operation whose result does not fit the type it is being computed
-   at has no right answer, and wrapping is a wrong one that keeps going. Every
-   backend detects the condition itself, inline, and calls this only on the
-   branch that has already failed, so an operation that fits costs a compare the
-   hardware was doing anyway. */
-void frost_rt_arith_trap(int64_t what) {
-    static const char *reasons[] = {
-        "this addition overflowed",
-        "this subtraction overflowed",
-        "this multiplication overflowed",
-        "division by zero",
-        "remainder by zero",
-        "this division overflowed",
-        "this negation overflowed",
-        "this shift moved by more than the width of its type",
-        "this arithmetic left the range of its type",
-    };
-    const char *reason = "arithmetic that cannot answer";
-    if (what >= 0 && what < (int64_t)(sizeof(reasons) / sizeof(reasons[0]))) {
-        reason = reasons[what];
-    }
-    fprintf(stderr, "frost: %s\n", reason);
-    frost_rt_stop();
-}
-
-/* A view of `count` elements starting `from` elements into a run of `room`,
-   refused where it would reach past the end.
-
-   This is the part of `slice_from`'s claim that a sub-slice does know. Handed a
-   raw pointer, nothing can say how many elements live behind it. Handed a slice,
-   the run is right there, so a prefix or a range longer than what is left is not
-   an unverifiable claim but a false one: the view that came back carried a
-   length the storage did not have, and every access through it was
-   bounds-checked against that length and passed. */
-int64_t frost_rt_check_span(int64_t from, int64_t count, int64_t room) {
-    if (from < 0 || from > room) {
-        fprintf(stderr,
-                "frost: a view cannot start %lld elements into a run of %lld\n",
-                (long long)from, (long long)room);
-        frost_rt_stop();
-    }
-    if (count < 0 || count > room - from) {
-        fprintf(stderr,
-                "frost: a view of %lld elements starting at %lld reaches past a run of %lld\n",
-                (long long)count, (long long)from, (long long)room);
-        frost_rt_stop();
-    }
-    return count;
-}
-
-/* How many bytes `count` elements of `width` take, refused where the product
-   would wrap.
-
-   A wrapped size asks the allocator for fewer bytes than the caller believes it
-   is getting. The slice built over that block carries the count the caller
-   asked for, so every read past the block's real end is bounds-checked against
-   the wrong number and passes. The multiplication is the whole of the failure,
-   so it is done here rather than at each container. */
-int64_t frost_rt_check_size(int64_t count, int64_t width) {
-    if (count < 0 || width <= 0) {
-        fprintf(stderr,
-                "frost: cannot allocate %lld elements of %lld bytes\n",
-                (long long)count, (long long)width);
-        frost_rt_stop();
-    }
-    if (count > INT64_MAX / width) {
-        fprintf(stderr,
-                "frost: %lld elements of %lld bytes is more memory than can be addressed\n",
-                (long long)count, (long long)width);
-        frost_rt_stop();
-    }
-    return count * width;
-}
-
-void frost_rt_generation_check(int64_t stored, int64_t expected) {
-    if (stored != expected) {
-        if ((stored >> 24) != (expected >> 24)) {
-            fprintf(stderr,
-                    "frost: handle from another container, this one is %lld and the handle names %lld\n",
-                    (long long)(stored >> 24), (long long)(expected >> 24));
-        } else {
-            fprintf(stderr,
-                    "frost: stale handle, slot generation %lld but handle expected %lld\n",
-                    (long long)(stored & 0xffffff),
-                    (long long)(expected & 0xffffff));
-        }
-        frost_rt_stop();
-    }
-}
-
 /* A number for one container, so a handle carries which container it came from
    and not only which slot. A generation catches a handle to a slot that has been
    reused; it says nothing about two containers of the same element type and
@@ -368,31 +244,6 @@ int64_t frost_rt_container_id(void) {
         __atomic_add_fetch(&frost_rt_container_counter, 1, __ATOMIC_RELAXED);
 #endif
     return (drawn % 127) + 1;
-}
-
-/* Validate a handle against a slab and answer with the slot it names. The low
-   32 bits are the index and the high 32 the generation. The index is bounds
-   checked and the generation matched against the slot's, so `slab[handle]`
-   reading a released or out-of-range slot aborts rather than seeing whatever
-   took its place. */
-int64_t frost_rt_slot(int64_t handle, int64_t count, const int64_t *generations) {
-    int64_t index = handle & 0xffffffff;
-    int64_t generation = handle >> 32;
-    frost_rt_bounds_check(index, count);
-    frost_rt_generation_check(generations[index], generation);
-    return index;
-}
-
-int64_t frost_rt_byte_at(const char *text, int64_t index) {
-    return (int64_t)(unsigned char)text[index];
-}
-
-int64_t frost_rt_str_len(const char *text) {
-    int64_t length = 0;
-    while (text[length] != 0) {
-        length++;
-    }
-    return length;
 }
 
 /* Emitted output goes to standard output unless a file has been opened for it,
@@ -596,10 +447,6 @@ const char *frost_rt_read_file(const char *path) {
     return buffer;
 }
 
-void frost_rt_byte_set(char *buffer, int64_t index, int64_t value) {
-    buffer[index] = (char)value;
-}
-
 /* The test runner. A failing assertion has to end the test it is in without
    ending the run, or one bad test hides every test after it. The escape is a
    longjmp back into frost_rt_test_run, which is why the runner takes the test body
@@ -643,7 +490,6 @@ int64_t frost_rt_test_summary(void) {
     fflush(stdout);
     return frost_rt_tests_failed;
 }
-
 
 /* Reports as JSON. While a record is open every piece of a message is held
    rather than written, so the whole message can go out as one JSON string when
@@ -842,18 +688,20 @@ void frost_rt_assert_at(int8_t condition, const char *where) {
     }
 }
 
-
 /* Diagnostics for a Frost-written compiler. Its program output goes to stdout,
    so errors are composed piecewise on stderr and frost_rt_die ends the process. */
-// Reads an i64 through a pointer. A `linear` resource passed to an extern
-// arrives as a pointer to the moved-in aggregate, and this is the smallest
-// terminal consumer that proves the value crossed intact.
-int64_t frost_rt_read_i64(void *data) {
-    return *(int64_t *)data;
-}
-
 void frost_rt_error(const char *text) {
     fputs(text, stderr);
+}
+
+/* One byte, straight to stderr. The checks in runtime.frost compose their
+   numbers a digit at a time through this, which is what lets them format
+   without a buffer: a buffer is indexed, and an index is what those checks are
+   there to answer for. Straight, rather than through frost_rt_error_int, because
+   a check that failed is not a report and must not be held back while reports
+   are being collected as JSON. */
+void frost_rt_error_char(int64_t byte) {
+    fputc((int)(unsigned char)byte, stderr);
 }
 
 /* Write a counted run of bytes to stderr, so a diagnostic composed from a `str`
@@ -953,30 +801,10 @@ int64_t frost_rt_heap_live(void) {
     return frost_rt_heap_blocks;
 }
 
-/* Allocation for the compiler's own arenas, which is the same abort on failure
-   without the block counting. `heap_live` is there so a container's tests can
-   say a leak happened; a compiler that runs once and exits frees nothing on
-   purpose, and counting its blocks would answer a question nobody asked. */
-void *frost_rt_alloc(int64_t size) {
-    void *block = malloc((size_t)size);
-    if (block == NULL) {
-        fprintf(stderr,
-                "frost: out of memory asking for %lld bytes\n",
-                (long long)size);
-        frost_rt_stop();
-    }
-    return block;
-}
-
-/* An allocation that fails aborts rather than answering with nothing.
-
-   Frost has no way to say a call ran out of memory: there is no
-   `-> ^u8 ! OutOfMemory` on these, and every caller in std/ wraps what comes
-   back in a slice without looking. A null wrapped in a slice reads as a run of
-   `count` elements at address zero, and each access through it is bounds-checked
-   against a length that has nothing to do with what was allocated. Aborting is
-   what the rest of the runtime does with a condition a program cannot answer
-   for, and it fails where the memory ran out rather than somewhere later. */
+/* An allocation that fails aborts rather than answering with nothing, for the
+   reason `frost_rt_alloc` in runtime.frost says. These two stay here because
+   they count the blocks that are out, and a count is a static, which Frost has
+   no way to declare. */
 void *frost_rt_heap_alloc(int64_t size) {
     void *block = malloc((size_t)size);
     if (block == NULL) {
@@ -1008,18 +836,6 @@ void frost_rt_heap_free(void *block) {
         frost_rt_heap_blocks -= 1;
     }
     free(block);
-}
-
-/* Copy `size` bytes from `source` to `destination`, for a container growing its
-   storage or shifting elements. */
-void frost_rt_mem_copy(void *destination, const void *source, int64_t size) {
-    memcpy(destination, source, (size_t)size);
-}
-
-/* Write `size` bytes of `value` at `destination`, for zeroing a freshly built
-   aggregate such as a columns container. */
-void frost_rt_mem_set(void *destination, int64_t value, int64_t size) {
-    memset(destination, (int)value, (size_t)size);
 }
 
 /* Whole-file read and write, for a standard library that does its own IO
@@ -1104,10 +920,6 @@ char *frost_rt_absolute_path(const char *path) {
     }
     memcpy(copy, path, length + 1);
     return copy;
-}
-
-int64_t frost_rt_remove_file(const char *path) {
-    return remove(path) == 0;
 }
 
 /* Runs a command line through the shell and answers with its exit status, so

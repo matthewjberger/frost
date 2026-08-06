@@ -156,7 +156,8 @@ ordinary build.
 | --- | --- |
 | `FROST_INPUT` | The file to compile, when the command line named none |
 | `FROST_BACKEND` | `asm` picks the assembly emitter, when no backend flag was given |
-| `FROST_RUNTIME` | Where `frost_runtime.c` is. Defaults to `runtime/frost_runtime.c` relative to the working directory, which is what a checkout you are not standing in needs changed |
+| `FROST_RUNTIME` | Where the runtime's C stub is. Looked for beside the compiler and then up the directories a checkout puts it under, which is what a checkout you are not standing in needs changed |
+| `FROST_RUNTIME_FROST` | Where the runtime's Frost half is, found the same way. The runtime is two files: `runtime.frost` holds the checks an index and a slice compile to, and `frost_runtime.c` holds what cannot be written in Frost |
 | `FROST_ABI` | `sysv` or `win` overrides the host's calling convention, so either target's output can be read from either host |
 | `FROST_QUERY` | Answer an editor's question about the checked program instead of building it: `symbols`, `definition NAME`, `fields NAME`, or `local FN NAME`. Answers go to stderr, one line each, and nothing is emitted |
 | `CC` | The C compiler the emitted C and the link go to. Defaults to `gcc` on Windows and `cc` elsewhere |

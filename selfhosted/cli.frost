@@ -8,6 +8,7 @@ import "imports.frost"
 export Backend, Options, c_compiler, join_two, join_number,
     file_checksum, text_checksum, stored_checksum, write_checksum,
     make_directory, cached_runtime_object, runtime_source,
+    cached_frost_runtime_object, frost_runtime_source, compiling_the_runtime,
     options_from_command_line, usage
 
 // Which backend the program goes through. Nothing is chosen until the arguments
@@ -253,23 +254,19 @@ write_checksum :: fn(path: ^i8, value: i64) {
     frost_rt_emit_close()
 }
 
-// Where the C runtime is. FROST_RUNTIME names it outright. Otherwise it is
-// looked for beside the compiler and then up the directories a checkout puts it
-// under, which is the search the standard library gets, so a compiler run from
-// somewhere other than the directory it was built in still finds it.
-runtime_source :: fn() -> ^i8 {
-    named := unsafe { frost_rt_getenv("FROST_RUNTIME") }
-    if (cstr_len(named) != 0) {
-        return named
-    }
+// Where one of the runtime's two files is. It is looked for beside the compiler
+// and then up the directories a checkout puts it under, which is the search the
+// standard library gets, so a compiler run from somewhere other than the
+// directory it was built in still finds it. Not found anywhere, the relative
+// path comes back, and whatever reads it says which path it looked at.
+runtime_beside :: fn(relative: ^i8) -> ^i8 {
     program := frost_rt_arg_at(0)
     length := cstr_len(program)
     if (length > 0) {
         var directory := directory_part(program, length)
         var tries: i64 = 0
         while (tries < 3) {
-            here := joined_path(program, directory,
-                "runtime/frost_runtime.c")
+            here := joined_path(program, directory, relative)
             if (unsafe { frost_rt_file_exists(here) } == 1) {
                 return here
             }
@@ -277,7 +274,82 @@ runtime_source :: fn() -> ^i8 {
             tries = tries + 1
         }
     }
-    "runtime/frost_runtime.c"
+    relative
+}
+
+// Where the C stub is. FROST_RUNTIME names it outright.
+runtime_source :: fn() -> ^i8 {
+    named := unsafe { frost_rt_getenv("FROST_RUNTIME") }
+    if (cstr_len(named) != 0) {
+        return named
+    }
+    runtime_beside("runtime/frost_runtime.c")
+}
+
+// Where the Frost half is. FROST_RUNTIME_FROST names it, so a checkout that is
+// not the working directory can say where both halves are rather than only one.
+frost_runtime_source :: fn() -> ^i8 {
+    named := unsafe { frost_rt_getenv("FROST_RUNTIME_FROST") }
+    if (cstr_len(named) != 0) {
+        return named
+    }
+    runtime_beside("runtime/runtime.frost")
+}
+
+// Whether two paths name one file.
+//
+// The comparison is between absolute paths with the separators read one way,
+// because a path built by joining a directory the environment gave to a name
+// this compiler chose carries both, and the same file reached two ways is still
+// one file. On Windows it also ignores case, which is what that file system
+// does.
+same_path :: fn(first: ^i8, second: ^i8) -> bool {
+    length := cstr_len(first)
+    if (cstr_len(second) != length) {
+        return false
+    }
+    windows := frost_rt_is_windows()
+    var k: i64 = 0
+    while (k < length) {
+        var here := byte_at(first, k)
+        var there := byte_at(second, k)
+        if (here == CH_BACKSLASH) {
+            here = CH_SLASH
+        }
+        if (there == CH_BACKSLASH) {
+            there = CH_SLASH
+        }
+        if (windows == 1) {
+            if (here >= CH_UPPER_A && here <= CH_UPPER_Z) {
+                here = here + 32
+            }
+            if (there >= CH_UPPER_A && there <= CH_UPPER_Z) {
+                there = there + 32
+            }
+        }
+        if (here != there) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// Whether the file being compiled is the runtime, which is the one file that
+// may define a name in the runtime's own name space. Every other file gets the
+// refusal, including a module a program imports.
+compiling_the_runtime :: fn(path: ^i8) -> i64 {
+    if (cstr_len(path) == 0) {
+        return 0
+    }
+    // Each answer is a block of its own, so the second call does not stand on
+    // the first.
+    here := unsafe { frost_rt_absolute_path(path) }
+    wanted := unsafe { frost_rt_absolute_path(frost_runtime_source()) }
+    if (same_path(here, wanted)) {
+        return 1
+    }
+    0
 }
 
 // Where the system keeps temporary files. The compiled runtime goes here rather
@@ -331,6 +403,53 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
     build := join_two(
         join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
         pending)
+    if (unsafe { frost_rt_run_command(build) } != 0) {
+        report("frost: the runtime did not compile: ")
+        report_cstr(build)
+        report("\n")
+        frost_rt_die()
+    }
+    move_file(pending, object)
+    object
+}
+
+// The Frost half of the runtime, compiled by this compiler and cached the same
+// way. `--native` writes an object and links nothing, so a build of the runtime
+// never asks for a runtime and this reaches one level deep and stops.
+//
+// Running this compiler again rather than compiling the file in this process:
+// reaching an object from a path is what the command line already is, and a
+// second way in would be a second thing to hold to the checks the first one
+// runs.
+cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
+    runtime := frost_runtime_source()
+    if (unsafe { frost_rt_file_exists(runtime) } == 0) {
+        report("frost: cannot find the runtime at '")
+        report_cstr(runtime)
+        report("'. FROST_RUNTIME_FROST names it, or install it beside the ")
+        report("compiler\n")
+        frost_rt_die()
+    }
+    var key := file_checksum(runtime) % 1000000007
+    if (key < 0) {
+        key = -key
+    }
+    object := join_number(join_two(temp_directory(), "/frost_runtime_frost_"),
+        key, ".o")
+    if (unsafe { frost_rt_file_exists(object) } == 1) {
+        return object
+    }
+    pending := join_number(join_two(object, "."), cstr_checksum(mark), ".tmp")
+    // The compiler's own path, quoted, since it is the one path here that came
+    // from the shell rather than from the environment's temporary directory.
+    build := join_two(
+        join_two(
+            join_two(
+                join_two(join_two("\"", frost_rt_arg_at(0)),
+                    "\" --native -o "),
+                pending),
+            " "),
+        runtime)
     if (unsafe { frost_rt_run_command(build) } != 0) {
         report("frost: the runtime did not compile: ")
         report_cstr(build)

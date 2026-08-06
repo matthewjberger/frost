@@ -150,15 +150,40 @@ that file is the complete list of places to look when memory is corrupted. The
 generated wgpu binding is written that way, with a safe wrapper per call, so a
 program that draws a triangle writes none for the graphics API.
 
-### The support runtime is itself just linked C
+### The support runtime is two files, and most of it is Frost
 
-The support runtime (`runtime/frost_runtime.c`) is an ordinary C file that both
-backends link automatically. It is a few hundred lines: the bounds and
-generation aborts, the assertions, the IO helpers, process arguments, and the
-reporting `--test` runs through. The pool itself is written in Frost, so nothing
-here allocates or owns one. See
-[pools-and-columns.md](../design/pools-and-columns.md). Programs reach it
-through the same `extern fn` mechanism:
+Every program links a runtime, and it is two files rather than one.
+
+`runtime/runtime.frost` is Frost. It holds the checks a program compiles to: the
+bounds check an index becomes, the length and span checks a slice becomes, the
+size check an allocation becomes, the generation check a handle becomes, the trap
+arithmetic that cannot answer ends on, and the byte and memory helpers the
+standard library reaches for. Each function there is written `extern fn` with a
+body, so it is emitted under the name it was written under and emitted code
+calls it by that name (12.5a). Both compilers compile it with their own front
+end into a cached object and link it beside the C one.
+
+Two rules hold that file. Nothing in it may need what it provides: a bounds
+check that indexes something calls itself, so nothing there indexes an array and
+a number is written a digit at a time rather than through a buffer. And what it
+bottoms out in is the C file beside it, reached through a handful of `extern`
+declarations that are the whole of its contact with C.
+
+`runtime/frost_runtime.c` is what is left, and what is left is what Frost cannot
+say. Almost all of it is built around a variable that lives for the whole program
+and that every call sees the same copy of: the emit buffer `-o` writes through,
+the counters `--test` sums, the recovery stack a parse escapes to, the block
+count a leak check reads, the arguments a constructor captures before `main`.
+Frost has constants and locals and no module-level variable, so those bodies have
+nowhere to keep what they are about. Beside them sit the `setjmp`/`longjmp`
+escapes, whose `setjmp` has to own its own call frame; the stack-guard handlers,
+which are platform APIs; and the three functions that are an `#if` on the target.
+Each says why it is there.
+
+The pool is in neither: it is written in Frost as an ordinary library, so nothing
+in the runtime allocates or owns one. See
+[pools-and-columns.md](../design/pools-and-columns.md). Programs reach the
+runtime through the same `extern fn` mechanism:
 
 ```frost
 frost_rt_bounds_check :: extern fn(index: i64, length: i64)
@@ -233,6 +258,7 @@ frost program.frost --link -o program --libs -lm  # link extra libraries
 frost program.frost --link --incremental -o program  # rebuild only what changed
 ```
 
-Both `--link` paths automatically compile and link `runtime/frost_runtime.c`, so
+Both `--link` paths automatically compile and link both halves of the runtime, so
 the bounds and generation checks, the assertions and the IO helpers are there
-without any extra flags.
+without any extra flags. `FROST_RUNTIME` and `FROST_RUNTIME_FROST` say where they
+are for a checkout you are not standing in.

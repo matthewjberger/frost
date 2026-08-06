@@ -7,21 +7,71 @@
 // `frost_rt_check_index` by that name, and a function the compiler named would
 // answer to nothing. See 12.5a of the reference.
 //
+// That holds for the helpers below as well as for what a program calls, and it
+// is why they carry the runtime's prefix rather than a short name. This object
+// is linked into every program, so a function here named `fault` would be a
+// symbol named `fault` in every program that links it, and the next program to
+// write one of its own would not link. `frost_rt_` is the name space that
+// cannot be written outside this file, which is what makes it the one to use.
+//
 // Two rules hold everything in this file:
 //
 //   - Nothing here may need what it provides. A bounds check that indexes
-//     something calls itself; arithmetic that can overflow calls the trap that
-//     may be running already. So the bodies use comparisons and whole numbers
-//     and nothing else.
+//     something calls itself, so nothing below indexes an array or a slice, and
+//     a number is written a digit at a time rather than through a buffer.
 //   - What it bottoms out in is the C stub, declared below. Those declarations
 //     are the whole of this file's contact with C.
 
 // Writing a fault out, and ending the process once it is written. Both are in
-// the stub: the first because a handler may run where stdio cannot be reached,
-// the second because it prints a backtrace the platform has to be asked for.
-frost_rt_error :: safe extern fn(text: ^i8)
-frost_rt_error_int :: safe extern fn(value: i64)
-frost_rt_die :: safe extern fn()
+// the stub: the first because it is stdio, the second because it prints a
+// backtrace the platform has to be asked for and then aborts, so a debugger and
+// a core file see the failure rather than a tidy exit.
+//
+// `frost_rt_error` reads to a terminator, so it keeps the gate. What is handed
+// to it below is a literal in this file, which has one.
+frost_rt_error :: extern fn(text: ^i8)
+frost_rt_error_char :: safe extern fn(byte: i64)
+frost_rt_stop :: safe extern fn()
+
+// The C library, for the four things below that are a call to it and a
+// judgement about what comes back. Declared here rather than reached through
+// the stub, because a C function that wraps a C function is a line of C this
+// file exists to remove.
+malloc :: extern fn(size: i64) -> ^u8
+memcpy :: extern fn(destination: ^u8, source: ^u8, count: i64) -> ^u8
+memset :: extern fn(destination: ^u8, value: i32, count: i64) -> ^u8
+remove :: extern fn(path: ^i8) -> i32
+
+// A piece of a fault's message. The call is gated on the terminator and every
+// caller here hands it a literal, so the gate is answered for once.
+frost_rt_fault :: extern fn(text: ^i8) {
+    unsafe { frost_rt_error(text) }
+}
+
+// The digits of a number at or below zero, most significant first.
+//
+// Counting down from zero rather than up from a positive value is what lets the
+// smallest i64 be written at all: its negation does not fit the type, so a
+// formatter that starts by taking the absolute value traps on the one number it
+// is asked about least often and most needs to say.
+frost_rt_fault_digits :: extern fn(value: i64) {
+    if (value <= -10) {
+        frost_rt_fault_digits(value / 10)
+    }
+    frost_rt_error_char(48 - (value % 10))
+}
+
+// A number in a fault's message. No buffer, because a buffer is indexed and an
+// index is what this file is here to check.
+frost_rt_fault_int :: extern fn(value: i64) {
+    if (value < 0) {
+        // 45 is '-'.
+        frost_rt_error_char(45)
+        frost_rt_fault_digits(value)
+        return
+    }
+    frost_rt_fault_digits(0 - value)
+}
 
 // An index against the run it reaches into, answering with the index so an
 // access checks inline: `data[frost_rt_check_index(i, len)]`.
@@ -31,14 +81,7 @@ frost_rt_die :: safe extern fn()
 // reader should not have to know the cast to see that a negative index is
 // caught.
 frost_rt_check_index :: extern fn(index: i64, length: i64) -> i64 {
-    if (index < 0 || index >= length) {
-        frost_rt_error("frost: index ")
-        frost_rt_error_int(index)
-        frost_rt_error(" out of bounds for length ")
-        frost_rt_error_int(length)
-        frost_rt_error("\n")
-        frost_rt_die()
-    }
+    frost_rt_bounds_check(index, length)
     index
 }
 
@@ -46,12 +89,12 @@ frost_rt_check_index :: extern fn(index: i64, length: i64) -> i64 {
 // a write through an index calls this and then does the write.
 frost_rt_bounds_check :: extern fn(index: i64, length: i64) {
     if (index < 0 || index >= length) {
-        frost_rt_error("frost: index ")
-        frost_rt_error_int(index)
-        frost_rt_error(" out of bounds for length ")
-        frost_rt_error_int(length)
-        frost_rt_error("\n")
-        frost_rt_die()
+        frost_rt_fault("frost: index ")
+        frost_rt_fault_int(index)
+        frost_rt_fault(" out of bounds for length ")
+        frost_rt_fault_int(length)
+        frost_rt_fault("\n")
+        frost_rt_stop()
     }
 }
 
@@ -64,10 +107,211 @@ frost_rt_bounds_check :: extern fn(index: i64, length: i64) {
 // one, so it is refused here.
 frost_rt_check_length :: extern fn(length: i64) -> i64 {
     if (length < 0) {
-        frost_rt_error("frost: a slice cannot be ")
-        frost_rt_error_int(length)
-        frost_rt_error(" elements long\n")
-        frost_rt_die()
+        frost_rt_fault("frost: a slice cannot be ")
+        frost_rt_fault_int(length)
+        frost_rt_fault(" elements long\n")
+        frost_rt_stop()
     }
     length
+}
+
+// A view of `count` elements starting `from` elements into a run of `room`,
+// refused where it would reach past the end.
+//
+// This is the part of `slice_from`'s claim that a sub-slice does know. Handed a
+// raw pointer, nothing can say how many elements live behind it. Handed a slice,
+// the run is right there, so a prefix or a range longer than what is left is not
+// an unverifiable claim but a false one: the view that came back carried a
+// length the storage did not have, and every access through it was
+// bounds-checked against that length and passed.
+frost_rt_check_span :: extern fn(from: i64, count: i64, room: i64) -> i64 {
+    if (from < 0 || from > room) {
+        frost_rt_fault("frost: a view cannot start ")
+        frost_rt_fault_int(from)
+        frost_rt_fault(" elements into a run of ")
+        frost_rt_fault_int(room)
+        frost_rt_fault("\n")
+        frost_rt_stop()
+    }
+    if (count < 0 || count > room - from) {
+        frost_rt_fault("frost: a view of ")
+        frost_rt_fault_int(count)
+        frost_rt_fault(" elements starting at ")
+        frost_rt_fault_int(from)
+        frost_rt_fault(" reaches past a run of ")
+        frost_rt_fault_int(room)
+        frost_rt_fault("\n")
+        frost_rt_stop()
+    }
+    count
+}
+
+// How many bytes `count` elements of `width` take, refused where the product
+// would wrap.
+//
+// A wrapped size asks the allocator for fewer bytes than the caller believes it
+// is getting. The slice built over that block carries the count the caller
+// asked for, so every read past the block's real end is bounds-checked against
+// the wrong number and passes. The multiplication is the whole of the failure,
+// so it is done here rather than at each container.
+frost_rt_check_size :: extern fn(count: i64, width: i64) -> i64 {
+    if (count < 0 || width <= 0) {
+        frost_rt_fault("frost: cannot allocate ")
+        frost_rt_fault_int(count)
+        frost_rt_fault(" elements of ")
+        frost_rt_fault_int(width)
+        frost_rt_fault(" bytes\n")
+        frost_rt_stop()
+    }
+    // The largest i64, divided rather than multiplied, so the question is asked
+    // without doing the arithmetic it is about.
+    if (count > 9223372036854775807 / width) {
+        frost_rt_fault("frost: ")
+        frost_rt_fault_int(count)
+        frost_rt_fault(" elements of ")
+        frost_rt_fault_int(width)
+        frost_rt_fault(" bytes is more memory than can be addressed\n")
+        frost_rt_stop()
+    }
+    count * width
+}
+
+// Whether a handle still names what it named. The high seven bits of a
+// generation are the container the handle came from and the rest is the slot's
+// own count, so one comparison catches both a stale handle and a handle from
+// somewhere else, and which it was decides what is said.
+frost_rt_generation_check :: extern fn(stored: i64, expected: i64) {
+    if (stored != expected) {
+        if ((stored >> 24) != (expected >> 24)) {
+            frost_rt_fault("frost: handle from another container, this one is ")
+            frost_rt_fault_int(stored >> 24)
+            frost_rt_fault(" and the handle names ")
+            frost_rt_fault_int(expected >> 24)
+            frost_rt_fault("\n")
+        } else {
+            frost_rt_fault("frost: stale handle, slot generation ")
+            frost_rt_fault_int(stored & 0xffffff)
+            frost_rt_fault(" but handle expected ")
+            frost_rt_fault_int(expected & 0xffffff)
+            frost_rt_fault("\n")
+        }
+        frost_rt_stop()
+    }
+}
+
+// A handle against the container it names, answering with the slot. The low 32
+// bits are the index and the high 32 the generation, so `slab[handle]` reading a
+// released or out-of-range slot aborts rather than seeing whatever took its
+// place.
+frost_rt_slot :: extern fn(handle: i64, count: i64, generations: ^i64) -> i64 {
+    index := handle & 0xffffffff
+    generation := handle >> 32
+    frost_rt_bounds_check(index, count)
+    // The run behind the pointer is the caller's, and the index into it has just
+    // been checked against the count the caller gave for it.
+    frost_rt_generation_check(unsafe { generations[index] }, generation)
+    index
+}
+
+// Arithmetic that cannot answer.
+//
+// An integer operation whose result does not fit the type it is being computed
+// at has no right answer, and wrapping is a wrong one that keeps going. Every
+// backend detects the condition itself, inline, and calls this only on the
+// branch that has already failed, so an operation that fits costs a compare the
+// hardware was doing anyway. The number is the contract with the backends.
+frost_rt_arith_trap :: extern fn(what: i64) {
+    frost_rt_fault("frost: ")
+    match what {
+        case 0: frost_rt_fault("this addition overflowed")
+        case 1: frost_rt_fault("this subtraction overflowed")
+        case 2: frost_rt_fault("this multiplication overflowed")
+        case 3: frost_rt_fault("division by zero")
+        case 4: frost_rt_fault("remainder by zero")
+        case 5: frost_rt_fault("this division overflowed")
+        case 6: frost_rt_fault("this negation overflowed")
+        case 7: frost_rt_fault("this shift moved by more than the width of its type")
+        case 8: frost_rt_fault("this arithmetic left the range of its type")
+        case _: frost_rt_fault("arithmetic that cannot answer")
+    }
+    frost_rt_fault("\n")
+    frost_rt_stop()
+}
+
+// A byte of text, read unsigned.
+//
+// Reading through `^i8` would sign-extend anything above 127, and a caller
+// comparing what comes back against a character would never match on a byte a
+// text file is entitled to hold.
+frost_rt_byte_at :: extern fn(text: ^i8, index: i64) -> i64 {
+    // The run behind the pointer is the caller's, which is what makes reading
+    // through it unchecked wherever it is done.
+    bytes := unsafe { ptr_cast($u8, text) }
+    cast($i64, unsafe { bytes[index] })
+}
+
+// A byte written where the caller says. The same claim about the run, made by
+// the caller and not checkable here.
+frost_rt_byte_set :: extern fn(buffer: ^i8, index: i64, value: i64) {
+    unsafe { buffer[index] = cast($i8, value) }
+}
+
+// How many bytes a C string holds, counted to its terminator. The terminator is
+// the caller's promise, and it is the whole of what bounds this read.
+frost_rt_str_len :: extern fn(text: ^i8) -> i64 {
+    var length: i64 = 0
+    while (unsafe { text[length] } != 0) {
+        length = length + 1
+    }
+    length
+}
+
+// An i64 read through a pointer. A `linear` resource passed to an extern
+// arrives as a pointer to the moved-in aggregate, and this is the smallest
+// terminal consumer that proves the value crossed intact.
+frost_rt_read_i64 :: extern fn(data: ^u8) -> i64 {
+    unsafe { ptr_cast($i64, data)^ }
+}
+
+// Bytes moved, for a container growing its storage or shifting elements, and
+// bytes written, for zeroing a freshly built aggregate. Both are the C library's
+// and both are unchecked for the same reason: what is behind each pointer is
+// the caller's claim.
+frost_rt_mem_copy :: extern fn(destination: ^u8, source: ^u8, size: i64) {
+    unsafe { memcpy(destination, source, size) }
+}
+
+frost_rt_mem_set :: extern fn(destination: ^u8, value: i64, size: i64) {
+    unsafe { memset(destination, cast($i32, value), size) }
+}
+
+// A file removed, answering with whether it went. `remove` answers 0 for
+// success, which is the opposite of what every caller here reads, so the sense
+// is turned over once, here.
+frost_rt_remove_file :: extern fn(path: ^i8) -> i64 {
+    if (unsafe { remove(path) } == 0) {
+        return 1
+    }
+    0
+}
+
+// Allocation for the compiler's own arenas. A request that cannot be met stops
+// here with a message rather than answering with nothing and leaving the caller
+// to write through it.
+//
+// Frost has no way to say a call ran out of memory: there is no
+// `-> ^u8 ! OutOfMemory` on this, and every caller wraps what comes back in a
+// slice without looking. A null wrapped in a slice reads as a run of `count`
+// elements at address zero, and each access through it is bounds-checked
+// against a length that has nothing to do with what was allocated.
+frost_rt_alloc :: extern fn(size: i64) -> ^u8 {
+    block := unsafe { malloc(size) }
+    zero := 0
+    if (block == unsafe { ptr_cast($u8, zero) }) {
+        frost_rt_fault("frost: out of memory asking for ")
+        frost_rt_fault_int(size)
+        frost_rt_fault(" bytes\n")
+        frost_rt_stop()
+    }
+    block
 }

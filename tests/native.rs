@@ -8,8 +8,9 @@ mod support;
 
 use support::{
     bootstrap_output, bootstrap_refusal, build_self_hosted_compiler,
-    c_compiler, in_parallel, linker_available, runtime_object, runtime_source,
-    self_hosted_source, selfhosted_default_output, unique,
+    c_compiler, frost_runtime_object, frost_runtime_source, in_parallel,
+    linker_available, runtime_object, runtime_source, self_hosted_source,
+    selfhosted_default_output, unique,
 };
 
 // A temp-file stem no run and no other test reuses. On Windows a just-run or
@@ -3138,6 +3139,7 @@ fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
         .arg("-std=c11")
         .arg(&c_path)
         .arg(&runtime)
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&exe_path)
         .arg("-lm")
@@ -3359,6 +3361,7 @@ fn self_hosted_runs_test_blocks() {
             .arg(&exe)
             .arg(&input)
             .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
             .output()
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
@@ -3491,6 +3494,7 @@ fn self_hosted_threads_share_a_counter() {
     let compile = Command::new(c_compiler().unwrap())
         .arg(&c_path)
         .arg(&runtime)
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&exe)
         .output()
@@ -3883,6 +3887,7 @@ fn self_hosted_runs_the_standard_library_tests() {
             .arg(&exe)
             .arg(root.join("std").join(module))
             .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
             .output()
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
@@ -4207,6 +4212,7 @@ fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {
         .arg("-std=c11")
         .arg(&c_path)
         .arg(&runtime)
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&exe_path)
         .arg("-lm")
@@ -4363,11 +4369,10 @@ fn native_self_hosting_is_a_fixpoint() {
     let stage1_exe = directory
         .join(format!("frost_nativefix1{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&asm_path, &stage1).unwrap();
-    let runtime =
-        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
-        .arg(&runtime)
+        .arg(runtime_object())
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&stage1_exe)
         .output()
@@ -4430,6 +4435,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
         .arg(runtime_object())
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&exe_path)
         .output()
@@ -4482,6 +4488,7 @@ fn selfhosted_unaudited_output(name: &str, source: &str) -> Option<String> {
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
         .arg(&runtime)
+        .arg(frost_runtime_object())
         // libm, for a program that reaches std/math.frost's sqrtf and the rest.
         // Needed on Linux, a harmless no-op on macOS and mingw.
         .arg("-lm")
@@ -4538,6 +4545,7 @@ fn selfhosted_native_status(
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
         .arg(&runtime)
+        .arg(frost_runtime_object())
         .arg("-o")
         .arg(&exe_path)
         .output()
@@ -5574,6 +5582,7 @@ fn run_self_hosted_against_c(
             .arg(&emitted)
             .arg(&library)
             .arg(&runtime)
+            .arg(frost_runtime_object())
             .arg("-o")
             .arg(&exe)
             .output()
@@ -5635,6 +5644,7 @@ fn self_hosted_passes_a_struct_to_c_by_value() {
             .arg(&emitted)
             .arg(&library)
             .arg(&runtime)
+            .arg(frost_runtime_object())
             .arg("-o")
             .arg(&exe)
             .output()
@@ -6759,6 +6769,7 @@ fn the_assembly_backend_writes_a_line_table_when_asked() {
         .arg(&exe)
         .arg(&input)
         .env("FROST_RUNTIME", runtime_source())
+        .env("FROST_RUNTIME_FROST", frost_runtime_source())
         .output()
         .unwrap();
     assert!(
@@ -14146,6 +14157,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             .arg(exe)
             .arg(&source)
             .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
             .output()
             .unwrap()
     };
@@ -14161,6 +14173,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             .arg(exe)
             .arg(&source)
             .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
             .output()
             .unwrap()
     };
@@ -14252,6 +14265,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         .arg(&test_exe)
         .arg(&source)
         .env("FROST_RUNTIME", &runtime)
+        .env("FROST_RUNTIME_FROST", frost_runtime_source())
         .output()
         .unwrap();
     let printed = String::from_utf8_lossy(&built.stdout).replace("\r\n", "\n");
@@ -18029,9 +18043,17 @@ fn installed_layout(name: &str, compiler: &Path) -> Option<(PathBuf, PathBuf)> {
             .ok()?;
         }
     }
+    // Both halves of the runtime: the C stub and the Frost file holding the
+    // checks. An install that carries one of them is an install where a program
+    // that indexes anything does not link.
     std::fs::copy(
         root.join("runtime").join("frost_runtime.c"),
         bin.join("runtime").join("frost_runtime.c"),
+    )
+    .ok()?;
+    std::fs::copy(
+        root.join("runtime").join("runtime.frost"),
+        bin.join("runtime").join("runtime.frost"),
     )
     .ok()?;
     let installed = bin.join(format!("frostc{}", std::env::consts::EXE_SUFFIX));

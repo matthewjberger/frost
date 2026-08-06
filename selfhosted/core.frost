@@ -1673,6 +1673,9 @@ Parser :: struct {
     indirects: Arena<Indirect>,
     tests: Arena<TestCase>,
     testing: i64,
+    // Whether the file being compiled is the runtime, which is the one file
+    // that may define a name in the runtime's own name space.
+    runtime_names: i64,
     // Whether to report an `unsafe` block that vouches for nothing. Off unless
     // asked for, so an ordinary build never walks the spans.
     audit_unsafe: i64,

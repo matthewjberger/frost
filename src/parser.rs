@@ -345,6 +345,9 @@ pub struct Parser<'a> {
     // How many brackets are open. A line break inside one says nothing, so an
     // expression may run over lines there and nowhere else.
     bracket_depth: i32,
+    // Whether the file being parsed is the runtime, which is the one file that
+    // may define a name in the runtime's own name space.
+    runtime_names: bool,
 }
 
 // Where a top-level declaration's value ends: at the head of the next one, or
@@ -445,6 +448,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         generic_types: std::collections::HashSet::new(),
         block_depth: 0,
         bracket_depth: 0,
+        runtime_names: false,
     }
 }
 
@@ -726,6 +730,7 @@ impl<'a> Parser<'a> {
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
             bracket_depth: 0,
+            runtime_names: false,
         }
     }
 
@@ -793,6 +798,7 @@ impl<'a> Parser<'a> {
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
             bracket_depth: 0,
+            runtime_names: false,
         }
     }
 
@@ -1002,6 +1008,39 @@ impl<'a> Parser<'a> {
         let mut held = diagnostics;
         held.append(&mut self.diagnostics);
         self.diagnostics = held;
+    }
+
+    // A name-keeping definition is emitted under the name it was written under,
+    // so two of them by one name are one symbol, and the runtime is linked into
+    // every program. `frost_rt_` is what the runtime emits and `frost_u_` is
+    // what the compiler's C backend names an ordinary function, so a program
+    // defining either would replace something every program calls. Refused
+    // where the declaration is read, in the words the self-hosted compiler also
+    // says.
+    fn refuse_reserved_name(&self, name: &str, start: u32) -> Result<()> {
+        if self.runtime_names
+            || !(name.starts_with("frost_rt_") || name.starts_with("frost_u_"))
+        {
+            return Ok(());
+        }
+        let position = self
+            .positions
+            .get(start as usize)
+            .copied()
+            .unwrap_or_default();
+        Err(anyhow::Error::new(crate::diagnostic::LocatedError {
+            position,
+            message: format!(
+                "'{name}' keeps the name it is written under, and 'frost_rt_' and 'frost_u_' are the runtime's and the compiler's own, so a definition here would replace what every program calls"
+            ),
+        }))
+    }
+
+    /// Say that this file is the runtime, so it may define names in the
+    /// runtime's own name space. Set by the driver for the one file it resolved
+    /// as the runtime and for nothing else.
+    pub fn compiling_the_runtime(&mut self) {
+        self.runtime_names = true;
     }
 
     // `true` and `false` always mean the booleans in expression position, so
@@ -2052,6 +2091,7 @@ impl<'a> Parser<'a> {
             // choosing. That is what lets Frost supply a symbol C already calls
             // by name, which is what the runtime is.
             if matches!(self.peek_nth(0), Token::LeftBrace) {
+                self.refuse_reserved_name(&identifier, start)?;
                 let name = self.ast.intern(&identifier);
                 let block = self.parse_block()?;
                 let params = self.ast.add_parameters(params);
