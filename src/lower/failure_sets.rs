@@ -139,8 +139,9 @@ fn statement_has_try(ast: &Ast, statement: StmtId) -> bool {
         Statement::Assignment(place, value) => {
             expression_has_try(ast, *place) || expression_has_try(ast, *value)
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => statement_has_try(ast, *inner),
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+            statement_has_try(ast, *inner)
+        }
         Statement::While(condition, body) => {
             expression_has_try(ast, *condition) || block_has_try(ast, *body)
         }
@@ -381,8 +382,7 @@ impl Lowerer {
                 self.rewrite_expression(ast, place, result, error);
                 self.rewrite_expression(ast, value, result, error);
             }
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
                 self.rewrite_statement(ast, inner, result, error)
             }
             Statement::While(condition, body) => {

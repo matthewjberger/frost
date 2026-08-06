@@ -5,7 +5,8 @@ use anyhow::{Context, Result, bail};
 use crate::ast::{
     Ast, EnumVariant, ExprId, Expression, Literal, NamedExpr, Parameter,
     Pattern, PatternId, Range32, ReturnKind, ReturnSignature, SignatureId,
-    Statement, StmtId, StructField, SwitchCase, Symbol, TokenSpan, live_subject,
+    Statement, StmtId, StructField, SwitchCase, Symbol, TokenSpan,
+    live_subject,
 };
 use crate::ast_display::{display_expr, display_stmt};
 use crate::ir::{
@@ -154,7 +155,8 @@ struct AnonRequest {
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
-        let text = crate::modules::imports::demangle_private_names(&error.to_string());
+        let text =
+            crate::modules::imports::demangle_private_names(&error.to_string());
         if position == Position::default() || text.starts_with("at ") {
             anyhow::anyhow!("{text}")
         } else {
@@ -217,7 +219,8 @@ fn report(
     position: Position,
     error: &anyhow::Error,
 ) {
-    let text = crate::modules::imports::demangle_private_names(&error.to_string());
+    let text =
+        crate::modules::imports::demangle_private_names(&error.to_string());
     let message = if position == Position::default() || text.starts_with("at ")
     {
         text
@@ -329,7 +332,9 @@ fn build_module_inner(
         generic_functions,
         generic_struct_defs,
         linear: linear_with_holders(linear, ast, &with_instances),
-        registrations: crate::lower::callbacks::callback_registrations(ast, roots),
+        registrations: crate::lower::callbacks::callback_registrations(
+            ast, roots,
+        ),
         type_ids: std::cell::RefCell::new(HashMap::new()),
         anon_counter: std::cell::Cell::new(0),
     };
@@ -399,9 +404,10 @@ fn build_module_inner(
                 if let Some(first) =
                     ownership.check(ast, parameters, body).first()
                 {
-                    let message = crate::modules::imports::demangle_private_names(
-                        &format!("at {}: {first}", position.describe()),
-                    );
+                    let message =
+                        crate::modules::imports::demangle_private_names(
+                            &format!("at {}: {first}", position.describe()),
+                        );
                     diagnostics.push(crate::diagnostic::Diagnostic {
                         position,
                         message,
@@ -665,11 +671,12 @@ fn build_module_inner(
                 // The prefix an import gives a private name is nothing the
                 // reader wrote, so it comes back off the way it does in every
                 // other diagnostic.
-                let message = crate::modules::imports::demangle_private_names(&format!(
-                    "at {}: instantiating '{}': {first}",
-                    specialization.requested_at.describe(),
-                    specialization.display
-                ));
+                let message =
+                    crate::modules::imports::demangle_private_names(&format!(
+                        "at {}: instantiating '{}': {first}",
+                        specialization.requested_at.describe(),
+                        specialization.display
+                    ));
                 diagnostics.push(crate::diagnostic::Diagnostic {
                     position: specialization.requested_at,
                     message,
@@ -864,9 +871,11 @@ fn locate_instantiation_error(
     error: &anyhow::Error,
     specialization: &Specialization,
 ) -> anyhow::Error {
-    let text = crate::modules::imports::demangle_private_names(&error.to_string());
-    let display =
-        crate::modules::imports::demangle_private_names(&specialization.display);
+    let text =
+        crate::modules::imports::demangle_private_names(&error.to_string());
+    let display = crate::modules::imports::demangle_private_names(
+        &specialization.display,
+    );
     if specialization.requested_at == Position::default() {
         anyhow::anyhow!("instantiating '{display}': {text}")
     } else {
@@ -1114,16 +1123,12 @@ impl IrBuilder {
             function.define_variable(&parameter_name, local);
         }
 
-        let has_defers = function
-            .ast
-            .stmts_in(body)
-            .iter()
-            .any(|s| {
-                matches!(
-                    function.ast.stmt(*s),
-                    Statement::Defer(_) | Statement::ErrDefer(_)
-                )
-            });
+        let has_defers = function.ast.stmts_in(body).iter().any(|s| {
+            matches!(
+                function.ast.stmt(*s),
+                Statement::Defer(_) | Statement::ErrDefer(_)
+            )
+        });
         if has_defers {
             function.lower_body_with_defers(body, &return_type)?;
         } else {
@@ -1364,8 +1369,10 @@ pub fn linear_with_holders(
     // The instantiations, which the declarations alone cannot answer for: a
     // generic's field is a parameter bound to nothing here, so `Slab` holds no
     // resource while `Slab<Node, 2>` does.
-    let instances = crate::check::linear_instances::collect_instances(ast, statements);
-    let templates = crate::check::linear_instances::declared_structs(ast, statements);
+    let instances =
+        crate::check::linear_instances::collect_instances(ast, statements);
+    let templates =
+        crate::check::linear_instances::declared_structs(ast, statements);
     loop {
         let mut grew = false;
         for statement in statements {
@@ -3084,8 +3091,7 @@ fn collect_instances_in_statement(
             collect_instances_in_expression(ast, *condition, out);
             collect_instances_in_block(ast, *body, out);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
             collect_instances_in_statement(ast, *inner, out);
         }
         // A constant whose value is not a function is that value wherever it is
@@ -3369,8 +3375,7 @@ fn collect_call_instances_in_statement(
             );
             collect_call_instances_in_block(ast, *body, env, discovery, out);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
             collect_call_instances_in_statement(
                 ast, *inner, env, discovery, out,
             );
@@ -4312,7 +4317,11 @@ fn check_defer_names(
     rest: &[StmtId],
 ) -> Result<()> {
     let mut mentioned = Vec::new();
-    crate::modules::interface_names::names_in_statement(ast, deferred, &mut mentioned);
+    crate::modules::interface_names::names_in_statement(
+        ast,
+        deferred,
+        &mut mentioned,
+    );
     let mut rebound = HashSet::new();
     for statement in rest {
         crate::modules::import_visibility::bound_in_statement(
@@ -5047,8 +5056,7 @@ impl<'a> FunctionLowering<'a> {
             // reaching here is written inside a block. Named rather than left to
             // the catch-all below, which says a statement is unsupported and
             // gives a reader nothing to do about it.
-            Statement::Defer(_)
-            | Statement::ErrDefer(_) => {
+            Statement::Defer(_) | Statement::ErrDefer(_) => {
                 bail!(
                     "a `defer` belongs at the top level of a body, since it runs where the function leaves rather than where this block does"
                 )
@@ -6277,7 +6285,9 @@ impl<'a> FunctionLowering<'a> {
         self.check_vector_shape(&element, count)?;
         if !matches!(
             binop,
-            IrBinOp::Add | IrBinOp::Subtract | IrBinOp::Multiply
+            IrBinOp::Add
+                | IrBinOp::Subtract
+                | IrBinOp::Multiply
                 | IrBinOp::Divide
         ) && !(element.is_integer()
             && matches!(
@@ -6365,7 +6375,9 @@ impl<'a> FunctionLowering<'a> {
         match ty {
             Type::Array(..) => {
                 let IrOperand::Local(local) = operand else {
-                    bail!("a vector is read out of a place, and this is not one");
+                    bail!(
+                        "a vector is read out of a place, and this is not one"
+                    );
                 };
                 let address = self.address_of_local(*local, ty);
                 Ok(LaneSource::At(address))
@@ -6389,8 +6401,8 @@ impl<'a> FunctionLowering<'a> {
             LaneSource::Broadcast(operand) => Ok(operand.clone()),
             LaneSource::At(address) => {
                 let width = self.builder.byte_size(element);
-                let at =
-                    self.fresh_local(Type::Ptr(Box::new(element.clone())), None);
+                let at = self
+                    .fresh_local(Type::Ptr(Box::new(element.clone())), None);
                 self.emit(IrStatement::Assign(
                     at,
                     IrRvalue::FieldAddress {
@@ -6734,8 +6746,9 @@ impl<'a> FunctionLowering<'a> {
                 )
             }
             _ => {
-                let written =
-                    crate::modules::imports::demangle_private_names(&ty.to_string());
+                let written = crate::modules::imports::demangle_private_names(
+                    &ty.to_string(),
+                );
                 if matches!(expected, Some(Type::Ptr(_))) {
                     (
                         IrOperand::Constant(IrConstant::CString(written)),
@@ -8365,7 +8378,8 @@ impl<'a> FunctionLowering<'a> {
             );
         };
         if self.flags_name_of(&wanted_type) != Some(name) {
-            let readable = crate::modules::imports::demangle_private_names(name);
+            let readable =
+                crate::modules::imports::demangle_private_names(name);
             bail!(
                 "flags_has looks for bits of the set it is given, and a '{wanted_type}' is not a '{readable}'"
             );
@@ -9754,10 +9768,7 @@ impl<'a> FunctionLowering<'a> {
         cases: &[SwitchCase],
     ) -> Result<()> {
         let catches_rest = cases.iter().any(|case| {
-            matches!(
-                self.ast.pattern(case.pattern),
-                Pattern::Wildcard
-            )
+            matches!(self.ast.pattern(case.pattern), Pattern::Wildcard)
         });
         if catches_rest {
             return Ok(());
@@ -9783,7 +9794,8 @@ impl<'a> FunctionLowering<'a> {
             .map(|name| format!("'.{name}'"))
             .collect::<Vec<_>>()
             .join(", ");
-        let readable = crate::modules::imports::demangle_private_names(enum_name);
+        let readable =
+            crate::modules::imports::demangle_private_names(enum_name);
         bail!(
             "match on '{readable}' does not cover {named}; add the case or a `case _` for the rest"
         )
@@ -9854,7 +9866,8 @@ impl<'a> FunctionLowering<'a> {
 
             let mut mine = HashSet::new();
             self.gather_variants(case.pattern, &mut mine);
-            if !mine.is_empty() && mine.iter().all(|name| variants.contains(name))
+            if !mine.is_empty()
+                && mine.iter().all(|name| variants.contains(name))
             {
                 bail!(UNREACHABLE_CASE);
             }
@@ -9938,8 +9951,10 @@ impl<'a> FunctionLowering<'a> {
                     else_block: failure,
                 });
                 self.switch_to(upper);
-                let (to, _) = self
-                    .lower_literal(&Literal::Integer(high), Some(&value_type))?;
+                let (to, _) = self.lower_literal(
+                    &Literal::Integer(high),
+                    Some(&value_type),
+                )?;
                 let ordering = if inclusive {
                     IrBinOp::LessThanOrEqual
                 } else {
@@ -9995,8 +10010,7 @@ impl<'a> FunctionLowering<'a> {
             // value reaches the body. What follows a failed test is the next
             // alternative, so the last one's failure is the arm's.
             Pattern::Or(alternatives) => {
-                let alternatives =
-                    self.ast.patterns_in(alternatives).to_vec();
+                let alternatives = self.ast.patterns_in(alternatives).to_vec();
                 let last = alternatives.len() - 1;
                 for (index, held) in alternatives.iter().enumerate() {
                     let following = if index == last {

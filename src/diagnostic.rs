@@ -123,7 +123,8 @@ pub fn grouped(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
         }
         seen.push((place.clone(), claim.clone()));
         let same_words = kept.iter_mut().find(|held| {
-            claim_of(held) == claim && crate::tools::fixes::edit_for(held).is_none()
+            claim_of(held) == claim
+                && crate::tools::fixes::edit_for(held).is_none()
         });
         match same_words {
             Some(held) => {

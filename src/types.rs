@@ -36,10 +36,7 @@ pub enum SizeOp {
 impl SizeExpr {
     /// The number this works out to, given what the names in it stand for, or
     /// nothing when a name is still unbound or the arithmetic has no answer.
-    pub fn evaluate(
-        &self,
-        bound: &dyn Fn(&str) -> Option<i64>,
-    ) -> Option<i64> {
+    pub fn evaluate(&self, bound: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
         match self {
             SizeExpr::Number(value) => Some(*value),
             SizeExpr::Named(name) => bound(name),

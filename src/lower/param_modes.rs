@@ -109,8 +109,9 @@ fn rewrite_statement(
         Statement::Return(expression) | Statement::Expression(expression) => {
             rewrite_expression(ast, expression, signatures);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => rewrite_statement(ast, inner, signatures),
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+            rewrite_statement(ast, inner, signatures)
+        }
         Statement::Assignment(place, value) => {
             rewrite_expression(ast, place, signatures);
             rewrite_expression(ast, value, signatures);
@@ -200,8 +201,7 @@ fn read_through_statement(
             read_through_expression(ast, place, through, bound);
             read_through_expression(ast, value, through, bound);
         }
-        Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+        Statement::Defer(inner) | Statement::ErrDefer(inner) => {
             read_through_statement(ast, inner, through, bound)
         }
         Statement::For(variable, _, iterable, body) => {
@@ -486,8 +486,8 @@ fn pattern_bindings(ast: &Ast, pattern: PatternId) -> Vec<Symbol> {
             .iter()
             .flat_map(|held| pattern_bindings(ast, *held))
             .collect(),
-        Pattern::Wildcard
-        | Pattern::Literal(_)
-        | Pattern::Range { .. } => Vec::new(),
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {
+            Vec::new()
+        }
     }
 }

@@ -89,10 +89,9 @@ fn program_of(block: &Block) -> Option<String> {
         "frost" | "frost,refused" => {
             Some(format!("{}\n\nmain :: fn() -> i64 {{ 0 }}\n", block.body))
         }
-        "frost,inside" => Some(format!(
-            "main :: fn() -> i64 {{\n{}\n0\n}}\n",
-            block.body
-        )),
+        "frost,inside" => {
+            Some(format!("main :: fn() -> i64 {{\n{}\n0\n}}\n", block.body))
+        }
         _ => None,
     }
 }
@@ -162,13 +161,11 @@ fn every_block_in_the_book_is_what_its_fence_says_it_is() {
                     block.line
                 ));
             } else if block.kind != "frost,refused" && !built {
-                let first =
-                    said.lines().rfind(|line| !line.trim().is_empty())
-                        .unwrap_or("");
-                faults.push(format!(
-                    "{shown}:{}  {first}",
-                    block.line
-                ));
+                let first = said
+                    .lines()
+                    .rfind(|line| !line.trim().is_empty())
+                    .unwrap_or("");
+                faults.push(format!("{shown}:{}  {first}", block.line));
             }
         }
     }
