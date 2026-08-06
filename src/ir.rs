@@ -168,6 +168,10 @@ pub struct IrFunction {
     // be exported. Two modules that instantiate the same generic each emit
     // their own copy, and two objects exporting one name is a duplicate symbol.
     pub local: bool,
+    // Whether the symbol is the name the function was written under, which is
+    // what `extern fn` with a body asks for. A C caller names it, so the
+    // compiler may not choose the name.
+    pub keeps_name: bool,
 }
 
 impl IrFunction {

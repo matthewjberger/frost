@@ -1321,6 +1321,12 @@ fn module_renames(module: &Module, tag: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some(name) = top_level_name(&module.ast, *statement) {
+            // A function written as `extern fn` with a body is named by a C
+            // caller, so it keeps what it was written as for the same reason
+            // the declaration above does.
+            if module.ast.is_exported_symbol(name) {
+                continue;
+            }
             renames.insert(name.to_string(), mangled_name(tag, name));
         }
     }

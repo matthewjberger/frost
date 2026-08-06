@@ -2046,6 +2046,33 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            // A body makes this a definition rather than a declaration: the
+            // function is written here and keeps the name it was written under,
+            // where an ordinary one is emitted under a name of the compiler's
+            // choosing. That is what lets Frost supply a symbol C already calls
+            // by name, which is what the runtime is.
+            if matches!(self.peek_nth(0), Token::LeftBrace) {
+                let name = self.ast.intern(&identifier);
+                let block = self.parse_block()?;
+                let params = self.ast.add_parameters(params);
+                let signature = self.ast.push_signature(ReturnSignature {
+                    kind: match return_type {
+                        Some(ty) => ReturnKind::Single(ty),
+                        None => ReturnKind::None,
+                    },
+                    uses: Vec::new(),
+                    bound: None,
+                });
+                let body = self.ast.push_expr(
+                    Expression::Proc(params, signature, block),
+                    self.span_from(start),
+                );
+                self.ast.note_exported_symbol(name);
+                return Ok(self.ast.push_stmt(
+                    Statement::Constant(name, body),
+                    self.span_from(start),
+                ));
+            }
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }

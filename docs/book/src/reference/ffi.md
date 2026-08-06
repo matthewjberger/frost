@@ -134,6 +134,33 @@ program's own objects and ahead of the platform's libraries, which is the order
 a linker resolves in: a library that itself needs libm has to be seen before
 libm is.
 
+## 12.5a Going the other way: a Frost function C calls by name
+
+The same declaration with a body is a definition rather than a declaration, and
+what it adds is the name. A Frost function is emitted under a name the compiler
+chose, so C cannot call it; one written this way is emitted under the name it
+was written under:
+
+```frost
+frost_demo_double :: extern fn(value: i64) -> i64 {
+    value * 2
+}
+```
+
+That is `int64_t frost_demo_double(int64_t)` in the emitted C and
+`.globl frost_demo_double` in the emitted assembly, from both compilers and all
+four backends. An ordinary function beside it is emitted as `frost_u_double` or
+`mf_7`, which is what keeps two Frost functions of the same name in different
+modules apart.
+
+The body is ordinary Frost, and calling one from Frost needs no `unsafe`: the
+function is written here, so there is nothing unaudited about the call. What is
+outside the language is only who else may name it.
+
+This is what lets Frost supply a symbol something else already calls: a
+callback a C library takes by name rather than by pointer, an entry point a
+platform expects, and the compiler's own runtime.
+
 ## 12.6 Callbacks
 
 An `extern` whose parameter list has a `$` parameter bound to a function

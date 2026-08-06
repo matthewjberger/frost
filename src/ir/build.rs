@@ -801,6 +801,7 @@ fn declared_function(
         instantiated: None,
         module: 0,
         local: false,
+        keeps_name: false,
     }
 }
 
@@ -1181,6 +1182,7 @@ impl IrBuilder {
                 // some other module asked for.
                 module: 0,
                 local: false,
+                keeps_name: ast.is_exported_symbol(name),
             },
             specializations,
             anonymous,

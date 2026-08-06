@@ -2016,6 +2016,26 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `extern fn` with a body is written here and keeps the name it was
+    // written under, where an ordinary function is emitted under one the
+    // compiler chose. Both compilers have to agree, because what the form is
+    // for is a symbol something outside the program calls by name: the answer
+    // is the same, and so is the name in the object.
+    (
+        "an_extern_with_a_body_keeps_its_name",
+        "import \"io.frost\"
+         frost_demo_double :: extern fn(value: i64) -> i64 {
+             value * 2
+         }
+         ordinary :: fn(value: i64) -> i64 { value + 1 }
+         main :: fn() -> i64 {
+             print_int_line(frost_demo_double(20))
+             print_int_line(ordinary(6))
+             0
+         }
+",
+        "40\n7\n",
+    ),
     // `$P` on a type the program declared reads as a type parameter, since a
     // `$` argument is one everywhere else. `sizeof` measured that as nothing
     // and answered zero, which a program cannot tell from a real zero, so
