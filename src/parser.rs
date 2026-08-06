@@ -23,6 +23,23 @@ pub type Identifier = String;
 // can recognize one without a second registry to keep in step.
 pub const TEST_PREFIX: &str = "__frost_test_";
 
+// What a `case` says about its own coverage. These are the four ways a pattern
+// can claim a set that the arm it sits on cannot mean, and both compilers word
+// them the same because a program refused here is refused by the language
+// rather than by whichever compiler read it.
+const CATCH_ALL_ALTERNATIVE: &str =
+    "this alternative covers everything on its own, so give it a case of its own";
+const BINDING_ALTERNATIVE: &str =
+    "an alternative binding payload fields holds one name to two shapes, so give it a case of its own";
+const TUPLE_PART: &str =
+    "a tuple case compares one value per part, so an alternative or a range belongs in a match on one value";
+const FLOAT_SPAN: &str =
+    "a case range runs between whole numbers, and a decimal is not one";
+const NOT_A_BOUND: &str =
+    "a case range runs between whole numbers, and this bound is not one";
+const REPEATED_ALTERNATIVE: &str =
+    "this alternative repeats one the same case already names";
+
 // How a parameter takes its argument. `read` (the default) is a shared borrow,
 // `mut` an exclusive borrow, `move` takes ownership. These are the surface. A
 // later pass turns them into the reference types the rest of the compiler
@@ -3139,25 +3156,84 @@ impl<'a> Parser<'a> {
         Ok(self.ast.add_pattern_bindings(&bindings))
     }
 
+    /// An arm's whole pattern: one alternative, or several joined by `|`.
+    ///
+    /// The alternatives cover a set between them and the body runs for any of
+    /// them, which is why nothing in an alternative binds: two variants hold
+    /// two shapes, and a name reading a field would mean one thing in one
+    /// alternative and another in the next.
     fn parse_pattern(&mut self) -> Result<PatternId> {
+        let first = self.parse_pattern_alternative()?;
+        if !matches!(self.peek_nth(0), Token::Pipe) {
+            return Ok(first);
+        }
+        let mut alternatives = vec![first];
+        while matches!(self.peek_nth(0), Token::Pipe) {
+            self.read_token();
+            alternatives.push(self.parse_pattern_alternative()?);
+        }
+        for (index, held) in alternatives.iter().enumerate() {
+            match self.ast.pattern(*held) {
+                Pattern::Wildcard | Pattern::Identifier(_) => {
+                    return Err(self.here(CATCH_ALL_ALTERNATIVE.to_string()));
+                }
+                Pattern::EnumVariant { bindings, .. }
+                    if !bindings.is_empty() =>
+                {
+                    return Err(self.here(BINDING_ALTERNATIVE.to_string()));
+                }
+                _ => {}
+            }
+            let written = crate::ast_display::display_pattern(&self.ast, *held);
+            if alternatives[..index].iter().any(|earlier| {
+                crate::ast_display::display_pattern(&self.ast, *earlier)
+                    == written
+            }) {
+                return Err(self.here(REPEATED_ALTERNATIVE.to_string()));
+            }
+        }
+        let list = self.ast.add_pattern_list(&alternatives);
+        Ok(self.ast.push_pattern(Pattern::Or(list)))
+    }
+
+    /// One alternative of a pattern. A range is read here rather than beside
+    /// `|`, so `0 | 5..10` joins a number and a span the way it reads.
+    fn parse_pattern_alternative(&mut self) -> Result<PatternId> {
         let pattern = match self.peek_nth(0) {
             Token::Underscore => {
                 self.read_token();
                 Pattern::Wildcard
             }
-            Token::Integer(value) => {
-                let value = *value;
+            Token::Integer(_) | Token::Minus => {
+                let low = self.parse_pattern_bound()?;
+                match self.parse_pattern_range(low)? {
+                    Some(range) => range,
+                    None => Pattern::Literal(Literal::Integer(low)),
+                }
+            }
+            // A name a `::` constant declaration settled, written where the
+            // start of a span goes. Anywhere else a name in a pattern binds
+            // what was matched, so what tells the two apart is the `..` after.
+            Token::Identifier(name)
+                if matches!(
+                    self.peek_nth(1),
+                    Token::DotDot | Token::DotDotEqual
+                ) && self.integer_constant(name).is_some() =>
+            {
+                let low = self.integer_constant(name).unwrap();
                 self.read_token();
-                Pattern::Literal(Literal::Integer(value))
+                self.parse_pattern_range(low)?.unwrap()
             }
             Token::Float(value) => {
                 let value = *value;
                 self.read_token();
+                self.refuse_a_float_span()?;
                 Pattern::Literal(Literal::Float(value))
             }
             Token::Float32(value) => {
                 let value = *value;
                 self.read_token();
+                self.refuse_a_float_span()?;
                 Pattern::Literal(Literal::Float32(value))
             }
             Token::StringLiteral(s) => {
@@ -3195,7 +3271,13 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 let mut patterns = Vec::new();
                 while self.peek_nth(0) != &Token::RightParentheses {
-                    patterns.push(self.parse_pattern()?);
+                    let part = self.parse_pattern_alternative()?;
+                    if matches!(self.ast.pattern(part), Pattern::Range { .. })
+                        || matches!(self.peek_nth(0), Token::Pipe)
+                    {
+                        return Err(self.here(TUPLE_PART.to_string()));
+                    }
+                    patterns.push(part);
                     if matches!(self.peek_nth(0), Token::Comma) {
                         self.read_token();
                     }
@@ -3237,6 +3319,78 @@ impl<'a> Parser<'a> {
             }
         };
         Ok(self.ast.push_pattern(pattern))
+    }
+
+    /// One end of a span: a whole number written out, with a `-` in front of
+    /// it where it is below zero.
+    fn parse_pattern_bound(&mut self) -> Result<i64> {
+        let negative = matches!(self.peek_nth(0), Token::Minus);
+        if negative {
+            self.read_token();
+        }
+        match self.peek_nth(0) {
+            Token::Integer(value) => {
+                let value = *value;
+                self.read_token();
+                Ok(if negative { -value } else { value })
+            }
+            Token::Float(_) | Token::Float32(_) => {
+                Err(self.here(FLOAT_SPAN.to_string()))
+            }
+            Token::Identifier(name) => {
+                let name = name.clone();
+                match self.integer_constant(&name) {
+                    Some(value) => {
+                        self.read_token();
+                        Ok(if negative { -value } else { value })
+                    }
+                    None => Err(self.here(NOT_A_BOUND.to_string())),
+                }
+            }
+            _ => Err(self.here(NOT_A_BOUND.to_string())),
+        }
+    }
+
+    /// The rest of a span once its lower end has been read, or nothing where
+    /// what was read stands on its own.
+    fn parse_pattern_range(&mut self, low: i64) -> Result<Option<Pattern>> {
+        let inclusive = match self.peek_nth(0) {
+            Token::DotDot => false,
+            Token::DotDotEqual => true,
+            _ => return Ok(None),
+        };
+        self.read_token();
+        let high = self.parse_pattern_bound()?;
+        let holds = if inclusive { low <= high } else { low < high };
+        if !holds {
+            let between = if inclusive { "..=" } else { ".." };
+            return Err(self.here(format!(
+                "the case range {low}{between}{high} covers nothing"
+            )));
+        }
+        Ok(Some(Pattern::Range {
+            low,
+            high,
+            inclusive,
+        }))
+    }
+
+    /// A span written with a decimal end. What a span covers is counted, and a
+    /// count over the reals is not one, so the two ends are whole numbers.
+    fn refuse_a_float_span(&self) -> Result<()> {
+        if matches!(self.peek_nth(0), Token::DotDot | Token::DotDotEqual) {
+            return Err(self.here(FLOAT_SPAN.to_string()));
+        }
+        Ok(())
+    }
+
+    /// The number a `::` declaration settled on for this name, for the one
+    /// position a pattern reads a name as a value rather than binding it.
+    fn integer_constant(&self, name: &str) -> Option<i64> {
+        match self.constant_values.get(name) {
+            Some(crate::const_eval::Value::Integer(held)) => Some(*held),
+            _ => None,
+        }
     }
 
     fn parse_if_expression(&mut self) -> Result<ExprId> {

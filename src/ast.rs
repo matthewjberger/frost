@@ -384,6 +384,18 @@ pub enum Pattern {
         bindings: Range32,
     },
     Tuple(Range32),
+    // Several patterns under one arm: the body runs for any of them. Its
+    // covered set is the union of what the alternatives cover, which is what
+    // keeps the exhaustiveness rule countable.
+    Or(Range32),
+    // A span of whole numbers, half-open or inclusive, with the bounds already
+    // worked out. `low` and `high` are what was written, and `inclusive` says
+    // whether `high` is inside.
+    Range {
+        low: i64,
+        high: i64,
+        inclusive: bool,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -1335,6 +1347,25 @@ impl<'a> Splicer<'a> {
                     .collect();
                 Pattern::Tuple(dest.add_pattern_list(&copied))
             }
+            Pattern::Or(patterns) => {
+                let copied: Vec<PatternId> = self
+                    .source
+                    .patterns_in(patterns)
+                    .to_vec()
+                    .into_iter()
+                    .map(|held| self.pattern(dest, held, rename))
+                    .collect();
+                Pattern::Or(dest.add_pattern_list(&copied))
+            }
+            Pattern::Range {
+                low,
+                high,
+                inclusive,
+            } => Pattern::Range {
+                low,
+                high,
+                inclusive,
+            },
         };
         dest.push_pattern(node)
     }

@@ -50,6 +50,8 @@ surprises.
 | `enum Shape { Circle { r: i64 }, .. }` | `Shape :: enum { Circle { r: i64 }, .. }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }` |
 | `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
+| `A \| B => ..` and `1..=9 => ..` | `case .A \| .B:` and `case 1..=9:` |
+| `n if n > 5 => ..` | `case _: if (n > 5) { .. }` |
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `for x in &xs { }` | `for x in xs { }` |
@@ -303,6 +305,12 @@ fizz :: fn(i: i64) -> i64 {
     }
 }
 ```
+
+Or-patterns and range patterns carry over as they read in Rust: `case .Left |
+.Right:` runs one body for either variant, and `case 1..10:` or `case 'a'..='z'`
+written out as numbers covers a span. Guards do not exist: an `if` inside the
+arm is the spelling, and 15.2 says why. An alternative may not bind payload
+fields, and a range never removes the need for a `case _`.
 
 Matching a value of a `linear` type consumes it (see below). There is no
 `#[derive(Debug)]`, `PartialEq`, or the rest. Equality is written, and printing

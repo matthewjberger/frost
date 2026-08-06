@@ -352,6 +352,22 @@ pub fn display_pattern(ast: &Ast, pattern: PatternId) -> String {
                 .collect();
             format!("({})", pat_strs.join(", "))
         }
+        Pattern::Or(patterns) => {
+            let pat_strs: Vec<String> = ast
+                .patterns_in(*patterns)
+                .iter()
+                .map(|p| display_pattern(ast, *p))
+                .collect();
+            pat_strs.join(" | ")
+        }
+        Pattern::Range {
+            low,
+            high,
+            inclusive,
+        } => {
+            let between = if *inclusive { "..=" } else { ".." };
+            format!("{low}{between}{high}")
+        }
     }
 }
 

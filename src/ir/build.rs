@@ -104,6 +104,16 @@ struct FlagsLayout {
     bits: HashMap<String, i64>,
 }
 
+// What a match's arms compare against. An enum leaves the tag and the enum's
+// name, anything else leaves the value and its type, and which of the two a
+// pattern reaches for is what tells a pattern apart from the value it was
+// written against.
+struct Scrutinee<'a> {
+    tag: Option<&'a IrOperand>,
+    enum_name: Option<&'a String>,
+    scalar: Option<&'a (IrOperand, Type)>,
+}
+
 struct AnonRequest {
     name: String,
     parameters: Range32,
@@ -9728,20 +9738,15 @@ impl<'a> FunctionLowering<'a> {
         let Some(layout) = self.builder.enum_layout(enum_name) else {
             return Ok(());
         };
-        let covered = cases
-            .iter()
-            .filter_map(|case| match self.ast.pattern(case.pattern) {
-                Pattern::EnumVariant { variant_name, .. } => {
-                    Some(self.ast.name(*variant_name))
-                }
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
+        let mut covered: HashSet<String> = HashSet::new();
+        for case in cases {
+            self.gather_variants(case.pattern, &mut covered);
+        }
         let missing = layout
             .variants
             .iter()
             .map(|variant| variant.name.as_str())
-            .filter(|name| !covered.contains(name))
+            .filter(|name| !covered.contains(*name))
             .collect::<Vec<_>>();
         if missing.is_empty() {
             return Ok(());
@@ -9755,6 +9760,244 @@ impl<'a> FunctionLowering<'a> {
         bail!(
             "match on '{readable}' does not cover {named}; add the case or a `case _` for the rest"
         )
+    }
+
+    /// Every variant one arm names, looking through the alternatives of an
+    /// or-pattern, since what such an arm covers is their union.
+    fn gather_variants(&self, pattern: PatternId, into: &mut HashSet<String>) {
+        match self.ast.pattern(pattern) {
+            Pattern::EnumVariant { variant_name, .. } => {
+                into.insert(self.ast.name(*variant_name).to_string());
+            }
+            Pattern::Or(alternatives) => {
+                for held in self.ast.patterns_in(*alternatives).to_vec() {
+                    self.gather_variants(held, into);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The spans of whole numbers one arm covers. A literal is a span of one,
+    /// and an alternative list contributes each of its own.
+    fn gather_spans(&self, pattern: PatternId, into: &mut Vec<(i64, i64)>) {
+        match self.ast.pattern(pattern) {
+            Pattern::Literal(Literal::Integer(value)) => {
+                into.push((*value, *value));
+            }
+            Pattern::Range {
+                low,
+                high,
+                inclusive,
+            } => {
+                let last = if *inclusive { *high } else { *high - 1 };
+                into.push((*low, last));
+            }
+            Pattern::Or(alternatives) => {
+                for held in self.ast.patterns_in(*alternatives).to_vec() {
+                    self.gather_spans(held, into);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// An arm every value of which an earlier arm already takes.
+    ///
+    /// Read one span at a time against one earlier span at a time, which is
+    /// what makes the answer something a reader can work out at the arms: an
+    /// arm two earlier arms cover between them, and neither on its own, goes on
+    /// standing. Refusing that would need the union of every span written
+    /// above, and a rule nobody can run in their head is a rule that surprises.
+    fn check_reachable(&self, cases: &[SwitchCase]) -> Result<()> {
+        let mut variants: HashSet<String> = HashSet::new();
+        let mut spans: Vec<(i64, i64)> = Vec::new();
+        for case in cases {
+            let mut mine = HashSet::new();
+            self.gather_variants(case.pattern, &mut mine);
+            if !mine.is_empty() && mine.iter().all(|name| variants.contains(name))
+            {
+                bail!(
+                    "this case is covered by an earlier one, so nothing reaches it"
+                );
+            }
+            variants.extend(mine);
+
+            let mut ours = Vec::new();
+            self.gather_spans(case.pattern, &mut ours);
+            if !ours.is_empty()
+                && ours.iter().all(|(low, high)| {
+                    spans
+                        .iter()
+                        .any(|(from, to)| from <= low && high <= to)
+                })
+            {
+                bail!(
+                    "this case is covered by an earlier one, so nothing reaches it"
+                );
+            }
+            spans.extend(ours);
+        }
+        Ok(())
+    }
+
+    /// The comparisons one arm's pattern stands for, written out as the chain a
+    /// reader would write by hand: control reaches `success` where the pattern
+    /// covers the value and `failure` where it does not.
+    fn emit_case_test(
+        &mut self,
+        pattern: PatternId,
+        subject: &Scrutinee<'_>,
+        success: BlockId,
+        failure: BlockId,
+    ) -> Result<()> {
+        let Scrutinee {
+            tag: tag_operand,
+            enum_name,
+            scalar,
+        } = *subject;
+        match self.ast.pattern(pattern).clone() {
+            Pattern::Wildcard | Pattern::Identifier(_) => {
+                self.set_terminator(IrTerminator::Jump(success));
+            }
+            Pattern::Literal(literal) => {
+                let Some((value, value_type)) = scalar else {
+                    bail!("literal pattern requires a scalar match value");
+                };
+                let value = value.clone();
+                let value_type = value_type.clone();
+                let (literal_operand, _) =
+                    self.lower_literal(&literal, Some(&value_type))?;
+                let condition = self.fresh_local(Type::Bool, None);
+                self.emit(IrStatement::Assign(
+                    condition,
+                    IrRvalue::Binary(IrBinOp::Equal, value, literal_operand),
+                ));
+                self.set_terminator(IrTerminator::Branch {
+                    condition: IrOperand::Local(condition),
+                    then_block: success,
+                    else_block: failure,
+                });
+            }
+            Pattern::Range {
+                low,
+                high,
+                inclusive,
+            } => {
+                let Some((value, value_type)) = scalar else {
+                    bail!("a case range needs a whole number to compare with");
+                };
+                let value = value.clone();
+                let value_type = value_type.clone();
+                let (from, _) = self
+                    .lower_literal(&Literal::Integer(low), Some(&value_type))?;
+                let above = self.fresh_local(Type::Bool, None);
+                self.emit(IrStatement::Assign(
+                    above,
+                    IrRvalue::Binary(
+                        IrBinOp::GreaterThanOrEqual,
+                        value.clone(),
+                        from,
+                    ),
+                ));
+                let upper = self.new_block();
+                self.set_terminator(IrTerminator::Branch {
+                    condition: IrOperand::Local(above),
+                    then_block: upper,
+                    else_block: failure,
+                });
+                self.switch_to(upper);
+                let (to, _) = self
+                    .lower_literal(&Literal::Integer(high), Some(&value_type))?;
+                let ordering = if inclusive {
+                    IrBinOp::LessThanOrEqual
+                } else {
+                    IrBinOp::LessThan
+                };
+                let below = self.fresh_local(Type::Bool, None);
+                self.emit(IrStatement::Assign(
+                    below,
+                    IrRvalue::Binary(ordering, value, to),
+                ));
+                self.set_terminator(IrTerminator::Branch {
+                    condition: IrOperand::Local(below),
+                    then_block: success,
+                    else_block: failure,
+                });
+            }
+            Pattern::EnumVariant { variant_name, .. } => {
+                let variant_name = self.ast.name(variant_name).to_string();
+                let Some(tag) = tag_operand else {
+                    bail!("enum variant pattern requires an enum match value");
+                };
+                let enum_name = enum_name.unwrap();
+                let variant_tag = self
+                    .builder
+                    .enum_layout(enum_name)
+                    .and_then(|layout| layout.variant(&variant_name))
+                    .map(|variant| variant.tag)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "enum '{enum_name}' has no variant '{variant_name}'"
+                        )
+                    })?;
+                let tag = tag.clone();
+                let condition = self.fresh_local(Type::Bool, None);
+                self.emit(IrStatement::Assign(
+                    condition,
+                    IrRvalue::Binary(
+                        IrBinOp::Equal,
+                        tag,
+                        IrOperand::Constant(IrConstant::Integer(
+                            variant_tag as i64,
+                            Type::I32,
+                        )),
+                    ),
+                ));
+                self.set_terminator(IrTerminator::Branch {
+                    condition: IrOperand::Local(condition),
+                    then_block: success,
+                    else_block: failure,
+                });
+            }
+            // Each alternative is tried in turn, and the one that covers the
+            // value reaches the body. What follows a failed test is the next
+            // alternative, so the last one's failure is the arm's.
+            Pattern::Or(alternatives) => {
+                let alternatives =
+                    self.ast.patterns_in(alternatives).to_vec();
+                let last = alternatives.len() - 1;
+                for (index, held) in alternatives.iter().enumerate() {
+                    let following = if index == last {
+                        failure
+                    } else {
+                        self.new_block()
+                    };
+                    self.emit_case_test(*held, subject, success, following)?;
+                    if index != last {
+                        self.switch_to(following);
+                    }
+                }
+            }
+            // A tuple pattern matches a tuple, which `lower_tuple_match` has
+            // already taken. Reaching here means the pattern has parts and the
+            // value being matched does not, so this is a mismatch to report
+            // rather than a feature to miss.
+            Pattern::Tuple(patterns) => {
+                let parts = patterns.len();
+                let described = match (enum_name, scalar) {
+                    (Some(name), _) => {
+                        crate::modules::imports::demangle_private_names(name)
+                    }
+                    (None, Some((_, ty))) => ty.to_string(),
+                    (None, None) => "the matched value".to_string(),
+                };
+                bail!(
+                    "a `case` of {parts} parts matches a tuple, and this match is on '{described}', which has none; match on `(a, b)` to compare several values at once"
+                );
+            }
+        }
+        Ok(())
     }
 
     fn lower_match(
@@ -9817,6 +10060,7 @@ impl<'a> FunctionLowering<'a> {
         if let Some(name) = &enum_name {
             self.check_exhaustive(name, &cases)?;
         }
+        self.check_reachable(&cases)?;
 
         // Taking a linear value apart is consuming it: every arm names what it
         // held, and what the arm does with those is the arm's obligation. This
@@ -9832,88 +10076,16 @@ impl<'a> FunctionLowering<'a> {
             let case_block = self.new_block();
             let next_block = self.new_block();
 
-            match self.ast.pattern(case.pattern).clone() {
-                Pattern::Wildcard | Pattern::Identifier(_) => {
-                    self.set_terminator(IrTerminator::Jump(case_block));
-                }
-                Pattern::Literal(literal) => {
-                    let Some((value, value_type)) = &scalar else {
-                        bail!("literal pattern requires a scalar match value");
-                    };
-                    let value = value.clone();
-                    let value_type = value_type.clone();
-                    let (literal_operand, _) =
-                        self.lower_literal(&literal, Some(&value_type))?;
-                    let condition = self.fresh_local(Type::Bool, None);
-                    self.emit(IrStatement::Assign(
-                        condition,
-                        IrRvalue::Binary(
-                            IrBinOp::Equal,
-                            value,
-                            literal_operand,
-                        ),
-                    ));
-                    self.set_terminator(IrTerminator::Branch {
-                        condition: IrOperand::Local(condition),
-                        then_block: case_block,
-                        else_block: next_block,
-                    });
-                }
-                Pattern::EnumVariant { variant_name, .. } => {
-                    let variant_name = self.ast.name(variant_name).to_string();
-                    let Some(tag) = &tag_operand else {
-                        bail!(
-                            "enum variant pattern requires an enum match value"
-                        );
-                    };
-                    let enum_name = enum_name.as_ref().unwrap();
-                    let variant_tag = self
-                        .builder
-                        .enum_layout(enum_name)
-                        .and_then(|layout| layout.variant(&variant_name))
-                        .map(|variant| variant.tag)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "enum '{enum_name}' has no variant '{variant_name}'"
-                            )
-                        })?;
-                    let tag = tag.clone();
-                    let condition = self.fresh_local(Type::Bool, None);
-                    self.emit(IrStatement::Assign(
-                        condition,
-                        IrRvalue::Binary(
-                            IrBinOp::Equal,
-                            tag,
-                            IrOperand::Constant(IrConstant::Integer(
-                                variant_tag as i64,
-                                Type::I32,
-                            )),
-                        ),
-                    ));
-                    self.set_terminator(IrTerminator::Branch {
-                        condition: IrOperand::Local(condition),
-                        then_block: case_block,
-                        else_block: next_block,
-                    });
-                }
-                // A tuple pattern matches a tuple, which `lower_tuple_match`
-                // above has already taken. Reaching here means the pattern has
-                // parts and the value being matched does not, so this is a
-                // mismatch to report rather than a feature to miss.
-                Pattern::Tuple(patterns) => {
-                    let parts = patterns.len();
-                    let described = match (&enum_name, &scalar) {
-                        (Some(name), _) => {
-                            crate::modules::imports::demangle_private_names(name)
-                        }
-                        (None, Some((_, ty))) => ty.to_string(),
-                        (None, None) => "the matched value".to_string(),
-                    };
-                    bail!(
-                        "a `case` of {parts} parts matches a tuple, and this match is on '{described}', which has none; match on `(a, b)` to compare several values at once"
-                    );
-                }
-            }
+            self.emit_case_test(
+                case.pattern,
+                &Scrutinee {
+                    tag: tag_operand.as_ref(),
+                    enum_name: enum_name.as_ref(),
+                    scalar: scalar.as_ref(),
+                },
+                case_block,
+                next_block,
+            )?;
 
             self.switch_to(case_block);
             if let Some(local) = consumed {

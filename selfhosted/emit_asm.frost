@@ -3075,6 +3075,11 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     }
     // A match is a chain of comparisons against the scrutinee, which is kept in
     // a temporary because each arm's body may clobber the registers.
+    //
+    // The comparisons one arm stands for. Each pattern it names jumps to the
+    // body where it covers the value and falls through to the next where it
+    // does not, so an arm covering nothing runs off the end of the chain and
+    // into the jump to the arm below.
     if (kind == NodeKind::Match) {
         scrutinee := node.a
         cases := node.b
@@ -3086,7 +3091,6 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         while (cid != (-1)) {
             cnode := arena_at(p.arena, cid)
             is_default := cnode.c
-            value := cnode.val
             body := cnode.a
             next_case := cnode.next
             if (is_default == 1) {
@@ -3096,11 +3100,10 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
                 emit_text("\n")
             } else {
                 skip_id := new_label(p)
-                asm_i("movq ", slot, "(%rbp), %rax")
-                asm_i("cmpq $", value, ", %rax")
-                emit_text("    jne ")
-                emit_label(".Lcase", skip_id)
-                emit_text("\n")
+                body_id := new_label(p)
+                emit_asm_case_test(p, slot, cid, body_id, skip_id)
+                emit_label(".Lbody", body_id)
+                emit_text(":\n")
                 emit_asm_block(p, body)
                 emit_text("    jmp ")
                 emit_label(".Lend", end_id)
@@ -3115,6 +3118,44 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         return
     }
     asm_unsupported("this statement")
+}
+
+emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
+    skip_id: i64) {
+    var alt := case_alts(p, cid)
+    while (alt != (-1)) {
+        anode := arena_at(p.arena, alt)
+        form := anode.c
+        low := anode.val
+        high := anode.b
+        next_alt := anode.next
+        asm_i("movq ", slot, "(%rbp), %rax")
+        asm_i("cmpq $", low, ", %rax")
+        if (form == ALT_VALUE) {
+            emit_text("    je ")
+            emit_label(".Lbody", body_id)
+            emit_text("\n")
+        } else {
+            past_id := new_label(p)
+            emit_text("    jl ")
+            emit_label(".Lalt", past_id)
+            emit_text("\n")
+            asm_i("cmpq $", high, ", %rax")
+            if (form == ALT_INCLUSIVE) {
+                emit_text("    jle ")
+            } else {
+                emit_text("    jl ")
+            }
+            emit_label(".Lbody", body_id)
+            emit_text("\n")
+            emit_label(".Lalt", past_id)
+            emit_text(":\n")
+        }
+        alt = next_alt
+    }
+    emit_text("    jmp ")
+    emit_label(".Lcase", skip_id)
+    emit_text("\n")
 }
 
 // Leave a function. A struct result is copied into the buffer the caller

@@ -482,11 +482,13 @@ fn pattern_bindings(ast: &Ast, pattern: PatternId) -> Vec<Symbol> {
             .iter()
             .map(|held| held.binding)
             .collect(),
-        Pattern::Tuple(patterns) => ast
+        Pattern::Tuple(patterns) | Pattern::Or(patterns) => ast
             .patterns_in(*patterns)
             .iter()
             .flat_map(|held| pattern_bindings(ast, *held))
             .collect(),
-        Pattern::Wildcard | Pattern::Literal(_) => Vec::new(),
+        Pattern::Wildcard
+        | Pattern::Literal(_)
+        | Pattern::Range { .. } => Vec::new(),
     }
 }

@@ -1253,6 +1253,176 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "'==' is not something two vectors answer",
     ),
+    // Two variants hold two shapes, so a name reading a field out of an
+    // alternative would mean one thing in one alternative and another in the
+    // next. The arm that binds gets an arm of its own.
+    (
+        "an_alternative_that_binds_a_payload",
+        "import \"io.frost\"
+         Side :: enum { Left { a: i64 }, Right { b: i64 } }
+         main :: fn() -> i64 {
+             s := Side::Left { a = 1 }
+             match s {
+                 case .Left { a } | .Right: a
+                 case _: 0
+             }
+         }
+",
+        "an alternative binding payload fields holds one name to two shapes",
+    ),
+    // An alternative that covers everything leaves the others saying nothing,
+    // which is an arm misstating what it covers rather than an arm that works.
+    (
+        "a_catch_all_among_alternatives",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 1 | _: 0
+                 case _: 1
+             }
+         }
+",
+        "this alternative covers everything on its own",
+    ),
+    // One arm naming one pattern twice.
+    (
+        "an_alternative_written_twice",
+        "import \"io.frost\"
+         Side :: enum { Left, Right }
+         main :: fn() -> i64 {
+             s := Side::Left
+             match s {
+                 case .Left | .Left: 0
+                 case _: 1
+             }
+         }
+",
+        "this alternative repeats one the same case already names",
+    ),
+    // A span that runs backwards, and one whose two ends meet under the
+    // half-open spelling. Both cover nothing, and an arm covering nothing is a
+    // mistake to name where it was written.
+    (
+        "a_case_range_that_runs_backwards",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 10..3: 0
+                 case _: 1
+             }
+         }
+",
+        "the case range 10..3 covers nothing",
+    ),
+    (
+        "a_case_range_whose_ends_meet",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 4..4: 0
+                 case _: 1
+             }
+         }
+",
+        "the case range 4..4 covers nothing",
+    ),
+    // What a span covers is counted, and a count over the reals is not one.
+    (
+        "a_case_range_with_a_decimal_end",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 1.0..2.0: 0
+                 case _: 1
+             }
+         }
+",
+        "a case range runs between whole numbers, and a decimal is not one",
+    ),
+    (
+        "a_case_range_ending_at_a_name_that_is_not_a_number",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 1..zzz: 0
+                 case _: 1
+             }
+         }
+",
+        "a case range runs between whole numbers, and this bound is not one",
+    ),
+    // A tuple case compares one value per part, so a part naming a set rather
+    // than a value has nothing to compare against.
+    (
+        "an_alternative_inside_a_tuple_case",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match (1, 2) {
+                 case (1 | 2, 3): 0
+                 case _: 1
+             }
+         }
+",
+        "a tuple case compares one value per part",
+    ),
+    (
+        "a_range_inside_a_tuple_case",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match (1, 2) {
+                 case (1..5, 3): 0
+                 case _: 1
+             }
+         }
+",
+        "a tuple case compares one value per part",
+    ),
+    // An arm every value of which an earlier arm already takes. Read one span
+    // against one span: an arm two earlier spans cover between them, and
+    // neither on its own, goes on standing.
+    (
+        "a_case_an_earlier_span_covers",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             match 3 {
+                 case 1..10: 0
+                 case 5: 2
+                 case _: 1
+             }
+         }
+",
+        "this case is covered by an earlier one, so nothing reaches it",
+    ),
+    (
+        "a_case_an_earlier_alternative_covers",
+        "import \"io.frost\"
+         Side :: enum { Left, Right }
+         main :: fn() -> i64 {
+             s := Side::Left
+             match s {
+                 case .Left | .Right: 0
+                 case .Left: 2
+             }
+         }
+",
+        "this case is covered by an earlier one, so nothing reaches it",
+    ),
+    // A span never removes the need for a `case _`. What the spans leave out is
+    // not something either compiler counts, so the arm naming the rest is what
+    // says the match is finished.
+    (
+        "a_match_over_spans_still_needs_the_rest",
+        "import \"io.frost\"
+         Side :: enum { Left, Right, Up }
+         main :: fn() -> i64 {
+             s := Side::Left
+             match s {
+                 case .Left | .Right: 0
+             }
+         }
+",
+        "does not cover '.Up'",
+    ),
 ];
 
 #[test]
@@ -3390,6 +3560,82 @@ main :: fn() -> i64 {
         "0
 1
 99
+",
+    ),
+    // An arm may name several patterns, and an arm over whole numbers may name
+    // a span. The two compose because both are covered sets: `0 | 5..10` is one
+    // number and one span, and the body runs for any value either takes.
+    (
+        "a_case_names_several_patterns_and_spans",
+        "import \"io.frost\"
+         Step :: enum { Left, Right, Up, Down }
+         CH_0 :: 48
+         CH_9 :: 57
+         sideways :: fn(k: Step) -> i64 {
+             match k {
+                 case .Left | .Right: 1
+                 case .Up: 2
+                 case _: 3
+             }
+         }
+         qualified :: fn(k: Step) -> i64 {
+             match k {
+                 case Step::Left | Step::Down: 4
+                 case _: 5
+             }
+         }
+         classify :: fn(c: i64) -> i64 {
+             match c {
+                 case 97..=122: 1
+                 case CH_0..=CH_9: 2
+                 case 0 | 5..10: 3
+                 case -4..-1: 7
+                 case 20..=20: 8
+                 case _: 0
+             }
+         }
+         main :: fn() -> i64 {
+             print_int_line(sideways(Step::Left))
+             print_int_line(sideways(Step::Right))
+             print_int_line(sideways(Step::Up))
+             print_int_line(sideways(Step::Down))
+             print_int_line(qualified(Step::Left))
+             print_int_line(qualified(Step::Down))
+             print_int_line(qualified(Step::Up))
+             print_int_line(classify(97))
+             print_int_line(classify(122))
+             print_int_line(classify(48))
+             print_int_line(classify(57))
+             print_int_line(classify(0))
+             print_int_line(classify(5))
+             print_int_line(classify(9))
+             print_int_line(classify(10))
+             print_int_line(classify(-4))
+             print_int_line(classify(-1))
+             print_int_line(classify(20))
+             print_int_line(classify(21))
+             0
+         }
+",
+        "1
+1
+2
+3
+4
+4
+5
+1
+1
+2
+2
+3
+3
+3
+0
+7
+0
+8
+0
 ",
     ),
 ];
