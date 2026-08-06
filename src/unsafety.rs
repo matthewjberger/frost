@@ -541,7 +541,7 @@ impl Checker<'_> {
                         bound.insert(parameter.clone(), argument.clone());
                     }
                 }
-                Some(crate::ir_build::substitute_type(declared, &bound))
+                Some(crate::ir::build::substitute_type(declared, &bound))
             }
             // A block's value is what its last statement answers with, and
             // `ptr_cast` is written inside one, so the type of what comes out is

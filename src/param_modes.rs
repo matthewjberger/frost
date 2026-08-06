@@ -359,7 +359,7 @@ fn rewrite_expression(
             }
             // Auto-borrow at call sites needs the argument's type (to avoid
             // re-borrowing a value that is already a reference), which only
-            // exists during lowering. Done in ir_build, not here.
+            // exists during lowering. Done in ir::build, not here.
             let _ = auto_borrow_call;
         }
         Expression::PackMap(inner, _, _)

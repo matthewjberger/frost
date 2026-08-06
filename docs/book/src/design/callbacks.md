@@ -68,7 +68,7 @@ Which form of compile-time parameter it is follows from that. Not `$handler:
 Type`, which says only "some type", but the bound form `$handler: fn(mut Ctx,
 i64)` ([generics.md](../reference/generics.md) 11.1b), so the handler's
 signature is checked against what the library expects at the call, by the code
-in `src/ir_build.rs` that already checks compile-time signatures.
+in `src/ir/build.rs` that already checks compile-time signatures.
 
 ### The extern's C signature
 

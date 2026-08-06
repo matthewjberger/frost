@@ -9758,7 +9758,7 @@ fn self_hosted_columns_container() {
 
 // The same SoA `columns<T, N>` container, compiled by the BOOTSTRAP compiler on
 // both of its backends. Parity with the self-hosted compiler: the container is
-// synthesized by field reflection in ir_build, `columns_new()` zero-inits it,
+// synthesized by field reflection in ir::build, `columns_new()` zero-inits it,
 // `c[h].field` and `c[h] = value` lower to the generational check, and a column
 // (`c.x`) slices into a hot loop. Generic functions over `columns<T, N>` are
 // monomorphized like any other. Kept self-contained (its own `printf` extern,

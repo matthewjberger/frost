@@ -28,12 +28,6 @@ mod imports;
 mod interface;
 mod interface_names;
 mod ir;
-mod ir_build;
-mod ir_c;
-mod ir_codegen;
-mod ir_interp;
-mod ir_ownership;
-mod ir_typecheck;
 mod layers;
 mod lexer;
 mod linear_instances;
@@ -51,8 +45,8 @@ mod unsafety;
 pub use self::{
     allocation_sources::*, ast::*, ast_display::*, build_cache::*, c_abi::*,
     callbacks::*, distinct_types::*, failure_sets::*, import_visibility::*,
-    imports::*, interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*,
-    ir_interp::*, ir_ownership::*, ir_typecheck::*, layers::Layer, lexer::*,
+    imports::*, interface::*, ir::*, ir::build::*, ir::c::*, ir::codegen::*,
+    ir::interp::*, ir::ownership::*, ir::typecheck::*, layers::Layer, lexer::*,
     manifest::*, multi_returns::*, ownership::*, param_modes::*, parser::*,
     query::*, regions::*, types::*, unsafety::*,
 };

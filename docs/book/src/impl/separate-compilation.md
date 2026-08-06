@@ -81,15 +81,15 @@ name today. Working through the pipeline, that is:
 
 | what | why it must be in the interface | consulted by |
 | --- | --- | --- |
-| exported function signatures | call arity and types, and the return type | `ir_typecheck`, `ir_build` |
+| exported function signatures | call arity and types, and the return type | `ir::typecheck`, `ir::build` |
 | parameter **modes** | the borrow at a call site is inserted from the callee's mode, not from the call | `param_modes`, `ownership` |
-| exported struct layouts | field offsets, sizes, alignment | `ir_build`, both backends |
+| exported struct layouts | field offsets, sizes, alignment | `ir::build`, both backends |
 | exported enum layouts | tag values, payload offsets | same |
 | which types are `linear` | consume-exactly-once is checked at the caller | `check_linearity` |
 | failure sets (`-> T ! E`) | `?` lowering and the result type | `lower_failure_sets` |
 | allocation capabilities (`uses Arena`) | the implicit parameter a caller has to supply | `lower_allocation_sources` |
-| **generic bodies** | a specialization is stamped out at the caller, so the caller needs the AST | `ir_build` |
-| compile-time parameter signatures | the bound checked at the call | `ir_build` |
+| **generic bodies** | a specialization is stamped out at the caller, so the caller needs the AST | `ir::build` |
+| compile-time parameter signatures | the bound checked at the call | `ir::build` |
 
 The last one on the list is the one that decides the flavour of the whole design.
 A generic's body is part of its interface. There is no way around it while
@@ -124,7 +124,7 @@ same thing in every build of the compiler, and `DefaultHasher` promises only
 consistency within one version.
 
 Monomorphization was a whole-program fixpoint. `expand_generic_structs` and the
-specialization loop in `src/ir_build.rs` walked every statement in the flattened
+specialization loop in `src/ir/build.rs` walked every statement in the flattened
 program, and flattening had thrown away which module a statement came from. A
 `Position` now carries a file id into `src/source_map.rs`, stamped during import
 resolution, so every statement knows its module and every specialization records

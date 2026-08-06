@@ -16,7 +16,7 @@
 use crate::ast::{
     Ast, ExprId, Expression, Range32, ReturnKind, Statement, StmtId,
 };
-use crate::ir_build::substitute_type;
+use crate::ir::build::substitute_type;
 use crate::lexer::Position;
 use crate::parser::type_from_string;
 use crate::types::Type;

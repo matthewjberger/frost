@@ -147,7 +147,7 @@ recognizer that tells a columns container from a slab. The one operation not pro
 the element type the layout does not store. Read the fields you want through
 `c[handle].field` instead.
 
-It is built in both compilers (the Rust bootstrap in `src/ir_build.rs`, the
+It is built in both compilers (the Rust bootstrap in `src/ir/build.rs`, the
 self-hosted compiler in `selfhosted/`), on both backends each, to a
 byte-identical self-hosting fixpoint, because the language is defined by the two
 compilers agreeing. `examples/selfhosted/soa_particles.frost` is a worked

@@ -119,11 +119,11 @@ If the ABI did not line up, that is where it would crash.
 It sat under "Linearity checking on the IR" and every item was marked done.
 
 1. Discharge ownership on the IR. *(Partly done: the linear consume discipline
-   now runs as a CFG dataflow pass in `src/ir_ownership.rs`. Move tracking and
+   now runs as a CFG dataflow pass in `src/ir/ownership.rs`. Move tracking and
    borrow exclusivity stay on the AST, where the move-versus-borrow distinction
    the IR erases is still visible. Second-class borrows keep that analysis
    scope-local.)*
-2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
+2. A real type-checking pass on the IR. *(Done: `src/ir/typecheck.rs` runs on
    the typed IR after lowering and before either backend. It validates local
    and block id ranges, direct and indirect call arity against the gathered
    signatures, numeric operands for arithmetic and indexing, and that non-void
@@ -147,7 +147,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
    library), on top of slices, value generics, and `ptr_to`/`ptr_cast`.
    CORRECTED WHILE MOVING: the original text said the runtime pool functions are
    an opt-in `extern` library and that `pool[handle]` lowers to `pool_get`.
-   Neither is true. `slab_shaped_base` in `src/ir_build.rs` recognizes a struct
+   Neither is true. `slab_shaped_base` in `src/ir/build.rs` recognizes a struct
    holding a `storage` array beside a parallel `generations` array, and the
    index lowers inline to the bounds-and-generation check `frost_rt_slot`. The
    original also cited `docs/native-pools.md` and `docs/allocators.md`, which are
@@ -170,7 +170,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
    line and column, not just the enclosing function. A position also carries the
    file it came from, so an error inside an imported module names that module
    rather than a line number in the flattened program.)*
-9. A third differential oracle. *(Done: `src/ir_interp.rs` interprets the typed
+9. A third differential oracle. *(Done: `src/ir/interp.rs` interprets the typed
    IR directly, exposed through `--run-ir`. It validates scalar arithmetic,
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
@@ -194,7 +194,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
     always makes progress, so recovery cannot loop. This is the foundation an
     editor integration would build on, though the language server itself is not
     yet in scope.)*
-12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
+12. Parallel code generation. *(Done: `src/ir/codegen.rs` builds and compiles
     functions across every core from a shared work queue. 385 ms to 55 ms on
     sixteen threads at 10,401 functions, and a full native build of 58k lines
     in 353 ms, measured when it landed. [roadmap.md](../roadmap.md) says how to
@@ -203,7 +203,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
 13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
     parameter bound to a function signature is a callback registration:
     `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the
-    registration to the frame that holds its context, and `src/ir_build.rs`
+    registration to the frame that holds its context, and `src/ir/build.rs`
     passes the handler's address and the context's address. There is no
     trampoline and no cast, because a `mut` parameter is already a pointer and
     Frost and C share a calling convention.
@@ -245,7 +245,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
    serde and JSON, marked replaceable.
 3. Make monomorphization per-module. *Prerequisite done, the rest not
    started.* `expand_generic_structs` and the specialization loop in
-   `src/ir_build.rs` walk every statement in the flattened program, and the
+   `src/ir/build.rs` walk every statement in the flattened program, and the
    blocker was that flattening threw away which module a statement came from.
    That is fixed: a `Position` now carries a file id into `src/source_map.rs`,
    stamped during import resolution, so every statement knows its module. It
@@ -267,7 +267,7 @@ It sat under "Linearity checking on the IR" and every item was marked done.
    One thing to get right, because it is easy to state the step wrongly. While
    the compiler still emits one object, per-module copies cannot actually be
    emitted: two definitions of `Stack<i64>` in one object file is a duplicate
-   symbol, not a fold. So `emitted: HashSet<String>` in `src/ir_build.rs` stays
+   symbol, not a fold. So `emitted: HashSet<String>` in `src/ir/build.rs` stays
    global for as long as the output is one object, and what step 3 changes is
    only *how the worklist is seeded*. The copies become real at step 4, when
    each module emits its own object, and that is also when their linkage becomes
