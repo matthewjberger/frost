@@ -169,16 +169,30 @@ a number is written a digit at a time rather than through a buffer. And what it
 bottoms out in is the C file beside it, reached through a handful of `extern`
 declarations that are the whole of its contact with C.
 
-`runtime/frost_runtime.c` is what is left, and what is left is what Frost cannot
-say. Almost all of it is built around a variable that lives for the whole program
-and that every call sees the same copy of: the emit buffer `-o` writes through,
-the counters `--test` sums, the recovery stack a parse escapes to, the block
-count a leak check reads, the arguments a constructor captures before `main`.
-Frost has constants and locals and no module-level variable, so those bodies have
-nowhere to keep what they are about. Beside them sit the `setjmp`/`longjmp`
-escapes, whose `setjmp` has to own its own call frame; the stack-guard handlers,
-which are platform APIs; and the three functions that are an `#if` on the target.
-Each says why it is there.
+`runtime/frost_runtime.c` is what is left, and this is the size it is meant to
+be rather than a port waiting to be finished.
+
+Almost all of it is built around a variable that lives for the whole program and
+that every call sees the same copy of: the emit buffer `-o` writes through, the
+counters `--test` sums, the recovery stack a parse escapes to, the block count a
+leak check reads, the arguments a constructor captures before `main`. Frost has
+constants and locals and nothing at module scope that a function writes to,
+because a value's lifetime is a place in the program rather than a property of a
+declaration. That rule is what the region check and the move checker are built
+on: a `^T` points into an arena in scope, and a place belongs to a frame. Adding
+a variable that outlives every frame would give both of them a second case, paid
+for by every program, to serve these few functions. So they stay here.
+
+Beside them sit the `setjmp`/`longjmp` escapes, whose `setjmp` has to own its own
+call frame; the stack-guard handlers, which are platform APIs; and the three
+functions that are an `#if` on the target. Each says why it is there.
+
+Where a runtime function's state does have an explicit form, that is the
+direction to take it, and the reason is that it removes an implicit global from
+*programs* rather than that it shrinks this file. Output is a stream something
+names. A block count belongs to the allocation source that handed the block out.
+The arguments are an input to the program. Each of those is a language
+improvement first and a smaller runtime second.
 
 The pool is in neither: it is written in Frost as an ordinary library, so nothing
 in the runtime allocates or owns one. See
