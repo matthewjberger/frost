@@ -302,7 +302,7 @@ temp_directory :: fn() -> ^i8 {
 // compiling it again for every link is most of what a build that assembled
 // nothing spends. What the source holds is the name, so editing the runtime
 // builds a new one and nothing else does.
-cached_runtime_object :: fn() -> ^i8 {
+cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
     runtime := runtime_source()
     // A missing runtime checksums to the same 0 as any other missing file, so
     // saying which path was looked at beats letting the C compiler report a
@@ -322,16 +322,81 @@ cached_runtime_object :: fn() -> ^i8 {
     if (unsafe { frost_rt_file_exists(object) } == 1) {
         return object
     }
+    // Two builds running at once both find the cache empty and both fill it,
+    // and a build reading an object another is still writing links garbage. So
+    // the compile goes to a name this build alone uses, named after where its
+    // own output is going, and the finished object is moved into place in the
+    // one step the platform gives for it.
+    pending := join_number(join_two(object, "."), cstr_checksum(mark), ".tmp")
     build := join_two(
         join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
-        object)
+        pending)
     if (unsafe { frost_rt_run_command(build) } != 0) {
         report("frost: the runtime did not compile: ")
         report_cstr(build)
         report("\n")
         frost_rt_die()
     }
+    move_file(pending, object)
     object
+}
+
+// A number for a name, so a path can carry something of the build that made it
+// without a process id to ask for.
+cstr_checksum :: fn(text: ^i8) -> i64 {
+    length := cstr_len(text)
+    var sum: i64 = length + 1
+    var k: i64 = 0
+    while (k < length) {
+        sum = wrap_add(wrap_mul(sum, 131), byte_at(text, k))
+        k = k + 1
+    }
+    if (sum < 0) {
+        sum = -sum
+    }
+    sum % 1000000007
+}
+
+// The same path written the way the Windows shell reads one. Paths here are
+// built by joining a directory the environment gave with a name this compiler
+// chose, so they carry both separators, and `move` refuses the mixture.
+backslashed :: fn(path: ^i8) -> ^i8 {
+    length := cstr_len(path)
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 1)) }
+    var k: i64 = 0
+    while (k < length) {
+        held := byte_at(path, k)
+        if (held == CH_SLASH) {
+            held = CH_BACKSLASH
+        }
+        byte_set(out, k, held)
+        k = k + 1
+    }
+    byte_set(out, length, 0)
+    out
+}
+
+// One name replaced by another, which the shell does in one step on either
+// platform. This is the second of the two places that knows which one it is
+// running on.
+// What it has to say goes nowhere: a compiler with no `-o` writes the program
+// it emitted to standard output, and a shell announcing a file it moved would
+// land in the middle of it.
+move_file :: fn(from: ^i8, to: ^i8) {
+    var command := join_two(join_two(join_two("mv -f ", from), " "), to)
+    if (frost_rt_is_windows() == 1) {
+        command = join_two(
+            join_two(join_two("move /Y \"", backslashed(from)), "\" \""),
+            backslashed(to))
+        command = join_two(command, "\"")
+    }
+    command = join_two(command, " > ")
+    if (frost_rt_is_windows() == 1) {
+        command = join_two(command, "nul 2>&1")
+    } else {
+        command = join_two(command, "/dev/null 2>&1")
+    }
+    unsafe { frost_rt_run_command(command) }
 }
 
 // The directory the objects go in, made if it is not there. The shell is what

@@ -215,7 +215,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         checked = checked + 1
     }
 
-    runtime_object := cached_runtime_object()
+    runtime_object := cached_runtime_object(executable)
     var command := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), objects), " "),
@@ -292,7 +292,7 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
 // runner a `--test` build needs. FROST_RUNTIME says where it is for a checkout
 // that is not the working directory.
 link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
-    extra := join_two(" ", cached_runtime_object())
+    extra := join_two(" ", cached_runtime_object(executable))
     var base := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), " "), unit), extra),

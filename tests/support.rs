@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A temp-file stem no run and no other test reuses. On Windows a just-run or
@@ -28,7 +29,51 @@ pub fn unique(base: &str) -> String {
     )
 }
 
+/// Whether a linker is on the path, asked once. Every helper here asks, and
+/// asking meant spawning three processes per question: the suite spent longer
+/// running `--version` than compiling some of the programs it checks.
+/// One job per item, spread over as many threads as the machine has.
+///
+/// A test that compiles a list of programs one after another sets the floor for
+/// how long the whole suite takes, however many cores are idle beside it: the
+/// binary's other tests finish long before the list does. Each job here is a
+/// compiler and a C toolchain in their own processes, so the work is theirs to
+/// overlap and this only stops handing it to them one at a time.
+///
+/// The answers come back in the order the items were given, so a failure names
+/// the item it came from.
+pub fn in_parallel<T, R>(items: &[T], job: impl Fn(&T) -> R + Sync) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+{
+    let threads = std::thread::available_parallelism()
+        .map(std::num::NonZero::get)
+        .unwrap_or(4)
+        .min(items.len().max(1));
+    let width = items.len().div_ceil(threads.max(1));
+    let chunks: Vec<&[T]> = items.chunks(width.max(1)).collect();
+    let job = &job;
+    std::thread::scope(|scope| {
+        let running: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| {
+                scope.spawn(move || chunk.iter().map(job).collect::<Vec<R>>())
+            })
+            .collect();
+        running
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect::<Vec<R>>()
+    })
+}
+
 pub fn linker_available() -> bool {
+    static FOUND: OnceLock<bool> = OnceLock::new();
+    *FOUND.get_or_init(find_linker)
+}
+
+fn find_linker() -> bool {
     for linker in ["cc", "gcc", "clang"] {
         let found = Command::new(linker)
             .arg("--version")
@@ -50,6 +95,11 @@ pub fn linker_available() -> bool {
 }
 
 pub fn c_compiler() -> Option<&'static str> {
+    static FOUND: OnceLock<Option<&'static str>> = OnceLock::new();
+    *FOUND.get_or_init(find_c_compiler)
+}
+
+fn find_c_compiler() -> Option<&'static str> {
     for compiler in ["gcc", "clang", "cc"] {
         let found = Command::new(compiler)
             .arg("--version")
@@ -74,6 +124,44 @@ pub fn self_hosted_source() -> PathBuf {
 
 pub fn runtime_source() -> String {
     format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The runtime, compiled once and linked thereafter.
+///
+/// Every test that runs a program links the runtime beside what the compiler
+/// emitted, and handing the C compiler the source each time made that the
+/// slowest thing a test run did: the link took 0.6 seconds against the source
+/// and 0.12 against an object, and the suite does it hundreds of times. Both
+/// compilers already cache this object on their own link paths; this is the
+/// harness doing what they do. The source is unchanged by any test, so one
+/// object serves the whole run.
+///
+/// Falls back to the source where the object cannot be built, so a machine this
+/// does not suit is slow rather than broken.
+pub fn runtime_object() -> String {
+    static BUILT: OnceLock<String> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let Some(compiler) = c_compiler() else {
+                return runtime_source();
+            };
+            let object = std::env::temp_dir()
+                .join(format!("frost_test_runtime_{}.o", std::process::id()));
+            let built = Command::new(compiler)
+                .arg("-std=c11")
+                .arg("-c")
+                .arg(runtime_source())
+                .arg("-o")
+                .arg(&object)
+                .output();
+            match built {
+                Ok(done) if done.status.success() => {
+                    object.display().to_string()
+                }
+                _ => runtime_source(),
+            }
+        })
+        .clone()
 }
 
 /// Each caller gets its own copy, named after itself. The test binary runs its
@@ -114,13 +202,14 @@ pub fn selfhosted_default_output(
     suffix: &str,
 ) -> String {
     let directory = std::env::temp_dir();
-    let input = directory.join(format!("frost_sl_{name}.frost"));
+    // The stem carries this process's id, so the same test running in another
+    // test binary at the same time writes its own files rather than this one's.
+    let stem = unique(&format!("frost_sl_{name}"));
+    let input = directory.join(format!("{stem}.frost"));
     std::fs::write(&input, source).unwrap();
-    let emitted = directory.join(format!("frost_sl_{name}.{suffix}"));
-    let exe = directory.join(format!(
-        "frost_sl_{name}_{suffix}{}",
-        std::env::consts::EXE_SUFFIX
-    ));
+    let emitted = directory.join(format!("{stem}.{suffix}"));
+    let exe = directory
+        .join(format!("{stem}_{suffix}{}", std::env::consts::EXE_SUFFIX));
     let emit = Command::new(compiler)
         .arg(backend)
         .arg("-o")
@@ -136,7 +225,7 @@ pub fn selfhosted_default_output(
     );
     let built = Command::new(c_compiler().unwrap())
         .arg(&emitted)
-        .arg(runtime_source())
+        .arg(runtime_object())
         .arg("-lm")
         .arg("-o")
         .arg(&exe)
@@ -163,10 +252,10 @@ pub fn bootstrap_output(name: &str, source: &str) -> Option<String> {
         return None;
     }
     let directory = std::env::temp_dir();
-    let input = directory.join(format!("frost_bs_{name}.frost"));
+    let stem = unique(&format!("frost_bs_{name}"));
+    let input = directory.join(format!("{stem}.frost"));
     std::fs::write(&input, source).unwrap();
-    let exe = directory
-        .join(format!("frost_bs_{name}{}", std::env::consts::EXE_SUFFIX));
+    let exe = directory.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
         .arg("--link")
         .arg("-o")
@@ -190,11 +279,12 @@ pub fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // What the bootstrap said when it would not compile a program.
 pub fn bootstrap_refusal(name: &str, source: &str) -> String {
     let directory = std::env::temp_dir();
-    let source_path = directory.join(format!("frost_refuse_{name}.frost"));
+    let stem = unique(&format!("frost_refuse_{name}"));
+    let source_path = directory.join(format!("{stem}.frost"));
     std::fs::write(&source_path, source).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
         .arg("-o")
-        .arg(directory.join(format!("frost_refuse_{name}.o")))
+        .arg(directory.join(format!("{stem}.o")))
         .arg(&source_path)
         .output()
         .unwrap();

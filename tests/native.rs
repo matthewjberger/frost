@@ -8,8 +8,8 @@ mod support;
 
 use support::{
     bootstrap_output, bootstrap_refusal, build_self_hosted_compiler,
-    c_compiler, linker_available, runtime_source, self_hosted_source,
-    selfhosted_default_output, unique,
+    c_compiler, in_parallel, linker_available, runtime_object, runtime_source,
+    self_hosted_source, selfhosted_default_output, unique,
 };
 
 // A temp-file stem no run and no other test reuses. On Windows a just-run or
@@ -1281,7 +1281,6 @@ fn a_distinct_type_is_not_its_representation() {
             said.contains("a distinct type is not its representation"),
             "expected the nominal diagnostic from the self-hosted compiler in:\n{said}"
         );
-        let _ = std::fs::remove_file(&compiler);
     }
 }
 
@@ -1563,9 +1562,6 @@ fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
             "case {index} wanted '{expected}' from the self-hosted compiler in:
 {said}"
         );
-    }
-    if let Some(compiler) = compiler {
-        let _ = std::fs::remove_file(&compiler);
     }
 }
 
@@ -3113,7 +3109,6 @@ fn self_hosted_emits(
         command.env("FROST_BACKEND", backend);
     }
     let run = command.output().unwrap();
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         run.status.success(),
         "the self-hosted compiler failed on {name}:\n{}",
@@ -3125,16 +3120,15 @@ fn self_hosted_emits(
 fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
     let compiler = c_compiler()?;
     let directory = std::env::temp_dir();
-    let c_path = directory.join(format!("frost_emitted_{name}.c"));
-    let exe_path = directory.join(format!(
-        "frost_emitted_{name}{}",
-        std::env::consts::EXE_SUFFIX
-    ));
+    let stem = unique(&format!("frost_emitted_{name}"));
+    let c_path = directory.join(format!("{stem}.c"));
+    let exe_path =
+        directory.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&c_path, c_source).unwrap();
     // The emitted code calls into the runtime for the bounds check an index
-    // compiles to and for assertions, so the runtime is linked alongside it.
-    let runtime =
-        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    // compiles to and for assertions, so the runtime is linked alongside it,
+    // as the object every test in this binary shares.
+    let runtime = runtime_object();
     // The math functions `std/math.frost` reaches live in libm where the
     // platform keeps them out of the C runtime, which is Linux and the BSDs.
     // Both compilers pass this on their own link paths; a test that links what
@@ -3167,7 +3161,6 @@ fn self_hosted_compiler_emits_working_c() {
     };
     // With no FROST_INPUT it compiles the demonstration program it carries.
     let run = Command::new(&compiler).output().unwrap();
-    let _ = std::fs::remove_file(&compiler);
     assert!(run.status.success(), "the self-hosted compiler failed");
     let c_source = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
     let Some(output) = compile_c_and_run("selfhosted", &c_source) else {
@@ -3417,7 +3410,6 @@ fn self_hosted_runs_test_blocks() {
 
     let _ = std::fs::remove_file(&plain);
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // The self-hosted compiler, the most pointer-heavy program in the tree, compiles
@@ -3799,38 +3791,46 @@ fn the_standard_library_passes_its_own_tests() {
     // backend ran none of these bodies.
     let with_c = c_compiler().is_some();
 
-    for (module, expected) in STD_MODULES.iter().copied() {
-        let source = root.join("std").join(module);
-        for (label, emit_c) in [("stdnative", false), ("stdc", true)] {
-            if emit_c && !with_c {
-                continue;
-            }
-            let exe = directory.join(format!(
-                "{}{}",
-                unique(&format!("frost_{label}")),
-                std::env::consts::EXE_SUFFIX
-            ));
-            let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-            if emit_c {
-                command.arg("--emit-c");
-            }
-            let run = command
-                .arg("--test")
-                .arg("-o")
-                .arg(&exe)
-                .arg(&source)
-                .output()
-                .unwrap();
-            let output =
-                String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
-            assert!(
-                output.contains(expected) && output.contains("0 failed"),
+    let jobs: Vec<(&str, &str, &str, bool)> = STD_MODULES
+        .iter()
+        .flat_map(|(module, expected)| {
+            [("stdnative", false), ("stdc", true)]
+                .into_iter()
+                .map(move |(label, emit_c)| (label, *module, *expected, emit_c))
+        })
+        .filter(|(_, _, _, emit_c)| with_c || !emit_c)
+        .collect();
+    let faults = in_parallel(&jobs, |(label, module, expected, emit_c)| {
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if *emit_c {
+            command.arg("--emit-c");
+        }
+        let run = command
+            .arg("--test")
+            .arg("-o")
+            .arg(&exe)
+            .arg(root.join("std").join(module))
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        let held = if output.contains(expected) && output.contains("0 failed") {
+            None
+        } else {
+            Some(format!(
                 "{module} {label}:\n{output}{}",
                 String::from_utf8_lossy(&run.stderr)
-            );
-            let _ = std::fs::remove_file(&exe);
-        }
-    }
+            ))
+        };
+        let _ = std::fs::remove_file(&exe);
+        held
+    });
+    let faults: Vec<String> = faults.into_iter().flatten().collect();
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
 // The standard library, compiled and run by the Frost compiler through both
@@ -3861,33 +3861,44 @@ fn self_hosted_runs_the_standard_library_tests() {
     //
     // `STD_MODULES` is the one list, which the bootstrap suite reads too. They
     // used to be two literals and drifted by three modules.
-    for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
-        for (module, expected) in STD_MODULES.iter().copied() {
-            let exe = directory.join(format!(
-                "{}{}",
-                unique(&format!("frost_{label}")),
-                std::env::consts::EXE_SUFFIX
-            ));
-            let run = Command::new(&compiler)
-                .arg(backend)
-                .arg("--test")
-                .arg("-o")
-                .arg(&exe)
-                .arg(root.join("std").join(module))
-                .env("FROST_RUNTIME", &runtime)
-                .output()
-                .unwrap();
-            let output =
-                String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
-            assert!(
-                output.contains(expected) && output.contains("0 failed"),
+    let jobs: Vec<(&str, &str, &str, &str)> =
+        [("stdc", "--emit-c"), ("stdasm", "--emit-asm")]
+            .iter()
+            .flat_map(|(label, backend)| {
+                STD_MODULES.iter().map(move |(module, expected)| {
+                    (*label, *backend, *module, *expected)
+                })
+            })
+            .collect();
+    let faults = in_parallel(&jobs, |(label, backend, module, expected)| {
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let run = Command::new(&compiler)
+            .arg(backend)
+            .arg("--test")
+            .arg("-o")
+            .arg(&exe)
+            .arg(root.join("std").join(module))
+            .env("FROST_RUNTIME", &runtime)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        let held = if output.contains(expected) && output.contains("0 failed") {
+            None
+        } else {
+            Some(format!(
                 "{label} on {module}:\n{output}{}",
                 String::from_utf8_lossy(&run.stderr)
-            );
-            let _ = std::fs::remove_file(&exe);
-        }
-    }
-    let _ = std::fs::remove_file(&compiler);
+            ))
+        };
+        let _ = std::fs::remove_file(&exe);
+        held
+    });
+    let faults: Vec<String> = faults.into_iter().flatten().collect();
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
 // A generic in one module whose body calls a helper in that same module, reached
@@ -3966,7 +3977,6 @@ fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
         "the self-hosted assembly backend",
         &["--emit-asm"],
     );
-    let _ = std::fs::remove_file(&compiler);
     let _ = std::fs::remove_file(&source);
 }
 
@@ -4173,7 +4183,6 @@ fn self_hosted_compiler_takes_a_command_line() {
     assert!(!unknown.status.success(), "an unknown option was accepted");
 
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // Compile emitted C together with the runtime into an executable, returning its
@@ -4263,7 +4272,6 @@ fn both_routes_build_the_same_compiler() {
         );
         emitted
             .push(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"));
-        let _ = std::fs::remove_file(&compiler);
     }
     assert!(
         emitted[0].lines().count() > 10000,
@@ -4374,7 +4382,6 @@ fn native_self_hosting_is_a_fixpoint() {
 
     let _ = std::fs::remove_file(&asm_path);
     let _ = std::fs::remove_file(&stage1_exe);
-    let _ = std::fs::remove_file(&compiler);
 
     assert_eq!(stage1, stage2, "native self-hosting is not a fixpoint");
 }
@@ -4422,7 +4429,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
     // the way one that indexes names the bounds check.
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
-        .arg(runtime_source())
+        .arg(runtime_object())
         .arg("-o")
         .arg(&exe_path)
         .output()
@@ -4436,7 +4443,6 @@ fn self_hosted_native_backend_emits_working_assembly() {
     let run = Command::new(&exe_path).output().unwrap();
     let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
 
-    let _ = std::fs::remove_file(&compiler);
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&asm_path);
     let _ = std::fs::remove_file(&exe_path);
@@ -4470,9 +4476,9 @@ fn selfhosted_unaudited_output(name: &str, source: &str) -> Option<String> {
     std::fs::write(&asm_path, String::from_utf8_lossy(&emit.stdout).as_ref())
         .unwrap();
     // The emitted code calls into the runtime for the bounds check an index
-    // compiles to and for assertions, so the runtime is linked alongside it.
-    let runtime =
-        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    // compiles to and for assertions, so the runtime is linked alongside it,
+    // as the object every test in this binary shares.
+    let runtime = runtime_object();
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
         .arg(&runtime)
@@ -4685,7 +4691,6 @@ fn both_self_hosted_backends_refuse_the_same_programs() {
         }
         let _ = std::fs::remove_file(&input);
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
@@ -4701,8 +4706,6 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
-
-    let _ = std::fs::remove_file(&compiler);
 
     assert!(
         !run.status.success(),
@@ -4788,8 +4791,6 @@ fn self_hosted_enforces_the_unsafe_gate() {
         "main :: fn() -> i64 { var x : i64 = 1  p := ptr_to(x)  unsafe { p^ } }\n",
     );
     assert!(ok, "the same read inside a block is allowed");
-
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // A diagnostic names the file, the line and the column it is about, not just
@@ -5590,7 +5591,6 @@ fn run_self_hosted_against_c(
     }
     let _ = std::fs::remove_file(&library);
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 #[test]
@@ -5655,7 +5655,6 @@ fn self_hosted_passes_a_struct_to_c_by_value() {
     }
     let _ = std::fs::remove_file(&library);
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // A byte that is no operator used to keep the "nothing matched" value, which is
@@ -6073,7 +6072,6 @@ fn self_hosted_resolves_imports() {
     };
 
     let _ = std::fs::remove_dir_all(&directory);
-    let _ = std::fs::remove_file(&compiler);
     assert_eq!(output, "49\n27\n9\n");
 }
 
@@ -6129,7 +6127,6 @@ fn export_name_collision_is_rejected_by_both_compilers() {
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         !selfhosted.status.success(),
         "the self-hosted compiler accepted two modules exporting the same name"
@@ -6238,7 +6235,6 @@ fn a_name_can_be_read_under_another_on_import() {
         if let Some(output) = compile_c_and_run("rename", &c_source) {
             assert_eq!(output, "40\n5\n80\n");
         }
-        let _ = std::fs::remove_file(&compiler);
     }
     let _ = std::fs::remove_dir_all(&directory);
 }
@@ -6281,7 +6277,6 @@ fn self_hosted_survives_an_import_cycle() {
     };
 
     let _ = std::fs::remove_dir_all(&directory);
-    let _ = std::fs::remove_file(&compiler);
     assert_eq!(output, "7\n");
 }
 
@@ -6398,7 +6393,6 @@ fn a_constant_may_stand_for_one_from_another_module() {
             String::from_utf8_lossy(&emitted.stderr)
         );
         let ran = Command::new(&hosted_exe).output().unwrap();
-        let _ = std::fs::remove_file(&compiler);
         String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
     });
 
@@ -6477,7 +6471,6 @@ fn a_stated_layout_crosses_a_module() {
             String::from_utf8_lossy(&emitted.stderr)
         );
         let ran = Command::new(&hosted_exe).output().unwrap();
-        let _ = std::fs::remove_file(&compiler);
         String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
     });
 
@@ -6562,7 +6555,6 @@ fn a_compile_time_call_crosses_a_module() {
             String::from_utf8_lossy(&emitted.stderr)
         );
         let ran = Command::new(&hosted_exe).output().unwrap();
-        let _ = std::fs::remove_file(&compiler);
         String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
     });
 
@@ -6665,7 +6657,6 @@ fn a_value_moved_inside_a_call_argument_is_moved() {
             .output()
             .unwrap();
         let _ = std::fs::remove_file(&emitted);
-        let _ = std::fs::remove_file(&compiler);
         assert!(!hosted.status.success());
         assert!(
             String::from_utf8_lossy(&hosted.stderr)
@@ -6785,7 +6776,6 @@ fn the_assembly_backend_writes_a_line_table_when_asked() {
     let _ = std::fs::remove_file(&plain);
     let _ = std::fs::remove_file(&debugged);
     let _ = std::fs::remove_file(&exe);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // What the bootstrap prints when it refuses a program. It used to be one line,
@@ -6898,7 +6888,6 @@ fn a_self_hosted_diagnostic_points_at_the_construct_it_is_about() {
             "the line shown was not the one at fault:\n{complaint}"
         );
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // A literal that does not fit the type it is written at. Both compilers used to
@@ -6982,7 +6971,6 @@ fn the_self_hosted_compiler_refuses_a_literal_that_does_not_fit() {
         .unwrap();
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&emitted);
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         !built.status.success(),
         "the self-hosted compiler took a literal outside a u8"
@@ -7067,7 +7055,6 @@ fn the_self_hosted_compiler_refuses_a_narrowing_conversion() {
         .unwrap();
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&emitted);
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         !built.status.success(),
         "the self-hosted compiler narrowed an i64 into an i32 in silence"
@@ -8051,7 +8038,6 @@ fn self_hosted_keeps_unexported_names_private() {
     let message = String::from_utf8_lossy(&refused.stderr).to_string();
 
     let _ = std::fs::remove_dir_all(&directory);
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         !refused.status.success() && message.contains("undefined function"),
         "a private name was reachable from another file: {message}"
@@ -8121,7 +8107,6 @@ fn both_compilers_refuse_a_name_an_import_already_offers() {
             && said.contains("also arrives from an import"),
         "the self-hosted compiler took it:\n{said}"
     );
-    let _ = std::fs::remove_file(&compiler);
     let _ = std::fs::remove_dir_all(&directory);
 }
 
@@ -8277,7 +8262,6 @@ fn an_enum_is_the_same_width_under_both_compilers() {
             "the self-hosted compiler's {backend} laid an enum out differently"
         );
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 #[test]
@@ -8644,7 +8628,7 @@ fn both_compilers_agree_on_the_examples() {
     };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let directory = std::env::temp_dir();
-    for example in SHARED_EXAMPLES {
+    let faults = in_parallel(SHARED_EXAMPLES, |example| {
         let source = root.join("examples").join(example);
         let label = unique("frost_shared");
         let exe =
@@ -8656,11 +8640,12 @@ fn both_compilers_agree_on_the_examples() {
             .arg(&source)
             .output()
             .unwrap();
-        assert!(
-            built.status.success(),
-            "the bootstrap refused {example}:\n{}",
-            String::from_utf8_lossy(&built.stderr)
-        );
+        if !built.status.success() {
+            return Some(format!(
+                "the bootstrap refused {example}:\n{}",
+                String::from_utf8_lossy(&built.stderr)
+            ));
+        }
         let want = String::from_utf8_lossy(
             &Command::new(&exe).output().unwrap().stdout,
         )
@@ -8674,19 +8659,21 @@ fn both_compilers_agree_on_the_examples() {
             .arg(&emitted)
             .output()
             .unwrap();
-        assert!(
-            run.status.success(),
-            "the self-hosted compiler refused {example}:\n{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
+        if !run.status.success() {
+            return Some(format!(
+                "the self-hosted compiler refused {example}:\n{}",
+                String::from_utf8_lossy(&run.stderr)
+            ));
+        }
         let c_source = std::fs::read_to_string(&emitted).unwrap();
         let _ = std::fs::remove_file(&emitted);
-        let Some(got) = compile_c_and_run(&label, &c_source) else {
-            return;
-        };
-        assert_eq!(got, want, "the two compilers disagree about {example}");
-    }
-    let _ = std::fs::remove_file(&compiler);
+        let got = compile_c_and_run(&label, &c_source)?;
+        (got != want).then(|| {
+            format!("the two compilers disagree about {example}:\n{got}{want}")
+        })
+    });
+    let faults: Vec<String> = faults.into_iter().flatten().collect();
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
 // Everything the two self-hosted backends can express, run through both. They
@@ -9932,7 +9919,6 @@ fn self_hosted_inline_emits_c_qualifier() {
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
-    let _ = std::fs::remove_file(&compiler);
     let _ = std::fs::remove_file(&input);
     assert!(
         emit.status.success(),
@@ -13010,7 +12996,6 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
         .unwrap();
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&emitted);
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         run.status.success(),
         "a view traced to a parameter should compile, got:\n{}",
@@ -13533,7 +13518,6 @@ fn a_where_bound_is_checked_at_the_call() {
             .output()
             .unwrap();
         let _ = std::fs::remove_file(&input);
-        let _ = std::fs::remove_file(&compiler);
         assert!(
             !refused.status.success(),
             "the self-hosted compiler accepted case {index}"
@@ -16763,7 +16747,6 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
         &compiler, "pooladj", source, "--emit-c", "c",
     );
     assert_eq!(hosted, "", "the self-hosted compiler disagreed");
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // The questions an editor asks, answered by the self-hosted compiler from the
@@ -16818,7 +16801,6 @@ fn self_hosted_answers_editor_queries() {
         );
     }
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // A resource reached through a field is a place of its own, so consuming it
@@ -17133,7 +17115,6 @@ fn both_compilers_name_the_same_faults_whatever_found_them() {
             "the two compilers name different faults in {name}:\nbootstrap:\n{bootstrap}\nself-hosted:\n{hosted}"
         );
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 #[test]
@@ -17167,7 +17148,6 @@ fn both_compilers_report_the_same_fault_lines() {
             "the two compilers describe {name} differently:\nbootstrap:\n{bootstrap}\nself-hosted:\n{hosted}"
         );
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 #[test]
@@ -17338,7 +17318,6 @@ fn the_self_hosted_compiler_gates_an_index_through_a_raw_pointer() {
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&compiler);
     let message = String::from_utf8_lossy(&run.stderr).to_string();
     assert!(
         !run.status.success() && message.contains("indexing a raw pointer"),
@@ -18026,7 +18005,6 @@ fn self_hosted_compiles_the_sdl_binding() {
         }
         let _ = std::fs::remove_file(&emitted);
     }
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // Both compilers, run from a working directory that is not the checkout, on a
@@ -18743,7 +18721,6 @@ fn the_assembler_writes_the_line_table_the_system_assembler_writes() {
     let _ = std::fs::remove_file(&assembly);
     let _ = std::fs::remove_file(&reference);
     let _ = std::fs::remove_file(&ours);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 fn std_source(name: &str) -> PathBuf {
@@ -19399,7 +19376,6 @@ fn include_str_reads_the_same_bytes_through_both_compilers() {
         );
     }
     let _ = std::fs::remove_file(&data);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // The gate runs on every compilation and nothing turns it off, so a program
@@ -19515,7 +19491,6 @@ fn both_compilers_format_the_corpus_the_same_way() {
         }
     }
     let _ = std::fs::remove_dir_all(&work);
-    let _ = std::fs::remove_file(&compiler);
     assert!(
         differ.is_empty(),
         "{} of {} files render differently:\n{}",
@@ -19615,7 +19590,6 @@ fn both_compilers_write_the_same_json_reports() {
     );
     assert_eq!(mine, theirs, "the two compilers write different reports");
     let _ = std::fs::remove_dir_all(&directory);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // Both compilers find the same things worth a look, in the same words. The
@@ -19670,7 +19644,6 @@ fn both_compilers_lint_the_same_way() {
     );
     assert_eq!(mine, theirs, "the two compilers report different findings");
     let _ = std::fs::remove_dir_all(&directory);
-    let _ = std::fs::remove_file(&compiler);
 }
 
 // The line-boundary grammar, held against every operator that could carry an
