@@ -4329,7 +4329,7 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
     off := node.val
     len := node.c
     if (kind == NodeKind::Var) {
-        return type_listed(p.frame_types, p.src, off, len)
+        return type_listed(p.walk_types, p.src, off, len)
     }
     if (kind == NodeKind::Field) {
         base := frame_place_type(p, child)
@@ -4732,8 +4732,17 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Var) {
         return frame_name_prov(p, node.val, node.c)
     }
-    // Reaching into a value stays inside whatever it named.
+    // Reaching into a value stays inside whatever it named, unless what is read
+    // holds no view of its own. A number read out of a struct that also holds a
+    // pointer is a number, and carries nothing however short-lived the struct
+    // was. This is the rule the dereference below runs, asked of a field and an
+    // element: without it, `holder.count` and `view[0]` were as short-lived as
+    // the storage beside them.
     if (kind == NodeKind::Index || kind == NodeKind::Field) {
+        read := frame_place_type(p, id)
+        if (read >= 0 && type_holds_view(p, read, FRAME_TYPE_DEPTH) == false) {
+            return PROV_OUTLIVES
+        }
         return frame_value_prov(p, child)
     }
     // Reading back through a pointer hands out whatever sits there. A scalar
@@ -4945,15 +4954,34 @@ frame_borrowed_place :: fn(mut p: Parser, id: i64) -> i64 {
 
 frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
     report_where(p.modules, p.src, pos)
-    report("a pointer into this frame is ")
+    report("region: a pointer into the frame of '")
+    report_src(p.src, p.current_fn_off, p.current_fn_len)
+    report("' is ")
     report_cstr(how)
     report("; the storage it names dies when the call returns")
     frost_rt_recover_escape()
 }
 
+// The same escape, named at the call that keeps the pointer. The callee's name
+// is what tells a reader which of the two arguments written side by side is the
+// one that outlives the other.
+frame_escape_kept :: fn(mut p: Parser, pos: i64, callee: i64) {
+    sym := arena_at(p.fns, callee)
+    report_where(p.modules, p.src, pos)
+    report("region: a pointer into the frame of '")
+    report_src(p.src, p.current_fn_off, p.current_fn_len)
+    report("' is handed to '")
+    report_src(p.src, sym.off, sym.len)
+    report("', which keeps it in something that outlives this frame; the ")
+    report("storage it names dies when the call returns")
+    frost_rt_recover_escape()
+}
+
 frame_unproven :: fn(mut p: Parser, pos: i64) {
     report_where(p.modules, p.src, pos)
-    report("this answers with a borrowed view whose storage cannot be traced ")
+    report("region: '")
+    report_src(p.src, p.current_fn_off, p.current_fn_len)
+    report("' answers with a borrowed view whose storage cannot be traced ")
     report("to a parameter or an allocation capability; a view that leaves the ")
     report("call has to name storage that outlives it")
     frost_rt_recover_escape()
@@ -5033,7 +5061,7 @@ frame_note_let :: fn(mut p: Parser, id: i64) {
         note_prov(p.frame_places, p.src, off, len, borrowed)
     }
     if (ty >= 0) {
-        note_type(p.frame_types, p.src, off, len, ty)
+        note_type(p.walk_types, p.src, off, len, ty)
     }
 }
 
@@ -5067,7 +5095,7 @@ frame_note_assign :: fn(mut p: Parser, id: i64) {
         return
     }
     if (held == PROV_FRAME) {
-        frame_escape(p, pos, "stored where the call cannot see it")
+        frame_escape(p, pos, "stored where the call cannot see")
     }
 }
 
@@ -5166,8 +5194,7 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
                         if (at <= 0) {
                             at = pos
                         }
-                        frame_escape(p, at,
-                            "handed to a call that keeps it in something that outlives this frame")
+                        frame_escape_kept(p, at, callee)
                     }
                 }
             }
@@ -5241,7 +5268,7 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
             frame_judge(p, first, "returned", pos)
         } else if (kind == NodeKind::ExprStmt) {
             if (answers == 1) {
-                frame_judge(p, first, "the block's value", pos)
+                frame_judge(p, first, "the call's answer", pos)
             }
         } else if (kind == NodeKind::If) {
             frame_check_block(p, second, answers)
@@ -5291,7 +5318,7 @@ frame_seed_params :: fn(mut p: Parser, params: i64) {
         if (mode == 2) {
             list_name(p.frame_storage, off, len)
         }
-        note_type(p.frame_types, p.src, off, len, ty)
+        note_type(p.walk_types, p.src, off, len, ty)
     }
 }
 
@@ -5781,7 +5808,7 @@ settle_kept :: fn(mut p: Parser) {
                 && node.val < p.fns.count) {
                 sym := arena_at(p.fns, node.val)
                 params := sym.params
-                p.frame_types.count = 0
+                p.walk_types.count = 0
                 p.answer_locals.count = 0
                 frame_seed_types(p, params)
                 grew = grew | kept_walk_block(p, node.a, params, node.val)
@@ -5810,7 +5837,7 @@ settle_answer_sources :: fn(mut p: Parser) {
                 sym := arena_at(p.fns, fn_index)
                 params := sym.params
                 answers_place := is_borrow(sym.ret_type)
-                p.frame_types.count = 0
+                p.walk_types.count = 0
                 p.answer_locals.count = 0
                 frame_seed_types(p, params)
                 // A function handing back a place reaches it through bindings
@@ -5844,7 +5871,7 @@ frame_seed_types :: fn(mut p: Parser, params: i64) {
         len := node.c
         ty := node.b
         id = node.next
-        note_type(p.frame_types, p.src, off, len, ty)
+        note_type(p.walk_types, p.src, off, len, ty)
     }
 }
 
@@ -5878,11 +5905,13 @@ check_frame_escapes :: fn(mut p: Parser) {
             sym := arena_at(p.fns, node.val)
             answer := sym.ret_type
             params := sym.params
+            p.current_fn_off = sym.off
+            p.current_fn_len = sym.len
             p.frame_storage.count = 0
             p.frame_outlives.count = 0
             p.frame_locals.count = 0
             p.frame_places.count = 0
-            p.frame_types.count = 0
+            p.walk_types.count = 0
             p.frame_ret = answer
             p.frame_answers_view = 0
             p.frame_answers_place = 0
@@ -5965,7 +5994,25 @@ mentions_region :: fn(mut p: Parser, id: i64) -> bool {
     if (kind == NodeKind::Call) {
         return mentions_region_args(p, node.a)
     }
+    // A value built around the arena's storage names it, so a pointer taken of
+    // one of those points into the region.
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        return mentions_region_items(p, node.a)
+    }
     mentions_region(p, node.a) || mentions_region(p, node.b)
+}
+
+mentions_region_items :: fn(mut p: Parser, head: i64) -> bool {
+    var id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (mentions_region(p, node.a)) {
+            return true
+        }
+        id = next_id
+    }
+    false
 }
 
 mentions_region_args :: fn(mut p: Parser, head: i64) -> bool {
@@ -6002,6 +6049,40 @@ region_points_at_tainted :: fn(mut p: Parser, id: i64) -> bool {
     name_listed(p.tainted, p.src, rnode.val, rnode.c)
 }
 
+// Whether reading this place hands the region pointer back out. The root has to
+// hold one, and what is read has to be able to carry it: a number read out of a
+// struct that also holds arena storage is a number, and reading it is how a
+// count leaves a `with` block. A read whose type the walk cannot name is
+// refused, since it could be the storage itself.
+region_reads_out :: fn(mut p: Parser, id: i64) -> bool {
+    root := root_name(p, id)
+    if (root == (-1)) {
+        return false
+    }
+    rnode := arena_at(p.arena, root)
+    if (name_listed(p.tainted, p.src, rnode.val, rnode.c) == false) {
+        return false
+    }
+    read := frame_place_type(p, id)
+    if (read < 0) {
+        return true
+    }
+    type_holds_view(p, read, FRAME_TYPE_DEPTH)
+}
+
+region_pointer_items :: fn(mut p: Parser, head: i64) -> bool {
+    var id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (region_pointer(p, node.a)) {
+            return true
+        }
+        id = next_id
+    }
+    false
+}
+
 region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     if (id == (-1)) {
         return false
@@ -6014,10 +6095,29 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     if (kind == NodeKind::Var) {
         return name_listed(p.tainted, p.src, node.val, node.c)
     }
-    // A cast still points where it pointed. A dereference does not: it reads
-    // the value there, and reading out of the region is what the region is for.
+    // Reading a field or an element of something that holds arena storage hands
+    // that storage out, where what is read can carry it.
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
+        return region_reads_out(p, id)
+    }
+    // A value built around a region pointer carries it. Reading only the bare
+    // pointer let the same pointer out one field down, which is the road a
+    // container built in the region takes. An enum variant is a struct literal
+    // too, so this covers it.
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        return region_pointer_items(p, node.a)
+    }
+    // A cast still points where it pointed, and a slice wraps a pointer in a
+    // length. A dereference does not: it reads the value there, and reading out
+    // of the region is what the region is for.
     if (kind == NodeKind::PtrCast) {
-        return region_pointer(p, node.a)
+        return region_pointer(p, node.a) || mentions_region(p, node.a)
+    }
+    if (kind == NodeKind::SliceFrom) {
+        if (region_pointer(p, node.a) || mentions_region(p, node.a)) {
+            return true
+        }
+        return region_pointer(p, node.b) || mentions_region(p, node.b)
     }
     // Reading back through a pointer at a binding that holds an arena pointer
     // hands that pointer out again. `pp^` where `pp` was taken from something
@@ -6032,11 +6132,12 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     }
     if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, node.val)
-        // Every view, not only a raw pointer. A `[]T` or a `str` carved out of
-        // an arena names the arena's storage exactly as a `^T` does, and reading
-        // only the pointer let a slice of one leave its `with` block while the
-        // pointer beside it was refused.
-        if (type_is_direct_view(p, sym.ret_type) == false) {
+        // Every view, not only a raw pointer, and a value holding one as much as
+        // one written bare. A `[]T` or a `str` carved out of an arena names the
+        // arena's storage exactly as a `^T` does, and a container answering with
+        // itself carries the run inside it, which is how a `Vec` built in a
+        // `with` block leaves the block.
+        if (type_holds_view(p, sym.ret_type, FRAME_TYPE_DEPTH) == false) {
             return false
         }
         if (sym.cap_count > 0) {
@@ -6047,9 +6148,9 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     false
 }
 
-region_escape :: fn(mut p: Parser, how: ^i8) {
-    report_where(p.modules, p.src, p.region_off)
-    report("a pointer into arena '")
+region_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
+    report_where(p.modules, p.src, pos)
+    report("region: a pointer into arena '")
     report_src(p.src, p.region_off, p.region_len)
     report("' escapes its region by ")
     report_cstr(how)
@@ -6057,24 +6158,45 @@ region_escape :: fn(mut p: Parser, how: ^i8) {
     frost_rt_recover_escape()
 }
 
+region_unhandled :: fn(mut p: Parser, pos: i64) {
+    report_where(p.modules, p.src, pos)
+    report("the region check has no rule for this statement, so it cannot say ")
+    report("whether what it writes outlives the arena")
+    frost_rt_recover_escape()
+}
+
+// A binding declared inside the region dies with it, so it may hold a region
+// pointer. Its type is recorded beside it, so a later read of one of its fields
+// can be weighed against the type that read hands back.
+region_note_let :: fn(mut p: Parser, id: i64) {
+    node := arena_at(p.arena, id)
+    value := node.a
+    var ty := node.b
+    if (ty < 0) {
+        ty = frame_value_type(p, value)
+    }
+    if (ty >= 0) {
+        note_type(p.walk_types, p.src, node.val, node.c, ty)
+    }
+    if (region_pointer(p, value)) {
+        list_name(p.tainted, node.val, node.c)
+    }
+    if (region_points_at_tainted(p, value)) {
+        list_name(p.region_via_pointer, node.val, node.c)
+    }
+    list_name(p.inner, node.val, node.c)
+}
+
 check_region_block :: fn(mut p: Parser, head: i64) {
     var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
+        pos := node.pos
         next_id := node.next
         if (kind == NodeKind::Let) {
-            // A binding declared inside the region dies with it, so it may hold
-            // a region pointer.
-            if (region_pointer(p, node.a)) {
-                list_name(p.tainted, node.val, node.c)
-            }
-            if (region_points_at_tainted(p, node.a)) {
-                list_name(p.region_via_pointer, node.val, node.c)
-            }
-            list_name(p.inner, node.val, node.c)
-        }
-        if (kind == NodeKind::Assign) {
+            region_note_let(p, id)
+        } else if (kind == NodeKind::Assign) {
             if (region_pointer(p, node.b)) {
                 place := root_name(p, node.a)
                 var outside: bool = true
@@ -6084,36 +6206,53 @@ check_region_block :: fn(mut p: Parser, head: i64) {
                         pnode.c) == false
                 }
                 if (outside) {
+                    // Out of a `with` block the place is a binding the block
+                    // outlives. Out of a `uses` function it is a parameter,
+                    // whose frame outlives the call.
                     if (p.region_returns == 1) {
-                        region_escape(p, "being stored into a parameter")
+                        region_escape(p, pos, "being stored into a parameter")
                     }
-                    region_escape(p, "being stored outside it")
+                    region_escape(p, pos, "being stored outside it")
+                }
+                if (place != (-1)) {
+                    pnode := arena_at(p.arena, place)
+                    list_name(p.tainted, pnode.val, pnode.c)
                 }
             }
-        }
         // Handing a pointer back is an escape from a `with` block, whose arena
         // dies at the closing brace. It is not one from a `uses` function: the
         // arena belongs to the caller, so the pointer is handed to the caller's
         // region and checked there.
-        if (kind == NodeKind::Return && p.region_returns == 0) {
-            if (region_pointer(p, node.a)) {
-                region_escape(p, "being returned")
+        } else if (kind == NodeKind::Return) {
+            if (p.region_returns == 0 && region_pointer(p, node.a)) {
+                region_escape(p, pos, "being returned")
             }
-        }
-        if (kind == NodeKind::ExprStmt && p.region_returns == 0) {
-            if (next_id == (-1) && region_pointer(p, node.a)) {
-                region_escape(p, "being the block's value")
+        } else if (kind == NodeKind::ExprStmt) {
+            if (p.region_returns == 0 && next_id == (-1)
+                && region_pointer(p, node.a)) {
+                region_escape(p, pos, "being the block's value")
             }
-        }
-        if (kind == NodeKind::If) {
+        } else if (kind == NodeKind::If) {
             check_region_block(p, node.b)
             check_region_block(p, node.val)
-        }
-        if (kind == NodeKind::While) {
+        } else if (kind == NodeKind::Match) {
+            var arm := node.b
+            while (arm != (-1)) {
+                case_node := arena_at(p.arena, arm)
+                body := case_node.a
+                arm = case_node.next
+                check_region_block(p, body)
+            }
+        } else if (kind == NodeKind::While) {
             check_region_block(p, node.b)
-        }
-        if (kind == NodeKind::With) {
+        } else if (kind == NodeKind::With) {
             check_region_block(p, node.a)
+        } else if (kind == NodeKind::Assert
+            || kind == NodeKind::Break || kind == NodeKind::Continue) {
+        // Nothing leaves the region through one. An assert reads a value, and
+        // the two transfers carry no value at all.
+        } else {
+            region_unhandled(p, pos)
         }
         id = next_id
     }
@@ -6159,6 +6298,7 @@ check_regions :: fn(mut p: Parser) {
             p.tainted.count = 0
             p.region_via_pointer.count = 0
             p.inner.count = 0
+            p.walk_types.count = 0
             p.region_returns = 0
             check_region_once(p, body)
         }
@@ -6175,6 +6315,7 @@ check_regions :: fn(mut p: Parser) {
                 p.tainted.count = 0
                 p.region_via_pointer.count = 0
                 p.inner.count = 0
+                p.walk_types.count = 0
                 p.region_returns = 1
                 check_region_once(p, body)
                 p.region_returns = 0
@@ -6511,7 +6652,44 @@ check_calls :: fn(mut p: Parser) {
                 // than written at the call, so it is not counted.
                 expected = count_params(p, params) - sym.cap_count
             }
-            got := count_args(p, args)
+            var got := count_args(p, args)
+            // A generic's compile-time parameters are written at the call, one
+            // `$` argument each, and are erased before anything runs, so
+            // neither count above sees them. A call leaving one out lines every
+            // value argument up against the parameter beside the one it was
+            // written for, so it is reported here by the count the declaration
+            // wrote rather than by whatever the mismatch does further on.
+            gi := generic_fn_of(p, fn_index)
+            var generic: bool = false
+            if (gi >= 0 && is_supplied == false) {
+                gfn := arena_at(p.generic_fns, gi)
+                if (gfn.pack_len == 0) {
+                    // Only the parameters written as parameters. A `$T` that
+                    // appears inside another parameter's type, as `Stack<$T>`
+                    // does, is read off the argument rather than written at the
+                    // call, so counting it refuses every call to one.
+                    var declared: i64 = gfn.xparam_count
+                    if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1) {
+                        declared = declared + 1
+                    }
+                    generic = true
+                    expected = expected + declared
+                    got = got + count_type_args(p, args)
+                }
+            }
+            if (generic && expected != got && is_supplied == false) {
+                report_where(p.modules, p.src, node.pos)
+                report("generic function '")
+                report_src(p.src, name_off, name_len)
+                report("' expects ")
+                frost_rt_error_int(expected)
+                report(" argument(s) but ")
+                frost_rt_error_int(got)
+                report(" were given")
+                frost_rt_recover_note()
+                i = i + 1
+                continue
+            }
             // A compile-time list takes every argument past the parameters
             // written before it, so a call to one gives as many as it likes and
             // the count says nothing.

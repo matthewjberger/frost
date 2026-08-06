@@ -50,7 +50,8 @@ fn type_parameter_slots(
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
-        let text = crate::modules::imports::demangle_private_names(&error.to_string());
+        let text =
+            crate::modules::imports::demangle_private_names(&error.to_string());
         if position == Position::default() || text.starts_with("at ") {
             anyhow::anyhow!("{text}")
         } else {
@@ -73,6 +74,7 @@ struct Program<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    packed: &'a HashSet<String>,
     field_types: &'a FieldTypes,
     summaries: &'a Summaries,
     runs: &'a Runs,
@@ -89,6 +91,7 @@ struct Program<'a> {
 pub struct Specializations {
     signatures: Signatures,
     param_types: ParamTypes,
+    packed: HashSet<String>,
     field_types: FieldTypes,
     held: HashSet<String>,
     summaries: Summaries,
@@ -104,6 +107,7 @@ pub fn specializations(
 ) -> Specializations {
     let signatures = collect_signatures(ast, roots);
     let param_types = collect_param_types(ast, roots);
+    let packed = collect_packed(ast, roots);
     let field_types = collect_field_types(ast, roots);
     let held = linear_closure(linear, &field_types, ast, roots);
     let runs = settle_runs(ast, roots, &field_types);
@@ -114,6 +118,7 @@ pub fn specializations(
             linear: &held,
             signatures: &signatures,
             param_types: &param_types,
+            packed: &packed,
             field_types: &field_types,
             summaries: &Summaries::new(),
             runs: &runs,
@@ -122,6 +127,7 @@ pub fn specializations(
     Specializations {
         signatures,
         param_types,
+        packed,
         field_types,
         held,
         summaries,
@@ -146,6 +152,7 @@ impl Specializations {
                 linear: &self.held,
                 signatures: &self.signatures,
                 param_types: &self.param_types,
+                packed: &self.packed,
                 field_types: &self.field_types,
                 summaries: &self.summaries,
                 runs: &self.runs,
@@ -232,6 +239,7 @@ pub fn check_ownership_recovering(
 ) -> Vec<crate::diagnostic::Diagnostic> {
     let signatures = collect_signatures(ast, roots);
     let param_types = collect_param_types(ast, roots);
+    let packed = collect_packed(ast, roots);
     let field_types = collect_field_types(ast, roots);
     let held = linear_closure(linear, &field_types, ast, roots);
     let runs = settle_runs(ast, roots, &field_types);
@@ -242,6 +250,7 @@ pub fn check_ownership_recovering(
             linear: &held,
             signatures: &signatures,
             param_types: &param_types,
+            packed: &packed,
             field_types: &field_types,
             summaries: &Summaries::new(),
             runs: &runs,
@@ -251,6 +260,7 @@ pub fn check_ownership_recovering(
         linear: &held,
         signatures: &signatures,
         param_types: &param_types,
+        packed: &packed,
         field_types: &field_types,
         summaries: &summaries,
         runs: &runs,
@@ -283,6 +293,24 @@ pub fn check_ownership_recovering(
 // so a call argument can be told to borrow (a reference parameter) rather than
 // move (a value parameter). Positions line up one-to-one with call arguments,
 // including a `$Type` argument against a `$T: Type` parameter.
+/// The functions declaring a compile-time list parameter.
+fn collect_packed(ast: &Ast, roots: &[StmtId]) -> HashSet<String> {
+    let mut packed = HashSet::new();
+    for statement in roots {
+        if let Statement::Constant(name, value) = ast.stmt(*statement)
+            && let Expression::Function(params, _, _)
+            | Expression::Proc(params, _, _) = ast.expr(*value)
+            && ast
+                .params_in(*params)
+                .iter()
+                .any(|parameter| parameter.pack)
+        {
+            packed.insert(ast.name(*name).to_string());
+        }
+    }
+    packed
+}
+
 fn collect_param_types(ast: &Ast, roots: &[StmtId]) -> ParamTypes {
     let mut param_types = HashMap::new();
     for statement in roots {
@@ -1107,8 +1135,9 @@ impl RunWalk<'_> {
                 self.walk_block(*body);
             }
             Statement::With(_, body) => self.walk_block(*body),
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => self.walk_statement(*inner),
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
+                self.walk_statement(*inner)
+            }
             _ => {}
         }
     }
@@ -1141,7 +1170,9 @@ impl RunWalk<'_> {
                 }
             }
             _ => {
-                for inner in crate::check::regions::sub_expressions(ast, expression) {
+                for inner in
+                    crate::check::regions::sub_expressions(ast, expression)
+                {
                     self.walk_expression(inner);
                 }
             }
@@ -1246,6 +1277,7 @@ fn run_function<'a>(
         linear: program.linear,
         signatures: program.signatures,
         param_types: program.param_types,
+        packed: program.packed,
         field_types: program.field_types,
         summaries: program.summaries,
         compile_time: ast
@@ -1319,6 +1351,10 @@ struct MoveChecker<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    // The functions taking a compile-time list. A call to one gives as many
+    // arguments as it likes, so a count that differs from the declaration says
+    // nothing there.
+    packed: &'a HashSet<String>,
     field_types: &'a FieldTypes,
     // What each function already worked out does to the resources it is lent.
     // Empty while the summaries are still settling, which is why they settle
@@ -2465,6 +2501,29 @@ impl MoveChecker<'_> {
                     }
                     _ => held.as_ref(),
                 };
+                // A call giving a different number of arguments than the
+                // callee declares parameters is one the lowering refuses by
+                // count. Pairing the two by position anyway lines every
+                // argument up against somebody else's parameter, and a call
+                // leaving out a compile-time argument then read its first
+                // value argument as handed over by value: `f(a, 8)` where the
+                // declaration is `f($N: usize, mut a: A, by: i64)` reported
+                // 'a' moved rather than the argument that is missing. So a
+                // call whose count does not line up says nothing about what it
+                // takes, and the count itself is what is reported. A
+                // compile-time list is the one case a differing count is
+                // honest, and it keeps the positional reading.
+                let aligned = match ast.expr(callee) {
+                    Expression::Identifier(name)
+                        if self.packed.contains(ast.name(*name)) =>
+                    {
+                        true
+                    }
+                    _ => param_types.is_none_or(|types| {
+                        types.len() == ast.exprs_in(arguments).len()
+                    }),
+                };
+                let param_types = if aligned { param_types } else { None };
                 check_borrow_exclusivity(
                     self,
                     ast.exprs_in(arguments),
@@ -2481,7 +2540,7 @@ impl MoveChecker<'_> {
                     Expression::Identifier(name)
                         if self.compile_time.contains(ast.name(*name))
                 );
-                let known = !deferred;
+                let known = !deferred && aligned;
                 for (index, argument) in
                     ast.exprs_in(arguments).iter().enumerate()
                 {
@@ -2920,8 +2979,10 @@ fn linear_closure(
     // The instantiations the program writes. A generic's declared field names a
     // parameter bound to nothing here, so the field table answers for `Slab` and
     // not for `Slab<Node, 2>`, and it is the second that holds the resource.
-    let instances = crate::check::linear_instances::collect_instances(ast, roots);
-    let templates = crate::check::linear_instances::declared_structs(ast, roots);
+    let instances =
+        crate::check::linear_instances::collect_instances(ast, roots);
+    let templates =
+        crate::check::linear_instances::declared_structs(ast, roots);
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
@@ -3016,7 +3077,10 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse()?;
         let linear = parser.linear_types().clone();
-        crate::lower::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        crate::lower::param_modes::lower_param_modes(
+            &mut module.ast,
+            &module.roots,
+        );
         check_ownership(&module.ast, &module.roots, &linear)
     }
 
@@ -3039,7 +3103,10 @@ mod tests {
         let mut parser = Parser::with_positions(&tokens, &positions);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        crate::lower::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        crate::lower::param_modes::lower_param_modes(
+            &mut module.ast,
+            &module.roots,
+        );
         let reports =
             check_ownership_recovering(&module.ast, &module.roots, &linear);
         let moved = reports

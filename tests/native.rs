@@ -5910,7 +5910,7 @@ fn self_hosted_rejects_a_returned_frame_pointer() {
         return;
     };
     assert!(
-        message.contains("into this frame"),
+        message.contains("into the frame of 'grab'"),
         "expected a frame-escape error, got:\n{message}"
     );
 }
@@ -5929,7 +5929,7 @@ fn self_hosted_rejects_a_frame_pointer_inside_a_struct() {
         return;
     };
     assert!(
-        message.contains("into this frame"),
+        message.contains("into the frame of 'grab'"),
         "expected a frame-escape error, got:\n{message}"
     );
 }
@@ -6729,7 +6729,9 @@ fn the_assembly_backend_writes_a_line_table_when_asked() {
     let text = std::fs::read_to_string(&debugged).unwrap();
     assert!(text.contains(".file 1 "), "no file was declared:\n{text}");
     // The three statements of the body, each naming the line it was written on.
-    for line in [3, 4, 6] {
+    // The trailing `0` is the answer rather than a statement of its own, so it
+    // adds no entry.
+    for line in [3, 4, 5] {
         assert!(
             text.contains(&format!(".loc 1 {line} ")),
             "line {line} is not in the table"
@@ -8584,7 +8586,9 @@ fn a_defer_in_a_test_body_runs() {
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
+    ("arena.frost", "4 passed"),
     ("ecs.frost", "116 passed"),
+    ("fixed.frost", "4 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
     ("math.frost", "33 passed"),
@@ -8624,6 +8628,7 @@ const SHARED_EXAMPLES: &[&str] = &[
     "native/shapes.frost",
     "native/slices.frost",
     "native/vectors.frost",
+    "scratch_frame.frost",
     "selfhosted/diamond.frost",
     "tour.frost",
 ];
@@ -12974,7 +12979,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
             "{name} should not compile under the self-hosted compiler"
         );
         assert!(
-            message.contains("pointer into this frame")
+            message.contains("pointer into the frame of")
                 || message.contains("cannot be traced"),
             "{name} should be refused by the frame check, got:\n{message}"
         );
@@ -16760,9 +16765,6 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
     let _ = std::fs::remove_file(&compiler);
 }
 
-
-
-
 // The questions an editor asks, answered by the self-hosted compiler from the
 // tables its passes already build. The expectations are the ones the
 // bootstrap's query layer answers in its own unit tests, so the two compilers
@@ -19398,7 +19400,6 @@ fn include_str_reads_the_same_bytes_through_both_compilers() {
     let _ = std::fs::remove_file(&data);
     let _ = std::fs::remove_file(&compiler);
 }
-
 
 // The gate runs on every compilation and nothing turns it off, so a program
 // with an unguarded extern call is refused. This is what holds that: the

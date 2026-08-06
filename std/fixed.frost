@@ -1,0 +1,152 @@
+// A growable array over storage it does not own. `Fixed<T>` is a `Vec<T>` with
+// the allocator taken out: a run somebody else carved, and how much of it is
+// live. Push writes the next element and moves the mark; there is no growth,
+// because there is nothing here that could allocate.
+//
+// This is what a container in an arena is. `Vec<T>` calls the heap in
+// `vec_new`, regrows through `heap_grow_slice` and gives the block back in
+// `vec_free`, and none of those three is a thing an arena can do: a bump
+// allocator has no realloc and no per-value free. Rather than widen `Vec` with
+// a field naming where its storage came from, which every heap vector in every
+// program would then carry, the container that draws from an arena is this one,
+// and what it draws from is the `[]T` it is handed:
+//
+//     with scratch {
+//         var visible := fixed_over($Sprite, arena_carve($Sprite, $4096, scratch, 64))
+//         fixed_push($Sprite, visible, sprite)
+//     }
+//
+// Three things follow from owning nothing, and they are the reason this is a
+// separate type rather than a flag on `Vec`:
+//
+//   - It is not `linear`. There is no block to give back, so there is no
+//     obligation to discharge and no `fixed_free`. The arena reclaims what it
+//     handed out when its `with` block ends.
+//   - Capacity is the run's length, so there is no `cap` field to keep honest.
+//     A push past the end is an index past the end of the storage slice, and
+//     that aborts where it happens rather than growing quietly.
+//   - It may not outlive its storage, and that is checked rather than trusted.
+//     A `Fixed<T>` built inside a `with` block holds a view of the arena, so
+//     the region check refuses it being stored outside the block, read out of
+//     one field at a time, or handed back as the block's value.
+//
+// Held to elements that are not resources. Nothing consumes a `Fixed<T>`, so a
+// resource pushed into one has no place it is required to come back out, and a
+// container that can hold an obligation nobody can discharge is worse than one
+// that says so at the constructor.
+
+import "mem.frost"
+
+export Fixed, fixed_over, fixed_len, fixed_room, fixed_slice, fixed_push,
+    fixed_get, fixed_set, fixed_clear, fixed_truncate
+
+Fixed :: struct($T: Type) {
+    // The whole run, whose length is the capacity. The live prefix is `len`.
+    storage: []T,
+    len: i64,
+}
+
+// An empty container over a run. The run is the capacity, and the caller
+// carved it: out of an arena, out of a stack array, out of a static buffer.
+fixed_over :: fn($T: Type, storage: []T) -> Fixed<T> where !is_linear(T) {
+    Fixed { storage = storage, len = 0 }
+}
+
+fixed_len :: fn($T: Type, f: Fixed<T>) -> i64 {
+    f.len
+}
+
+// How many more will fit. A caller that would rather answer than abort asks
+// this first, the way `columns_full` is asked before an insert.
+fixed_room :: fn($T: Type, f: Fixed<T>) -> i64 {
+    slice_len(f.storage) - f.len
+}
+
+// The live elements as a bounds-checked slice, which is how everything above
+// the container reads, writes and borrows one.
+fixed_slice :: fn($T: Type, f: Fixed<T>) -> []T {
+    slice_prefix($T, f.storage, f.len)
+}
+
+// One more element. Past the end of the run this aborts, at the index that
+// reaches past it: the run came from a size the program chose, so filling it is
+// a bug in that choice rather than a condition to handle, and there is no
+// allocator here to ask for more.
+fixed_push :: fn($T: Type, mut f: Fixed<T>, move value: $T) {
+    f.storage[f.len] = value
+    f.len = f.len + 1
+}
+
+fixed_get :: fn($T: Type, f: Fixed<T>, index: i64) -> $T {
+    fixed_slice($T, f)[index]
+}
+
+fixed_set :: fn($T: Type, mut f: Fixed<T>, index: i64, move value: $T) {
+    fixed_slice($T, f)[index] = value
+}
+
+// Empty again over the same run. The bytes stay as they were and the next push
+// takes them.
+fixed_clear :: fn($T: Type, mut f: Fixed<T>) {
+    f.len = 0
+}
+
+// The first `count` elements, where that is fewer than there are. A count past
+// the live prefix leaves it alone rather than claiming elements nothing wrote.
+fixed_truncate :: fn($T: Type, mut f: Fixed<T>, count: i64) {
+    if (count < f.len) {
+        f.len = count
+    }
+}
+
+test "a container over an array fills and reads back" {
+    var backing: [4]i64 = [0, 0, 0, 0]
+    var held := fixed_over($i64, backing)
+    assert(fixed_len($i64, held) == 0)
+    assert(fixed_room($i64, held) == 4)
+    fixed_push($i64, held, 10)
+    fixed_push($i64, held, 20)
+    assert(fixed_len($i64, held) == 2)
+    assert(fixed_room($i64, held) == 2)
+    assert(fixed_get($i64, held, 0) + fixed_get($i64, held, 1) == 30)
+}
+
+test "the live prefix is what the slice hands out" {
+    var backing: [4]i64 = [0, 0, 0, 0]
+    var held := fixed_over($i64, backing)
+    fixed_push($i64, held, 1)
+    fixed_push($i64, held, 2)
+    fixed_push($i64, held, 3)
+    var total: i64 = 0
+    for value in fixed_slice($i64, held) {
+        total = total + value
+    }
+    assert(slice_len(fixed_slice($i64, held)) == 3)
+    assert(total == 6)
+}
+
+test "a set writes through the live prefix" {
+    var backing: [4]i64 = [0, 0, 0, 0]
+    var held := fixed_over($i64, backing)
+    fixed_push($i64, held, 1)
+    fixed_push($i64, held, 2)
+    fixed_set($i64, held, 1, 9)
+    assert(fixed_get($i64, held, 1) == 9)
+}
+
+test "clearing and truncating move the mark and nothing else" {
+    var backing: [4]i64 = [0, 0, 0, 0]
+    var held := fixed_over($i64, backing)
+    fixed_push($i64, held, 1)
+    fixed_push($i64, held, 2)
+    fixed_push($i64, held, 3)
+    fixed_truncate($i64, held, 2)
+    assert(fixed_len($i64, held) == 2)
+    fixed_truncate($i64, held, 7)
+    assert(fixed_len($i64, held) == 2)
+    fixed_clear($i64, held)
+    assert(fixed_len($i64, held) == 0)
+    assert(fixed_room($i64, held) == 4)
+    fixed_push($i64, held, 5)
+    assert(fixed_get($i64, held, 0) == 5)
+}

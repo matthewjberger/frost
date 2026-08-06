@@ -1531,7 +1531,199 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "does not cover '.Up'",
     ),
+    // The region check, pinned here rather than only as "some refusal": the two
+    // compilers wording an escape differently is how a walk that had stopped
+    // looking inside a struct went unnoticed on one side.
+    //
+    // A pointer carved out of the arena, written into a binding the `with`
+    // block outlives.
+    (
+        "an_arena_pointer_stored_outside_its_block",
+        ARENA_PRELUDE_ESCAPE,
+        "region: a pointer into arena 'arena' escapes its region by being \
+         stored outside it; it may not outlive the arena",
+    ),
+    // The same pointer, one field down. A struct built in the region carries
+    // the arena's storage wherever it goes, so the literal is the escape.
+    (
+        "an_arena_pointer_inside_a_struct_literal",
+        ARENA_PRELUDE_STRUCT,
+        "region: a pointer into arena 'arena' escapes its region by being \
+         stored outside it; it may not outlive the arena",
+    ),
+    // And read back out of one. The struct stays in the region; what leaves is
+    // the field, and the field is the storage.
+    (
+        "an_arena_pointer_read_out_of_a_struct",
+        ARENA_PRELUDE_FIELD,
+        "region: a pointer into arena 'arena' escapes its region by being \
+         stored outside it; it may not outlive the arena",
+    ),
+    // A `uses` function may hand a pointer back to its caller, whose own `with`
+    // block is checked, but not write one into a parameter: that frame outlives
+    // the call.
+    (
+        "an_arena_pointer_stored_into_a_parameter",
+        "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         Holder :: struct { p: ^i64, count: i64 }
+         alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+             slot := ptr_to(a.data[a.offset])
+             a.offset = a.offset + 8
+             unsafe { ptr_cast($i64, slot) }
+         }
+         stash :: fn(mut h: Holder) -> i64 uses Arena<256> {
+             h.p = alloc_int(arena)
+             0
+         }
+         main :: fn() -> i64 {
+             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var sink : i64 = 0
+             var held : Holder = Holder { p = ptr_to(sink), count = 0 }
+             with arena { sink = stash(held) }
+             sink
+         }
+",
+        "region: a pointer into arena 'arena' escapes its region by being \
+         stored into a parameter; it may not outlive the arena",
+    ),
+    // The value a `with` block ends with flows to the enclosing scope, which is
+    // the third way out beside a store and a return.
+    (
+        "an_arena_pointer_as_the_blocks_value",
+        "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+             slot := ptr_to(a.data[a.offset])
+             a.offset = a.offset + 8
+             unsafe { ptr_cast($i64, slot) }
+         }
+         main :: fn() -> i64 {
+             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var sink : i64 = 0
+             with arena {
+                 alloc_int(arena)
+             }
+             sink
+         }
+",
+        "region: a pointer into arena 'arena' escapes its region by being the \
+         block's value; it may not outlive the arena",
+    ),
+    // The container the arena feeds. `Fixed<T>` holds a view of the run it was
+    // given, so one built inside the block is the arena's storage travelling
+    // under a struct's name, and it leaves the block the same way the bare
+    // pointer does.
+    (
+        "a_container_over_an_arena_run_leaving_its_block",
+        "import \"arena.frost\"
+         import \"fixed.frost\"
+         Sprite :: struct { x: i64 }
+         main :: fn() -> i64 {
+             var scratch : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var backing : [1]Sprite = [Sprite { x = 0 }]
+             var escaped := fixed_over($Sprite, backing)
+             with scratch {
+                 run := arena_carve($Sprite, $256, scratch, 4)
+                 escaped = fixed_over($Sprite, run)
+             }
+             fixed_len($Sprite, escaped)
+         }
+",
+        "region: a pointer into arena 'scratch' escapes its region by being \
+         stored outside it; it may not outlive the arena",
+    ),
+    // A compile-time parameter is written at the call, one `$` argument each.
+    // Leaving one out lines every value argument up against the parameter
+    // beside the one it was written for, which is a mistake worth naming as
+    // the count it is: the bootstrap read the first value argument as handed
+    // over by value and said 'a' was moved, and the self-hosted inferred the
+    // missing argument and built the program.
+    (
+        "a_call_leaving_out_a_compile_time_argument",
+        "Box :: struct($N: usize) { room: [N]i64, offset: i64 }
+         bump :: fn($N: usize, mut b: Box<N>, by: i64) -> i64 {
+             b.offset = b.offset + by
+             b.offset
+         }
+         main :: fn() -> i64 {
+             var b : Box<4> = Box { room = [0; 4], offset = 0 }
+             bump(b, 8)
+         }
+",
+        "generic function 'bump' expects 3 argument(s) but 2 were given",
+    ),
+    // The frame half of the same file, for the same reason: what a call answers
+    // with may not name storage the call owns.
+    (
+        "a_frame_pointer_as_the_calls_answer",
+        "grab :: fn() -> ^i64 {
+             var x : i64 = 5
+             ptr_to(x)
+         }
+         main :: fn() -> i64 { 0 }
+",
+        "region: a pointer into the frame of 'grab' is the call's answer; the \
+         storage it names dies when the call returns",
+    ),
 ];
+
+// One arena, one carve, and the three ways the pointer leaves the block. Held
+// apart from the rows so the three read as the one program they are.
+const ARENA_PRELUDE_ESCAPE: &str =
+    "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+             slot := ptr_to(a.data[a.offset])
+             a.offset = a.offset + 8
+             unsafe { ptr_cast($i64, slot) }
+         }
+         main :: fn() -> i64 {
+             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var sink : i64 = 0
+             var escaped : ^i64 = ptr_to(sink)
+             with arena {
+                 escaped = alloc_int(arena)
+             }
+             unsafe { escaped^ }
+         }
+";
+
+const ARENA_PRELUDE_STRUCT: &str =
+    "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         Holder :: struct { p: ^i64, count: i64 }
+         alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+             slot := ptr_to(a.data[a.offset])
+             a.offset = a.offset + 8
+             unsafe { ptr_cast($i64, slot) }
+         }
+         main :: fn() -> i64 {
+             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var sink : i64 = 0
+             var held : Holder = Holder { p = ptr_to(sink), count = 0 }
+             with arena {
+                 held = Holder { p = alloc_int(arena), count = 1 }
+             }
+             unsafe { held.p^ }
+         }
+";
+
+const ARENA_PRELUDE_FIELD: &str =
+    "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         Holder :: struct { p: ^i64, count: i64 }
+         alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+             slot := ptr_to(a.data[a.offset])
+             a.offset = a.offset + 8
+             unsafe { ptr_cast($i64, slot) }
+         }
+         main :: fn() -> i64 {
+             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var sink : i64 = 0
+             var escaped : ^i64 = ptr_to(sink)
+             with arena {
+                 inner := Holder { p = alloc_int(arena), count = 1 }
+                 escaped = inner.p
+             }
+             unsafe { escaped^ }
+         }
+";
 
 #[test]
 fn both_compilers_refuse_the_same_programs() {
@@ -1577,8 +1769,20 @@ fn both_compilers_refuse_the_same_programs() {
 // The pairs straddle the line on both sides on purpose: every row that leaves
 // the range has a neighbour one step inside it.
 const RANGE_EDGE: &[(&str, &str, &str, &str, Option<i64>)] = &[
-    ("add_at_the_top", "a + b", "9223372036854775807", "0", Some(i64::MAX)),
-    ("add_past_the_top", "a + b", "9223372036854775807", "1", None),
+    (
+        "add_at_the_top",
+        "a + b",
+        "9223372036854775807",
+        "0",
+        Some(i64::MAX),
+    ),
+    (
+        "add_past_the_top",
+        "a + b",
+        "9223372036854775807",
+        "1",
+        None,
+    ),
     (
         "add_at_the_bottom",
         "a + b",
@@ -1586,8 +1790,20 @@ const RANGE_EDGE: &[(&str, &str, &str, &str, Option<i64>)] = &[
         "0",
         Some(i64::MIN),
     ),
-    ("add_past_the_bottom", "a + b", "-9223372036854775807 - 1", "-1", None),
-    ("subtract_at_the_bottom", "a - b", "-9223372036854775807", "1", Some(i64::MIN)),
+    (
+        "add_past_the_bottom",
+        "a + b",
+        "-9223372036854775807 - 1",
+        "-1",
+        None,
+    ),
+    (
+        "subtract_at_the_bottom",
+        "a - b",
+        "-9223372036854775807",
+        "1",
+        Some(i64::MIN),
+    ),
     (
         "subtract_past_the_bottom",
         "a - b",
@@ -1595,17 +1811,59 @@ const RANGE_EDGE: &[(&str, &str, &str, &str, Option<i64>)] = &[
         "1",
         None,
     ),
-    ("multiply_inside", "a * b", "4611686018427387903", "2", Some(9223372036854775806)),
-    ("multiply_past_the_top", "a * b", "4611686018427387904", "2", None),
-    ("multiply_the_bottom_by_one", "a * b", "-9223372036854775807 - 1", "1", Some(i64::MIN)),
-    ("multiply_the_bottom_by_minus_one", "a * b", "-9223372036854775807 - 1", "-1", None),
-    ("divide_the_bottom_by_one", "a / b", "-9223372036854775807 - 1", "1", Some(i64::MIN)),
-    ("divide_the_bottom_by_minus_one", "a / b", "-9223372036854775807 - 1", "-1", None),
+    (
+        "multiply_inside",
+        "a * b",
+        "4611686018427387903",
+        "2",
+        Some(9223372036854775806),
+    ),
+    (
+        "multiply_past_the_top",
+        "a * b",
+        "4611686018427387904",
+        "2",
+        None,
+    ),
+    (
+        "multiply_the_bottom_by_one",
+        "a * b",
+        "-9223372036854775807 - 1",
+        "1",
+        Some(i64::MIN),
+    ),
+    (
+        "multiply_the_bottom_by_minus_one",
+        "a * b",
+        "-9223372036854775807 - 1",
+        "-1",
+        None,
+    ),
+    (
+        "divide_the_bottom_by_one",
+        "a / b",
+        "-9223372036854775807 - 1",
+        "1",
+        Some(i64::MIN),
+    ),
+    (
+        "divide_the_bottom_by_minus_one",
+        "a / b",
+        "-9223372036854775807 - 1",
+        "-1",
+        None,
+    ),
     ("divide_by_a_number", "a / b", "7", "2", Some(3)),
     ("divide_by_nothing", "a / b", "7", "0", None),
     ("remainder_by_a_number", "a % b", "7", "2", Some(1)),
     ("remainder_by_nothing", "a % b", "7", "0", None),
-    ("remainder_of_the_bottom_by_minus_one", "a % b", "-9223372036854775807 - 1", "-1", Some(0)),
+    (
+        "remainder_of_the_bottom_by_minus_one",
+        "a % b",
+        "-9223372036854775807 - 1",
+        "-1",
+        Some(0),
+    ),
     ("shift_to_the_sign_bit", "a << b", "1", "63", Some(i64::MIN)),
     ("shift_past_the_width", "a << b", "1", "64", None),
     ("shift_right_inside", "a >> b", "1024", "3", Some(128)),
@@ -1727,8 +1985,6 @@ fn compile_and_run_unaudited_allowing_failure(
     let _ = std::fs::remove_file(&exe);
     Some(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"))
 }
-
-
 
 // Programs whose meaning the two compilers used to disagree about. Each ran
 // correctly under the bootstrap and was miscompiled or refused by the

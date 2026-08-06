@@ -1,10 +1,11 @@
 # Containers
 
-Five modules: a growable vector, a hash map, a generational slab, the
-structure-of-arrays version of that slab, and an optional. They share one shape.
-Storage is either a heap block from [mem.frost](mem.md) or a fixed array in the
-struct itself, elements are reached through a bounds-checked slice or a
-generation-checked handle, and what a caller does with an element is written
+Six modules: a growable vector, the same array over storage it does not own, a
+hash map, a generational slab, the structure-of-arrays version of that slab, and
+an optional. They share one shape. Storage is a heap block from
+[mem.frost](mem.md), a run carved out of an [arena](mem.md), or a fixed array in
+the struct itself; elements are reached through a bounds-checked slice or a
+generation-checked handle; and what a caller does with an element is written
 where the caller is rather than handed to the container as a closure.
 
 ## `std/vec.frost`, a growable array
@@ -57,6 +58,43 @@ reallocates.
 buffer is reused rather than reallocated. The test asserts `heap_live()` is
 unchanged across the clear and the next push, which is the part that would
 otherwise regress silently.
+
+## `std/fixed.frost`, the same array over borrowed storage
+
+```frost
+Fixed :: struct($T: Type) {
+    storage: []T,
+    len: i64,
+}
+```
+
+`Fixed<T>` is `Vec<T>` with the allocator taken out. It is handed a run and
+fills it; it never allocates, never frees, and never grows. That is what lets a
+container live in an arena, where there is no realloc to grow with and no
+per-value free to give a block back.
+
+| Call | What it does |
+| --- | --- |
+| `fixed_over($T, storage) -> Fixed<T>` | An empty container over a run |
+| `fixed_len($T, f) -> i64` | How many elements are live |
+| `fixed_room($T, f) -> i64` | How many more will fit |
+| `fixed_slice($T, f) -> []T` | The live elements, bounds-checked |
+| `fixed_push($T, mut f, move value)` | Appends. Past the run's end this aborts |
+| `fixed_get($T, f, index) -> T` | The element, by copy |
+| `fixed_set($T, mut f, index, move value)` | Overwrites the element |
+| `fixed_clear($T, mut f)` | Forgets the elements, keeps the run |
+| `fixed_truncate($T, mut f, count)` | Keeps the first `count` |
+
+Three differences from `Vec<T>` follow from owning nothing. It is not `linear`,
+because there is no block to give back. It has no `cap` field, because the run's
+length is the capacity and a push past it is an index past the end of a slice,
+which aborts where it happens. And where the run came from an arena, the
+container may not outlive the arena's `with` block: it holds a view of the
+arena's storage, and the region check follows that view into the struct. See
+[allocation-and-regions.md](../reference/allocation-and-regions.md).
+
+Held to elements that are not resources. Nothing consumes a `Fixed<T>`, so a
+resource pushed into one would have no place it is required to come back out.
 
 ## `std/map.frost`, a hash map
 

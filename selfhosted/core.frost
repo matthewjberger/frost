@@ -685,6 +685,11 @@ GenericFn :: struct {
     // it, the same two questions `is_value` and `is_fn` ask of the rest.
     tparam_is_value: i64,
     tparam_is_fn: i64,
+    // Whether it was declared as a parameter of its own, `f($T: Type, ...)`,
+    // rather than introduced inside another parameter's type,
+    // `f(s: Stack<$T>)`. A slot is written at the call and the other is read
+    // off the argument, so only the first is counted against what a call gives.
+    tparam_is_slot: i64,
     // The compile-time list this generic takes, by the name it is reached
     // under, and how many ordinary parameters were written before it. A length
     // of zero is a generic that takes no list.
@@ -1418,6 +1423,9 @@ Parser :: struct {
     ok_ty: i64,
     variant_fixups: Arena<VariantFixup>,
     saw_type_param: i64,
+    // Whether the type parameter being recorded was written as a parameter of
+    // its own rather than inside another parameter's type.
+    tparam_is_slot: i64,
     // Whether the declaration being parsed calls its own first compile-time
     // parameter, so the generic it becomes records that a function binds there.
     tparam_called: i64,
@@ -1565,7 +1573,7 @@ Parser :: struct {
     frame_places: Arena<LocalVar>,
     // The declared or inferred type of each parameter and local, in `ty`. The
     // frame check runs before the type pass, so it carries its own.
-    frame_types: Arena<LocalVar>,
+    walk_types: Arena<LocalVar>,
     // The same idea for a region: bindings holding the address of one already
     // tainted, so reading back through one hands the arena pointer out again.
     region_via_pointer: Arena<LocalVar>,

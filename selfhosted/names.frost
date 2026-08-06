@@ -316,13 +316,14 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
 
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_len: i64, tparam_is_value: i64, tparam_is_fn: i64,
-    xparam_start: i64, xparam_count: i64, token_start: i64,
+    tparam_is_slot: i64, xparam_start: i64, xparam_count: i64,
+    token_start: i64,
     bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
             tparam_len = tparam_len, tparam_is_value = tparam_is_value,
-            tparam_is_fn = tparam_is_fn,
+            tparam_is_fn = tparam_is_fn, tparam_is_slot = tparam_is_slot,
             xparam_start = xparam_start,
             xparam_count = xparam_count, token_start = token_start,
             bound_token = bound_token, pack_off = pack_off,

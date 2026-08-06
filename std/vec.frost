@@ -3,6 +3,13 @@
 // caller reads, writes and borrows them through the bounds-checked slice path
 // rather than through the raw pointer inside.
 //
+// The storage is the heap, and that is wired in rather than chosen: `vec_new`
+// calls `heap_slice`, `vec_push` regrows through `heap_grow_slice`, and
+// `vec_free` gives the block back. A container over storage somebody else
+// owns, an arena run among them, is `Fixed<T>` in fixed.frost, which is this
+// one with the allocator taken out. Nothing here carries a field naming where
+// its block came from, so a heap vector pays nothing for the other case.
+//
 // The storage is a slice of the whole block rather than a raw pointer, so every
 // access here is bounds-checked too and this file has no `unsafe` of its own.
 // What is unchecked is the allocation, and that lives in mem.frost. `vec_slice`

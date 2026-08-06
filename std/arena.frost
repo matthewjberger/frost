@@ -1,0 +1,118 @@
+// A bump allocator over a fixed byte buffer, and the carve that hands a run of
+// it out as a typed slice.
+//
+// An arena holds its own storage: `Arena<4096>` is 4096 bytes and an offset,
+// and nothing under it allocates. A program builds one where it wants the
+// storage to live (a local, a static) and hands it to the calls that draw from
+// it. Allocation is a bump of the offset; there is no per-value free. The
+// whole thing is reclaimed at once by putting the offset back, which is what
+// makes a scratch region per frame or per request cost nothing to clear.
+//
+// `arena_carve` is the only way out of it, and it hands back a `[]T` rather
+// than a pointer, so everything built on top is bounds-checked. What that run
+// may outlive is the region check's question: a `with` block is a region, and a
+// view carved out of the arena inside one may not leave it. That is what makes
+// `fixed.frost` over an arena run safe rather than a convention.
+//
+// The one `unsafe` block here is the reinterpret from bytes to `T`, in the same
+// place and for the same reason as the one in mem.frost.
+
+import "mem.frost"
+
+export Arena, arena_mark, arena_reset, arena_used, arena_carve
+
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+// Where the arena is now, to roll back to later. A marker plus `arena_reset` is
+// a stack discipline: everything carved after the mark goes back in one step.
+arena_mark :: fn($N: usize, a: Arena<N>) -> i64 {
+    a.offset
+}
+
+// Everything carved since the mark, reclaimed. Nothing is written and nothing
+// is run: the bytes stay as they were and the next carve takes them again.
+//
+// A mark from a later state than the arena is in is refused, since rolling
+// *forward* would hand out a run that overlaps what is already live.
+arena_reset :: fn($N: usize, mut a: Arena<N>, mark: i64) {
+    assert(mark >= 0 && mark <= a.offset)
+    a.offset = mark
+}
+
+// How many bytes are out. A caller sizing a scratch region reads this after a
+// representative frame rather than guessing.
+arena_used :: fn($N: usize, a: Arena<N>) -> i64 {
+    a.offset
+}
+
+// Room for `count` elements of `T`, taken from the front of what is left.
+//
+// The run starts at the next multiple of 8, which is the alignment of every
+// type the language lays out without `align(N)` being written on it. A type
+// that asks for more than that is not carved correctly here, and there is no
+// `alignof` to ask, so the buffer is walked in units of 8 and a wider
+// alignment is a gap this cannot fill.
+//
+// Running out is an abort rather than an answer of nothing: the run is
+// requested against a buffer whose size the program chose, so reaching the end
+// is a bug in that choice, and handing back an empty slice would push the
+// mistake to the first push instead of naming it here.
+arena_carve :: fn($T: Type, $N: usize, mut a: Arena<N>, count: i64) -> []T {
+    start := (a.offset + 7) / 8 * 8
+    width := count * sizeof(T)
+    bytes := slice_range($u8, a.data, start, width)
+    a.offset = start + width
+    unsafe { slice_from($T, ptr_cast($T, ptr_to(bytes[0])), count) }
+}
+
+test "a carve hands back a run of the arena" {
+    var a: Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var run := arena_carve($i64, $256, a, 4)
+    assert(slice_len(run) == 4)
+    run[0] = 11
+    run[3] = 44
+    assert(run[0] + run[3] == 55)
+    assert(arena_used($256, a) == 32)
+}
+
+test "two carves do not overlap" {
+    var a: Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var first := arena_carve($i64, $256, a, 2)
+    var second := arena_carve($i64, $256, a, 2)
+    first[0] = 1
+    first[1] = 2
+    second[0] = 3
+    second[1] = 4
+    assert(first[0] == 1 && first[1] == 2)
+    assert(second[0] == 3 && second[1] == 4)
+}
+
+test "a reset hands the same bytes out again" {
+    var a: Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mark := arena_mark($256, a)
+    var first := arena_carve($i64, $256, a, 3)
+    first[0] = 7
+    assert(arena_used($256, a) == 24)
+    arena_reset($256, a, mark)
+    assert(arena_used($256, a) == 0)
+    var again := arena_carve($i64, $256, a, 3)
+    assert(slice_len(again) == 3)
+    assert(again[0] == 7)
+}
+
+ArenaPoint :: struct { x: i64, y: i64 }
+
+test "a carve of a struct is aligned and sized by the struct" {
+    var a: Arena<256> = Arena { data = [0; 256], offset = 0 }
+    var one := arena_carve($u8, $256, a, 1)
+    one[0] = 9
+    var points := arena_carve($ArenaPoint, $256, a, 2)
+    assert(arena_used($256, a) == 8 + 2 * sizeof(ArenaPoint))
+    points[0] = ArenaPoint { x = 1, y = 2 }
+    points[1] = ArenaPoint { x = 3, y = 4 }
+    assert(points[0].y + points[1].x == 5)
+    assert(one[0] == 9)
+}
