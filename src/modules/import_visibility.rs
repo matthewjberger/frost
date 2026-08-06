@@ -272,9 +272,6 @@ fn bound_in_block(ast: &Ast, block: Range32, out: &mut HashSet<String>) {
 
 fn bound_in_pattern(ast: &Ast, pattern: PatternId, out: &mut HashSet<String>) {
     match ast.pattern(pattern) {
-        Pattern::Identifier(name) => {
-            out.insert(ast.name(*name).to_string());
-        }
         Pattern::EnumVariant { bindings, .. } => {
             for binding in ast.pattern_bindings_in(*bindings) {
                 out.insert(ast.name(binding.binding).to_string());

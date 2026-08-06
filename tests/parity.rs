@@ -1327,6 +1327,25 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "the case range 4..4 covers nothing",
     ),
     // What a span covers is counted, and a count over the reals is not one.
+    // What a `case` covers is a set a reader can count. A decimal covers one of
+    // the reals, which is a claim nobody can act on, and text is compared
+    // rather than counted; both belong in an `if`. Both compilers used to
+    // disagree here in the worst way: the bootstrap matched a decimal and the
+    // self-hosted one read the arm as the one covering the rest, so
+    // `case 1.5:` ran for every value there and for one value here.
+    (
+        "a_decimal_in_a_case",
+        "import \"io.frost\"
+         f :: fn(x: f64) -> i64 {
+             match x {
+                 case 1.5: 10
+                 case _: 20
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(1.5)) 0 }
+",
+        "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`",
+    ),
     (
         "a_case_range_with_a_decimal_end",
         "import \"io.frost\"
@@ -1337,7 +1356,96 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              }
          }
 ",
-        "a case range runs between whole numbers, and a decimal is not one",
+        "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`",
+    ),
+    (
+        "text_in_a_case",
+        "import \"io.frost\"
+         f :: fn(x: str) -> i64 {
+             match x {
+                 case \"hi\": 10
+                 case _: 20
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(\"hi\")) 0 }
+",
+        "a case matches whole numbers, booleans and variants, so text belongs in an `if`",
+    ),
+    // A name in a case is the value it stands for. It used to bind whatever
+    // was matched, which made `case CH_0:` and `case CH_0..=CH_9:` mean
+    // opposite things: the second compared and the first quietly did not.
+    (
+        "a_name_in_a_case_that_names_no_constant",
+        "import \"io.frost\"
+         f :: fn(x: i64) -> i64 {
+             match x {
+                 case 1: 10
+                 case n: n * 100
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(7)) 0 }
+",
+        "a name in a case is the value it stands for, and this one names no constant",
+    ),
+    (
+        "a_name_in_a_tuple_case_that_names_no_constant",
+        "import \"io.frost\"
+         f :: fn(a: i64, b: i64) -> i64 {
+             match (a, b) {
+                 case (0, n): n
+                 case (_, _): 99
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(0, 3)) 0 }
+",
+        "a name in a case is the value it stands for, and this one names no constant",
+    ),
+    // `_` covers everything, so an arm below one is refused by the rule about
+    // coverage rather than by a rule of its own. A tuple arm naming `_` in
+    // every part is the same arm.
+    (
+        "a_case_after_one_that_covers_everything",
+        "import \"io.frost\"
+         f :: fn(x: i64) -> i64 {
+             match x {
+                 case _: 10
+                 case 1: 20
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(1)) 0 }
+",
+        "this case is covered by an earlier one, so nothing reaches it",
+    ),
+    (
+        "a_tuple_case_after_one_that_covers_everything",
+        "import \"io.frost\"
+         f :: fn(a: i64, b: i64) -> i64 {
+             match (a, b) {
+                 case (_, _): 10
+                 case (1, 1): 20
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(1, 1)) 0 }
+",
+        "this case is covered by an earlier one, so nothing reaches it",
+    ),
+    // Two earlier arms cover this one between them, and neither on its own.
+    // That is the question a reader asks looking down the arms, so it is the
+    // one both compilers answer.
+    (
+        "a_case_two_earlier_spans_cover_between_them",
+        "import \"io.frost\"
+         f :: fn(x: i64) -> i64 {
+             match x {
+                 case 1..5: 1
+                 case 5..10: 2
+                 case 3..7: 3
+                 case _: 0
+             }
+         }
+         main :: fn() -> i64 { print_int_line(f(1)) 0 }
+",
+        "this case is covered by an earlier one, so nothing reaches it",
     ),
     (
         "a_case_range_ending_at_a_name_that_is_not_a_number",
@@ -3559,6 +3667,60 @@ main :: fn() -> i64 {
 ",
         "0
 1
+99
+",
+    ),
+    // A name in a case compares against the constant it stands for, a boolean
+    // arm covers one of the two values, and an arm still stands where two
+    // earlier spans only partly cover it.
+    (
+        "a_case_reads_a_name_as_its_value",
+        "import \"io.frost\"
+         CH_0 :: 48
+         digit :: fn(x: i64) -> i64 {
+             match x {
+                 case CH_0: 10
+                 case _: 20
+             }
+         }
+         either :: fn(x: bool) -> i64 {
+             match x {
+                 case true: 1
+                 case false: 2
+             }
+         }
+         overlap :: fn(x: i64) -> i64 {
+             match x {
+                 case 1..10: 1
+                 case 5..20: 2
+                 case _: 0
+             }
+         }
+         pair :: fn(a: i64, b: i64) -> i64 {
+             match (a, b) {
+                 case (0, CH_0): 7
+                 case (_, _): 99
+             }
+         }
+         main :: fn() -> i64 {
+             print_int_line(digit(48))
+             print_int_line(digit(1))
+             print_int_line(either(true))
+             print_int_line(either(false))
+             print_int_line(overlap(1))
+             print_int_line(overlap(15))
+             print_int_line(pair(0, 48))
+             print_int_line(pair(0, 1))
+             0
+         }
+",
+        "10
+20
+1
+2
+1
+2
+7
 99
 ",
     ),

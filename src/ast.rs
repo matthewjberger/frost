@@ -377,7 +377,6 @@ pub struct SwitchCase {
 pub enum Pattern {
     Wildcard,
     Literal(Literal),
-    Identifier(Symbol),
     EnumVariant {
         enum_name: Option<Symbol>,
         variant_name: Symbol,
@@ -1311,9 +1310,6 @@ impl<'a> Splicer<'a> {
             Pattern::Wildcard => Pattern::Wildcard,
             Pattern::Literal(literal) => {
                 Pattern::Literal(self.literal(dest, literal, rename))
-            }
-            Pattern::Identifier(name) => {
-                Pattern::Identifier(self.symbol(dest, name, rename))
             }
             Pattern::EnumVariant {
                 enum_name,

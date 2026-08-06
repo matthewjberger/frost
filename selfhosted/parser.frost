@@ -2691,9 +2691,9 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
 }
 
 // Whether what the cursor is on opens a whole number: one written out, one
-// under a minus, or a name a `::` declaration settled on a number. A name is
-// read this way only where a `..` follows it, since everywhere else a name in a
-// case position stands for whatever was matched.
+// under a minus, or a name a `::` declaration settled on one. A name in a case
+// is the value it stands for, here and in a span alike, so `case CH_0:` and
+// `case CH_0..=CH_9:` read the one name the one way.
 at_case_number :: fn(mut p: Parser) -> bool {
     k := cur(p)
     if (k == TokenKind::Int) {
@@ -2702,21 +2702,24 @@ at_case_number :: fn(mut p: Parser) -> bool {
     if (k == TokenKind::Minus) {
         return peek_kind(p, 1) == TokenKind::Int
     }
-    after := peek_kind(p, 1)
-    opens_span := after == TokenKind::Dotdot || after == TokenKind::Dotdoteq
-    // A decimal stands for a value of its own everywhere else in a case, so it
-    // is read here only where it opens a span, which is where the span itself
-    // says what is wrong with it.
+    // A decimal is read here so that the span it opens is what reports it,
+    // rather than the arm falling through to whatever comes next.
     if (k == TokenKind::Float) {
-        return opens_span
+        return true
     }
     if (k == TokenKind::Ident) {
-        if (opens_span == false) {
-            return false
-        }
         return is_const(p, cur_off(p), cur_len(p))
     }
     false
+}
+
+// The two booleans, which cover two values between them and so are patterns a
+// reader can count, the way whole numbers and variants are.
+at_case_boolean :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident) {
+        return false
+    }
+    (peek_is_word(p, 0, "true") || peek_is_word(p, 0, "false"))
 }
 
 // One end of a span.
@@ -2737,8 +2740,10 @@ parse_case_bound :: fn(mut p: Parser) -> i64 {
         return sign * held
     }
     report_where(p.modules, p.src, cur_off(p))
+    // A decimal says the same thing wherever it stands in a case: at the head
+    // of a span, at its end, or on its own. One fault, one wording.
     if (cur(p) == TokenKind::Float) {
-        report("a case range runs between whole numbers, and a decimal is not one")
+        report("a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`")
     } else {
         report("a case range runs between whole numbers, and this bound is not one")
     }
@@ -2809,38 +2814,73 @@ alts_are_one :: fn(mut p: Parser, left: i64, right: i64) -> bool {
     a_low == b.val && a_high == b.b && a_form == b.c
 }
 
-// Whether an earlier alternative takes every value this one covers. Read one
-// span against one span, so what an arm covers is something a reader works out
-// at the arms: an arm two earlier spans cover between them, and neither on its
-// own, goes on standing.
-alt_is_within :: fn(mut p: Parser, held: i64, earlier: i64) -> bool {
-    family := alt_family(p, held)
-    if (family < 0 || family != alt_family(p, earlier)) {
-        return false
+// How far right the arms above reach from `at`, staying inside `family`. The
+// first answer says whether any of them stands on that number at all, since
+// there is no number below the smallest to stand for "none of them did".
+alt_reach_from :: fn(mut p: Parser, head: i64, family: i64,
+    at: i64) -> (found: bool, reach: i64) {
+    var found: bool = false
+    var best: i64 = 0
+    var cid := head
+    while (cid != (-1)) {
+        cnode := arena_at(p.arena, cid)
+        var earlier := cnode.b
+        cid = cnode.next
+        while (earlier != (-1)) {
+            if (alt_family(p, earlier) == family) {
+                low := alt_low(p, earlier)
+                high := alt_high(p, earlier)
+                if (low <= at && at <= high) {
+                    if (found == false || high > best) {
+                        best = high
+                        found = true
+                    }
+                }
+            }
+            earlier = node_next(p, earlier)
+        }
     }
-    low := alt_low(p, held)
-    high := alt_high(p, held)
-    alt_low(p, earlier) <= low && high <= alt_high(p, earlier)
+    return found, best
 }
 
-// Whether every value an arm covers is already taken by an arm above it.
+// Whether the arms above hold every value one alternative covers.
+//
+// Walked rather than merged: stand at the lowest number wanted, jump to the far
+// end of the widest span covering it, and repeat. A step that finds no span
+// standing on its number is a number nobody covered, and every step that does
+// find one moves strictly right, so this ends.
+alt_is_covered :: fn(mut p: Parser, head: i64, held: i64) -> bool {
+    family := alt_family(p, held)
+    if (family < 0) {
+        return false
+    }
+    high := alt_high(p, held)
+    var at := alt_low(p, held)
+    var settled: bool = false
+    while (settled == false) {
+        found, reach := alt_reach_from(p, head, family, at)
+        if (found == false) {
+            return false
+        }
+        // Tested before the step, since the largest number has nothing above
+        // it and stepping past it would leave the range.
+        if (reach >= high) {
+            settled = true
+        } else {
+            at = reach + 1
+        }
+    }
+    true
+}
+
+// Whether every value an arm covers is already taken by an arm above it. What
+// an arm covers is the union of what its alternatives name, and it is read
+// against the union of every arm above, which is the question a reader asks
+// looking down the arms.
 case_is_shadowed :: fn(mut p: Parser, head: i64, alts: i64) -> bool {
     var held := alts
     while (held != (-1)) {
-        var found: bool = false
-        var cid := head
-        while (cid != (-1) && found == false) {
-            cnode := arena_at(p.arena, cid)
-            var earlier := cnode.b
-            cid = cnode.next
-            while (earlier != (-1) && found == false) {
-                if (alt_is_within(p, held, earlier)) {
-                    found = true
-                }
-                earlier = node_next(p, earlier)
-            }
-        }
-        if (found == false) {
+        if (alt_is_covered(p, head, held) == false) {
             return false
         }
         held = node_next(p, held)
@@ -3129,9 +3169,16 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                     report("a tuple case compares one value per part, so an alternative or a range belongs in a match on one value")
                     frost_rt_recover_escape()
                 }
-                if (cur(p) == TokenKind::Int) {
-                    wanted := cur_val(p)
-                    advance(p)
+                if (at_case_number(p) || at_case_boolean(p)) {
+                    var wanted: i64 = 0
+                    if (at_case_boolean(p)) {
+                        if (peek_is_word(p, 0, "true")) {
+                            wanted = 1
+                        }
+                        advance(p)
+                    } else {
+                        wanted = parse_case_bound(p)
+                    }
                     name_off := synth_numbered(p, "__tup", unique + index)
                     name_len := 5 + digits_in(unique + index)
                     held := new_named_node(p, NodeKind::Var, 0, name_off,
@@ -3144,8 +3191,16 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                         condition = new_node(p, NodeKind::Bin, condition,
                             equals, OP_AND)
                     }
-                } else {
+                } else if (cur(p) == TokenKind::Underscore) {
                     advance(p)
+                } else {
+                    // A part naming nothing the compiler can compare against
+                    // used to be passed over, so `case (0, n):` compared the
+                    // first part and let the second stand for everything while
+                    // reading as though it named something.
+                    report_where(p.modules, p.src, cur_off(p))
+                    report("a name in a case is the value it stands for, and this one names no constant; `_` is the case that covers the rest")
+                    frost_rt_recover_escape()
                 }
                 index = index + 1
                 if (cur(p) == TokenKind::Comma) {
@@ -3160,7 +3215,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         body := parse_arm(p)
         if (closed == 1) {
             report_where(p.modules, p.src, cur_off(p))
-            report("this arm follows one that matches everything, so nothing reaches it")
+            report("this case is covered by an earlier one, so nothing reaches it")
             frost_rt_recover_escape()
         }
         if (condition == (-1)) {
@@ -3272,12 +3327,34 @@ parse_match :: fn(mut p: Parser) -> i64 {
                     entry_of = ALT_UNRESOLVED
                 }
                 alt = new_case_alt(p, tag, tag, ALT_VALUE, entry_of)
+            } else if (at_case_boolean(p)) {
+                // A boolean is stored as the number it is, so an arm over one
+                // compares the way an arm over any other whole number does.
+                var held: i64 = 0
+                if (peek_is_word(p, 0, "true")) {
+                    held = 1
+                }
+                advance(p)
+                alt = new_case_alt(p, held, held, ALT_VALUE, ALT_NUMBER)
+                value = held
             } else if (at_case_number(p)) {
                 alt = parse_case_number(p)
                 value = alt_low(p, alt)
-            } else {
+            } else if (cur(p) == TokenKind::Underscore) {
                 is_default = 1
                 advance(p)
+            } else if (cur(p) == TokenKind::Str) {
+                report_where(p.modules, p.src, cur_off(p))
+                report("a case matches whole numbers, booleans and variants, so text belongs in an `if`")
+                frost_rt_recover_escape()
+            } else {
+                // A name that names no constant, and anything else that is not
+                // a pattern. This used to be read as the arm that covers the
+                // rest, which made `case n:` and `case "text":` arms that ran
+                // for everything and said they ran for one thing.
+                report_where(p.modules, p.src, cur_off(p))
+                report("a name in a case is the value it stands for, and this one names no constant; `_` is the case that covers the rest")
+                frost_rt_recover_escape()
             }
             if (alt != (-1)) {
                 var seen := alts
@@ -3302,7 +3379,9 @@ parse_match :: fn(mut p: Parser) -> i64 {
             report("this alternative covers everything on its own, so give it a case of its own")
             frost_rt_recover_escape()
         }
-        if (case_is_shadowed(p, head, alts)) {
+        // `_` covers everything, so an arm below one is refused by the rule
+        // about coverage rather than by a rule of its own.
+        if (saw_default == 1 || case_is_shadowed(p, head, alts)) {
             report_where(p.modules, p.src, cur_off(p))
             report("this case is covered by an earlier one, so nothing reaches it")
             frost_rt_recover_escape()

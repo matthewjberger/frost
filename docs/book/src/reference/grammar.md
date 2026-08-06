@@ -210,20 +210,30 @@ Pattern    = PatternAlt ( "|" PatternAlt )*
 PatternAlt =
       "_"
     | Bound ( ( ".." | "..=" ) Bound )?
-    | FLOAT | STRING | "true" | "false"
+    | "true" | "false"
     | "." IDENT ( "{" IDENT ( "," IDENT )* "}" )?
     | IDENT "::" IDENT ( "{" IDENT ( "," IDENT )* "}" )?
     | "(" PatternAlt ( "," PatternAlt )* ")"
-    | IDENT
 Bound      = "-"? ( INTEGER | IDENT )        // a whole number, written or named
 ```
 
+A name is a `Bound` and nothing else: it is the value a `::` declaration
+settled it on, and a name that settled on no whole number is refused. `_` is
+the only pattern that covers the rest. A decimal and a string literal are
+refused too, since what a `case` covers is a set a reader can count.
+
 An arm naming several patterns runs its body for any of them, and what it
-covers is their union. Three shapes may not be one of those alternatives: a
+covers is their union. Two shapes may not be one of those alternatives: a
 variant pattern binding payload fields (two variants hold two shapes, so a name
-reading a field would mean two things), `_`, and a bare identifier (each already
-covers everything, so the others would say nothing). A `|` and a range are also
-refused inside a tuple pattern, which compares one value per part.
+reading a field would mean two things), and `_` (it already covers everything,
+so the others would say nothing). A `|` and a range are also refused inside a
+tuple pattern, which compares one value per part.
+
+An arm every value of which the arms above it already take is refused. What an
+arm covers is read against the union of every arm above, so an arm two earlier
+spans cover between them is refused as surely as one a single earlier span
+covers, and an arm below a `case _` is refused by that rule rather than by one
+of its own.
 
 `Bound` reads a name only where a `..` or `..=` follows it, and only where a
 `::` declaration settled that name on a whole number. Everywhere else a name in

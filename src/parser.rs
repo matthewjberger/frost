@@ -33,12 +33,16 @@ const BINDING_ALTERNATIVE: &str =
     "an alternative binding payload fields holds one name to two shapes, so give it a case of its own";
 const TUPLE_PART: &str =
     "a tuple case compares one value per part, so an alternative or a range belongs in a match on one value";
-const FLOAT_SPAN: &str =
-    "a case range runs between whole numbers, and a decimal is not one";
 const NOT_A_BOUND: &str =
     "a case range runs between whole numbers, and this bound is not one";
 const REPEATED_ALTERNATIVE: &str =
     "this alternative repeats one the same case already names";
+const DECIMAL_PATTERN: &str =
+    "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`";
+const TEXT_PATTERN: &str =
+    "a case matches whole numbers, booleans and variants, so text belongs in an `if`";
+const NAME_PATTERN: &str =
+    "a name in a case is the value it stands for, and this one names no constant; `_` is the case that covers the rest";
 
 // How a parameter takes its argument. `read` (the default) is a shared borrow,
 // `mut` an exclusive borrow, `move` takes ownership. These are the surface. A
@@ -3174,7 +3178,7 @@ impl<'a> Parser<'a> {
         }
         for (index, held) in alternatives.iter().enumerate() {
             match self.ast.pattern(*held) {
-                Pattern::Wildcard | Pattern::Identifier(_) => {
+                Pattern::Wildcard => {
                     return Err(self.here(CATCH_ALL_ALTERNATIVE.to_string()));
                 }
                 Pattern::EnumVariant { bindings, .. }
@@ -3198,48 +3202,26 @@ impl<'a> Parser<'a> {
 
     /// One alternative of a pattern. A range is read here rather than beside
     /// `|`, so `0 | 5..10` joins a number and a span the way it reads.
+    ///
+    /// A name is the value it stands for, everywhere and always: `case CH_0:`
+    /// compares against that constant exactly as `case CH_0..=CH_9:` does. A
+    /// name used to bind whatever was matched instead, which made those two
+    /// arms mean opposite things and made `case CH_0:` a comparison that
+    /// silently was not one. `_` is the arm that covers the rest.
     fn parse_pattern_alternative(&mut self) -> Result<PatternId> {
         let pattern = match self.peek_nth(0) {
             Token::Underscore => {
                 self.read_token();
                 Pattern::Wildcard
             }
-            Token::Integer(_) | Token::Minus => {
-                let low = self.parse_pattern_bound()?;
-                match self.parse_pattern_range(low)? {
-                    Some(range) => range,
-                    None => Pattern::Literal(Literal::Integer(low)),
-                }
+            // What a `case` covers is a set a reader can count. A decimal
+            // covers one of the reals, which is a claim nobody can act on, and
+            // text is compared rather than counted; both belong in an `if`.
+            Token::Float(_) | Token::Float32(_) => {
+                return Err(self.here(DECIMAL_PATTERN.to_string()));
             }
-            // A name a `::` constant declaration settled, written where the
-            // start of a span goes. Anywhere else a name in a pattern binds
-            // what was matched, so what tells the two apart is the `..` after.
-            Token::Identifier(name)
-                if matches!(
-                    self.peek_nth(1),
-                    Token::DotDot | Token::DotDotEqual
-                ) && self.integer_constant(name).is_some() =>
-            {
-                let low = self.integer_constant(name).unwrap();
-                self.read_token();
-                self.parse_pattern_range(low)?.unwrap()
-            }
-            Token::Float(value) => {
-                let value = *value;
-                self.read_token();
-                self.refuse_a_float_span()?;
-                Pattern::Literal(Literal::Float(value))
-            }
-            Token::Float32(value) => {
-                let value = *value;
-                self.read_token();
-                self.refuse_a_float_span()?;
-                Pattern::Literal(Literal::Float32(value))
-            }
-            Token::StringLiteral(s) => {
-                let s = s.clone();
-                self.read_token();
-                Pattern::Literal(Literal::String(s))
+            Token::StringLiteral(_) => {
+                return Err(self.here(TEXT_PATTERN.to_string()));
             }
             Token::Identifier(word) if word == "true" => {
                 self.read_token();
@@ -3248,6 +3230,13 @@ impl<'a> Parser<'a> {
             Token::Identifier(word) if word == "false" => {
                 self.read_token();
                 Pattern::Literal(Literal::Boolean(false))
+            }
+            _ if self.at_pattern_number() => {
+                let low = self.parse_pattern_bound()?;
+                match self.parse_pattern_range(low)? {
+                    Some(range) => range,
+                    None => Pattern::Literal(Literal::Integer(low)),
+                }
             }
             Token::Dot => {
                 self.read_token();
@@ -3308,7 +3297,7 @@ impl<'a> Parser<'a> {
                         bindings,
                     }
                 } else {
-                    Pattern::Identifier(self.ast.intern(&name))
+                    return Err(self.at_consumed(NAME_PATTERN.to_string()));
                 }
             }
             token => {
@@ -3319,6 +3308,17 @@ impl<'a> Parser<'a> {
             }
         };
         Ok(self.ast.push_pattern(pattern))
+    }
+
+    /// Whether what the cursor is on opens a whole number: one written out,
+    /// one under a minus, or a name a `::` declaration settled on one.
+    fn at_pattern_number(&self) -> bool {
+        match self.peek_nth(0) {
+            Token::Integer(_) => true,
+            Token::Minus => matches!(self.peek_nth(1), Token::Integer(_)),
+            Token::Identifier(name) => self.integer_constant(name).is_some(),
+            _ => false,
+        }
     }
 
     /// One end of a span: a whole number written out, with a `-` in front of
@@ -3335,7 +3335,7 @@ impl<'a> Parser<'a> {
                 Ok(if negative { -value } else { value })
             }
             Token::Float(_) | Token::Float32(_) => {
-                Err(self.here(FLOAT_SPAN.to_string()))
+                Err(self.here(DECIMAL_PATTERN.to_string()))
             }
             Token::Identifier(name) => {
                 let name = name.clone();
@@ -3373,15 +3373,6 @@ impl<'a> Parser<'a> {
             high,
             inclusive,
         }))
-    }
-
-    /// A span written with a decimal end. What a span covers is counted, and a
-    /// count over the reals is not one, so the two ends are whole numbers.
-    fn refuse_a_float_span(&self) -> Result<()> {
-        if matches!(self.peek_nth(0), Token::DotDot | Token::DotDotEqual) {
-            return Err(self.here(FLOAT_SPAN.to_string()));
-        }
-        Ok(())
     }
 
     /// The number a `::` declaration settled on for this name, for the one

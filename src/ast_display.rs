@@ -308,7 +308,6 @@ pub fn display_pattern(ast: &Ast, pattern: PatternId) -> String {
     match ast.pattern(pattern) {
         Pattern::Wildcard => "_".to_string(),
         Pattern::Literal(lit) => display_literal(ast, lit),
-        Pattern::Identifier(id) => ast.name(*id).to_string(),
         Pattern::EnumVariant {
             enum_name,
             variant_name,
