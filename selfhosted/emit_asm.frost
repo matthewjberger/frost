@@ -3120,6 +3120,21 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     asm_unsupported("this statement")
 }
 
+// The value in %rax against one end of what an arm covers.
+//
+// A compare carries its immediate in four bytes, read back sign-extended, so a
+// bound past that has nowhere to go and travels through a register instead.
+// The arithmetic path already made this choice for every operator it folds; a
+// case bound was the one number reaching an instruction without asking.
+emit_asm_case_compare :: fn(value: i64) {
+    if (asm_immediate_fits(value)) {
+        asm_i("cmpq $", value, ", %rax")
+        return
+    }
+    asm_i("movq $", value, ", %r11")
+    asm("cmpq %r11, %rax")
+}
+
 emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
     skip_id: i64) {
     var alt := case_alts(p, cid)
@@ -3130,7 +3145,7 @@ emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
         high := anode.b
         next_alt := anode.next
         asm_i("movq ", slot, "(%rbp), %rax")
-        asm_i("cmpq $", low, ", %rax")
+        emit_asm_case_compare(low)
         if (form == ALT_VALUE) {
             emit_text("    je ")
             emit_label(".Lbody", body_id)
@@ -3140,7 +3155,7 @@ emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
             emit_text("    jl ")
             emit_label(".Lalt", past_id)
             emit_text("\n")
-            asm_i("cmpq $", high, ", %rax")
+            emit_asm_case_compare(high)
             if (form == ALT_INCLUSIVE) {
                 emit_text("    jle ")
             } else {
