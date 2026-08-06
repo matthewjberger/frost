@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
@@ -26,8 +26,13 @@ use crate::types::{SizeExpr, Type};
 // dies with the region.
 
 struct Signatures {
-    returns_pointer: HashMap<String, bool>,
+    returns_view: HashMap<String, bool>,
     uses_arena: HashSet<String>,
+    // The declared fields of every struct and what each function answers with,
+    // so a read out of a value built in the region can be weighed against the
+    // type it reads.
+    fields: FieldTypes,
+    returns: HashMap<String, Type>,
 }
 
 pub fn check_regions(ast: &Ast, roots: &[StmtId]) -> Result<()> {
@@ -45,34 +50,38 @@ pub fn check_regions_recovering(
     ast: &Ast,
     roots: &[StmtId],
 ) -> Vec<Diagnostic> {
-    let mut signatures = Signatures {
-        returns_pointer: HashMap::new(),
-        uses_arena: HashSet::new(),
-    };
+    let fields = collect_field_types(ast, roots);
+    let mut returns_view = HashMap::new();
+    let mut uses_arena = HashSet::new();
     for statement in roots {
         if let Statement::Constant(name, value) = ast.stmt(*statement)
             && let Expression::Function(_, sig, _) | Expression::Proc(_, sig, _) =
                 ast.expr(*value)
         {
             let sig = ast.signature(*sig);
-            // Every view, not only a raw pointer. A `[]T` or a `str` carved out
-            // of an arena names the arena's storage exactly as a `^T` does, and
-            // reading only the pointer let a slice of one leave its `with`
-            // block while the pointer beside it was refused.
+            // Every view, not only a raw pointer, and a value holding one as
+            // much as one written bare. A `[]T` or a `str` carved out of an
+            // arena names the arena's storage exactly as a `^T` does, and a
+            // container answering with itself carries the run inside it, which
+            // is how a `Vec` built in a `with` block leaves the block.
             if matches!(
                 &sig.kind,
                 ReturnKind::Single(ty) | ReturnKind::Fallible(ty, _)
-                    if is_direct_view(ty)
+                    if holds_view(ty, &fields, &mut HashSet::new())
             ) {
-                signatures
-                    .returns_pointer
-                    .insert(ast.name(*name).to_string(), true);
+                returns_view.insert(ast.name(*name).to_string(), true);
             }
             if !sig.uses.is_empty() {
-                signatures.uses_arena.insert(ast.name(*name).to_string());
+                uses_arena.insert(ast.name(*name).to_string());
             }
         }
     }
+    let signatures = Signatures {
+        returns_view,
+        uses_arena,
+        returns: collect_return_types(ast, roots),
+        fields,
+    };
 
     let mut diagnostics = Vec::new();
     for statement in roots {
@@ -123,8 +132,7 @@ fn find_regions(
             Statement::While(_, body) | Statement::For(_, _, _, body) => {
                 find_regions(ast, *body, signatures, diagnostics);
             }
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
                 if let Statement::With(arena, body) = ast.stmt(*inner) {
                     let mut region = Region::new(
                         ast,
@@ -215,12 +223,18 @@ struct Region<'a> {
     // Bindings declared inside the region. They die with it, so they may hold a
     // region pointer.
     inner: HashSet<String>,
-    // Bindings that currently hold, or transitively contain, a region pointer.
+    // Bindings that hold, or hold somewhere inside them, a region pointer. A
+    // whole binding rather than the field carrying it, since a struct travels
+    // as one value; which of its fields carries the storage is a question the
+    // read asks of the field's type.
     bound: HashSet<String>,
     // Bindings holding the address of one of those, so reading back through one
     // hands the region pointer out again. This is what tells `pp^` from `p^`
     // without types: `pp` was taken from something already bound, `p` was not.
     via_pointer: HashSet<String>,
+    // What each binding declared in the region holds, so a read of a field or an
+    // element can be weighed against the type it reads.
+    types: HashMap<String, Type>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -239,7 +253,55 @@ impl<'a> Region<'a> {
             inner: HashSet::new(),
             bound: HashSet::new(),
             via_pointer: HashSet::new(),
+            types: HashMap::new(),
             diagnostics: Vec::new(),
+        }
+    }
+
+    // Whether reading this place hands the region pointer back out. The root
+    // has to hold one, and what is read has to be able to carry it: a number
+    // read out of a struct that also holds arena storage is a number, and
+    // reading it is how a count leaves a `with` block. A read whose type the
+    // walk cannot name is refused, since it could be the storage itself.
+    fn reads_out(&self, place: ExprId) -> bool {
+        let Some(root) = root_identifier(self.ast, place) else {
+            return false;
+        };
+        if !self.bound.contains(root) {
+            return false;
+        }
+        match self.place_type(place) {
+            Some(read) => {
+                holds_view(&read, &self.signatures.fields, &mut HashSet::new())
+            }
+            None => true,
+        }
+    }
+
+    fn place_type(&self, place: ExprId) -> Option<Type> {
+        place_type(self.ast, &self.types, &self.signatures.fields, place)
+    }
+
+    // What a binding declared in the region holds, so a later read of one of
+    // its fields can be weighed against the field's type.
+    fn record_type(
+        &mut self,
+        name: &str,
+        annotation: Option<&Type>,
+        value: ExprId,
+    ) {
+        let held = match annotation {
+            Some(declared) => Some(declared.clone()),
+            None => value_type(
+                self.ast,
+                &self.types,
+                &self.signatures.fields,
+                &self.signatures.returns,
+                value,
+            ),
+        };
+        if let Some(held) = held {
+            self.types.insert(name.to_string(), held);
         }
     }
 
@@ -309,20 +371,36 @@ impl<'a> Region<'a> {
     fn check_statement(&mut self, statement: StmtId, at: Position) {
         let ast = self.ast;
         match ast.stmt(statement) {
-            Statement::Let { name, value, .. }
-            | Statement::Constant(name, value) => {
-                let name = ast.name(*name);
-                self.inner.insert(name.to_string());
+            Statement::Let {
+                name,
+                value,
+                type_annotation,
+                ..
+            } => {
+                let name = ast.name(*name).to_string();
+                self.inner.insert(name.clone());
+                self.record_type(&name, type_annotation.as_ref(), *value);
                 if self.is_region_pointer(*value) {
-                    self.bound.insert(name.to_string());
+                    self.bound.insert(name.clone());
                 }
                 if self.points_at_region_pointer(*value) {
-                    self.via_pointer.insert(name.to_string());
+                    self.via_pointer.insert(name);
+                }
+            }
+            Statement::Constant(name, value) => {
+                let name = ast.name(*name).to_string();
+                self.inner.insert(name.clone());
+                self.record_type(&name, None, *value);
+                if self.is_region_pointer(*value) {
+                    self.bound.insert(name.clone());
+                }
+                if self.points_at_region_pointer(*value) {
+                    self.via_pointer.insert(name);
                 }
             }
             Statement::Assignment(place, value) => {
                 if self.is_region_pointer(*value) {
-                    self.bind_or_escape(*place, "assignment", at);
+                    self.bind_or_escape(*place, at);
                 }
             }
             Statement::Return(value) => {
@@ -341,18 +419,19 @@ impl<'a> Region<'a> {
             }
             // A deferred statement runs at scope exit, inside the region
             // still, so what it writes is written from in here.
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
                 self.check_statement(*inner, at);
             }
             // The multiple-return lowering runs before this check, so this
             // shape is already gone. Named rather than left to a wildcard so
             // it stays that way on purpose.
             Statement::LetMultiple(bindings, value) => {
+                let held = self.is_region_pointer(*value);
                 for binding in ast.bindings_in(*bindings) {
-                    self.inner.insert(ast.name(binding.name).to_string());
-                    if self.is_region_pointer(*value) {
-                        self.bound.insert(ast.name(binding.name).to_string());
+                    let name = ast.name(binding.name).to_string();
+                    self.inner.insert(name.clone());
+                    if held {
+                        self.bound.insert(name);
                     }
                 }
             }
@@ -371,14 +450,23 @@ impl<'a> Region<'a> {
         }
     }
 
-    // Storing a region pointer into a binding declared inside the region keeps it
-    // in the region (and taints that binding). Storing it anywhere else escapes.
-    fn bind_or_escape(&mut self, place: ExprId, how: &str, at: Position) {
+    // Storing a region pointer into a place declared inside the region keeps it
+    // in the region, and that place now holds it. Storing it anywhere else
+    // escapes: out of a `with` block that is a binding the block outlives, and
+    // out of a `uses` function it is a parameter, whose frame outlives the call.
+    fn bind_or_escape(&mut self, place: ExprId, at: Position) {
         match root_identifier(self.ast, place) {
-            Some(name) if self.inner.contains(name) => {
-                self.bound.insert(name.to_string());
+            Some(root) if self.inner.contains(root) => {
+                self.bound.insert(root.to_string());
             }
-            _ => self.escape(how, at),
+            _ => {
+                let how = if self.allow_return {
+                    "being stored into a parameter"
+                } else {
+                    "being stored outside it"
+                };
+                self.escape(how, at);
+            }
         }
     }
 
@@ -417,24 +505,46 @@ impl<'a> Region<'a> {
             Expression::Identifier(name) => {
                 self.bound.contains(ast.name(*name))
             }
+            Expression::FieldAccess(..) | Expression::Index(..) => {
+                self.reads_out(expression)
+            }
+            // A value built around a region pointer carries it. Reading only
+            // the bare pointer let the same pointer out one field down, which
+            // is the road a container built in the region takes.
+            Expression::StructInit(_, fields)
+            | Expression::EnumVariantInit(_, _, fields) => ast
+                .named_in(*fields)
+                .iter()
+                .any(|field| self.is_region_pointer(field.value)),
+            Expression::Tuple(items)
+            | Expression::Literal(Literal::Array(items)) => ast
+                .exprs_in(*items)
+                .iter()
+                .any(|item| self.is_region_pointer(*item)),
+            Expression::ArrayRepeat(value, _) => self.is_region_pointer(*value),
             Expression::Call(callee, arguments) => {
                 let Expression::Identifier(function) = ast.expr(*callee) else {
                     return false;
                 };
                 let function = ast.name(*function);
-                if function == "ptr_to" || function == "slice_from" {
-                    return ast
-                        .exprs_in(*arguments)
-                        .iter()
-                        .any(|argument| self.mentions_region(*argument));
+                // The three primitives that build one. A cast still points
+                // where it pointed, so it answers as what it was given does.
+                if function == "ptr_to"
+                    || function == "slice_from"
+                    || function == "ptr_cast"
+                {
+                    return ast.exprs_in(*arguments).iter().any(|argument| {
+                        self.mentions_region(*argument)
+                            || self.is_region_pointer(*argument)
+                    });
                 }
-                let returns_pointer = self
+                let returns_view = self
                     .signatures
-                    .returns_pointer
+                    .returns_view
                     .get(function)
                     .copied()
                     .unwrap_or(false);
-                if !returns_pointer {
+                if !returns_view {
                     return false;
                 }
                 // A pointer-returning function hands back an arena pointer only if
@@ -468,7 +578,6 @@ impl<'a> Region<'a> {
             }
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
-            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
@@ -479,14 +588,9 @@ impl<'a> Region<'a> {
             | Expression::Proc(..)
             | Expression::UnsafeFn(_)
             | Expression::Try(_)
-            | Expression::Index(..)
-            | Expression::FieldAccess(..)
             | Expression::AddressOf(_)
             | Expression::Borrow(_)
-            | Expression::BorrowMut(_)
-            | Expression::StructInit(..)
-            | Expression::EnumVariantInit(..)
-            | Expression::Tuple(_) => false,
+            | Expression::BorrowMut(_) => false,
         }
     }
 
@@ -513,9 +617,21 @@ impl<'a> Region<'a> {
                 .any(|argument| self.mentions_region(*argument)),
             Expression::Unsafe(body) => block_value(ast, *body)
                 .is_some_and(|value| self.mentions_region(value)),
+            // A value built around the arena's storage names it, so a pointer
+            // taken of one of those points into the region.
+            Expression::StructInit(_, fields)
+            | Expression::EnumVariantInit(_, _, fields) => ast
+                .named_in(*fields)
+                .iter()
+                .any(|field| self.mentions_region(field.value)),
+            Expression::Tuple(items)
+            | Expression::Literal(Literal::Array(items)) => ast
+                .exprs_in(*items)
+                .iter()
+                .any(|item| self.mentions_region(*item)),
+            Expression::ArrayRepeat(value, _) => self.mentions_region(*value),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
-            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::TypeValue(_)
             | Expression::PackMap(..)
@@ -526,9 +642,6 @@ impl<'a> Region<'a> {
             | Expression::Proc(..)
             | Expression::UnsafeFn(_)
             | Expression::Try(_)
-            | Expression::StructInit(..)
-            | Expression::EnumVariantInit(..)
-            | Expression::Tuple(_)
             | Expression::If(..)
             | Expression::Switch(..) => false,
         }
@@ -569,7 +682,8 @@ pub fn check_frame_escapes_recovering(
     // and is safe, because `check_linearity` forces the registration to be
     // consumed in the function that made it and this check stops it leaving
     // that function by any other road.
-    let registrations = crate::lower::callbacks::callback_registrations(ast, roots);
+    let registrations =
+        crate::lower::callbacks::callback_registrations(ast, roots);
     let fields = collect_field_types(ast, roots);
     let views = collect_view_returns(ast, roots, &fields);
     let externs: HashSet<String> = roots
@@ -1862,8 +1976,7 @@ impl Frame<'_> {
                 }
                 self.check(*body, false);
             }
-            Statement::Defer(inner)
-            | Statement::ErrDefer(inner) => {
+            Statement::Defer(inner) | Statement::ErrDefer(inner) => {
                 self.check_statement(*inner, false, at);
             }
             Statement::Expression(value) => {
@@ -2183,124 +2296,152 @@ impl Frame<'_> {
         }
     }
 
-    /// The declared type of a place, as far as the annotations and the struct
-    /// declarations give it. `None` means the walk cannot tell, and the rules
-    /// that ask treat that as the answer that keeps storage in.
     fn place_type(&self, place: ExprId) -> Option<Type> {
-        let ast = self.ast;
-        match ast.expr(place) {
-            Expression::Identifier(name) => {
-                self.types.get(ast.name(*name)).cloned()
-            }
-            Expression::FieldAccess(base, field) => {
-                let name = match self.place_type(*base)? {
-                    Type::Struct(name) | Type::Enum(name) => name,
-                    Type::Ptr(inner)
-                    | Type::Ref(inner)
-                    | Type::RefMut(inner) => match *inner {
+        place_type(self.ast, &self.types, self.fields, place)
+    }
+
+    fn value_type(&self, value: ExprId) -> Option<Type> {
+        value_type(self.ast, &self.types, self.fields, self.returns, value)
+    }
+}
+
+/// The declared type of a place, as far as the annotations and the struct
+/// declarations give it. `None` means the walk cannot tell, and the rules
+/// that ask treat that as the answer that keeps storage in.
+fn place_type(
+    ast: &Ast,
+    locals: &HashMap<String, Type>,
+    fields: &FieldTypes,
+    place: ExprId,
+) -> Option<Type> {
+    match ast.expr(place) {
+        Expression::Identifier(name) => locals.get(ast.name(*name)).cloned(),
+        Expression::FieldAccess(base, field) => {
+            let name = match place_type(ast, locals, fields, *base)? {
+                Type::Struct(name) | Type::Enum(name) => name,
+                Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+                    match *inner {
                         Type::Struct(name) | Type::Enum(name) => name,
                         _ => return None,
-                    },
-                    _ => return None,
-                };
-                let field = ast.name(*field);
-                self.fields
-                    .get(Type::template_of(&name))?
-                    .iter()
-                    .find(|(declared, _)| declared == field)
-                    .map(|(_, ty)| ty.clone())
-            }
-            Expression::Index(base, _) => match self.place_type(*base)? {
+                    }
+                }
+                _ => return None,
+            };
+            let field = ast.name(*field);
+            fields
+                .get(Type::template_of(&name))?
+                .iter()
+                .find(|(declared, _)| declared == field)
+                .map(|(_, ty)| ty.clone())
+        }
+        Expression::Index(base, _) => {
+            match place_type(ast, locals, fields, *base)? {
                 Type::Array(inner, _)
                 | Type::ArrayGeneric(inner, _)
                 | Type::Slice(inner)
                 | Type::Ptr(inner) => Some(*inner),
                 Type::Str => Some(Type::U8),
                 _ => None,
-            },
-            Expression::Dereference(base) => match self.place_type(*base)? {
+            }
+        }
+        Expression::Dereference(base) => {
+            match place_type(ast, locals, fields, *base)? {
                 Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
                     Some(*inner)
                 }
                 _ => None,
-            },
-            _ => None,
+            }
         }
+        _ => None,
     }
+}
 
-    /// The type a binding takes from its value, for the shapes that say so
-    /// plainly. Only enough to answer the indexing question above.
-    fn value_type(&self, value: ExprId) -> Option<Type> {
-        let ast = self.ast;
-        match ast.expr(value) {
-            Expression::Call(callee, arguments) => {
-                let arguments = ast.exprs_in(*arguments);
-                let Expression::Identifier(name) = ast.expr(*callee) else {
-                    return None;
-                };
-                match ast.name(*name) {
-                    // The three that build a view are not declared anywhere, so
-                    // their types are written here. Without them a pointer bound
-                    // from `ptr_to` has no type, and the dereference rule cannot
-                    // tell a scalar read from a view read.
-                    "ptr_to" => Some(Type::Ptr(Box::new(
-                        arguments
-                            .first()
-                            .and_then(|place| self.place_type(*place))
-                            .unwrap_or(Type::Unknown),
-                    ))),
-                    "ptr_cast" => match arguments
+/// The type a binding takes from its value, for the shapes that say so
+/// plainly. Only enough to answer the indexing question above.
+fn value_type(
+    ast: &Ast,
+    locals: &HashMap<String, Type>,
+    fields: &FieldTypes,
+    returns: &HashMap<String, Type>,
+    value: ExprId,
+) -> Option<Type> {
+    match ast.expr(value) {
+        Expression::Call(callee, arguments) => {
+            let arguments = ast.exprs_in(*arguments);
+            let Expression::Identifier(name) = ast.expr(*callee) else {
+                return None;
+            };
+            match ast.name(*name) {
+                // The three that build a view are not declared anywhere, so
+                // their types are written here. Without them a pointer bound
+                // from `ptr_to` has no type, and the dereference rule cannot
+                // tell a scalar read from a view read.
+                "ptr_to" => Some(Type::Ptr(Box::new(
+                    arguments
                         .first()
-                        .map(|argument| ast.expr(*argument))
+                        .and_then(|place| {
+                            place_type(ast, locals, fields, *place)
+                        })
+                        .unwrap_or(Type::Unknown),
+                ))),
+                "ptr_cast" => {
+                    match arguments.first().map(|argument| ast.expr(*argument))
                     {
                         Some(Expression::TypeValue(inner)) => {
                             Some(Type::Ptr(Box::new(inner.clone())))
                         }
                         _ => None,
-                    },
-                    "slice_from" => match arguments
-                        .first()
-                        .map(|argument| ast.expr(*argument))
+                    }
+                }
+                "slice_from" => {
+                    match arguments.first().map(|argument| ast.expr(*argument))
                     {
                         Some(Expression::TypeValue(inner)) => {
                             Some(Type::Slice(Box::new(inner.clone())))
                         }
                         _ => None,
-                    },
-                    name => self.returns.get(name).cloned(),
+                    }
                 }
+                name => returns.get(name).cloned(),
             }
-            Expression::Unsafe(body) => {
-                block_value(ast, *body).and_then(|inner| self.value_type(inner))
-            }
-            Expression::Literal(Literal::String(_)) => Some(Type::Str),
-            Expression::Literal(Literal::Array(elements)) => {
-                let elements = ast.exprs_in(*elements);
-                let element = elements
-                    .first()
-                    .and_then(|first| self.value_type(*first))
-                    .unwrap_or(Type::Unknown);
-                Some(Type::Array(Box::new(element), elements.len()))
-            }
-            Expression::ArrayRepeat(inner, count) => Some(Type::ArrayGeneric(
-                Box::new(self.value_type(*inner).unwrap_or(Type::Unknown)),
-                SizeExpr::Named(ast.name(*count).to_string()),
-            )),
-            Expression::StructInit(name, _) => {
-                Some(Type::Struct(ast.name(*name).to_string()))
-            }
-            Expression::EnumVariantInit(name, _, _) => {
-                Some(Type::Enum(ast.name(*name).to_string()))
-            }
-            Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
-            Expression::Literal(Literal::Float(_)) => Some(Type::F64),
-            Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
-            Expression::Literal(Literal::Boolean(_))
-            | Expression::Boolean(_) => Some(Type::Bool),
-            _ => self.place_type(value),
         }
+        Expression::Unsafe(body) => block_value(ast, *body)
+            .and_then(|inner| value_type(ast, locals, fields, returns, inner)),
+        Expression::Literal(Literal::String(_)) => Some(Type::Str),
+        Expression::Literal(Literal::Array(elements)) => {
+            let elements = ast.exprs_in(*elements);
+            let element = elements
+                .first()
+                .and_then(|first| {
+                    value_type(ast, locals, fields, returns, *first)
+                })
+                .unwrap_or(Type::Unknown);
+            Some(Type::Array(Box::new(element), elements.len()))
+        }
+        Expression::ArrayRepeat(inner, count) => Some(Type::ArrayGeneric(
+            Box::new(
+                value_type(ast, locals, fields, returns, *inner)
+                    .unwrap_or(Type::Unknown),
+            ),
+            SizeExpr::Named(ast.name(*count).to_string()),
+        )),
+        Expression::StructInit(name, _) => {
+            Some(Type::Struct(ast.name(*name).to_string()))
+        }
+        Expression::EnumVariantInit(name, _, _) => {
+            Some(Type::Enum(ast.name(*name).to_string()))
+        }
+        Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
+        Expression::Literal(Literal::Float(_)) => Some(Type::F64),
+        Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
+        Expression::Literal(Literal::Boolean(_)) | Expression::Boolean(_) => {
+            Some(Type::Bool)
+        }
+        _ => place_type(ast, locals, fields, value),
     }
+}
 
+impl Frame<'_> {
     /// What a value is worth where the context expects a particular type.
     ///
     /// A view is *formed* rather than copied wherever an array lands somewhere
@@ -2655,9 +2796,26 @@ impl Frame<'_> {
             Expression::Identifier(name) => {
                 self.name_provenance(ast.name(*name))
             }
-            // Reaching into a value stays inside whatever it named.
+            // Reaching into a value stays inside whatever it named, unless
+            // what is read holds no view of its own. A number read out of a
+            // struct that also holds a pointer is a number, and carries
+            // nothing however short-lived the struct was. This is the same
+            // rule the dereference below runs, asked of a field and an
+            // element: without it, `holder.count` and `view[0]` were as
+            // short-lived as the storage beside them.
             Expression::Index(base, _) | Expression::FieldAccess(base, _) => {
-                self.value_provenance(*base)
+                match self.place_type(expression) {
+                    Some(read)
+                        if !holds_view(
+                            &read,
+                            self.fields,
+                            &mut HashSet::new(),
+                        ) =>
+                    {
+                        Provenance::Outlives
+                    }
+                    _ => self.value_provenance(*base),
+                }
             }
             // Reading back through a pointer hands out whatever sits there. A
             // scalar read carries no storage however short-lived the pointer

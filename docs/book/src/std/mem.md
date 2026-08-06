@@ -140,6 +140,42 @@ test "what a block took is what releasing it gives back" {
 `before` is read rather than assumed to be zero, so the test says what it means
 whatever else the program has already allocated.
 
+## `std/arena.frost`, the other allocator
+
+An arena is the second way a program gets storage, and the one a scratch region
+uses. It holds its own bytes and an offset:
+
+```frost
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+```
+
+`Arena<4096>` is 4096 bytes and an offset, and nothing under it allocates. A
+program builds one where it wants the storage to live and hands it to the calls
+that draw from it.
+
+| Call | What it does |
+| --- | --- |
+| `arena_carve($T, $N, mut a, count) -> []T` | A run of `count` elements, taken from the front of what is left |
+| `arena_mark($N, a) -> i64` | Where the arena is now, to roll back to |
+| `arena_reset($N, mut a, mark)` | Everything carved since the mark, reclaimed |
+| `arena_used($N, a) -> i64` | How many bytes are out |
+
+`arena_carve` hands back a `[]T` rather than a pointer, so everything built on
+it is bounds-checked, and the one `unsafe` block in the file is the reinterpret
+from bytes to `T`. A run starts at the next multiple of 8, which is the
+alignment of every type laid out without `align(N)` written on it; there is no
+`alignof` to ask, so a type wanting more than that is a gap this does not fill.
+
+Freeing is by the block rather than by the value: `arena_reset` puts the offset
+back and the next carve takes the same bytes. That is the whole lifetime story,
+and it is why the container over a carved run
+([fixed.frost](containers.md)) owns nothing and frees nothing. What stops a run
+outliving the arena is the region check, in
+[allocation-and-regions.md](../reference/allocation-and-regions.md).
+
 ## Tests
 
 ```bash

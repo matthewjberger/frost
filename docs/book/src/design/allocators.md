@@ -34,9 +34,17 @@ in how they hand that memory out and take it back.
    free. You free everything at once by resetting the offset, or you save a
    marker and roll back to it, a stack discipline. That is O(1),
    fragmentation-free, and it removes a class of leak and use-after-free bug by
-   batching lifetime rather than tracking it per object.
-   `examples/native/arena.frost` is one over a fixed `[N]u8` inside the struct,
-   with `ptr_to` and `ptr_cast` as the only primitives the compiler supplies.
+   batching lifetime rather than tracking it per object. `std/arena.frost` is
+   one over a fixed `[N]u8` inside the struct, handing out `[]T` runs so that
+   what is built on it is bounds-checked, with `ptr_to`, `ptr_cast` and
+   `slice_from` as the only primitives the compiler supplies.
+   `examples/native/arena.frost` is the same thing written out by hand, which is
+   what the layer looks like with nothing under it.
+
+   `std/fixed.frost` is the container over a carved run: `Vec<T>` with the
+   allocator taken out, so a growable array can live in a scratch region and the
+   region check refuses it outliving one. A `Vec` keeps the heap, and neither
+   type carries a field naming which allocator it came from.
 
    An arena whose backing came from the OS is declared `linear`, so the compiler
    requires it be destroyed exactly once and forgetting is a compile error. That

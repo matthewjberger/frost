@@ -1,6 +1,6 @@
 # The standard library
 
-`std/` is seventeen files of Frost, compiled the way your own modules are
+`std/` is twenty files of Frost, compiled the way your own modules are
 compiled. Nothing in it is a compiler intrinsic a program does not also get:
 `Vec` and `Map` are structs over a heap slice, `Option` is a generic enum, and
 `Slab` and `columns` use the handle indexing of section 10.2 of
@@ -11,8 +11,10 @@ Where the library reaches outside the language it does it the way a program
 would, with an `extern` declaration. `mem.frost` declares the C allocator,
 `io.frost` the runtime's write helpers, `fs.frost` its file calls,
 `thread.frost` its threading ones, and `math.frost` and `math64.frost` the C
-transcendentals. Those six files hold every `extern` in the library. The other
-eleven declare none, which is why they are ordinary safe code.
+transcendentals. `ecs.frost` and `slab.frost` add one runtime call each, for
+reporting and for the identifier a container stamps into its handles. Those
+eight files hold every `extern` in the library. The other twelve declare none,
+which is why they are ordinary safe code.
 
 Nothing is imported implicitly. A program that wants to print says
 `import "io.frost"`, and the file is found on the standard library search path
@@ -23,7 +25,9 @@ standard library is the last of them.
 | Module | What it is | Page |
 | --- | --- | --- |
 | `mem.frost` | Typed heap allocation, and the block counter the leak tests use | [mem.md](mem.md) |
+| `arena.frost` | A bump allocator over a fixed buffer, carving `[]T` runs | [mem.md](mem.md) |
 | `vec.frost` | A growable array, `linear`, over one heap block | [containers.md](containers.md) |
+| `fixed.frost` | The same array over storage it does not own, an arena run among them | [containers.md](containers.md) |
 | `map.frost` | A hash map by open addressing, with `Hashing<K>` | [containers.md](containers.md) |
 | `slab.frost` | The generational slab, and `Handle<T>` | [containers.md](containers.md) |
 | `columns.frost` | The same slab stored structure-of-arrays | [containers.md](containers.md) |
@@ -38,6 +42,7 @@ standard library is the last of them.
 | `thread.frost` | Spawn, join, and an atomic add | [thread.md](thread.md) |
 | `math.frost` | Vectors, matrices and quaternions at `f32` | [math.md](math.md) |
 | `math64.frost` | The same library at `f64` | [math.md](math.md) |
+| `snapshot.frost` | A world written to bytes and read back, refusing a mismatched registry | [ecs.md](ecs.md) |
 | `ecs.frost` | An archetype entity-component system | [ecs.md](ecs.md) |
 
 [graphics.md](graphics.md) covers `lib/` and `examples/graphics/`, which are not part of
@@ -47,8 +52,10 @@ what a binding to a real C library looks like.
 ## What it stands on
 
 Almost everything allocating in the library goes through `mem.frost`, which is
-where the `unsafe` is concentrated. `vec.frost` and `map.frost` hold slices
-rather than raw pointers and contain no `unsafe` block of their own.
+where the `unsafe` is concentrated. `arena.frost` is the one other allocator,
+and its single `unsafe` block is the reinterpret from bytes to `T`.
+`vec.frost`, `fixed.frost` and `map.frost` hold slices rather than raw pointers
+and contain no `unsafe` block of their own.
 `slab.frost` and `columns.frost` allocate nothing at all. `io.frost`,
 `fs.frost` and `thread.frost` each wrap a handful of `extern` declarations so a
 program that prints, reads a file or starts a thread names none of them.

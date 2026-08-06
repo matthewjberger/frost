@@ -1,0 +1,91 @@
+// A per-frame scratch region: the storage a frame needs, carved out of an arena
+// inside the frame's own `with` block and reclaimed whole when the frame ends.
+//
+// The arena is built once, on the stack, and never grows. Each frame carves a
+// run out of it, fills a container over that run, reads the container, and
+// resets the arena back to empty. No allocation happens after startup and
+// nothing is freed one value at a time.
+//
+// What the block buys over calling the arena directly is the check. `visible`
+// holds a view of the arena, so the region check refuses it leaving the block:
+// assigning it to a binding declared outside, reading its storage out one field
+// at a time, or ending the block with it are all errors rather than a pointer
+// into bytes the next frame is about to overwrite. The commented line at the
+// bottom of `draw_frame` is one of them, and uncommenting it stops the program
+// building under both compilers.
+//
+//   frost examples/native/scratch_frame.frost
+
+import "io.frost"
+import "arena.frost"
+import "fixed.frost"
+
+Sprite :: struct { x: i64, y: i64, layer: i64 }
+
+// The layers a frame draws, which is what decides how much of the world lands
+// in the scratch buffer that frame.
+visible_layers :: fn(frame: i64) -> i64 {
+    frame + 1
+}
+
+// What the frame is worth, read off the run the container hands out. This takes
+// a `[]Sprite` rather than the container, so everything above the arena is
+// ordinary slice code.
+tally :: fn(drawn: []Sprite) -> i64 {
+    var total: i64 = 0
+    for sprite in drawn {
+        total = total + sprite.x + sprite.y
+    }
+    total
+}
+
+// One frame. The arena is handed in, the run is carved inside the region, and
+// what leaves is a number.
+draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite, frame: i64) -> i64 {
+    var total: i64 = 0
+    with scratch {
+        run := arena_carve($Sprite, $4096, scratch, 16)
+        var visible := fixed_over($Sprite, run)
+        for sprite in world {
+            if (sprite.layer < visible_layers(frame)) {
+                fixed_push($Sprite, visible, sprite)
+            }
+        }
+        print_str("frame ")
+        print_int(frame)
+        print_str(" drew ")
+        print_int(fixed_len($Sprite, visible))
+        print_str(" of ")
+        print_int_line(slice_len(world))
+        total = tally(fixed_slice($Sprite, visible))
+    // escaped = visible
+    //     region: a pointer into arena 'scratch' escapes its region
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    var scratch: Arena<4096> = Arena { data = [0; 4096], offset = 0 }
+    var world: [6]Sprite = [
+        Sprite { x = 1, y = 2, layer = 0 },
+        Sprite { x = 3, y = 4, layer = 0 },
+        Sprite { x = 5, y = 6, layer = 1 },
+        Sprite { x = 7, y = 8, layer = 1 },
+        Sprite { x = 9, y = 10, layer = 2 },
+        Sprite { x = 11, y = 12, layer = 2 },
+    ]
+    var total: i64 = 0
+    var frame: i64 = 0
+    while (frame < 3) {
+        total = total + draw_frame(scratch, world, frame)
+        // The whole frame's storage, back in one step. Nothing was freed one
+        // value at a time, and the next frame carves the same bytes again.
+        arena_reset($4096, scratch, 0)
+        frame = frame + 1
+    }
+    print_str("total ")
+    print_int_line(total)
+    print_str("arena still holds ")
+    print_int_line(arena_used($4096, scratch))
+    0
+}

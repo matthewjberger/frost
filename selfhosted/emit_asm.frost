@@ -9,7 +9,7 @@ import "parser.frost"
 import "emit.frost"
 import "layout.frost"
 
-export count_args, count_params, emit_asm_program, unit_owns,
+export count_args, count_type_args, count_params, emit_asm_program, unit_owns,
     unit_owns_generic
 
 // Emitting assembly a fragment at a time is noisy, so these write one line:
@@ -3761,6 +3761,24 @@ count_params :: fn(mut p: Parser, head: i64) -> i64 {
         node := arena_at(p.arena, id)
         count = count + 1
         id = node.next
+    }
+    count
+}
+
+// The other half of the same list: how many arguments a call writes with a `$`
+// in front of them, which is what says a compile-time parameter was given.
+count_type_args :: fn(mut p: Parser, head: i64) -> i64 {
+    var count: i64 = 0
+    var id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind == NodeKind::TypeVal) {
+            count = count + 1
+        }
+        id = next_id
     }
     count
 }

@@ -2363,6 +2363,8 @@ record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
         p.type_param_off = off
         p.type_param_len = len
         p.tparam_is_value = is_value
+        // Written as a parameter of its own, so the call writes it.
+        p.tparam_is_slot = 1
         p.xparam_start = p.gparams.count
         p.xparam_count = 0
     } else {
@@ -3922,7 +3924,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 p.expected_type = saved_expected
                 return new_node_at(p, NodeKind::Assign, expr, value, 0, start)
             }
-            return new_unary(p, NodeKind::ExprStmt, expr)
+            return new_unary_at(p, NodeKind::ExprStmt, expr, start)
         }
         advance(p)
         start := cur_off(p)
@@ -4402,7 +4404,11 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.expected_type = saved_expected
         return new_node_at(p, NodeKind::Assign, expr, value, 0, start)
     }
-    new_unary(p, NodeKind::ExprStmt, expr)
+    // At the token the statement starts with, taken before the expression is
+    // parsed. Reading it off the parser afterwards named the token past the
+    // expression, so a diagnostic about the value a block answers with landed
+    // on the closing brace.
+    new_unary_at(p, NodeKind::ExprStmt, expr, start)
 }
 
 // Everything a `?` or a match queued while this statement was being parsed goes
@@ -6448,6 +6454,21 @@ parse_test :: fn(mut p: Parser) -> i64 {
     name_off := cur_off(p)
     name_len := cur_len(p)
     advance(p)
+    // A test body is a body like any other and names no type parameter, so the
+    // state a generic template left behind is cleared here the way parsing a
+    // function clears it. Without this, a `test` written under a template read
+    // every type name as that template's unbound parameter: `sizeof(Point)` in
+    // a test below a `fn($T: Type)` answered the placeholder's width rather
+    // than the struct's.
+    p.type_param_off = 0
+    p.type_param_len = 0
+    p.saw_type_param = 0
+    p.tparam_is_slot = 0
+    p.tparam_called = 0
+    p.bound_token = -1
+    p.decl_pack_off = 0
+    p.decl_pack_len = 0
+    p.decl_pack_fixed = 0
     fn_name_off := synth_numbered(p, "__test", p.tests.count)
     fn_name_len := 6 + digits_in(p.tests.count)
     fn_index := intern_global(p, fn_name_off, fn_name_len)
@@ -6835,6 +6856,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
     p.type_param_off = 0
     p.type_param_len = 0
     p.saw_type_param = 0
+    p.tparam_is_slot = 0
     p.tparam_called = 0
     p.bound_token = -1
     p.decl_pack_off = 0
@@ -6848,7 +6870,8 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
         tparam_off := p.type_param_off
         tparam_len := p.type_param_len
         record_generic_fn(p, fn_index, tparam_off, tparam_len,
-            p.tparam_is_value, p.tparam_called, p.xparam_start,
+            p.tparam_is_value, p.tparam_called, p.tparam_is_slot,
+            p.xparam_start,
             p.xparam_count, start, p.bound_token, p.decl_pack_off,
             p.decl_pack_len, p.decl_pack_fixed)
         return -1

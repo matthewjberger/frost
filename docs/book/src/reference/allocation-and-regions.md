@@ -152,12 +152,22 @@ Two regions exist:
 - the body of a `with a { ... }` block, whose arena is `a`;
 - the body of a `uses A` function, whose arena is the implicit capability.
 
-A value is a pointer into the region when it is `ptr_to(...)` or
-`slice_from(...)` over the arena, or over something already bound to it; a
-binding already holding one; a call to a *view*-returning function that either
-draws this arena or is passed it, whether that view is a `^T`, a `[]T` or a
-`str`; whichever of those an `if`, a `match` or an `unsafe` block ends with; or a
-read back through a pointer to one.
+A value is a pointer into the region when it is `ptr_to(...)`, `slice_from(...)`
+or `ptr_cast(...)` over the arena, or over something already bound to it; a
+binding already holding one; a call to a function that either draws this arena
+or is passed it and answers with something *holding* a view, whether that is a
+bare `^T`, a `[]T`, a `str`, or a struct with one of those inside; a struct, an
+enum variant or an array literal any of whose values is one; whichever of those
+an `if`, a `match` or an `unsafe` block ends with; or a read back through a
+pointer to one.
+
+The last two are what make a container in an arena checkable. A `Vec`-shaped
+value built in the region carries the arena's storage under a field name, so the
+literal that builds it is a region pointer and so is the whole binding it lands
+in. Reading a field back out is one too, where what is read can carry storage:
+`held.view` off a bound binding is the arena's run, and `held.count` beside it
+is a number and leaves freely. A read whose type the walk cannot name is refused
+rather than let out.
 
 Inside a `with` block, such a value escapes three ways, and each is an error:
 being returned; being assigned to a place rooted outside the region; and being
@@ -193,12 +203,50 @@ stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
 }
 ```
 
-Every refusal reads the same way, naming the arena and how the pointer got out:
+Every refusal reads the same way, naming the arena and how the pointer got out,
+in the same words and at the same place from both compilers:
 
 ```
 region: a pointer into arena 'arena' escapes its region by being returned;
 it may not outlive the arena
 ```
+
+The four ways it ends are `being returned`, `being stored outside it`, `being
+stored into a parameter` (the `uses` case above), and `being the block's value`.
+
+## 8a.5a A container in an arena
+
+`std/arena.frost` is the arena, and `std/fixed.frost` is the container over what
+it carves. `Fixed<T>` is `Vec<T>` with the allocator taken out: a `[]T` somebody
+else owns and a count of how much of it is live. `Vec<T>` calls the heap in
+three places, and none of the three is a thing a bump allocator can do, so the
+container that draws from an arena is a separate type rather than a field on
+`Vec` saying which allocator to use. Every heap vector in every program would
+carry that field.
+
+Owning nothing decides the rest of it. `Fixed<T>` is not `linear`, since there
+is no block to give back and the arena reclaims what it handed out when the
+block ends. Its capacity is the run's length, so a push past the end is an index
+past the end of a slice and aborts where it happens. And it may not outlive its
+storage, which is the region check's job rather than a comment:
+
+```frost,sketch
+draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite) -> i64 {
+    var total : i64 = 0
+    with scratch {
+        run := arena_carve($Sprite, $4096, scratch, 16)
+        var visible := fixed_over($Sprite, run)
+        for sprite in world { fixed_push($Sprite, visible, sprite) }
+        total = tally(fixed_slice($Sprite, visible))
+    }
+    total
+}
+```
+
+`visible` holds a view of the arena, so assigning it to a binding outside the
+block, reading its storage out one field at a time, or ending the block with it
+are all refused. `total` is a number and leaves. `examples/scratch_frame.frost`
+is the whole program.
 
 This is the arena half of 8.2. The frame half is checked beside it, in
 `src/check/regions.rs` and in `check_frame_escapes` in `selfhosted/regions.frost`, and
