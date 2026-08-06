@@ -20,11 +20,11 @@ back. Every piece of that idiom is already in the language:
 - `^T` carries no guarantee once formed, which the reference says outright.
 
 So a callback is writable and it is entirely outside every check the language
-has. `src/regions.rs` reasons about arena pointers by provenance, and its
+has. `src/check/regions.rs` reasons about arena pointers by provenance, and its
 argument is stated in its own header comment: "Frost has no global arenas and no
 closures, so a `^T` can only point into an arena a function was handed directly."
 A `^u8` handed to a C library and called back through later is precisely the case
-that argument does not cover. `src/ownership.rs` cannot see through it either.
+that argument does not cover. `src/check/ownership.rs` cannot see through it either.
 
 The result was that every callback-shaped API in Frost was an unsafe API, not
 because callbacks are unsafe but because the only expression of one was a raw
@@ -60,7 +60,7 @@ expected a trampoline to hold that cast. Why there is none is in
 A `$handler` parameter carrying a function bound on an `extern fn` is the
 complete statement of "this extern takes a callback". Nothing is written beside
 it, and in particular no capability: `uses Arena` means a real implicit
-parameter is supplied at the call, which `src/allocation_sources.rs` inserts,
+parameter is supplied at the call, which `src/lower/allocation_sources.rs` inserts,
 and a callback needs no such parameter. A `uses CallbackAbi` would be a keyword
 pretending to be a capability and a second thing to keep in step with the first.
 
@@ -149,7 +149,7 @@ fire.
 
 `move ctx: Ctx` hands the value to the extern, and the extern keeps a pointer to
 it. So the storage the pointer names has to outlive the call, and a moved
-argument is a value in the caller's frame. `src/regions.rs` and
+argument is a value in the caller's frame. `src/check/regions.rs` and
 `check_frame_escapes` between them already reject a pointer into the current
 frame being returned, stored into a parameter, or carried out inside a struct.
 What they did not reject was one being *handed to an extern that keeps it*,
@@ -174,7 +174,7 @@ so `check_linearity` already forces it to be consumed exactly once in the
 function that made it. A context in that same frame therefore outlives the
 registration by construction, and the frame is exactly the right place for it.
 What is left to stop is the registration *leaving* that function by some other
-road, which is the same shape `src/regions.rs` already enforces for pointers:
+road, which is the same shape `src/check/regions.rs` already enforces for pointers:
 returned, stored where the call cannot see, or handed back as the call's answer.
 
 So the rule is not a new kind of check. A registration whose context is rooted in

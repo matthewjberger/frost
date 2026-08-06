@@ -105,7 +105,7 @@ The wording is the bootstrap's, byte for byte.
 faults, on the same lines, in the same words, and
 `self_hosted_answers_editor_queries` holds `FROST_QUERY` (symbols, a
 definition's line, a struct's fields, a local's type) to the answers the
-bootstrap's `src/query.rs` gives in its own tests.
+bootstrap's `src/tools/query.rs` gives in its own tests.
 
 ## What the fixpoint cannot see
 

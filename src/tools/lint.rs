@@ -30,7 +30,7 @@ pub fn lint(
 
 /// An `unsafe` block holding nothing that needs one.
 fn idle_unsafe_blocks(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
-    let (_, idle) = crate::unsafety::check_unsafety_and_audit(ast, roots);
+    let (_, idle) = crate::check::unsafety::check_unsafety_and_audit(ast, roots);
     idle
 }
 

@@ -88,7 +88,7 @@ pub struct IrBuilder {
     generic_struct_defs: GenericStructDefs,
     linear: HashSet<String>,
     // Callback registrations, by name.
-    registrations: HashMap<String, crate::callbacks::CallbackShape>,
+    registrations: HashMap<String, crate::lower::callbacks::CallbackShape>,
     // A number per type, handed out in the order `type_id` first asks for one.
     // What it is for is a table keyed by type in a program that decides at run
     // time what it holds: a component registry knows a type at the call that
@@ -117,7 +117,7 @@ struct AnonRequest {
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
-        let text = crate::imports::demangle_private_names(&error.to_string());
+        let text = crate::modules::imports::demangle_private_names(&error.to_string());
         if position == Position::default() || text.starts_with("at ") {
             anyhow::anyhow!("{text}")
         } else {
@@ -180,7 +180,7 @@ fn report(
     position: Position,
     error: &anyhow::Error,
 ) {
-    let text = crate::imports::demangle_private_names(&error.to_string());
+    let text = crate::modules::imports::demangle_private_names(&error.to_string());
     let message = if position == Position::default() || text.starts_with("at ")
     {
         text
@@ -292,14 +292,14 @@ fn build_module_inner(
         generic_functions,
         generic_struct_defs,
         linear: linear_with_holders(linear, ast, &with_instances),
-        registrations: crate::callbacks::callback_registrations(ast, roots),
+        registrations: crate::lower::callbacks::callback_registrations(ast, roots),
         type_ids: std::cell::RefCell::new(HashMap::new()),
         anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(ast, roots);
 
     let ownership =
-        crate::ownership::specializations(ast, &with_instances, linear);
+        crate::check::ownership::specializations(ast, &with_instances, linear);
 
     let mut functions = Vec::new();
     let mut externs = Vec::new();
@@ -362,7 +362,7 @@ fn build_module_inner(
                 if let Some(first) =
                     ownership.check(ast, parameters, body).first()
                 {
-                    let message = crate::imports::demangle_private_names(
+                    let message = crate::modules::imports::demangle_private_names(
                         &format!("at {}: {first}", position.describe()),
                     );
                     diagnostics.push(crate::diagnostic::Diagnostic {
@@ -628,7 +628,7 @@ fn build_module_inner(
                 // The prefix an import gives a private name is nothing the
                 // reader wrote, so it comes back off the way it does in every
                 // other diagnostic.
-                let message = crate::imports::demangle_private_names(&format!(
+                let message = crate::modules::imports::demangle_private_names(&format!(
                     "at {}: instantiating '{}': {first}",
                     specialization.requested_at.describe(),
                     specialization.display
@@ -766,7 +766,7 @@ fn declared_function(
 // keeps it past the call.
 fn extern_parameter_types(ast: &Ast, params: Range32) -> Vec<Type> {
     let params = ast.params_in(params);
-    let shape = crate::callbacks::callback_shape(params);
+    let shape = crate::lower::callbacks::callback_shape(params);
     params
         .iter()
         .enumerate()
@@ -827,9 +827,9 @@ fn locate_instantiation_error(
     error: &anyhow::Error,
     specialization: &Specialization,
 ) -> anyhow::Error {
-    let text = crate::imports::demangle_private_names(&error.to_string());
+    let text = crate::modules::imports::demangle_private_names(&error.to_string());
     let display =
-        crate::imports::demangle_private_names(&specialization.display);
+        crate::modules::imports::demangle_private_names(&specialization.display);
     if specialization.requested_at == Position::default() {
         anyhow::anyhow!("instantiating '{display}': {text}")
     } else {
@@ -956,7 +956,7 @@ fn walk_constant(
     path.push(name.to_string());
     let mut referenced = Vec::new();
     if let Some(value) = constants.get(name) {
-        crate::interface_names::names_in_expression(
+        crate::modules::interface_names::names_in_expression(
             ast,
             *value,
             &mut referenced,
@@ -1327,8 +1327,8 @@ pub fn linear_with_holders(
     // The instantiations, which the declarations alone cannot answer for: a
     // generic's field is a parameter bound to nothing here, so `Slab` holds no
     // resource while `Slab<Node, 2>` does.
-    let instances = crate::linear_instances::collect_instances(ast, statements);
-    let templates = crate::linear_instances::declared_structs(ast, statements);
+    let instances = crate::check::linear_instances::collect_instances(ast, statements);
+    let templates = crate::check::linear_instances::declared_structs(ast, statements);
     loop {
         let mut grew = false;
         for statement in statements {
@@ -1383,7 +1383,7 @@ pub fn linear_with_holders(
         // In the same loop as the holders, since an instance is a resource
         // because of a field and a struct is one because of an instance in a
         // field of its own.
-        if crate::linear_instances::note_linear_instances(
+        if crate::check::linear_instances::note_linear_instances(
             &templates, &instances, &mut held,
         ) {
             grew = true;
@@ -4275,10 +4275,10 @@ fn check_defer_names(
     rest: &[StmtId],
 ) -> Result<()> {
     let mut mentioned = Vec::new();
-    crate::interface_names::names_in_statement(ast, deferred, &mut mentioned);
+    crate::modules::interface_names::names_in_statement(ast, deferred, &mut mentioned);
     let mut rebound = HashSet::new();
     for statement in rest {
-        crate::import_visibility::bound_in_statement(
+        crate::modules::import_visibility::bound_in_statement(
             ast,
             *statement,
             &mut rebound,
@@ -6096,7 +6096,7 @@ impl<'a> FunctionLowering<'a> {
                     .find(|variant| !variant.fields.is_empty())
                 {
                     let readable =
-                        crate::imports::demangle_private_names(&name);
+                        crate::modules::imports::demangle_private_names(&name);
                     bail!(
                         "'{readable}' cannot be compared with == because its variant '.{}' carries fields, so two values of it can be the same variant and different values; match on it instead",
                         carrying.name
@@ -6402,7 +6402,7 @@ impl<'a> FunctionLowering<'a> {
         let Some(name) = named else {
             return Ok(());
         };
-        let readable = crate::imports::demangle_private_names(name);
+        let readable = crate::modules::imports::demangle_private_names(name);
         if !matches!(
             binop,
             IrBinOp::BitwiseOr
@@ -6698,7 +6698,7 @@ impl<'a> FunctionLowering<'a> {
             }
             _ => {
                 let written =
-                    crate::imports::demangle_private_names(&ty.to_string());
+                    crate::modules::imports::demangle_private_names(&ty.to_string());
                 if matches!(expected, Some(Type::Ptr(_))) {
                     (
                         IrOperand::Constant(IrConstant::CString(written)),
@@ -7182,7 +7182,7 @@ impl<'a> FunctionLowering<'a> {
         // ones alone: a program that never writes `Vec<File>` down still makes
         // one.
         if !self.builder.linear.is_empty() {
-            let templates: crate::linear_instances::Templates<'_> = self
+            let templates: crate::check::linear_instances::Templates<'_> = self
                 .builder
                 .generic_struct_defs
                 .iter()
@@ -7209,7 +7209,7 @@ impl<'a> FunctionLowering<'a> {
                 .chain(std::iter::once(&return_type))
             {
                 if let Some(report) =
-                    crate::linear_instances::pooled_resource_in(
+                    crate::check::linear_instances::pooled_resource_in(
                         concrete,
                         &templates,
                         &self.builder.linear,
@@ -8328,7 +8328,7 @@ impl<'a> FunctionLowering<'a> {
             );
         };
         if self.flags_name_of(&wanted_type) != Some(name) {
-            let readable = crate::imports::demangle_private_names(name);
+            let readable = crate::modules::imports::demangle_private_names(name);
             bail!(
                 "flags_has looks for bits of the set it is given, and a '{wanted_type}' is not a '{readable}'"
             );
@@ -9751,7 +9751,7 @@ impl<'a> FunctionLowering<'a> {
             .map(|name| format!("'.{name}'"))
             .collect::<Vec<_>>()
             .join(", ");
-        let readable = crate::imports::demangle_private_names(enum_name);
+        let readable = crate::modules::imports::demangle_private_names(enum_name);
         bail!(
             "match on '{readable}' does not cover {named}; add the case or a `case _` for the rest"
         )
@@ -9904,7 +9904,7 @@ impl<'a> FunctionLowering<'a> {
                     let parts = patterns.len();
                     let described = match (&enum_name, &scalar) {
                         (Some(name), _) => {
-                            crate::imports::demangle_private_names(name)
+                            crate::modules::imports::demangle_private_names(name)
                         }
                         (None, Some((_, ty))) => ty.to_string(),
                         (None, None) => "the matched value".to_string(),

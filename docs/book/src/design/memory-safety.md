@@ -2,7 +2,7 @@
 
 Frost is memory-safe without a garbage collector and without lifetime
 annotations. Safety is enforced entirely at compile time by a pass that runs
-after parsing and before any code is generated (`src/ownership.rs`), backed by a
+after parsing and before any code is generated (`src/check/ownership.rs`), backed by a
 type system that makes the dangerous shapes *unrepresentable* rather than merely
 *checked*.
 
@@ -23,7 +23,7 @@ one decision plus a small number of local rules.
    trace its storage to a parameter or an allocation capability. Storage it
    cannot trace is refused, whether the view leaves by being returned, by being
    stored where the call cannot see, or by being what the block ends with
-   (`src/regions.rs`, and `check_frame_escapes` in `selfhosted/regions.frost`;
+   (`src/check/regions.rs`, and `check_frame_escapes` in `selfhosted/regions.frost`;
    both compilers refuse the same programs). A view the function was handed names
    storage the caller owns and passes back out freely. Neither borrow may be
    stored: not in a struct field, not in an array element, not in a container.
@@ -264,7 +264,7 @@ do not consume, so the common read patterns are unaffected. Only a `move`
 parameter takes the value. Copy types are never moved, so
 `add(x, x)` with integer `x` is fine.
 
-Enforced per function body by `MoveChecker` in `src/ownership.rs`, which tracks a
+Enforced per function body by `MoveChecker` in `src/check/ownership.rs`, which tracks a
 set of moved bindings and their types.
 
 ## 3. Borrow exclusivity, so no mutable aliasing

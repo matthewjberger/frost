@@ -856,7 +856,7 @@ impl Checker<'_> {
                 // function could index its own arena outside an `unsafe` block.
                 for capability in &ast.signature(*signature).uses {
                     self.bind(
-                        &crate::regions::capability_binding(capability),
+                        &crate::check::regions::capability_binding(capability),
                         Some(capability.clone()),
                     );
                 }

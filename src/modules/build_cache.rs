@@ -7,7 +7,7 @@ use crate::ast::{
     Ast, Expression, Module, Parameter, Range32, Splicer, Statement, StmtId,
     splice_positions,
 };
-use crate::interface::ModuleInterface;
+use crate::modules::interface::ModuleInterface;
 use crate::types::Type;
 
 // The shape of a record on disk. Bumped when the serialized AST changes form,

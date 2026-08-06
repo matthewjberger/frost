@@ -54,7 +54,7 @@ fn reachable_types(
                 continue;
             }
             let mut mentioned = Vec::new();
-            crate::interface_names::names_in_statement(
+            crate::modules::interface_names::names_in_statement(
                 ast,
                 *statement,
                 &mut mentioned,
@@ -186,7 +186,7 @@ pub fn check_interface_is_closed(
         .collect();
     for statement in &held.roots {
         let mut mentioned = Vec::new();
-        crate::interface_names::names_in_statement(
+        crate::modules::interface_names::names_in_statement(
             &held.ast,
             *statement,
             &mut mentioned,

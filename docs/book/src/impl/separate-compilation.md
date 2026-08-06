@@ -15,7 +15,7 @@ build clears the bar, which `just bench-scaling` is what says. This is the other
 half, and it is not a constant factor. [roadmap.md](../roadmap.md) lists the
 recipes.
 
-`src/imports.rs` flattens every import into one AST. `resolve_imports` reads each
+`src/modules/imports.rs` flattens every import into one AST. `resolve_imports` reads each
 imported file, parses it, renames its private names, and splices the statements
 into a single `Vec<Spanned<Statement>>`. Every pass after that runs over the
 whole program. So a program's cost is whole-program by construction, and the two
@@ -37,7 +37,7 @@ A module is a file. That is already true of `import`, already true of the
 rules to explain instead of one.
 
 A module's interface is its `export` line. Also already true. `private_renames`
-in `src/imports.rs` mangles every top-level name a file does not export, which
+in `src/modules/imports.rs` mangles every top-level name a file does not export, which
 means the export list is already the complete set of names another file can
 depend on. Separate compilation does not need a new declaration form. It needs
 the existing one to be written down in a file rather than reconstructed by
@@ -137,7 +137,7 @@ private copies rather than a fold.
 Compiling a module writes an interface and an object, and `--incremental` skips
 the modules an edit cannot reach.
 
-`src/interface.rs` derives a `ModuleInterface` at the one place a module is
+`src/modules/interface.rs` derives a `ModuleInterface` at the one place a module is
 parsed, which is what stops it drifting from the source it describes. Three
 checks run under `FROST_CHECK_INTERFACES`, which the test suite sets on every
 compilation: it survives a JSON round trip, it declares everything it exports,
@@ -160,7 +160,7 @@ would lose the hidden out-pointer an aggregate return uses and the two objects
 would silently disagree about the ABI.
 
 `--incremental` keeps a record and an object per module under `--build-dir`. The
-decision is a fingerprint, in `src/build_cache.rs`: a hash of a module's own
+decision is a fingerprint, in `src/modules/build_cache.rs`: a hash of a module's own
 source together with the interface hash of every module reachable through its
 imports, transitively, since a generic this module instantiates can instantiate
 one from further down. A module's interface hash is taken over the interface

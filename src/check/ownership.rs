@@ -50,7 +50,7 @@ fn type_parameter_slots(
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
-        let text = crate::imports::demangle_private_names(&error.to_string());
+        let text = crate::modules::imports::demangle_private_names(&error.to_string());
         if position == Position::default() || text.starts_with("at ") {
             anyhow::anyhow!("{text}")
         } else {
@@ -256,10 +256,10 @@ pub fn check_ownership_recovering(
         runs: &runs,
     };
     let mut reports: Vec<crate::diagnostic::Diagnostic> =
-        crate::linear_instances::check_pooled_resources(
+        crate::check::linear_instances::check_pooled_resources(
             ast,
             roots,
-            &crate::linear_instances::locate_instances(ast, roots),
+            &crate::check::linear_instances::locate_instances(ast, roots),
             &held,
         )
         .into_iter()
@@ -1141,7 +1141,7 @@ impl RunWalk<'_> {
                 }
             }
             _ => {
-                for inner in crate::regions::sub_expressions(ast, expression) {
+                for inner in crate::check::regions::sub_expressions(ast, expression) {
                     self.walk_expression(inner);
                 }
             }
@@ -2920,8 +2920,8 @@ fn linear_closure(
     // The instantiations the program writes. A generic's declared field names a
     // parameter bound to nothing here, so the field table answers for `Slab` and
     // not for `Slab<Node, 2>`, and it is the second that holds the resource.
-    let instances = crate::linear_instances::collect_instances(ast, roots);
-    let templates = crate::linear_instances::declared_structs(ast, roots);
+    let instances = crate::check::linear_instances::collect_instances(ast, roots);
+    let templates = crate::check::linear_instances::declared_structs(ast, roots);
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
@@ -2942,7 +2942,7 @@ fn linear_closure(
         // In the same loop as the holders, since an instance is a resource
         // because of a field and a struct is one because of an instance in a
         // field of its own.
-        if crate::linear_instances::note_linear_instances(
+        if crate::check::linear_instances::note_linear_instances(
             &templates, &instances, &mut held,
         ) {
             grew = true;
@@ -3016,7 +3016,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse()?;
         let linear = parser.linear_types().clone();
-        crate::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        crate::lower::param_modes::lower_param_modes(&mut module.ast, &module.roots);
         check_ownership(&module.ast, &module.roots, &linear)
     }
 
@@ -3039,7 +3039,7 @@ mod tests {
         let mut parser = Parser::with_positions(&tokens, &positions);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        crate::param_modes::lower_param_modes(&mut module.ast, &module.roots);
+        crate::lower::param_modes::lower_param_modes(&mut module.ast, &module.roots);
         let reports =
             check_ownership_recovering(&module.ast, &module.roots, &linear);
         let moved = reports

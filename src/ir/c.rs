@@ -107,7 +107,7 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
-    output.push_str(crate::arith_prelude::ARITH_PRELUDE);
+    output.push_str(crate::lower::arith_prelude::ARITH_PRELUDE);
     output.push('\n');
     externs.insert("frost_rt_arith_trap");
     declared.insert("frost_rt_arith_trap");
