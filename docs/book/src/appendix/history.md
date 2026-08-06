@@ -19,6 +19,7 @@ packed `(generation << 32) | index` handles and the stale-handle check all
 ordinary Frost over a fixed-size array inside a struct.
 
 ```frost
+import "ecs.frost"
 Slab :: struct {
     storage: [4]Entity,
     generations: [4]i64,

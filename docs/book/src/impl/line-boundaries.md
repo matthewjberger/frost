@@ -9,12 +9,12 @@ measured, and what was done about it.
 
 A single token at a line boundary decided the answer, silently:
 
-```frost
+```frost,sketch
 x := 10
     + 20        // x is 30
 ```
 
-```frost
+```frost,sketch
 x := 10
     20          // x is 10, and nothing was said
 ```
@@ -109,6 +109,7 @@ that was already going to be parenthesised by anyone reading it twice.
 Sets no column, since it is indented relative to nothing:
 
 ```frost
+import "io.frost"
 main :: fn() -> i64 { print_int_line(1)
     0 }
 ```

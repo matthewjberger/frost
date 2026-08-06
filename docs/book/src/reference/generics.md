@@ -41,7 +41,7 @@ A parameter written `$N: usize` is a value parameter rather than a type
 parameter. It is a compile-time integer, and its main use is sizing a fixed
 array:
 
-```frost
+```frost,sketch
 Slab :: struct($T: Type, $N: usize) { storage: [N]T, used: i64 }
 world : Slab<Entity, 4> = ...
 ```
@@ -63,7 +63,7 @@ filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
 A function takes them too, which is what lets an operation over a sized
 aggregate be written once rather than once per size:
 
-```frost
+```frost,sketch
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     var i : i64 = 0
     while (i < N) { s.generations[i] = 0  i = i + 1 }
@@ -83,7 +83,7 @@ A parameter written `$f: Type` whose argument names a declared function is a
 compile-time function parameter. The specialization calls it directly, with no
 function pointer and no indirect call:
 
-```frost
+```frost,sketch
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
@@ -99,7 +99,7 @@ Written `$f: Type` the parameter accepts a function of any signature, and a
 mismatch surfaces inside the specialized body. Writing the signature instead
 states what the argument has to be:
 
-```frost
+```frost,sketch
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
 ```
 
@@ -119,7 +119,7 @@ written before it. It is not a runtime parameter: each call has its own count
 and its own types, and the specialization takes one ordinary parameter per
 element.
 
-```frost
+```frost,sketch
 printall :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
@@ -187,7 +187,7 @@ element's name standing for it. This is what gives a call an arity the list
 decides, and it is the only place a list may be written this way, since it is
 the argument count that is being produced:
 
-```frost
+```frost,sketch
 for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     ...
     body(query_column($T, world, q, component_of($T, world))
@@ -218,7 +218,7 @@ A `for` over `fields(T)` is decided at expansion time, the same as a `for` over
 a compile-time list. The body is written once and compiled once per field of
 `T`, with the loop's name standing for that field:
 
-```frost
+```frost,sketch
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
 
 describe :: fn($T: Type, mut out: []Attribute) -> i64 {
@@ -275,7 +275,7 @@ the specialized ABI once monomorphization chooses concrete types.
 There is no turbofish. A type is passed as an ordinary argument by writing `$`
 before it, which forms a type value:
 
-```frost
+```frost,sketch
 stride :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 bytes := stride($Entity, 16)
 ```
@@ -363,7 +363,7 @@ i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
 A generic that needs the operations takes the bundle as a compile-time
 argument, and the call names which one it means:
 
-```frost
+```frost,sketch
 sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
     ...
     if (ops.less(items[j], items[j - 1])) { ... }
@@ -378,7 +378,7 @@ and dispatches on nothing.
 
 Dropping the `$` gives the runtime form from the same declaration:
 
-```frost
+```frost,sketch
 sort_at_runtime :: fn(ops: Ordering<i64>, mut items: []i64) { ... }
 ```
 

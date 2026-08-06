@@ -105,7 +105,7 @@ one instead. A wire format, a file header and a GPU uniform block are each a
 layout something else already decided, and matching one by choosing field
 widths until `sizeof` agrees is a guess that holds until a field is added.
 
-```frost
+```frost,sketch
 Header :: packed struct { magic: u32, kind: u8, length: u32 }
 Uniform :: struct { time: f32, view: Matrix4 align(16) }
 ```
@@ -138,7 +138,7 @@ answer the same on all of them.
 A fixed array of numbers is what a vector register holds, so the arithmetic
 operators are defined over one, once per lane:
 
-```frost
+```frost,inside
 a : [4]f32 = [1.0, 2.0, 3.0, 4.0]
 b : [4]f32 = [5.0, 6.0, 7.0, 8.0]
 sum := a + b            // [6.0, 8.0, 10.0, 12.0]
@@ -189,7 +189,7 @@ rather than by rule.
 
 `ref T` is what lets an accessor hand back a place rather than a copy:
 
-```frost
+```frost,sketch
 arena_at :: fn($T: Type, a: Arena<T>, index: i64) -> ref T { ... }
 
 ref entry := arena_at(p.tokens, index)

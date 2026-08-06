@@ -60,7 +60,7 @@ main :: fn() -> i64 {
 A line built from several values is several calls, with the newline written by
 the one `_line` call at the end:
 
-```frost
+```frost,sketch
 print_str("hp ")
 print_int(entity.hp)
 print_str(" of ")
@@ -131,7 +131,7 @@ Builder :: struct { bytes: Vec<u8> }
 | `builder_uint(mut b, value)` | Appends a non-negative integer's digits |
 | `builder_clear(mut b)` | Forgets the bytes, keeps the storage |
 
-```frost
+```frost,sketch
 var out := builder_new(256)
 builder_str_value(out, "frames: ")
 builder_int(out, count)
@@ -175,7 +175,7 @@ compiler refuses a read whose buffer nothing frees. `ok` is false when the file
 could not be opened, in which case `text` is empty. The `text` is a view into
 `buffer`, so nothing may use it after `fs_free`.
 
-```frost
+```frost,sketch
 read := fs_read("webgpu.json")
 if (read.ok == false) {
     fs_free(read)

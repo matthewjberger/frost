@@ -41,7 +41,7 @@ view names can move while everything around it stays alive. A container that
 fills asks the allocator for a wider block and gives the old one back, so a view
 taken before that names storage the allocator has taken.
 
-```frost
+```frost,sketch
 view := vec_slice($i64, v)
 vec_push($i64, v, 1)         // fills, so the block is replaced
 print_int_line(view[0])      // refused

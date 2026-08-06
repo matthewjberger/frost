@@ -66,7 +66,7 @@ which is wasted work for an integration step and a wrong answer for a sum.
 
 `live_slots(c)` is what that loop should have said:
 
-```frost
+```frost,sketch
 for slot in live_slots(c) {
     c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
 }
@@ -81,7 +81,7 @@ the slot.
 `for index, name in` reads in, which is what compacting into a packed buffer
 wants:
 
-```frost
+```frost,sketch
 for rank, slot in live_slots(c) {
     upload[rank] = c.position[slot]
 }
@@ -228,7 +228,7 @@ slot the handle names, or `-1` where the handle is stale. Indexing `storage` wit
 that number is an ordinary array access: bounds-checked like any other, compared
 against no generation.
 
-```frost
+```frost,sketch
 slot := slab_slot($Unit, $1024, pool, handle)
 if (slot >= 0) {
     var round : i64 = 0

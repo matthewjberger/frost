@@ -39,7 +39,7 @@ live prefix rather than the block, so a vector with room for sixty-four holding
 two elements gives a slice of length two. Writing through it writes into the
 vector:
 
-```frost
+```frost,sketch
 var v := vec_new($VecPoint, 2)
 vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
 vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
@@ -108,7 +108,7 @@ The library ships `i64_keys` and `text_keys`, built from `i64_hash`/`i64_same`
 and `text_hash`/`text_same`. A key of any other type is a constant written where
 it is needed, and the module's own tests do exactly that for a two-field struct:
 
-```frost
+```frost,sketch
 Cell :: struct { x: i64, y: i64 }
 
 cell_hash :: fn(c: Cell) -> i64 {
@@ -130,7 +130,7 @@ contains one.
 
 A string key goes through a one-field wrapper:
 
-```frost
+```frost,sketch
 Text :: struct { bytes: str }
 
 var ages := map_new($Text, $i64, 8)
@@ -195,7 +195,7 @@ storage" cannot be written in a language where references are second-class. The
 rule is section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md).
 
-```frost
+```frost,sketch
 var world : Slab<Entity, 8> = slab_new()
 slab_reset($Entity, $8, world)
 
@@ -237,7 +237,7 @@ over those, mirroring
 `columns<T, N>` changes the container token and the `slab_` prefix and nothing
 else.
 
-```frost
+```frost,sketch
 Particle :: struct { x: i64, y: i64 }
 
 var world : columns<Particle, 8> = columns_new()
@@ -278,7 +278,7 @@ the whole module is the declaration above plus four functions over it.
 A `match` has to cover every variant, so forgetting to handle the absent case is
 a compile error rather than a crash:
 
-```frost
+```frost,sketch
 match found {
     case .None: 0
     case .Some { value }: value * 2

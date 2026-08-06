@@ -12,7 +12,7 @@ is written in (11.1a).
 A call may go through a value rather than a name. A parameter, a binding, or a
 struct field of function-pointer type is called by writing the call on it:
 
-```frost
+```frost,sketch
 System :: struct { run: fn(mut World), stage: i64 }
 
 systems[index].run(world)
@@ -141,7 +141,7 @@ An `if` answers with a value when both of its arms do. An arm whose block ends
 in a statement answers with nothing, and then the whole `if` answers with
 nothing however the other arm ended, which is what makes
 
-```frost
+```frost,sketch
 if (queued) { spawn(world) } else { report(world) }
 ```
 

@@ -29,7 +29,7 @@ The refusal class is one shape:
 
 > a view whose storage is the calling function's own frame, on any path.
 
-```frost
+```frost,inside
 view :: fn() -> []i64 {
     var local : [4]i64 = [0; 4]
     local
@@ -177,7 +177,7 @@ wildcard, and never a binding name. The bootstrap has `Token::Underscore` and
 enforces that. `selfhosted/lexer.frost` had no underscore token at all, so `_`
 fell into the identifier rule and became an ordinary local:
 
-```frost
+```frost,sketch
 high, _ := split(4096)
 a, _    := split(512)      // shadows the first
 print_int_line(high + a + _)   // printed 18 under the self-hosted compiler
@@ -226,7 +226,7 @@ Asking what a caller may leave unbound found the last one, and it was in both
 compilers. A struct holding a resource is a resource, which is right, and the
 struct a return type list becomes inherited it:
 
-```frost
+```frost,sketch
 File :: linear struct { handle: i64 }
 pair :: fn(n: i64) -> (opened: File, count: i64) { ... }
 
@@ -345,7 +345,7 @@ its inverse.
 
 The surface is two characters longer than the wrong loop:
 
-```frost
+```frost,sketch
 for slot in 0..N     { ... }
 for slot in live_slots(c)  { ... }
 ```
@@ -491,7 +491,7 @@ now, which is what tells them apart.
 `packed` and `align` went in as keywords, and `std/slab.frost` stopped
 compiling at line 98:
 
-```frost
+```frost,sketch
 packed := (s.generations[index] << 32) | index
 ```
 
@@ -657,3 +657,22 @@ that merely might be: the first is refused where it fails and the second is
 tried quietly and left for the pass that emits it. The bootstrap gets the try
 free from `Result`; the self-hosted compiler needed a flag and a quiet mode,
 since its faults leave through an escape rather than through a return.
+
+## A doc that shows code is making a claim
+
+`tests/doctests.rs` hands every fenced Frost block in the book to the compiler.
+The fence says what the block is: `frost` is a program or a run of top-level
+declarations and has to compile, `frost,inside` is statements and is wrapped in
+a `main` first, `frost,refused` has to fail, and `frost,sketch` is a shape
+rather than a program and is not compiled.
+
+Eighty-three of two hundred and sixteen blocks compile today. The rest are
+marked as sketches, and that number is the honest measure of how much of the
+book is checked rather than asserted. Every one that moves from `sketch` to
+`frost` is a claim that stops being one.
+
+Two things came out of writing it. Twelve blocks wanted only an `import` they
+had not written, which is a doc example nobody could paste; they carry it now.
+And three blocks that read as code were not: one matched a variant of no enum,
+one called a wgpu name this tree does not declare, and one named a local that
+was never bound.

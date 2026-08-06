@@ -96,7 +96,7 @@ body may assign again. It is not Rust's `let mut`: `mut` in Frost means exactly
 one thing, the parameter mode, so a reader who sees it knows a caller's value
 is being written:
 
-```frost
+```frost,inside
 var total : i64 = 0
 total = total + 1
 ```
@@ -147,7 +147,7 @@ Rust returns a tuple. Frost has no tuple type, so a function that answers with
 more than one value declares a return type list and the caller binds the values
 by name:
 
-```frost
+```frost,sketch
 divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
@@ -251,7 +251,7 @@ always on, with no `get`/`get_unchecked` split.
 
 Structs and enums are plain data. Construction uses `=` for fields, not `:`:
 
-```frost
+```frost,sketch
 Point :: struct { x: i64, y: i64 }
 p := Point { x = 3, y = 4 }
 
@@ -265,14 +265,14 @@ c := Shape::Circle { radius = 5 }
 Enum variants may be unit variants or carry named fields, and a single enum can
 mix both:
 
-```frost
+```frost,sketch
 Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 ```
 
 `match` is the workhorse, and its arm syntax is `case <pattern>: <expr>`. A
 variant pattern leads with a dot and binds fields by name:
 
-```frost
+```frost,sketch
 delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
@@ -325,7 +325,7 @@ The call is `f(x)` in all three cases. Which one it is comes from the signature
 you can go read, not from a sigil at the call, and the exclusivity check reads
 that signature too.
 
-```frost
+```frost,sketch
 scale :: fn(mut p: Point, k: i64) {
     p.x = p.x * k          // field access on a borrowed struct is direct
     p.y = p.y * k
@@ -349,7 +349,7 @@ operate on it, and the borrow dies at the end of the call.
 The exception is explicit and checked. `ref name := place` binds a borrow of a
 place rather than a copy of it, and a function may declare `-> ref T`:
 
-```frost
+```frost,sketch
 at :: fn(points: []Point, index: i64) -> ref Point {
     ref result := points[index]
     result
@@ -381,7 +381,7 @@ and exists for FFI and for building low-level libraries. `ptr_to(place)` takes
 one, you dereference it with postfix `^`, and both the taking and the reading
 belong in an `unsafe` block:
 
-```frost
+```frost,sketch
 var hero := Entity { hp = 100, mana = 30 }
 pe : ^Entity = ptr_to(hero)
 unsafe { pe^.hp = pe^.hp - 25 }
@@ -398,7 +398,7 @@ Move semantics match your Rust intuition. A non-copy value (a struct or an
 enum) is moved when passed by value, assigned, or returned, and using it
 afterward is a compile error:
 
-```frost
+```frost,sketch
 buf := make_buffer()
 consume(buf)
 // consume(buf)   // error: use of moved value 'buf'
@@ -414,6 +414,7 @@ place is the `linear` qualifier, which changes the affine rule (use *at most*
 once) into a linear rule (use *exactly* once):
 
 ```frost
+import "io.frost"
 File :: linear struct { fd: i64 }
 open  :: fn(n: i64) -> File { File { fd = n } }
 close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
@@ -446,6 +447,7 @@ Because there is no `Drop`, the RAII-guard pattern is replaced by `defer`,
 which runs a statement when the scope exits, in last-in-first-out order:
 
 ```frost
+import "io.frost"
 work :: fn() {
     defer print_str_line("cleanup")   // runs on the way out
     // ... body ...
@@ -463,7 +465,7 @@ you compose: `?` plus `From` for conversion, `Box<dyn Error>` to erase the type,
 `#[must_use]` to nag about ignoring one. Frost puts the same idea in the
 signature and leaves the machinery out.
 
-```frost
+```frost,sketch
 Parse :: struct { at: i64, code: i64 }
 
 digit :: fn(text: str, index: i64) -> i64 ! Parse { .. }
@@ -519,6 +521,7 @@ cannot express in itself. It offers it for any struct that is slab-shaped: a
 `storage` array beside a parallel `generations` array.
 
 ```frost
+import "io.frost"
 import "slab.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
@@ -584,7 +587,7 @@ infers `T` from a call. When it cannot be (for example a function that only uses
 the type explicitly at the call site with a leading `$`, which is Frost's
 equivalent of the turbofish:
 
-```frost
+```frost,sketch
 bytes_for :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 
 n := bytes_for($Entity, 16)     // like bytes_for::<Entity>(16)
@@ -616,7 +619,7 @@ Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost passes the
 operation. For a single operation that is a compile-time function parameter,
 which can declare the signature it needs:
 
-```frost
+```frost,sketch
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
@@ -658,7 +661,7 @@ the call. Frost's replacement is a capability bundle: the same operations in a
 generic struct whose fields are functions, an implementation that is a plain
 constant of it, and a call that names which constant it means.
 
-```frost
+```frost,sketch
 Ordering :: struct($T: Type) { less: fn(T, T) -> bool, equal: fn(T, T) -> bool }
 
 i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
@@ -702,7 +705,7 @@ above. Anything narrower surfaces when the specialization is compiled.
 Functions are values. A parameter of type `fn(..) -> T` holds one, and you call
 it directly:
 
-```frost
+```frost,inside
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
@@ -743,7 +746,7 @@ A list is what a variadic macro is reached for in Rust, without being a macro. A
 `for` over one unrolls, `list[K]` names an element, and an `if` over a type
 predicate keeps the branch that survives for that element:
 
-```frost
+```frost,sketch
 printall :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
@@ -880,6 +883,7 @@ objects with cross-references. Entities live in a slab, are named by handles,
 and are mutated in place through the slab.
 
 ```frost
+import "io.frost"
 import "slab.frost"
 
 Kind   :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }

@@ -76,6 +76,7 @@ the same `generations` / `free_list` / `free_count` bookkeeping the slab
 carries, and a record of which slots hold an element:
 
 ```frost
+import "math.frost"
 Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
 
 // columns<Particle, 1024> is, in effect:
@@ -128,7 +129,7 @@ live_slots(c)` walks it: a word of zeroes passes over sixty-four slots on one te
 word with bits set gives up its lowest, clears it, and goes round. No slot is
 asked whether it holds an element and no empty slot is reached.
 
-```frost
+```frost,sketch
 for slot in live_slots(c) {
     c.velocity[slot] = c.velocity[slot] + c.accel[slot] * dt
 }

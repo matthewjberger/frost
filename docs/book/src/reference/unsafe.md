@@ -16,7 +16,7 @@ comment.
 
 ## 6a.2 The operations that need one
 
-```frost
+```frost,sketch
 unsafe { Stmt* }
 ```
 
@@ -42,7 +42,7 @@ compiler can already see, and the frame and region checks of 8.2 hold what it
 yields to storage that outlives it, so `ptr_to` is written in ordinary code and
 the block goes around the read, the write, or the cast:
 
-```frost
+```frost,sketch
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
