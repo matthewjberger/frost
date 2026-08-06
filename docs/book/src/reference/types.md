@@ -365,7 +365,13 @@ form of a slice (`[]u8`).
 - A string literal is a `str` pointing into read-only data, with the length
   fixed at compile time.
 - `str_len(s)` returns the byte length in constant time, reading the length
-  field rather than scanning.
+  field rather than scanning. Since `str` *is* `[]u8`, `str_len` reads either
+  spelling, and `slice_len` reads a `str` the same way it reads any other run.
+  What neither reads is something that carries no length: a struct, a scalar, or
+  a raw pointer, which is a run's address with nothing beside it saying how long
+  the run is. `str_len` of a run whose elements are not bytes is refused too,
+  since that is a length rather than a text length and `slice_len` is the word
+  for it.
 - `s[i]` reads the byte at index `i` as a `u8` and is bounds-checked against the
   length (10.4), the same rule as array indexing.
 - Passing a `str` to a function copies the pointer and length by value.

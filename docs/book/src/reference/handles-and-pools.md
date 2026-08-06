@@ -15,10 +15,11 @@ language, and the direction is written up in
 [pools-and-columns.md](../design/pools-and-columns.md) and
 [allocators.md](../design/allocators.md).
 
-The runtime (`runtime/frost_runtime.c`) has no pool in it. It holds aborts,
-assertions, IO, and the checks a handle deref calls (`frost_rt_bounds_check`,
-`frost_rt_generation_check`, and `frost_rt_slot`, which runs both and answers
-with the validated index). Nothing in it allocates or hands out a slot. The pool
+The runtime has no pool in it. It holds aborts, assertions, IO, and the checks a
+handle deref calls (`frost_rt_bounds_check`, `frost_rt_generation_check`, and
+`frost_rt_slot`, which runs both and answers with the validated index). Those
+three are Frost, in `runtime/runtime.frost`. Nothing in the runtime allocates or
+hands out a slot. The pool
 the standard library offers is
 `std/slab.frost`, ordinary Frost: a `Slab<T, N>` carrying `storage`,
 `generations`, `free_list` and `free_count`, with `slab_reset`, `slab_full`,

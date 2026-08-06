@@ -23,7 +23,7 @@ install: build
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
     Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" runtime) | Out-Null
-    Copy-Item -Force runtime/frost_runtime.c (Join-Path "{{bindir}}" runtime)
+    Copy-Item -Force runtime/frost_runtime.c, runtime/runtime.frost (Join-Path "{{bindir}}" runtime)
     Write-Host "frost -> {{bindir}}"
 
 # Builds the bootstrap compiler, with the standard library beside it (Unix)
@@ -32,7 +32,7 @@ install: build
     mkdir -p "{{bindir}}/std" "{{bindir}}/runtime"
     cp target/release/frost "{{bindir}}/frost"
     cp std/*.frost "{{bindir}}/std/"
-    cp runtime/frost_runtime.c "{{bindir}}/runtime/"
+    cp runtime/frost_runtime.c runtime/runtime.frost "{{bindir}}/runtime/"
     echo "frost -> {{bindir}}"
 
 # Builds the self-hosted compiler, with the standard library beside it (Windows)
@@ -43,7 +43,7 @@ install-self: selfhost-build
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
     Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" runtime) | Out-Null
-    Copy-Item -Force runtime/frost_runtime.c (Join-Path "{{bindir}}" runtime)
+    Copy-Item -Force runtime/frost_runtime.c, runtime/runtime.frost (Join-Path "{{bindir}}" runtime)
     Write-Host "frostc -> {{bindir}}"
 
 # Builds the self-hosted compiler and puts it on PATH as `frostc` (Unix)
@@ -56,7 +56,7 @@ install-self: selfhost-build
     mkdir -p "{{bindir}}/std" "{{bindir}}/runtime"
     cp selfhosted/frost.exe "{{bindir}}/frostc"
     cp std/*.frost "{{bindir}}/std/"
-    cp runtime/frost_runtime.c "{{bindir}}/runtime/"
+    cp runtime/frost_runtime.c runtime/runtime.frost "{{bindir}}/runtime/"
     echo "frostc -> {{bindir}}"
 
 # Removes both compilers from PATH (Windows)
@@ -367,7 +367,8 @@ selfhost-native file: selfhost-build
     #!/usr/bin/env bash
     set -euo pipefail
     FROST_BACKEND=asm FROST_INPUT={{file}} ./selfhosted/frost.exe > {{file}}.s
-    cc {{file}}.s runtime/frost_runtime.c -o {{file}}.exe
+    ./selfhosted/frost.exe --native -o {{file}}.rt.o runtime/runtime.frost
+    cc {{file}}.s runtime/frost_runtime.c {{file}}.rt.o -o {{file}}.exe
     ./{{file}}.exe
 
 # Builds a file with a line table, so a debugger can step through the source
@@ -377,24 +378,25 @@ debug file: selfhost-build
     #!/usr/bin/env bash
     set -euo pipefail
     ./selfhosted/frost.exe -g --native -o {{file}}.o {{file}}
-    cc -g {{file}}.o runtime/frost_runtime.c -o {{file}}.exe
+    ./selfhosted/frost.exe --native -o {{file}}.rt.o runtime/runtime.frost
+    cc -g {{file}}.o runtime/frost_runtime.c {{file}}.rt.o -o {{file}}.exe
     echo "built {{file}}.exe with line information. try: gdb ./{{file}}.exe"
 
 # Builds a file with a line table, so a debugger can step through the source
 # (Windows)
 [windows]
 debug file: selfhost-build
-    ./selfhosted/frost.exe -g --native -o "{{file}}.o" "{{file}}"; gcc -g "{{file}}.o" runtime/frost_runtime.c -o "{{file}}.exe"; Write-Host "built {{file}}.exe with line information. try: gdb ./{{file}}.exe"
+    ./selfhosted/frost.exe -g --native -o "{{file}}.o" "{{file}}"; ./selfhosted/frost.exe --native -o "{{file}}.rt.o" runtime/runtime.frost; gcc -g "{{file}}.o" runtime/frost_runtime.c "{{file}}.rt.o" -o "{{file}}.exe"; Write-Host "built {{file}}.exe with line information. try: gdb ./{{file}}.exe"
 
 # Compiles a frost file with the self-hosted native backend, then assembles and runs it (Windows)
 [windows]
 selfhost-native file: selfhost-build
-    $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = "{{file}}"; $asm = & ./selfhosted/frost.exe; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines((Resolve-Path .).Path + "/{{file}}.s", $asm); gcc "{{file}}.s" runtime/frost_runtime.c -o "{{file}}.exe"; & "./{{file}}.exe"
+    $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = "{{file}}"; $asm = & ./selfhosted/frost.exe; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines((Resolve-Path .).Path + "/{{file}}.s", $asm); & ./selfhosted/frost.exe --native -o "{{file}}.rt.o" runtime/runtime.frost; gcc "{{file}}.s" runtime/frost_runtime.c "{{file}}.rt.o" -o "{{file}}.exe"; & "./{{file}}.exe"
 
 # Runs every self-hosted example through the native backend (Windows)
 [windows]
 selfhost-examples: selfhost-build
-    Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { Write-Host "== $($_.Name)"; $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = $_.FullName; $asm = & ./selfhosted/frost.exe; if ($LASTEXITCODE -ne 0) { throw "the self-hosted compiler failed on $($_.Name)" }; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines($_.FullName + ".s", $asm); gcc ($_.FullName + ".s") runtime/frost_runtime.c -o ($_.FullName + ".exe"); & ($_.FullName + ".exe"); Remove-Item ($_.FullName + ".s"), ($_.FullName + ".exe") -Force }
+    Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { Write-Host "== $($_.Name)"; $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = $_.FullName; $asm = & ./selfhosted/frost.exe; if ($LASTEXITCODE -ne 0) { throw "the self-hosted compiler failed on $($_.Name)" }; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines($_.FullName + ".s", $asm); & ./selfhosted/frost.exe --native -o ($_.FullName + ".rt.o") runtime/runtime.frost; gcc ($_.FullName + ".s") runtime/frost_runtime.c ($_.FullName + ".rt.o") -o ($_.FullName + ".exe"); & ($_.FullName + ".exe"); Remove-Item ($_.FullName + ".s"), ($_.FullName + ".rt.o"), ($_.FullName + ".exe") -Force }
 
 # Runs every self-hosted example through the native backend (Unix)
 [unix]
@@ -404,9 +406,10 @@ selfhost-examples: selfhost-build
     for f in examples/selfhosted/*.frost; do
         echo "== $f"
         FROST_BACKEND=asm FROST_INPUT="$f" ./selfhosted/frost.exe > "$f.s"
-        cc "$f.s" runtime/frost_runtime.c -o "$f.exe"
+        ./selfhosted/frost.exe --native -o "$f.rt.o" runtime/runtime.frost
+        cc "$f.s" runtime/frost_runtime.c "$f.rt.o" -o "$f.exe"
         "./$f.exe"
-        rm -f "$f.s" "$f.exe"
+        rm -f "$f.s" "$f.rt.o" "$f.exe"
     done
 
 # A green suite on this machine says nothing about three kinds of defect, and

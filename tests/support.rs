@@ -126,6 +126,42 @@ pub fn runtime_source() -> String {
     format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"))
 }
 
+pub fn frost_runtime_source() -> String {
+    format!("{}/runtime/runtime.frost", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The Frost half of the runtime, compiled once by the bootstrap and linked
+/// beside the C half by every test that links.
+///
+/// The compilers each cache this for themselves on their own link paths; a test
+/// that hands the toolchain an emitted unit is doing the linking itself, so it
+/// needs the object itself. Built by the bootstrap for both compilers, since
+/// what it holds is the same either way and one build serves the whole run.
+pub fn frost_runtime_object() -> String {
+    static BUILT: OnceLock<String> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let object = std::env::temp_dir().join(format!(
+                "frost_test_runtime_frost_{}.o",
+                std::process::id()
+            ));
+            let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+                .arg("--native")
+                .arg("-o")
+                .arg(&object)
+                .arg(frost_runtime_source())
+                .output()
+                .expect("the Frost runtime failed to compile");
+            assert!(
+                built.status.success(),
+                "the Frost runtime failed to compile:\n{}",
+                String::from_utf8_lossy(&built.stderr)
+            );
+            object.display().to_string()
+        })
+        .clone()
+}
+
 /// The runtime, compiled once and linked thereafter.
 ///
 /// Every test that runs a program links the runtime beside what the compiler
@@ -226,6 +262,7 @@ pub fn selfhosted_default_output(
     let built = Command::new(c_compiler().unwrap())
         .arg(&emitted)
         .arg(runtime_object())
+        .arg(frost_runtime_object())
         .arg("-lm")
         .arg("-o")
         .arg(&exe)
