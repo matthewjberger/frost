@@ -1,4 +1,9 @@
-// What both test binaries need to reach a compiler and run what it produced.
+// What the test binaries need to reach a compiler and run what it produced.
+//
+// Each of them takes the whole file and uses the part it needs, so an unused
+// helper here is one the other binaries are using.
+#![allow(dead_code)]
+
 //
 // It lives here rather than in each because the fuzzer and the integration
 // suite were building the self-hosted compiler two different ways, and a
@@ -150,4 +155,53 @@ pub fn selfhosted_default_output(
     let _ = std::fs::remove_file(&emitted);
     let _ = std::fs::remove_file(&exe);
     output
+}
+
+// Build and run `source` with the bootstrap, and return what it printed.
+pub fn bootstrap_output(name: &str, source: &str) -> Option<String> {
+    if c_compiler().is_none() || !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_bs_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let exe = directory
+        .join(format!("frost_bs_{name}{}", std::env::consts::EXE_SUFFIX));
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the bootstrap refused {name}:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success(), "{name} exited with failure");
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
+    Some(output)
+}
+
+// What the bootstrap said when it would not compile a program.
+pub fn bootstrap_refusal(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_refuse_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-o")
+        .arg(directory.join(format!("frost_refuse_{name}.o")))
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        !output.status.success(),
+        "the bootstrap accepted {name}, which it should refuse"
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
 }
