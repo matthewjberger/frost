@@ -254,15 +254,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // The boolean literals. Predeclared meanings rather than reserved words:
     // the words always mean the booleans in expression position, and declaring
     // either as a name is refused where the declaration is read.
+    // Each carries `bool`, the way a number written as a bit of a flags type
+    // carries that type. A name bound to one holds a yes or no rather than the
+    // number it travels as, which is what `!` reads to hold its operand to one.
     if (kind == TokenKind::Ident
         && str_range_eq(p.src, cur_off(p), cur_len(p), "true")) {
         advance(p)
-        return new_node(p, NodeKind::Num, 0, 0, 1)
+        return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, 1)
     }
     if (kind == TokenKind::Ident
         && str_range_eq(p.src, cur_off(p), cur_len(p), "false")) {
         advance(p)
-        return new_node(p, NodeKind::Num, 0, 0, 0)
+        return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, 0)
     }
     if (kind == TokenKind::Str) {
         offset := cur_off(p)
@@ -1613,7 +1616,14 @@ parse_unary :: fn(mut p: Parser) -> i64 {
         advance(p)
         operand := parse_unary(p)
         zero := new_node_at(p, NodeKind::Num, 0, 0, 0, start)
-        return new_node_at(p, NodeKind::Bin, operand, zero, OP_EQ, start)
+        made := new_node_at(p, NodeKind::Bin, operand, zero, OP_EQ, start)
+        // A comparison against false, so both backends carry it with the code
+        // they already have. Marked as written with `!`, which is what holds
+        // the operand to a yes or no: the node is otherwise what `x == false`
+        // parses to, and that one takes whatever `==` takes.
+        held := arena_at(p.arena, made)
+        held.c = 1
+        return made
     }
     parse_factor(p)
 }
