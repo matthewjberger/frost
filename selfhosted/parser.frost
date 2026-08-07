@@ -1167,7 +1167,11 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             var head: i64 = -1
             var tail: i64 = -1
             while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
-                argument := parse_expr(p)
+                // A call through a value takes an aggregate by address, the
+                // same as a call through a name, so an aggregate a call answers
+                // with is bound first. Without the binding there is nothing to
+                // take the address of.
+                argument := hold_struct_result(p, parse_expr(p))
                 held := new_node(p, NodeKind::Arg, argument, 0, 0)
                 if (head == (-1)) {
                     head = held
