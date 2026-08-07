@@ -799,7 +799,7 @@ emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
     // A borrow of a scalar reaching a place of the value's own type. %rax holds
     // where the value sits, and what is wanted is the value. Ahead of the
     // pointer rule below, which is what left the address where a number belongs.
-    if (is_borrow(from) && is_pointer(to) == false && is_aggregate(to) == false
+    if (reads_through_borrow(p, from) && is_pointer(to) == false
         && pointee(p, from) == to) {
         emit_asm_load_from(p, to, 0, "(%rax), ")
         return
