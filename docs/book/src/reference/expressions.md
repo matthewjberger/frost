@@ -32,6 +32,13 @@ precedence in 14.1, are `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
 `>>`, `+` `-`, `*` `/` `%`, and the range operators `..` and `..=`. All binary
 operators are left-associative.
 
+`!` applies to `bool` and answers the opposite of it. Given anything else it is
+refused, naming the type it was given: `!count` over a number is
+`count == 0` written a second way, and reading it as one would be a conversion
+the reader never wrote. `x == false` says the same as `!x` and both are
+available, since the first is `==` comparing two values of a type the way it
+compares any others.
+
 ## 6.3 References and dereference
 
 - `ptr_to(place)` the address of a place. There is no borrow operator: a
