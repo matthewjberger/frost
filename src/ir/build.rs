@@ -2040,6 +2040,25 @@ const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_
 
 // What a formatted value may be: a number, a yes or no, or text. Read through
 // any name a type carries, the same way the bounds vocabulary reads one.
+// A type spelled the way a reader writes one.
+//
+// `Display` is the name the compiler files a type under, and it round-trips
+// through `type_from_string`, which is what monomorphization reads a
+// specialization's arguments back out of. A borrow has no spelling there to
+// round-trip and takes `&T` and `&mut T`, which are two forms the surface
+// dropped: what a reader writes is `ref T`. So a report spells one and the
+// table keeps the other.
+fn spelled(ty: &Type) -> String {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) => {
+            format!("ref {}", spelled(inner))
+        }
+        Type::Ptr(inner) => format!("^{}", spelled(inner)),
+        Type::Slice(inner) => format!("[]{}", spelled(inner)),
+        other => other.to_string(),
+    }
+}
+
 fn writable_by_format(ty: &Type) -> bool {
     match ty {
         Type::Distinct(_, inner) => writable_by_format(inner),
@@ -2096,7 +2115,8 @@ fn check_format(
         };
         if !writable_by_format(ty) {
             bail!(
-                "a format string writes a number, a yes or no, or a str, and this is a {ty}"
+                "a format string writes a number, a yes or no, or a str, and this is a {}",
+                spelled(ty)
             )
         }
     }
@@ -7849,7 +7869,9 @@ impl<'a> FunctionLowering<'a> {
             && from != into
         {
             bail!(
-                "this argument is a '{given}' and a '{target}' is what is wanted here"
+                "this argument is a '{}' and a '{}' is what is wanted here",
+                spelled(&given),
+                spelled(target)
             );
         }
         // A raw pointer where a slice is wanted. A slice is an address and a
@@ -7863,7 +7885,9 @@ impl<'a> FunctionLowering<'a> {
             && matches!(given, Type::Ptr(_))
         {
             bail!(
-                "this argument is a '{given}' and a '{target}' is what is wanted here"
+                "this argument is a '{}' and a '{}' is what is wanted here",
+                spelled(&given),
+                spelled(target)
             );
         }
         // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice

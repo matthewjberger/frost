@@ -878,6 +878,13 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_BOOL) { report("bool") return }
     if (held == TY_VOID) { report("nothing") return }
     if (held == TY_HANDLE) { report("Handle") return }
+    // A borrow is written `ref T`, which is what a reader can write. `^T` is a
+    // raw pointer, a different thing that reads the same.
+    if (is_borrow(held)) {
+        report("ref ")
+        report_type_name(p, pointee(p, held))
+        return
+    }
     if (is_pointer(held)) {
         report("^")
         report_type_name(p, pointee(p, held))
@@ -1094,6 +1101,11 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_BOOL) { synth_bytes(p, "bool") return }
     if (held == TY_VOID) { synth_bytes(p, "void") return }
     if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
+    if (is_borrow(held)) {
+        synth_bytes(p, "ref ")
+        write_type_name(p, pointee(p, held))
+        return
+    }
     if (is_pointer(held)) {
         synth_bytes(p, "^")
         write_type_name(p, pointee(p, held))
