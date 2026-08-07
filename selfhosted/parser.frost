@@ -751,15 +751,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     param_ty := parse_param_type(p, offset, length)
     if (param_ty >= 0 && is_borrow(param_ty)
         && is_aggregate(pointee(p, param_ty)) == false) {
-        held := new_named_node_at(p, NodeKind::Var, 0, offset, length, offset)
-        made := new_unary(p, NodeKind::Deref, held)
-        // Marked as a read through a borrow rather than through a raw pointer.
-        // The unsafety gate walks the whole arena with no local types in hand,
-        // so what a node reads through has to be recorded where the node is
-        // made, which is here.
-        node := arena_at(p.arena, made)
-        node.val = 1
-        return made
+        return read_through_borrow(p, offset, length)
+    }
+    // A `ref x := place` binding of a scalar is the same shape: the name holds
+    // where the place is and reading it reads the place. Without this the name
+    // was the address, so `bound == 9` compared an address against nine and
+    // answered no for every place there is.
+    local_ty := parse_local_type(p, offset, length)
+    if (local_ty >= 0 && is_borrow(local_ty)
+        && is_aggregate(pointee(p, local_ty)) == false) {
+        return read_through_borrow(p, offset, length)
     }
     // A name the compile-time `for` around this copy bound stands for the
     // element that copy is for.
@@ -1092,6 +1093,20 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         p.name_ok_value,
         8,
     )
+}
+
+// A name holding a borrow of a scalar, read as the value it borrows. Assigning
+// to it writes through, which is what a `Deref` over the name is on both sides.
+read_through_borrow :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    held := new_named_node_at(p, NodeKind::Var, 0, offset, length, offset)
+    made := new_unary(p, NodeKind::Deref, held)
+    // Marked as a read through a borrow rather than through a raw pointer. The
+    // unsafety gate walks the whole arena with no local types in hand, so what
+    // a node reads through has to be recorded where the node is made, which is
+    // here.
+    node := arena_at(p.arena, made)
+    node.val = 1
+    made
 }
 
 // `flags_has(chosen, InitFlags::Video)`: whether every bit on the right is on
@@ -3467,7 +3482,8 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
             if ((covered & (1 << entry.tag)) == 0) {
                 if (missing == 0) {
                     report_where(p.modules, p.src, cur_off(p))
-                    report("match does not cover '.")
+                    report_fmt("match on '{}' does not cover '.",
+                        type_text(p, enum_ty))
                     report_src(p.src, entry.name_off, entry.name_len)
                     report("'")
                 } else {
@@ -3482,7 +3498,11 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
     }
     if (missing > 0) {
         report("; add the case or a `case _` for the rest")
-        frost_rt_recover_escape()
+        // The match is well formed; what is refused is what it leaves out. The
+        // cursor sits on the brace that closes it, so escaping here hands the
+        // resync a closing brace it reads as the block's own, the function ends
+        // on it and the line after reads as a declaration.
+        frost_rt_recover_note()
     }
 }
 
@@ -3932,6 +3952,12 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         place := parse_expr(p)
         value := new_unary(p, NodeKind::Ref, place)
+        // What the name binds, which every other binding records and this one
+        // did not. Without it the rest of the parse had no way to tell a name
+        // holding a borrow from a name holding a number, so a scalar one was
+        // read as the address it carries and `bound == 9` compared that address
+        // against nine.
+        record_parse_local(p, name_off, name_len, binding_type(p, value), value)
         return new_let_node(p, value, name_off, name_len, -1)
     }
 
@@ -4557,11 +4583,41 @@ parse_stmt_guarded :: fn(raw: ^u8) {
 // statement, without crossing the token that closes the block. Always makes
 // progress, so recovery cannot loop.
 synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
+    // Only the braces opened past the cursor are counted, so a statement that
+    // failed while its own body was still unread is walked over whole. Left
+    // uncounted, `for slot in live_slots(made()) { print(...) }` ended the walk
+    // on the loop body's closing brace, which the statement list took for its
+    // own: the function ended there and everything after it read as a
+    // declaration, so one refusal was told twice and the second time wrongly.
+    var depth: i64 = 0
     if (cur(p) != terminator && cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lbrace) {
+            depth = depth + 1
+        }
         advance(p)
     }
-    while (cur(p) != terminator && cur(p) != TokenKind::Eof) {
+    while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+            advance(p)
+            continue
+        }
+        if (kind == TokenKind::Rbrace) {
+            if (depth == 0) {
+                return
+            }
+            depth = depth - 1
+            advance(p)
+            continue
+        }
+        if (depth > 0) {
+            advance(p)
+            continue
+        }
+        if (kind == terminator) {
+            return
+        }
         if (kind == TokenKind::Semi) {
             return
         }

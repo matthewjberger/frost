@@ -223,23 +223,41 @@ const_fault :: fn(mut p: Parser, at: i64) {
     if (p.const_quiet > 0) {
         return
     }
+    if (const_fault_told(p, at)) {
+        p.const_repeat = 1
+        return
+    }
+    p.const_repeat = 0
+    arena_push(p.const_faults, at)
     report_where(p.modules, p.src, at)
 }
 
+// Whether a constant fault at this offset has already been reported.
+const_fault_told :: fn(mut p: Parser, at: i64) -> bool {
+    var i: i64 = 0
+    while (i < p.const_faults.count) {
+        if (arena_at(p.const_faults, i) == at) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 creport :: fn(mut p: Parser, text: str) {
-    if (p.const_quiet == 0) {
+    if (p.const_quiet == 0 && p.const_repeat == 0) {
         report(text)
     }
 }
 
 creport_int :: fn(mut p: Parser, value: i64) {
-    if (p.const_quiet == 0) {
+    if (p.const_quiet == 0 && p.const_repeat == 0) {
         report_int(value)
     }
 }
 
 creport_src :: fn(mut p: Parser, off: i64, len: i64) {
-    if (p.const_quiet == 0) {
+    if (p.const_quiet == 0 && p.const_repeat == 0) {
         report_src(p.src, off, len)
     }
 }
