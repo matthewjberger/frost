@@ -35,7 +35,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
     emit_to_memory, emit_memory_text,
-    report, report_cstr, report_fmt, report_int, report_src, source_text,
+    report, report_cstr, report_fmt, report_int, report_src, source_text, text_covers, text_matches,
     SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
     cstr_len,
@@ -213,6 +213,42 @@ report_span :: fn(fmt: str, from: i64, count: i64) {
         return
     }
     report_src(fmt, from, count)
+}
+
+// Whether one place written out reaches over another: `h` covers `h.file` and
+// `run` covers `run[0]`, and a name covers itself. The bytes after the outer
+// one have to open a field, an element or a dereference, so `h` does not cover
+// `held`.
+text_covers :: fn(outer: str, inner: str) -> bool {
+    if (str_len(outer) > str_len(inner)) {
+        return false
+    }
+    var i: i64 = 0
+    while (i < str_len(outer)) {
+        if (outer[i] != inner[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    if (str_len(outer) == str_len(inner)) {
+        return true
+    }
+    next := inner[str_len(outer)]
+    next == 46 || next == 91 || next == 94
+}
+
+text_matches :: fn(a: str, b: str) -> bool {
+    if (str_len(a) != str_len(b)) {
+        return false
+    }
+    var i: i64 = 0
+    while (i < str_len(a)) {
+        if (a[i] != b[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
 }
 
 // A run of the source as text, so a message quoting what the reader wrote puts

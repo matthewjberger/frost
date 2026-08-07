@@ -1836,22 +1836,41 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     if (moved_slot < 0) {
         return
     }
+    // The place, not the name it starts from. `close(h.file)` twice moves
+    // `h.file` twice, and saying `h` names something the reader did not write
+    // on that line and did not move as a whole.
+    //
+    // What is named is what went missing. Where the move took the whole and the
+    // use reaches a part of it, the part was never moved on its own, so the
+    // whole is what the reader has to put back.
+    gone := place_text(p, moved_slot)
+    var said := place_text(p, id)
+    if (text_covers(gone, said)) {
+        said = gone
+    }
     report_where(p.modules, p.src, name_off)
-    report("use of moved value '")
-    report_src(p.src, name_off, name_len)
-    report("'")
+    report_fmt("use of moved value '{}'", said)
     // Where the value went, said the way the fault itself is said, so the
     // reader sees the move and the use as two placed lines of one story. The
     // slot recorded at the move is the place node written there, and its root
     // carries the source offset of that line.
+    //
+    // Only where the place that moved is the place being named. Using `h` after
+    // `h.file` went is a fault about `h`, and there is no line where `h` moved
+    // to point at: what moved was a part of it.
+    if (text_matches(gone, said) == false) {
+        frost_rt_recover_note()
+        return
+    }
     report("\n")
     moved_root := strip_place(p, moved_slot, place_depth(p, moved_slot))
     moved_node := arena_at(p.arena, moved_root)
     report_where(p.modules, p.src, moved_node.val)
-    report("'")
-    report_src(p.src, name_off, name_len)
-    report("' was moved here")
-    frost_rt_recover_escape()
+    report_fmt("'{}' was moved here", said)
+    // The walk goes on. What is refused is this use, and the uses after it are
+    // their own faults about their own places, so abandoning here would report
+    // the first and leave a reader to find the rest a build at a time.
+    frost_rt_recover_note()
 }
 
 walk_moves_expr :: fn(mut p: Parser, id: i64) {
@@ -3575,10 +3594,14 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
             if (container >= 0) {
                 root := strip_place(p, container, place_depth(p, container))
                 rnode := arena_at(p.arena, root)
+                said := source_text(p.src, rnode.val, rnode.c)
                 report_where(p.modules, p.src, rnode.val)
-                report("use of moved value '")
-                report_src(p.src, rnode.val, rnode.c)
-                report("'")
+                report_fmt("use of moved value '{}'", said)
+                // Where it went, on its own line, the way every other move
+                // fault says it.
+                report("\n")
+                report_where(p.modules, p.src, rnode.val)
+                report_fmt("'{}' was moved here", said)
                 frost_rt_recover_escape()
             }
             revive_place(p, node.a)
