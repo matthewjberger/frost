@@ -1925,7 +1925,7 @@ fn nominal_words(
 ) -> (String, String) {
     let (described, note) = nominal_reason(ast, value, to, flags);
     let described = if described.is_empty() {
-        format!("a '{value_type}'")
+        format!("a '{}'", spelled(value_type))
     } else {
         described.to_string()
     };
@@ -5126,7 +5126,8 @@ impl<'a> FunctionLowering<'a> {
                         &self.builder.flags,
                     );
                     bail!(
-                        "this binding is a '{annotated}' and the value is {described}; {note}"
+                        "this binding is a '{}' and the value is {described}; {note}",
+                        spelled(annotated)
                     );
                 }
                 if matches!(value_type, Type::Void) {
@@ -5955,7 +5956,10 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_literal(&Literal::Integer(-value), expected)
             }
             Expression::Prefix(operator, operand) => {
-                self.lower_prefix(operator, operand, expected)
+                // The mark and what it is applied to, which is what a fault
+                // about the pair is about.
+                let at = self.at_expression(expression);
+                locate(self.lower_prefix(operator, operand, expected), at)
             }
             Expression::Infix(left, operator, right) => {
                 self.lower_infix(left, operator, right, expected)
@@ -6690,7 +6694,9 @@ impl<'a> FunctionLowering<'a> {
         // would be a number wearing one of the two names.
         if left_type != right_type {
             bail!(
-                "'{readable}' combines only with itself, and this is a '{left_type}' against a '{right_type}'"
+                "'{readable}' combines only with itself, and this is a '{}' against a '{}'",
+                spelled(left_type),
+                spelled(right_type)
             );
         }
         Ok(())
@@ -7563,7 +7569,8 @@ impl<'a> FunctionLowering<'a> {
                         }
                         let IrOperand::Local(local) = operand else {
                             bail!(
-                                "this argument is a '{value_type}' with no storage, and '{name}' borrows it here"
+                                "this argument is a '{}' with no storage, and '{name}' borrows it here",
+                                spelled(&value_type)
                             );
                         };
                         lowered.push(self.address_of_local(local, inner));
@@ -7759,7 +7766,8 @@ impl<'a> FunctionLowering<'a> {
                     &self.builder.flags,
                 );
                 bail!(
-                    "'{name}' takes a '{target}' here and this argument is {described}; {note}"
+                    "'{name}' takes a '{}' here and this argument is {described}; {note}",
+                    spelled(target)
                 );
             }
             let coerced = match expected {
