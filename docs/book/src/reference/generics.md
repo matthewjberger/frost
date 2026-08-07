@@ -11,6 +11,18 @@ Option :: enum($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
+A parameter may name the type parameter inside a generic type's argument list
+rather than as the whole of its own type, and then it binds to whatever that
+instance was made with:
+
+```frost,sketch
+first :: fn(a: Pair<$T>) -> T { a.first }
+```
+
+A caller that is itself generic hands its own argument straight on this way, so
+`fn(a: Pair<$T>) -> i64 { width(first(a)) }` compiles `width` for the element
+rather than for the pair.
+
 A generic literal usually carries no arguments of its own, and which instance it
 is comes from the context: an annotation, or the type of the parameter it is
 passed to.
