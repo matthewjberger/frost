@@ -2885,11 +2885,21 @@ fn holds_run(ty: &Type, fields: &FieldTypes) -> bool {
     }
 }
 
+// A place as the reader wrote it. Reaching a field of a `mut` parameter goes
+// through a borrow, and that step is the compiler's rather than the reader's:
+// what was written is `h.file`, so naming `h^.file` points at a line nobody can
+// find. A dereference of a raw pointer is written down, so that one is kept.
 fn describe_place(path: &[Step]) -> String {
     path.iter()
         .map(|step| match step {
             Step::Named(text) | Step::Index(_, text) => text.as_str(),
-            Step::Deref(_) => "^",
+            Step::Deref(raw) => {
+                if *raw {
+                    "^"
+                } else {
+                    ""
+                }
+            }
         })
         .collect()
 }

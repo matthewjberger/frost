@@ -38,7 +38,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text,
+    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text, place_text,
     type_code_for
 
 // Whether there is room for `wanted` more bytes past the source, said here
@@ -919,6 +919,81 @@ synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
 type_text :: fn(mut p: Parser, ty: i64) -> str {
     off, len := synth_type_name(p, ty)
     source_text(p.src, off, len)
+}
+
+// A place as the reader wrote it: `h`, `h.file`, `run[0]`, `h^.file`. A rule
+// about a place is about that place and not about the name it starts from, so a
+// message that named the root said the wrong thing was moved.
+place_text :: fn(mut p: Parser, id: i64) -> str {
+    start := p.synth_next
+    write_place_name(p, id)
+    length := p.synth_next - start
+    p.src[p.synth_next] = 0
+    p.synth_next = p.synth_next + 1
+    source_text(p.src, start, length)
+}
+
+write_place_name :: fn(mut p: Parser, id: i64) {
+    if (id < 0) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    if (node.kind == NodeKind::Var) {
+        synth_range(p, node.val, node.c)
+        return
+    }
+    if (node.kind == NodeKind::Field) {
+        write_place_name(p, node.a)
+        synth_bytes(p, ".")
+        synth_range(p, node.val, node.c)
+        return
+    }
+    if (node.kind == NodeKind::Deref) {
+        write_place_name(p, node.a)
+        synth_bytes(p, "^")
+        return
+    }
+    if (node.kind == NodeKind::Index) {
+        write_place_name(p, node.a)
+        synth_bytes(p, "[")
+        write_place_name(p, node.b)
+        synth_bytes(p, "]")
+        return
+    }
+    // An index worked out from something other than a literal is written as it
+    // was read, since the digits are what a reader is looking at.
+    if (node.kind == NodeKind::Num) {
+        synth_digits(p, node.val)
+        return
+    }
+    synth_range(p, node.val, node.c)
+}
+
+// The digits of a number, in the room past the source.
+synth_digits :: fn(mut p: Parser, value: i64) {
+    if (value < 0) {
+        synth_bytes(p, "-")
+        synth_digits(p, 0 - value)
+        return
+    }
+    count := digits_in(value)
+    synth_room_for(p, count + 1)
+    var scale: i64 = 1
+    var left: i64 = 1
+    while (left < count) {
+        scale = scale * 10
+        left = left + 1
+    }
+    var held := value
+    var written: i64 = 0
+    while (written < count) {
+        digit := held / scale
+        p.src[p.synth_next + written] = cast($u8, CH_0 + digit)
+        held = held - digit * scale
+        scale = scale / 10
+        written = written + 1
+    }
+    p.synth_next = p.synth_next + count
 }
 
 synth_bytes :: fn(mut p: Parser, word: ^i8) {

@@ -2006,12 +2006,8 @@ fn both_compilers_refuse_the_same_programs() {
 // inside it, which is what let forty of these drift unseen.
 const WORDED_DIFFERENTLY: &[&str] = &[
     // One names the place the resource left by, the other names the whole.
-    "field_twice",
-    "element_twice",
-    "borrowed_field_twice",
     "consumed_through_a_borrow_twice",
     "handed_out_of_a_borrow_twice",
-    "write_into_consumed",
     "moved_through_a_compile_time_list",
     // One names the pool's instance and what it holds, the other the template.
     "generic_pool",
