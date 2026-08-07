@@ -1737,6 +1737,15 @@ pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
     if (is_borrow(held) && is_slice_ty(p, pointee(p, held))) {
         return pointee(p, held)
     }
+    // The same for a scalar, which has no field access to read through it the
+    // way an aggregate does. An element of a list is a value like any other,
+    // and this is the one place a value arrives with nothing having asked for a
+    // type, so a borrow of a number travelled as itself: the body that unrolls
+    // the list was handed an address where its number belongs, and a format
+    // string was told to write out a `^i64`.
+    if (is_borrow(held) && is_aggregate(pointee(p, held)) == false) {
+        return pointee(p, held)
+    }
     held
 }
 

@@ -4600,9 +4600,10 @@ main :: fn() -> i64 {
     // what a call answers with is known only once every signature has been
     // read. A `ref T` handed back by a function answering one stays the borrow.
     //
-    // A borrow handed to a compile-time list is not here: what a list element
-    // holds is the type the argument had, and both compilers refuse a borrow
-    // there rather than reading through it.
+    // A list element is a value like any other, and it is the one place a value
+    // arrives with nothing having asked for a type, so it is the one place a
+    // borrow travelled as itself: both compilers told a format string to write
+    // out a `^i64`.
     (
         "a_borrow_of_a_number_is_the_number",
         "import \"io.frost\"\nBag :: struct { data: ^i64, count: i64 }\n\
@@ -4618,12 +4619,14 @@ main :: fn() -> i64 {
          \x20   print(\"{}\n\", bound == 9)\n\
          \x20   print(\"{}\n\", at(b, 2) == 9)\n\
          \x20   print(\"{}\n\", at(b, 1) + 1)\n\
+         \x20   print(\"{}\n\", at(b, 3))\n\
          \x20   bound = 12\n\
          \x20   print(\"{}\n\", cells[2])\n\
          \x20   0\n}\n",
         "1
 1
 9
+10
 12
 ",
     ),

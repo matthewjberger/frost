@@ -7386,6 +7386,22 @@ impl<'a> FunctionLowering<'a> {
                 }
                 let (operand, value_type) =
                     self.lower_expression(*argument, None)?;
+                // An element of a list is a value like any other, so a borrow
+                // of a scalar reaching one reads through. Nothing had asked for
+                // a type here, which is the one road into the compiler that
+                // takes an expression without saying what it wants, so the
+                // borrow travelled as itself: the element's type became a
+                // reference, the body that unrolls it was handed an address
+                // where its number belongs, and a format string was told to
+                // write out a `&mut i64`.
+                let (operand, value_type) = match borrowed_value(&value_type) {
+                    Some(inner) if !needs_memory(inner) => {
+                        let held = inner.clone();
+                        let read = self.coerce(operand, &value_type, &held)?;
+                        (read, held)
+                    }
+                    _ => (operand, value_type),
+                };
                 pack_elements.push(PackElement::Value(
                     pack_element_name(pack_name, index),
                     value_type.clone(),
