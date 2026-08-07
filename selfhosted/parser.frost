@@ -981,7 +981,14 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         // of it and indexed a table with -1.
         return TY_INFER
     }
-    type_code_for(p, offset, length)
+    // The name is asked about here and again by the caller, which refuses a
+    // literal of a type nothing declares. Reported at one of them, so a reader
+    // hears it once.
+    held := p.type_check_names
+    p.type_check_names = 0
+    code := type_code_for(p, offset, length)
+    p.type_check_names = held
+    code
 }
 
 // A struct literal of a name nothing declares.
@@ -1004,9 +1011,9 @@ refuse_unknown_lit_type :: fn(mut p: Parser, ty: i64, offset: i64,
         return
     }
     report_where(p.modules, p.src, offset)
-    report("unknown struct '")
-    report_src(p.src, offset, length)
     report("'")
+    report_src(p.src, offset, length)
+    report("' is not a type this program declares")
     // Past the literal's own braces before the escape, because recovery reads
     // forward to the brace that ends the statement list and the next brace here
     // is the literal's. Left where it is, one undeclared name ended the function

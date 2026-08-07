@@ -256,7 +256,14 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
         if (token.kind == TokenKind::Lbrace) {
             i = p.tokens.count
         } else {
+            joins := token.kind == TokenKind::Andand || token.kind == TokenKind::Oror
+            if (joins) {
+                report(" ")
+            }
             report_src(p.src, token.off, token.len)
+            if (joins) {
+                report(" ")
+            }
             i = i + 1
         }
     }
@@ -4033,13 +4040,11 @@ check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) 
                         && places_overlap(p, arg_i, arg_j)) {
                         report_where(p.modules, p.src, pos)
                         if (excl_i && excl_j) {
-                            report("two arguments are both borrowed as ")
-                            report("mutable in a single call; mutable borrows ")
-                            report("are exclusive")
+                            report_fmt("'{}' and '{}' are both borrowed as mutable in a single call; mutable borrows are exclusive",
+                                place_text(p, arg_i), place_text(p, arg_j))
                         } else {
-                            report("an argument is borrowed as both shared ")
-                            report("and mutable in a single call; mutable ")
-                            report("borrows are exclusive")
+                            report_fmt("'{}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive",
+                                place_text(p, arg_i))
                         }
                         // One report per call, and the next call is still
                         // checked. Every other overlapping pair in this call is

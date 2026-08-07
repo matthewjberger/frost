@@ -447,8 +447,8 @@ mod tests {
     #[test]
     fn the_same_words_about_two_places_are_one_fault_with_two_places() {
         let kept = grouped(vec![
-            at(2, "unknown struct 'Absent'"),
-            at(9, "unknown struct 'Absent'"),
+            at(2, "'Absent' is not a type this program declares"),
+            at(9, "'Absent' is not a type this program declares"),
         ]);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].related.len(), 1);
