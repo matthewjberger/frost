@@ -898,8 +898,13 @@ impl<'a> Parser<'a> {
     // takes a space either side and nothing else does, which is the spelling the
     // self-hosted compiler replays them with.
     fn tokens_written(&self, first: u32, last: u32) -> String {
+        // `read_token` counts a read past the end as a read, so the mark it
+        // answers with can be one past the last token there is. Nothing here
+        // reaches that, and a slice taken with it would end the compile with a
+        // panic rather than a report, which is not a trade worth leaving open.
+        let last = (last as usize).min(self.all_tokens.len());
         let mut out = String::new();
-        for token in &self.all_tokens[first as usize..last as usize] {
+        for token in &self.all_tokens[first as usize..last] {
             match token {
                 Token::And | Token::Or => {
                     out.push(' ');
