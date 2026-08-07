@@ -164,7 +164,7 @@ impl Specializations {
     }
 }
 
-fn collect_field_types(ast: &Ast, roots: &[StmtId]) -> FieldTypes {
+pub(crate) fn collect_field_types(ast: &Ast, roots: &[StmtId]) -> FieldTypes {
     let mut fields = HashMap::new();
     for statement in roots {
         match ast.stmt(*statement) {
@@ -2987,7 +2987,7 @@ fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
 /// that hold such a value in a field. A struct holding a resource is a resource,
 /// otherwise wrapping one in an ordinary struct would launder the obligation
 /// away. This runs to a fixpoint, since the holder of a holder is one too.
-fn linear_closure(
+pub(crate) fn linear_closure(
     declared: &HashSet<String>,
     fields: &FieldTypes,
     ast: &Ast,

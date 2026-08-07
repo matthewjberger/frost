@@ -323,7 +323,20 @@ mod tests {
         let mut module = parser.parse()?;
         let linear = parser.linear_types().clone();
         let module = build_module(&mut module.ast, &module.roots, &linear)?;
-        check_linearity(&module)
+        // The walk a build runs, with the set of pooled types it is handed
+        // there. A program here declares none, so it is empty, and the path
+        // under test is the path that runs.
+        let reports = check_linearity_recovering(&module, &HashSet::new());
+        match reports.is_empty() {
+            true => Ok(()),
+            false => Err(anyhow::anyhow!(
+                reports
+                    .iter()
+                    .map(|held| held.rendered())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )),
+        }
     }
 
     const PRELUDE: &str = "\

@@ -78,10 +78,67 @@ pub(crate) fn check_pooled_resources(
         return Vec::new();
     }
     let templates = declared_structs(ast, roots);
-    // Every pool a program has, which is an instantiation of a generic one and a
-    // plainly declared one alike. A concrete `Pool :: struct { storage: [4]File,
-    // generations: [4]i64 }` is the same container written out, and asking only
-    // about instantiations let it through.
+    let pools = every_pool(ast, roots, instances);
+    let mut reports = Vec::new();
+    for (instance, element, at) in refused(&pools, &templates, held) {
+        reports.push(format!(
+            "at {}: {}",
+            at.describe(),
+            pool_report(&instance, &element)
+        ));
+    }
+    reports.sort();
+    // One type reaches both rules by more than one road, and a reader wants the
+    // complaint once.
+    reports.dedup();
+    reports
+}
+
+/// The pools refused, as the names their values are typed with.
+///
+/// Nothing consumes such a value the way the language asks, which is the
+/// refusal, so the walk that counts consumptions leaves them alone rather than
+/// telling a reader to do what cannot be done. Answered here rather than read
+/// back out of the reports above: a check and the words it is reported in are
+/// two things, and matching one against the other means the words cannot be
+/// changed without the check quietly stopping.
+pub fn pooled_instance_names(
+    ast: &Ast,
+    roots: &[StmtId],
+    linear: &HashSet<String>,
+) -> HashSet<String> {
+    if linear.is_empty() {
+        return HashSet::new();
+    }
+    // The types a program declares `linear` and the ones that hold one, which
+    // is the set the check itself is asked about. A `Node` holding a `File` is
+    // a resource without saying so, and asking with the declared names alone
+    // answered that a slab of them was not a pool of resources when the report
+    // beside it said it was.
+    let held = crate::check::ownership::linear_closure(
+        linear,
+        &crate::check::ownership::collect_field_types(ast, roots),
+        ast,
+        roots,
+    );
+    let templates = declared_structs(ast, roots);
+    let pools = every_pool(ast, roots, &locate_instances(ast, roots));
+    refused(&pools, &templates, &held)
+        .into_iter()
+        .map(|(instance, _, _)| instance)
+        .collect()
+}
+
+/// Every container a program has, instantiated or written out.
+///
+/// A concrete `Pool :: struct { storage: [4]File, generations: [4]i64 }` is the
+/// same container written out, and asking only about instantiations let it
+/// through.
+fn every_pool(
+    ast: &Ast,
+    roots: &[StmtId],
+    instances: &Located,
+) -> Vec<(String, Position)> {
     let mut pools: Vec<(String, Position)> = instances
         .iter()
         .map(|(name, at)| (name.clone(), *at))
@@ -96,29 +153,30 @@ pub(crate) fn check_pooled_resources(
             ));
         }
     }
-    let mut reports = Vec::new();
-    for (instance, at) in &pools {
+    pools
+}
+
+/// The ones among them whose slots hold a resource.
+fn refused(
+    pools: &[(String, Position)],
+    templates: &Templates,
+    held: &HashSet<String>,
+) -> Vec<(String, Type, Position)> {
+    let mut found = Vec::new();
+    for (instance, at) in pools {
         // A name with no arguments binds nothing, and its fields are already the
         // types it has, so the same substitution answers for both shapes.
         let (base, arguments) = split_instance(instance)
             .unwrap_or_else(|| (instance.clone(), Vec::new()));
-        let Some(element) = pool_element(&base, &arguments, &templates) else {
+        let Some(element) = pool_element(&base, &arguments, templates) else {
             continue;
         };
         if !element.is_linear_with(held) {
             continue;
         }
-        reports.push(format!(
-            "at {}: {}",
-            at.describe(),
-            pool_report(instance, &element)
-        ));
+        found.push((instance.clone(), element, *at));
     }
-    reports.sort();
-    // One type reaches both rules by more than one road, and a reader wants the
-    // complaint once.
-    reports.dedup();
-    reports
+    found
 }
 
 /// What to say about a pool holding a resource. The name carries the prefix an
