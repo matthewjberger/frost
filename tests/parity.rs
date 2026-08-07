@@ -2005,23 +2005,20 @@ fn both_compilers_refuse_the_same_programs() {
 // harness learned to compare what was said rather than to look for a phrase
 // inside it, which is what let forty of these drift unseen.
 const WORDED_DIFFERENTLY: &[&str] = &[
-    // One names the place the resource left by, the other names the whole.
+    // One reports what follows the first fault and the other stops at it.
+    // Consuming a field through a borrow twice is refused by both; what they
+    // disagree about is whether the consequences of that are faults of their
+    // own.
     "consumed_through_a_borrow_twice",
     "handed_out_of_a_borrow_twice",
-    "moved_through_a_compile_time_list",
-    // One names the pool's instance and what it holds, the other the template.
-    "pool_nobody_named",
-    "handed_out_by_element",
-    // One names what was passed and where, the other names the callee.
-    // One opens with what kind of fault it is, the other with the fault.
-    // One reports a second fault where the other stops at the first. A `case`
-    // the self-hosted compiler refuses leaves it looking for a declaration at
-    // the brace that closes the match, so the reader is told twice and once
-    // wrongly.
     "an_alternative_that_binds_a_payload",
-    // One says it without a position, so there is no caret to read it off.
-    // One writes the bound with the brackets it was read through.
-    // One names the instance the fault is inside.
+    "pool_nobody_named",
+    // One names the instance the fault is inside and the other the line inside
+    // it. The bootstrap points at the call and says `instantiating 'peek<File>'`;
+    // the self-hosted compiler points at the expression in the body, which is
+    // the line to change, and names no instance.
+    "handed_out_by_element",
+    "moved_through_a_compile_time_list",
 ];
 
 // What a compiler said, apart from where it said it. A diagnostic is a header
