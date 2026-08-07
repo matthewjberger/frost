@@ -206,12 +206,10 @@ fn report_block(
             if current != OWNED {
                 let name = local_name(function, *local);
                 let message = if current == CONSUMED {
-                    format!(
-                        "linearity: linear value {name} is consumed more than once"
-                    )
+                    format!("linear value {name} is consumed more than once")
                 } else {
                     format!(
-                        "linearity: linear value {name} may be consumed more than once or before it holds a resource"
+                        "linear value {name} may be consumed more than once or before it holds a resource"
                     )
                 };
                 return Err(located(function, *local, message));
@@ -234,7 +232,7 @@ fn report_block(
                     function,
                     local,
                     format!(
-                        "linearity: linear value {name} is not consumed on every path before return"
+                        "linear value {name} is not consumed on every path before return"
                     ),
                 ));
             }
@@ -242,8 +240,7 @@ fn report_block(
                 return Err(located(
                     function,
                     local,
-                    "linearity: a linear value is created but never consumed"
-                        .to_string(),
+                    "a linear value is created but never consumed".to_string(),
                 ));
             }
         }

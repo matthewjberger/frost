@@ -185,9 +185,8 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
         xarg_count)
     if (ty < 0) {
         report_where(p.modules, p.src, param_off)
-        report("the bound names ")
-        report_src(p.src, param_off, param_len)
-        report(", which is not a compile-time parameter of this function")
+        report_fmt("the bound names '{}', which is not a compile-time parameter of this function",
+            source_text(p.src, param_off, param_len))
         frost_rt_recover_escape()
     }
     answer := bound_predicate(p, pred_off, pred_len, ty)
@@ -1499,7 +1498,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                 report_where(p.modules, p.src, node.val)
                 report("linear value '")
                 report_src(p.src, node.val, node.c)
-                report("' is never consumed")
+                report("' is not consumed on every path before return")
                 frost_rt_recover_escape()
             }
         }

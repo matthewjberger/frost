@@ -38,7 +38,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name,
+    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text,
     type_code_for
 
 // Whether there is room for `wanted` more bytes past the source, said here
@@ -906,6 +906,14 @@ synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
     p.src[p.synth_next] = 0
     p.synth_next = p.synth_next + 1
     return start, length
+}
+
+// The same name as text, so a message naming a type puts it in a hole like any
+// other value. It is written into the room past the source and read back from
+// there, which is where `typename` leaves one too.
+type_text :: fn(mut p: Parser, ty: i64) -> str {
+    off, len := synth_type_name(p, ty)
+    source_text(p.src, off, len)
 }
 
 synth_bytes :: fn(mut p: Parser, word: ^i8) {

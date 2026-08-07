@@ -109,7 +109,7 @@ pub(crate) fn check_pooled_resources(
             continue;
         }
         reports.push(format!(
-            "at {}: linearity: {}",
+            "at {}: {}",
             at.describe(),
             pool_report(instance, &element)
         ));
