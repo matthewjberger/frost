@@ -8681,8 +8681,41 @@ fn both_compilers_agree_on_the_examples() {
         let c_source = std::fs::read_to_string(&emitted).unwrap();
         let _ = std::fs::remove_file(&emitted);
         let got = compile_c_and_run(&label, &c_source)?;
-        (got != want).then(|| {
-            format!("the two compilers disagree about {example}:\n{got}{want}")
+        if got != want {
+            return Some(format!(
+                "the two compilers disagree about {example}:\n{got}{want}"
+            ));
+        }
+
+        // The same program built the way a build builds one: each module to its
+        // own object, then linked. A whole-program unit emits every body it
+        // names, so a specialization the module that names it does not emit is
+        // a name only this path is missing. That is how a `[]i64` keyed one way
+        // at the call and another in the body went unseen.
+        let linked = directory
+            .join(format!("{label}_l{}", std::env::consts::EXE_SUFFIX));
+        let built = Command::new(&compiler)
+            .arg("--link")
+            .arg("-o")
+            .arg(&linked)
+            .arg(&source)
+            .output()
+            .unwrap();
+        if !built.status.success() {
+            return Some(format!(
+                "the self-hosted compiler could not link {example}:\n{}",
+                String::from_utf8_lossy(&built.stderr)
+            ));
+        }
+        let ran = String::from_utf8_lossy(
+            &Command::new(&linked).output().unwrap().stdout,
+        )
+        .replace("\r\n", "\n");
+        let _ = std::fs::remove_file(&linked);
+        (ran != want).then(|| {
+            format!(
+                "the linked self-hosted build disagrees about {example}:\n{ran}{want}"
+            )
         })
     });
     let faults: Vec<String> = faults.into_iter().flatten().collect();
