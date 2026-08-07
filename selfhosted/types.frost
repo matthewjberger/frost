@@ -23,6 +23,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
     borrow_kept, pack_local_type, read_borrowed_operands,
+    reads_through_borrow,
     record_local, record_mono_ret, type_cache_prepare, type_of, binding_type,
     place_type,
     types_compatible, value_fits, untyped_literal
@@ -1361,6 +1362,18 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
     -1
 }
 
+// Whether reading this type reads through it.
+//
+// Reading a borrow reads what it borrows. An aggregate is reached by address
+// either way, so a field access through one already does it and there is
+// nothing to add; a scalar has no field to reach through, so the read is here
+// or nowhere. Four walks apply this and the rule is written once: the parse
+// wrapping a name, the pass reading an operator's operands, and each backend
+// coercing a value to the type a place wants.
+reads_through_borrow :: fn(mut p: Parser, ty: i64) -> bool {
+    is_borrow(ty) && is_aggregate(pointee(p, ty)) == false
+}
+
 // A borrow where a borrow is wanted, undoing the read a name holding one takes
 // wherever it is written. A function answering `ref T` hands back the borrow
 // rather than what it borrows, and so does an argument for a parameter that
@@ -1420,7 +1433,7 @@ read_borrow_through :: fn(mut p: Parser, value: i64) -> i64 {
         return value
     }
     ty := arena_at(p.fns, node.val).ret_type
-    if (is_borrow(ty) == false || is_aggregate(pointee(p, ty))) {
+    if (reads_through_borrow(p, ty) == false) {
         return value
     }
     made := new_unary(p, NodeKind::Deref, value)

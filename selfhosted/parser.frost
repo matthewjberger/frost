@@ -749,8 +749,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // and writes through it. An aggregate is already reached by address, so
     // only a scalar is dereferenced here.
     param_ty := parse_param_type(p, offset, length)
-    if (param_ty >= 0 && is_borrow(param_ty)
-        && is_aggregate(pointee(p, param_ty)) == false) {
+    if (param_ty >= 0 && reads_through_borrow(p, param_ty)) {
         return read_through_borrow(p, offset, length)
     }
     // A `ref x := place` binding of a scalar is the same shape: the name holds
@@ -758,8 +757,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // was the address, so `bound == 9` compared an address against nine and
     // answered no for every place there is.
     local_ty := parse_local_type(p, offset, length)
-    if (local_ty >= 0 && is_borrow(local_ty)
-        && is_aggregate(pointee(p, local_ty)) == false) {
+    if (local_ty >= 0 && reads_through_borrow(p, local_ty)) {
         return read_through_borrow(p, offset, length)
     }
     // A name the compile-time `for` around this copy bound stands for the

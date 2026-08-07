@@ -159,8 +159,8 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
     // The same for a scalar, which has no field access to read through it the
     // way an aggregate does: a borrow reaching a place of the value's own type
     // is the value it borrows.
-    if (is_borrow(have) && is_borrow(want) == false
-        && is_aggregate(want) == false && pointee(p, have) == want) {
+    if (reads_through_borrow(p, have) && is_borrow(want) == false
+        && pointee(p, have) == want) {
         emit_text("(*(")
         emit_expr(p, value)
         emit_text("))")
