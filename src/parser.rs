@@ -27,6 +27,13 @@ pub const TEST_PREFIX: &str = "__frost_test_";
 // can claim a set that the arm it sits on cannot mean, and both compilers word
 // them the same because a program refused here is refused by the language
 // rather than by whichever compiler read it.
+// What the space around a `!` says. The two meanings are told apart by it, so a
+// program is held to writing each the way it is read: both compilers word these
+// the same because a program refused here is refused by the language rather
+// than by whichever compiler read it.
+const FAILURE_SET_SPACING: &str = "a `!` against what follows it negates, and this one marks a failure set; write `-> T ! E`, with a space on both sides";
+const NEGATION_SPACING: &str = "a `!` with a space after it marks a failure set, and this one negates; write it against what it negates, as `!ready`";
+
 const CATCH_ALL_ALTERNATIVE: &str = "this alternative covers everything on its own, so give it a case of its own";
 const BINDING_ALTERNATIVE: &str = "an alternative binding payload fields holds one name to two shapes, so give it a case of its own";
 const TUPLE_PART: &str = "a tuple case compares one value per part, so an alternative or a range belongs in a match on one value";
@@ -877,6 +884,39 @@ impl<'a> Parser<'a> {
 
     pub fn linear_types(&self) -> &std::collections::HashSet<String> {
         &self.linear_types
+    }
+
+    // Whether the token at the cursor ends where the one after it begins.
+    //
+    // `!` carries two meanings and the space after it is what tells them
+    // apart: written against what follows it, it negates; written with a space
+    // on both sides in a return type, it marks a failure set. So this is the
+    // question the rule about it asks.
+    // Answers nothing where there are no positions to read it off, which is a
+    // parse of tokens alone, and a rule about spacing has nothing to say there.
+    fn touches_next(&self) -> Option<bool> {
+        let here = self.consumed;
+        if here + 1 >= self.positions.len() {
+            return None;
+        }
+        let held = self.positions[here];
+        let next = self.positions[here + 1];
+        Some(next.line == held.line && next.column == held.column + 1)
+    }
+
+    // The same of the token before it, whose width is what it is written as.
+    // Every token that can end a return type is written the way it reads.
+    fn touches_previous(&self) -> Option<bool> {
+        let here = self.consumed;
+        if here == 0 || here >= self.positions.len() {
+            return None;
+        }
+        let previous = self.positions[here - 1];
+        let width = self.all_tokens[here - 1].to_string().chars().count();
+        Some(
+            self.positions[here].line == previous.line
+                && self.positions[here].column == previous.column + width,
+        )
     }
 
     fn current_position(&self) -> Option<Position> {
@@ -2661,6 +2701,16 @@ impl<'a> Parser<'a> {
     fn parse_prefix_expression(&mut self) -> Result<ExprId> {
         let start = self.mark();
         let operator = Operator::from_token(self.peek_nth(0), true)?;
+        // Recorded rather than raised. The expression reads one way whichever
+        // spacing it was written with, so the parse carries on and the reader
+        // is told the one thing that is wrong.
+        if operator == Operator::Not && self.touches_next() == Some(false) {
+            let position = self.current_position().unwrap_or_default();
+            self.diagnostics.push(crate::diagnostic::Diagnostic::new(
+                position,
+                NEGATION_SPACING.to_string(),
+            ));
+        }
         self.read_token();
         let inner = self.parse_expression(Precedence::Prefix)?;
         Ok(self.ast.push_expr(
@@ -3617,6 +3667,15 @@ impl<'a> Parser<'a> {
 
         let typ = self.parse_type()?;
         if matches!(self.peek_nth(0), Token::Bang) {
+            if self.touches_previous() == Some(true)
+                || self.touches_next() == Some(true)
+            {
+                let position = self.current_position().unwrap_or_default();
+                self.diagnostics.push(crate::diagnostic::Diagnostic::new(
+                    position,
+                    FAILURE_SET_SPACING.to_string(),
+                ));
+            }
             self.read_token();
             let error = self.parse_type()?;
             return Ok(ReturnKind::Fallible(typ, error));
