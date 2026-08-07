@@ -2040,6 +2040,15 @@ const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_
 
 // What a formatted value may be: a number, a yes or no, or text. Read through
 // any name a type carries, the same way the bounds vocabulary reads one.
+// What a distinct type is represented by, which is what a rule about shapes
+// asks about. The name it carries is a question for the rules about names.
+fn through_distinct(ty: &Type) -> &Type {
+    match ty {
+        Type::Distinct(_, inner) => through_distinct(inner),
+        other => other,
+    }
+}
+
 // A type spelled the way a reader writes one.
 //
 // `Display` is the name the compiler files a type under, and it round-trips
@@ -6200,6 +6209,18 @@ impl<'a> FunctionLowering<'a> {
                 Ok((IrOperand::Local(result), ty))
             }
             Operator::Not => {
+                // `!` answers the opposite of a yes or no and takes one. A
+                // number is not one: reading `!count` as `count == 0` is a
+                // conversion nothing wrote, and a corpus full of `started == 0`
+                // over an i64 flag means what it says.
+                if let Some(ty) = self.probe_type(operand)
+                    && !matches!(through_distinct(&ty), Type::Bool)
+                {
+                    bail!(
+                        "'!' answers the opposite of a yes or no, and this is a '{}'",
+                        spelled(&ty)
+                    );
+                }
                 let (value, _) =
                     self.lower_expression(operand, Some(&Type::Bool))?;
                 let result = self.fresh_local(Type::Bool, None);

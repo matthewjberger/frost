@@ -815,6 +815,47 @@ Holder :: struct { a: i64, b: i64 }
 ",
         "this argument is a 'ref Holder' and a 'Other' is what is wanted here",
     ),
+    // `!` answers the opposite of a yes or no and takes one. A number is not
+    // one: reading `!count` as `count == 0` is a conversion nothing wrote, and
+    // a corpus full of `started == 0` over an i64 flag means what it says. So
+    // the two spellings coexist and neither reaches into the other.
+    (
+        "a_negation_of_a_number",
+        "main :: fn() -> i64 {
+             n := 3
+             if (!n) {
+                 return 1
+             }
+             0
+}
+",
+        "'!' answers the opposite of a yes or no, and this is a 'i64'",
+    ),
+    (
+        "a_negation_of_a_decimal",
+        "main :: fn() -> i64 {
+             x := 1.5
+             if (!x) {
+                 return 1
+             }
+             0
+}
+",
+        "'!' answers the opposite of a yes or no, and this is a 'f64'",
+    ),
+    (
+        "a_negation_of_a_struct",
+        "Pair :: struct { a: i64 }
+         main :: fn() -> i64 {
+             p := Pair { a = 1 }
+             if (!p) {
+                 return 1
+             }
+             0
+}
+",
+        "'!' answers the opposite of a yes or no, and this is a 'Pair'",
+    ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
     // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
@@ -4780,6 +4821,43 @@ main :: fn() -> i64 {
 9
 10
 12
+",
+    ),
+    // `!` wherever a boolean expression is written: over a comparison, over a
+    // call answering one, doubled, beside `&&` and `||`, and with brackets
+    // deciding what it applies to. `!=` is a token of its own and `-> T ! E`
+    // marks a failure set, and a program writing all three reads the same in
+    // both.
+    (
+        "negation_beside_what_else_reads_bang",
+        "import \"io.frost\"
+Fault :: enum { Bad }
+         risky :: fn(n: i64) -> i64 ! Fault {
+             if (n < 0) {
+                 return .Bad
+             }
+             n
+}
+         ok :: fn(n: i64) -> bool { n > 0 }
+         main :: fn() -> i64 {
+             a := 3
+             print(\"{}\n\", a != 4)
+             print(\"{}\n\", !ok(a))
+             print(\"{}\n\", !ok(a) && a > 2)
+             print(\"{}\n\", !ok(a) || a > 2)
+             print(\"{}\n\", !(ok(a) && a > 5))
+             print(\"{}\n\", !!ok(a))
+             print(\"{}\n\", !(a > 2) == false)
+             0
+}
+",
+        "1
+0
+0
+1
+1
+1
+1
 ",
     ),
 ];

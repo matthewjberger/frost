@@ -824,6 +824,26 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
+        // `!` answers the opposite of a yes or no and takes one. A number is
+        // not one: reading `!count` as `count == 0` is a conversion nothing
+        // wrote, and the corpus is full of `started == 0` over an i64 flag
+        // meaning what it says.
+        if (kind == NodeKind::Bin && node.c == 1) {
+            // A comparison and a join answer a truth value and carry it as a
+            // number, so what they are is read off the operator rather than off
+            // the width the answer travels in.
+            operand := arena_at(p.arena, node.a)
+            answers_truth := (operand.kind == NodeKind::Bin
+                && op_answers_truth(operand.val))
+            operand_ty := type_of(p, node.a)
+            if (answers_truth == false
+                && distinct_repr(operand_ty) != TY_BOOL) {
+                report_where(p.modules, p.src, node.pos)
+                report_fmt("'!' answers the opposite of a yes or no, and this is a '{}'",
+                    type_text(p, operand_ty))
+                frost_rt_recover_note()
+            }
+        }
         // A bare number takes its width from what it is compared against,
         // whichever side it is written on. A comparison stops a width reaching
         // in from outside, since it answers a truth value however wide its
