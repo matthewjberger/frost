@@ -484,6 +484,7 @@ fn lowered_and_checked(
     linear_types: &std::collections::HashSet<String>,
     per_module: bool,
     collected: &[frost::Diagnostic],
+    idle: &[frost::Diagnostic],
 ) -> Result<frost::IrModule> {
     let (module, lowering) = beside(
         collected,
@@ -510,6 +511,14 @@ fn lowered_and_checked(
     }
     suggest_names(program, &program.roots.clone(), &mut faults);
     refuse(&faults)?;
+    // A build that is refused says what it refused and nothing else, so this is
+    // past the last of them. A warning is a report too, and a caller reading
+    // JSON gets it as one rather than as a line in the middle of the stream.
+    if wants_json() {
+        eprint!("{}", frost::diagnostics_as_json(idle, "warning"));
+    } else {
+        eprint!("{}", frost::render_warnings(idle));
+    }
     Ok(module)
 }
 
@@ -1087,20 +1096,19 @@ fn compile() -> Result<()> {
     // list of `unsafe` blocks is only worth reading while every one of them
     // earns its place. `--audit-unsafe` turns the report into a failure, which
     // is what holds a tree to it.
-    // A warning is a report too, so a caller reading JSON gets it as one rather
-    // than as a line of prose in the middle of the stream.
-    if wants_json() {
-        eprint!("{}", frost::diagnostics_as_json(&idle, "warning"));
-    } else {
-        for held in &idle {
-            eprintln!(
-                "warning: at {}: {}",
-                held.position.describe(),
-                held.message
-            );
-        }
-    }
+    // Held until the build is known to have one thing to say. A reader shown a
+    // block that vouches for nothing beside the fault that stopped the build
+    // has been handed a second thing to read and one thing to do, so the
+    // warnings go out where the last check has passed.
     if cli.audit_unsafe && !idle.is_empty() {
+        // The one build where an idle block is what stops it, so this is where
+        // the blocks are named: the summary below counts them and the reader
+        // needs the lines.
+        if wants_json() {
+            eprint!("{}", frost::diagnostics_as_json(&idle, "warning"));
+        } else {
+            eprint!("{}", frost::render_warnings(&idle));
+        }
         anyhow::bail!(
             "Unsafe audit: {} block(s) vouch for nothing",
             idle.len()
@@ -1162,8 +1170,13 @@ fn compile() -> Result<()> {
             &augmented.roots,
             &linear_types,
         ));
-        let module =
-            lowered_and_checked(&mut augmented, &linear_types, false, &faults)?;
+        let module = lowered_and_checked(
+            &mut augmented,
+            &linear_types,
+            false,
+            &faults,
+            &idle,
+        )?;
         let stem = Path::new(&cli.file)
             .file_stem()
             .unwrap_or_default()
@@ -1221,8 +1234,13 @@ fn compile() -> Result<()> {
     ));
 
     if cli.run_ir {
-        let module =
-            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
+        let module = lowered_and_checked(
+            &mut program,
+            &linear_types,
+            false,
+            &faults,
+            &idle,
+        )?;
         match run_module(&module) {
             RunOutcome::Output(output) => {
                 print!("{output}");
@@ -1236,8 +1254,13 @@ fn compile() -> Result<()> {
     }
 
     if cli.emit_c {
-        let module =
-            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
+        let module = lowered_and_checked(
+            &mut program,
+            &linear_types,
+            false,
+            &faults,
+            &idle,
+        )?;
         let c_source = emit_c(&module).context("C emission error")?;
 
         let input_path = Path::new(&cli.file);
@@ -1284,6 +1307,7 @@ fn compile() -> Result<()> {
             &linear_types,
             cli.link,
             &faults,
+            &idle,
         )?;
         let input_path = Path::new(&cli.file);
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
@@ -1398,8 +1422,13 @@ fn compile() -> Result<()> {
             }
         }
     } else {
-        let module =
-            lowered_and_checked(&mut program, &linear_types, false, &faults)?;
+        let module = lowered_and_checked(
+            &mut program,
+            &linear_types,
+            false,
+            &faults,
+            &idle,
+        )?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
         let stem = Path::new(&cli.file)

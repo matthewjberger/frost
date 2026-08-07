@@ -1837,6 +1837,10 @@ Parser :: struct {
     // Whether to report an `unsafe` block that vouches for nothing. Off unless
     // asked for, so an ordinary build never walks the spans.
     audit_unsafe: i64,
+    // Whether this run is listing findings rather than building. A finding is
+    // advisory by what it is, so the word that tells a warning from a refusal
+    // has nothing to tell there.
+    linting: i64,
     // Whether a line table is written beside the code. Off unless asked for,
     // since the paths in it are absolute and a build that carries them is not
     // the same bytes on another machine.
