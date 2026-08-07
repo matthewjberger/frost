@@ -16350,8 +16350,9 @@ fn an_aggregate_literal_must_write_every_field() {
 }
 
 // A generic struct literal passed straight to a generic function used to fail
-// with "unknown struct 'Pair'": the argument was lowered with no expected type,
-// so the literal had nothing to tell it which instance it was and fell back to
+// with "'Pair' is not a type this program declares": the argument was lowered
+// with no expected type, so the literal had nothing to tell it which instance
+// it was and fell back to
 // the bare template, which has no layout. The parameter's type is known at the
 // call, so the fix is to substitute what is bound so far and hand that down.
 #[test]
@@ -17161,7 +17162,9 @@ fn one_root_cause_is_one_report_with_every_place() {
          three :: fn() -> i64 { Absent { a = 3 }.a }\n\
          main :: fn() -> i64 { one() + two() + three() }\n",
     );
-    let said = report.matches("unknown struct 'Absent'").count();
+    let said = report
+        .matches("'Absent' is not a type this program declares")
+        .count();
     assert_eq!(
         said, 3,
         "one root cause was named {said} times, and it shows in three places:\n{report}"

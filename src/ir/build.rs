@@ -2175,8 +2175,56 @@ fn check_bound(
     bail!(
         "'{callee}' is declared `where {bound}`, and that does not hold for {}",
         bindings.join(", "),
-        bound = display_expr(ast, bound)
+        bound = display_bound(ast, bound)
     )
+}
+
+// The bound, spelled the way it was declared. `display_expr` brackets every
+// operator so that any expression reads back without ambiguity, which turns
+// `!is_linear(T)` into `(!is_linear(T))` and quotes the reader a line they did
+// not write. A bound joins predicate calls with `!`, `&&` and `||`, so the one
+// place a bracket carries meaning is an `||` under something that binds
+// tighter.
+fn display_bound(ast: &Ast, expression: ExprId) -> String {
+    match ast.expr(expression) {
+        Expression::Prefix(crate::parser::Operator::Not, inner) => {
+            format!("!{}", bound_term(ast, *inner, BOUND_NOT))
+        }
+        Expression::Infix(left, operator, right) => {
+            let level = bound_level(operator);
+            format!(
+                "{} {operator} {}",
+                bound_term(ast, *left, level),
+                bound_term(ast, *right, level)
+            )
+        }
+        _ => display_expr(ast, expression),
+    }
+}
+
+// How tightly a bound's joins bind, so that a term written under one that
+// binds tighter than its own gets the brackets back. `!` is tightest and `||`
+// is loosest, which is the one place a bracket in a bound says something.
+const BOUND_OR: u8 = 0;
+const BOUND_AND: u8 = 1;
+const BOUND_NOT: u8 = 2;
+
+fn bound_level(operator: &crate::parser::Operator) -> u8 {
+    match operator {
+        crate::parser::Operator::And => BOUND_AND,
+        _ => BOUND_OR,
+    }
+}
+
+fn bound_term(ast: &Ast, expression: ExprId, outer: u8) -> String {
+    let inner = match ast.expr(expression) {
+        Expression::Infix(_, operator, _) => bound_level(operator),
+        _ => BOUND_NOT,
+    };
+    match inner < outer {
+        true => format!("({})", display_bound(ast, expression)),
+        false => display_bound(ast, expression),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7823,6 +7871,20 @@ impl<'a> FunctionLowering<'a> {
                 "this argument is a '{given}' and a '{target}' is what is wanted here"
             );
         }
+        // A raw pointer where a slice is wanted. A slice is an address and a
+        // length; a pointer is the address alone, so the callee reads whatever
+        // sat beside it for the length. Caught here, while both types are still
+        // spelled the way the reader wrote them: taken as an address like any
+        // other aggregate argument, the complaint lands in the IR typechecker
+        // and quotes the lowered `^^i8` of a parameter the source calls a `str`.
+        if let Some(given) = self.probe_type(argument)
+            && slice_element_wanted(target).is_some()
+            && matches!(given, Type::Ptr(_))
+        {
+            bail!(
+                "this argument is a '{given}' and a '{target}' is what is wanted here"
+            );
+        }
         // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice
         // view and hand over its address, rather than the array's.
         if let Some(element) = slice_element_wanted(target)
@@ -9545,10 +9607,12 @@ impl<'a> FunctionLowering<'a> {
             }
         }
         let (base_pointer, struct_name) = self.struct_place(base)?;
-        let layout = self
-            .builder
-            .struct_layout(&struct_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown struct '{struct_name}'"))?;
+        let layout =
+            self.builder.struct_layout(&struct_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "'{struct_name}' is not a type this program declares"
+                )
+            })?;
         let field_layout = layout.field(field).ok_or_else(|| {
             anyhow::anyhow!("struct '{struct_name}' has no field '{field}'")
         })?;
@@ -9694,7 +9758,9 @@ impl<'a> FunctionLowering<'a> {
         let fields: Vec<(String, usize, Type)> = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
-                    anyhow::anyhow!("unknown struct '{struct_name}'")
+                    anyhow::anyhow!(
+                        "'{struct_name}' is not a type this program declares"
+                    )
                 })?;
             layout
                 .fields

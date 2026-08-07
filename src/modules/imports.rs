@@ -191,12 +191,19 @@ pub fn expand_includes(
                 Some(Token::RightParentheses),
             ) => path.clone(),
             _ => bail!(
-                "include_str takes one string literal naming a file, so the path is known while the program is being compiled"
+                "at {}: include_str takes one string literal naming a file, so the path is known while the program is being compiled",
+                positions[index].describe()
             ),
         };
         let full = directory.join(&path);
         let content = fs::read_to_string(&full).map_err(|_| {
-            anyhow::anyhow!("include_str: cannot read {}", full.display())
+            // Written with `/` throughout, which is how a path reads in every
+            // other report and how the same path reads on the other platform.
+            anyhow::anyhow!(
+                "at {}: include_str: cannot read '{}'",
+                positions[index].describe(),
+                full.display().to_string().replace('\\', "/")
+            )
         })?;
         spliced_tokens.push(Token::StringLiteral(content.replace('\r', "")));
         spliced_positions.push(positions[index]);
@@ -401,10 +408,11 @@ pub fn resolve_imports_cached(
     let reports = declared_compiler_names(&walk.files);
     if !reports.is_empty() {
         bail!(
-            "a name the compiler owns means one thing, and these declare another:
-{}",
-            reports.join("
-")
+            "{}",
+            reports.join(
+                "
+"
+            )
         );
     }
     let reports = shadowed_imports(&walk.files, &walk.module_exports);

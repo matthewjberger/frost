@@ -415,7 +415,6 @@ fn suggest_names(
 fn names_a_missing_name(message: &str) -> Option<String> {
     for opening in [
         "unknown variable '",
-        "unknown struct '",
         "call to undefined function '",
         "unknown function '",
     ] {

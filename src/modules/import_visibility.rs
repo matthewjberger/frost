@@ -33,6 +33,9 @@ use crate::modules::interface_names::names_in_statement;
 pub struct FileNames {
     pub module: String,
     pub declared: HashSet<String>,
+    // Where each declared name is written, so a report about one lands on the
+    // line that wrote it rather than on the file as a whole.
+    pub declared_at: HashMap<String, crate::lexer::Position>,
     pub imports: Vec<PathBuf>,
     pub used: Vec<String>,
     // The exported names this file read under another name. One of those does
@@ -48,9 +51,13 @@ impl FileNames {
         imports: &[PathBuf],
     ) -> Self {
         let mut declared = HashSet::new();
+        let mut declared_at = HashMap::new();
         for statement in roots {
             if let Some(name) = top_level_name(ast, *statement) {
                 declared.insert(name.to_string());
+                declared_at
+                    .entry(name.to_string())
+                    .or_insert_with(|| ast.stmt_position(*statement));
             }
         }
         let mut used = Vec::new();
@@ -74,6 +81,7 @@ impl FileNames {
         FileNames {
             module: module.to_string(),
             declared,
+            declared_at,
             imports: imports.to_vec(),
             used,
             renamed,
@@ -140,9 +148,14 @@ pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
             {
                 continue;
             }
+            let position = file
+                .declared_at
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_default();
             reports.push(format!(
-                "{}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
-                file.module
+                "at {}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
+                position.describe()
             ));
         }
     }

@@ -743,8 +743,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // and the emitters read a struct index out of something that is not a
     // struct, dying with an arena index of -16 rather than saying anything. The
     // bootstrap rendered the parameter it could not bind as its own name and
-    // called `Box<T>` an unknown struct, which points at neither the cause nor
-    // the fix.
+    // called `Box<T>` a type nothing declares, which points at neither the cause
+    // nor the fix.
     (
         "a_generic_literal_with_no_argument_to_read",
         "import \"io.frost\"\nBox :: struct($T: Type) { storage: [2]T, len: i64 }\n\
@@ -1166,7 +1166,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "main :: fn() -> i64 {\n\
          \x20   held := Absent { a = 2 }\n\
          \x20   0\n}\n",
-        "unknown struct 'Absent'",
+        "'Absent' is not a type this program declares",
     ),
     (
         "a_slice_of_an_arena_leaving_its_with_block",
@@ -2013,25 +2013,18 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     "pool_nobody_named",
     "handed_out_by_element",
     // One names what was passed and where, the other names the callee.
-    "pointer_for_text",
-    "one_value_passed_to_two_mut_parameters",
     // One opens with what kind of fault it is, the other with the fault.
     // One reports a second fault where the other stops at the first. A `case`
     // the self-hosted compiler refuses leaves it looking for a declaration at
     // the brace that closes the match, so the reader is told twice and once
     // wrongly.
     "a_live_walk_over_a_computed_container",
-    "a_literal_of_an_undeclared_type",
     "two_vectors_compared",
     "a_compile_time_call_over_a_size_parameter",
     "an_alternative_that_binds_a_payload",
     "a_match_over_spans_still_needs_the_rest",
     // One says it without a position, so there is no caret to read it off.
-    "a_declaration_of_a_compiler_name",
-    "an_include_of_a_file_that_is_not_there",
-    "an_include_whose_path_is_not_a_literal",
     // One writes the bound with the brackets it was read through.
-    "a_resource_against_a_bound_that_refuses_one",
     // One names the instance the fault is inside.
 ];
 
