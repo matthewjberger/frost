@@ -216,6 +216,48 @@ locate_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     beside
 }
 
+// The bytes of a terminated string from `start` on, as one of its own.
+cstr_from :: fn(s: ^i8, start: i64) -> ^i8 {
+    length := cstr_len(s) - start
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 1)) }
+    var k: i64 = 0
+    while (k < length) {
+        byte_set(out, k, byte_at(s, start + k))
+        k = k + 1
+    }
+    byte_set(out, length, 0)
+    out
+}
+
+// What a file is called in a report and in what a build writes out: where it
+// sits under the directory the build was started in. The path beside it says
+// where to read the file on this machine, and that changes with the machine, so
+// a compiler built in one checkout and one built in another wrote two spellings
+// of `std/mem.frost` into their own assembly and agreed on nothing else.
+//
+// A file outside that directory keeps the path it was resolved by, which is the
+// only thing there is to call it.
+named_path :: fn(path: ^i8) -> ^i8 {
+    here := absolute_path(".")
+    full := absolute_path(path)
+    prefix := cstr_len(here)
+    if (prefix == 0 || cstr_len(full) <= prefix + 1) {
+        return path
+    }
+    var k: i64 = 0
+    while (k < prefix) {
+        if (byte_at(full, k) != byte_at(here, k)) {
+            return path
+        }
+        k = k + 1
+    }
+    var start := prefix
+    if (byte_at(full, start) == CH_SLASH) {
+        start = start + 1
+    }
+    cstr_from(full, start)
+}
+
 // A path with the working directory in front of it and one separator
 // throughout, which is what makes two spellings of one file compare equal. A
 // relative path and an absolute one name the same file and share no prefix, so
@@ -302,7 +344,8 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
     if (module_seen(modules, path)) {
         return at
     }
-    mine := arena_push(modules, Module { path = path, start = 0, finish = 0,
+    mine := arena_push(modules, Module { path = path, name = named_path(path),
+            start = 0, finish = 0,
             cursor_off = -1, cursor_line = 1, cursor_column = 1 })
     raw := unsafe { frost_rt_read_file(path) }
     // The file's bytes as a slice, once, so nothing below indexes a bare
@@ -324,11 +367,14 @@ place_module :: fn(buffer: str, at: i64, given: ^i8,
         entry := arena_at(scratch, i)
         named := arena_at(scratch, i + 1)
         if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
+            // Held for both fields. What a child is called is worked out where
+            // it is placed, and nothing reads this one.
+            child := find_import(path, text, named.off, named.len, roots,
+                layers)
             arena_push(
                 children,
                 Module {
-                    path = find_import(path, text, named.off, named.len,
-                        roots, layers),
+                    path = child, name = child,
                     start = 0, finish = 0,
                     cursor_off = -1, cursor_line = 1,
                     cursor_column = 1 },
@@ -525,9 +571,9 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     entry.cursor_line = line
     entry.cursor_column = column
     var k: i64 = 0
-    length := cstr_len(entry.path)
+    length := cstr_len(entry.name)
     while (k < length) {
-        byte := byte_at(entry.path, k)
+        byte := byte_at(entry.name, k)
         if (byte == CH_BACKSLASH) {
             frost_rt_emit_char(CH_BACKSLASH)
         }

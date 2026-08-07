@@ -1012,6 +1012,11 @@ VariantFixup :: struct {
 // laid into, and a module's range is what says which file wrote it.
 Module :: struct {
     path: ^i8,
+    // What a report and an assertion built into the output call this file. The
+    // path beside it says where the file is on this machine, which is what
+    // reading a line back needs and what changes with the machine: a build from
+    // two checkouts wrote two spellings of one file into its own assembly.
+    name: ^i8,
     start: i64,
     finish: i64,
     // Where the last line and column question about this module was answered.
