@@ -1023,13 +1023,16 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
             emit_text(", ")
         }
         param_ty := proc_param_at(p, callee_ty, i)
-        // A struct and a fixed array travel by address, so the signature says
-        // `char*` for one. A slice does not: it is a pointer beside a length
-        // and it travels by value, so it is written as the type it is.
-        if (is_aggregate(param_ty) && is_slice_ty(p, param_ty) == false) {
-            emit_text("char*")
-        } else {
-            emit_ctype(p, param_ty)
+        // A struct, a fixed array and a slice all travel by address, which is
+        // how every definition takes one, so the signature says a pointer to
+        // the type. Saying the value itself agrees with the callee on one
+        // target and not another: a sixteen-byte struct goes in two registers
+        // under the System V convention while the callee reads one pointer, and
+        // goes as a hidden pointer under the Windows one, where the two happen
+        // to line up.
+        emit_ctype(p, param_ty)
+        if (is_aggregate(param_ty)) {
+            emit_text("*")
         }
         i = i + 1
     }
@@ -1059,8 +1062,16 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
             param_ty = proc_param_at(p, callee_ty, at)
         }
         arg_ty := type_of(p, node.a)
-        if (param_ty >= 0 && is_pointer(param_ty)
-            && is_aggregate(pointee(p, param_ty)) && is_pointer(arg_ty) == false) {
+        var by_address: bool = false
+        if (param_ty >= 0 && is_pointer(arg_ty) == false) {
+            if (is_aggregate(param_ty)) {
+                by_address = true
+            } else if (is_pointer(param_ty)
+                && is_aggregate(pointee(p, param_ty))) {
+                by_address = true
+            }
+        }
+        if (by_address) {
             emit_text("(&(")
             emit_expr(p, node.a)
             emit_text("))")

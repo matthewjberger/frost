@@ -3118,6 +3118,53 @@ fn self_hosted_emits(
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
+// A call through a function-pointer field has to agree with the definition it
+// reaches about how an aggregate travels. Every definition takes one by
+// address, so the cast the call goes through says a pointer too.
+//
+// Behaviour cannot answer this. A sixteen-byte struct passed by value goes as a
+// hidden pointer under the Windows convention, which is the same thing the
+// callee reads, so a mismatch runs correctly there and reads the data pointer
+// as the struct under the System V one. The emitted text is the same on both,
+// so that is what this reads.
+#[test]
+fn a_call_through_a_field_passes_an_aggregate_by_address() {
+    let source = "import \"io.frost\"\n\
+         loud :: fn(text: str) { write(to_stdout, \"[{}]\", text) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   write(loud, \"a {} b\\n\", 3)\n\
+         \x20   0\n\
+         }\n";
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_fieldabi.frost");
+    std::fs::write(&input, source).unwrap();
+    let Some(emitted) = self_hosted_emits("fieldabi", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+
+    // `(*)(struct __arr0)` is the by-value spelling and `(*)(struct __arr0*)`
+    // the one that matches. Finding the first is the fault.
+    let mut faults = Vec::new();
+    for (index, _) in emitted.match_indices("(*)(") {
+        let rest = &emitted[index + 4..];
+        let Some(close) = rest.find(')') else {
+            continue;
+        };
+        for parameter in rest[..close].split(',') {
+            let parameter = parameter.trim();
+            if parameter.starts_with("struct ") && !parameter.ends_with('*') {
+                faults.push(parameter.to_string());
+            }
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "a function-pointer cast takes an aggregate by value, which the \
+         definition does not: {faults:?}"
+    );
+}
+
 fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
     let compiler = c_compiler()?;
     let directory = std::env::temp_dir();
