@@ -2035,11 +2035,6 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     "two_vectors_compared",
     "a_compile_time_call_over_a_size_parameter",
     "an_alternative_that_binds_a_payload",
-    "a_case_after_one_that_covers_everything",
-    "a_tuple_case_after_one_that_covers_everything",
-    "a_case_two_earlier_spans_cover_between_them",
-    "a_case_an_earlier_span_covers",
-    "a_case_an_earlier_alternative_covers",
     "a_match_over_spans_still_needs_the_rest",
     // One says it without a position, so there is no caret to read it off.
     "a_declaration_of_a_compiler_name",

@@ -3246,7 +3246,11 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         if (closed == 1) {
             report_where(p.modules, p.src, cur_off(p))
             report("this case is covered by an earlier one, so nothing reaches it")
-            frost_rt_recover_escape()
+            // The arm is well formed; what is refused is that it can be
+            // reached. Escaping here would abandon a parse that is in good
+            // order and leave the resync looking for a statement at the brace
+            // closing the match, so the reader was told twice and once wrongly.
+            frost_rt_recover_note()
         }
         if (condition == (-1)) {
             // Matches whatever is left, so it is the chain's else and the last
@@ -3414,7 +3418,11 @@ parse_match :: fn(mut p: Parser) -> i64 {
         if (saw_default == 1 || case_is_shadowed(p, head, alts)) {
             report_where(p.modules, p.src, cur_off(p))
             report("this case is covered by an earlier one, so nothing reaches it")
-            frost_rt_recover_escape()
+            // The arm is well formed; what is refused is that it can be
+            // reached. Escaping here would abandon a parse that is in good
+            // order and leave the resync looking for a statement at the brace
+            // closing the match, so the reader was told twice and once wrongly.
+            frost_rt_recover_note()
         }
         advance(p)
         body := parse_arm(p)
