@@ -2019,13 +2019,10 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     "concrete_pool",
     "handed_out_by_element",
     // One names what was passed and where, the other names the callee.
-    "an_aggregate_of_the_wrong_type_is_refused",
     "pointer_for_text",
     "one_value_passed_to_two_mut_parameters",
     "a_c_function_called_outside_an_unsafe_block",
     // One opens with what kind of fault it is, the other with the fault.
-    "distinct_through_a_field",
-    "flags_through_a_field",
     // One reports a second fault where the other stops at the first. A `case`
     // the self-hosted compiler refuses leaves it looking for a declaration at
     // the brace that closes the match, so the reader is told twice and once

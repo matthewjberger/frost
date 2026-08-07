@@ -537,11 +537,8 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         if (fits == false) {
             report_where(p.modules, p.src, node.pos)
-            report("assigning a value of the wrong type: the place is a '")
-            report_type_name(p, place_ty)
-            report("' and the value is a '")
-            report_type_name(p, value_ty)
-            report("'")
+            report_fmt("this place is a '{}' and the value is a '{}'",
+                type_text(p, place_ty), type_text(p, value_ty))
             report_distinct_note(p, value, value_ty, place_ty)
             frost_rt_recover_escape()
         }
@@ -950,14 +947,8 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                 }
                 if (expected != TY_PARAM && fits == false) {
                     report_where(p.modules, p.src, vnode.pos)
-                    report("'")
-                    report_src(p.src, sym.off, sym.len)
-                    report("' was passed an argument of the wrong type: ")
-                    report("it takes a '")
-                    report_type_name(p, expected)
-                    report("' and this is a '")
-                    report_type_name(p, arg_ty)
-                    report("'")
+                    report_fmt("this argument is a '{}' and a '{}' is what is wanted here",
+                        type_text(p, arg_ty), type_text(p, expected))
                     report_distinct_note(p, value, arg_ty, expected)
                     frost_rt_recover_escape()
                 }

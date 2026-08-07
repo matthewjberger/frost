@@ -4835,13 +4835,13 @@ fn both_self_hosted_backends_refuse_the_same_programs() {
             "P :: struct { x: i64 }\n\
           take :: fn(n: i64) -> i64 { n }\n\
           main :: fn() -> i64 { p := P { x = 1 }  return take(p) }\n",
-            "argument of the wrong type",
+            "is what is wanted here",
         ),
         // A value of the wrong type assigned to a place.
         (
             "P :: struct { x: i64 }\n\
           main :: fn() -> i64 { var n : i64 = 0  p := P { x = 1 }  n = p  0 }\n",
-            "assigning a value of the wrong type",
+            "this place is a",
         ),
         // A returned value of the wrong type.
         (
@@ -5958,7 +5958,7 @@ fn self_hosted_rejects_an_argument_of_the_wrong_type() {
         return;
     };
     assert!(
-        message.contains("wrong type"),
+        message.contains("is what is wanted here"),
         "expected an argument-type error, got:\n{message}"
     );
 }
@@ -5973,7 +5973,7 @@ fn self_hosted_rejects_assigning_the_wrong_type() {
         return;
     };
     assert!(
-        message.contains("wrong type"),
+        message.contains("this place is a"),
         "expected an assignment-type error, got:\n{message}"
     );
 }
