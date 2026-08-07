@@ -2018,11 +2018,7 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     // the self-hosted compiler refuses leaves it looking for a declaration at
     // the brace that closes the match, so the reader is told twice and once
     // wrongly.
-    "a_live_walk_over_a_computed_container",
-    "two_vectors_compared",
-    "a_compile_time_call_over_a_size_parameter",
     "an_alternative_that_binds_a_payload",
-    "a_match_over_spans_still_needs_the_rest",
     // One says it without a position, so there is no caret to read it off.
     // One writes the bound with the brackets it was read through.
     // One names the instance the fault is inside.
@@ -4609,6 +4605,45 @@ main :: fn() -> i64 {
 4
 11
 15
+",
+    ),
+    // A borrow of a scalar, read as the value it borrows.
+    //
+    // Reading a borrow reads what it borrows, which for an aggregate is what a
+    // field access does and for a scalar there is nothing to read through. So
+    // all four of these compared the address the borrow holds against the
+    // number beside it and answered no every time: `arena_at` on an arena of
+    // numbers is the shape that found it, and it answers a `ref i64` the same
+    // way it answers a `ref` of any struct. The name reads through where it is
+    // written and a call answering one reads through where it is used, since
+    // what a call answers with is known only once every signature has been
+    // read. A `ref T` handed back by a function answering one stays the borrow.
+    //
+    // A borrow handed to a compile-time list is not here: what a list element
+    // holds is the type the argument had, and both compilers refuse a borrow
+    // there rather than reading through it.
+    (
+        "a_borrow_of_a_number_is_the_number",
+        "import \"io.frost\"\nBag :: struct { data: ^i64, count: i64 }\n\
+         at :: fn(b: Bag, i: i64) -> ref i64 {\n\
+         \x20   unsafe {\n\
+         \x20       ref r := b.data[i]\n\
+         \x20       r\n\
+         \x20   }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   var cells : [4]i64 = [7, 8, 9, 10]\n\
+         \x20   b := Bag { data = unsafe { ptr_to(cells[0]) }, count = 4 }\n\
+         \x20   ref bound := cells[2]\n\
+         \x20   print(\"{}\n\", bound == 9)\n\
+         \x20   print(\"{}\n\", at(b, 2) == 9)\n\
+         \x20   print(\"{}\n\", at(b, 1) + 1)\n\
+         \x20   bound = 12\n\
+         \x20   print(\"{}\n\", cells[2])\n\
+         \x20   0\n}\n",
+        "1
+1
+9
+12
 ",
     ),
 ];

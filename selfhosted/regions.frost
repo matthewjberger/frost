@@ -3627,7 +3627,15 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
             // a use of the run rather than a rebinding of the name, and a stale
             // one lands in the block that was given back.
             if (node.a != (-1)) {
-                tnode := arena_at(p.arena, node.a)
+                // Past the read a name holding a borrow of a scalar takes
+                // wherever it is written, to the name underneath: what the
+                // write goes through is what the name views.
+                var target := node.a
+                held := arena_at(p.arena, target)
+                if (held.kind == NodeKind::Deref && held.val == 1) {
+                    target = held.a
+                }
+                tnode := arena_at(p.arena, target)
                 target_kind := tnode.kind
                 target_off := tnode.val
                 target_len := tnode.c

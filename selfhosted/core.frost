@@ -1455,6 +1455,14 @@ Parser :: struct {
     // node the literal parsed to, written out again at each use.
     value_consts: Arena<ConstDef>,
     instances: Arena<Instance>,
+    // Where each constant fault was reported, and whether the one being
+    // reported now is a repeat. A generic's fields are read again for every
+    // mention of an instance and an instance is recorded only once its fields
+    // are read, so a template that fails while they are being read is read
+    // again by the next mention of it and says the same thing about the same
+    // line. The same expression cannot be wrong twice.
+    const_faults: Arena<i64>,
+    const_repeat: i64,
     generic_fns: Arena<GenericFn>,
     // Every allocation capability every `uses` function draws, as runs one per
     // function, and the ones in scope where a call is being emitted.

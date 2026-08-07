@@ -119,6 +119,7 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
             value = held
         }
     }
+    value = borrow_kept(p, value, want)
     // A zeroed columns container. Zero sets every generation and free slot to 0.
     // `columns_reset` lays out the free list before the container is used.
     if (is_columns_new_call(p, value)) {
@@ -153,6 +154,16 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
         emit_text("(*")
         emit_expr(p, value)
         emit_text(")")
+        return
+    }
+    // The same for a scalar, which has no field access to read through it the
+    // way an aggregate does: a borrow reaching a place of the value's own type
+    // is the value it borrows.
+    if (is_borrow(have) && is_borrow(want) == false
+        && is_aggregate(want) == false && pointee(p, have) == want) {
+        emit_text("(*(")
+        emit_expr(p, value)
+        emit_text("))")
         return
     }
     if (is_array_ty(want) && is_array_ty(have) && is_slice_ty(p, want)
