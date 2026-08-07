@@ -121,18 +121,17 @@ fn locate_instantiation<T>(
         // The mangled symbol is a compiler artifact, so where the inner message
         // names it, say what the reader wrote instead. The text has already had
         // the module tag taken off it, so the symbol looked for has to have
-        // lost the same thing or it is not in there to find. Only the symbol:
-        // the instance is not named in the words, which is the position's to
-        // say.
+        // lost the same thing or it is not in there to find.
         let symbol =
             crate::modules::imports::demangle_private_names(&function.name);
         let text = text.replace(&symbol, &name);
-        // The call is where the report is shown, so a place the fault carried
-        // from inside the instance comes off: two in one report renders as the
-        // first with the second left in the words, and the claim a reader had
-        // to act on began with a file name.
-        let text = crate::diagnostic::without_leading_place(&text);
-        if instantiated.at == crate::lexer::Position::default() {
+        // A fault that carried a place from inside the instance keeps it: that
+        // is the line to change, and the instance it went wrong for is named
+        // in the claim. The call is the place to show it at when the fault has
+        // none.
+        if text.starts_with("at ")
+            || instantiated.at == crate::lexer::Position::default()
+        {
             anyhow::anyhow!("{text}")
         } else {
             anyhow::anyhow!("at {}: {text}", instantiated.at.describe())

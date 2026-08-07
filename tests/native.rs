@@ -16286,10 +16286,14 @@ fn an_error_inside_a_specialization_names_the_call() {
     let message = String::from_utf8_lossy(&output.stderr).to_string();
     let _ = std::fs::remove_dir_all(&directory);
 
-    // The call, first.
+    // The line to change, which is the one in the template. The instance it
+    // went wrong for is named in the claim, and a generic is one function to
+    // look at, so the call that asked for it is a search away while the line
+    // holding the fault is not.
     assert!(
-        message.contains("generic_diagnostic_app.frost:5:5"),
-        "the error did not name the call site:\n{message}"
+        message.contains("lib/g.frost:2:"),
+        "the error did not name the line at fault:
+{message}"
     );
     // Named the way it was written, not as `add__Point`, and in the words the
     // fault itself uses. The instance is not announced by a phrase of the
@@ -16312,7 +16316,7 @@ fn an_error_inside_a_specialization_names_the_call() {
     // body; where a fault has a second line worth pointing at it says so as a
     // placed line of its own, the way "was moved here" does.
     assert!(
-        !message.contains("lib/g.frost:2:"),
+        !message.contains("generic_diagnostic_app.frost:5:"),
         "the claim carries a second place:\n{message}"
     );
 }

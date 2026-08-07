@@ -684,11 +684,16 @@ fn build_module_inner(
                 // in front of it left two in one report: the renderer reads the
                 // first and the second stays in the words, so the claim a
                 // reader saw began with a file name.
-                let placed = format!(
-                    "at {}: {}",
-                    specialization.requested_at.describe(),
-                    crate::diagnostic::without_leading_place(first)
-                );
+                // A complaint that carried a place from inside the
+                // instance keeps it: that is the line to change. The call is
+                // the place to show it at when the complaint has none.
+                let placed = match first.starts_with("at ") {
+                    true => first.clone(),
+                    false => format!(
+                        "at {}: {first}",
+                        specialization.requested_at.describe()
+                    ),
+                };
                 let message =
                     crate::modules::imports::demangle_private_names(&placed);
                 diagnostics.push(crate::diagnostic::Diagnostic {
@@ -888,12 +893,12 @@ fn locate_instantiation_error(
 ) -> anyhow::Error {
     let text =
         crate::modules::imports::demangle_private_names(&error.to_string());
-    // The call is where the report is shown, so a place the fault carried from
-    // inside the instance comes off: two in one report renders as the first
-    // with the second left in the words, and the claim a reader had to act on
-    // began with a file name.
-    let text = crate::diagnostic::without_leading_place(&text);
-    if specialization.requested_at == Position::default() {
+    // A fault that carried a place from inside the instance keeps it: that is
+    // the line to change, and the instance it went wrong for is named in the
+    // claim. The call is the place to show it at when the fault has none.
+    if text.starts_with("at ")
+        || specialization.requested_at == Position::default()
+    {
         anyhow::anyhow!("{text}")
     } else {
         anyhow::anyhow!("at {}: {text}", specialization.requested_at.describe())
@@ -7746,7 +7751,8 @@ impl<'a> FunctionLowering<'a> {
                 && value_type == **inner
             {
                 bail!(
-                    "cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                    "a '{}' is wanted here as a borrow and this is the value; a parameter's mode is what borrows, so declare the one this reaches as `read` or `mut`",
+                    spelled(&value_type)
                 );
             }
             if let Some(target) = expected
@@ -7864,7 +7870,8 @@ impl<'a> FunctionLowering<'a> {
                 && value_type == **inner
             {
                 bail!(
-                    "cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                    "a '{}' is wanted here as a borrow and this is the value; a parameter's mode is what borrows, so declare the one this reaches as `read` or `mut`",
+                    spelled(&value_type)
                 );
             }
             let coerced = match expected {
