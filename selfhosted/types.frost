@@ -1384,8 +1384,8 @@ borrow_kept :: fn(mut p: Parser, value: i64, want: i64) -> i64 {
 // its operands are read through here instead. Left alone, `at(bag, 2) == 9`
 // compared the address the borrow holds against nine and answered no for every
 // bag there is.
-read_borrowed_operands :: fn(mut p: Parser) {
-    var i: i64 = 0
+read_borrowed_operands :: fn(mut p: Parser, from: i64) {
+    var i: i64 = from
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         kind := node.kind
@@ -1415,7 +1415,8 @@ read_borrow_through :: fn(mut p: Parser, value: i64) -> i64 {
     // parse had already answered, and the answering wrote every generic
     // argument it walked into the table a second time until the table was full.
     node := arena_at(p.arena, value)
-    if (node.kind != NodeKind::Call) {
+    if (node.kind != NodeKind::Call || node.val < 0
+        || node.val >= p.fns.count) {
         return value
     }
     ty := arena_at(p.fns, node.val).ret_type

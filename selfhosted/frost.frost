@@ -764,13 +764,12 @@ main :: fn() -> i64 {
     if (frost_rt_recover_failures() > 0) {
         frost_rt_die()
     }
-    // Every `.Variant` an argument left unresolved, now that every signature is
-    // parsed.
-    resolve_variant_fixups(parser)
-    // Every operand that is a borrow of a scalar, read as the value it borrows.
-    // Also after the parse, for the same reason: what a call answers with is
-    // known once every signature has been read.
-    read_borrowed_operands(parser)
+    // Everything the parse still owes, now that every signature is known: the
+    // `.Variant` an argument left unresolved, and every operand that is a
+    // borrow of a scalar read as the value it borrows. A generic's body is
+    // parsed again per instance and owes the same, which is why both are one
+    // step called from both places rather than a list written out here.
+    settle_parsed_tree(parser, 0)
     // The resources a `_` would drop, once every declaration has said whether
     // it holds one.
     check_discarded_resources(parser)
@@ -792,10 +791,6 @@ main :: fn() -> i64 {
             known = -1
         }
     }
-    // What every format call was given, now that the fixpoint has settled what
-    // each list holds. It waits for that: an element whose type is what a call
-    // to a generic answers with reads as the default until every instance has
-    // been walked.
     // What every format call was given, now that the fixpoint has settled what
     // each list holds. It waits for that: an element whose type is what a call
     // to a generic answers with reads as the default until every instance has
