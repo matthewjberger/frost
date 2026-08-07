@@ -2010,9 +2010,7 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     "handed_out_of_a_borrow_twice",
     "moved_through_a_compile_time_list",
     // One names the pool's instance and what it holds, the other the template.
-    "generic_pool",
     "pool_nobody_named",
-    "concrete_pool",
     "handed_out_by_element",
     // One names what was passed and where, the other names the callee.
     "pointer_for_text",
