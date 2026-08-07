@@ -592,7 +592,11 @@ fn build_module_inner(
                     mode: parameter.mode,
                     compile_time_signature: None,
                     pack: false,
-                    format: false,
+                    // The word travels with the parameter. A body that hands
+                    // its own literal on to another `format` parameter is
+                    // handing on one a caller already wrote, and the
+                    // specialization is where that body is read.
+                    format: parameter.format,
                 })
                 .collect();
             // The bound was checked at the call that asked for this
@@ -1122,6 +1126,10 @@ impl IrBuilder {
         for parameter in &declared_parameters {
             let ty = parameter_type(parameter);
             let parameter_name = function.ast.name(parameter.name).to_string();
+            if parameter.format {
+                function.forwarded_format = Some(parameter_name.clone());
+            }
+            function.parameter_names.push(parameter_name.clone());
             let local = function.fresh_local(ty, Some(parameter_name.clone()));
             function.define_variable(&parameter_name, local);
         }
@@ -4619,6 +4627,13 @@ struct FunctionLowering<'a> {
     current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
+    // What the enclosing declaration named its `format` parameter, and every
+    // parameter name in the order they were written. A body that hands its own
+    // literal on together with its own trailing parameters is handing on what a
+    // caller wrote and what that caller gave, so the count was checked where
+    // they were written and there is nothing left to count here.
+    forwarded_format: Option<String>,
+    parameter_names: Vec<String>,
 }
 
 impl<'a> FunctionLowering<'a> {
@@ -4644,7 +4659,74 @@ impl<'a> FunctionLowering<'a> {
             current_position: Position::default(),
             specializations: Vec::new(),
             anonymous: Vec::new(),
+            forwarded_format: None,
+            parameter_names: Vec::new(),
         }
+    }
+
+    // Whether this call hands on the literal and the values the enclosing
+    // declaration was given, rather than writing its own. `print` is the case:
+    // it takes a `format` parameter and a list and passes both to `write`, so
+    // the holes were counted against the values where the reader wrote them,
+    // and counting again here would be counting a name.
+    //
+    // Both halves are required. A body forwarding the literal beside values of
+    // its own would be handing over a count nothing had checked, which is the
+    // hole the word exists to close. The values are held to being this
+    // declaration's own trailing parameters in the order it declared them,
+    // which is what a forwarded list expands to and what writing a list out by
+    // hand is not.
+    fn forwards_its_own_format(
+        &self,
+        argument: ExprId,
+        arguments: &[ExprId],
+    ) -> bool {
+        let Some(format) = &self.forwarded_format else {
+            return false;
+        };
+        let Expression::Identifier(name) = self.ast.expr(argument) else {
+            return false;
+        };
+        if self.ast.name(*name) != format {
+            return false;
+        }
+        let Some(at) = arguments.iter().position(|held| *held == argument)
+        else {
+            return false;
+        };
+        let mut handed: Vec<&str> = Vec::new();
+        for held in &arguments[at + 1..] {
+            let Expression::Identifier(other) = self.ast.expr(*held) else {
+                return false;
+            };
+            handed.push(self.ast.name(*other));
+        }
+        // What this declaration has left to give past its own literal. A call
+        // that hands over exactly those, in that order, is handing on what it
+        // was given, and a call giving anything else is writing a list of its
+        // own that nothing has counted. A `print("\n")` forwards an empty list,
+        // which is the two being equal at zero.
+        let Some(mine) =
+            self.parameter_names.iter().position(|held| held == format)
+        else {
+            return false;
+        };
+        let trailing = &self.parameter_names[mine + 1..];
+        if trailing.len() == handed.len()
+            && trailing
+                .iter()
+                .zip(handed.iter())
+                .all(|(declared, given)| declared == given)
+        {
+            return true;
+        }
+        // The list under its own name, which is how the body writes it before
+        // the elements have taken a parameter each. One name stands for all of
+        // them, and they are the ones named after it.
+        handed.len() == 1
+            && trailing.iter().enumerate().all(|(index, declared)| {
+                *declared == pack_element_name(handed[0], index)
+            })
     }
 
     fn fresh_local(&mut self, ty: Type, name: Option<String>) -> LocalId {
@@ -7259,7 +7341,10 @@ impl<'a> FunctionLowering<'a> {
         }
 
         for (index, parameter) in generic_parameters.iter().enumerate() {
-            if parameter.format && index < arguments.len() {
+            if parameter.format
+                && index < arguments.len()
+                && !self.forwards_its_own_format(arguments[index], arguments)
+            {
                 check_format(self.ast, arguments[index], &pack_elements)?;
             }
         }

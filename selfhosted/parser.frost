@@ -663,6 +663,9 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // A call whose arguments came from a list that is not bound is one
         // this parse is not entitled to name a tuple for: the elements it read
         // belong to a template, and the real call is read again per instance.
+        // Whether this call hands its own literal and its own list on, noted
+        // while the names this declaration gave them are still in scope.
+        note_format_forward(p, args, fn_index)
         if (p.args_unbound_map == 0 && pack_call_args(p, args, fn_index)) {
             note_type_args(p, p.call_pack_primary, p.call_xarg_start,
                 p.call_xarg_count, generic_fn_of(p, fn_index) + 1,
@@ -5131,6 +5134,8 @@ parse_params :: fn(mut p: Parser) -> i64 {
             && str_range_eq(p.src, cur_off(p), cur_len(p), "format")) {
             p.decl_pack_format = fixed
             advance(p)
+            p.decl_format_off = cur_off(p)
+            p.decl_format_len = cur_len(p)
         }
         // `args: $...` is a compile-time list rather than a value: each call
         // has its own count and its own types. The template reads no parameter
@@ -6327,6 +6332,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
         p.decl_pack_len = 0
         p.decl_pack_fixed = 0
         p.decl_pack_format = -1
+        p.decl_format_len = 0
         body := parse_block(p)
         return new_func_node(p, body, params, fn_index, 0)
     }
@@ -6563,6 +6569,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
     p.decl_pack_format = -1
+    p.decl_format_len = 0
     fn_name_off := synth_numbered(p, "__test", p.tests.count)
     fn_name_len := 6 + digits_in(p.tests.count)
     fn_index := intern_global(p, fn_name_off, fn_name_len)
@@ -6957,6 +6964,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
     p.decl_pack_format = -1
+    p.decl_format_len = 0
     start := p.ti
     item := parse_function(p)
     if (p.saw_type_param == 1) {
@@ -6968,7 +6976,8 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
             p.tparam_is_value, p.tparam_called, p.tparam_is_slot,
             p.xparam_start,
             p.xparam_count, start, p.bound_token, p.decl_pack_off,
-            p.decl_pack_len, p.decl_pack_fixed, p.decl_pack_format)
+            p.decl_pack_len, p.decl_pack_fixed, p.decl_pack_format,
+            p.decl_format_off, p.decl_format_len)
         return -1
     }
     item
@@ -7262,6 +7271,15 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     saved_pack_len := p.pack_len
     saved_pack_start := p.pack_start
     saved_pack_count := p.pack_count
+    // What the declaration wrote, which this parse reads a body against rather
+    // than working out again. A call in that body handing on its own literal
+    // and its own list is recognised by these, so an instance that did not have
+    // them would read the same forward as a call writing a literal it never
+    // wrote.
+    saved_format_off := p.decl_format_off
+    saved_format_len := p.decl_format_len
+    p.decl_format_off = gfn.format_off
+    p.decl_format_len = gfn.format_len
     p.pack_off = pack_off
     p.pack_len = pack_len
     // The run a pack call left behind holds this generic's own compile-time
@@ -7301,6 +7319,8 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     p.pack_len = saved_pack_len
     p.pack_start = saved_pack_start
     p.pack_count = saved_pack_count
+    p.decl_format_off = saved_format_off
+    p.decl_format_len = saved_format_len
     p.type_param_off = saved_off
     p.type_param_len = saved_len
     p.type_binding = saved_bind

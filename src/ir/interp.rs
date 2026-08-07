@@ -493,9 +493,7 @@ impl<'a> Interpreter<'a> {
             IrRvalue::Call {
                 function: callee,
                 arguments,
-            } => {
-                self.call_named(frame, callee, arguments, out)
-            }
+            } => self.call_named(frame, callee, arguments, out),
             IrRvalue::CallIndirect {
                 callee, arguments, ..
             } => {
@@ -793,8 +791,7 @@ impl Interpreter<'_> {
                         .get(argument_index)
                         .map(|held| self.operand_value(function, held, locals));
                     argument_index += 1;
-                    let text =
-                        self.format_argument(&specifier, next, value)?;
+                    let text = self.format_argument(&specifier, next, value)?;
                     result.push_str(&text);
                     break;
                 }

@@ -11,6 +11,7 @@ import "layout.frost"
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
+    note_format_forward,
     parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local, untyped_literal,
     parse_local_type,
@@ -1980,6 +1981,125 @@ writable_by_format :: fn(mut p: Parser, ty: i64) -> bool {
     is_slice_ty(p, ty) && array_element(p, ty) == TY_U8
 }
 
+// Whether this call hands on the literal and the values the declaration being
+// parsed was given, rather than writing its own. `print` is the case: it takes
+// a `format` parameter and a list and passes both to `write`, so the holes were
+// counted against the values where the reader wrote them, and counting again
+// here would be counting a name.
+//
+// Both halves are required. A body forwarding the literal beside values of its
+// own would be handing over a count nothing had checked, which is the hole the
+// word exists to close. The values are held to being this declaration's own
+// trailing parameters in the order it declared them, which is what a forwarded
+// list expands to and what writing a list out by hand is not. A call giving no
+// values is the two being equal at zero.
+forwards_own_format :: fn(mut p: Parser, args: i64) -> bool {
+    var i: i64 = 0
+    while (i < p.format_forwards.count) {
+        entry := arena_at(p.format_forwards, i)
+        if (entry.node == args) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// The same question asked where the answer is knowable: while the declaration
+// that wrote the call is still being parsed, which is the only time the names
+// it gave its own parameters are in hand. Every later pass reads what this
+// noted, since by then the tables hold whatever was parsed last.
+note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    owner := generic_fn_of(p, fn_index)
+    if (owner < 0) {
+        return
+    }
+    gfn := arena_at(p.generic_fns, owner)
+    at := gfn.pack_format
+    if (at < 0) {
+        return
+    }
+    // What this declaration called its list. A template's own parse has it as
+    // the name it wrote; an instance parse has the same name put back under
+    // `pack_off`, which is what its body is read against.
+    var list_off := p.decl_pack_off
+    var list_len := p.decl_pack_len
+    if (list_len == 0) {
+        list_off = p.pack_off
+        list_len = p.pack_len
+    }
+    if (p.decl_format_len == 0 || list_len == 0) {
+        return
+    }
+    held := nth_value_arg(p, args, at)
+    if (held < 0) {
+        return
+    }
+    node := arena_at(p.arena, held)
+    if (node.kind != NodeKind::Var || node.c != p.decl_format_len
+        || bytes_equal(p.src, node.val, p.decl_format_off,
+            p.decl_format_len) == false) {
+        return
+    }
+    // What is handed on past the literal. A template's own parse still writes
+    // the list under its name, so that is one argument standing for however
+    // many elements an instance will have. An instance's parse has the list
+    // already spread into one argument per element, and those are the
+    // parameters this declaration took them as, in the order it took them.
+    // Either way a body writing values of its own is a different shape and
+    // stays checked.
+    var given: i64 = 0
+    while (nth_value_arg(p, args, at + 1 + given) >= 0) {
+        given = given + 1
+    }
+    if (given == 1
+        && names_the_pack(p, nth_value_arg(p, args, at + 1), list_off,
+            list_len)) {
+        arena_push(p.format_forwards, BoundValue { node = args })
+        return
+    }
+    // An instance knows how many elements its list was given, so a call handing
+    // over a different number is writing a list of its own and stays counted. A
+    // line with no values at all is the two agreeing at zero, which is what
+    // `print("\n")` forwards.
+    if (given != p.pack_count) {
+        return
+    }
+    if (given == 0) {
+        arena_push(p.format_forwards, BoundValue { node = args })
+        return
+    }
+    mine := p.parse_param_end - given
+    if (mine < p.parse_param_start) {
+        return
+    }
+    var k: i64 = 0
+    while (k < given) {
+        held2 := nth_value_arg(p, args, at + 1 + k)
+        gnode := arena_at(p.arena, held2)
+        entry := arena_at(p.parse_locals, mine + k)
+        if (gnode.kind != NodeKind::Var || gnode.c != entry.name_len
+            || bytes_equal(p.src, gnode.val, entry.name_off,
+                entry.name_len) == false) {
+            return
+        }
+        k = k + 1
+    }
+    arena_push(p.format_forwards, BoundValue { node = args })
+}
+
+names_the_pack :: fn(mut p: Parser, held: i64, list_off: i64,
+    list_len: i64) -> bool {
+    if (held < 0) {
+        return false
+    }
+    node := arena_at(p.arena, held)
+    if (node.kind != NodeKind::Var || node.c != list_len) {
+        return false
+    }
+    bytes_equal(p.src, node.val, list_off, list_len)
+}
+
 // The literal a `format` parameter took, read where the call is written. How
 // many values a line names is settled here, so the literal is read here too:
 // the holes it opens are counted against the list that follows, and a type
@@ -1993,6 +2113,9 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
     }
     node := arena_at(p.arena, node_id)
     if (node.kind != NodeKind::StrLit) {
+        if (forwards_own_format(p, args)) {
+            return
+        }
         report_where(p.modules, p.src, node.pos)
         report("a format string is written as a literal, since how many values follow it is settled where the call is written")
         frost_rt_recover_escape()

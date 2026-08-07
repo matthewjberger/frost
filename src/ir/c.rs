@@ -110,12 +110,12 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             "void frost_rt_write_i64(int64_t value);",
         ),
         (
-            "frost_rt_write_f64",
-            "void frost_rt_write_f64(double value);",
-        ),
-        (
             "frost_rt_write_char",
             "void frost_rt_write_char(int64_t byte);",
+        ),
+        (
+            "frost_rt_format_f64",
+            "int64_t frost_rt_format_f64(double value, char* out, int64_t room);",
         ),
     ];
 

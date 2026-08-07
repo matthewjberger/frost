@@ -704,6 +704,11 @@ GenericFn :: struct {
     // the literal written there and counts its holes against the list, so
     // which parameter it is has to travel with the declaration.
     pack_format: i64,
+    // The name that ormat parameter was given, so an instance parse can put
+    // it back: the declaration state a body is read against is set up here
+    // rather than derived again, the same way the list is.
+    format_off: i64,
+    format_len: i64,
     xparam_start: i64,
     xparam_count: i64,
     token_start: i64,
@@ -1400,6 +1405,10 @@ Parser :: struct {
     // The calls a compile-time list's elements take their types from, each
     // named by the tuple the call makes.
     pending_rets: Arena<PendingRet>,
+    // The argument lists of calls that hand on their own format literal and
+    // their own compile-time list, noted while the declaration writing them is
+    // still being parsed.
+    format_forwards: Arena<BoundValue>,
     gbindings: Arena<GBinding>,
     type_param_off: i64,
     type_param_len: i64,
@@ -1451,6 +1460,12 @@ Parser :: struct {
     decl_pack_len: i64,
     decl_pack_fixed: i64,
     decl_pack_format: i64,
+    // The name the declaration being parsed gave its `format` parameter. A body
+    // that hands that name on to another `format` parameter is handing on a
+    // literal a caller already wrote, so the holes were counted where the
+    // reader wrote them and counting the name here would count nothing.
+    decl_format_off: i64,
+    decl_format_len: i64,
     // Whether that first parameter was declared as taking a number.
     tparam_is_value: i64,
     last_return_type: i64,

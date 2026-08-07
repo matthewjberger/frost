@@ -1187,7 +1187,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          noisy :: fn(n: i64) -> i64 { print(\"{}\\n\", n) n }\n\
          SAID :: noisy(4)\n\
          main :: fn() -> i64 { print(\"{}\\n\", SAID) 0 }\n",
-        "this is not something a compile-time call may do",
+        "has no value at compile time",
     ),
     // A body may loop, so how long one takes is not read off the text. The
     // bound is what says a compile finishes.
@@ -2265,17 +2265,14 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     // self-hosted C backend rendered as `char*` while a slice travels by value.
     (
         "a_program_names_its_own_sink",
-        "import \"io.frost\"\nloud_bytes :: fn(text: str) {\n\
-         \x20   write($to_stdout, \"[{}]\", text)\n\
+        "import \"io.frost\"\nloud :: fn(text: str) {\n\
+         \x20   write(to_stdout, \"[{}]\", text)\n\
          }\n\
-         loud_int :: fn(value: i64) { write($to_stdout, \"<{}>\", value) }\n\
-         loud_float :: fn(value: f64) { write($to_stdout, \"<{}>\", value) }\n\
-         loud :: Sink { bytes = loud_bytes, int = loud_int, float = loud_float }\n\
          main :: fn() -> i64 {\n\
-         \x20   write($loud, \"a {} b\n\", 3)\n\
+         \x20   write(loud, \"a {} b\n\", 3)\n\
          \x20   0\n\
          }\n",
-        "[a ]<3>[ b\n]",
+        "[a 3 b\n]",
     ),
     // A string literal handed to a compile-time list is a run of bytes, the way
     // it is everywhere else a `str` is read. The self-hosted compiler answered

@@ -330,15 +330,6 @@ const_call :: fn(mut p: Parser, index: i64, arg_start: i64, arg_count: i64,
         advance(p)
         if (cur(p) == TokenKind::Colon) {
             advance(p)
-            // A `$` opens a compile-time parameter or a compile-time list, and
-            // neither is a value a call hands over. The whole call is refused
-            // rather than the parameter, since what a body does with a list is
-            // decided where the call is written and there is no call here.
-            if (cur(p) == TokenKind::Dollar) {
-                const_fault(p, at)
-                creport(p, "this is not something a compile-time call may do")
-                const_stop(p)
-            }
             const_skip_type(p)
         }
         if (taken < arg_count) {

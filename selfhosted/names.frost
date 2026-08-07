@@ -336,7 +336,7 @@ record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_is_slot: i64, xparam_start: i64, xparam_count: i64,
     token_start: i64,
     bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64,
-    pack_format: i64) {
+    pack_format: i64, format_off: i64, format_len: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
@@ -346,7 +346,8 @@ record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
             xparam_count = xparam_count, token_start = token_start,
             bound_token = bound_token, pack_off = pack_off,
             pack_len = pack_len, pack_fixed = pack_fixed,
-            pack_format = pack_format },
+            pack_format = pack_format, format_off = format_off,
+            format_len = format_len },
     )
 }
 
