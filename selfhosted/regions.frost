@@ -893,9 +893,8 @@ check_multi_call_bound :: fn(mut p: Parser, id: i64, fn_index: i64, at: i64) {
     report_where(p.modules, p.src, at)
     report("'")
     report_src(p.src, sym.off, sym.len)
-    report("' returns ")
-    report_int(multi_value_count(p, sym.ret_type))
-    report(" values, so its call is bound by a list of names")
+    report_fmt("' returns {} values, so its call is bound by a list of names",
+        multi_value_count(p, sym.ret_type))
     frost_rt_recover_escape()
 }
 

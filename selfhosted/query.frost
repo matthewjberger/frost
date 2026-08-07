@@ -175,9 +175,7 @@ query_symbols :: fn(mut p: Parser) {
             if (best_kind == 4) {
                 report("extern")
             }
-            report(" ")
-            report_int(query_line(p.modules, p.src, best_off))
-            report("\n")
+            report_fmt(" {}\n", query_line(p.modules, p.src, best_off))
             written = best_off
         }
     }
@@ -196,8 +194,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         if (def.declared == 1 && def.instance_id < 0
             && word_names(question, name_at, p.src, def.name_off,
                 def.name_len)) {
-            report_int(query_line(p.modules, p.src, def.name_off))
-            report("\n")
+            report_fmt("{}\n", query_line(p.modules, p.src, def.name_off))
             return
         }
         si = si + 1
@@ -206,8 +203,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     while (fi < p.fns.count) {
         sym := arena_at(p.fns, fi)
         if (word_names(question, name_at, p.src, sym.off, sym.len)) {
-            report_int(query_line(p.modules, p.src, sym.off))
-            report("\n")
+            report_fmt("{}\n", query_line(p.modules, p.src, sym.off))
             return
         }
         fi = fi + 1
@@ -217,8 +213,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         held := arena_at(p.consts, ci)
         if (word_names(question, name_at, p.src, held.name_off,
                 held.name_len)) {
-            report_int(query_line(p.modules, p.src, held.name_off))
-            report("\n")
+            report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }
         ci = ci + 1
@@ -228,8 +223,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         held := arena_at(p.value_consts, vi)
         if (word_names(question, name_at, p.src, held.name_off,
                 held.name_len)) {
-            report_int(query_line(p.modules, p.src, held.name_off))
-            report("\n")
+            report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }
         vi = vi + 1
