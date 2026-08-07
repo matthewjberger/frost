@@ -38,7 +38,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text, place_text,
+    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text, place_text, instance_text,
     type_code_for
 
 // Whether there is room for `wanted` more bytes past the source, said here
@@ -919,6 +919,55 @@ synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
 type_text :: fn(mut p: Parser, ty: i64) -> str {
     off, len := synth_type_name(p, ty)
     source_text(p.src, off, len)
+}
+
+// A generic struct's instance as the reader wrote it: the template's name and
+// the arguments it was made for. A concrete struct was made for none and is its
+// own name. A rule about `Slab<Node, 2>` is about that one, and naming the
+// template says it of every instance including the ones that are fine.
+instance_text :: fn(mut p: Parser, struct_ty: i64) -> str {
+    start := p.synth_next
+    index := struct_index_of(struct_ty)
+    def := arena_at(p.structs, index)
+    synth_range(p, def.name_off, def.name_len)
+    var found: i64 = -1
+    var i: i64 = 0
+    while (i < p.instances.count) {
+        held := arena_at(p.instances, i)
+        if (held.struct_index == index) {
+            found = i
+            i = p.instances.count
+            continue
+        }
+        i = i + 1
+    }
+    if (found >= 0) {
+        made := arena_at(p.instances, found)
+        synth_bytes(p, "<")
+        write_argument_name(p, made.arg)
+        var k: i64 = 0
+        while (k < made.xarg_count) {
+            garg := arena_at(p.gargs, made.xarg_start + k)
+            synth_bytes(p, ", ")
+            write_argument_name(p, garg.value)
+            k = k + 1
+        }
+        synth_bytes(p, ">")
+    }
+    length := p.synth_next - start
+    p.src[p.synth_next] = 0
+    p.synth_next = p.synth_next + 1
+    source_text(p.src, start, length)
+}
+
+// One argument of an instance. A number stands for itself and a type for its
+// name, which is what tells `Slab<Node, 2>` from `Slab<Node, Two>`.
+write_argument_name :: fn(mut p: Parser, value: i64) {
+    if (value >= CONST_BASE && value < PROC_BASE) {
+        synth_digits(p, value - CONST_BASE)
+        return
+    }
+    write_type_name(p, value)
 }
 
 // A place as the reader wrote it: `h`, `h.file`, `run[0]`, `h^.file`. A rule

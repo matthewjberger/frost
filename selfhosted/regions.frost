@@ -58,7 +58,7 @@ report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
         storage := slab_field_type(p, struct_ty, "storage")
         if (is_slice_ty(p, storage) == false
             && is_linear_type(p, array_element(p, storage))) {
-            report_pool(p, struct_ty)
+            report_pool(p, struct_ty, array_element(p, storage))
         }
         return
     }
@@ -73,7 +73,7 @@ report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
         if (is_column_field(p, name_off, name_len) && is_array_ty(ty)
             && is_slice_ty(p, ty) == false
             && is_linear_type(p, array_element(p, ty))) {
-            report_pool(p, struct_ty)
+            report_pool(p, struct_ty, array_element(p, ty))
         }
         field = next_field
     }
@@ -94,14 +94,11 @@ is_column_field :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     true
 }
 
-report_pool :: fn(mut p: Parser, struct_ty: i64) {
+report_pool :: fn(mut p: Parser, struct_ty: i64, element: i64) {
     def := arena_at(p.structs, struct_index_of(struct_ty))
-    name_off := def.name_off
-    name_len := def.name_len
-    report_where(p.modules, p.src, name_off)
-    report("'")
-    report_src(p.src, name_off, name_len)
-    report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
+    report_where(p.modules, p.src, def.name_off)
+    report_fmt("'{}' is a pool of '{}', which is a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it.",
+        instance_text(p, struct_ty), type_text(p, element))
     // One pool is asked about on its own, so the next one is asked too.
     frost_rt_recover_note()
 }
