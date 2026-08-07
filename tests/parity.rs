@@ -39,6 +39,45 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "this format string opens 1 hole(s) and the call gives 2 value(s)",
     ),
+    // A value whose type is what a call to a generic answers with. The parse
+    // reads it as the default until every instance has been walked, so judging
+    // it there accepted a `[]i64` for reading as an `i64`; the self-hosted
+    // compiler then refused the program a step later, as an ordinary type error
+    // inside the library. Both spellings are here because a name bound to the
+    // call and the call written out reach the answer by different routes.
+    (
+        "a_format_string_given_a_generic_call",
+        "import \"io.frost\"\nimport \"mem.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   var xs: [3]i64 = [1, 2, 3]\n\
+         \x20   print(\"{}\n\", slice_range($i64, xs, 0, 3))\n\
+         \x20   0\n\
+         }\n",
+        "a format string writes a number, a yes or no, or a str, and this is a []i64",
+    ),
+    (
+        "a_format_string_given_a_name_bound_to_a_generic_call",
+        "import \"io.frost\"\nimport \"mem.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   var xs: [3]i64 = [1, 2, 3]\n\
+         \x20   view := slice_range($i64, xs, 0, 3)\n\
+         \x20   print(\"{}\n\", view)\n\
+         \x20   0\n\
+         }\n",
+        "a format string writes a number, a yes or no, or a str, and this is a []i64",
+    ),
+    // The same question asked through `write`, which is the door a program's
+    // own destination goes through and the one that used to have no check at
+    // all behind it.
+    (
+        "a_write_to_a_named_destination_is_checked",
+        "import \"io.frost\"\nloud :: fn(text: str) { write(to_stdout, \"[{}]\", text) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   write(loud, \"{} of {}\n\", 1)\n\
+         \x20   0\n\
+         }\n",
+        "this format string opens 2 hole(s) and the call gives 1 value(s)",
+    ),
     // A lone brace is a typo rather than a decision, so it is refused rather
     // than written out. `{{` is how one is meant.
     (

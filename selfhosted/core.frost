@@ -28,7 +28,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     ConstFn, ConstLocal, ConstFrame, ConstValue, ConstItem, ConstFlow,
     CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
-    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
+    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
     TypeCacheEntry, UnsafeSpan,
     Variant,
     add_root, add_layer, Layer, layer_of, path_under,
@@ -1040,6 +1040,19 @@ ProcSig :: struct {
 
 // A concrete type a generic was used with. Every generic function is emitted
 // once per distinct one of these.
+// A call that took a format string, kept until the types its list turned out to
+// have are known. What a literal says is settled where it is written, so the
+// hole count is checked there; what the values are is not, since an element
+// whose type is what a call to a generic answers with reads as the default
+// until every instance has been walked. `tuple` names the run those elements
+// live in, which `settle_pack_args` fixes up in place, so reading it after the
+// fixpoint reads what the call really gave.
+FormatCall :: struct {
+    fmt: i64,
+    tuple: i64,
+    owner: i64,
+}
+
 TypeArg :: struct {
     arg: i64,
     xarg_start: i64,
@@ -1409,6 +1422,9 @@ Parser :: struct {
     // their own compile-time list, noted while the declaration writing them is
     // still being parsed.
     format_forwards: Arena<BoundValue>,
+    // Every call that took a format string, checked once the fixpoint has
+    // settled what its list holds.
+    format_calls: Arena<FormatCall>,
     gbindings: Arena<GBinding>,
     type_param_off: i64,
     type_param_len: i64,

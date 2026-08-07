@@ -589,6 +589,7 @@ main :: fn() -> i64 {
         argbuf = arena_make($GArg, 4096),
         pending_rets = arena_make($PendingRet, 4096),
         format_forwards = arena_make($BoundValue, 256),
+        format_calls = arena_make($FormatCall, 256),
         summaries = arena_make($Summary, 4096),
         summary_steps = arena_make($SummaryStep, 4096),
         run_views = arena_make($Summary, 4096),
@@ -783,6 +784,15 @@ main :: fn() -> i64 {
             known = -1
         }
     }
+    // What every format call was given, now that the fixpoint has settled what
+    // each list holds. It waits for that: an element whose type is what a call
+    // to a generic answers with reads as the default until every instance has
+    // been walked.
+    // What every format call was given, now that the fixpoint has settled what
+    // each list holds. It waits for that: an element whose type is what a call
+    // to a generic answers with reads as the default until every instance has
+    // been walked.
+    check_format_types(parser)
     check_calls(parser)
     check_pooled_resources(parser)
     check_regions(parser)
