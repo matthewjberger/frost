@@ -4955,7 +4955,7 @@ fn self_hosted_enforces_the_unsafe_gate() {
     );
     assert!(!ok, "a bare C call should be gated");
     assert!(
-        message.contains("calling a C function is unchecked"),
+        message.contains("calling the C function 'puts' is unchecked"),
         "expected the gate to name the call, got:\n{message}"
     );
 

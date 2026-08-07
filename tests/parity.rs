@@ -2021,7 +2021,6 @@ const WORDED_DIFFERENTLY: &[&str] = &[
     // One names what was passed and where, the other names the callee.
     "pointer_for_text",
     "one_value_passed_to_two_mut_parameters",
-    "a_c_function_called_outside_an_unsafe_block",
     // One opens with what kind of fault it is, the other with the fault.
     // One reports a second fault where the other stops at the first. A `case`
     // the self-hosted compiler refuses leaves it looking for a declaration at

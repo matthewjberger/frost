@@ -6452,17 +6452,27 @@ check_unsafety :: fn(mut p: Parser) {
                 what = "reading a field through a raw pointer"
             }
         }
+        // Which C function it is, where the unchecked step is a call. A reader
+        // looking at a line with several calls on it needs the name to know
+        // which one the block is for.
+        var named: i64 = -1
         if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, node.val)
             if (sym.is_extern == 1 && sym.is_safe == 0) {
                 gated = 1
-                what = "calling a C function"
+                named = node.val
             }
         }
         if (gated == 1 && inside_unsafe(p, node.pos) == 0) {
             report_where(p.modules, p.src, node.pos)
-            report_cstr(what)
-            report(" is unchecked, so it belongs in an `unsafe` block")
+            if (named >= 0) {
+                held := arena_at(p.fns, named)
+                report_fmt("calling the C function '{}' is unchecked, so it belongs in an `unsafe` block",
+                    source_text(p.src, held.off, held.len))
+            } else {
+                report_cstr(what)
+                report(" is unchecked, so it belongs in an `unsafe` block")
+            }
             frost_rt_recover_escape()
         }
         if (gated == 1) {
