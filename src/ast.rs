@@ -425,6 +425,13 @@ pub struct ReturnSignature {
     pub kind: ReturnKind,
     pub uses: Vec<crate::types::Type>,
     pub bound: Option<ExprId>,
+    // The bound as the source wrote it, kept because a parse does not: brackets
+    // a reader put around a whole term are grouping, and grouping is not a node.
+    // Rendering the parsed shape instead quoted them a line they never wrote,
+    // and the self-hosted compiler, which replays the tokens, quoted the one
+    // they did.
+    #[serde(default)]
+    pub bound_text: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -780,6 +787,7 @@ impl ReturnSignature {
             kind,
             uses: Vec::new(),
             bound: None,
+            bound_text: String::new(),
         }
     }
 
@@ -1335,6 +1343,7 @@ impl<'a> Splicer<'a> {
             kind,
             uses: held.uses,
             bound,
+            bound_text: held.bound_text,
         })
     }
 

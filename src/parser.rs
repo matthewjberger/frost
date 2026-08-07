@@ -894,6 +894,24 @@ impl<'a> Parser<'a> {
         self.consumed as u32
     }
 
+    // The tokens between two marks, written back the way they were read. A join
+    // takes a space either side and nothing else does, which is the spelling the
+    // self-hosted compiler replays them with.
+    fn tokens_written(&self, first: u32, last: u32) -> String {
+        let mut out = String::new();
+        for token in &self.all_tokens[first as usize..last as usize] {
+            match token {
+                Token::And | Token::Or => {
+                    out.push(' ');
+                    out.push_str(&token.to_string());
+                    out.push(' ');
+                }
+                other => out.push_str(&other.to_string()),
+            }
+        }
+        out
+    }
+
     fn span_from(&self, start: u32) -> TokenSpan {
         let last = self.consumed.saturating_sub(1).max(start as usize) as u32;
         TokenSpan { first: start, last }
@@ -2120,6 +2138,7 @@ impl<'a> Parser<'a> {
                     },
                     uses: Vec::new(),
                     bound: None,
+                    bound_text: String::new(),
                 });
                 let body = self.ast.push_expr(
                     Expression::Proc(params, signature, block),
@@ -3556,15 +3575,23 @@ impl<'a> Parser<'a> {
         // `where is_numeric(T)`. The body's `{` follows the bound, so no
         // struct literal is read here.
         let mut bound = None;
+        let mut bound_text = String::new();
         if matches!(self.peek_nth(0), Token::Where) {
             self.read_token();
+            let first = self.mark();
             let held = self.no_struct_literal;
             self.no_struct_literal = true;
             let expression = self.parse_expression(Precedence::Lowest);
             self.no_struct_literal = held;
             bound = Some(expression?);
+            bound_text = self.tokens_written(first, self.mark());
         }
-        Ok(ReturnSignature { kind, uses, bound })
+        Ok(ReturnSignature {
+            kind,
+            uses,
+            bound,
+            bound_text,
+        })
     }
 
     fn parse_return_kind(&mut self) -> Result<ReturnKind> {

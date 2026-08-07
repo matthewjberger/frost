@@ -720,6 +720,26 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "is_linear",
     ),
+    // The same, written with brackets the reader put there and a join. A parse
+    // does not keep grouping, so rendering the shape it built quoted a line
+    // nobody wrote, while the compiler that replays the tokens quoted the one
+    // they did. The declaration is what is quoted now, by both.
+    (
+        "a_bound_written_with_brackets",
+        "import \"io.frost\"
+File :: linear struct { fd: i64 }
+         close :: fn(move f: File) -> i64 { f.fd }
+         either :: fn($T: Type, v: $T) -> i64
+             where (is_float(T) || is_struct(T)) && !is_linear(T) { 2 }
+         main :: fn() -> i64 {
+             f := File { fd = 1 }
+             print(\"{}\n\", either($File, f))
+             print(\"{}\n\", close(f))
+             0
+}
+",
+        "is declared `where (is_float(T) || is_struct(T)) && !is_linear(T)`",
+    ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
     // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
