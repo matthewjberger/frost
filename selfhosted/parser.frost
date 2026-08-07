@@ -790,7 +790,7 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         bound := type_code_for(p, param.name_off, param.name_len)
-        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1 })
+        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1, node = -1 })
         j = j + 1
     }
     instantiate(p, gi, p.type_binding, run_start, xparam_count)
@@ -929,7 +929,7 @@ instantiate_inferred :: fn(mut p: Parser, gi: i64, inits: i64, offset: i64,
         if (bound < 0) {
             report_uninferable(p, offset, length)
         }
-        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1 })
+        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1, node = -1 })
         j = j + 1
     }
     instantiate(p, gi, primary, run_start, xparam_count)
@@ -1290,7 +1290,7 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
     // The name binds the call, so an argument written as the call reads the
     // same as one written as a name given the call.
-    record_parse_local(p, name_off, name_len, type_of(p, value), value)
+    record_parse_local(p, name_off, name_len, binding_type(p, value), value)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
         name_off)
 }
@@ -2083,7 +2083,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 param_ty = borrow_of(p, param_ty)
             }
             arena_push(p.proc_params,
-                GArg { value = param_ty, is_type = 0, pending = -1 })
+                GArg { value = param_ty, is_type = 0, pending = -1,
+                    node = -1 })
             param_count = param_count + 1
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
@@ -2205,7 +2206,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (a == TY_PARAM) {
                     all_concrete = 0
                 }
-                arena_push(p.argbuf, GArg { value = a, is_type = 0, pending = -1 })
+                arena_push(p.argbuf, GArg { value = a, is_type = 0, pending = -1, node = -1 })
                 count = count + 1
                 if (cur(p) == TokenKind::Comma) {
                     advance(p)
@@ -2222,7 +2223,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 while (j < count) {
                     entry := arena_at(p.argbuf, buf_start + j)
                     arena_push(p.gargs,
-                        GArg { value = entry.value, is_type = 0, pending = -1 })
+                        GArg { value = entry.value, is_type = 0, pending = -1,
+                            node = -1 })
                     j = j + 1
                 }
                 xarg_count = count - 1
@@ -4070,7 +4072,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (ann >= 0) {
             record_parse_local(p, offset, length, ann, -1)
         } else {
-            record_parse_local(p, offset, length, type_of(p, value), value)
+            record_parse_local(p, offset, length, binding_type(p, value), value)
         }
         return new_let_node(p, value, offset, length, ann)
     }
@@ -4376,8 +4378,11 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         value := parse_expr(p)
         // What the name binds is recorded for the rest of this parse, so an
-        // argument at a call below it can be typed where it is written.
-        record_parse_local(p, offset, length, type_of(p, value), value)
+        // argument at a call below it can be typed where it is written. It is
+        // read the way the emitters read the same binding: the two tables name
+        // one specialization between them, so an answer either gives alone
+        // names a body the other never defines.
+        record_parse_local(p, offset, length, binding_type(p, value), value)
         return new_let_node(p, value, offset, length, -1)
     }
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
@@ -5066,7 +5071,15 @@ parse_expansion_if :: fn(mut p: Parser, taken: i64) -> i64 {
     var other: i64 = -1
     if (cur(p) == TokenKind::KwElse) {
         advance(p)
-        other = parse_block(p)
+        // `else if` continues the chain, and the next `if` is read the way this
+        // one was: a predicate over the same element is answered here too, and
+        // a condition that is not one is the ordinary runtime `if`. Reading it
+        // is what moves the cursor past a branch this element does not take.
+        if (cur(p) == TokenKind::KwIf) {
+            other = parse_stmt(p)
+        } else {
+            other = parse_block(p)
+        }
     }
     if (taken == 1) {
         if (kept == (-1)) {
@@ -5108,6 +5121,15 @@ parse_params :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Ident
             && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
             by_value = 1
+            advance(p)
+        }
+        // `format fmt: str` says the argument written here is a string literal
+        // and that its holes are counted against the compile-time list the
+        // parameter list ends with. A word rather than a keyword, so a
+        // parameter may still be called `format`.
+        if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Ident
+            && str_range_eq(p.src, cur_off(p), cur_len(p), "format")) {
+            p.decl_pack_format = fixed
             advance(p)
         }
         // `args: $...` is a compile-time list rather than a value: each call
@@ -6304,6 +6326,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
         p.decl_pack_off = 0
         p.decl_pack_len = 0
         p.decl_pack_fixed = 0
+        p.decl_pack_format = -1
         body := parse_block(p)
         return new_func_node(p, body, params, fn_index, 0)
     }
@@ -6539,6 +6562,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     p.decl_pack_off = 0
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
+    p.decl_pack_format = -1
     fn_name_off := synth_numbered(p, "__test", p.tests.count)
     fn_name_len := 6 + digits_in(p.tests.count)
     fn_index := intern_global(p, fn_name_off, fn_name_len)
@@ -6932,6 +6956,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
     p.decl_pack_off = 0
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
+    p.decl_pack_format = -1
     start := p.ti
     item := parse_function(p)
     if (p.saw_type_param == 1) {
@@ -6943,7 +6968,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
             p.tparam_is_value, p.tparam_called, p.tparam_is_slot,
             p.xparam_start,
             p.xparam_count, start, p.bound_token, p.decl_pack_off,
-            p.decl_pack_len, p.decl_pack_fixed)
+            p.decl_pack_len, p.decl_pack_fixed, p.decl_pack_format)
         return -1
     }
     item

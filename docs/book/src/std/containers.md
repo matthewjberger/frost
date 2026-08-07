@@ -238,11 +238,11 @@ var world : Slab<Entity, 8> = slab_new()
 slab_reset($Entity, $8, world)
 
 h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
-print_int_line(world[h].hp)     // 100
+print("{}\n", world[h].hp)     // 100
 world[h].hp = 75
-print_int_line(world[h].hp)     // 75
+print("{}\n", world[h].hp)     // 75
 slab_release($Entity, $8, world, h)
-print_int_line(world[h].hp)     // aborts: the handle is stale
+print("{}\n", world[h].hp)     // aborts: the handle is stale
 ```
 
 A slab is written out with its arrays and then reset, because construction
@@ -284,8 +284,8 @@ columns_reset($Particle, $8, world)
 a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
 columns_insert($Particle, $8, world, Particle { x = 20, y = 2 })
 
-print_int_line(world[a].x + world[a].y)   // one element, generation-checked
-print_int_line(sum_x(world.x))            // the whole x column, as a []i64
+print("{}\n", world[a].x + world[a].y)   // one element, generation-checked
+print("{}\n", sum_x(world.x))            // the whole x column, as a []i64
 ```
 
 `world.x` is the column, handed out as a slice, which is what a data-oriented

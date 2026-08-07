@@ -50,7 +50,7 @@ main :: fn() -> i64 {
     t2 := spawn(worker, unsafe { ptr_cast($u8, ptr_to(w2)) })
     join(t1)
     join(t2)
-    print_int_line(total)     // 499500
+    print("{}\n", total)     // 499500
     0
 }
 ```

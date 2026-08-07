@@ -15,17 +15,13 @@ bytes :: fn($T: Type) -> i64 { sizeof(T) }
 Vec3 :: struct { x: i64, y: i64, z: i64 }
 
 main :: fn() -> i64 {
-    print_int_line(max_of(3, 9))
-    print_int_line(min_of(3, 9))
-    print_int_line(clamp(15, 0, 10))
-    print_int_line(clamp(-5, 0, 10))
+    print("{}\n{}\n{}\n{}\n", max_of(3, 9), min_of(3, 9), clamp(15, 0, 10), clamp(-5, 0, 10))
 
     var a: i64 = 100
     var b: i64 = 200
     swap(a, b)
-    print_int_line(a)
+    print("{}\n", a)
 
-    print_int_line(bytes($Vec3))
-    print_int_line(bytes($i32))
+    print("{}\n{}\n", bytes($Vec3), bytes($i32))
     0
 }

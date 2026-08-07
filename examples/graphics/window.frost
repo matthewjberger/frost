@@ -22,17 +22,17 @@ import "io.frost"
 
 main :: fn() -> i64 {
     if (sdl_init(InitFlags::Video) == false) {
-        print_int_line(0)
+        print("{}\n", 0)
         return 1
     }
 
     window := window_create("Frost", 960, 540, WindowFlags::Resizable)
     if (is_no_window(window)) {
-        print_int_line(0)
+        print("{}\n", 0)
         sdl_quit()
         return 2
     }
-    print_int_line(1)
+    print("{}\n", 1)
 
     var running: bool = true
     while (running) {

@@ -6,6 +6,6 @@ import "io.frost"
 
 main :: fn() -> i64 {
     r := Rect { width = 3, height = 4 }
-    print_int_line(area(r))
+    print("{}\n", area(r))
     0
 }

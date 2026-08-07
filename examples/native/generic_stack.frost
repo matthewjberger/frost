@@ -20,8 +20,6 @@ main :: fn() -> i64 {
     push(numbers, 10)
     push(numbers, 20)
     push(numbers, 30)
-    print_int_line(depth(numbers))
-    print_int_line(peek(numbers))
-    print_int_line(numbers.items[0])
+    print("{}\n{}\n{}\n", depth(numbers), peek(numbers), numbers.items[0])
     0
 }

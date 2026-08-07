@@ -51,12 +51,7 @@ draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite, frame: i64) -> i64 {
                 fixed_push($Sprite, visible, sprite)
             }
         }
-        print_str("frame ")
-        print_int(frame)
-        print_str(" drew ")
-        print_int(fixed_len($Sprite, visible))
-        print_str(" of ")
-        print_int_line(slice_len(world))
+        print("frame {} drew {} of {}\n", frame, fixed_len($Sprite, visible), slice_len(world))
         total = tally(fixed_slice($Sprite, visible))
     // escaped = visible
     //     region: a pointer into arena 'scratch' escapes its region
@@ -83,9 +78,6 @@ main :: fn() -> i64 {
         arena_reset($4096, scratch, 0)
         frame = frame + 1
     }
-    print_str("total ")
-    print_int_line(total)
-    print_str("arena still holds ")
-    print_int_line(arena_used($4096, scratch))
+    print("total {}\narena still holds {}\n", total, arena_used($4096, scratch))
     0
 }

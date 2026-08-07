@@ -1075,7 +1075,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 })
     graph_writes_depth(inset_graph, inset_scene_pass, inset_depth)
     if (graph_schedule(inset_graph) == false) {
-        print_str_line("the inset graph cannot run")
+        print("the inset graph cannot run\n")
     }
 
     sub := graph_sub(g, inset_graph)

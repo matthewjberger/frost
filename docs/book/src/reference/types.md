@@ -346,7 +346,7 @@ Reading one as its representation is allowed, and is what a call into C is, the
 same way it is for a distinct type.
 
 Printing a flags value writes the number: going out to the representation is
-free, so `print_int_line(set)` shows the bits as one integer. The names are not
+free, so `print("{}\n", set)` shows the bits as one integer. The names are not
 available at run time, and a program that wants to show which bits are set
 writes that loop itself. `flags_has` makes each test one call.
 

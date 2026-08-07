@@ -3,6 +3,7 @@ use crate::ir::{
     IrStatement, IrTerminator, IrUnOp,
 };
 use crate::types::Type;
+use std::collections::HashMap;
 
 pub enum RunOutcome {
     Output(String),
@@ -50,21 +51,52 @@ pub fn run_module(module: &IrModule) -> RunOutcome {
     let mut interpreter = Interpreter {
         module,
         output: String::new(),
+        memory: vec![0; FIRST_ADDRESS],
+        literals: HashMap::new(),
     };
+    // Every literal in the program is laid down before anything runs, so that
+    // reading one is a read of storage like any other and mentioning the same
+    // literal twice names one address.
+    if let Err(Signal::Unsupported(reason)) = interpreter.place_literals() {
+        return RunOutcome::Unsupported(reason);
+    }
     match interpreter.call(entry, &[], 0) {
         Ok(_) => RunOutcome::Output(interpreter.output),
         Err(Signal::Unsupported(reason)) => RunOutcome::Unsupported(reason),
     }
 }
 
+// Nothing is placed at zero, so a null pointer stays a value nothing answers
+// for and reaching through one is a fault here rather than a read of whatever
+// happened to be laid down first.
+const FIRST_ADDRESS: usize = 8;
+const MEMORY_LIMIT: usize = 1 << 26;
+
 struct Interpreter<'a> {
     module: &'a IrModule,
     output: String,
+    // One flat run of bytes standing for every frame and every literal. A local
+    // the build put in memory is given a place in it and the local's value is
+    // that address, which is the same shape the native backend gives a stack
+    // slot. Frames are never reclaimed: a run bounded by MEMORY_LIMIT is enough
+    // for the programs this answers for, and reclaiming would make an address
+    // handed back from a call read as storage that had been reused.
+    memory: Vec<u8>,
+    literals: HashMap<String, i64>,
 }
 
 enum Flow {
     Jump(usize),
     Return(Value),
+}
+
+// What a body is being read against: the function it belongs to, the values its
+// locals hold, and how deep the calls are. They travel together because every
+// question about an operand needs all three.
+struct Frame<'f> {
+    function: &'f IrFunction,
+    locals: &'f [Value],
+    depth: usize,
 }
 
 impl<'a> Interpreter<'a> {
@@ -77,22 +109,63 @@ impl<'a> Interpreter<'a> {
         if depth > MAX_DEPTH {
             return unsupported("recursion limit reached");
         }
+        // A local the build put in memory is given its storage here, and its
+        // value is the address of it. Every read and write of such a local
+        // goes through that address, which is what makes `ptr_to` on one
+        // answer with something the rest of the walk can follow.
+        let mut locals: Vec<Value> = Vec::with_capacity(function.locals.len());
         for local in &function.locals {
-            if local.in_memory || !is_scalar(&local.ty) {
+            if local.in_memory {
+                let address = self.reserve(local.size.max(1))?;
+                locals.push(Value::Int(address));
+                continue;
+            }
+            if !is_scalar(&local.ty) {
                 return unsupported(format!(
-                    "non-scalar local of type {}",
+                    "a {} local that the build left out of memory",
                     local.ty
                 ));
             }
+            locals.push(default_value(&local.ty));
         }
-        let mut locals: Vec<Value> = function
-            .locals
-            .iter()
-            .map(|local| default_value(&local.ty))
-            .collect();
-        for (slot, value) in arguments.iter().enumerate() {
-            locals[slot] = *value;
+        // How a parameter arrives, matching what the native backend collects:
+        // an aggregate as the address of the caller's copy, which the callee
+        // copies into its own storage, and everything else as the value, stored
+        // into the callee's storage where it has some.
+        let mut copies: Vec<(i64, i64, usize)> = Vec::new();
+        let mut writes: Vec<(i64, Value, Type)> = Vec::new();
+        for (index, slot) in
+            locals.iter_mut().enumerate().take(function.param_count)
+        {
+            let Some(incoming) = arguments.get(index) else {
+                break;
+            };
+            let local = &function.locals[index];
+            if is_aggregate(&local.ty) {
+                copies.push((slot.as_i64(), incoming.as_i64(), local.size));
+                continue;
+            }
+            if local.in_memory {
+                writes.push((slot.as_i64(), *incoming, local.ty.clone()));
+                continue;
+            }
+            *slot = *incoming;
         }
+        for (to, from, size) in copies {
+            self.copy_bytes(to, from, size)?;
+        }
+        for (address, value, ty) in writes {
+            self.write_at(address, value, &ty)?;
+        }
+        // A function answering with an aggregate is handed the storage to put
+        // it in as one more argument past the ones it declares.
+        let out_pointer = if returns_aggregate(function) {
+            arguments
+                .get(function.param_count)
+                .map(|held| held.as_i64())
+        } else {
+            None
+        };
 
         let mut block_index = function.entry;
         loop {
@@ -100,7 +173,7 @@ impl<'a> Interpreter<'a> {
             for statement in &block.statements {
                 self.execute(function, statement, &mut locals, depth)?;
             }
-            match self.terminate(function, block_index, &locals)? {
+            match self.terminate(function, block_index, &locals, out_pointer)? {
                 Flow::Return(value) => return Ok(value),
                 Flow::Jump(target) => block_index = target,
             }
@@ -116,15 +189,220 @@ impl<'a> Interpreter<'a> {
     ) -> Eval<()> {
         match statement {
             IrStatement::Assign(local, rvalue) => {
+                let ty = function.local_type(*local).clone();
+                if matches!(ty, Type::Void | Type::Unknown) {
+                    // A call made for what it does rather than what it answers
+                    // with still has to happen.
+                    if matches!(
+                        rvalue,
+                        IrRvalue::Call { .. } | IrRvalue::CallIndirect { .. }
+                    ) {
+                        self.evaluate(function, rvalue, locals, depth)?;
+                    }
+                    return Ok(());
+                }
+                // An aggregate lands in the storage the local already names,
+                // rather than replacing what the local is: a copy from another
+                // one is bytes moved, and a call is handed the storage to
+                // answer into.
+                if is_aggregate(&ty) {
+                    let destination = locals[*local].as_i64();
+                    let size = function.locals[*local].size;
+                    match rvalue {
+                        IrRvalue::Use(IrOperand::Local(source)) => {
+                            let from = self
+                                .aggregate_address(function, *source, locals);
+                            self.copy_bytes(destination, from, size)?;
+                        }
+                        IrRvalue::Call { .. }
+                        | IrRvalue::CallIndirect { .. } => {
+                            let frame = Frame {
+                                function,
+                                locals,
+                                depth,
+                            };
+                            self.evaluate_into(
+                                &frame,
+                                rvalue,
+                                Some(destination),
+                            )?;
+                        }
+                        _ => {
+                            return unsupported(
+                                "an aggregate assigned from something that is neither a local nor a call",
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
                 let value = self.evaluate(function, rvalue, locals, depth)?;
+                if function.locals[*local].in_memory {
+                    let address = locals[*local].as_i64();
+                    self.write_at(address, value, &ty)?;
+                    return Ok(());
+                }
                 locals[*local] = value;
                 Ok(())
             }
             IrStatement::Own(_) | IrStatement::Consume(_) => Ok(()),
-            IrStatement::Store { .. } | IrStatement::Copy { .. } => {
-                unsupported("memory store or copy")
+            IrStatement::Store { address, value } => {
+                let ty = operand_type(function, value);
+                let target =
+                    self.operand_value(function, address, locals).as_i64();
+                let held = self.operand_value(function, value, locals);
+                self.write_at(target, held, &ty)
+            }
+            IrStatement::Copy {
+                destination,
+                source,
+                size,
+            } => {
+                let to =
+                    self.operand_value(function, destination, locals).as_i64();
+                let from =
+                    self.operand_value(function, source, locals).as_i64();
+                self.copy_bytes(to, from, *size)
             }
         }
+    }
+
+    // Where the aggregate a local names lives. A local of aggregate type is its
+    // own storage; a local of reference type holds someone else's address
+    // already, so its value is the answer rather than where that value sits.
+    fn aggregate_address(
+        &self,
+        function: &IrFunction,
+        local: usize,
+        locals: &[Value],
+    ) -> i64 {
+        if matches!(function.local_type(local), Type::Ref(_) | Type::RefMut(_))
+        {
+            return self
+                .operand_value(function, &IrOperand::Local(local), locals)
+                .as_i64();
+        }
+        locals[local].as_i64()
+    }
+
+    fn reserve(&mut self, size: usize) -> Eval<i64> {
+        let rounded = size.div_ceil(8) * 8;
+        let at = self.memory.len();
+        if at + rounded > MEMORY_LIMIT {
+            return unsupported(
+                "the program asked for more storage than the interpreter holds",
+            );
+        }
+        self.memory.resize(at + rounded, 0);
+        Ok(at as i64)
+    }
+
+    fn span(&self, address: i64, width: usize) -> Eval<usize> {
+        let Ok(at) = usize::try_from(address) else {
+            return unsupported("a read through an address below zero");
+        };
+        if at < FIRST_ADDRESS || at + width > self.memory.len() {
+            return unsupported("a read or write outside any storage");
+        }
+        Ok(at)
+    }
+
+    fn write_at(&mut self, address: i64, value: Value, ty: &Type) -> Eval<()> {
+        let width = stored_width(ty);
+        let at = self.span(address, width)?;
+        let bits = match ty {
+            Type::F32 => (value.as_f64() as f32).to_bits() as u64,
+            Type::F64 => value.as_f64().to_bits(),
+            _ => value.as_i64() as u64,
+        };
+        self.memory[at..at + width]
+            .copy_from_slice(&bits.to_le_bytes()[..width]);
+        Ok(())
+    }
+
+    fn read_at(&self, address: i64, ty: &Type) -> Eval<Value> {
+        let width = stored_width(ty);
+        let at = self.span(address, width)?;
+        let mut bytes = [0u8; 8];
+        bytes[..width].copy_from_slice(&self.memory[at..at + width]);
+        let raw = u64::from_le_bytes(bytes);
+        Ok(match ty {
+            Type::F32 => Value::Float(f32::from_bits(raw as u32) as f64),
+            Type::F64 => Value::Float(f64::from_bits(raw)),
+            _ => {
+                let (bits, signed) = integer_info(ty);
+                Value::Int(normalize(
+                    raw as i64,
+                    bits.min(width as u32 * 8),
+                    signed,
+                ))
+            }
+        })
+    }
+
+    fn copy_bytes(&mut self, to: i64, from: i64, size: usize) -> Eval<()> {
+        if size == 0 {
+            return Ok(());
+        }
+        let source = self.span(from, size)?;
+        let destination = self.span(to, size)?;
+        self.memory.copy_within(source..source + size, destination);
+        Ok(())
+    }
+
+    // Where a literal's bytes sit, laid down once and shared by every mention.
+    // A trailing NUL is written after them, since a `^i8` handed to C is read
+    // until one.
+    fn literal_address(&mut self, text: &str) -> Eval<i64> {
+        if let Some(address) = self.literals.get(text) {
+            return Ok(*address);
+        }
+        let bytes = text.as_bytes();
+        let address = self.reserve(bytes.len() + 1)?;
+        let at = address as usize;
+        self.memory[at..at + bytes.len()].copy_from_slice(bytes);
+        self.literals.insert(text.to_string(), address);
+        Ok(address)
+    }
+
+    fn place_literals(&mut self) -> Eval<()> {
+        let mut found: Vec<String> = Vec::new();
+        for function in &self.module.functions {
+            for block in &function.blocks {
+                for statement in &block.statements {
+                    match statement {
+                        IrStatement::Assign(_, rvalue) => {
+                            collect_rvalue_literals(rvalue, &mut found);
+                        }
+                        IrStatement::Store { address, value } => {
+                            collect_literal(address, &mut found);
+                            collect_literal(value, &mut found);
+                        }
+                        IrStatement::Copy {
+                            destination,
+                            source,
+                            ..
+                        } => {
+                            collect_literal(destination, &mut found);
+                            collect_literal(source, &mut found);
+                        }
+                        IrStatement::Own(_) | IrStatement::Consume(_) => {}
+                    }
+                }
+                match &block.terminator {
+                    IrTerminator::Return(Some(operand)) => {
+                        collect_literal(operand, &mut found);
+                    }
+                    IrTerminator::Branch { condition, .. } => {
+                        collect_literal(condition, &mut found);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for text in found {
+            self.literal_address(&text)?;
+        }
+        Ok(())
     }
 
     fn terminate(
@@ -132,11 +410,23 @@ impl<'a> Interpreter<'a> {
         function: &IrFunction,
         block_index: usize,
         locals: &[Value],
+        out_pointer: Option<i64>,
     ) -> Eval<Flow> {
         match &function.blocks[block_index].terminator {
             IrTerminator::Return(None) => Ok(Flow::Return(Value::Int(0))),
             IrTerminator::Return(Some(operand)) => {
-                Ok(Flow::Return(operand_value(operand, locals)))
+                // A function answering with an aggregate copies it into the
+                // storage the caller handed in, and answers with nothing.
+                if let Some(out) = out_pointer {
+                    if let IrOperand::Local(source) = operand {
+                        let from =
+                            self.aggregate_address(function, *source, locals);
+                        let size = function.locals[*source].size;
+                        self.copy_bytes(out, from, size)?;
+                    }
+                    return Ok(Flow::Return(Value::Int(0)));
+                }
+                Ok(Flow::Return(self.operand_value(function, operand, locals)))
             }
             IrTerminator::Jump(target) => Ok(Flow::Jump(*target)),
             IrTerminator::Branch {
@@ -144,7 +434,9 @@ impl<'a> Interpreter<'a> {
                 then_block,
                 else_block,
             } => {
-                let taken = operand_value(condition, locals).as_i64() != 0;
+                let taken =
+                    self.operand_value(function, condition, locals).as_i64()
+                        != 0;
                 Ok(Flow::Jump(if taken { *then_block } else { *else_block }))
             }
             IrTerminator::Unreachable => unsupported("reached unreachable"),
@@ -158,40 +450,68 @@ impl<'a> Interpreter<'a> {
         locals: &[Value],
         depth: usize,
     ) -> Eval<Value> {
+        let frame = Frame {
+            function,
+            locals,
+            depth,
+        };
+        self.evaluate_into(&frame, rvalue, None)
+    }
+
+    fn evaluate_into(
+        &mut self,
+        frame: &Frame,
+        rvalue: &IrRvalue,
+        out: Option<i64>,
+    ) -> Eval<Value> {
+        let function = frame.function;
+        let locals = frame.locals;
+        let depth = frame.depth;
         match rvalue {
-            IrRvalue::Use(operand) => Ok(operand_value(operand, locals)),
+            IrRvalue::Use(operand) => {
+                Ok(self.operand_value(function, operand, locals))
+            }
             IrRvalue::Binary(op, left, right) => {
                 let ty = operand_type(function, left);
                 binary(
                     *op,
-                    operand_value(left, locals),
-                    operand_value(right, locals),
+                    self.operand_value(function, left, locals),
+                    self.operand_value(function, right, locals),
                     &ty,
                 )
             }
             IrRvalue::Unary(op, operand) => {
                 let ty = operand_type(function, operand);
-                Ok(unary(*op, operand_value(operand, locals), &ty))
+                let value = self.operand_value(function, operand, locals);
+                Ok(unary(*op, value, &ty))
             }
             IrRvalue::Cast(operand, target) => {
                 let source = operand_type(function, operand);
-                Ok(cast(operand_value(operand, locals), &source, target))
+                let value = self.operand_value(function, operand, locals);
+                Ok(cast(value, &source, target))
             }
             IrRvalue::Call {
                 function: callee,
                 arguments,
-            } => self.call_named(callee, arguments, locals, depth),
+            } => {
+                self.call_named(frame, callee, arguments, out)
+            }
             IrRvalue::CallIndirect {
                 callee, arguments, ..
             } => {
-                let index = operand_value(callee, locals).as_i64();
+                let index =
+                    self.operand_value(function, callee, locals).as_i64();
                 let Some(target) = usize::try_from(index)
                     .ok()
                     .and_then(|index| self.module.functions.get(index))
                 else {
                     return unsupported("indirect call to unknown target");
                 };
-                let values = self.argument_values(arguments, locals);
+                let mut values =
+                    self.argument_values(function, arguments, locals);
+                if let Some(address) = out {
+                    values.push(Value::Int(address));
+                }
                 self.call(target, &values, depth + 1)
             }
             IrRvalue::FunctionAddress(name) => {
@@ -201,42 +521,69 @@ impl<'a> Interpreter<'a> {
                     None => unsupported("address of unknown function"),
                 }
             }
-            IrRvalue::AddressOf { .. }
-            | IrRvalue::FieldAddress { .. }
-            | IrRvalue::ElementAddress { .. }
-            | IrRvalue::Load { .. } => unsupported("memory addressing"),
+            IrRvalue::AddressOf { local, offset } => {
+                if !function.locals[*local].in_memory {
+                    return unsupported(
+                        "the address of a local the build left out of memory",
+                    );
+                }
+                Ok(Value::Int(locals[*local].as_i64() + *offset as i64))
+            }
+            IrRvalue::FieldAddress { base, offset } => {
+                let address =
+                    self.operand_value(function, base, locals).as_i64();
+                Ok(Value::Int(address + *offset as i64))
+            }
+            IrRvalue::ElementAddress {
+                base,
+                index,
+                element_size,
+            } => {
+                let address =
+                    self.operand_value(function, base, locals).as_i64();
+                let step = self.operand_value(function, index, locals).as_i64();
+                Ok(Value::Int(address + step * *element_size as i64))
+            }
+            IrRvalue::Load { address, ty } => {
+                let at = self.operand_value(function, address, locals).as_i64();
+                self.read_at(at, ty)
+            }
         }
     }
 
     fn argument_values(
-        &self,
+        &mut self,
+        function: &IrFunction,
         arguments: &[IrOperand],
         locals: &[Value],
     ) -> Vec<Value> {
         arguments
             .iter()
-            .map(|argument| operand_value(argument, locals))
+            .map(|argument| self.operand_value(function, argument, locals))
             .collect()
     }
 
     fn call_named(
         &mut self,
+        frame: &Frame,
         callee: &str,
         arguments: &[IrOperand],
-        locals: &[Value],
-        depth: usize,
+        out: Option<i64>,
     ) -> Eval<Value> {
+        let function = frame.function;
+        let locals = frame.locals;
+        let depth = frame.depth;
         if callee == "printf" {
-            return self.printf(arguments, locals);
+            return self.printf(function, arguments, locals);
         }
         // What std/io.frost writes through. The interpreter is one of the
         // backends a program is checked against, so it has to write the same
         // bytes the ones that link the runtime do.
         if callee == "frost_rt_write_bytes" {
-            return self.write_bytes(arguments);
+            return self.write_bytes(function, arguments, locals);
         }
         if callee == "frost_rt_write_i64" {
-            let value = operand_value(&arguments[0], locals);
+            let value = self.operand_value(function, &arguments[0], locals);
             let Value::Int(number) = value else {
                 return unsupported("writing a value that is not an integer");
             };
@@ -250,18 +597,70 @@ impl<'a> Interpreter<'a> {
             return unsupported("writing a float");
         }
         if callee == "frost_rt_write_char" {
-            let value = operand_value(&arguments[0], locals);
+            let value = self.operand_value(function, &arguments[0], locals);
             let Value::Int(byte) = value else {
                 return unsupported("writing a byte that is not an integer");
             };
             self.output.push(byte as u8 as char);
             return Ok(Value::Int(0));
         }
+        // An index against the run it reaches into. Both forms are answered
+        // here, since every indexed read and write in a compiled program goes
+        // through one of them and a walk that stopped at them would reach no
+        // program that indexes anything.
+        if callee == "frost_rt_bounds_check" || callee == "frost_rt_check_index"
+        {
+            let index = self.operand_value(function, &arguments[0], locals);
+            let length = self.operand_value(function, &arguments[1], locals);
+            let (index, length) = (index.as_i64(), length.as_i64());
+            if index < 0 || index >= length {
+                return unsupported(format!(
+                    "index {index} out of bounds for length {length}"
+                ));
+            }
+            return Ok(Value::Int(index));
+        }
+        // A view against the run it is taken from, and the bytes a count of a
+        // width comes to.
+        if callee == "frost_rt_check_span" {
+            let from = self.operand_value(function, &arguments[0], locals);
+            let count = self.operand_value(function, &arguments[1], locals);
+            let room = self.operand_value(function, &arguments[2], locals);
+            let (from, count, room) =
+                (from.as_i64(), count.as_i64(), room.as_i64());
+            if from < 0 || from > room {
+                return unsupported(format!(
+                    "a view cannot start {from} elements into a run of {room}"
+                ));
+            }
+            if count < 0 || count > room - from {
+                return unsupported(format!(
+                    "a view of {count} elements starting at {from} reaches past a run of {room}"
+                ));
+            }
+            return Ok(Value::Int(count));
+        }
+        if callee == "frost_rt_check_size" {
+            let count = self.operand_value(function, &arguments[0], locals);
+            let width = self.operand_value(function, &arguments[1], locals);
+            let (count, width) = (count.as_i64(), width.as_i64());
+            if count < 0 || width <= 0 {
+                return unsupported(format!(
+                    "cannot allocate {count} elements of {width} bytes"
+                ));
+            }
+            if count > i64::MAX / width {
+                return unsupported(format!(
+                    "{count} elements of {width} bytes is more memory than can be addressed"
+                ));
+            }
+            return Ok(Value::Int(count * width));
+        }
         // Every slice is built through this, so the interpreter has to answer it
         // the way the linked runtime does or a program that builds one stops
         // here rather than being compared against the other two backends.
         if callee == "frost_rt_check_length" {
-            let value = operand_value(&arguments[0], locals);
+            let value = self.operand_value(function, &arguments[0], locals);
             let Value::Int(length) = value else {
                 return unsupported("a slice length that is not an integer");
             };
@@ -275,7 +674,10 @@ impl<'a> Interpreter<'a> {
         if let Some(target) =
             self.module.functions.iter().find(|f| f.name == callee)
         {
-            let values = self.argument_values(arguments, locals);
+            let mut values = self.argument_values(function, arguments, locals);
+            if let Some(address) = out {
+                values.push(Value::Int(address));
+            }
             return self.call(target, &values, depth + 1);
         }
         unsupported(format!("call to external '{callee}'"))
@@ -283,6 +685,7 @@ impl<'a> Interpreter<'a> {
 
     fn printf(
         &mut self,
+        function: &IrFunction,
         arguments: &[IrOperand],
         locals: &[Value],
     ) -> Eval<Value> {
@@ -291,99 +694,156 @@ impl<'a> Interpreter<'a> {
         else {
             return unsupported("printf with a non-literal format");
         };
-        let rendered = render_format(format, &arguments[1..], locals)?;
+        let format = format.clone();
+        let rendered =
+            self.render_format(function, &format, &arguments[1..], locals)?;
         let length = rendered.len();
         self.output.push_str(&rendered);
         Ok(Value::Int(length as i64))
     }
+
+    // A run of bytes given as a pointer and a length, read out of the storage
+    // the pointer names. A literal is laid into that storage the first time it
+    // is mentioned, so a literal and a `str` the program built arrive the same
+    // way and neither is a special case.
+    fn write_bytes(
+        &mut self,
+        function: &IrFunction,
+        arguments: &[IrOperand],
+        locals: &[Value],
+    ) -> Eval<Value> {
+        let (Some(address), Some(length)) =
+            (arguments.first(), arguments.get(1))
+        else {
+            return unsupported("writing bytes without a pointer and a length");
+        };
+        let at = self.operand_value(function, address, locals).as_i64();
+        let count = self.operand_value(function, length, locals).as_i64();
+        let Ok(count) = usize::try_from(count) else {
+            return unsupported("writing a run of fewer than no bytes");
+        };
+        if count == 0 {
+            return Ok(Value::Int(0));
+        }
+        let start = self.span(at, count)?;
+        let bytes = &self.memory[start..start + count];
+        self.output.push_str(&String::from_utf8_lossy(bytes));
+        Ok(Value::Int(0))
+    }
+
+    fn operand_value(
+        &self,
+        function: &IrFunction,
+        operand: &IrOperand,
+        locals: &[Value],
+    ) -> Value {
+        match operand {
+            // A local the build put in memory holds its storage rather than its
+            // value, so reading one is a read of that storage. An aggregate is
+            // the exception: what names it is the storage.
+            IrOperand::Local(local) => {
+                let held = function.local_type(*local);
+                if function.locals[*local].in_memory && !is_aggregate(held) {
+                    return self
+                        .read_at(locals[*local].as_i64(), held)
+                        .unwrap_or(Value::Int(0));
+                }
+                locals[*local]
+            }
+            IrOperand::Constant(constant) => match constant {
+                IrConstant::Integer(value, _) => Value::Int(*value),
+                IrConstant::Float(value, _) => Value::Float(*value),
+                IrConstant::Bool(value) => Value::Int(*value as i64),
+                IrConstant::Unit => Value::Int(0),
+                IrConstant::CString(text) => {
+                    Value::Int(self.literals.get(text).copied().unwrap_or(0))
+                }
+            },
+        }
+    }
 }
 
 impl Interpreter<'_> {
-    // A run of bytes, either a literal the compiler placed or a `str` the
-    // program holds. A literal arrives as the constant itself, which is the
-    // only form the interpreter can read: it has no addressable data segment
-    // to point into.
-    fn write_bytes(&mut self, arguments: &[IrOperand]) -> Eval<Value> {
-        let Some(IrOperand::Constant(IrConstant::CString(text))) =
-            arguments.first()
-        else {
-            return unsupported("writing bytes that are not a literal");
+    fn render_format(
+        &self,
+        function: &IrFunction,
+        format: &str,
+        arguments: &[IrOperand],
+        locals: &[Value],
+    ) -> Eval<String> {
+        let mut result = String::new();
+        let mut argument_index = 0;
+        let mut characters = format.chars().peekable();
+        while let Some(character) = characters.next() {
+            if character != '%' {
+                result.push(character);
+                continue;
+            }
+            let mut specifier = String::new();
+            loop {
+                let Some(next) = characters.next() else {
+                    return unsupported("truncated format specifier");
+                };
+                if next == '%' && specifier.is_empty() {
+                    result.push('%');
+                    break;
+                }
+                if is_conversion(next) {
+                    let value = arguments
+                        .get(argument_index)
+                        .map(|held| self.operand_value(function, held, locals));
+                    argument_index += 1;
+                    let text =
+                        self.format_argument(&specifier, next, value)?;
+                    result.push_str(&text);
+                    break;
+                }
+                specifier.push(next);
+            }
+        }
+        Ok(result)
+    }
+
+    fn format_argument(
+        &self,
+        flags: &str,
+        conversion: char,
+        argument: Option<Value>,
+    ) -> Eval<String> {
+        let trimmed = flags.trim_end_matches('l');
+        let Some(held) = argument else {
+            return unsupported("printf missing argument");
         };
-        self.output.push_str(text);
-        Ok(Value::Int(0))
-    }
-}
-
-fn render_format(
-    format: &str,
-    arguments: &[IrOperand],
-    locals: &[Value],
-) -> Eval<String> {
-    let mut result = String::new();
-    let mut argument_index = 0;
-    let mut characters = format.chars().peekable();
-    while let Some(character) = characters.next() {
-        if character != '%' {
-            result.push(character);
-            continue;
-        }
-        let mut specifier = String::new();
-        loop {
-            let Some(next) = characters.next() else {
-                return unsupported("truncated format specifier");
-            };
-            if next == '%' && specifier.is_empty() {
-                result.push('%');
-                break;
+        match conversion {
+            'd' | 'i' => Ok(held.as_i64().to_string()),
+            'u' => Ok((held.as_i64() as u64).to_string()),
+            'x' => Ok(format!("{:x}", held.as_i64() as u64)),
+            'c' => {
+                let value = held.as_i64();
+                match u32::try_from(value).ok().and_then(char::from_u32) {
+                    Some(character) => Ok(character.to_string()),
+                    None => unsupported("invalid character in printf"),
+                }
             }
-            if is_conversion(next) {
-                let value = arguments.get(argument_index);
-                argument_index += 1;
-                let text = format_argument(&specifier, next, value, locals)?;
-                result.push_str(&text);
-                break;
+            'f' | 'F' => {
+                let value = held.as_f64();
+                let precision = parse_precision(trimmed).unwrap_or(6);
+                Ok(format!("{value:.precision$}"))
             }
-            specifier.push(next);
-        }
-    }
-    Ok(result)
-}
-
-fn format_argument(
-    flags: &str,
-    conversion: char,
-    argument: Option<&IrOperand>,
-    locals: &[Value],
-) -> Eval<String> {
-    let trimmed = flags.trim_end_matches('l');
-    match conversion {
-        'd' | 'i' => {
-            let value = require_scalar(argument, locals)?.as_i64();
-            Ok(value.to_string())
-        }
-        'u' => {
-            let value = require_scalar(argument, locals)?.as_i64();
-            Ok((value as u64).to_string())
-        }
-        'x' => {
-            let value = require_scalar(argument, locals)?.as_i64();
-            Ok(format!("{:x}", value as u64))
-        }
-        'c' => {
-            let value = require_scalar(argument, locals)?.as_i64();
-            match u32::try_from(value).ok().and_then(char::from_u32) {
-                Some(character) => Ok(character.to_string()),
-                None => unsupported("invalid character in printf"),
+            's' => {
+                let at = held.as_i64();
+                let start = self.span(at, 1)?;
+                let end = self.memory[start..]
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .map_or(self.memory.len(), |offset| start + offset);
+                Ok(String::from_utf8_lossy(&self.memory[start..end])
+                    .into_owned())
             }
+            _ => unsupported(format!(
+                "unsupported printf conversion '%{conversion}'"
+            )),
         }
-        'f' | 'F' => {
-            let value = require_scalar(argument, locals)?.as_f64();
-            let precision = parse_precision(trimmed).unwrap_or(6);
-            Ok(format!("{value:.precision$}"))
-        }
-        _ => unsupported(format!(
-            "unsupported printf conversion '%{conversion}'"
-        )),
     }
 }
 
@@ -412,27 +872,77 @@ fn parse_precision(flags: &str) -> Option<usize> {
     flags[dot + 1..].parse().ok()
 }
 
-fn require_scalar(
-    argument: Option<&IrOperand>,
-    locals: &[Value],
-) -> Eval<Value> {
-    match argument {
-        Some(operand) => Ok(operand_value(operand, locals)),
-        None => unsupported("printf missing argument"),
+fn collect_literal(operand: &IrOperand, found: &mut Vec<String>) {
+    if let IrOperand::Constant(IrConstant::CString(text)) = operand {
+        found.push(text.clone());
     }
 }
 
-fn operand_value(operand: &IrOperand, locals: &[Value]) -> Value {
-    match operand {
-        IrOperand::Local(local) => locals[*local],
-        IrOperand::Constant(constant) => match constant {
-            IrConstant::Integer(value, _) => Value::Int(*value),
-            IrConstant::Float(value, _) => Value::Float(*value),
-            IrConstant::Bool(value) => Value::Int(*value as i64),
-            IrConstant::Unit => Value::Int(0),
-            IrConstant::CString(_) => Value::Int(0),
-        },
+fn collect_rvalue_literals(rvalue: &IrRvalue, found: &mut Vec<String>) {
+    match rvalue {
+        IrRvalue::Use(operand)
+        | IrRvalue::Unary(_, operand)
+        | IrRvalue::Cast(operand, _)
+        | IrRvalue::FieldAddress { base: operand, .. }
+        | IrRvalue::Load {
+            address: operand, ..
+        } => collect_literal(operand, found),
+        IrRvalue::Binary(_, left, right) => {
+            collect_literal(left, found);
+            collect_literal(right, found);
+        }
+        IrRvalue::ElementAddress { base, index, .. } => {
+            collect_literal(base, found);
+            collect_literal(index, found);
+        }
+        IrRvalue::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_literal(argument, found);
+            }
+        }
+        IrRvalue::CallIndirect {
+            callee, arguments, ..
+        } => {
+            collect_literal(callee, found);
+            for argument in arguments {
+                collect_literal(argument, found);
+            }
+        }
+        IrRvalue::AddressOf { .. } | IrRvalue::FunctionAddress(_) => {}
     }
+}
+
+// How many bytes a value of this type occupies where it is stored. A `bool`
+// takes one, the way the native backend stores it, so a struct laid out with
+// one beside a number reads back what was written into it.
+fn stored_width(ty: &Type) -> usize {
+    match ty {
+        Type::Distinct(_, inner) => stored_width(inner),
+        Type::F32 => 4,
+        Type::F64 => 8,
+        Type::Bool => 1,
+        Type::Enum(_) => 4,
+        Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) | Type::Proc(_, _) => 8,
+        other => {
+            let (bits, _) = integer_info(other);
+            (bits as usize).div_ceil(8).clamp(1, 8)
+        }
+    }
+}
+
+fn is_aggregate(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Struct(_)
+            | Type::Enum(_)
+            | Type::Array(_, _)
+            | Type::Str
+            | Type::Slice(_)
+    )
+}
+
+fn returns_aggregate(function: &IrFunction) -> bool {
+    function.name != "main" && is_aggregate(&function.return_type)
 }
 
 fn operand_type(function: &IrFunction, operand: &IrOperand) -> Type {
@@ -647,6 +1157,10 @@ fn is_scalar(ty: &Type) -> bool {
         | Type::Bool
         | Type::Void
         | Type::Ptr(_)
+        // A borrow is the address of someone else's storage, which is a value
+        // this holds like any other pointer.
+        | Type::Ref(_)
+        | Type::RefMut(_)
         | Type::Handle(_)
         | Type::Proc(_, _)
         | Type::Enum(_) => true,

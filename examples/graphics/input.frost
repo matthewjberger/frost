@@ -18,15 +18,14 @@ say :: fn(label: str, value: i64) {
     var line := builder_new(64)
     builder_str_value(line, label)
     builder_int(line, value)
-    print_str_line(builder_str(line))
+    print("{}\n", builder_str(line))
     builder_free(line)
 }
 
 main :: fn() -> i64 {
     var p := platform_open("Frost input", 960, 540)
     if (platform_ok(p) == false) {
-        print_str_line("no window")
-        print_str_line(platform_error())
+        print("no window\n{}\n", platform_error())
         return 1
     }
 
@@ -38,7 +37,7 @@ main :: fn() -> i64 {
     var resizes: i64 = 0
     var travelled: f32 = 0.0
 
-    print_str_line("running. escape or close the window to finish.")
+    print("running. escape or close the window to finish.\n")
     while (platform_poll(p)) {
         if (key_pressed(p, KEY_ESCAPE)) {
             break

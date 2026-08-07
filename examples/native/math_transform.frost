@@ -18,8 +18,7 @@ milli :: fn(x: f32) -> i64 {
 }
 
 show :: fn(label: str, value: i64) {
-    print_str(label)
-    print_int_line(value)
+    print("{}{}\n", label, value)
 }
 
 main :: fn() -> i64 {

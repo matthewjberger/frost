@@ -176,6 +176,7 @@ fn harness_parameter(ast: &mut Ast, name: &str, ty: Type) -> AstParameter {
         mode: frost::ParamMode::Read,
         compile_time_signature: None,
         pack: false,
+        format: false,
     }
 }
 

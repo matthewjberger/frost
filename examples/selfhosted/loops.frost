@@ -21,11 +21,10 @@ classify :: fn(n: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(sum_to(10))
-    print_int_line(sum_to(100))
+    print("{}\n{}\n", sum_to(10), sum_to(100))
     var i: i64 = 1
     while (i <= 15) {
-        print_int_line(classify(i))
+        print("{}\n", classify(i))
         i = i + 1
     }
     0

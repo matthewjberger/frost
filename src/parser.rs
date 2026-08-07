@@ -2073,6 +2073,7 @@ impl<'a> Parser<'a> {
                     mode,
                     compile_time_signature: None,
                     pack: false,
+                    format: false,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -3099,6 +3100,22 @@ impl<'a> Parser<'a> {
                 _ => ParamMode::Read,
             };
 
+            // `format fmt: str` says the argument written here is a string
+            // literal, and that the holes in it are counted against the
+            // compile-time list the parameter list ends with. Contextual, so a
+            // parameter may still be called `format`.
+            let format =
+                if matches!(
+                    self.peek_nth(0),
+                    Token::Identifier(word) if word == "format"
+                ) && matches!(self.peek_nth(1), Token::Identifier(_))
+                {
+                    self.read_token();
+                    true
+                } else {
+                    false
+                };
+
             if matches!(self.peek_nth(0), Token::Dollar) {
                 parameters.push(self.parse_compile_time_parameter()?);
             } else if let Token::Identifier(name) = self.peek_nth(0) {
@@ -3135,6 +3152,7 @@ impl<'a> Parser<'a> {
                     mode,
                     compile_time_signature: None,
                     pack,
+                    format,
                 });
             } else {
                 let written = self.peek_nth(0).to_string();
@@ -3649,6 +3667,22 @@ impl<'a> Parser<'a> {
                 _ => ParamMode::Read,
             };
 
+            // `format fmt: str` says the argument written here is a string
+            // literal, and that the holes in it are counted against the
+            // compile-time list the parameter list ends with. Contextual, so a
+            // parameter may still be called `format`.
+            let format =
+                if matches!(
+                    self.peek_nth(0),
+                    Token::Identifier(word) if word == "format"
+                ) && matches!(self.peek_nth(1), Token::Identifier(_))
+                {
+                    self.read_token();
+                    true
+                } else {
+                    false
+                };
+
             if matches!(self.peek_nth(0), Token::Dollar) {
                 parameters.push(self.parse_compile_time_parameter()?);
             } else if let Token::Identifier(name) = self.peek_nth(0) {
@@ -3685,6 +3719,7 @@ impl<'a> Parser<'a> {
                     mode,
                     compile_time_signature: None,
                     pack,
+                    format,
                 });
             } else {
                 let written = self.peek_nth(0).to_string();
@@ -3801,6 +3836,7 @@ impl<'a> Parser<'a> {
             mode: ParamMode::Read,
             compile_time_signature,
             pack: false,
+            format: false,
         })
     }
 

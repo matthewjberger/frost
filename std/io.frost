@@ -1,67 +1,122 @@
 // Writing to standard output.
 //
-// Without this a program declares the C function it wants itself, which is why
-// so many examples open with `printf :: extern fn(fmt: ^i8, value: i64) -> i32`.
-// That is honest about the FFI, but it is a strange first line for a first
-// program and it carries `printf`'s format string, which is one more thing to
-// get wrong when what was wanted was to print a number.
+// One call writes a line: `print` takes a format string and as many values as
+// the line names, and each value is written the way its type is written. The
+// list is a compile-time one, so the call expands to one direct write per value
+// with the choice of writer already made. What is left at run time is a walk
+// over the format string's own bytes.
 //
-// These go through the runtime's write helpers, which are pinned to standard
-// output. The emit helpers are not: they follow the compiler's `-o` target, so
-// a program that opens one would find its own output inside the file it was
-// writing. Nothing here names a raw pointer except the one writer below: a
-// writer taking a `^i8` promises the bytes end in a NUL, and that is a promise
-// the caller makes silently and the compiler cannot check. A `str` carries its
-// length, so there is nothing to promise.
-
-export print_int, print_char, print_str, print_bool, print_f64,
-    print_int_line, print_str_line, print_bool_line, print_f64_line
-
-// The ones that take a number are `safe` and need no block at their call sites,
-// because there is nothing a caller can hand them that misbehaves.
+// A destination is a `Sink`: the three writes a formatted line is made of.
+// `print` is `write` to standard output, and a program that wants its text
+// somewhere else declares its own `Sink` and calls `write`. Passing one as a
+// compile-time argument is what keeps the calls direct.
 //
-// The one that takes a pointer and a length is not. It asserts that `length`
-// bytes live at `data`, which is the claim `slice_from` is gated for, and a
-// length that does not match the pointer reads past the end inside C where
-// nothing checks it.
+// The runtime's write helpers are pinned to standard output. The emit helpers
+// are not: they follow the compiler's `-o` target, so a program that opened one
+// would find its own output inside the file it was writing.
+
+import "mem.frost"
+
+export Sink, to_stdout, print, write
+
+// The one writer taking a pointer and a length is not `safe`: it asserts that
+// `length` bytes live at `data`, which is the claim `slice_from` is gated for.
+// The ones taking a number are, because there is nothing a caller can hand them
+// that misbehaves.
 frost_rt_write_bytes :: extern fn(data: ^u8, length: i64)
 frost_rt_write_i64 :: safe extern fn(value: i64)
 frost_rt_write_f64 :: safe extern fn(value: f64)
-frost_rt_write_char :: safe extern fn(byte: i64)
 
-print_int :: fn(value: i64) { frost_rt_write_i64(value) }
-
-print_char :: fn(byte: i64) { frost_rt_write_char(byte) }
-
-// Written the way C writes `%g`, which is the shortest spelling that reads
-// back as the same number for the values a program prints to look at.
-print_f64 :: fn(value: f64) { frost_rt_write_f64(value) }
-
-// `1` and `0` rather than words, so a printed comparison reads as the number
-// a mask or a flag would print.
-print_bool :: fn(value: bool) {
-    if (value) {
-        frost_rt_write_i64(1)
-    } else {
-        frost_rt_write_i64(0)
-    }
+// A destination, given as the three writes a formatted line is made of. A
+// number and a float go straight to the runtime rather than through the byte
+// writer, so a destination that wants them spelled some other way says so here.
+Sink :: struct {
+    bytes: fn(str),
+    int: fn(i64),
+    float: fn(f64),
 }
 
-// The whole run in one call rather than a byte at a time. A string literal is a
-// `str`, so `print_str("hello")` is what a first program writes.
-print_str :: fn(text: str) {
+// An empty run has no first byte to take the address of, so it answers before
+// asking for one.
+out_bytes :: fn(text: str) {
     if (str_len(text) == 0) {
         return
     }
-    // The length comes from the same `str` the pointer is taken from, so the
-    // two cannot disagree. That is the whole of what the block vouches for.
     unsafe { frost_rt_write_bytes(ptr_to(text[0]), str_len(text)) }
 }
 
-print_int_line :: fn(value: i64) { print_int(value) print_char(10) }
+out_int :: fn(value: i64) { frost_rt_write_i64(value) }
 
-print_str_line :: fn(text: str) { print_str(text) print_char(10) }
+out_float :: fn(value: f64) { frost_rt_write_f64(value) }
 
-print_f64_line :: fn(value: f64) { print_f64(value) print_char(10) }
+to_stdout :: Sink { bytes = out_bytes, int = out_int, float = out_float }
 
-print_bool_line :: fn(value: bool) { print_bool(value) print_char(10) }
+span :: fn(text: str, from: i64, count: i64) -> str {
+    slice_range($u8, text, from, count)
+}
+
+// The literal from `at` up to the next hole, written, and the index past that
+// hole answered. A run holding a doubled brace goes out in pieces, one per
+// brace, and a run holding none goes out in a single write.
+//
+// A `{` that opens nothing was refused where the call is written, so what
+// arrives here is either a hole, a doubled brace, or a byte that stands for
+// itself. That is why nothing here reports a fault: a lone `}` is a `}`.
+run_from :: fn(sink: Sink, fmt: str, at: i64) -> i64 {
+    var start := at
+    var index := at
+    while (index < str_len(fmt)) {
+        byte := fmt[index]
+        if (byte == 123 || byte == 125) {
+            if (index + 1 < str_len(fmt)) {
+                next := fmt[index + 1]
+                if (byte == 123 && next == 125) {
+                    sink.bytes(span(fmt, start, index - start))
+                    return index + 2
+                }
+                if (next == byte) {
+                    sink.bytes(span(fmt, start, index + 1 - start))
+                    index = index + 2
+                    start = index
+                    continue
+                }
+            }
+        }
+        index = index + 1
+    }
+    sink.bytes(span(fmt, start, index - start))
+    index
+}
+
+// The values, in the order the holes come. The chain over `value` is answered
+// while the body is expanded, so what a call emits is the literal walk and one
+// direct write per value: the arms that would not compile for that value's type
+// are gone before the body is checked.
+//
+// The order the arms are asked in is what routes a `bool`, which answers no to
+// every predicate and lands in the last two arms.
+write :: fn($sink: Sink, fmt: str, args: $...) {
+    var at: i64 = 0
+    for value in args {
+        at = run_from(sink, fmt, at)
+        if (is_float(value)) {
+            sink.float(cast($f64, value))
+        } else if (is_slice(value)) {
+            sink.bytes(value)
+        } else if (is_numeric(value)) {
+            sink.int(cast($i64, value))
+        } else if (value) {
+            sink.int(1)
+        } else {
+            sink.int(0)
+        }
+    }
+    at = run_from(sink, fmt, at)
+}
+
+// `format` on the parameter is what makes the literal's holes count against the
+// list that follows it: a call naming more holes than it gives values, or a
+// value the sink cannot write, is refused where the call is written.
+print :: fn(format fmt: str, args: $...) {
+    write($to_stdout, fmt, args)
+}

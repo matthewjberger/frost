@@ -207,18 +207,18 @@ empty_gltf :: fn(ok: bool) -> Gltf {
 gltf_read :: fn(path: str) -> Gltf {
     var file := fs_read(path)
     if (file.ok == false) {
-        print_str_line("gltf: cannot read the file")
+        print("gltf: cannot read the file\n")
         fs_free(file)
         return empty_gltf(false)
     }
     bytes := file.text
     if (str_len(bytes) < 20 || read_u32(bytes, 0) != GLB_MAGIC) {
-        print_str_line("gltf: not a binary glTF file")
+        print("gltf: not a binary glTF file\n")
         fs_free(file)
         return empty_gltf(false)
     }
     if (read_u32(bytes, 4) != 2) {
-        print_str_line("gltf: the file is not glTF version 2")
+        print("gltf: the file is not glTF version 2\n")
         fs_free(file)
         return empty_gltf(false)
     }
@@ -235,7 +235,7 @@ gltf_read :: fn(path: str) -> Gltf {
         kind := read_u32(bytes, at + 4)
         body := at + 8
         if (length < 0 || body + length > str_len(bytes)) {
-            print_str_line("gltf: a chunk runs past the end of the file")
+            print("gltf: a chunk runs past the end of the file\n")
             fs_free(file)
             return empty_gltf(false)
         }
@@ -250,7 +250,7 @@ gltf_read :: fn(path: str) -> Gltf {
         at = body + padded(length)
     }
     if (json_at < 0) {
-        print_str_line("gltf: the file carries no JSON chunk")
+        print("gltf: the file carries no JSON chunk\n")
         fs_free(file)
         return empty_gltf(false)
     }
@@ -258,7 +258,7 @@ gltf_read :: fn(path: str) -> Gltf {
     var document := json_parse(str_slice(bytes, json_at, json_length))
     root := json_root(document)
     if (root < 0) {
-        print_str_line("gltf: the JSON chunk does not parse")
+        print("gltf: the JSON chunk does not parse\n")
         json_free(document)
         fs_free(file)
         return empty_gltf(false)
@@ -615,7 +615,7 @@ accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
     // comparison covers the whole run.
     last := offset + (count - 1) * stride + width * components
     if (last > binary_length) {
-        print_str_line("gltf: an accessor runs past the binary chunk")
+        print("gltf: an accessor runs past the binary chunk\n")
         return absent
     }
     Accessor { offset = offset, stride = stride, count = count,

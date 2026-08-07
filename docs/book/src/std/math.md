@@ -126,7 +126,7 @@ main :: fn() -> i64 {
     turn := quat_from_axis_angle(vec3(0.0, 1.0, 0.0), radians(90.0))
     spun := quat_rotate_vec3(turn, vec3(0.0, 0.0, 1.0))
     scaled : i64 = spun.x * 1000.0   // ~1000
-    print_int_line(scaled)
+    print("{}\n", scaled)
     0
 }
 ```

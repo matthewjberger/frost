@@ -37,10 +37,8 @@ payload :: fn(high: i64, low: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(side(52, 55))
-    print_int_line(payload(52, 55))
+    print("{}\n{}\n", side(52, 55), payload(52, 55))
 
-    print_int_line(side(52, 90))
-    print_int_line(payload(52, 90))
+    print("{}\n{}\n", side(52, 90), payload(52, 90))
     0
 }

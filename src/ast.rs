@@ -323,6 +323,11 @@ pub struct Parameter {
     pub mode: crate::parser::ParamMode,
     pub compile_time_signature: Option<crate::types::Type>,
     pub pack: bool,
+    // Whether the argument here has to be a string literal whose holes are
+    // counted against the compile-time list that follows it. Declared `format`,
+    // and read where the call is written rather than inside the body, because
+    // the literal is the caller's and so is the count it has to agree with.
+    pub format: bool,
 }
 
 #[derive(

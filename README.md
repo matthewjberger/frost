@@ -74,17 +74,12 @@ trade :: fn(mut hero: Hero, mut foe: Monster) -> (dealt: i64, taken: i64) {
 
 // An unmarked parameter borrows to read.
 report :: fn(foe: Monster, dealt: i64, taken: i64) {
-    print_str("  you hit ")
-    print_str(foe.name)
-    print_str(" for ")
-    print_int(dealt)
+    print("  you hit {} for {}", foe.name, dealt)
     if (foe.hp == 0) {
-        print_str_line(" and it falls")
+        print(" and it falls\n")
         return
     }
-    print_str(" and take ")
-    print_int(taken)
-    print_str_line(" back")
+    print(" and take {} back\n", taken)
 }
 
 main :: fn() -> i64 {
@@ -107,20 +102,15 @@ main :: fn() -> i64 {
     for step in plan {
         match step {
             case .Look: {
-                print_str("you are in room ")
-                print_int(hero.room)
-                print_str(" with ")
-                print_str_line(here[hero.room].name)
+                print("you are in room {} with {}\n", hero.room, here[hero.room].name)
             }
             case .Go { to }: {
                 match walk(hero, to) {
                     case .Ok { value }: {
-                        print_str("you walk into room ")
-                        print_int_line(value)
+                        print("you walk into room {}\n", value)
                     }
                     case .Err { error }: {
-                        print_str("no way out of room ")
-                        print_int_line(error.from)
+                        print("no way out of room {}\n", error.from)
                     }
                 }
             }
@@ -130,17 +120,13 @@ main :: fn() -> i64 {
             }
             case .Rest: {
                 hero.hp = hero.hp + 4
-                print_str("you rest, and are back to ")
-                print_int_line(hero.hp)
+                print("you rest, and are back to {}\n", hero.hp)
             }
         }
     }
 
-    print_str("you leave with ")
-    print_int(hero.hp)
-    print_str(" hit points and a torch good for ")
-    print_int(douse(torch))
-    print_str_line(" more turns")
+    print("you leave with {} hit points and a torch good for {} more turns\n",
+        hero.hp, douse(torch))
     0
 }
 ```
@@ -222,7 +208,7 @@ One typed intermediate representation feeds three backends, a Cranelift native p
 
 The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
 
-The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. Output is one `print("{} of {}\n", a, b)` over a compile-time argument list: the holes are counted against the values where the call is written, and each value's type picks its writer while the call is compiled, so what runs is a direct write per value. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
 
 The engine is ordinary Frost too. [`lib/`](lib) is a window and input layer over SDL3, a renderer over wgpu with a render graph that orders passes by the resources between them, and an `App` a program composes plugins into. A plugin is a `fn(mut App)`, systems run in stages, a pass carries its own typed state, and no example in the tree says `unsafe`.
 

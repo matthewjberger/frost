@@ -458,7 +458,7 @@ render_world_begin :: fn(mut held: RenderWorld) {
 render_world_push :: fn(mut held: RenderWorld, matrix: Mat4, mesh: i64,
     material: i64, layer: i64) {
     if (held.count >= held.room) {
-        print_str_line("render: more things to draw than the world was made room for")
+        print("render: more things to draw than the world was made room for\n")
         return
     }
     var places := held.transforms

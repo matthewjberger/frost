@@ -31,25 +31,24 @@ main :: fn() -> i64 {
     for i in 0..n {
         total = total + square(i)
     }
-    print_int_line(total)  // 55
+    print("{}\n", total)  // 55
     0
 }
 ```
 
-Writing output is a library question. `import "io.frost"` brings in the
-writers, named for what they write: `print_int_line`, `print_str_line`,
-`print_f64_line`, `print_bool_line`, and the no-newline forms beside them, so a
-line built from several values is several calls:
+Writing output is a library question. `import "io.frost"` brings in `print`,
+which takes a format string and as many values as the line names. Each `{}` is
+where the next value goes, and the value's type decides how it is written:
 
 ```frost,sketch
-print_str("hp ")
-print_int(entity.hp)
-print_str(" of ")
-print_int_line(entity.max)
+print("hp {} of {}\n", entity.hp, entity.max)
 ```
 
-Each writer is a few lines of ordinary Frost over one runtime call. Printing
-lives entirely in the library ([text-and-io.md](std/text-and-io.md)).
+An integer, a float, a `bool` and a `str` all go in a hole. Nothing is appended,
+so a line ends with the `\n` written into the literal. The count is checked
+where the call is written, and the choice of writer is made while the call is
+compiled, so what runs is one direct write per value. Printing lives entirely in
+the library ([text-and-io.md](std/text-and-io.md)).
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
@@ -122,8 +121,8 @@ area :: fn(s: Shape) -> i64 {
 
 main :: fn() -> i64 {
     p := Point { x = 3, y = 4 }
-    print_int_line(p.x + p.y)                                     // 7
-    print_int_line(area(Shape::Rect { width = 4, height = 5 }))   // 20
+    print("{}\n", p.x + p.y)                                     // 7
+    print("{}\n", area(Shape::Rect { width = 4, height = 5 }))   // 20
     0
 }
 ```
@@ -135,7 +134,7 @@ the construction counterpart of the `case .Circle` an arm writes:
 
 ```frost,sketch
 s : Shape = .Circle { radius = 4 }                    // the annotation says which
-print_int_line(area(.Rect { width = 4, height = 5 })) // the parameter does
+print("{}\n", area(.Rect { width = 4, height = 5 })) // the parameter does
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return
 ```
 
@@ -173,7 +172,7 @@ scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
 main :: fn() -> i64 {
     var p := Point { x = 3, y = 4 }
     scale(p, 2)                       // no sigil at the call
-    print_int_line(p.x)               // 6
+    print("{}\n", p.x)               // 6
     0
 }
 ```
@@ -199,7 +198,7 @@ main :: fn() -> i64 {
     var storage : [3]Point = [Point { x = 0, y = 0 }; 3]
     held := at(storage, 1)
     held.x = 9
-    print_int_line(storage[1].x)  // 9, written through the borrow
+    print("{}\n", storage[1].x)  // 9, written through the borrow
     0
 }
 ```
@@ -233,7 +232,7 @@ close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print_int_line(close(f))   // consumes f exactly once
+    print("{}\n", close(f))   // consumes f exactly once
     // close(f)                // error: use of moved value 'f'
 }                              // dropping f without consuming would also be an error
 ```
@@ -275,8 +274,8 @@ which is where the names come from at the match:
 
 ```frost,sketch
 match number(text) {
-    case .Ok { value }: { print_int_line(value) }
-    case .Err { error }: { print_int_line(error.at) }
+    case .Ok { value }: { print("{}\n", value) }
+    case .Err { error }: { print("{}\n", error.at) }
 }
 ```
 
@@ -316,12 +315,12 @@ main :: fn() -> i64 {
 
     hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
 
-    print_int_line(world[hero].hp)        // 100
+    print("{}\n", world[hero].hp)        // 100
     world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print_int_line(world[hero].hp)        // 75
+    print("{}\n", world[hero].hp)        // 75
 
     slab_release($Entity, $16, world, hero)
-    print_int_line(slab_alive($Entity, $16, world, hero))   // 0, the generation moved on
+    print("{}\n", slab_alive($Entity, $16, world, hero))   // 0, the generation moved on
     0
 }
 ```
@@ -352,7 +351,7 @@ main :: fn() -> i64 {
     columns_reset($Particle, $8, world)
     h := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
 
-    print_int_line(world[h].x)     // 10, checked at the handle's slot
+    print("{}\n", world[h].x)     // 10, checked at the handle's slot
     world[h].x = 100               // scatter a field back to the slot
     // world.x is the whole [8]i64 column, and coerces to a []i64 slice
     0
@@ -378,12 +377,12 @@ swap      :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)               // Pair<i64> inferred
-    print_int_line(p.first + p.second) // 7
+    print("{}\n", p.first + p.second) // 7
 
     var x : i64 = 1
     var y : i64 = 2
     swap(x, y)
-    print_int_line(x)                  // 2
+    print("{}\n", x)                  // 2
     0
 }
 ```
@@ -397,7 +396,7 @@ and pass the type explicitly with a leading `$`:
 bytes_for :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 
 main :: fn() -> i64 {
-    print_int_line(bytes_for($Entity, 16))   // pass the type with $
+    print("{}\n", bytes_for($Entity, 16))   // pass the type with $
     0
 }
 ```
@@ -435,7 +434,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print_int_line(best($i64, $ascending, 7, 3))   // 3
+    print("{}\n", best($i64, $ascending, 7, 3))   // 3
     0
 }
 ```
@@ -480,7 +479,7 @@ apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
 main :: fn() -> i64 {
-    print_int_line(apply(double, 21))   // 42
+    print("{}\n", apply(double, 21))   // 42
     0
 }
 ```
@@ -496,11 +495,11 @@ import "io.frost"
 printall :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
-            print_f64_line(value)
+            print("{}\n", value)
         } else if (is_slice(value)) {
-            print_str_line(value)
+            print("{}\n", value)
         } else {
-            print_int_line(value)
+            print("{}\n", value)
         }
     }
 }
@@ -537,11 +536,10 @@ import "io.frost"
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
 
 main :: fn() -> i64 {
-    print_int_line(field_count(Vertex))
+    print("{}\n", field_count(Vertex))
     for field in fields(Vertex) {
-        print_int_line(offset_of(field))
-        print_int_line(sizeof(field))
-        if (is_float(field)) { print_int_line(1) } else { print_int_line(0) }
+        print("{}\n{}\n", offset_of(field), sizeof(field))
+        if (is_float(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
     }
     0
 }
@@ -566,7 +564,7 @@ import "io.frost"
 
 main :: fn() -> i64 {
     arr := [10, 20, 30]
-    print_int_line(arr[2])   // 30
+    print("{}\n", arr[2])   // 30
     // arr[5]                // aborts: index 5 out of bounds for length 3
     0
 }
@@ -674,11 +672,10 @@ main :: fn() -> i64 {
         Entity { hp = 30, kind = .Enemy { damage = 15 } })
 
     world[player].hp = world[player].hp + delta(world[goblin])
-    print_str("hp ")
-    print_int_line(world[player].hp)                 // 85
+    print("hp {}\n", world[player].hp)                 // 85
 
     slab_release($Entity, $16, world, goblin)
-    print_int_line(slab_alive($Entity, $16, world, goblin))   // 0
+    print("{}\n", slab_alive($Entity, $16, world, goblin))   // 0
     0
 }
 ```

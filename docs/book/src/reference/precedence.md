@@ -36,9 +36,9 @@ type unsafe uses var where while with
 
 The primitive type names `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64
 bool str` and the boolean literals `true` and `false` are predeclared
-identifiers (2.4). The wildcard is `_`. `test`, `export`, `flags` and `value`
-are contextual, and so are `packed`, `align` and the capitalized `Type` of
-`$T: Type`.
+identifiers (2.4). The wildcard is `_`. `test`, `export`, `flags`, `value` and
+`format` are contextual, and so are `packed`, `align` and the capitalized `Type`
+of `$T: Type`.
 
 ## 14.3 String escapes
 
