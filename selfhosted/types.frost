@@ -22,7 +22,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
-    borrow_kept, read_borrowed_operands,
+    borrow_kept, pack_local_type, read_borrowed_operands,
     record_local, record_mono_ret, type_cache_prepare, type_of, binding_type,
     place_type,
     types_compatible, value_fits, untyped_literal
@@ -1735,16 +1735,13 @@ pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
     // emitters no longer do and reach `type_of` instead. A specialization is
     // named by one and defined by the other, so stripping in one place only
     // names a body nothing emits.
-    if (is_borrow(held) && is_slice_ty(p, pointee(p, held))) {
-        return pointee(p, held)
-    }
-    // The same for a scalar, which has no field access to read through it the
-    // way an aggregate does. An element of a list is a value like any other,
-    // and this is the one place a value arrives with nothing having asked for a
-    // type, so a borrow of a number travelled as itself: the body that unrolls
-    // the list was handed an address where its number belongs, and a format
-    // string was told to write out a `^i64`.
-    if (is_borrow(held) && is_aggregate(pointee(p, held)) == false) {
+    // Whatever it borrows: a slice, a number, or a struct. An element of a list
+    // is a value like any other, and this is the one place a value arrives with
+    // nothing having asked for a type, so a borrow that stayed one travelled as
+    // itself. A `ref` binding to a struct named a specialization for the borrow
+    // while the emitters named one for the struct, and the call went out to a
+    // body nothing defines.
+    if (is_borrow(held)) {
         return pointee(p, held)
     }
     held
