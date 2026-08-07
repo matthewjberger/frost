@@ -1928,7 +1928,15 @@ impl MoveChecker<'_> {
         match outcome {
             Ok(diverges) => diverges,
             Err(error) => {
-                if self.reported.insert(error.to_string()) {
+                // The claim, without the place it was said at. Past a move
+                // the binding stays moved and every later mention fails the
+                // same way, and those are echoes of one mistake: keyed on the
+                // located text they were one report each, since each names its
+                // own line.
+                let claim = crate::diagnostic::without_leading_place(
+                    &error.to_string(),
+                );
+                if self.reported.insert(claim) {
                     let located = locate::<bool>(Err(error), position)
                         .expect_err("an error stays an error");
                     let message = located.to_string();
@@ -2391,6 +2399,20 @@ impl MoveChecker<'_> {
     }
 
     fn visit(&mut self, expression: ExprId, moving: bool) -> Result<()> {
+        // A fault lands on the expression it is about. The walk records the
+        // statement it started from, and pointing there names the line's first
+        // token however far into the line the name that is wrong sits.
+        locate(
+            self.visit_expression(expression, moving),
+            self.ast.position_of(self.ast.expr_span(expression)),
+        )
+    }
+
+    fn visit_expression(
+        &mut self,
+        expression: ExprId,
+        moving: bool,
+    ) -> Result<()> {
         let ast = self.ast;
         match ast.expr(expression) {
             Expression::Identifier(name) => {
