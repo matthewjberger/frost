@@ -883,6 +883,11 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
         report_type_name(p, pointee(p, held))
         return
     }
+    if (is_array_ty(held) && array_element(p, held) == TY_U8
+        && array_length(p, held) < 0) {
+        report("str")
+        return
+    }
     if (is_array_ty(held)) {
         report("[]")
         report_type_name(p, array_element(p, held))
@@ -968,6 +973,13 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (is_pointer(held)) {
         synth_bytes(p, "^")
         write_type_name(p, pointee(p, held))
+        return
+    }
+    // A run of bytes is what the language calls text, and str is the name it
+    // is written under wherever a program says it.
+    if (is_array_ty(held) && array_element(p, held) == TY_U8
+        && array_length(p, held) < 0) {
+        synth_bytes(p, "str")
         return
     }
     if (is_array_ty(held)) {
