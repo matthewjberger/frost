@@ -562,6 +562,8 @@ main :: fn() -> i64 {
         const_failed = 0,
         value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
+        const_faults = arena_make($i64, 256),
+        const_repeat = 0,
         generic_fns = arena_make($GenericFn, 4096),
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),
@@ -763,6 +765,10 @@ main :: fn() -> i64 {
     // Every `.Variant` an argument left unresolved, now that every signature is
     // parsed.
     resolve_variant_fixups(parser)
+    // Every operand that is a borrow of a scalar, read as the value it borrows.
+    // Also after the parse, for the same reason: what a call answers with is
+    // known once every signature has been read.
+    read_borrowed_operands(parser)
     // The resources a `_` would drop, once every declaration has said whether
     // it holds one.
     check_discarded_resources(parser)

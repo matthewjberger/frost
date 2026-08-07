@@ -796,6 +796,14 @@ emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
             return
         }
     }
+    // A borrow of a scalar reaching a place of the value's own type. %rax holds
+    // where the value sits, and what is wanted is the value. Ahead of the
+    // pointer rule below, which is what left the address where a number belongs.
+    if (is_borrow(from) && is_pointer(to) == false && is_aggregate(to) == false
+        && pointee(p, from) == to) {
+        emit_asm_load_from(p, to, 0, "(%rax), ")
+        return
+    }
     if (from == to || is_pointer(from) || is_pointer(to)) {
         return
     }
@@ -3170,12 +3178,16 @@ emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
 
 // Leave a function. A struct result is copied into the buffer the caller
 // supplied, because the frame it was built in is about to go away.
-emit_asm_return :: fn(mut p: Parser, value: i64) {
-    if (value == (-1)) {
+emit_asm_return :: fn(mut p: Parser, value_in: i64) {
+    if (value_in == (-1)) {
         asm("movq $0, %rax")
         emit_asm_leave(p)
         return
     }
+    // Before the expression is written out rather than after: this backend
+    // coerces whatever is in %rax, and by then the read through the borrow has
+    // already happened.
+    value := borrow_kept(p, value_in, p.asm_ret)
     emit_asm_expr(p, value)
     emit_asm_coerce(p, value, p.asm_ret)
     if (is_aggregate(p.asm_ret)) {

@@ -22,6 +22,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
+    borrow_kept, read_borrowed_operands,
     record_local, record_mono_ret, type_cache_prepare, type_of, binding_type,
     place_type,
     types_compatible, value_fits, untyped_literal
@@ -1358,6 +1359,75 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
         return 0
     }
     -1
+}
+
+// A borrow where a borrow is wanted, undoing the read a name holding one takes
+// wherever it is written. A function answering `ref T` hands back the borrow
+// rather than what it borrows, and so does an argument for a parameter that
+// takes one.
+borrow_kept :: fn(mut p: Parser, value: i64, want: i64) -> i64 {
+    if (is_borrow(want) == false) {
+        return value
+    }
+    held := arena_at(p.arena, value)
+    if (held.kind == NodeKind::Deref && held.val == 1) {
+        return held.a
+    }
+    value
+}
+
+// A borrow of a scalar put beside a value is the value it borrows.
+//
+// A name holding one reads through where it is written, which the parse does.
+// A call answering one is known to answer a borrow only once every signature
+// has been read, and a call may be written above the declaration it names, so
+// its operands are read through here instead. Left alone, `at(bag, 2) == 9`
+// compared the address the borrow holds against nine and answered no for every
+// bag there is.
+read_borrowed_operands :: fn(mut p: Parser) {
+    var i: i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        kind := node.kind
+        left := node.a
+        right := node.b
+        if (kind == NodeKind::Bin) {
+            read_left := read_borrow_through(p, left)
+            read_right := read_borrow_through(p, right)
+            again := arena_at(p.arena, i)
+            again.a = read_left
+            again.b = read_right
+        }
+        i = i + 1
+    }
+}
+
+// The value a borrow of a scalar names, or the expression unchanged. An
+// aggregate is reached by address already, so reading one through its borrow
+// is what a field access does and there is nothing to add here.
+read_borrow_through :: fn(mut p: Parser, value: i64) -> i64 {
+    if (value < 0) {
+        return value
+    }
+    // Only a call, and its answer read off the table rather than worked out.
+    // Every other producer of a borrow is a name, and a name reads through
+    // where it is written. Asked of `type_of` instead, this put a question the
+    // parse had already answered, and the answering wrote every generic
+    // argument it walked into the table a second time until the table was full.
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Call) {
+        return value
+    }
+    ty := arena_at(p.fns, node.val).ret_type
+    if (is_borrow(ty) == false || is_aggregate(pointee(p, ty))) {
+        return value
+    }
+    made := new_unary(p, NodeKind::Deref, value)
+    // Read through a borrow rather than through a raw pointer, which is what
+    // the unsafety gate reads off the node.
+    read := arena_at(p.arena, made)
+    read.val = 1
+    made
 }
 
 // Record what a name binds for the rest of this declaration's parse.

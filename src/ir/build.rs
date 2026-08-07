@@ -8045,6 +8045,23 @@ impl<'a> FunctionLowering<'a> {
                 bail!("assignment to unknown variable '{name}'");
             };
             let target_type = self.type_of_local(local);
+            // A name holding a borrow of a scalar names the storage it borrows,
+            // so writing to it writes through. Left alone the address itself
+            // was overwritten, and the place the reader meant kept its old
+            // value with nothing said.
+            if let Some(inner) = borrowed_value(&target_type)
+                && !needs_memory(inner)
+            {
+                let inner = inner.clone();
+                let (operand, value_type) =
+                    self.lower_expression(value, Some(&inner))?;
+                let coerced = self.coerce(operand, &value_type, &inner)?;
+                self.emit(IrStatement::Store {
+                    address: IrOperand::Local(local),
+                    value: coerced,
+                });
+                return Ok(());
+            }
             let (operand, value_type) =
                 self.lower_expression(value, Some(&target_type))?;
             if distinct_mismatch(
@@ -10811,6 +10828,25 @@ impl<'a> FunctionLowering<'a> {
         if from == to || matches!(to, Type::Void | Type::Unknown) {
             return Ok(operand);
         }
+        // Reading a borrow reads what it borrows. A `ref T` stays one where a
+        // `ref T` is wanted, which is a parameter that takes a borrow and an
+        // answer declared as one; everywhere else it is the value, and a scalar
+        // has no field access to read through it the way an aggregate does.
+        if let Some(inner) = borrowed_value(from)
+            && borrowed_value(to).is_none()
+            && !needs_memory(inner)
+        {
+            let held = inner.clone();
+            let read = self.fresh_local(held.clone(), None);
+            self.emit(IrStatement::Assign(
+                read,
+                IrRvalue::Load {
+                    address: operand,
+                    ty: held.clone(),
+                },
+            ));
+            return self.coerce(IrOperand::Local(read), &held, to);
+        }
         if let (Type::Array(from_element, count), Some(to_element)) =
             (from, &slice_element_wanted(to))
             && from_element.as_ref() == to_element
@@ -11090,6 +11126,14 @@ fn unify(left: &Type, right: &Type) -> Type {
     if left == right {
         return left.clone();
     }
+    // A borrow of a value put beside that value is the two of them, which is
+    // what the operator is about. Left alone, `at(bag, 2) == 9` compared the
+    // address the borrow holds against nine and answered no for every bag.
+    match (borrowed_value(left), borrowed_value(right)) {
+        (Some(inner), _) => return unify(inner, right),
+        (_, Some(inner)) => return unify(left, inner),
+        _ => {}
+    }
     match (left, right) {
         (wide, narrow) | (narrow, wide)
             if wide.is_integer()
@@ -11101,6 +11145,16 @@ fn unify(left: &Type, right: &Type) -> Type {
         (Type::F64, Type::F32) | (Type::F32, Type::F64) => Type::F64,
         (Type::Unknown, other) | (other, Type::Unknown) => other.clone(),
         _ => left.clone(),
+    }
+}
+
+// What a borrow borrows, for the one type that is a borrow rather than holds
+// one. A raw pointer is not this: it is a value the reader wrote `^` to read
+// through, and reading one without the `^` is the address on purpose.
+fn borrowed_value(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) => Some(inner),
+        _ => None,
     }
 }
 
