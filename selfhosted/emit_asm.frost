@@ -1833,8 +1833,10 @@ simple_operand_kind :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
     // A number written as a bit of a flags type carries that type rather than
-    // its own value, so it is not the plain literal this reads.
-    if (kind == NodeKind::Num && node.b == 0) {
+    // its own value, so it is not the plain literal this reads. A yes or no
+    // carries `bool` and is its own value, so it is one.
+    if (kind == NodeKind::Num
+        && (node.b == 0 || node.b == TY_BOOL + 1)) {
         return SIMPLE_NUMBER
     }
     if (kind != NodeKind::Var) {
