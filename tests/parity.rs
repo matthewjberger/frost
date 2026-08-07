@@ -1998,28 +1998,12 @@ fn both_compilers_refuse_the_same_programs() {
     );
 }
 
-// The refusals the two compilers still word differently. Each is a place one
-// says something the other does not, and the list is here rather than in a
-// comment so it can only shrink: a new one fails the test above, and one that
-// is mended fails it too until the name is taken off. Written down after the
-// harness learned to compare what was said rather than to look for a phrase
-// inside it, which is what let forty of these drift unseen.
-const WORDED_DIFFERENTLY: &[&str] = &[
-    // One reports what follows the first fault and the other stops at it.
-    // Consuming a field through a borrow twice is refused by both; what they
-    // disagree about is whether the consequences of that are faults of their
-    // own.
-    "consumed_through_a_borrow_twice",
-    "handed_out_of_a_borrow_twice",
-    "an_alternative_that_binds_a_payload",
-    "pool_nobody_named",
-    // One names the instance the fault is inside and the other the line inside
-    // it. The bootstrap points at the call and says `instantiating 'peek<File>'`;
-    // the self-hosted compiler points at the expression in the body, which is
-    // the line to change, and names no instance.
-    "handed_out_by_element",
-    "moved_through_a_compile_time_list",
-];
+// The refusals the two compilers word differently. Empty, and it is the test
+// above that keeps it so: a pair that drifts fails on the way in, and one that
+// is mended fails until its name comes off. Written down after the harness
+// learned to compare what was said rather than to look for a phrase inside it,
+// which is what let forty of these drift unseen.
+const WORDED_DIFFERENTLY: &[&str] = &[];
 
 // What a compiler said, apart from where it said it. A diagnostic is a header
 // naming the position, the line it is about, and a caret with the words after

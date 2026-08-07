@@ -2405,7 +2405,15 @@ impl MoveChecker<'_> {
                         "'{name}' views a run that '{replaced}' has since replaced; growing a container gives its old block back, so the storage this names is not the caller's to read. Take the view again after the growth"
                     );
                 }
-                match self.state_of(name) {
+                // The place the answer came from, not the name written here.
+                // `once(h)` gives up `h.file`, so a second one names storage
+                // that is already gone and the reader has to put `h.file` back.
+                // Naming `h` instead pointed at something that was never moved
+                // as a whole, and left the walk with no key to find the line
+                // the move happened on.
+                let (state, blamed) =
+                    self.state_of_place(&[Step::Named(name.to_string())], name);
+                match state {
                     // A value whose failure path is covered is still the
                     // straight-line path's to consume, so this reads as `Live`
                     // does and answers the obligation either way.
@@ -2425,12 +2433,12 @@ impl MoveChecker<'_> {
                     MoveState::Deferred => {
                         if moving {
                             bail!(
-                                "value '{name}' is already scheduled for consumption by a later defer; it cannot be moved again"
+                                "value '{blamed}' is already scheduled for consumption by a later defer; it cannot be moved again"
                             );
                         }
                     }
                     MoveState::Moved | MoveState::MaybeMoved => {
-                        bail!("use of moved value '{name}'");
+                        bail!("use of moved value '{blamed}'");
                     }
                 }
                 Ok(())

@@ -1045,6 +1045,24 @@ skip_brace_group :: fn(mut p: Parser) {
     }
 }
 
+// Forward to just past the brace that closes the match the cursor sits inside.
+// A refusal among the arms leaves the cursor where no statement begins, and a
+// resync from there reads patterns as statements: `_` before a colon is a
+// binding, a variant name is a type, and one refusal becomes four about lines
+// with nothing wrong.
+skip_past_match :: fn(mut p: Parser) {
+    var depth: i64 = 1
+    while (depth > 0 && cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lbrace) {
+            depth = depth + 1
+        }
+        if (cur(p) == TokenKind::Rbrace) {
+            depth = depth - 1
+        }
+        advance(p)
+    }
+}
+
 // Apply any trailing `.field`, `^` deref, and `[index]` operators to a node.
 // `e?` where the enclosing function answers with a failure set: bind the
 // result, hand the failure on if that is what it holds, and stand for the value
@@ -3373,6 +3391,12 @@ parse_match :: fn(mut p: Parser) -> i64 {
                     if (written > 0 || cur(p) == TokenKind::Pipe) {
                         report_where(p.modules, p.src, cur_off(p))
                         report("an alternative binding payload fields holds one name to two shapes, so give it a case of its own")
+                        // Past the arms to the brace that closes the match. The
+                        // cursor sits among patterns, so a resync from here
+                        // looks for a statement and finds `_` before a colon,
+                        // which reads as a binding, and one refusal turns into
+                        // four about lines with nothing wrong.
+                        skip_past_match(p)
                         frost_rt_recover_escape()
                     }
                     bindings = p.case_bindings

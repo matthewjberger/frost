@@ -499,11 +499,31 @@ fn lowered_and_checked(
 
     if lowering.is_empty() {
         faults.extend(frost::check_module_recovering(&module));
-        faults.extend(frost::check_linearity_recovering(&module));
+        faults.extend(frost::check_linearity_recovering(
+            &module,
+            &pooled_types(&faults),
+        ));
     }
     suggest_names(program, &program.roots.clone(), &mut faults);
     refuse(&faults)?;
     Ok(module)
+}
+
+/// The container types already refused as pools of resources, read off the
+/// reports that refused them. Nothing consumes such a value the way the
+/// language asks, so the walk that counts consumptions leaves them alone rather
+/// than telling a reader to do what cannot be done.
+fn pooled_types(
+    faults: &[frost::Diagnostic],
+) -> std::collections::HashSet<String> {
+    faults
+        .iter()
+        .filter_map(|held| {
+            let (before, _) = held.message.split_once("' is a pool of '")?;
+            let (_, named) = before.rsplit_once(QUOTE)?;
+            Some(named.to_string())
+        })
+        .collect()
 }
 
 /// `frost fmt <paths...>`: write the one rendering of every file named.

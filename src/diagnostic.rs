@@ -85,6 +85,19 @@ fn shown_as(diagnostic: &Diagnostic) -> (String, &str) {
     )
 }
 
+/// A message with any `at <place>: ` prefix taken off it.
+///
+/// A fault raised inside an instance carries the place in the template it came
+/// from, and the report is shown at the call that asked for the instance. Two
+/// places in one report renders as the first with the second read as part of
+/// the claim, so a reader is handed a sentence beginning with a file name.
+pub fn without_leading_place(message: &str) -> String {
+    match leading_place(message) {
+        Some((_, rest)) => rest.to_string(),
+        None => message.to_string(),
+    }
+}
+
 /// The place an `at ...: ` prefix names, and what follows it.
 ///
 /// Both spellings `Position::describe` produces: a file that is known reads
@@ -128,7 +141,13 @@ pub fn grouped(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
         });
         match same_words {
             Some(held) => {
-                held.related.push((shown_position(&diagnostic), claim))
+                // The places a folded report named come with it. Two uses of a
+                // moved value each point at the line the value went on, and
+                // those are different lines, so keeping only the claim drops
+                // half of what the second report had to say.
+                let at = shown_position(&diagnostic);
+                held.related.push((at, claim));
+                held.related.extend(diagnostic.related);
             }
             None => kept.push(diagnostic),
         }

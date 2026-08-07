@@ -104,8 +104,8 @@ pub fn check_module_recovering(
 
 // A type error inside a specialization names a line in the template, which is
 // code the reader never wrote. The call that asked for the specialization is
-// what they did write, so it goes first and the template position stays behind
-// it for whoever maintains the generic.
+// what they did write, so it is the place the report is shown at when the fault
+// carries no place of its own.
 fn locate_instantiation<T>(
     result: Result<T>,
     function: &IrFunction,
@@ -121,17 +121,21 @@ fn locate_instantiation<T>(
         // The mangled symbol is a compiler artifact, so where the inner message
         // names it, say what the reader wrote instead. The text has already had
         // the module tag taken off it, so the symbol looked for has to have
-        // lost the same thing or it is not in there to find.
+        // lost the same thing or it is not in there to find. Only the symbol:
+        // the instance is not named in the words, which is the position's to
+        // say.
         let symbol =
             crate::modules::imports::demangle_private_names(&function.name);
         let text = text.replace(&symbol, &name);
+        // The call is where the report is shown, so a place the fault carried
+        // from inside the instance comes off: two in one report renders as the
+        // first with the second left in the words, and the claim a reader had
+        // to act on began with a file name.
+        let text = crate::diagnostic::without_leading_place(&text);
         if instantiated.at == crate::lexer::Position::default() {
-            anyhow::anyhow!("instantiating '{name}': {text}")
+            anyhow::anyhow!("{text}")
         } else {
-            anyhow::anyhow!(
-                "at {}: instantiating '{name}': {text}",
-                instantiated.at.describe()
-            )
+            anyhow::anyhow!("at {}: {text}", instantiated.at.describe())
         }
     })
 }

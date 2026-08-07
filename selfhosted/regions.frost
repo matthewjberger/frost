@@ -99,8 +99,23 @@ report_pool :: fn(mut p: Parser, struct_ty: i64, element: i64) {
     report_where(p.modules, p.src, def.name_off)
     report_fmt("'{}' is a pool of '{}', which is a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it.",
         instance_text(p, struct_ty), type_text(p, element))
+    arena_push(p.refused_pools, struct_ty)
     // One pool is asked about on its own, so the next one is asked too.
     frost_rt_recover_note()
+}
+
+// Whether a type was refused as a pool of resources. Nothing consumes such a
+// value the way the language asks, which is the refusal, so the obligation it
+// carries is not a second thing to tell its holder about.
+is_refused_pool :: fn(mut p: Parser, ty: i64) -> bool {
+    var i: i64 = 0
+    while (i < p.refused_pools.count) {
+        if (arena_at(p.refused_pools, i) == ty) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,7 +1503,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
             if (ty == (-1)) {
                 ty = type_of(p, node.a)
             }
-            if (is_linear_type(p, ty)
+            if (is_linear_type(p, ty) && is_refused_pool(p, ty) == false
                 && consumes_value(p, node.next, node.val, node.c) == false) {
                 report_where(p.modules, p.src, node.val)
                 report("linear value '")
@@ -1782,6 +1797,21 @@ view_container_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     -1
 }
 
+// Whether a fault about this place has already been told. The text is written
+// into the room past the source, which is never given back, so a run recorded
+// here stays readable for the rest of the compile.
+move_told :: fn(mut p: Parser, said: str) -> bool {
+    var i: i64 = 0
+    while (i < p.told_moves.count) {
+        entry := arena_at(p.told_moves, i)
+        if (text_matches(entry.said, said)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     // While the summaries are settling the state is not final, so what would be
     // said here would be said against a half-answer. The reporting walk that
@@ -1840,32 +1870,25 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     if (moved_slot < 0) {
         return
     }
-    // The place, not the name it starts from. `close(h.file)` twice moves
-    // `h.file` twice, and saying `h` names something the reader did not write
-    // on that line and did not move as a whole.
-    //
-    // What is named is what went missing. Where the move took the whole and the
-    // use reaches a part of it, the part was never moved on its own, so the
-    // whole is what the reader has to put back.
-    gone := place_text(p, moved_slot)
-    var said := place_text(p, id)
-    if (text_covers(gone, said)) {
-        said = gone
+    // What went missing, not the name the use starts from. `close(h.file)`
+    // twice moves `h.file` twice, and saying `h` names something the reader
+    // never moved as a whole and leaves no line to point at for the move. Where
+    // the move took the whole and the use reaches a part of it, the whole is
+    // what went, so the place that moved is what is named either way.
+    said := place_text(p, moved_slot)
+    // The same thing wrong is one fault however many walks reach it. The
+    // argument walk and the summary both arrive at a second `once(h)`, and
+    // every use after that names the same storage that already went.
+    if (move_told(p, said)) {
+        return
     }
+    arena_push(p.told_moves, ToldMove { said = said })
     report_where(p.modules, p.src, name_off)
     report_fmt("use of moved value '{}'", said)
     // Where the value went, said the way the fault itself is said, so the
     // reader sees the move and the use as two placed lines of one story. The
     // slot recorded at the move is the place node written there, and its root
     // carries the source offset of that line.
-    //
-    // Only where the place that moved is the place being named. Using `h` after
-    // `h.file` went is a fault about `h`, and there is no line where `h` moved
-    // to point at: what moved was a part of it.
-    if (text_matches(gone, said) == false) {
-        frost_rt_recover_note()
-        return
-    }
     report("\n")
     moved_root := strip_place(p, moved_slot, place_depth(p, moved_slot))
     moved_node := arena_at(p.arena, moved_root)
@@ -3555,9 +3578,10 @@ report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
                         }
                         if (nameable == false && answerable) {
                             report_where(p.modules, p.src, root_off)
-                            report("this gives away a resource out of '")
-                            report_src(p.src, pname_off, pname_len)
-                            report("', which it only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take it by `move` and answer with it")
+                            report_fmt("'{}' gives away a resource out of '{}', which this function only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take '{}' by `move` and answer with it.",
+                                place_text(p, place),
+                                source_text(p.src, pname_off, pname_len),
+                                source_text(p.src, pname_off, pname_len))
                             frost_rt_recover_escape()
                         }
                     }
@@ -3826,6 +3850,10 @@ check_moves :: fn(mut p: Parser) {
                 }
             }
             p.moved.count = 0
+            // Per function, the way every other table here is. The same place
+            // written in two functions is two places, and a fault about each is
+            // a fault of its own.
+            p.told_moves.count = 0
             p.move_views.count = 0
             p.view_runs.count = 0
             p.stale_views.count = 0

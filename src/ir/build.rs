@@ -677,12 +677,19 @@ fn build_module_inner(
                 // The prefix an import gives a private name is nothing the
                 // reader wrote, so it comes back off the way it does in every
                 // other diagnostic.
+                //
+                // The call, and only the call. A complaint raised inside the
+                // instance carries the template's place, and putting the call
+                // in front of it left two in one report: the renderer reads the
+                // first and the second stays in the words, so the claim a
+                // reader saw began with a file name.
+                let placed = format!(
+                    "at {}: {}",
+                    specialization.requested_at.describe(),
+                    crate::diagnostic::without_leading_place(first)
+                );
                 let message =
-                    crate::modules::imports::demangle_private_names(&format!(
-                        "at {}: instantiating '{}': {first}",
-                        specialization.requested_at.describe(),
-                        specialization.display
-                    ));
+                    crate::modules::imports::demangle_private_names(&placed);
                 diagnostics.push(crate::diagnostic::Diagnostic {
                     position: specialization.requested_at,
                     message,
@@ -880,16 +887,15 @@ fn locate_instantiation_error(
 ) -> anyhow::Error {
     let text =
         crate::modules::imports::demangle_private_names(&error.to_string());
-    let display = crate::modules::imports::demangle_private_names(
-        &specialization.display,
-    );
+    // The call is where the report is shown, so a place the fault carried from
+    // inside the instance comes off: two in one report renders as the first
+    // with the second left in the words, and the claim a reader had to act on
+    // began with a file name.
+    let text = crate::diagnostic::without_leading_place(&text);
     if specialization.requested_at == Position::default() {
-        anyhow::anyhow!("instantiating '{display}': {text}")
+        anyhow::anyhow!("{text}")
     } else {
-        anyhow::anyhow!(
-            "at {}: instantiating '{display}': {text}",
-            specialization.requested_at.describe()
-        )
+        anyhow::anyhow!("at {}: {text}", specialization.requested_at.describe())
     }
 }
 
