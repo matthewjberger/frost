@@ -604,6 +604,7 @@ fn build_module_inner(
             let generic_signature = ast.signature(generic.return_sig).clone();
             let return_sig = ReturnSignature {
                 bound: None,
+                bound_text: String::new(),
                 kind: match ast.signature_to_type(&generic_signature) {
                     Some(ty) => ReturnKind::Single(substitute_type(
                         &ty,
@@ -2165,72 +2166,27 @@ fn evaluate_bound(
 // the reader chose it at the call and the template is not theirs.
 fn check_bound(
     ast: &Ast,
-    bound: ExprId,
+    signature: &ReturnSignature,
     subst: &HashMap<String, Type>,
     callee: &str,
     linear: &HashSet<String>,
 ) -> Result<()> {
+    let Some(bound) = signature.bound else {
+        return Ok(());
+    };
     if evaluate_bound(ast, bound, subst, linear)? {
         return Ok(());
     }
+    let written = &signature.bound_text;
     let mut bindings: Vec<String> = subst
         .iter()
         .map(|(name, ty)| format!("{name} = {ty}"))
         .collect();
     bindings.sort();
     bail!(
-        "'{callee}' is declared `where {bound}`, and that does not hold for {}",
-        bindings.join(", "),
-        bound = display_bound(ast, bound)
+        "'{callee}' is declared `where {written}`, and that does not hold for {}",
+        bindings.join(", ")
     )
-}
-
-// The bound, spelled the way it was declared. `display_expr` brackets every
-// operator so that any expression reads back without ambiguity, which turns
-// `!is_linear(T)` into `(!is_linear(T))` and quotes the reader a line they did
-// not write. A bound joins predicate calls with `!`, `&&` and `||`, so the one
-// place a bracket carries meaning is an `||` under something that binds
-// tighter.
-fn display_bound(ast: &Ast, expression: ExprId) -> String {
-    match ast.expr(expression) {
-        Expression::Prefix(crate::parser::Operator::Not, inner) => {
-            format!("!{}", bound_term(ast, *inner, BOUND_NOT))
-        }
-        Expression::Infix(left, operator, right) => {
-            let level = bound_level(operator);
-            format!(
-                "{} {operator} {}",
-                bound_term(ast, *left, level),
-                bound_term(ast, *right, level)
-            )
-        }
-        _ => display_expr(ast, expression),
-    }
-}
-
-// How tightly a bound's joins bind, so that a term written under one that
-// binds tighter than its own gets the brackets back. `!` is tightest and `||`
-// is loosest, which is the one place a bracket in a bound says something.
-const BOUND_OR: u8 = 0;
-const BOUND_AND: u8 = 1;
-const BOUND_NOT: u8 = 2;
-
-fn bound_level(operator: &crate::parser::Operator) -> u8 {
-    match operator {
-        crate::parser::Operator::And => BOUND_AND,
-        _ => BOUND_OR,
-    }
-}
-
-fn bound_term(ast: &Ast, expression: ExprId, outer: u8) -> String {
-    let inner = match ast.expr(expression) {
-        Expression::Infix(_, operator, _) => bound_level(operator),
-        _ => BOUND_NOT,
-    };
-    match inner < outer {
-        true => format!("({})", display_bound(ast, expression)),
-        false => display_bound(ast, expression),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7312,9 +7268,8 @@ impl<'a> FunctionLowering<'a> {
 
         // The bound, before the body is specialized, so a type that cannot
         // work is refused here rather than inside code the reader never wrote.
-        if let Some(bound) = self.ast.signature(generic.return_sig).bound {
-            check_bound(self.ast, bound, &subst, name, &self.builder.linear)?;
-        }
+        let signature = self.ast.signature(generic.return_sig).clone();
+        check_bound(self.ast, &signature, &subst, name, &self.builder.linear)?;
 
         for (parameter, target) in bundle_checks {
             let Some(declared) = parameter.compile_time_signature.as_ref()
