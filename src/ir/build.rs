@@ -7355,7 +7355,11 @@ impl<'a> FunctionLowering<'a> {
                         let read = self.coerce(operand, &value_type, &held)?;
                         (read, held)
                     }
-                    _ => (operand, value_type),
+                    // An aggregate travels by address either way, so a borrow
+                    // of one is already what a value of it would be here and
+                    // only the name it goes under changes.
+                    Some(inner) => (operand, inner.clone()),
+                    None => (operand, value_type),
                 };
                 pack_elements.push(PackElement::Value(
                     pack_element_name(pack_name, index),

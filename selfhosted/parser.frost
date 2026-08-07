@@ -3986,7 +3986,18 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // holding a borrow from a name holding a number, so a scalar one was
         // read as the address it carries and `bound == 9` compared that address
         // against nine.
-        record_parse_local(p, name_off, name_len, binding_type(p, value), value)
+        //
+        // Read off the parse's own table first. `binding_type` asks `type_of`,
+        // which reads the table the emitters fill, and that one is empty while
+        // a body is still being read: a borrow of a struct came back a borrow
+        // of an i64, and the list element it became was a number.
+        var bound_ty := pack_local_type(p, place)
+        if (bound_ty < 0) {
+            bound_ty = binding_type(p, value)
+        } else {
+            bound_ty = borrow_of(p, bound_ty)
+        }
+        record_parse_local(p, name_off, name_len, bound_ty, value)
         return new_let_node(p, value, name_off, name_len, -1)
     }
 

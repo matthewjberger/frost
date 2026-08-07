@@ -740,6 +740,26 @@ File :: linear struct { fd: i64 }
 ",
         "is declared `where (is_float(T) || is_struct(T)) && !is_linear(T)`",
     ),
+    // A borrow bound by `ref` handed to a format string. A borrow of a struct is
+    // what a value of it already is here, since an aggregate travels by address
+    // either way, so what is refused is writing a struct rather than holding
+    // one. The type it names had to be read off the parse's own table: asking
+    // `type_of` while the body is still being read asks the table the emitters
+    // fill, which is empty, so the borrow came back one of an i64 and the call
+    // went out to a specialization nothing defines.
+    (
+        "a_borrow_handed_to_a_format_string",
+        "import \"io.frost\"
+Holder :: struct { a: i64, b: i64 }
+         main :: fn() -> i64 {
+             var h : Holder = Holder { a = 1, b = 2 }
+             ref r := h
+             print(\"{}\n\", r)
+             0
+}
+",
+        "a format string writes a number, a yes or no, or a str, and this is a Holder",
+    ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
     // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
