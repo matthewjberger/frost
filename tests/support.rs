@@ -314,27 +314,21 @@ pub fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 }
 
 // What the bootstrap said when it would not compile a program.
-/// What the bootstrap says about a program it accepts, which is its warnings.
-pub fn bootstrap_warnings(name: &str, source: &str) -> String {
-    let directory = std::env::temp_dir();
-    let stem = unique(&format!("frost_warn_{name}"));
-    let source_path = directory.join(format!("{stem}.frost"));
-    std::fs::write(&source_path, source).unwrap();
+/// What the bootstrap says about a file already on disk, which is how a test
+/// hands one file to both compilers. What a report calls a file is part of what
+/// is compared, and two files named differently cannot answer that.
+pub fn bootstrap_report_at(name: &str, source_path: &Path) -> (bool, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
         .arg("--emit-c")
         .arg("-o")
-        .arg(directory.join(format!("{stem}.c")))
-        .arg(&source_path)
+        .arg(source_path.with_extension("c"))
+        .arg(source_path)
         .output()
-        .unwrap();
-    let _ = std::fs::remove_file(&source_path);
-    assert!(
+        .unwrap_or_else(|_| panic!("the bootstrap did not run for {name}"));
+    (
         output.status.success(),
-        "the bootstrap refused {name}, which warns rather than refusing:
-{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stderr).to_string()
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
 }
 
 pub fn bootstrap_refusal(name: &str, source: &str) -> String {

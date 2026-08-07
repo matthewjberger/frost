@@ -12,8 +12,8 @@ use std::process::Command;
 mod support;
 
 use support::{
-    bootstrap_output, bootstrap_refusal, bootstrap_warnings,
-    build_self_hosted_compiler, linker_available, selfhosted_default_output,
+    bootstrap_output, bootstrap_report_at, build_self_hosted_compiler,
+    linker_available, selfhosted_default_output,
 };
 
 // Programs the language refuses, put through both compilers. The third field is
@@ -2092,14 +2092,21 @@ fn both_compilers_warn_about_the_same_programs() {
     let directory = std::env::temp_dir();
     let mut drifted = Vec::new();
     for (name, source, wanted) in WARNED_BY_BOTH {
-        let bootstrap = bootstrap_warnings(name, source);
+        // One file, handed to both. What a report calls a file is compared
+        // below, and two files named differently cannot answer that.
+        let input = directory.join(format!("frost_warn_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let (built, bootstrap) = bootstrap_report_at(name, &input);
+        assert!(
+            built,
+            "the bootstrap refused {name}, which warns:
+{bootstrap}"
+        );
         assert!(
             bootstrap.contains(wanted),
             "the bootstrap did not warn '{wanted}' about {name}:
 {bootstrap}"
         );
-        let input = directory.join(format!("frost_warn_{name}.frost"));
-        std::fs::write(&input, source).unwrap();
         let run = Command::new(&compiler)
             .env("FROST_INPUT", &input)
             .output()
@@ -2127,6 +2134,11 @@ fn both_compilers_warn_about_the_same_programs() {
                 hosted_said.join(" | ")
             ));
         }
+        assert_eq!(
+            named_files(&bootstrap),
+            named_files(&hosted),
+            "the two compilers call the file different things in {name}"
+        );
     }
     assert!(
         drifted.is_empty(),
@@ -2149,13 +2161,20 @@ fn both_compilers_refuse_the_same_programs() {
     let directory = std::env::temp_dir();
     let mut drifted = Vec::new();
     for (name, source, wanted) in REFUSED_BY_BOTH {
-        let bootstrap = bootstrap_refusal(name, source);
-        assert!(
-            bootstrap.contains(wanted),
-            "the bootstrap did not say '{wanted}' about {name}:\n{bootstrap}"
-        );
+        // One file, handed to both. What a report calls a file is compared
+        // below, and two files named differently cannot answer that.
         let input = directory.join(format!("frost_both_{name}.frost"));
         std::fs::write(&input, source).unwrap();
+        let (built, bootstrap) = bootstrap_report_at(name, &input);
+        assert!(
+            !built,
+            "the bootstrap accepted {name}, which it should refuse"
+        );
+        assert!(
+            bootstrap.contains(wanted),
+            "the bootstrap did not say '{wanted}' about {name}:
+{bootstrap}"
+        );
         let run = Command::new(&compiler)
             .env("FROST_INPUT", &input)
             .output()
@@ -2183,6 +2202,11 @@ fn both_compilers_refuse_the_same_programs() {
                 hosted_said.join(" | ")
             ));
         }
+        assert_eq!(
+            named_files(&bootstrap),
+            named_files(&hosted),
+            "the two compilers call the file different things in {name}"
+        );
     }
     let unexpected: Vec<&String> = drifted
         .iter()
@@ -2225,6 +2249,26 @@ fn both_compilers_refuse_the_same_programs() {
 // learned to compare what was said rather than to look for a phrase inside it,
 // which is what let forty of these drift unseen.
 const WORDED_DIFFERENTLY: &[&str] = &[];
+
+// The file each header names, which is what a report calls a file rather than
+// where the file is.
+//
+// A name stays what it is whoever compiles. One compiler wrote the path it
+// resolved instead, so the same fault about the same file read `std/mem.frost`
+// from one and an absolute path from the other, and nothing compared them
+// because `spoken` keeps the claim and drops the header the name sits in. The
+// line and the column are left out: the two count a fault's place from what
+// they were reading when they found it, and where each points is a question of
+// its own.
+fn named_files(report: &str) -> Vec<String> {
+    report
+        .lines()
+        .filter_map(|line| line.strip_suffix(':'))
+        .filter_map(|line| line.rsplit_once(':'))
+        .filter_map(|(head, _)| head.rsplit_once(':'))
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
 
 // What a compiler said, apart from where it said it. A diagnostic is a header
 // naming the position, the line it is about, and a caret with the words after
