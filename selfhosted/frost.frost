@@ -726,6 +726,7 @@ main :: fn() -> i64 {
         testing = options.testing,
         runtime_names = compiling_the_runtime(input_path),
         audit_unsafe = options.audit_unsafe,
+        linting = options.linting,
         debug_lines = options.debug_lines,
         asm_debug_names = asm_debug_names_wanted(),
         type_cache = arena_make($TypeCacheEntry, 262144),

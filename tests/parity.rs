@@ -12,13 +12,50 @@ use std::process::Command;
 mod support;
 
 use support::{
-    bootstrap_output, bootstrap_refusal, build_self_hosted_compiler,
-    linker_available, selfhosted_default_output,
+    bootstrap_output, bootstrap_refusal, bootstrap_warnings,
+    build_self_hosted_compiler, linker_available, selfhosted_default_output,
 };
 
 // Programs the language refuses, put through both compilers. The third field is
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
+// Programs both compilers accept and both say something about. A warning is a
+// report the build does not refuse on, and it is held to what a refusal is held
+// to: one rendering, and the same words. The two used to render one the same
+// way only by coincidence, since nothing compared them: the bootstrap wrote a
+// bare `warning: at f:3:5: ...` line while the self-hosted compiler wrote a
+// caret block with no word saying which kind of report it was.
+const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // An `unsafe` block around nothing that needs one.
+    (
+        "an_unsafe_block_that_vouches_for_nothing",
+        "main :: fn() -> i64 {
+             var n : i64 = 3
+             unsafe {
+                 n = n + 1
+             }
+             n
+}
+",
+        "this `unsafe` block holds no unchecked operation, so it vouches for nothing",
+    ),
+    // One inside another, where the outer already vouches for what is in it.
+    (
+        "an_unsafe_block_inside_another",
+        "main :: fn() -> i64 {
+             var cells : [2]i64 = [1, 2]
+             unsafe {
+                 p := ptr_to(cells[0])
+                 unsafe {
+                     p^
+                 }
+             }
+}
+",
+        "already vouches for what is in it",
+    ),
+];
+
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // A format string is read where the call is written, so the count it names
     // and the count the call gives have to agree there. Both compilers read the
@@ -1977,6 +2014,63 @@ const ARENA_PRELUDE_FIELD: &str =
              unsafe { escaped^ }
          }
 ";
+
+#[test]
+fn both_compilers_warn_about_the_same_programs() {
+    let Some(compiler) = build_self_hosted_compiler("warnboth") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let mut drifted = Vec::new();
+    for (name, source, wanted) in WARNED_BY_BOTH {
+        let bootstrap = bootstrap_warnings(name, source);
+        assert!(
+            bootstrap.contains(wanted),
+            "the bootstrap did not warn '{wanted}' about {name}:
+{bootstrap}"
+        );
+        let input = directory.join(format!("frost_warn_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let hosted = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "the self-hosted compiler refused {name}, which warns:
+{hosted}"
+        );
+        assert!(
+            hosted.contains(wanted),
+            "the self-hosted compiler did not warn '{wanted}' about {name}:
+{hosted}"
+        );
+        let said = spoken(&bootstrap);
+        let hosted_said = spoken(&hosted);
+        if said != hosted_said {
+            drifted.push(format!(
+                "{name}
+  bootstrap: {}
+  self-hosted: {}",
+                said.join(" | "),
+                hosted_said.join(" | ")
+            ));
+        }
+    }
+    assert!(
+        drifted.is_empty(),
+        "the two compilers warn about these differently ({} of {}):
+{}",
+        drifted.len(),
+        WARNED_BY_BOTH.len(),
+        drifted.join(
+            "
+"
+        )
+    );
+}
 
 #[test]
 fn both_compilers_refuse_the_same_programs() {

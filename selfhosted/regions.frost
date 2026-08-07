@@ -6572,6 +6572,16 @@ mark_span_used :: fn(mut p: Parser, pos: i64) {
     }
 }
 
+// The word that says which kind of report follows. Without it a warning and a
+// refusal are the same block of text and only the exit code tells them apart.
+// A run listing findings says nothing, since a finding is advisory by what it
+// is and the listing says so once.
+report_warning_mark :: fn(mut p: Parser) {
+    if (p.linting == 0) {
+        report("warning: ")
+    }
+}
+
 // Every block that vouches for nothing: one holding no unchecked operation, and
 // one written inside another, which already covers what is in it. Reported on
 // every build as a warning, since the list of `unsafe` blocks is only worth
@@ -6605,11 +6615,13 @@ report_idle_unsafe :: fn(mut p: Parser) {
         }
         if (first == 1 && nested == 1) {
             report_where(p.modules, p.src, span.start)
+            report_warning_mark(p)
             report("this `unsafe` block is inside another one, which ")
             report("already vouches for what is in it\n")
             found = 1
         } else if (first == 1 && used == 0) {
             report_where(p.modules, p.src, span.start)
+            report_warning_mark(p)
             report("this `unsafe` block holds no unchecked operation, ")
             report("so it vouches for nothing\n")
             found = 1

@@ -348,6 +348,32 @@ pub fn as_json(diagnostics: &[Diagnostic], severity: &'static str) -> String {
 /// ones are the phase it happened in, which the position already implies. A
 /// message may carry several located lines, since a pass that reports every
 /// function rather than stopping at the first joins them.
+/// A report the build does not refuse on, shown the way a refusal is.
+///
+/// One rendering, so a reader learns to read a report once, and the word in
+/// front of it says which kind it is: without that a warning and a refusal are
+/// the same block of text and only the exit code tells them apart.
+pub fn render_warnings(warnings: &[Diagnostic]) -> String {
+    let mut out = String::new();
+    for held in warnings {
+        for line in held.rendered().lines() {
+            match located(line) {
+                Some((path, row, column, message)) => render_located(
+                    &mut out,
+                    &path,
+                    row,
+                    column,
+                    &format!("warning: {message}"),
+                ),
+                None => {
+                    let _ = writeln!(out, "frost: warning: {line}");
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn render(error: &anyhow::Error) -> String {
     let chain: Vec<String> =
         error.chain().map(|held| held.to_string()).collect();

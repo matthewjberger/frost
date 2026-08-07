@@ -314,6 +314,29 @@ pub fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 }
 
 // What the bootstrap said when it would not compile a program.
+/// What the bootstrap says about a program it accepts, which is its warnings.
+pub fn bootstrap_warnings(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let stem = unique(&format!("frost_warn_{name}"));
+    let source_path = directory.join(format!("{stem}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(directory.join(format!("{stem}.c")))
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        output.status.success(),
+        "the bootstrap refused {name}, which warns rather than refusing:
+{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 pub fn bootstrap_refusal(name: &str, source: &str) -> String {
     let directory = std::env::temp_dir();
     let stem = unique(&format!("frost_refuse_{name}"));
