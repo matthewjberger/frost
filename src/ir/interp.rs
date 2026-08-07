@@ -309,7 +309,7 @@ impl<'a> Interpreter<'a> {
     fn write_at(&mut self, address: i64, value: Value, ty: &Type) -> Eval<()> {
         let width = stored_width(ty);
         let at = self.span(address, width)?;
-        let bits = match ty {
+        let bits = match through_names(ty) {
             Type::F32 => (value.as_f64() as f32).to_bits() as u64,
             Type::F64 => value.as_f64().to_bits(),
             _ => value.as_i64() as u64,
@@ -325,7 +325,7 @@ impl<'a> Interpreter<'a> {
         let mut bytes = [0u8; 8];
         bytes[..width].copy_from_slice(&self.memory[at..at + width]);
         let raw = u64::from_le_bytes(bytes);
-        Ok(match ty {
+        Ok(match through_names(ty) {
             Type::F32 => Value::Float(f32::from_bits(raw as u32) as f64),
             Type::F64 => Value::Float(f64::from_bits(raw)),
             _ => {
@@ -588,11 +588,24 @@ impl<'a> Interpreter<'a> {
             self.output.push_str(&number.to_string());
             return Ok(Value::Int(0));
         }
-        // A float is written the way C writes `%g`, which this does not
-        // reproduce, so a program printing one is left to the backends that
-        // link the runtime rather than answered differently here.
-        if callee == "frost_rt_write_f64" {
-            return unsupported("writing a float");
+        // A float, spelled into the caller's buffer the way C writes `%g`.
+        // Reproducing that spelling is what lets a program printing one be
+        // compared against the backends that link the runtime, rather than
+        // stopping here and leaving the comparison unmade.
+        if callee == "frost_rt_format_f64" {
+            let value = self.operand_value(function, &arguments[0], locals);
+            let out = self.operand_value(function, &arguments[1], locals);
+            let room = self.operand_value(function, &arguments[2], locals);
+            let (out, room) = (out.as_i64(), room.as_i64());
+            if room <= 0 {
+                return Ok(Value::Int(0));
+            }
+            let text = format_like_g(value.as_f64());
+            let bytes = text.as_bytes();
+            let taken = bytes.len().min(room as usize - 1);
+            let at = self.span(out, taken)?;
+            self.memory[at..at + taken].copy_from_slice(&bytes[..taken]);
+            return Ok(Value::Int(taken as i64));
         }
         if callee == "frost_rt_write_char" {
             let value = self.operand_value(function, &arguments[0], locals);
@@ -869,6 +882,44 @@ fn parse_precision(flags: &str) -> Option<usize> {
     flags[dot + 1..].parse().ok()
 }
 
+// A float the way C writes `%g` with the default precision of six significant
+// digits: the exponent form where the value is very small or very large, the
+// plain form otherwise, and in both the trailing zeros of the fraction dropped
+// along with a point left with nothing after it.
+fn format_like_g(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-inf" } else { "inf" }.to_string();
+    }
+    const DIGITS: usize = 6;
+    // The exponent the exponent form would use, read off that form rather than
+    // worked out with a logarithm, which rounds the wrong way at the edges.
+    let scientific = format!("{:.*e}", DIGITS - 1, value);
+    let (mantissa, exponent) =
+        scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    if exponent < -4 || exponent >= DIGITS as i32 {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        return format!(
+            "{}e{sign}{:02}",
+            trim_fraction(mantissa),
+            exponent.abs()
+        );
+    }
+    let places = (DIGITS as i32 - 1 - exponent).max(0) as usize;
+    trim_fraction(&format!("{value:.places$}")).to_string()
+}
+
+fn trim_fraction(text: &str) -> &str {
+    if !text.contains('.') {
+        return text;
+    }
+    let trimmed = text.trim_end_matches('0');
+    trimmed.strip_suffix('.').unwrap_or(trimmed)
+}
+
 fn collect_literal(operand: &IrOperand, found: &mut Vec<String>) {
     if let IrOperand::Constant(IrConstant::CString(text)) = operand {
         found.push(text.clone());
@@ -906,6 +957,16 @@ fn collect_rvalue_literals(rvalue: &IrRvalue, found: &mut Vec<String>) {
             }
         }
         IrRvalue::AddressOf { .. } | IrRvalue::FunctionAddress(_) => {}
+    }
+}
+
+// What a type is made of, with the names over it read through. A `distinct f64`
+// is eight bytes of float wherever it is stored, and reading the name instead
+// of what it stands for made one land in memory as an integer.
+fn through_names(ty: &Type) -> &Type {
+    match ty {
+        Type::Distinct(_, inner) => through_names(inner),
+        other => other,
     }
 }
 

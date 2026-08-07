@@ -22,6 +22,43 @@ fn compile_and_run_unaudited(name: &str, source: &str) -> Option<String> {
     run_backend(name, source, false)
 }
 
+// The same, for a program expected to end on a runtime check. Answers what it
+// printed where it ran to the end, and nothing where a check stopped it, which
+// is the shape `run_ir_oracle` answers in so the two can be compared.
+fn compile_and_run_checked(name: &str, source: &str) -> Option<Option<String>> {
+    if !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_check_{name}.frost"));
+    let exe_path = directory.join(format!(
+        "frost_check_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, source).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the bootstrap refused {name}:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&exe_path).output().unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&exe_path);
+    if !run.status.success() {
+        return Some(None);
+    }
+    Some(Some(
+        String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+    ))
+}
+
 fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     if !linker_available() {
         return None;
@@ -3116,6 +3153,106 @@ fn self_hosted_emits(
         String::from_utf8_lossy(&run.stderr)
     );
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
+}
+
+// The interpreter answers the runtime's checks itself, and it has to answer
+// them the way `runtime/runtime.frost` does. It cannot share that code: the
+// `frost_rt_` prefix is the runtime's own, so a program carrying those
+// definitions is refused, which is what keeps a program from replacing what
+// every other program calls. Two readings of one rule is the price, and this is
+// what holds them together: each program either faults under both or runs under
+// both, and where it runs the answers match.
+#[test]
+fn the_interpreter_faults_where_the_runtime_faults() {
+    let cases: &[(&str, &str, bool)] = &[
+        (
+            "in_bounds",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+             \x20   var xs : [3]i64 = [7, 8, 9]\n\
+             \x20   print(\"{}\\n\", xs[2])\n    0\n}\n",
+            false,
+        ),
+        (
+            "past_the_end",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+             \x20   var xs : [3]i64 = [7, 8, 9]\n\
+             \x20   var at : i64 = 5\n\
+             \x20   print(\"{}\\n\", xs[at])\n    0\n}\n",
+            true,
+        ),
+        (
+            "a_span_inside_the_run",
+            "import \"io.frost\"\nimport \"mem.frost\"\nmain :: fn() -> i64 {\n\
+             \x20   var xs : [4]i64 = [1, 2, 3, 4]\n\
+             \x20   view := slice_range($i64, xs, 1, 2)\n\
+             \x20   print(\"{}\\n\", view[1])\n    0\n}\n",
+            false,
+        ),
+        (
+            "a_span_past_the_run",
+            "import \"io.frost\"\nimport \"mem.frost\"\nmain :: fn() -> i64 {\n\
+             \x20   var xs : [4]i64 = [1, 2, 3, 4]\n\
+             \x20   var count : i64 = 9\n\
+             \x20   view := slice_range($i64, xs, 1, count)\n\
+             \x20   print(\"{}\\n\", view[0])\n    0\n}\n",
+            true,
+        ),
+    ];
+    for (name, source, faults) in cases {
+        let interpreted = run_ir_oracle(&format!("chk_{name}"), source);
+        let Some(linked) =
+            compile_and_run_checked(&format!("chk_{name}"), source)
+        else {
+            continue;
+        };
+        assert_eq!(
+            interpreted.is_none(),
+            *faults,
+            "the interpreter disagrees about whether {name} faults"
+        );
+        assert_eq!(
+            linked.is_none(),
+            *faults,
+            "the linked runtime disagrees about whether {name} faults"
+        );
+        if let (Some(interpreted), Some(linked)) = (interpreted, linked) {
+            assert_eq!(
+                interpreted, linked,
+                "the interpreter and the linked runtime disagree about {name}"
+            );
+        }
+    }
+}
+
+// The interpreter spells a float the way the linked runtime does. It is one of
+// the three backends a program is checked against, so a spelling of its own
+// would make every program that prints a float unanswerable rather than
+// compared. The values are the shapes `%g` chooses between: the plain form, the
+// exponent form at each end, a fraction that ends in zeros, and one that does
+// not end at all.
+#[test]
+fn the_interpreter_spells_a_float_the_way_the_runtime_does() {
+    let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", 2.5)\n\
+         \x20   print(\"{}\\n\", 0.1)\n\
+         \x20   print(\"{}\\n\", 1.0)\n\
+         \x20   print(\"{}\\n\", 100.0)\n\
+         \x20   print(\"{}\\n\", 1234567.0)\n\
+         \x20   print(\"{}\\n\", 0.000012345)\n\
+         \x20   print(\"{}\\n\", -0.5)\n\
+         \x20   print(\"{}\\n\", 1.0 / 3.0)\n\
+         \x20   0\n\
+         }\n";
+    let Some(interpreted) = run_ir_oracle("floatg", source) else {
+        panic!("the interpreter declined a program that prints floats");
+    };
+    let Some(linked) = compile_and_run_unaudited("floatg", source) else {
+        return;
+    };
+    assert_eq!(
+        interpreted, linked,
+        "the interpreter and the linked runtime spell a float differently"
+    );
 }
 
 // A call through a function-pointer field has to agree with the definition it
