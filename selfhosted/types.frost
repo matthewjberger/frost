@@ -11,7 +11,7 @@ import "layout.frost"
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
-    note_format_forward,
+    note_format_forward, note_format_call, check_format_types,
     parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local, untyped_literal,
     parse_local_type,
@@ -1491,6 +1491,21 @@ bound_value :: fn(mut p: Parser, value: i64) -> i64 {
 // what it will be. The tuple the call names is worked out here, since the names
 // it writes are in scope only during this parse, and the type that
 // monomorphization returns is read from the tuple later.
+// Whether the call names its own type arguments rather than leaving them to be
+// worked out from what it was passed. `slice_range($i64, ...)` writes one;
+// `peek(numbers)` leaves it to the type of `numbers`.
+call_writes_its_types :: fn(mut p: Parser, args: i64) -> bool {
+    var id := args
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        if (arena_at(p.arena, node.a).kind == NodeKind::TypeVal) {
+            return true
+        }
+        id = node.next
+    }
+    false
+}
+
 pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
     value := bound_value(p, pack_arg_base(p, written))
     node := arena_at(p.arena, value)
@@ -1508,6 +1523,14 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
     // A call through a local of function-pointer type is indirect and answers
     // with that signature's return type, which is known already.
     if (local_exists(p, sym_off, sym_len)) {
+        return -1
+    }
+    // A tuple worked out from the types of the arguments is not one to wait on.
+    // Those types are read from tables the parse has not filled, so the tuple
+    // named here can name a monomorphization nothing has, and the answer read
+    // back from it belongs to some other one. A tuple the call writes out is the
+    // same however often it is read, so only those are waited on.
+    if (call_writes_its_types(p, args) == false) {
         return -1
     }
     arg := call_args_for(p, args, fn_index)
@@ -2005,6 +2028,98 @@ forwards_own_format :: fn(mut p: Parser, args: i64) -> bool {
     false
 }
 
+// Which recorded tuple a call's arguments came to, matched the way
+// `note_type_args` matches so a call that deduped onto an earlier one finds
+// that one. -1 where nothing holds it.
+find_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
+    is_pack: i64, owner: i64) -> i64 {
+    var i: i64 = 0
+    while (i < p.type_args.count) {
+        entry := arena_at(p.type_args, i)
+        if (entry.arg == arg && entry.xarg_count == xarg_count
+            && entry.is_pack == is_pack && entry.owner == owner
+            && gargs_alike(p, entry.xarg_start, xarg_start, xarg_count)) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// A call that took a format string, kept for the pass that reads its values.
+// Only the literal is settled where the call is written, so only the holes are
+// counted there; what the values are waits for every instance to be walked.
+note_format_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    owner := generic_fn_of(p, fn_index)
+    if (owner < 0) {
+        return
+    }
+    gfn := arena_at(p.generic_fns, owner)
+    if (gfn.pack_format < 0) {
+        return
+    }
+    // A call handing on a literal it was given has already been counted where
+    // that literal was written, and a call whose format string is not a literal
+    // was refused there.
+    if (forwards_own_format(p, args)) {
+        return
+    }
+    fmt := nth_value_arg(p, args, gfn.pack_format)
+    if (fmt < 0) {
+        return
+    }
+    if (arena_at(p.arena, fmt).kind != NodeKind::StrLit) {
+        return
+    }
+    tuple := find_type_args(p, p.call_pack_primary, p.call_xarg_start,
+        p.call_xarg_count, owner + 1, owner)
+    if (tuple < 0) {
+        return
+    }
+    var i: i64 = 0
+    while (i < p.format_calls.count) {
+        held := arena_at(p.format_calls, i)
+        if (held.fmt == fmt && held.tuple == tuple) {
+            return
+        }
+        i = i + 1
+    }
+    arena_push(p.format_calls,
+        FormatCall { fmt = fmt, tuple = tuple, owner = owner })
+}
+
+// What every format call was given, read after the fixpoint has settled it.
+// This is the one place a value's type is judged: the parse cannot tell a
+// `[]i64` from an `i64` while the call that answers with it is still waiting to
+// be worked out, and by the time this runs there is nothing left waiting.
+check_format_types :: fn(mut p: Parser) {
+    var i: i64 = 0
+    while (i < p.format_calls.count) {
+        held := arena_at(p.format_calls, i)
+        entry := arena_at(p.type_args, held.tuple)
+        gfn := arena_at(p.generic_fns, held.owner)
+        start := entry.xarg_start + gfn.xparam_count
+        count := entry.xarg_count - gfn.xparam_count
+        node := arena_at(p.arena, held.fmt)
+        var k: i64 = 0
+        while (k < count) {
+            garg := arena_at(p.gargs, start + k)
+            if (garg.is_type == 1) {
+                report_where(p.modules, p.src, node.pos)
+                report("a format string writes a value, and a type is not one")
+                frost_rt_recover_escape()
+            } else if (writable_by_format(p, garg.value) == false) {
+                report_where(p.modules, p.src, node.pos)
+                report("a format string writes a number, a yes or no, or a str, and this is a ")
+                report_type_name(p, garg.value)
+                frost_rt_recover_escape()
+            }
+            k = k + 1
+        }
+        i = i + 1
+    }
+}
+
 // The same question asked where the answer is knowable: while the declaration
 // that wrote the call is still being parsed, which is the only time the names
 // it gave its own parameters are in hand. Every later pass reads what this
@@ -2058,11 +2173,12 @@ note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
         arena_push(p.format_forwards, BoundValue { node = args })
         return
     }
-    // An instance knows how many elements its list was given, so a call handing
+    // An instance knows how many values its list was given, so a call handing
     // over a different number is writing a list of its own and stays counted. A
     // line with no values at all is the two agreeing at zero, which is what
-    // `print("\n")` forwards.
-    if (given != p.pack_count) {
+    // `print("\n")` forwards. A type element is counted out: it takes no
+    // argument, so handing the list on writes one fewer.
+    if (given != pack_value_count(p)) {
         return
     }
     if (given == 0) {
@@ -2086,6 +2202,22 @@ note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
         k = k + 1
     }
     arena_push(p.format_forwards, BoundValue { node = args })
+}
+
+// How many of the list this instance was given are values. A type element is a
+// name the body writes where a type belongs and takes no argument, so a body
+// handing the list on writes one fewer for each of them.
+pack_value_count :: fn(mut p: Parser) -> i64 {
+    var found: i64 = 0
+    var i: i64 = 0
+    while (i < p.pack_count) {
+        held := arena_at(p.gargs, p.pack_start + i)
+        if (held.is_type == 0) {
+            found = found + 1
+        }
+        i = i + 1
+    }
+    found
 }
 
 names_the_pack :: fn(mut p: Parser, held: i64, list_off: i64,
@@ -2164,24 +2296,11 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
         frost_rt_recover_escape()
         return
     }
-    var i: i64 = 0
-    while (i < count) {
-        held := arena_at(p.argbuf, buf_start + i)
-        if (held.is_type == 1) {
-            report_where(p.modules, p.src, node.pos)
-            report("a format string writes a value, and a type is not one")
-            frost_rt_recover_escape()
-            return
-        }
-        if (writable_by_format(p, held.value) == false) {
-            report_where(p.modules, p.src, node.pos)
-            report("a format string writes a number, a yes or no, or a str, and this is a ")
-            report_type_name(p, held.value)
-            frost_rt_recover_escape()
-            return
-        }
-        i = i + 1
-    }
+// What the values are is not settled here. An element whose type is what a
+// call to a generic answers with reads as the default until every instance
+// has been walked, so judging one here would accept a `[]i64` for reading
+// as an `i64`. `check_format_types` reads them once there is nothing left
+// waiting.
 }
 
 // The run built on the argument stack from `at` upward, moved into `gargs` in

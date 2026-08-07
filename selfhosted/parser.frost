@@ -670,6 +670,9 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             note_type_args(p, p.call_pack_primary, p.call_xarg_start,
                 p.call_xarg_count, generic_fn_of(p, fn_index) + 1,
                 generic_fn_of(p, fn_index))
+            // Kept for the pass that reads what the list turned out to hold,
+            // which is after every instance has been walked.
+            note_format_call(p, args, fn_index)
         } else if (p.args_unbound_map == 0 && generic_fn_of(p, fn_index) >= 0) {
             // A generic called over a plain type names it in the local table
             // and nowhere else, so the tuple is read here or not at all.
