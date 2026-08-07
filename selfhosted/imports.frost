@@ -235,19 +235,19 @@ cstr_from :: fn(s: ^i8, start: i64) -> ^i8 {
 // a compiler built in one checkout and one built in another wrote two spellings
 // of `std/mem.frost` into their own assembly and agreed on nothing else.
 //
-// A file outside that directory keeps the path it was resolved by, which is the
-// only thing there is to call it.
+// A file outside that directory is called by its own name, which is what a
+// build reading one file names it either way.
 named_path :: fn(path: ^i8) -> ^i8 {
     here := absolute_path(".")
     full := absolute_path(path)
     prefix := cstr_len(here)
     if (prefix == 0 || cstr_len(full) <= prefix + 1) {
-        return path
+        return file_name(full)
     }
     var k: i64 = 0
     while (k < prefix) {
         if (byte_at(full, k) != byte_at(here, k)) {
-            return path
+            return file_name(full)
         }
         k = k + 1
     }
@@ -256,6 +256,20 @@ named_path :: fn(path: ^i8) -> ^i8 {
         start = start + 1
     }
     cstr_from(full, start)
+}
+
+// What follows the last separator, which is a file's own name.
+file_name :: fn(path: ^i8) -> ^i8 {
+    length := cstr_len(path)
+    var cut: i64 = 0
+    var k: i64 = 0
+    while (k < length) {
+        if (byte_at(path, k) == CH_SLASH || byte_at(path, k) == CH_BACKSLASH) {
+            cut = k + 1
+        }
+        k = k + 1
+    }
+    cstr_from(path, cut)
 }
 
 // A path with the working directory in front of it and one separator
@@ -499,10 +513,10 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     // A caller reading JSON gets the place as fields and the message as one
     // string, so the record opens here and whatever ends the report closes it.
     if (json_reports()) {
-        unsafe { frost_rt_json_place(entry.path, line, column, offset) }
+        unsafe { frost_rt_json_place(entry.name, line, column, offset) }
         return
     }
-    report_cstr(entry.path)
+    report_cstr(entry.name)
     report(":")
     frost_rt_error_int(line)
     report(":")
