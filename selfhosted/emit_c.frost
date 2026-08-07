@@ -1023,7 +1023,10 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
             emit_text(", ")
         }
         param_ty := proc_param_at(p, callee_ty, i)
-        if (is_aggregate(param_ty)) {
+        // A struct and a fixed array travel by address, so the signature says
+        // `char*` for one. A slice does not: it is a pointer beside a length
+        // and it travels by value, so it is written as the type it is.
+        if (is_aggregate(param_ty) && is_slice_ty(p, param_ty) == false) {
             emit_text("char*")
         } else {
             emit_ctype(p, param_ty)

@@ -435,7 +435,7 @@ configure_graph :: fn(mut app: App) -> bool {
         i = i + 1
     }
     if (graph_schedule(app.renderer.graph) == false) {
-        print_str_line("the render graph cannot run")
+        print("the render graph cannot run\n")
         return false
     }
     graph_resize(app.renderer.graph, width(app.platform),
@@ -651,14 +651,14 @@ app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
 // printed came out of the failure, so it says the same thing however long ago
 // the platform was shut down.
 app_failed :: fn(held: AppError) -> i64 {
-    print_str_line(held.said)
+    print("{}\n", held.said)
     match held.why {
         case.NoWindow: {
-            print_str_line("no window")
+            print("no window\n")
             1
         }
         case.NoDevice: {
-            print_str_line("no device")
+            print("no device\n")
             2
         }
     }

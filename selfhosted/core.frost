@@ -700,6 +700,10 @@ GenericFn :: struct {
     pack_off: i64,
     pack_len: i64,
     pack_fixed: i64,
+    // Which ordinary parameter was declared `format`, or -1. A call reads
+    // the literal written there and counts its holes against the list, so
+    // which parameter it is has to travel with the declaration.
+    pack_format: i64,
     xparam_start: i64,
     xparam_count: i64,
     token_start: i64,
@@ -736,6 +740,11 @@ GArg :: struct {
     // be. An element whose type is what a call to a generic answers with is one
     // of these: the answer is worked out after the call is parsed.
     pending: i64,
+    // The expression the element was written as, kept only while it waits. What
+    // a call answers with is the base, and the fields and elements written over
+    // it are read again from here once that base is known. -1 for an element
+    // that waits on nothing.
+    node: i64,
 }
 
 // One place a function hands on that belongs to a borrowed parameter: which
@@ -1441,6 +1450,7 @@ Parser :: struct {
     decl_pack_off: i64,
     decl_pack_len: i64,
     decl_pack_fixed: i64,
+    decl_pack_format: i64,
     // Whether that first parameter was declared as taking a number.
     tparam_is_value: i64,
     last_return_type: i64,

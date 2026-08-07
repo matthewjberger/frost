@@ -329,9 +329,7 @@ run :: fn(move app: App) -> i64 {
         app.meshes, ids)
     gltf_free(held)
     if (loaded == false) {
-        print_str_line("no model at:")
-        print_str_line(MODEL)
-        print_str_line("run this from the root of the checkout, or `just gltf`")
+        print("no model at:\n{}\nrun this from the root of the checkout, or `just gltf`\n", MODEL)
     } else {
         // The model turns as one thing. Its own tree is untouched: this is a
         // spin added to the entity everything the file spawned hangs off. Added

@@ -99,6 +99,7 @@ pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
                 mode: ParamMode::Write,
                 compile_time_signature: None,
                 pack: false,
+                format: false,
             });
         }
         let widened = ast.add_parameters(parameters);

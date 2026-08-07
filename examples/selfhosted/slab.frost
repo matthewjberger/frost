@@ -45,9 +45,8 @@ main :: fn() -> i64 {
     hero := insert(world, Entity { hp = 100, mana = 30 })
     goblin := insert(world, Entity { hp = 40, mana = 10 })
 
-    print_int_line(world[hero].hp)
+    print("{}\n", world[hero].hp)
     world[hero].hp = world[hero].hp - 25
-    print_int_line(world[hero].hp)
-    print_int_line(world[goblin].mana)
+    print("{}\n{}\n", world[hero].hp, world[goblin].mana)
     0
 }

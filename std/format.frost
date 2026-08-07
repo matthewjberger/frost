@@ -2,7 +2,7 @@
 //
 // A `Builder` is a `Vec<u8>` under a name that says what it is for. Everything
 // here appends to one, so a caller assembles a line from parts and prints or
-// writes it once, rather than one `print_int` at a time. The bytes are a `str`
+// writes it once, rather than a write per part. The bytes are a `str`
 // through `builder_str`, which is the bounds-checked view every string
 // operation takes.
 

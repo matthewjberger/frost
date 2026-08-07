@@ -109,23 +109,14 @@ main :: fn() -> i64 {
         // is also the region: what `gather` carved may not outlive it.
         with scratch {
             kept := gather(world, round * 3)
-            print_str("over ")
-            print_int(round * 3)
-            print_str(": ")
-            print_int(slice_len(kept))
-            print_str(" values totalling ")
-            print_int(total_of(kept))
-            print_str(", ")
-            print_int(bump_used($1024, scratch))
-            print_str(" bytes out")
-            print_str("\n")
+            print("over {}: {} values totalling {}, {} bytes out\n",
+                round * 3, slice_len(kept), total_of(kept), bump_used($1024, scratch))
         }
         // The whole round's storage, back in one step. Nothing was freed one
         // value at a time, and the next round carves the same bytes again.
         bump_reset($1024, scratch, mark)
         round = round + 1
     }
-    print_str("still out: ")
-    print_int_line(bump_used($1024, scratch))
+    print("still out: {}\n", bump_used($1024, scratch))
     0
 }

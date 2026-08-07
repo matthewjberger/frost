@@ -371,8 +371,8 @@ graph_set_external :: fn(mut g: Graph, r: ResourceId, held: Texture2D) {
     var kept := g.resources
     index := resource_index(r)
     if (kept[index].external == false) {
-        print_str_line("graph: this resource is the graph's own, so it takes no texture from outside:")
-        print_str_line(kept[index].name)
+        print("graph: this resource is the graph's own, so it takes no texture from outside:\n{}\n",
+            kept[index].name)
         return
     }
     kept[index].held = held
@@ -587,7 +587,7 @@ graph_writes :: fn(mut g: Graph, p: PassId, r: ResourceId) {
     index := pass_index(p)
     count := held[index].write_count
     if (count >= MAX_WRITES) {
-        print_str_line("graph: a pass writes more resources than one can hold")
+        print("graph: a pass writes more resources than one can hold\n")
         return
     }
     held[index].writes[count] = r
@@ -599,7 +599,7 @@ graph_reads :: fn(mut g: Graph, p: PassId, r: ResourceId) {
     index := pass_index(p)
     count := held[index].read_count
     if (count >= MAX_READS) {
-        print_str_line("graph: a pass reads more resources than one can hold")
+        print("graph: a pass reads more resources than one can hold\n")
         return
     }
     held[index].reads[count] = r
@@ -860,8 +860,7 @@ check_declarations :: fn(mut g: Graph) -> bool {
         one := held[i]
         if (resource_is_none(one.color) && resource_is_none(one.depth)
             && one.write_count == 0) {
-            print_str_line("graph: a pass writes nothing, so nothing it did could be read:")
-            print_str_line(one.name)
+            print("graph: a pass writes nothing, so nothing it did could be read:\n{}\n", one.name)
             ok = false
         }
         var k: i64 = 0
@@ -876,9 +875,8 @@ check_declarations :: fn(mut g: Graph) -> bool {
                 j = j + 1
             }
             if (written == false) {
-                print_str_line("graph: a pass reads a resource no pass writes:")
-                print_str_line(one.name)
-                print_str_line(resource_name(g, wanted))
+                print("graph: a pass reads a resource no pass writes:\n{}\n{}\n",
+                    one.name, resource_name(g, wanted))
                 ok = false
             }
             // A target sized by the window is thrown away and made again on a
@@ -886,9 +884,8 @@ check_declarations :: fn(mut g: Graph) -> bool {
             // A pass that says how is handed the shape; one that does not
             // would read a view of a texture that no longer exists.
             if (resource_window_sized(g, wanted) && rebuilds(one) == false) {
-                print_str_line("graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:")
-                print_str_line(one.name)
-                print_str_line(resource_name(g, wanted))
+                print("graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:\n{}\n{}\n",
+                    one.name, resource_name(g, wanted))
                 ok = false
             }
             k = k + 1
@@ -908,8 +905,7 @@ check_declarations :: fn(mut g: Graph) -> bool {
         // in here.
         if (one.sampled == false && one.external == false
             && (is_color(one) || is_buffer(one))) {
-            print_str_line("graph: nothing reads or presents this resource, so it is dead:")
-            print_str_line(one.name)
+            print("graph: nothing reads or presents this resource, so it is dead:\n{}\n", one.name)
         }
         r = r + 1
     }
@@ -966,12 +962,12 @@ resource_name :: fn(mut g: Graph, index: i64) -> str {
 }
 
 report_cycle :: fn(mut g: Graph, placed: []i64) {
-    print_str_line("graph: these passes wait on each other and cannot be ordered:")
+    print("graph: these passes wait on each other and cannot be ordered:\n")
     var i: i64 = 0
     while (i < g.pass_count) {
         if (placed[i] == 0) {
             held := g.passes
-            print_str_line(held[i].name)
+            print("{}\n", held[i].name)
         }
         i = i + 1
     }
@@ -1160,8 +1156,8 @@ graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
         return pool_view(g, one)
     }
     if (one.made == false) {
-        print_str_line("graph: this resource has no view yet, so give the graph a size with graph_resize first:")
-        print_str_line(one.name)
+        print("graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name)
         return no_view()
     }
     one.held.view
@@ -1172,14 +1168,13 @@ graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
 // resource of its own would.
 pool_view :: fn(g: Graph, one: Resource) -> TextureView {
     if (one.slot < 0) {
-        print_str_line("graph: this resource has no slot yet, so schedule the graph first:")
-        print_str_line(one.name)
+        print("graph: this resource has no slot yet, so schedule the graph first:\n{}\n", one.name)
         return no_view()
     }
     pool := g.pool
     if (pool[one.slot].made == false) {
-        print_str_line("graph: this resource has no view yet, so give the graph a size with graph_resize first:")
-        print_str_line(one.name)
+        print("graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name)
         return no_view()
     }
     pool[one.slot].held.view
@@ -1203,8 +1198,8 @@ graph_sampler :: fn(g: Graph, r: ResourceId) -> Sampler {
         return pool_sampler(g, one)
     }
     if (one.made == false) {
-        print_str_line("graph: this resource has no sampler yet, so give the graph a size with graph_resize first:")
-        print_str_line(one.name)
+        print("graph: this resource has no sampler yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name)
         return no_sampler()
     }
     one.held.sampler
@@ -1216,8 +1211,8 @@ graph_buffer_of :: fn(g: Graph, r: ResourceId) -> Buffer {
     held := g.resources
     one := held[resource_index(r)]
     if (one.made == false) {
-        print_str_line("graph: this buffer has not been made yet, so give the graph a size with graph_resize first:")
-        print_str_line(one.name)
+        print("graph: this buffer has not been made yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name)
         return no_buffer()
     }
     one.buffer
@@ -1310,7 +1305,7 @@ graph_run :: fn(mut g: Graph, mut f: Frame) {
 // phases run in the order they would have run in together.
 graph_run_phase :: fn(mut g: Graph, mut f: Frame, wanted: i64) {
     if (g.scheduled == false) {
-        print_str_line("graph: this graph was never scheduled, so it has no order to run")
+        print("graph: this graph was never scheduled, so it has no order to run\n")
         return
     }
     var i: i64 = 0

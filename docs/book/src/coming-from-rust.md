@@ -57,7 +57,7 @@ surprises.
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `for x in &xs { }` | `for x in xs { }` |
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
-| `println!("{}", x)` | `import "io.frost"` and `print_int_line(x)` |
+| `println!("{}", x)` | `import "io.frost"` and `print("{}\n", x)` |
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (q: i64, r: i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | `let (q, _) = divide(a, b);` | `q, _ := divide(a, b)` |
@@ -116,7 +116,7 @@ what runs.
 
 `println!` has no equivalent either, because printing is a library call rather
 than a macro. `import "io.frost"` brings in one writer per type, so
-`print_int_line(x)` writes an integer and a newline, and a line built from
+`print("{}\n", x)` writes an integer and a newline, and a line built from
 several values is several calls. There is no format string anywhere: what would
 be a hole in one is a call in the order the pieces are written
 ([text-and-io.md](std/text-and-io.md)).
@@ -199,7 +199,7 @@ The representation is the inner type, so arithmetic, layout and the C ABI are
 newtype buys: a `Meters` cannot be built from a bare number or from a `Feet`.
 
 The check is one-directional, which is where it differs from the newtype. Going
-out is free, so `print_int_line(m)` and `n : i64 = m` both work, because a
+out is free, so `print("{}\n", m)` and `n : i64 = m` both work, because a
 `Meters` is an `i64` in memory and nothing is at stake that way. Going in is checked, so a
 value that means something else cannot become a `Meters` by accident. There is
 no cast in either direction and none is needed.
@@ -438,7 +438,7 @@ close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print_int_line(close(f))   // consumes f exactly once
+    print("{}\n", close(f))   // consumes f exactly once
     // close(f)         // error: use of moved value
 }                       // f still live here: linear value never consumed
 ```
@@ -466,7 +466,7 @@ which runs a statement when the scope exits, in last-in-first-out order:
 ```frost
 import "io.frost"
 work :: fn() {
-    defer print_str_line("cleanup")   // runs on the way out
+    defer print("cleanup\n")   // runs on the way out
     // ... body ...
 }
 ```
@@ -490,8 +490,8 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse { .. }
 d := digit(text, index)?
 
 match number(text) {
-    case .Ok { value }: { print_int_line(value) }
-    case .Err { error }: { print_int_line(error.at) }
+    case .Ok { value }: { print("{}\n", value) }
+    case .Err { error }: { print("{}\n", error.at) }
 }
 ```
 
@@ -549,9 +549,9 @@ main :: fn() -> i64 {
 
     hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
 
-    print_int_line(world[hero].hp)        // 100
+    print("{}\n", world[hero].hp)        // 100
     world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print_int_line(world[hero].hp)        // 75
+    print("{}\n", world[hero].hp)        // 75
     0
 }
 ```
@@ -767,11 +767,11 @@ predicate keeps the branch that survives for that element:
 printall :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
-            print_f64_line(value)
+            print("{}\n", value)
         } else if (is_slice(value)) {
-            print_str_line(value)
+            print("{}\n", value)
         } else {
-            print_int_line(value)
+            print("{}\n", value)
         }
     }
 }
@@ -925,11 +925,10 @@ main :: fn() -> i64 {
 
     // The player takes the goblin's damage, written straight into the slot.
     world[player].hp = world[player].hp + delta(world[goblin])
-    print_str("hp ")
-    print_int_line(world[player].hp)                 // 85
+    print("hp {}\n", world[player].hp)                 // 85
 
     slab_release($Entity, $16, world, goblin)
-    print_int_line(slab_alive($Entity, $16, world, goblin))   // 0, the handle is stale
+    print("{}\n", slab_alive($Entity, $16, world, goblin))   // 0, the handle is stale
     0
 }
 ```

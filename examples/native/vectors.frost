@@ -25,19 +25,12 @@ main :: fn() -> i64 {
     b := Vec3 { x = 4, y = 5, z = 6 }
 
     sum := add(a, b)
-    print_str("sum.x = ")
-    print_int_line(sum.x)
-    print_str("sum.y = ")
-    print_int_line(sum.y)
-    print_str("sum.z = ")
-    print_int_line(sum.z)
+    print("sum.x = {}\nsum.y = {}\nsum.z = {}\n", sum.x, sum.y, sum.z)
 
-    print_str("dot = ")
-    print_int_line(dot(a, b))
+    print("dot = {}\n", dot(a, b))
 
     var c := a
     scale(c, 10)
-    print_str("scaled.x = ")
-    print_int_line(c.x)
+    print("scaled.x = {}\n", c.x)
     0
 }

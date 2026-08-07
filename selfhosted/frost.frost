@@ -628,6 +628,7 @@ main :: fn() -> i64 {
         decl_pack_off = 0,
         decl_pack_len = 0,
         decl_pack_fixed = 0,
+        decl_pack_format = -1,
         tparam_is_value = 0,
         last_return_type = 0,
         no_struct_lit = false,

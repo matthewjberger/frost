@@ -592,6 +592,7 @@ fn build_module_inner(
                     mode: parameter.mode,
                     compile_time_signature: None,
                     pack: false,
+                    format: false,
                 })
                 .collect();
             // The bound was checked at the call that asked for this
@@ -628,6 +629,7 @@ fn build_module_inner(
                         mode: crate::parser::ParamMode::Read,
                         compile_time_signature: None,
                         pack: false,
+                        format: false,
                     });
                 }
             }
@@ -2020,6 +2022,71 @@ fn type_predicate(
 }
 
 const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
+
+// What a formatted value may be: a number, a yes or no, or text. Read through
+// any name a type carries, the same way the bounds vocabulary reads one.
+fn writable_by_format(ty: &Type) -> bool {
+    match ty {
+        Type::Distinct(_, inner) => writable_by_format(inner),
+        Type::Bool | Type::Str => true,
+        other => other.is_integer() || other.is_float(),
+    }
+}
+
+// The argument a `format` parameter took, read where the call is written. How
+// many values a line names is settled here, so the literal is read here too:
+// the holes it opens are counted against the list that follows, and a type
+// nothing can write is refused against the line the reader wrote rather than
+// inside a body they never saw.
+fn check_format(
+    ast: &Ast,
+    argument: ExprId,
+    elements: &[PackElement],
+) -> Result<()> {
+    let Expression::Literal(Literal::String(text)) = ast.expr(argument) else {
+        bail!(
+            "a format string is written as a literal, since how many values follow it is settled where the call is written"
+        )
+    };
+    let bytes = text.as_bytes();
+    let mut holes = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at] == b'{' {
+            match bytes.get(at + 1) {
+                Some(b'}') => holes += 1,
+                Some(b'{') => {}
+                _ => bail!(
+                    "a '{{' in a format string opens a hole or stands for one brace, so write '{{}}' or '{{{{'"
+                ),
+            }
+            at += 2;
+            continue;
+        }
+        if bytes[at] == b'}' && bytes.get(at + 1) == Some(&b'}') {
+            at += 2;
+            continue;
+        }
+        at += 1;
+    }
+    if holes != elements.len() {
+        bail!(
+            "this format string opens {holes} hole(s) and the call gives {} value(s)",
+            elements.len()
+        )
+    }
+    for element in elements {
+        let PackElement::Value(_, ty) = element else {
+            bail!("a format string writes a value, and a type is not one")
+        };
+        if !writable_by_format(ty) {
+            bail!(
+                "a format string writes a number, a yes or no, or a str, and this is a {ty}"
+            )
+        }
+    }
+    Ok(())
+}
 
 fn evaluate_bound(
     ast: &Ast,
@@ -7188,6 +7255,12 @@ impl<'a> FunctionLowering<'a> {
                     value_type.clone(),
                 ));
                 plans.push(ArgPlan::Value(operand, value_type));
+            }
+        }
+
+        for (index, parameter) in generic_parameters.iter().enumerate() {
+            if parameter.format && index < arguments.len() {
+                check_format(self.ast, arguments[index], &pack_elements)?;
             }
         }
 

@@ -20,6 +20,57 @@ use support::{
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A format string is read where the call is written, so the count it names
+    // and the count the call gives have to agree there. Both compilers read the
+    // literal, so both have to say the same thing about it.
+    (
+        "a_format_string_with_too_few_values",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"{} of {}\n\", 1)\n\
+         \x20   0\n\
+         }\n",
+        "this format string opens 2 hole(s) and the call gives 1 value(s)",
+    ),
+    (
+        "a_format_string_with_too_many_values",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"{}\n\", 1, 2)\n\
+         \x20   0\n\
+         }\n",
+        "this format string opens 1 hole(s) and the call gives 2 value(s)",
+    ),
+    // A lone brace is a typo rather than a decision, so it is refused rather
+    // than written out. `{{` is how one is meant.
+    (
+        "a_lone_brace_in_a_format_string",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"a { b\n\")\n\
+         \x20   0\n\
+         }\n",
+        "opens a hole or stands for one brace",
+    ),
+    // How many values follow is settled where the call is written, so what says
+    // how many the line names has to be written there too.
+    (
+        "a_format_string_that_is_not_a_literal",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   var held := \"x{}y\"\n\
+         \x20   print(held, 1)\n\
+         \x20   0\n\
+         }\n",
+        "a format string is written as a literal",
+    ),
+    // A struct reached the backend before this check existed, where it became
+    // a codegen fault naming a type rather than a refusal naming the line.
+    (
+        "a_format_string_given_a_struct",
+        "import \"io.frost\"\nPoint :: struct { x: i64, y: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\n\", Point { x = 1, y = 2 })\n\
+         \x20   0\n\
+         }\n",
+        "a format string writes a number, a yes or no, or a str, and this is a Point",
+    ),
     // A call that can fail answers with which of the two happened, and a
     // statement reads neither. The rule used to reach only a call holding a
     // resource, where linearity caught it; a failure nobody reads is the same
@@ -45,10 +96,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "an_errdefer_without_a_failure_set",
         "import \"io.frost\"
          work :: fn() -> i64 {
-             errdefer print_int_line(9)
+             errdefer print(\"{}\\n\", 9)
              7
          }
-         main :: fn() -> i64 { print_int_line(work())  0 }
+         main :: fn() -> i64 { print(\"{}\\n\", work())  0 }
 ",
         "runs where a function leaves through its failure set, and this one has none",
     ),
@@ -60,14 +111,14 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"
          FileError :: enum { Missing }
          Held :: linear struct { id: i64 }
-         close :: fn(move h: Held) { print_int_line(h.id) }
+         close :: fn(move h: Held) { print(\"{}\\n\", h.id) }
          opened :: fn(id: i64) -> Held { Held { id = id } }
          work :: fn() -> i64 ! FileError {
              h := opened(1)
              errdefer close(h)
              7
          }
-         main :: fn() -> i64 { print_int_line(1)  0 }
+         main :: fn() -> i64 { print(\"{}\\n\", 1)  0 }
 ",
         // The two word the leak differently, which is a divergence of its own
         // and older than this: the bootstrap says which paths, the self-hosted
@@ -86,7 +137,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"
          slice_len :: fn(x: i64) -> i64 { x + 1 }
          main :: fn() -> i64 {
-             print_int_line(slice_len(4))
+             print(\"{}\\n\", slice_len(4))
              0
          }
 ",
@@ -103,7 +154,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              var c : columns<Cell, 8> = columns_new()
              columns_reset($Cell, $8, c)
              held := live_slots(c)
-             print_int_line(held)
+             print(\"{}\\n\", held)
              0
          }
 ",
@@ -118,7 +169,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Cell :: struct { v: i64 }
          made :: fn() -> columns<Cell, 8> { columns_new() }
          main :: fn() -> i64 {
-             for slot in live_slots(made()) { print_int_line(slot) }
+             for slot in live_slots(made()) { print(\"{}\\n\", slot) }
              0
          }
 ",
@@ -138,7 +189,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          open :: fn(n: i64) -> File { File { handle = n } }
          main :: fn() -> i64 {
              held := __multiHolder { f = open(3) }
-             print_int_line(held.f.handle)
+             print(\"{}\\n\", held.f.handle)
              0
          }
 ",
@@ -152,7 +203,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
          main :: fn() -> i64 {
              high, var _ := split(4096)
-             print_int_line(high)
+             print(\"{}\\n\", high)
              0
          }
 ",
@@ -170,10 +221,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          pair :: fn(n: i64) -> (opened: File, count: i64) {
              return { opened = File { handle = n }, count = 1 }
          }
-         close :: fn(move f: File) { print_int_line(f.handle) }
+         close :: fn(move f: File) { print(\"{}\\n\", f.handle) }
          main :: fn() -> i64 {
              _, count := pair(3)
-             print_int_line(count)
+             print(\"{}\\n\", count)
              0
          }
 ",
@@ -191,7 +242,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
          main :: fn() -> i64 {
              high, _ := split(4096)
-             print_int_line(high + _)
+             print(\"{}\\n\", high + _)
              0
          }
 ",
@@ -210,7 +261,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              high, low := split(4096)
-             print_int_line(high + low)
+             print(\"{}\\n\", high + low)
              0
          }
 ",
@@ -229,7 +280,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n\
          main :: fn() -> i64 {\n\
          \x20   held := split(4096)\n\
-         \x20   print_int_line(held.high)\n\
+         \x20   print(\"{}\\n\", held.high)\n\
          \x20   0\n\
          }\n",
         "'split' returns 2 values, so its call is bound by a list of names",
@@ -248,7 +299,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   small := Small { x = 1.0, y = 2.0, z = 3.0 }\n\
          \x20   answer := takes_large(small)\n\
-         \x20   if (answer > 0.0) { print_int_line(1) } else { print_int_line(0) }\n\
+         \x20   if (answer > 0.0) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
          \x20   0\n\
          }\n",
         "Large",
@@ -308,7 +359,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   var b := Box { pool = heap_slice($Slot, 2),\n\
          \x20       into = heap_slice($Resource, 2) }\n\
          \x20   put(b, 0)\n\
-         \x20   print_int_line(1)\n\
+         \x20   print(\"{}\\n\", 1)\n\
          \x20   heap_release_slice($Resource, b.into)\n\
          \x20   heap_release_slice($Slot, b.pool)\n\
          \x20   0\n}\n",
@@ -329,7 +380,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   plain : i64 = 2\n\
          \x20   var h := Holder { m = cast($Meters, 0) }\n\
          \x20   h.m = plain\n\
-         \x20   print_int_line(1)\n\
+         \x20   print(\"{}\\n\", 1)\n\
          \x20   0\n}\n",
         "representation",
     ),
@@ -341,7 +392,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   plain : u32 = 2\n\
          \x20   var h := Holder { usage = Usage::None }\n\
          \x20   h.usage = plain\n\
-         \x20   print_int_line(1)\n\
+         \x20   print(\"{}\\n\", 1)\n\
          \x20   0\n}\n",
         "names declared under it",
     ),
@@ -482,7 +533,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
          \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
-         \x20   print_int_line(once(h))\n    print_int_line(once(h))\n    drop_holder(h)\n}\n",
+         \x20   print(\"{}\\n\", once(h))\n    print(\"{}\\n\", once(h))\n    drop_holder(h)\n}\n",
         "moved",
     ),
     // The same by the other road: handing the resource out rather than
@@ -497,7 +548,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
          \x20   h := Holder { file = File { fd = 5 }, name = 1 }\n\
-         \x20   print_int_line(close(lift(h)))\n    print_int_line(close(lift(h)))\n\
+         \x20   print(\"{}\\n\", close(lift(h)))\n    print(\"{}\\n\", close(lift(h)))\n\
          \x20   drop_holder(h)\n}\n",
         "moved",
     ),
@@ -514,7 +565,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   f := File { fd = 3 }\n\
          \x20   if (early > 0) {\n        return 1\n    }\n\
          \x20   close(f)\n}\n\
-         main :: fn() -> i64 {\n    print_int_line(run(1))\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", run(1))\n    0\n}\n",
         "consumed",
     ),
     // `break` is the same path out of the block a loop body is, and it binds to
@@ -530,7 +581,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20       f := File { fd = i }\n\
          \x20       if (i == 2) {\n            break\n        }\n\
          \x20       close(f)\n        i = i + 1\n    }\n    0\n}\n\
-         main :: fn() -> i64 {\n    print_int_line(run())\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", run())\n    0\n}\n",
         "consumed",
     ),
     // The rules that were already shared, here so the table is the whole list
@@ -570,7 +621,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nwidth :: fn(s: str) -> i64 { str_len(s) }\n\
          main :: fn() -> i64 {\n\
          \x20   p : ^i8 = \"hello\"\n\
-         \x20   print_int_line(width(p))\n\
+         \x20   print(\"{}\\n\", width(p))\n\
          \x20   0\n}\n",
         "argument",
     ),
@@ -591,8 +642,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          drop_box :: fn(move b: Box<File>) -> i64 { 0 }\n\
          main :: fn() -> i64 {\n\
          \x20   b : Box<File> = Box { storage = [File { fd = 1 }; 2], len = 2 }\n\
-         \x20   print_int_line(close(peek($File, b, 0)))\n\
-         \x20   print_int_line(close(peek($File, b, 0)))\n\
+         \x20   print(\"{}\\n\", close(peek($File, b, 0)))\n\
+         \x20   print(\"{}\\n\", close(peek($File, b, 0)))\n\
          \x20   drop_box(b)\n}\n",
         "by an element",
     ),
@@ -625,8 +676,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
          main :: fn() -> i64 {\n\
          \x20   f := File { fd = 1 }\n\
-         \x20   print_int_line(only_plain($File, f))\n\
-         \x20   print_int_line(close(f))\n\
+         \x20   print(\"{}\\n\", only_plain($File, f))\n\
+         \x20   print(\"{}\\n\", close(f))\n\
          \x20   0\n}\n",
         "is_linear",
     ),
@@ -660,7 +711,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nBox :: struct($T: Type) { storage: [2]T, len: i64 }\n\
          main :: fn() -> i64 {\n\
          \x20   b := Box { storage = [7; 2], len = 2 }\n\
-         \x20   print_int_line(b.storage[0] + b.len)\n\
+         \x20   print(\"{}\\n\", b.storage[0] + b.len)\n\
          \x20   0\n}\n",
         "is generic",
     ),
@@ -701,7 +752,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "an_include_of_a_file_that_is_not_there",
         "import \"io.frost\"\nMISSING :: include_str(\"frost_no_such_file_anywhere.wgsl\")\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(str_len(MISSING))\n\
+         \x20   print(\"{}\\n\", str_len(MISSING))\n\
          \x20   0\n}\n",
         "include_str: cannot read",
     ),
@@ -709,7 +760,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "an_include_whose_path_is_not_a_literal",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   held := \"lit.wgsl\"\n\
-         \x20   print_int_line(str_len(include_str(held)))\n\
+         \x20   print(\"{}\\n\", str_len(include_str(held)))\n\
          \x20   0\n}\n",
         "include_str takes one string literal",
     ),
@@ -941,7 +992,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := vec_slice($i64, v)\n\
          \x20   vec_push($i64, v, 222)\n\
-         \x20   print_int_line(view[0])\n\
+         \x20   print(\"{}\\n\", view[0])\n\
          \x20   vec_free($i64, v)\n\
          \x20   0\n}\n",
         "has since replaced",
@@ -958,7 +1009,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   view := vec_slice($i64, v)\n\
          \x20   var count : i64 = 0\n\
          \x20   while (count < 8) {\n\
-         \x20       print_int_line(view[0])\n\
+         \x20       print(\"{}\\n\", view[0])\n\
          \x20       vec_push($i64, v, count)\n\
          \x20       count = count + 1\n\
          \x20   }\n\
@@ -996,7 +1047,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := passthrough(vec_slice($i64, v))\n\
          \x20   vec_push($i64, v, 222)\n\
-         \x20   print_int_line(view[0])\n\
+         \x20   print(\"{}\\n\", view[0])\n\
          \x20   vec_free($i64, v)\n\
          \x20   0\n}\n",
         "has since replaced",
@@ -1010,7 +1061,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   vec_push($i64, v, 111)\n\
          \x20   view := passthrough(vec_slice($i64, v))\n\
          \x20   vec_free($i64, v)\n\
-         \x20   print_int_line(view[0])\n\
+         \x20   print(\"{}\\n\", view[0])\n\
          \x20   0\n}\n",
         "which has been given away",
     ),
@@ -1102,7 +1153,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "an_alignment_that_is_not_a_power_of_two",
         "Odd :: struct { a: u8, b: i64 align(3) }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(sizeof(Odd))\n\
+         \x20   print(\"{}\\n\", sizeof(Odd))\n\
          \x20   0\n}\n",
         "`align` takes a power of two, and 3 is not one",
     ),
@@ -1113,7 +1164,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "an_alignment_inside_a_packed_struct",
         "Both :: packed struct { a: u8, b: i64 align(8) }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(sizeof(Both))\n\
+         \x20   print(\"{}\\n\", sizeof(Both))\n\
          \x20   0\n}\n",
         "a `packed struct` pads no field",
     ),
@@ -1124,7 +1175,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\n\
          loops :: fn(n: i64) -> i64 { if (n <= 0) { return 0 } loops(n - 1) + 1 }\n\
          DEEP :: loops(4)\n\
-         main :: fn() -> i64 { print_int_line(DEEP) 0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", DEEP) 0 }\n",
         "reaches itself",
     ),
     // What a compile-time call may do is arithmetic over its arguments. A call
@@ -1133,10 +1184,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_compile_time_call_that_reads_the_world",
         "import \"io.frost\"\n\
-         noisy :: fn(n: i64) -> i64 { print_int_line(n) n }\n\
+         noisy :: fn(n: i64) -> i64 { print(\"{}\\n\", n) n }\n\
          SAID :: noisy(4)\n\
-         main :: fn() -> i64 { print_int_line(SAID) 0 }\n",
-        "is not a function this program declares",
+         main :: fn() -> i64 { print(\"{}\\n\", SAID) 0 }\n",
+        "this is not something a compile-time call may do",
     ),
     // A body may loop, so how long one takes is not read off the text. The
     // bound is what says a compile finishes.
@@ -1148,7 +1199,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   while (i >= 0) { i = i + 1 }\n\
          \x20   i\n}\n\
          FOREVER :: spin(1)\n\
-         main :: fn() -> i64 { print_int_line(FOREVER) 0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", FOREVER) 0 }\n",
         "took more than 1000000 steps",
     ),
     // A call is run where it is written, so every argument has to be known
@@ -1161,7 +1212,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Holder :: struct($N: usize) { cells: [twice(N)]i64 }\n\
          main :: fn() -> i64 {\n\
          \x20   var h : Holder<4> = Holder<4> { cells = [0; 8] }\n\
-         \x20   print_int_line(slice_len(h.cells))\n\
+         \x20   print(\"{}\\n\", slice_len(h.cells))\n\
          \x20   0\n}\n",
         "has no value at compile time",
     ),
@@ -1173,7 +1224,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\n\
          TABLE :: [1, 2, 4, 8]\n\
          OUT :: TABLE[9]\n\
-         main :: fn() -> i64 { print_int_line(OUT) 0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", OUT) 0 }\n",
         "this reads item 9 of a run of 4, whose items are numbered 0 to 3",
     ),
     // A field that is not there. Every field is named at the literal, so what
@@ -1185,7 +1236,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Point :: struct { x: i64, y: i64 }\n\
          ORIGIN :: Point { x = 3, y = 4 }\n\
          DEPTH :: ORIGIN.z\n\
-         main :: fn() -> i64 { print_int_line(DEPTH) 0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", DEPTH) 0 }\n",
         "this has no field called 'z'",
     ),
     // A vector's lanes are a register's worth, so the length is a power of two.
@@ -1196,7 +1247,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   a : [3]f32 = [1.0, 2.0, 3.0]\n\
          \x20   b : [3]f32 = [1.0, 2.0, 3.0]\n\
          \x20   c := a + b\n\
-         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   print(\"{}\\n\", cast($f64, c[0]))\n\
          \x20   0\n}\n",
         "elementwise arithmetic is over a vector whose length is a power of two",
     ),
@@ -1209,7 +1260,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   a : [32]f64 = [1.0; 32]\n\
          \x20   b : [32]f64 = [2.0; 32]\n\
          \x20   c := a + b\n\
-         \x20   print_f64_line(c[0])\n\
+         \x20   print(\"{}\\n\", c[0])\n\
          \x20   0\n}\n",
         "elementwise arithmetic is over a vector of at most 64 bytes",
     ),
@@ -1223,7 +1274,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
          \x20   b : [4]f64 = [1.0, 2.0, 3.0, 4.0]\n\
          \x20   c := a + b\n\
-         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   print(\"{}\\n\", cast($f64, c[0]))\n\
          \x20   0\n}\n",
         "a vector of 4 f32 and a vector of 4 f64 do not go together",
     ),
@@ -1236,7 +1287,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
          \x20   b : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
          \x20   c := a & b\n\
-         \x20   print_f64_line(cast($f64, c[0]))\n\
+         \x20   print(\"{}\\n\", cast($f64, c[0]))\n\
          \x20   0\n}\n",
         "'&' is not something two vectors answer",
     ),
@@ -1249,7 +1300,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   a : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
          \x20   b : [4]f32 = [1.0, 2.0, 3.0, 4.0]\n\
-         \x20   if (a == b) { print_int_line(1) }\n\
+         \x20   if (a == b) { print(\"{}\\n\", 1) }\n\
          \x20   0\n}\n",
         "'==' is not something two vectors answer",
     ),
@@ -1342,7 +1393,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case _: 20
              }
          }
-         main :: fn() -> i64 { print_int_line(f(1.5)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(1.5)) 0 }
 ",
         "a case matches whole numbers, booleans and variants, so a decimal belongs in an `if`",
     ),
@@ -1367,7 +1418,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case _: 20
              }
          }
-         main :: fn() -> i64 { print_int_line(f(\"hi\")) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(\"hi\")) 0 }
 ",
         "a case matches whole numbers, booleans and variants, so text belongs in an `if`",
     ),
@@ -1383,7 +1434,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case n: n * 100
              }
          }
-         main :: fn() -> i64 { print_int_line(f(7)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(7)) 0 }
 ",
         "a name in a case is the value it stands for, and this one names no constant",
     ),
@@ -1396,7 +1447,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case (_, _): 99
              }
          }
-         main :: fn() -> i64 { print_int_line(f(0, 3)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(0, 3)) 0 }
 ",
         "a name in a case is the value it stands for, and this one names no constant",
     ),
@@ -1412,7 +1463,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case 1: 20
              }
          }
-         main :: fn() -> i64 { print_int_line(f(1)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(1)) 0 }
 ",
         "this case is covered by an earlier one, so nothing reaches it",
     ),
@@ -1425,7 +1476,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case (1, 1): 20
              }
          }
-         main :: fn() -> i64 { print_int_line(f(1, 1)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(1, 1)) 0 }
 ",
         "this case is covered by an earlier one, so nothing reaches it",
     ),
@@ -1443,7 +1494,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
                  case _: 0
              }
          }
-         main :: fn() -> i64 { print_int_line(f(1)) 0 }
+         main :: fn() -> i64 { print(\"{}\\n\", f(1)) 0 }
 ",
         "this case is covered by an earlier one, so nothing reaches it",
     ),
@@ -1714,7 +1765,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Held :: struct { text: str, count: i64 }
          main :: fn() -> i64 {
              held := Held { text = \"hello\", count = 3 }
-             print_int_line(str_len(held))
+             print(\"{}\\n\", str_len(held))
              0
          }
 ",
@@ -1728,7 +1779,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          look :: fn(view: []i64) -> i64 { str_len(view) }
          main :: fn() -> i64 {
              var run: [4]i64 = [1; 4]
-             print_int_line(look(run))
+             print(\"{}\\n\", look(run))
              0
          }
 ",
@@ -1740,7 +1791,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_text_length_asked_of_a_pointer",
         "import \"io.frost\"
          look :: fn(raw: ^i8) -> i64 { str_len(raw) }
-         main :: fn() -> i64 { print_int_line(unsafe { look(\"hi\") })  0 }
+         main :: fn() -> i64 { print(\"{}\\n\", unsafe { look(\"hi\") })  0 }
 ",
         "expected a str value, found ^i8",
     ),
@@ -1750,7 +1801,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Held :: struct { text: str, count: i64 }
          main :: fn() -> i64 {
              held := Held { text = \"hello\", count = 3 }
-             print_int_line(slice_len(held))
+             print(\"{}\\n\", slice_len(held))
              0
          }
 ",
@@ -1979,7 +2030,7 @@ fn range_edge_folded(operation: &str, left: &str, right: &str) -> String {
         "import \"io.frost\"\n\
          step :: fn(a: i64, b: i64) -> i64 {{ {operation} }}\n\
          EDGE :: step({left}, {right})\n\
-         main :: fn() -> i64 {{ print_int_line(EDGE) 0 }}\n"
+         main :: fn() -> i64 {{ print(\"{{}}\\n\", EDGE) 0 }}\n"
     )
 }
 
@@ -1990,7 +2041,7 @@ fn range_edge_run(operation: &str, left: &str, right: &str) -> String {
          main :: fn() -> i64 {{\n\
          \x20   var a : i64 = {left}\n\
          \x20   var b : i64 = {right}\n\
-         \x20   print_int_line(step(a, b))\n\
+         \x20   print(\"{{}}\\n\", step(a, b))\n\
          \x20   0\n}}\n"
     )
 }
@@ -2096,6 +2147,153 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // One `print` writes every kind of value, with the writer for each chosen
+    // while the body is expanded. The chain of predicates is four arms long,
+    // which the self-hosted compiler refused until `parse_expansion_if` learned
+    // to read `else if`: it called `parse_block` on whatever followed `else`,
+    // so a chain longer than two arms died on the second one.
+    (
+        "one_print_writes_every_kind_of_value",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"none\n\")\n\
+         \x20   print(\"{} {}\n\", 1, 2)\n\
+         \x20   print(\"{}\n\", 2.5)\n\
+         \x20   print(\"{}\n\", \"text\")\n\
+         \x20   print(\"{} {}\n\", true, false)\n\
+         \x20   print(\"{}\", 7)\n\
+         \x20   print(\"\n\")\n\
+         \x20   0\n\
+         }\n",
+        "none\n1 2\n2.5\ntext\n1 0\n7\n",
+    ),
+    // The edges of the rule, where a run has no bytes on one side of a hole or
+    // none at all. Nothing is written for an empty run, and a call that names
+    // no hole and gives no value is a call that writes its literal and stops.
+    (
+        "a_format_string_at_its_edges",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"\")\n\
+         \x20   print(\"{}{}{}\", 1, 2, 3)\n\
+         \x20   print(\"\n\")\n\
+         \x20   print(\"{}\", \"\")\n\
+         \x20   print(\"[{}]\n\", \"\")\n\
+         \x20   print(\"{}{}\n\", \"\", 4)\n\
+         \x20   0\n\
+         }\n",
+        "123\n[]\n4\n",
+    ),
+    // A doubled brace against a hole, which is where the walk has to decide
+    // twice in a row and the counters have to agree with it.
+    (
+        "doubled_braces_meet_a_hole",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"{{{}}}\n\", 1)\n\
+         \x20   print(\"{{{}\n\", 2)\n\
+         \x20   print(\"{}}}\n\", 3)\n\
+         \x20   print(\"}}{}{{\n\", 4)\n\
+         \x20   print(\"{{}}{}\n\", 5)\n\
+         \x20   0\n\
+         }\n",
+        "{1}\n{2\n3}\n}4{\n{}5\n",
+    ),
+    // Every arm of the chain the body expands, each asked for on its own so a
+    // failure names which one. A `bool` answers no to every predicate and is
+    // what the last two arms are for.
+    (
+        "each_arm_of_the_writer_chain",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   var f: f32 = 1.5\n\
+         \x20   var d: f64 = 2.5\n\
+         \x20   var s: i8 = -3\n\
+         \x20   var u: u32 = 4\n\
+         \x20   text := \"five\"\n\
+         \x20   print(\"{}\n\", f)\n\
+         \x20   print(\"{}\n\", d)\n\
+         \x20   print(\"{}\n\", s)\n\
+         \x20   print(\"{}\n\", u)\n\
+         \x20   print(\"{}\n\", text)\n\
+         \x20   print(\"{}\n\", true)\n\
+         \x20   print(\"{}\n\", false)\n\
+         \x20   0\n\
+         }\n",
+        "1.5\n2.5\n-3\n4\nfive\n1\n0\n",
+    ),
+    // A doubled brace stands for one, and a `}` on its own writes itself. The
+    // compilers count the holes and the run-time walk writes the text, so all
+    // three readings of the same rule have to agree.
+    (
+        "a_format_string_holds_braces",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"braces {{ and }} stay\n\")\n\
+         \x20   print(\"}} alone } fine {{ too\n\")\n\
+         \x20   print(\"{{{}}}\n\", 5)\n\
+         \x20   0\n\
+         }\n",
+        "braces { and } stay\n} alone } fine { too\n{5}\n",
+    ),
+    // Holes at the ends and side by side, where a run between two of them is
+    // empty and the walk has nothing to write.
+    (
+        "format_holes_at_the_edges",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   print(\"{}{}\n\", 1, 2)\n\
+         \x20   print(\"{} trailing\n\", 3)\n\
+         \x20   print(\"leading {}\n\", 4)\n\
+         \x20   print(\"{}\", 5)\n\
+         \x20   print(\"\n\")\n\
+         \x20   0\n\
+         }\n",
+        "12\n3 trailing\nleading 4\n5\n",
+    ),
+    // Every integer width and both float widths reach the same two writers,
+    // through the cast the expanded branch carries.
+    (
+        "a_format_string_writes_every_width",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n\
+         \x20   var a: u8 = 200\n\
+         \x20   var b: i32 = -7\n\
+         \x20   var c: u32 = 9\n\
+         \x20   var d: f32 = 1.5\n\
+         \x20   print(\"{} {} {} {}\n\", a, b, c, d)\n\
+         \x20   0\n\
+         }\n",
+        "200 -7 9 1.5\n",
+    ),
+    // The destination is a value the caller names. `print` is `write` with
+    // standard output supplied, and a second `Sink` proves nothing about the
+    // destination is baked into the formatter. A `fn(str)` field is what the
+    // self-hosted C backend rendered as `char*` while a slice travels by value.
+    (
+        "a_program_names_its_own_sink",
+        "import \"io.frost\"\nloud_bytes :: fn(text: str) {\n\
+         \x20   write($to_stdout, \"[{}]\", text)\n\
+         }\n\
+         loud_int :: fn(value: i64) { write($to_stdout, \"<{}>\", value) }\n\
+         loud_float :: fn(value: f64) { write($to_stdout, \"<{}>\", value) }\n\
+         loud :: Sink { bytes = loud_bytes, int = loud_int, float = loud_float }\n\
+         main :: fn() -> i64 {\n\
+         \x20   write($loud, \"a {} b\n\", 3)\n\
+         \x20   0\n\
+         }\n",
+        "[a ]<3>[ b\n]",
+    ),
+    // A string literal handed to a compile-time list is a run of bytes, the way
+    // it is everywhere else a `str` is read. The self-hosted compiler answered
+    // `^i8` for one, which made the element a pointer and the branch that
+    // writes text refuse it.
+    (
+        "a_string_literal_is_a_list_element",
+        "import \"io.frost\"\nlast :: fn(args: $...) -> i64 {\n\
+         \x20   var n: i64 = 0\n\
+         \x20   for v in args { n = n + 1 }\n\
+         \x20   n\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{} {}\n\", \"one\", last(\"a\", \"b\", 3))\n\
+         \x20   0\n\
+         }\n",
+        "one 3\n",
+    ),
     // `extern fn` with a body is written here and keeps the name it was
     // written under, where an ordinary function is emitted under one the
     // compiler chose. Both compilers have to agree, because what the form is
@@ -2109,8 +2307,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          ordinary :: fn(value: i64) -> i64 { value + 1 }
          main :: fn() -> i64 {
-             print_int_line(frost_demo_double(20))
-             print_int_line(ordinary(6))
+             print(\"{}\\n\", frost_demo_double(20))
+             print(\"{}\\n\", ordinary(6))
              0
          }
 ",
@@ -2126,9 +2324,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          text_length :: fn(view: []u8) -> i64 { str_len(view) }
          run_length :: fn(view: str) -> i64 { slice_len(view) }
          main :: fn() -> i64 {
-             print_int_line(text_length(\"hello\"))
-             print_int_line(run_length(\"hi\"))
-             print_int_line(str_len(\"four\"))
+             print(\"{}\\n\", text_length(\"hello\"))
+             print(\"{}\\n\", run_length(\"hi\"))
+             print(\"{}\\n\", str_len(\"four\"))
              0
          }
 ",
@@ -2144,9 +2342,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          P :: struct { a: i64, b: i64 }
          Side :: enum { Left, Right }
          main :: fn() -> i64 {
-             print_int_line(sizeof($P))
-             print_int_line(sizeof(P))
-             print_int_line(sizeof($Side))
+             print(\"{}\\n\", sizeof($P))
+             print(\"{}\\n\", sizeof(P))
+             print(\"{}\\n\", sizeof($Side))
              0
          }
 ",
@@ -2169,7 +2367,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              _ := step(3)
-             print_int_line(1)
+             print(\"{}\\n\", 1)
              0
          }
 ",
@@ -2186,7 +2384,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"
          FileError :: enum { Missing }
          Held :: linear struct { id: i64 }
-         close :: fn(move h: Held) { print_int_line(h.id) }
+         close :: fn(move h: Held) { print(\"{}\\n\", h.id) }
          opened :: fn(id: i64) -> Held { Held { id = id } }
          step :: fn(fail: bool) -> i64 ! FileError {
              if (fail) { return FileError::Missing }
@@ -2194,7 +2392,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          work :: fn(fail: bool) -> i64 ! FileError {
              h := opened(1)
-             defer print_int_line(100)
+             defer print(\"{}\\n\", 100)
              errdefer close(h)
              value := step(fail)?
              close(h)
@@ -2202,12 +2400,12 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              match (work(false)) {
-                 case .Ok { value }: print_int_line(value)
-                 case .Err { error }: print_int_line(-1)
+                 case .Ok { value }: print(\"{}\\n\", value)
+                 case .Err { error }: print(\"{}\\n\", -1)
              }
              match (work(true)) {
-                 case .Ok { value }: print_int_line(value)
-                 case .Err { error }: print_int_line(-2)
+                 case .Ok { value }: print(\"{}\\n\", value)
+                 case .Err { error }: print(\"{}\\n\", -2)
              }
              0
          }
@@ -2241,10 +2439,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              var board : [SIDE * 2]i64 = [0; 12]
-             print_int_line(slice_len(board))
+             print(\"{}\\n\", slice_len(board))
              var g : Grid<4> = Grid<4> { cells = [0; 16], rows = [0; 2] }
-             print_int_line(filled($4, g))
-             print_int_line(slice_len(g.rows))
+             print(\"{}\\n\", filled($4, g))
+             print(\"{}\\n\", slice_len(g.rows))
              0
          }
 ",
@@ -2290,9 +2488,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  total = total + world.storage[slot].hp
                  seen = seen + 1
              }
-             print_int_line(seen)
-             print_int_line(world.live_count)
-             print_int_line(total)
+             print(\"{}\\n\", seen)
+             print(\"{}\\n\", world.live_count)
+             print(\"{}\\n\", total)
              0
          }
 ",
@@ -2336,7 +2534,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              assert(columns_alive($Entity, $4, two, q))
              assert(columns_alive($Entity, $4, one, q) == false)
              assert(columns_alive($Entity, $4, two, p) == false)
-             print_int_line(one[p].hp + two[q].hp)
+             print(\"{}\\n\", one[p].hp + two[q].hp)
              0
          }
 ",
@@ -2381,9 +2579,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  total = total + c.x[slot]
                  seen = seen + 1
              }
-             print_int_line(seen)
-             print_int_line(c.live_count)
-             print_int_line(total)
+             print(\"{}\\n\", seen)
+             print(\"{}\\n\", c.live_count)
+             print(\"{}\\n\", total)
              0
          }
 ",
@@ -2423,12 +2621,12 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  if (c.v[slot] > 70) { break }
                  counted = counted + 1
              }
-             print_int_line(counted)
+             print(\"{}\\n\", counted)
              var empty : columns<Cell, 8> = columns_new()
              columns_reset($Cell, $8, empty)
              var none : i64 = 0
              for slot in live_slots(empty) { none = none + 1 }
-             print_int_line(none)
+             print(\"{}\\n\", none)
              0
          }
 ",
@@ -2447,10 +2645,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {
              var bytes : [3]u8 = [104, 105, 33]
              text : str = bytes
-             print_str_line(text)
-             print_int_line(slice_len(text))
+             print(\"{}\\n\", text)
+             print(\"{}\\n\", slice_len(text))
              written : str = \"ada\"
-             print_int_line(slice_len(written))
+             print(\"{}\\n\", slice_len(written))
              0
          }
 ",
@@ -2475,11 +2673,11 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          pair :: fn(n: i64) -> (opened: File, count: i64) {
              return { opened = File { handle = n }, count = 1 }
          }
-         close :: fn(move f: File) { print_int_line(f.handle) }
+         close :: fn(move f: File) { print(\"{}\\n\", f.handle) }
          main :: fn() -> i64 {
              held, count := pair(3)
              close(held)
-             print_int_line(count)
+             print(\"{}\\n\", count)
              0
          }
 ",
@@ -2500,7 +2698,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              high, _ := split(4096)
              a, _ := split(512)
              _, low := split(770)
-             print_int_line(high + a + low)
+             print(\"{}\\n\", high + a + low)
              0
          }
 ",
@@ -2533,13 +2731,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {
              var data : [4]i64 = [10, 20, 30, 40]
              view, count := split(data)
-             print_int_line(view[0] + count)
+             print(\"{}\\n\", view[0] + count)
              text, length := label()
-             print_int_line(text[0] + length)
+             print(\"{}\\n\", text[0] + length)
              held, held_count := wrap(data)
-             print_int_line(held.row[1] + held_count)
+             print(\"{}\\n\", held.row[1] + held_count)
              row, row_count := rows()
-             print_int_line(row[2] + row_count)
+             print(\"{}\\n\", row[2] + row_count)
              0
          }
 ",
@@ -2560,14 +2758,14 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     // what tells the two apart: the write lands in the caller's array.
     (
         "an_array_parameter_is_sliced_where_the_caller_holds_it",
-        "import \"io.frost\"\nSink :: struct { view: []i64 }
+        "import \"io.frost\"\nHolder :: struct { view: []i64 }
          head :: fn(view: []i64) -> i64 { view[0] }
          by_let :: fn(mut source: [4]i64) -> i64 {
              view : []i64 = source
              view[0]
          }
          by_literal :: fn(mut source: [4]i64) -> i64 {
-             sink := Sink { view = source }
+             sink := Holder { view = source }
              sink.view[1]
          }
          by_argument :: fn(mut source: [4]i64) -> i64 { head(source) }
@@ -2582,13 +2780,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              var data : [4]i64 = [10, 20, 30, 40]
-             print_int_line(by_let(data))
-             print_int_line(by_literal(data))
-             print_int_line(by_argument(data))
-             print_int_line(by_return(data)[3])
-             print_int_line(by_read_borrow(data))
+             print(\"{}\\n\", by_let(data))
+             print(\"{}\\n\", by_literal(data))
+             print(\"{}\\n\", by_argument(data))
+             print(\"{}\\n\", by_return(data)[3])
+             print(\"{}\\n\", by_read_borrow(data))
              bump(data)
-             print_int_line(data[0])
+             print(\"{}\\n\", data[0])
              0
          }
 ",
@@ -2626,7 +2824,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              from_field(o)
              from_temporary(o)
              from_local(o)
-             print_int_line(1)
+             print(\"{}\\n\", 1)
              0
          }
 ",
@@ -2644,14 +2842,14 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nRotation :: enum { PerSession, Never }
          name :: fn(held: Rotation) {
              match held {
-                 case .PerSession: { print_int_line(1) }
+                 case .PerSession: { print(\"{}\\n\", 1) }
                  case .Never: { }
              }
          }
          main :: fn() -> i64 {
              name(Rotation::PerSession)
              name(Rotation::Never)
-             print_int_line(2)
+             print(\"{}\\n\", 2)
              0
          }
 ",
@@ -2678,7 +2876,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              var table := Table {
                  call = unsafe { ptr_cast($fn(^u8, i64), add) } }
              table.call(unsafe { ptr_cast($u8, ptr_to(held)) }, 41)
-             print_int_line(held.value)
+             print(\"{}\\n\", held.value)
              0
          }
 ",
@@ -2696,16 +2894,16 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_float_literal_takes_the_width_it_is_compared_against",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   narrow : f32 = 0.6\n\
-         \x20   if (narrow == 0.6) { print_int_line(1) } else { print_int_line(0) }\n\
-         \x20   if (0.6 == narrow) { print_int_line(2) } else { print_int_line(0) }\n\
-         \x20   if (narrow != 0.6) { print_int_line(0) } else { print_int_line(3) }\n\
-         \x20   if (0.7 > narrow) { print_int_line(4) } else { print_int_line(0) }\n\
-         \x20   if (-0.6 == -narrow) { print_int_line(5) } else { print_int_line(0) }\n\
+         \x20   if (narrow == 0.6) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+         \x20   if (0.6 == narrow) { print(\"{}\\n\", 2) } else { print(\"{}\\n\", 0) }\n\
+         \x20   if (narrow != 0.6) { print(\"{}\\n\", 0) } else { print(\"{}\\n\", 3) }\n\
+         \x20   if (0.7 > narrow) { print(\"{}\\n\", 4) } else { print(\"{}\\n\", 0) }\n\
+         \x20   if (-0.6 == -narrow) { print(\"{}\\n\", 5) } else { print(\"{}\\n\", 0) }\n\
          \x20   wide : f64 = 0.6\n\
-         \x20   if (wide == 0.6) { print_int_line(6) } else { print_int_line(0) }\n\
-         \x20   if (0.6 == wide) { print_int_line(7) } else { print_int_line(0) }\n\
+         \x20   if (wide == 0.6) { print(\"{}\\n\", 6) } else { print(\"{}\\n\", 0) }\n\
+         \x20   if (0.6 == wide) { print(\"{}\\n\", 7) } else { print(\"{}\\n\", 0) }\n\
          \x20   exact : f32 = 0.25\n\
-         \x20   if (0.25 == exact) { print_int_line(8) } else { print_int_line(0) }\n\
+         \x20   if (0.25 == exact) { print(\"{}\\n\", 8) } else { print(\"{}\\n\", 0) }\n\
          \x20   0\n\
          }\n",
         "1\n2\n3\n4\n5\n6\n7\n8\n",
@@ -2727,7 +2925,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          hold :: fn($T: Type, value: i64) -> Pair<T> {\n\
          \x20   Pair { first = value, second = value + 1 }\n}\n\
          each :: fn($body: Type, cols: $...) {\n    body(c for c in cols)\n}\n\
-         show :: fn(p: Pair<i64>) {\n    print_int_line(p.first + p.second)\n}\n\
+         show :: fn(p: Pair<i64>) {\n    print(\"{}\\n\", p.first + p.second)\n}\n\
          main :: fn() -> i64 {\n    each($show, hold($i64, 20))\n    0\n}\n",
         "41\n",
     ),
@@ -2741,7 +2939,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          hold :: fn($T: Type, value: i64) -> Pair<T> {\n\
          \x20   Pair { first = value, second = value + 1 }\n}\n\
          each :: fn($body: Type, cols: $...) {\n    body(c for c in cols)\n}\n\
-         show :: fn(p: Pair<i64>) {\n    print_int_line(p.first + p.second)\n}\n\
+         show :: fn(p: Pair<i64>) {\n    print(\"{}\\n\", p.first + p.second)\n}\n\
          main :: fn() -> i64 {\n    made := hold($i64, 20)\n\
          \x20   each($show, made)\n    0\n}\n",
         "41\n",
@@ -2752,7 +2950,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     // compiled under the self-hosted compiler, which is two languages.
     (
         "an_assertion_outside_a_test",
-        "import \"io.frost\"\nmain :: fn() -> i64 {\n    assert(1 == 1)\n    print_int_line(7)\n    0\n}\n",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n    assert(1 == 1)\n    print(\"{}\\n\", 7)\n    0\n}\n",
         "7\n",
     ),
     // A resource handed on from inside an expression rather than from a
@@ -2771,7 +2969,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20       f := File { fd = i }\n\
          \x20       total = total + close(f)\n\
          \x20       i = i + 1\n    }\n    total\n}\n\
-         main :: fn() -> i64 {\n    print_int_line(run())\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", run())\n    0\n}\n",
         "6\n",
     ),
     // A constant standing for another constant. Both compilers parsed
@@ -2786,7 +2984,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_constant_standing_for_another_constant",
         "import \"io.frost\"\nBASE :: 46\n\
          ALIAS :: BASE\n\
-         main :: fn() -> i64 {\n    print_int_line(ALIAS)\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", ALIAS)\n    0\n}\n",
         "46\n",
     ),
     // The same through three, since one link working says nothing about a
@@ -2796,7 +2994,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nFIRST :: 7\n\
          SECOND :: FIRST\n\
          THIRD :: SECOND\n\
-         main :: fn() -> i64 {\n    print_int_line(THIRD + 1)\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", THIRD + 1)\n    0\n}\n",
         "8\n",
     ),
     // Indexing a constant that is a string. The name is the literal wherever it
@@ -2808,8 +3006,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "indexing_a_constant_that_is_a_string",
         "import \"io.frost\"\nSUFFIX :: \"xyzw\"\n\
          main :: fn() -> i64 {\n\
-         \x20   unsafe { print_int_line(SUFFIX[0]) }\n\
-         \x20   unsafe { print_int_line(SUFFIX[3]) }\n    0\n}\n",
+         \x20   unsafe { print(\"{}\\n\", SUFFIX[0]) }\n\
+         \x20   unsafe { print(\"{}\\n\", SUFFIX[3]) }\n    0\n}\n",
         "120\n119\n",
     ),
     // And one that is an array, which is the same bug: an aggregate constant
@@ -2819,7 +3017,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "indexing_a_constant_that_is_an_array",
         "import \"io.frost\"\nROW :: [10, 20, 30]\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(ROW[1])\n    0\n}\n",
+         \x20   print(\"{}\\n\", ROW[1])\n    0\n}\n",
         "20\n",
     ),
     // Hex, binary, digit separators and an exponent. A `flags u32` declaration
@@ -2829,27 +3027,27 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "hex_binary_and_separator_literals",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-         \x20   print_int_line(0xFF)\n\
-         \x20   print_int_line(0xff)\n\
-         \x20   print_int_line(0b1010)\n\
-         \x20   print_int_line(0x_1_0)\n\
-         \x20   print_int_line(1_000_000)\n\
-         \x20   print_int_line(0x7FFFFFFF)\n\
+         \x20   print(\"{}\\n\", 0xFF)\n\
+         \x20   print(\"{}\\n\", 0xff)\n\
+         \x20   print(\"{}\\n\", 0b1010)\n\
+         \x20   print(\"{}\\n\", 0x_1_0)\n\
+         \x20   print(\"{}\\n\", 1_000_000)\n\
+         \x20   print(\"{}\\n\", 0x7FFFFFFF)\n\
          \x20   mask : u64 = 0xFFFFFFFFFFFFFFFF\n\
-         \x20   print_bool_line(mask == -1)\n    0\n}\n",
+         \x20   print(\"{}\\n\", mask == -1)\n    0\n}\n",
         "255\n255\n10\n16\n1000000\n2147483647\n1\n",
     ),
     (
         "exponent_literals",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   a := 1e3\n\
-         \x20   print_f64_line(a)\n\
+         \x20   print(\"{}\\n\", a)\n\
          \x20   b := 1.5e-3\n\
-         \x20   print_f64_line(b * 1000.0)\n\
+         \x20   print(\"{}\\n\", b * 1000.0)\n\
          \x20   c := 2.5e2\n\
-         \x20   print_f64_line(c)\n\
+         \x20   print(\"{}\\n\", c)\n\
          \x20   d := 1E2\n\
-         \x20   print_f64_line(d)\n    0\n}\n",
+         \x20   print(\"{}\\n\", d)\n    0\n}\n",
         "1000\n1.5\n250\n100\n",
     ),
     // A prefix minus. The self-hosted parser had no prefix layer at all, so
@@ -2862,14 +3060,14 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_prefix_minus",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   x := -1\n\
-         \x20   print_int_line(x)\n\
+         \x20   print(\"{}\\n\", x)\n\
          \x20   y := -1\n\
-         \x20   print_int_line(y)\n\
+         \x20   print(\"{}\\n\", y)\n\
          \x20   z := 5\n\
-         \x20   print_int_line(-z)\n\
-         \x20   print_int_line(-z * 2)\n\
-         \x20   print_int_line(-(z - 8))\n\
-         \x20   print_int_line(3 - -z)\n    0\n}\n",
+         \x20   print(\"{}\\n\", -z)\n\
+         \x20   print(\"{}\\n\", -z * 2)\n\
+         \x20   print(\"{}\\n\", -(z - 8))\n\
+         \x20   print(\"{}\\n\", 3 - -z)\n    0\n}\n",
         "-1\n-1\n-5\n-10\n3\n8\n",
     ),
     // The same for a float, where the sign is carried on the literal rather
@@ -2880,10 +3078,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   a := -1.5\n\
          \x20   b := 2.5\n\
-         \x20   print_f64_line(a + b)\n\
-         \x20   print_f64_line(-b)\n\
+         \x20   print(\"{}\\n\", a + b)\n\
+         \x20   print(\"{}\\n\", -b)\n\
          \x20   c : f32 = -0.75\n\
-         \x20   print_f64_line(c)\n    0\n}\n",
+         \x20   print(\"{}\\n\", c)\n    0\n}\n",
         "1\n-2.5\n-0.75\n",
     ),
     // Prefix `!`, which aborted the self-hosted compiler with an internal
@@ -2893,11 +3091,11 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_prefix_bang",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   flag := false\n\
-         \x20   if (!flag) { print_int_line(111) } else { print_int_line(222) }\n\
+         \x20   if (!flag) { print(\"{}\\n\", 111) } else { print(\"{}\\n\", 222) }\n\
          \x20   n := 7\n\
-         \x20   print_int_line(!(n == 7))\n\
-         \x20   print_int_line(!!(n == 7))\n\
-         \x20   print_int_line(!(n == 8))\n    0\n}\n",
+         \x20   print(\"{}\\n\", !(n == 7))\n\
+         \x20   print(\"{}\\n\", !!(n == 7))\n\
+         \x20   print(\"{}\\n\", !(n == 8))\n    0\n}\n",
         "111\n0\n1\n1\n",
     ),
     // A call's result handed straight to something that borrows it. The
@@ -2910,8 +3108,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          make :: fn() -> Held { Held { a = 1, b = 2 } }\n\
          use :: fn(h: Held) -> i64 { h.a + h.b }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(use(make()))\n\
-         \x20   print_int_line(use(Held { a = 10, b = 20 }))\n    0\n}\n",
+         \x20   print(\"{}\\n\", use(make()))\n\
+         \x20   print(\"{}\\n\", use(Held { a = 10, b = 20 }))\n    0\n}\n",
         "3\n30\n",
     ),
     // Copying a struct whose size is not a multiple of eight. The self-hosted
@@ -2935,13 +3133,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   var t := Trio { a = Small { value = 0.0 },\n\
          \x20       b = Small { value = 2.5 }, tail = 4242 }\n\
          \x20   t.a = take(Small { value = 1.5 })\n\
-         \x20   print_bool_line(t.b.value == 2.5)\n\
-         \x20   print_int_line(t.tail)\n\
+         \x20   print(\"{}\\n\", t.b.value == 2.5)\n\
+         \x20   print(\"{}\\n\", t.tail)\n\
          \x20   var held : [3]Small = [Small { value = 0.0 }; 3]\n\
          \x20   var guard : i64 = 777\n\
          \x20   held[1] = take(Small { value = 3.5 })\n\
-         \x20   print_bool_line(held[2].value == 0.0)\n\
-         \x20   print_int_line(guard)\n    0\n}\n",
+         \x20   print(\"{}\\n\", held[2].value == 0.0)\n\
+         \x20   print(\"{}\\n\", guard)\n    0\n}\n",
         "1\n4242\n1\n777\n",
     ),
     // Indexing a fixed-size array taken as a `mut` parameter. It arrives as a
@@ -2960,8 +3158,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   var held : [4]i64 = [0; 4]\n\
          \x20   fill(held)\n\
-         \x20   print_int_line(held[0])\n\
-         \x20   print_int_line(held[3])\n    0\n}\n",
+         \x20   print(\"{}\\n\", held[0])\n\
+         \x20   print(\"{}\\n\", held[3])\n    0\n}\n",
         "7\n8\n",
     ),
     // A string literal bound to a name with no annotation. The literal is a
@@ -2980,8 +3178,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nshown :: fn(s: str) -> i64 { str_len(s) }\n\
          main :: fn() -> i64 {\n\
          \x20   held := \"hello\"\n\
-         \x20   print_int_line(shown(held))\n\
-         \x20   print_int_line(str_len(held))\n    0\n}\n",
+         \x20   print(\"{}\\n\", shown(held))\n\
+         \x20   print(\"{}\\n\", str_len(held))\n    0\n}\n",
         "5\n5\n",
     ),
     // A type named before it is declared. The name resolved to nothing and was
@@ -2994,7 +3192,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   var held := Later { value = 3 }\n\
          \x20   held.value\n}\n\
          Later :: struct { value: i64 }\n\
-         main :: fn() -> i64 {\n    print_int_line(make())\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", make())\n    0\n}\n",
         "3\n",
     ),
     // The same, as the type of a field rather than of a literal.
@@ -3004,7 +3202,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Later :: struct { value: i64 }\n\
          main :: fn() -> i64 {\n\
          \x20   var h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
-         \x20   print_int_line(h.inner.value)\n    print_int_line(sizeof(Holder))\n    0\n}\n",
+         \x20   print(\"{}\\n\", h.inner.value)\n    print(\"{}\\n\", sizeof(Holder))\n    0\n}\n",
         "7\n16\n",
     ),
     // A field read straight off a generic call's answer, where the caller has a
@@ -3025,7 +3223,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          reach :: fn(mut a: Store) -> i64 { only(a.bag).value }
          main :: fn() -> i64 {
              var s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
-             print_int_line(reach(s))
+             print(\"{}\\n\", reach(s))
     0
 }
 ",
@@ -3043,8 +3241,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     \"many\"
 }
 main :: fn() -> i64 {
-    print_str_line(pick(0))
-    print_str_line(pick(7))
+    print(\"{}\\n\", pick(0))
+    print(\"{}\\n\", pick(7))
     0
 }
 ",
@@ -3065,18 +3263,18 @@ many
     big = big + 1
     var two : u64 = 2
     var one : u64 = 1
-    print_int_line(big / two)
-    print_int_line(big % 3)
-    if (big > one) { print_int_line(1) } else { print_int_line(0) }
-    if (big < one) { print_int_line(1) } else { print_int_line(0) }
-    print_int_line(big >> 1)
+    print(\"{}\\n\", big / two)
+    print(\"{}\\n\", big % 3)
+    if (big > one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
+    if (big < one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
+    print(\"{}\\n\", big >> 1)
     var span : usize = 9223372036854775807
     span = span + 2
-    if (span > one) { print_int_line(1) } else { print_int_line(0) }
-    print_int_line(span / two)
+    if (span > one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
+    print(\"{}\\n\", span / two)
     var n : i64 = -100
-    print_int_line(n / 7)
-    print_int_line(n >> 2)
+    print(\"{}\\n\", n / 7)
+    print(\"{}\\n\", n >> 2)
     0
 }
 ",
@@ -3101,11 +3299,11 @@ many
     (
         "a_literal_shifted_past_the_word",
         "import \"io.frost\"\nmain :: fn() -> i64 {
-    print_int_line(1 << 63)
-    print_int_line(1 << 40)
+    print(\"{}\\n\", 1 << 63)
+    print(\"{}\\n\", 1 << 40)
     var bits : i64 = 0
     bits = bits | (1 << 63)
-    print_int_line(bits)
+    print(\"{}\\n\", bits)
     0
 }
 ",
@@ -3128,18 +3326,18 @@ many
     for i in 0..6 {
         total = total + i
     }
-    print_int_line(total)
+    print(\"{}\\n\", total)
     var closed : i64 = 0
     for i in 1..=4 {
         closed = closed + i
     }
-    print_int_line(closed)
+    print(\"{}\\n\", closed)
     n := 3
     var counted : i64 = 0
     for i in 0..n {
         counted = counted + 1
     }
-    print_int_line(counted)
+    print(\"{}\\n\", counted)
     0
 }
 ",
@@ -3157,7 +3355,7 @@ many
     // reach it.
     (
         "defer_runs_at_every_exit",
-        "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }
+        "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }
 
 early :: fn(x: i64) -> i64 {
     defer trace(1)
@@ -3175,8 +3373,8 @@ quiet :: fn() {
 }
 
 main :: fn() -> i64 {
-    print_int_line(early(2))
-    print_int_line(early(0 - 1))
+    print(\"{}\\n\", early(2))
+    print(\"{}\\n\", early(0 - 1))
     quiet()
     0
 }
@@ -3216,13 +3414,13 @@ main :: fn() -> i64 {
     var u := Vec3 { x = 1, y = 2, z = 3 }
     var v := Vec3 { x = 4, y = 5, z = 6 }
     swap(u, v)
-    print_int_line(u.x)
-    print_int_line(v.x)
+    print(\"{}\\n\", u.x)
+    print(\"{}\\n\", v.x)
     var a : i64 = 100
     var b : i64 = 200
     swap(a, b)
-    print_int_line(a)
-    print_int_line(bytes($Vec3))
+    print(\"{}\\n\", a)
+    print(\"{}\\n\", bytes($Vec3))
     0
 }
 ",
@@ -3260,9 +3458,9 @@ widest :: fn(mut a: $T, by: i64) -> i64 {
 main :: fn() -> i64 {
     var u := Vec3 { x = 3, y = 4, z = 5 }
     scale(10, u)
-    print_int_line(u.x)
-    print_int_line(widest(u, 6))
-    print_int_line(u.y)
+    print(\"{}\\n\", u.x)
+    print(\"{}\\n\", widest(u, 6))
+    print(\"{}\\n\", u.y)
     0
 }
 ",
@@ -3294,10 +3492,10 @@ counted :: fn(v: []$T) -> i64 {
 main :: fn() -> i64 {
     xs := [1, 2, 3]
     ys := [9, 4]
-    print_int_line(first(xs))
-    print_int_line(first(ys))
-    print_int_line(counted(xs))
-    print_int_line(counted(ys))
+    print(\"{}\\n\", first(xs))
+    print(\"{}\\n\", first(ys))
+    print(\"{}\\n\", counted(xs))
+    print(\"{}\\n\", counted(ys))
     0
 }
 ",
@@ -3335,8 +3533,8 @@ counted :: fn(v: []$T) -> i64 {
 
 main :: fn() -> i64 {
     xs := [3, 9, 4]
-    print_int_line(widest(xs))
-    print_int_line(counted(xs))
+    print(\"{}\\n\", widest(xs))
+    print(\"{}\\n\", counted(xs))
     0
 }
 ",
@@ -3362,7 +3560,7 @@ digit_of :: fn(c: i64) -> i64 ! ParseError {
 }
 
 two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
-    defer print_int_line(99)
+    defer print(\"{}\\n\", 99)
     tens := digit_of(high)?
     ones := digit_of(low)?
     tens * 10 + ones
@@ -3376,8 +3574,8 @@ side :: fn(high: i64, low: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(side(52, 55))
-    print_int_line(side(52, 90))
+    print(\"{}\\n\", side(52, 55))
+    print(\"{}\\n\", side(52, 90))
     0
 }
 ",
@@ -3395,7 +3593,7 @@ main :: fn() -> i64 {
     // ran their deferred statement and then the function answered 0.
     (
         "a_defer_under_a_trailing_branch",
-        "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }
+        "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }
 Kind :: enum { One, Two }
 
 branchy :: fn(c: i64) -> i64 {
@@ -3417,12 +3615,12 @@ pair :: fn() -> (a: i64, b: i64) {
 }
 
 main :: fn() -> i64 {
-    print_int_line(branchy(1))
-    print_int_line(branchy(0 - 1))
-    print_int_line(matchy(Kind::Two))
+    print(\"{}\\n\", branchy(1))
+    print(\"{}\\n\", branchy(0 - 1))
+    print(\"{}\\n\", matchy(Kind::Two))
     x, y := pair()
-    print_int_line(x)
-    print_int_line(y)
+    print(\"{}\\n\", x)
+    print(\"{}\\n\", y)
     0
 }
 ",
@@ -3448,8 +3646,8 @@ main :: fn() -> i64 {
         "import \"io.frost\"\nP :: struct { x: i64 }\n\
          only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(only_plain($i64, 7))\n\
-         \x20   print_int_line(only_plain($P, P { x = 2 }))\n\
+         \x20   print(\"{}\\n\", only_plain($i64, 7))\n\
+         \x20   print(\"{}\\n\", only_plain($P, P { x = 2 }))\n\
          \x20   0\n}\n",
         "1\n1\n",
     ),
@@ -3463,8 +3661,8 @@ main :: fn() -> i64 {
          main :: fn() -> i64 {\n\
          \x20   a := Pair<i64> { first = 1, second = 2 }\n\
          \x20   b : Pair<i64> = Pair { first = 10, second = 20 }\n\
-         \x20   print_int_line(a.first + a.second)\n\
-         \x20   print_int_line(b.first + b.second)\n\
+         \x20   print(\"{}\\n\", a.first + a.second)\n\
+         \x20   print(\"{}\\n\", b.first + b.second)\n\
          \x20   0\n}\n",
         "3\n30\n",
     ),
@@ -3476,7 +3674,7 @@ main :: fn() -> i64 {
         "import \"io.frost\"\nDuo :: struct($A: Type, $B: Type) { first: A, second: B }\n\
          main :: fn() -> i64 {\n\
          \x20   d := Duo { first = 7, second = true }\n\
-         \x20   print_int_line(d.first)\n\
+         \x20   print(\"{}\\n\", d.first)\n\
          \x20   0\n}\n",
         "7\n",
     ),
@@ -3491,7 +3689,7 @@ main :: fn() -> i64 {
          plain :: fn(v: i64) -> i64 { v }\n\
          each :: fn(args: $...) {\n\
          \x20   for v in args {\n\
-         \x20       if (is_linear(v)) { print_int_line(close(v)) } else { print_int_line(plain(v)) }\n\
+         \x20       if (is_linear(v)) { print(\"{}\\n\", close(v)) } else { print(\"{}\\n\", plain(v)) }\n\
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
          \x20   each(File { fd = 7 }, 5)\n\
@@ -3508,11 +3706,11 @@ main :: fn() -> i64 {
         "a_float_converted_to_a_narrow_integer",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   x : f32 = 200.7\n\
-         \x20   print_int_line(cast($i64, cast($u8, x)))\n\
+         \x20   print(\"{}\\n\", cast($i64, cast($u8, x)))\n\
          \x20   y : f64 = 65535.4\n\
-         \x20   print_int_line(cast($i64, cast($u16, y)))\n\
+         \x20   print(\"{}\\n\", cast($i64, cast($u16, y)))\n\
          \x20   s : f32 = -40.9\n\
-         \x20   print_int_line(cast($i64, cast($i8, s)))\n\
+         \x20   print(\"{}\\n\", cast($i64, cast($i8, s)))\n\
          \x20   0\n}\n",
         "200\n65535\n-40\n",
     ),
@@ -3530,8 +3728,8 @@ main :: fn() -> i64 {
          \x20       case _: 2.25\n\
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(cast($i64, pick(0) * 100.0))\n\
-         \x20   print_int_line(cast($i64, pick(1) * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, pick(0) * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, pick(1) * 100.0))\n\
          \x20   0\n}\n",
         "150\n225\n",
     ),
@@ -3547,8 +3745,8 @@ main :: fn() -> i64 {
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
          \x20   got := pick(1)\n\
-         \x20   print_int_line(got.x)\n\
-         \x20   print_int_line(got.y)\n\
+         \x20   print(\"{}\\n\", got.x)\n\
+         \x20   print(\"{}\\n\", got.y)\n\
          \x20   0\n}\n",
         "3\n4\n",
     ),
@@ -3561,7 +3759,7 @@ main :: fn() -> i64 {
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
          \x20   got := pick(1)\n\
-         \x20   print_int_line(got[2])\n\
+         \x20   print(\"{}\\n\", got[2])\n\
          \x20   0\n}\n",
         "6\n",
     ),
@@ -3595,7 +3793,7 @@ main :: fn() -> i64 {
          \x20   count + 1\n}\n\
          main :: fn() -> i64 {\n\
          \x20   var m : Meters = 41\n\
-         \x20   print_int_line(far(ptr_to(m)))\n\
+         \x20   print(\"{}\\n\", far(ptr_to(m)))\n\
          \x20   0\n}\n",
         "42\n",
     ),
@@ -3613,7 +3811,7 @@ main :: fn() -> i64 {
          \x20   0\n}\n\
          main :: fn() -> i64 {\n\
          \x20   var g := no_grip()\n\
-         \x20   print_int_line(same(ptr_to(g)))\n\
+         \x20   print(\"{}\\n\", same(ptr_to(g)))\n\
          \x20   0\n}\n",
         "1\n",
     ),
@@ -3634,10 +3832,10 @@ main :: fn() -> i64 {
          \x20   var b : f32 = 1.1\n\
          \x20   computed := a + b\n\
          \x20   wide : f64 = -2.1 + 1.1\n\
-         \x20   print_int_line(cast($i64, named * 100.0))\n\
-         \x20   print_int_line(cast($i64, written * 100.0))\n\
-         \x20   print_int_line(cast($i64, computed * 100.0))\n\
-         \x20   print_int_line(cast($i64, wide * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, named * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, written * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, computed * 100.0))\n\
+         \x20   print(\"{}\\n\", cast($i64, wide * 100.0))\n\
          \x20   0\n}\n",
         "-99\n-99\n-99\n-100\n",
     ),
@@ -3651,8 +3849,8 @@ main :: fn() -> i64 {
          DEEP :: -3\n\
          main :: fn() -> i64 {\n\
          \x20   lowest : f32 = FLOOR + RISE\n\
-         \x20   print_int_line(cast($i64, lowest * 100.0))\n\
-         \x20   print_int_line(DEEP)\n\
+         \x20   print(\"{}\\n\", cast($i64, lowest * 100.0))\n\
+         \x20   print(\"{}\\n\", DEEP)\n\
          \x20   0\n}\n",
         "-125\n-3\n",
     ),
@@ -3664,7 +3862,7 @@ main :: fn() -> i64 {
          }\n\
          main :: fn() -> i64 {\n\
          \x20   got := pick(1)\n\
-         \x20   print_int_line(got.x + got.y)\n\
+         \x20   print(\"{}\\n\", got.x + got.y)\n\
          \x20   0\n}\n",
         "7\n",
     ),
@@ -3687,17 +3885,17 @@ main :: fn() -> i64 {
          \x20   a : [2]i64 = [1, 2]\n\
          \x20   b : [2]i64 = [3, 4]\n\
          \x20   pair : [2][]i64 = [a, b]\n\
-         \x20   print_int_line(pair[1][0])\n\
+         \x20   print(\"{}\\n\", pair[1][0])\n\
          \x20   texts : [2]str = [\"ab\", \"cd\"]\n\
-         \x20   print_int_line(texts[1][0])\n\
+         \x20   print(\"{}\\n\", texts[1][0])\n\
          \x20   held : Holder = { rows = pair }\n\
-         \x20   print_int_line(held.rows[0][1])\n\
+         \x20   print(\"{}\\n\", held.rows[0][1])\n\
          \x20   var v := vec_new($i64, 2)\n\
          \x20   vec_push($i64, v, 55)\n\
-         \x20   print_int_line(vec_slice($i64, v)[0])\n\
+         \x20   print(\"{}\\n\", vec_slice($i64, v)[0])\n\
          \x20   vec_free($i64, v)\n\
          \x20   var grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
-         \x20   print_int_line(grid[1][1])\n\
+         \x20   print(\"{}\\n\", grid[1][1])\n\
          \x20   0\n}\n",
         "3\n99\n2\n55\n10\n",
     ),
@@ -3720,8 +3918,8 @@ main :: fn() -> i64 {
          Holder :: struct { one: Tight, two: u8 }
          Spread :: struct { a: u8 align(4), b: u8 align(8), c: u8 align(32) }
          walk :: fn($T: Type) {
-             print_int_line(sizeof($T))
-             for field in fields(T) { print_int_line(offset_of(field)) }
+             print(\"{}\\n\", sizeof($T))
+             for field in fields(T) { print(\"{}\\n\", offset_of(field)) }
          }
          main :: fn() -> i64 {
              walk($Plain)
@@ -3731,12 +3929,12 @@ main :: fn() -> i64 {
              walk($Holder)
              walk($Spread)
              t := Tight { a = 1, b = 300, c = 5 }
-             print_int_line(t.a + t.b + t.c)
+             print(\"{}\\n\", t.a + t.b + t.c)
              w := Wide { a = 2, b = 400, c = 6 }
-             print_int_line(w.a + w.b + w.c)
+             print(\"{}\\n\", w.a + w.b + w.c)
              var row : [4]Tight = [Tight { a = 0, b = 0, c = 0 }; 4]
              row[3] = t
-             print_int_line(row[3].b)
+             print(\"{}\\n\", row[3].b)
              0
          }
 ",
@@ -3763,8 +3961,8 @@ main :: fn() -> i64 {
              packed := 7
              align := 3
              h := Held { packed = 10, align = 20 }
-             print_int_line(squeeze(packed, align))
-             print_int_line(h.packed + h.align)
+             print(\"{}\\n\", squeeze(packed, align))
+             print(\"{}\\n\", h.packed + h.align)
              0
          }
 ",
@@ -3810,16 +4008,16 @@ main :: fn() -> i64 {
          WIDE :: digits(40325)
          Buffer :: struct { bytes: [round_up(300, 64)]u8 }
          main :: fn() -> i64 {
-             print_int_line(LANES)
-             print_int_line(SLOTS)
-             print_int_line(SMALL)
-             print_int_line(BIG)
-             print_int_line(NESTED)
-             print_int_line(AROUND)
-             print_int_line(WIDE)
-             print_int_line(sizeof(Buffer))
+             print(\"{}\\n\", LANES)
+             print(\"{}\\n\", SLOTS)
+             print(\"{}\\n\", SMALL)
+             print(\"{}\\n\", BIG)
+             print(\"{}\\n\", NESTED)
+             print(\"{}\\n\", AROUND)
+             print(\"{}\\n\", WIDE)
+             print(\"{}\\n\", sizeof(Buffer))
              var held : [next_power_of_two(100)]i64 = [0; 128]
-             print_int_line(slice_len(held))
+             print(\"{}\\n\", slice_len(held))
              0
          }
 ",
@@ -3839,9 +4037,9 @@ main :: fn() -> i64 {
          SMALLEST :: -9223372036854775807 - 1
          LARGEST :: 9223372036854775807
          main :: fn() -> i64 {
-             print_int_line(SMALLEST)
-             print_int_line(LARGEST)
-             print_int_line(SMALLEST + 1)
+             print(\"{}\\n\", SMALLEST)
+             print(\"{}\\n\", LARGEST)
+             print(\"{}\\n\", SMALLEST + 1)
              0
          }
 ",
@@ -3889,17 +4087,17 @@ main :: fn() -> i64 {
          REPEATED :: repeated()
          Sized :: struct { bytes: [TABLE[3]]u8 }
          main :: fn() -> i64 {
-             print_int_line(SLOTS)
-             print_int_line(DOWN)
-             print_int_line(LETTER)
-             print_int_line(WIDTH)
-             print_int_line(CHOSEN)
-             print_int_line(SUM)
-             print_int_line(CORNER)
-             print_int_line(REPEATED)
-             print_int_line(sizeof(Sized))
-             print_int_line(TABLE[1])
-             print_int_line(ORIGIN.x)
+             print(\"{}\\n\", SLOTS)
+             print(\"{}\\n\", DOWN)
+             print(\"{}\\n\", LETTER)
+             print(\"{}\\n\", WIDTH)
+             print(\"{}\\n\", CHOSEN)
+             print(\"{}\\n\", SUM)
+             print(\"{}\\n\", CORNER)
+             print(\"{}\\n\", REPEATED)
+             print(\"{}\\n\", sizeof(Sized))
+             print(\"{}\\n\", TABLE[1])
+             print(\"{}\\n\", ORIGIN.x)
              0
          }
 ",
@@ -3919,11 +4117,11 @@ main :: fn() -> i64 {
          ROLL :: rolled(9223372036854775807)
          BACK :: backed(-9223372036854775807 - 1)
          main :: fn() -> i64 {
-             print_int_line(MIX)
-             print_int_line(ROLL)
-             print_int_line(BACK)
+             print(\"{}\\n\", MIX)
+             print(\"{}\\n\", ROLL)
+             print(\"{}\\n\", BACK)
              var a : i64 = 9223372036854775807
-             print_int_line(wrap_mul(a, 2654435761))
+             print(\"{}\\n\", wrap_mul(a, 2654435761))
              0
          }
 ",
@@ -3947,8 +4145,8 @@ main :: fn() -> i64 {
              var c : columns<Particle, pow2(5)> = columns_new()
              columns_reset($Particle, $pow2(5), c)
              h := columns_insert($Particle, $pow2(5), c, Particle { x = 7 })
-             print_int_line(c[h].x)
-             print_int_line(sizeof(Buffer))
+             print(\"{}\\n\", c[h].x)
+             print(\"{}\\n\", sizeof(Buffer))
              0
          }
 ",
@@ -3971,7 +4169,7 @@ main :: fn() -> i64 {
          show :: fn(v: [4]f32) {
              var i : i64 = 0
              while (i < 4) {
-                 print_f64_line(cast($f64, v[i]))
+                 print(\"{}\\n\", cast($f64, v[i]))
                  i = i + 1
              }
          }
@@ -3990,19 +4188,19 @@ main :: fn() -> i64 {
              e : [2]f64 = [0.5, 4.0]
              sum := d + e
              quotient := d / e
-             print_f64_line(sum[0])
-             print_f64_line(quotient[1])
+             print(\"{}\\n\", sum[0])
+             print(\"{}\\n\", quotient[1])
              wide : [8]f32 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
              doubled := wide * 2.0
-             print_f64_line(cast($f64, doubled[7]))
+             print(\"{}\\n\", cast($f64, doubled[7]))
              var w : [4]i32 = [1, 2, 3, 4]
              var x : [4]i32 = [10, 20, 30, 40]
              y := w + x
              z := x * 2
              q := x & 12
-             print_int_line(cast($i64, y[0]) + cast($i64, y[3]))
-             print_int_line(cast($i64, z[2]))
-             print_int_line(cast($i64, q[1]))
+             print(\"{}\\n\", cast($i64, y[0]) + cast($i64, y[3]))
+             print(\"{}\\n\", cast($i64, z[2]))
+             print(\"{}\\n\", cast($i64, q[1]))
              0
          }
 ",
@@ -4032,9 +4230,9 @@ main :: fn() -> i64 {
              }
          }
          main :: fn() -> i64 {
-             print_int_line(which(Step::Left))
-             print_int_line(which(Step::Right))
-             print_int_line(which(Step::Up))
+             print(\"{}\\n\", which(Step::Left))
+             print(\"{}\\n\", which(Step::Right))
+             print(\"{}\\n\", which(Step::Up))
              0
          }
 ",
@@ -4055,11 +4253,11 @@ main :: fn() -> i64 {
              while (i < 5) {
                  match i {
                      case 2: { break }
-                     case _: { print_int_line(i) }
+                     case _: { print(\"{}\\n\", i) }
                  }
                  i = i + 1
              }
-             print_int_line(99)
+             print(\"{}\\n\", 99)
              0
          }
 ",
@@ -4101,14 +4299,14 @@ main :: fn() -> i64 {
              }
          }
          main :: fn() -> i64 {
-             print_int_line(digit(48))
-             print_int_line(digit(1))
-             print_int_line(either(true))
-             print_int_line(either(false))
-             print_int_line(overlap(1))
-             print_int_line(overlap(15))
-             print_int_line(pair(0, 48))
-             print_int_line(pair(0, 1))
+             print(\"{}\\n\", digit(48))
+             print(\"{}\\n\", digit(1))
+             print(\"{}\\n\", either(true))
+             print(\"{}\\n\", either(false))
+             print(\"{}\\n\", overlap(1))
+             print(\"{}\\n\", overlap(15))
+             print(\"{}\\n\", pair(0, 48))
+             print(\"{}\\n\", pair(0, 1))
              0
          }
 ",
@@ -4145,14 +4343,14 @@ main :: fn() -> i64 {
              }
          }
          main :: fn() -> i64 {
-             print_int_line(f(4000000000))
-             print_int_line(f(5999999999))
-             print_int_line(f(6000000000))
-             print_int_line(f(2147483647))
-             print_int_line(f(2147483648))
-             print_int_line(f(-2147483648))
-             print_int_line(f(-2147483649))
-             print_int_line(f(9223372036854775807))
+             print(\"{}\\n\", f(4000000000))
+             print(\"{}\\n\", f(5999999999))
+             print(\"{}\\n\", f(6000000000))
+             print(\"{}\\n\", f(2147483647))
+             print(\"{}\\n\", f(2147483648))
+             print(\"{}\\n\", f(-2147483648))
+             print(\"{}\\n\", f(-2147483649))
+             print(\"{}\\n\", f(9223372036854775807))
              0
          }
 ",
@@ -4199,25 +4397,25 @@ main :: fn() -> i64 {
              }
          }
          main :: fn() -> i64 {
-             print_int_line(sideways(Step::Left))
-             print_int_line(sideways(Step::Right))
-             print_int_line(sideways(Step::Up))
-             print_int_line(sideways(Step::Down))
-             print_int_line(qualified(Step::Left))
-             print_int_line(qualified(Step::Down))
-             print_int_line(qualified(Step::Up))
-             print_int_line(classify(97))
-             print_int_line(classify(122))
-             print_int_line(classify(48))
-             print_int_line(classify(57))
-             print_int_line(classify(0))
-             print_int_line(classify(5))
-             print_int_line(classify(9))
-             print_int_line(classify(10))
-             print_int_line(classify(-4))
-             print_int_line(classify(-1))
-             print_int_line(classify(20))
-             print_int_line(classify(21))
+             print(\"{}\\n\", sideways(Step::Left))
+             print(\"{}\\n\", sideways(Step::Right))
+             print(\"{}\\n\", sideways(Step::Up))
+             print(\"{}\\n\", sideways(Step::Down))
+             print(\"{}\\n\", qualified(Step::Left))
+             print(\"{}\\n\", qualified(Step::Down))
+             print(\"{}\\n\", qualified(Step::Up))
+             print(\"{}\\n\", classify(97))
+             print(\"{}\\n\", classify(122))
+             print(\"{}\\n\", classify(48))
+             print(\"{}\\n\", classify(57))
+             print(\"{}\\n\", classify(0))
+             print(\"{}\\n\", classify(5))
+             print(\"{}\\n\", classify(9))
+             print(\"{}\\n\", classify(10))
+             print(\"{}\\n\", classify(-4))
+             print(\"{}\\n\", classify(-1))
+             print(\"{}\\n\", classify(20))
+             print(\"{}\\n\", classify(21))
              0
          }
 ",
@@ -4266,18 +4464,18 @@ main :: fn() -> i64 {
          main :: fn() -> i64 {
              var loose: Phase = .Opening
              loose = .Draining
-             print_int_line(reading(loose))
+             print(\"{}\\n\", reading(loose))
              var h: Holder = { phase = .Opening, mark = 1 }
              h.phase = .Draining
-             print_int_line(reading(h.phase))
+             print(\"{}\\n\", reading(h.phase))
              begin(h)
-             print_int_line(reading(h.phase))
+             print(\"{}\\n\", reading(h.phase))
              var p: Point = { x = 1, y = 2 }
              p = { x = 5, y = 6 }
-             print_int_line(p.x + p.y)
+             print(\"{}\\n\", p.x + p.y)
              var row: [2]Point = [{ x = 1, y = 1 }, { x = 2, y = 2 }]
              row[1] = { x = 7, y = 8 }
-             print_int_line(row[1].x + row[1].y)
+             print(\"{}\\n\", row[1].x + row[1].y)
              0
          }
 ",

@@ -127,7 +127,7 @@ main :: fn() -> i64 {
         mark := bump_mark($1024, scratch)
         with scratch {
             kept := gather(world, round * 3)
-            print_int_line(total_of(kept))
+            print("{}\n", total_of(kept))
         }
         bump_reset($1024, scratch, mark)
         round = round + 1

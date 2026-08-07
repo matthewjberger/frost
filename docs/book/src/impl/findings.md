@@ -180,7 +180,7 @@ fell into the identifier rule and became an ordinary local:
 ```frost,sketch
 high, _ := split(4096)
 a, _    := split(512)      // shadows the first
-print_int_line(high + a + _)   // printed 18 under the self-hosted compiler
+print("{}\n", high + a + _)   // printed 18 under the self-hosted compiler
 ```
 
 `_ := 5` then reading `_` printed 5 there and was two separate errors under the

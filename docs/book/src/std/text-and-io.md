@@ -14,21 +14,8 @@ caller.
 ## `std/io.frost`, writing to standard output
 
 ```frost
-export print_int, print_char, print_str, print_bool, print_f64,
-    print_int_line, print_str_line, print_bool_line, print_f64_line
+export Sink, to_stdout, print, write
 ```
-
-| Call | What it writes |
-| --- | --- |
-| `print_int(value)` | A signed integer in base ten |
-| `print_char(byte)` | One byte |
-| `print_str(text)` | A `str`, in a single call |
-| `print_f64(value)` | A float, the way C writes `%g` |
-| `print_bool(value)` | `1` or `0`, the number a mask or a flag would print |
-| `print_int_line(value)` | An integer and a newline |
-| `print_str_line(text)` | A `str` and a newline |
-| `print_f64_line(value)` | A float and a newline |
-| `print_bool_line(value)` | `1` or `0` and a newline |
 
 This module is the whole of how a program writes output: there is no print
 statement in the language. Without it a program declares the C function it
@@ -38,34 +25,98 @@ FFI, but it is a strange first line for a first program, and it drags in
 `printf`'s format string, which is one more thing to get wrong when what was
 wanted was to print a number.
 
-These go through the runtime's write helpers, which are pinned to standard
-output rather than following the compiler's emit target, so a program that
-redirects emitted text still prints where a reader looks. There is no format
-string and nothing is variadic. Three of the four externs behind them are
-`safe extern`, because each takes a number and there is nothing a caller can
-hand one that misbehaves. The byte writer takes a pointer and a length, so its
-one call sits in an `unsafe` block inside `print_str`, where the length comes
-from the same `str` as the pointer and the two cannot disagree.
-
 ```frost
 import "io.frost"
 
 main :: fn() -> i64 {
-    print_str_line("hello")
-    print_int_line(42)
+    print("hello\n")
+    print("hp {} of {}\n", 12, 20)
     0
 }
 ```
 
-A line built from several values is several calls, with the newline written by
-the one `_line` call at the end:
+`print` takes a format string and as many values as the line names. What it
+writes is the literal, with each `{}` replaced by the next value:
+
+| Written | Means |
+| --- | --- |
+| `{}` | The next value |
+| `{{` | One `{` |
+| `}}` | One `}` |
+| `}` on its own | One `}` |
+
+A value may be a signed or unsigned integer of any width, a float of either
+width, a `bool`, or a `str`. An integer is written in base ten, a float the way
+C writes `%g`, and a `bool` as `1` or `0`, which is the number a mask or a flag
+would print. Nothing is appended: a line ends with the `\n` written into the
+literal.
+
+There are no specifiers. `{}` says where a value goes and the value's type says
+how it is written, so there is no second small language to learn and no way for
+the two to disagree.
+
+### What the compiler checks, and what runs
+
+The count is settled where the call is written. `format` on the parameter is
+what says so:
 
 ```frost,sketch
-print_str("hp ")
-print_int(entity.hp)
-print_str(" of ")
-print_int_line(entity.max)
+print :: fn(format fmt: str, args: $...)
 ```
+
+A `format` parameter must be given a string literal, and the holes that literal
+opens are counted against the compile-time list that follows it. A call that
+names more holes than it gives values, gives more values than it names holes,
+opens a hole it never closes, or hands over a value no writer takes, is refused
+at the line the call is written on:
+
+```
+this format string opens 2 hole(s) and the call gives 1 value(s)
+a '{' in a format string opens a hole or stands for one brace, so write '{}' or '{{'
+a format string is written as a literal, since how many values follow it is settled where the call is written
+a format string writes a number, a yes or no, or a str, and this is a Point
+```
+
+`args: $...` is an ordinary [compile-time list](../reference/generics.md), so
+the body walks it with `for` and asks each value's type what it is. Those
+questions are answered while the body is expanded and the arms that lose are
+deleted, so what a call compiles to is one direct write per value with the
+choice already made. Nothing is dispatched at run time and nothing is boxed.
+
+What is left at run time is a walk over the literal's own bytes, looking for the
+next hole. A literal with no doubled brace in it is written in one call per run.
+
+### Where the bytes go
+
+A destination is a `Sink`: the three writes a formatted line is made of.
+
+```frost
+Sink :: struct {
+    bytes: fn(str),
+    int: fn(i64),
+    float: fn(f64),
+}
+```
+
+`print` is `write` to `to_stdout`. A program that wants its text somewhere else
+declares its own `Sink` and calls `write`:
+
+```frost,sketch
+var log := Sink { bytes = to_file, int = digits_to_file, float = real_to_file }
+write($log, "frame {} took {}ms\n", index, elapsed)
+```
+
+The `$` is what keeps that call direct: a compile-time argument is folded, so
+`sink.bytes(...)` inside `write` is a call to `to_file` by name rather than a
+call through a field.
+
+The writers behind `to_stdout` go through the runtime's write helpers, which are
+pinned to standard output rather than following the compiler's emit target, so a
+program that redirects emitted text still prints where a reader looks. Two of
+the three externs behind them are `safe extern`, because each takes a number and
+there is nothing a caller can hand one that misbehaves. The byte writer takes a
+pointer and a length, so its one call sits in an `unsafe` block, where the
+length comes from the same `str` as the pointer and the two cannot disagree.
 
 ## `std/strings.frost`, questions about text
 
@@ -113,7 +164,7 @@ can differ.
 
 A `Builder` is a `Vec<u8>` under a name that says what it is for. Everything
 here appends to one, so a caller assembles a line from parts and prints or
-writes it once rather than one `print_int` at a time.
+writes it once rather than a write per part.
 
 ```frost
 Builder :: struct { bytes: Vec<u8> }
@@ -136,7 +187,7 @@ var out := builder_new(256)
 builder_str_value(out, "frames: ")
 builder_int(out, count)
 builder_byte(out, 10)
-print_str(builder_str(out))
+print("{}", builder_str(out))
 builder_free(out)
 ```
 

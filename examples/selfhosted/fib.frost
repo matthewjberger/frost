@@ -13,9 +13,9 @@ fib :: fn(n: i64) -> i64 {
 main :: fn() -> i64 {
     var i: i64 = 0
     while (i < 10) {
-        print_int_line(fib(i))
+        print("{}\n", fib(i))
         i = i + 1
     }
-    print_int_line(6 * 7)
+    print("{}\n", 6 * 7)
     0
 }

@@ -310,7 +310,7 @@ mask_with :: fn(m: Mask, index: i64) -> Mask {
 **Antipattern.**
 
 ```frost,sketch
-print_cstr :: fn(text: ^i8)
+log_line :: fn(text: ^i8)
 fs_read :: fn(path: ^i8) -> ReadResult
 ```
 
@@ -320,7 +320,7 @@ needs no `unsafe` to make the promise, so the danger is invisible at both ends.
 **Instead**, take a `str`, which carries its length:
 
 ```frost,sketch
-print_str :: fn(text: str)
+log_line :: fn(text: str)
 fs_read :: fn(path: str) -> ReadResult
 ```
 

@@ -254,8 +254,8 @@ variant (6.7):
 
 ```frost,sketch
 match number(text) {
-    case .Ok { value }: { print_int_line(value) }
-    case .Err { error }: { print_int_line(error.at) }
+    case .Ok { value }: { print("{}\n", value) }
+    case .Err { error }: { print("{}\n", error.at) }
 }
 ```
 

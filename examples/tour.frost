@@ -110,24 +110,24 @@ main :: fn() -> i64 {
     // leaves out its enum. Every field is still named.
     var hero: Entity = { hp = 90, kind =.Hero }
     heal(hero, 10) // hero is borrowed and changed
-    print_int_line(hero.hp) // 100
-    print_int_line(attack(hero)) // 10
+    print("{}\n", hero.hp) // 100
+    print("{}\n", attack(hero)) // 10
 
-    print_int_line(damage_of(hero)) // 20
+    print("{}\n", damage_of(hero)) // 20
 
     party: [3]Entity = [ { hp = 100, kind =.Hero },
         { hp = 40, kind =.Monster { damage = 12 } },
         { hp = 25, kind =.Monster { damage = 30 } },
     ]
     total, strongest := tally(party)
-    print_int_line(total) // 52
-    print_int_line(strongest) // 30
+    print("{}\n", total) // 52
+    print("{}\n", strongest) // 30
 
     // `_` takes a value the caller has no use for. A call that can fail may not
     // be written as a statement, so this is also how an answer is meant to go
     // unread.
     _, best := tally(party)
-    print_int_line(best) // 30
+    print("{}\n", best) // 30
 
     // A columns container stores each field of `Particle` in its own array, so
     // a pass over one field strides it rather than stepping over the rest.
@@ -146,27 +146,27 @@ main :: fn() -> i64 {
     for slot in live_slots(swarm) {
         walked = walked + swarm.x[slot]
     }
-    print_int_line(walked) // 26, the 0..7 that are still there without the 2
+    print("{}\n", walked) // 26, the 0..7 that are still there without the 2
 
     // A handle carries which container it came from, so one from another pool
     // of the same shape is refused rather than read.
     var spare: columns<Particle, 8> = columns_new()
     columns_reset($Particle, $8, spare)
-    print_int_line(cast($i64, columns_alive($Particle, $8, spare, made[0]))) // 0
+    print("{}\n", cast($i64, columns_alive($Particle, $8, spare, made[0]))) // 0
 
     // Nine bytes rather than twelve, and the widest field's request decides
     // the whole type.
-    print_int_line(sizeof(Header)) // 9
-    print_int_line(sizeof(Block)) // 32
-    print_int_line(LANES) // 320, worked out before this program ran
-    print_int_line(WIDEST) // 32, read out of a table the compiler holds
+    print("{}\n", sizeof(Header)) // 9
+    print("{}\n", sizeof(Block)) // 32
+    print("{}\n", LANES) // 320, worked out before this program ran
+    print("{}\n", WIDEST) // 32, read out of a table the compiler holds
 
     left: [4]f32 = [1.0, 2.0, 3.0, 4.0]
     right: [4]f32 = [5.0, 6.0, 7.0, 8.0]
     lanes := mix(left, right) * 2.0
-    print_int_line(cast($i64, lanes[3])) // 72
+    print("{}\n", cast($i64, lanes[3])) // 72
 
     s := Session { id = 7 }
-    print_int_line(close(s)) // s cannot be named again
+    print("{}\n", close(s)) // s cannot be named again
     0
 }

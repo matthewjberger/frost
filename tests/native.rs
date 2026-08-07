@@ -138,7 +138,7 @@ split :: fn(mut source: [4]i64) -> (view: []i64, count: i64) {\n\
 main :: fn() -> i64 {\n\
 \x20   var data : [4]i64 = [11, 22, 33, 44]\n\
 \x20   view, count := split(data)\n\
-\x20   print_int_line(view[0] + count)\n\
+\x20   print(\"{}\\n\", view[0] + count)\n\
 \x20   0\n\
 }\n";
     let Some(output) = compile_and_run_unaudited("multiindex", source) else {
@@ -167,7 +167,7 @@ main :: fn() -> i64 {\n\
 \x20   with arena {\n\
 \x20       total = bump()\n\
 \x20   }\n\
-\x20   print_int_line(total)\n\
+\x20   print(\"{}\\n\", total)\n\
 \x20   0\n\
 }\n";
     let Some(output) = compile_and_run_unaudited("usesindex", source) else {
@@ -195,7 +195,7 @@ main :: fn() -> i64 {\n\
 \x20   view := pair_right(pair)\n\
 \x20   pair_grow(pair, 1)\n\
 \x20   pair_grow(pair, 2)\n\
-\x20   print_int_line(view[0])\n\
+\x20   print(\"{}\\n\", view[0])\n\
 \x20   pair_free(pair)\n\
 \x20   0\n\
 }\n";
@@ -221,7 +221,7 @@ main :: fn() -> i64 {\n\
 \x20       view = vec_slice($i64, v)\n\
 \x20       count = count + 1\n\
 \x20   }\n\
-\x20   print_int_line(view[0])\n\
+\x20   print(\"{}\\n\", view[0])\n\
 \x20   vec_free($i64, v)\n\
 \x20   0\n\
 }\n";
@@ -248,7 +248,7 @@ main :: fn() -> i64 {\n\
 \x20       vec_push($i64, v, count)\n\
 \x20       count = count + 1\n\
 \x20   }\n\
-\x20   print_int_line(held)\n\
+\x20   print(\"{}\\n\", held)\n\
 \x20   vec_free($i64, v)\n\
 \x20   0\n\
 }\n";
@@ -270,10 +270,10 @@ main :: fn() -> i64 {\n\
 \x20   var v := vec_new($i64, 1)\n\
 \x20   vec_push($i64, v, 111)\n\
 \x20   view := passthrough(vec_slice($i64, v))\n\
-\x20   print_int_line(view[0])\n\
+\x20   print(\"{}\\n\", view[0])\n\
 \x20   vec_push($i64, v, 222)\n\
 \x20   again := passthrough(vec_slice($i64, v))\n\
-\x20   print_int_line(again[1])\n\
+\x20   print(\"{}\\n\", again[1])\n\
 \x20   vec_free($i64, v)\n\
 \x20   0\n\
 }\n";
@@ -1197,7 +1197,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", total(trip)) }
 
     leg := Leg { distance = 12, took = 1.5 }
-    print_f64_line(elapsed(leg.took, 4.25))
+    print("{}\n", elapsed(leg.took, 4.25))
     unsafe { printf("%lld\n", leg.distance) }
 
     var marks : [3]Meters = [1, 2, 3]
@@ -1300,10 +1300,10 @@ const SELF_HOSTED_DISTINCT: &str = "import \"io.frost\"\nMeters :: distinct i64\
      main :: fn() -> i64 {\n\
      \x20   a : Meters = 3\n\
      \x20   b : Meters = 4\n\
-     \x20   print_int_line(add_meters(a, b))\n\
+     \x20   print(\"{}\\n\", add_meters(a, b))\n\
      \x20   leg := Leg { distance = 12, took = 1.5 }\n\
-     \x20   print_f64_line(elapsed(leg.took, 4.25))\n\
-     \x20   print_int_line(leg.distance)\n\
+     \x20   print(\"{}\\n\", elapsed(leg.took, 4.25))\n\
+     \x20   print(\"{}\\n\", leg.distance)\n\
      \x20   0\n\
      }\n";
 
@@ -1342,17 +1342,17 @@ const DISTINCT_ARITHMETIC: &str = "import \"io.frost\"\nMask :: distinct u32\n\
      main :: fn() -> i64 {\n\
      \x20   a : Mask = 16\n\
      \x20   b : Mask = 32\n\
-     \x20   print_int_line(bits(a | b))\n\
-     \x20   print_int_line(bits(a & a))\n\
-     \x20   print_int_line(bits(a + b))\n\
+     \x20   print(\"{}\\n\", bits(a | b))\n\
+     \x20   print(\"{}\\n\", bits(a & a))\n\
+     \x20   print(\"{}\\n\", bits(a + b))\n\
      \x20   n : Count = 3\n\
-     \x20   print_int_line(total(n << 2))\n\
-     \x20   print_int_line(total(n >> 1))\n\
-     \x20   print_int_line(total(n * n))\n\
+     \x20   print(\"{}\\n\", total(n << 2))\n\
+     \x20   print(\"{}\\n\", total(n >> 1))\n\
+     \x20   print(\"{}\\n\", total(n * n))\n\
      \x20   both : Mask = a | b\n\
-     \x20   print_int_line(bits(both))\n\
+     \x20   print(\"{}\\n\", bits(both))\n\
      \x20   if (a < b) {\n\
-     \x20       print_int_line(1)\n\
+     \x20       print(\"{}\\n\", 1)\n\
      \x20   }\n\
      \x20   0\n\
      }\n";
@@ -1405,15 +1405,15 @@ const FLAGS: &str = "import \"io.frost\"\nInitFlags :: flags u32 {
      started :: fn(f: InitFlags) -> u32 { f }
      opened :: fn(f: WindowFlags) -> u64 { f }
      main :: fn() -> i64 {
-         print_int_line(started(InitFlags::Video))
-         print_int_line(started(InitFlags::Video | InitFlags::Audio))
+         print(\"{}\\n\", started(InitFlags::Video))
+         print(\"{}\\n\", started(InitFlags::Video | InitFlags::Audio))
          chosen := InitFlags::Video | InitFlags::Events
-         print_int_line(started(chosen & InitFlags::Events))
-         if (flags_has(chosen, InitFlags::Video)) { print_int_line(1) }
-         if (flags_has(chosen, InitFlags::Audio) == false) { print_int_line(2) }
-         if (chosen == InitFlags::Video | InitFlags::Events) { print_int_line(3) }
-         if (chosen != InitFlags::Audio) { print_int_line(4) }
-         print_int_line(opened(WindowFlags::Resizable | WindowFlags::Fullscreen))
+         print(\"{}\\n\", started(chosen & InitFlags::Events))
+         if (flags_has(chosen, InitFlags::Video)) { print(\"{}\\n\", 1) }
+         if (flags_has(chosen, InitFlags::Audio) == false) { print(\"{}\\n\", 2) }
+         if (chosen == InitFlags::Video | InitFlags::Events) { print(\"{}\\n\", 3) }
+         if (chosen != InitFlags::Audio) { print(\"{}\\n\", 4) }
+         print(\"{}\\n\", opened(WindowFlags::Resizable | WindowFlags::Fullscreen))
          0
      }
 ";
@@ -1465,8 +1465,8 @@ fn flags_is_still_a_name() {
          Holder :: struct { flags: i64 }
          main :: fn() -> i64 {
              flags := Holder { flags = 7 }
-             print_int_line(flags.flags)
-             print_int_line(take(Mask::One | Mask::Two))
+             print(\"{}\\n\", flags.flags)
+             print(\"{}\\n\", take(Mask::One | Mask::Two))
              0
          }
 ";
@@ -1492,44 +1492,44 @@ fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
 ";
     let cases = [
         // Another flags type.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(WindowFlags::Resizable))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(WindowFlags::Resizable))  0 }
 ",
          "built only from the names declared under it"),
         // A number, which a distinct type would have taken from the context.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(48))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(48))  0 }
 ",
          "a number is not one of them"),
-        ("import \"io.frost\"\nmain :: fn() -> i64 { f : InitFlags = 5  print_int_line(started(f))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { f : InitFlags = 5  print(\"{}\\n\", started(f))  0 }
 ",
          "a number is not one of them"),
         // The representation.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { n : u32 = 48  print_int_line(started(n))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { n : u32 = 48  print(\"{}\\n\", started(n))  0 }
 ",
          "built only from the names declared under it"),
         // Operators a set of bits does not answer.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(InitFlags::Video + InitFlags::Audio))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(InitFlags::Video + InitFlags::Audio))  0 }
 ",
          "is not something two sets answer"),
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(InitFlags::Video << 1))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(InitFlags::Video << 1))  0 }
 ",
          "is not something two sets answer"),
-        ("import \"io.frost\"\nmain :: fn() -> i64 { if (InitFlags::Video < InitFlags::Audio) { print_int_line(1) }  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { if (InitFlags::Video < InitFlags::Audio) { print(\"{}\\n\", 1) }  0 }
 ",
          "is not something two sets answer"),
         // Two different sets combined.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(InitFlags::Video | WindowFlags::Resizable))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(InitFlags::Video | WindowFlags::Resizable))  0 }
 ",
          "combines only with itself"),
         // A bit the type does not name.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(InitFlags::Gamepad))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(InitFlags::Gamepad))  0 }
 ",
          "no bit called"),
         // And the same through flags_has.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { if (flags_has(InitFlags::Video, 32)) { print_int_line(1) }  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { if (flags_has(InitFlags::Video, 32)) { print(\"{}\\n\", 1) }  0 }
 ",
          "a number is not one of them"),
         // And a number written straight into a combination.
-        ("import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(started(InitFlags::Video | 4))  0 }
+        ("import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", started(InitFlags::Video | 4))  0 }
 ",
          "a number is not one of them"),
     ];
@@ -1586,12 +1586,12 @@ const BINDING_COPIES: &str =
      main :: fn() -> i64 {
          q := Pair { a = 1, b = 2 }
          r := bump(q)
-         print_int_line(r.a)
-         print_int_line(q.a)
+         print(\"{}\\n\", r.a)
+         print(\"{}\\n\", q.a)
          h := Held { items = [0, 0, 0, 0] }
          k := first(h)
-         print_int_line(k.items[0])
-         print_int_line(h.items[0])
+         print(\"{}\\n\", k.items[0])
+         print(\"{}\\n\", h.items[0])
          0
      }
 ";
@@ -1666,9 +1666,9 @@ const WIDE_FRAME: &str =
              total = total + held.rows[i] + other.rows[i]
              i = i + 1
          }
-         print_int_line(total)
-         print_int_line(held.rows[899])
-         print_int_line(other.rows[0])
+         print(\"{}\\n\", total)
+         print(\"{}\\n\", held.rows[899])
+         print(\"{}\\n\", other.rows[0])
          0
      }
 ";
@@ -1713,14 +1713,14 @@ const PACK_FEATURES: &str =
      }
      Big :: struct { a: i64, b: i64, c: i64 }
      show2 :: fn(a: i64, b: i64) {
-         print_int_line(a)
-         print_int_line(b)
+         print(\"{}\\n\", a)
+         print(\"{}\\n\", b)
      }
      doubled :: fn(v: i64) -> i64 { v * 2 }
      show3 :: fn(a: i64, b: i64, c: i64) {
-         print_int_line(a)
-         print_int_line(b)
-         print_int_line(c)
+         print(\"{}\\n\", a)
+         print(\"{}\\n\", b)
+         print(\"{}\\n\", c)
      }
      apply :: fn($body: fn(i64, i64, i64), values: $...) {
          body(doubled(v) for v in values)
@@ -1738,7 +1738,7 @@ const PACK_FEATURES: &str =
      main :: fn() -> i64 {
          widths($show2, $i64, $Big)
          apply($show3, 1, 2, 3)
-         print_int_line(passed_on(4, 5, 6))
+         print(\"{}\\n\", passed_on(4, 5, 6))
          0
      }
 ";
@@ -1757,11 +1757,11 @@ const TYPE_IDS: &str = "import \"io.frost\"\nA :: struct { x: i64 }
      B :: struct { y: i64 }
      ident :: fn($T: Type) -> i64 { type_id(T) }
      main :: fn() -> i64 {
-         print_bool_line(type_id($A) == type_id($A))
-         print_bool_line(type_id($A) == type_id($B))
-         print_bool_line(ident($A) == type_id($A))
-         print_bool_line(ident($B) == type_id($A))
-         print_bool_line(type_id($i64) == type_id($u8))
+         print(\"{}\\n\", type_id($A) == type_id($A))
+         print(\"{}\\n\", type_id($A) == type_id($B))
+         print(\"{}\\n\", ident($A) == type_id($A))
+         print(\"{}\\n\", ident($B) == type_id($A))
+         print(\"{}\\n\", type_id($i64) == type_id($u8))
          0
      }
 ";
@@ -1841,7 +1841,7 @@ const LOOP_CONTROL: &str = "import \"io.frost\"\nmain :: fn() -> i64 {
              if (i == 7) { break }
              sum = sum + i
          }
-         print_int_line(sum)
+         print(\"{}\\n\", sum)
          var outer : i64 = 0
          var total : i64 = 0
          while (outer < 3) {
@@ -1854,7 +1854,7 @@ const LOOP_CONTROL: &str = "import \"io.frost\"\nmain :: fn() -> i64 {
                  total = total + 1
              }
          }
-         print_int_line(total)
+         print(\"{}\\n\", total)
          0
      }
 ";
@@ -1950,9 +1950,9 @@ const LINEAR_TRAILING_CALL: &str =
 
      main :: fn() -> i64 {
          through_call := forward(21)
-         print_int_line(release(through_call))
+         print(\"{}\\n\", release(through_call))
          through_literal := literal(7)
-         print_int_line(release(through_literal))
+         print(\"{}\\n\", release(through_literal))
          0
      }
 ";
@@ -2018,8 +2018,8 @@ const LINEAR_NESTED_ARGUMENT: &str =
      }
 
      main :: fn() -> i64 {
-         print_int_line(twice(release(make_holder(21))))
-         print_int_line(release(make_holder(3)))
+         print(\"{}\\n\", twice(release(make_holder(21))))
+         print(\"{}\\n\", release(make_holder(3)))
          0
      }
 ";
@@ -2100,9 +2100,9 @@ const STRING_CONSTANT: &str = "import \"io.frost\"\nGREETING :: \"hello\"
      PROP :: \"SDL.window.win32.hwnd\"
      shout :: fn(text: str) -> i64 { str_len(text) }
      main :: fn() -> i64 {
-         print_str_line(GREETING)
-         print_int_line(shout(GREETING))
-         print_int_line(shout(PROP))
+         print(\"{}\\n\", GREETING)
+         print(\"{}\\n\", shout(GREETING))
+         print(\"{}\\n\", shout(PROP))
          0
      }
 ";
@@ -2387,7 +2387,7 @@ fn a_for_walks_a_sequence() {
 fn a_for_over_something_that_is_not_a_sequence_says_so() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   n := 7\n\
-                  \x20   for x in n { print_int_line(x) }\n\
+                  \x20   for x in n { print(\"{}\\n\", x) }\n\
                   \x20   0\n\
                   }\n";
     let message = compile_error("fornotseq", source);
@@ -2573,12 +2573,12 @@ narrow :: fn() -> i32 { 7 }
 byte :: fn() -> u8 { 200 }
 
 main :: fn() -> i64 {
-    print_int_line(answered(1))
-    print_int_line(answered(-1))
-    print_int_line(narrow())
-    print_int_line(byte())
-    print_bool_line(true)
-    print_bool_line(3 < 4)
+    print("{}\n", answered(1))
+    print("{}\n", answered(-1))
+    print("{}\n", narrow())
+    print("{}\n", byte())
+    print("{}\n", true)
+    print("{}\n", 3 < 4)
     0
 }
 "#;
@@ -2734,7 +2734,7 @@ main :: fn() -> i64 {
             result = result + only_one()
         }
     }
-    print_int_line(result)
+    print("{}\n", result)
     0
 }
 "#;
@@ -2868,7 +2868,7 @@ const TYPE_ARGUMENT_STORAGE: &str = "import \"io.frost\"\nimport \"mem.frost\"\n
      main :: fn() -> i64 {\n\
      \x20   var s := make()\n\
      \x20   s.room[0] = 5\n\
-     \x20   print_int_line(s.room[0])\n\
+     \x20   print(\"{}\\n\", s.room[0])\n\
      \x20   heap_release_slice($i64, s.room)\n\
      \x20   0\n\
      }\n";
@@ -2911,7 +2911,7 @@ const RESOURCE_INTO_A_STRUCT: &str = "import \"io.frost\"\nHeld :: linear struct
      pair_close :: fn(move p: Pair) -> i64 { close(p.one) + p.tag }\n\
      main :: fn() -> i64 {\n\
      \x20   var p := pair_new()\n\
-     \x20   print_int_line(pair_close(p))\n\
+     \x20   print(\"{}\\n\", pair_close(p))\n\
      \x20   0\n\
      }\n";
 
@@ -2955,7 +2955,7 @@ const RESOURCE_INTO_AN_ARRAY: &str = "import \"io.frost\"\nHeld :: linear struct
      \x20   [one, two]\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(both(pair()))\n\
+     \x20   print(\"{}\\n\", both(pair()))\n\
      \x20   0\n\
      }\n";
 
@@ -2995,7 +2995,7 @@ const COMPONENT_AN_ENTITY_LACKS: &str = "import \"io.frost\"\nimport \"ecs.frost
      \x20   other := ecs_register($Other, world)\n\
      \x20   entity := ecs_spawn_with(world, mask_with(mask_empty(), held))\n\
      \x20   ecs_set($Other, world, entity, other, Other { n = 5 })\n\
-     \x20   print_int_line(0)\n\
+     \x20   print(\"{}\\n\", 0)\n\
      \x20   ecs_free(world)\n\
      \x20   0\n\
      }\n";
@@ -3037,8 +3037,8 @@ const SHARED_VARIANT_NAME: &str = "import \"io.frost\"\nStage :: enum { First, R
      \x20   }\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(stage_at(Stage::Render))\n\
-     \x20   print_int_line(pass_at(Pass::Render))\n\
+     \x20   print(\"{}\\n\", stage_at(Stage::Render))\n\
+     \x20   print(\"{}\\n\", pass_at(Pass::Render))\n\
      \x20   0\n\
      }\n";
 
@@ -3185,12 +3185,12 @@ const SELF_HOSTED_WIDTHS: &str = "import \"io.frost\"\nMixed :: struct { a: i32,
      \x20   var byte : u8 = 200\n\
      \x20   var big : u32 = 4000000000\n\
      \x20   var wide : usize = 9000000000\n\
-     \x20   print_int_line(small)\n    print_int_line(tiny)\n    print_int_line(byte)\n    print_int_line(big)\n\
-     \x20   print_int_line(wide)\n    print_int_line(sizeof(Mixed))\n\
+     \x20   print(\"{}\\n\", small)\n    print(\"{}\\n\", tiny)\n    print(\"{}\\n\", byte)\n    print(\"{}\\n\", big)\n\
+     \x20   print(\"{}\\n\", wide)\n    print(\"{}\\n\", sizeof(Mixed))\n\
      \x20   m := Mixed { a = -7, b = 9, c = 250, d = 123456789 }\n\
-     \x20   print_int_line(m.a)\n    print_int_line(m.b)\n    print_int_line(m.c)\n    print_int_line(m.d)\n\
+     \x20   print(\"{}\\n\", m.a)\n    print(\"{}\\n\", m.b)\n    print(\"{}\\n\", m.c)\n    print(\"{}\\n\", m.d)\n\
      \x20   ptr := ptr_to(m)\n    unsafe { ptr^.a = -1 }\n\
-     \x20   print_int_line(m.a)\n    print_int_line(m.d)\n    0\n}\n";
+     \x20   print(\"{}\\n\", m.a)\n    print(\"{}\\n\", m.d)\n    0\n}\n";
 
 const WIDTHS_EXPECTED: &str = "-5\n300\n200\n4000000000\n9000000000\n16\n-7\n9\n250\n123456789\n-1\n123456789\n";
 
@@ -3227,15 +3227,15 @@ const SELF_HOSTED_FLOATS: &str = "import \"io.frost\"\nscale :: fn(v: f64, by: f
      Pair :: struct { x: f64, y: f32 }\n\
      main :: fn() -> i64 {\n\
      \x20   a := 3.5\n    b := 2.0\n\
-     \x20   print_f64_line(a + b)\n    print_f64_line(a - b)\n    print_f64_line(a * b)\n    print_f64_line(a / b)\n\
-     \x20   print_f64_line(scale(a, 4.0))\n\
-     \x20   var small : f32 = 1.25\n    print_f64_line(small)\n    print_f64_line(narrow(small))\n\
-     \x20   print_int_line(sizeof(Pair))\n\
+     \x20   print(\"{}\\n\", a + b)\n    print(\"{}\\n\", a - b)\n    print(\"{}\\n\", a * b)\n    print(\"{}\\n\", a / b)\n\
+     \x20   print(\"{}\\n\", scale(a, 4.0))\n\
+     \x20   var small : f32 = 1.25\n    print(\"{}\\n\", small)\n    print(\"{}\\n\", narrow(small))\n\
+     \x20   print(\"{}\\n\", sizeof(Pair))\n\
      \x20   pr := Pair { x = 9.75, y = 0.5 }\n\
-     \x20   print_f64_line(pr.x)\n    print_f64_line(pr.y)\n\
-     \x20   if (a > b) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   if (a < b) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   var n : i64 = 7\n    d := n * 1.0\n    print_f64_line(d / 2.0)\n    0\n}\n";
+     \x20   print(\"{}\\n\", pr.x)\n    print(\"{}\\n\", pr.y)\n\
+     \x20   if (a > b) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+     \x20   if (a < b) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+     \x20   var n : i64 = 7\n    d := n * 1.0\n    print(\"{}\\n\", d / 2.0)\n    0\n}\n";
 
 const FLOATS_EXPECTED: &str =
     "5.5\n1.5\n7\n1.75\n14\n1.25\n1.75\n16\n9.75\n0.5\n1\n0\n3.5\n";
@@ -3276,12 +3276,12 @@ const SELF_HOSTED_ARRAYS: &str = "import \"io.frost\"\nsum :: fn(numbers: []i64)
      main :: fn() -> i64 {\n\
      \x20   scores := [40, 10, 90, 30, 70]\n\
      \x20   view : []i64 = scores\n\
-     \x20   print_int_line(slice_len(scores))\n    print_int_line(slice_len(view))\n\
-     \x20   print_int_line(scores[2])\n    print_int_line(view[3])\n\
-     \x20   print_int_line(sum(view))\n    print_int_line(sum(scores))\n\
-     \x20   print_int_line(sizeof([5]i64))\n\
+     \x20   print(\"{}\\n\", slice_len(scores))\n    print(\"{}\\n\", slice_len(view))\n\
+     \x20   print(\"{}\\n\", scores[2])\n    print(\"{}\\n\", view[3])\n\
+     \x20   print(\"{}\\n\", sum(view))\n    print(\"{}\\n\", sum(scores))\n\
+     \x20   print(\"{}\\n\", sizeof([5]i64))\n\
      \x20   var grid : [3]i64 = [7, 8, 9]\n\
-     \x20   grid[1] = 99\n    print_int_line(grid[1])\n    print_int_line(sum(grid))\n    0\n}\n";
+     \x20   grid[1] = 99\n    print(\"{}\\n\", grid[1])\n    print(\"{}\\n\", sum(grid))\n    0\n}\n";
 
 const ARRAYS_EXPECTED: &str = "5\n5\n90\n30\n240\n240\n40\n99\n115\n";
 
@@ -3318,8 +3318,8 @@ fn self_hosted_boolean_operators_short_circuit() {
          \x20   var ok : [1]i64 = [0]\n    ok[5] = 1\n    1\n}\n\
          main :: fn() -> i64 {\n\
          \x20   var n : i64 = 0\n\
-         \x20   if (n == 1 && trap() == 1) { print_int_line(9) } else { print_int_line(1) }\n\
-         \x20   if (n == 0 || trap() == 1) { print_int_line(2) } else { print_int_line(8) }\n    0\n}\n";
+         \x20   if (n == 1 && trap() == 1) { print(\"{}\\n\", 9) } else { print(\"{}\\n\", 1) }\n\
+         \x20   if (n == 0 || trap() == 1) { print(\"{}\\n\", 2) } else { print(\"{}\\n\", 8) }\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("shortcircuit", source)
     else {
         return;
@@ -3342,7 +3342,7 @@ fn self_hosted_runs_test_blocks() {
          test \"doubling\" {\n\
          \x20   assert(double(2) == 4)\n    assert(double(0) == 0)\n}\n\
          test \"a failing one\" {\n    assert(double(2) == 5)\n}\n\
-         main :: fn() -> i64 { print_int_line(double(21))  0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", double(21))  0 }\n",
     )
     .unwrap();
     let runtime =
@@ -3467,7 +3467,7 @@ fn self_hosted_threads_share_a_counter() {
          \x20   t1 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w1))) }\n\
          \x20   t2 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w2))) }\n\
          \x20   join(t1)  join(t2)\n\
-         \x20   print_int_line(total)\n    0\n}\n",
+         \x20   print(\"{}\\n\", total)\n    0\n}\n",
     )
     .unwrap();
     let c_path = directory.join("threads.c");
@@ -3603,7 +3603,7 @@ fn a_call_argument_does_not_hide_a_gated_operation() {
             "import \"io.frost\"\nmain :: fn() -> i64 {\n\
              \x20   var x : i64 = 42\n\
              \x20   p := ptr_to(x)\n\
-             \x20   print_int_line(p^)\n\
+             \x20   print(\"{}\\n\", p^)\n\
              \x20   0\n}\n",
             "reading through a raw pointer",
         ),
@@ -3612,7 +3612,7 @@ fn a_call_argument_does_not_hide_a_gated_operation() {
             "import \"io.frost\"\nmain :: fn() -> i64 {\n\
              \x20   var xs : [3]i64 = [7, 8, 9]\n\
              \x20   p := ptr_to(xs[0])\n\
-             \x20   print_int_line(p[100000])\n\
+             \x20   print(\"{}\\n\", p[100000])\n\
              \x20   0\n}\n",
             "indexing a raw pointer",
         ),
@@ -3620,7 +3620,7 @@ fn a_call_argument_does_not_hide_a_gated_operation() {
             "printextern",
             "import \"io.frost\"\nabs :: extern fn(n: i32) -> i32\n\
              main :: fn() -> i64 {\n\
-             \x20   print_int_line(abs(0 - 5))\n\
+             \x20   print(\"{}\\n\", abs(0 - 5))\n\
              \x20   0\n}\n",
             "calling the C function 'abs'",
         ),
@@ -3680,7 +3680,7 @@ fn a_ref_local_carries_the_type_of_what_it_names() {
                   main :: fn() -> i64 {\n\
                   \x20   var items := [Outer { inner = Inner { cells = [1, 2, 3, 4] } }]\n\
                   \x20   ref held := items[0]\n\
-                  \x20   print_int_line(held.inner.cells[2])\n\
+                  \x20   print(\"{}\\n\", held.inner.cells[2])\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("reftype", source) else {
         return;
@@ -3697,7 +3697,7 @@ fn a_ref_to_a_raw_pointer_indexes_as_a_raw_pointer() {
                   \x20   var cells := [1, 2, 3, 4]\n\
                   \x20   var here := unsafe { ptr_to(cells[0]) }\n\
                   \x20   ref aliased := here\n\
-                  \x20   print_int_line(aliased[1])\n\
+                  \x20   print(\"{}\\n\", aliased[1])\n\
                   \x20   0\n}\n";
     let message = compile_error_checked("refptrindex", source);
     assert!(
@@ -3738,8 +3738,8 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          \x20   while (j < vec_len($i64, v)) {\n\
          \x20       builder_int(b, vec_get($i64, v, j))  builder_byte(b, 32)  j = j + 1\n\
          \x20   }\n\
-         \x20   print_str_line(builder_str(b))\n\
-         \x20   if (str_eq(\"frost\", \"frost\")) { print_str_line(\"ok\") }\n\
+         \x20   print(\"{}\\n\", builder_str(b))\n\
+         \x20   if (str_eq(\"frost\", \"frost\")) { print(\"ok\\n\") }\n\
          \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
     )
     .unwrap();
@@ -3937,7 +3937,7 @@ fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
          \x20       Position { x = 1.0, y = 2.0 })\n\
          \x20   for_each_row($nudge, world, no_filters(), $Position)\n\
          \x20   held := ecs_get($Position, world, a, position)\n\
-         \x20   print_f64_line(held.x)\n    ecs_free(world)\n    0\n}\n",
+         \x20   print(\"{}\\n\", held.x)\n    ecs_free(world)\n    0\n}\n",
     )
     .unwrap();
 
@@ -3997,8 +3997,8 @@ fn self_hosted_strings_and_if_expressions() {
          \x20       value = value * 10 + (s[i] - 48)\n        i = i + 1\n    }\n\
          \x20   if (negative) { 0 - value } else { value }\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(read(\"1234567\"))\n    print_int_line(read(\"-7\"))\n\
-         \x20   print_int_line(read(\"0\"))\n    print_int_line(str_len(\"abc\"))\n    0\n}\n";
+         \x20   print(\"{}\\n\", read(\"1234567\"))\n    print(\"{}\\n\", read(\"-7\"))\n\
+         \x20   print(\"{}\\n\", read(\"0\"))\n    print(\"{}\\n\", str_len(\"abc\"))\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("strif", source) else {
         return;
     };
@@ -4014,10 +4014,10 @@ const SELF_HOSTED_STR_FIELD: &str = "import \"io.frost\"\nDocument :: struct { s
      \x20   document.source[index]\n}\n\
      main :: fn() -> i64 {\n\
      \x20   document := Document { source = \"hello\", at = 1 }\n\
-     \x20   print_int_line(document.source[0])\n\
-     \x20   print_int_line(document.source[document.at])\n\
-     \x20   print_int_line(read_at(document, 4))\n\
-     \x20   print_int_line(str_len(document.source))\n    0\n}\n";
+     \x20   print(\"{}\\n\", document.source[0])\n\
+     \x20   print(\"{}\\n\", document.source[document.at])\n\
+     \x20   print(\"{}\\n\", read_at(document, 4))\n\
+     \x20   print(\"{}\\n\", str_len(document.source))\n    0\n}\n";
 
 #[test]
 fn self_hosted_str_held_in_a_struct_is_indexable() {
@@ -4049,11 +4049,11 @@ const SELF_HOSTED_CONSTANT_ARRAYS: &str = "import \"io.frost\"\nCAPACITY :: 8\n\
      Buffer :: struct { bytes: [CAPACITY]u8, used: i64 }\n\
      main :: fn() -> i64 {\n\
      \x20   var a : [4]i64 = [7; 4]\n\
-     \x20   print_int_line(a[0])\n    print_int_line(a[3])\n\
+     \x20   print(\"{}\\n\", a[0])\n    print(\"{}\\n\", a[3])\n\
      \x20   var b : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }\n\
      \x20   b.bytes[7] = 65\n\
-     \x20   print_int_line(b.bytes[7])\n    print_int_line(sizeof(Buffer))\n\
-     \x20   print_int_line(1)\n    0\n}\n";
+     \x20   print(\"{}\\n\", b.bytes[7])\n    print(\"{}\\n\", sizeof(Buffer))\n\
+     \x20   print(\"{}\\n\", 1)\n    0\n}\n";
 
 #[test]
 fn self_hosted_repeats_an_array_and_sizes_it_by_a_constant() {
@@ -4084,8 +4084,8 @@ const SELF_HOSTED_KEYWORD_FIELDS: &str = "import \"io.frost\"\nNode :: struct { 
      main :: fn() -> i64 {\n\
      \x20   var n : Node = Node { struct = 1, return = 2, case = 3, int = 4 }\n\
      \x20   n.int = 9\n\
-     \x20   print_int_line(n.struct)\n    print_int_line(n.return)\n\
-     \x20   print_int_line(n.case)\n    print_int_line(n.int)\n    0\n}\n";
+     \x20   print(\"{}\\n\", n.struct)\n    print(\"{}\\n\", n.return)\n\
+     \x20   print(\"{}\\n\", n.case)\n    print(\"{}\\n\", n.int)\n    0\n}\n";
 
 #[test]
 fn self_hosted_emits_a_field_named_for_a_c_keyword() {
@@ -4112,7 +4112,7 @@ fn self_hosted_emits_a_field_named_for_a_c_keyword() {
 const CLI_PROGRAM: &str = "import \"io.frost\"\nfib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\
-     main :: fn() -> i64 {\n    print_int_line(fib(10))\n    print_int_line(6 * 7)\n    0\n}\n";
+     main :: fn() -> i64 {\n    print(\"{}\\n\", fib(10))\n    print(\"{}\\n\", 6 * 7)\n    0\n}\n";
 
 // The compiler names its input on the command line rather than in the
 // environment, writes where -o says, and finishes the build itself.
@@ -4408,8 +4408,8 @@ fn self_hosted_native_backend_emits_working_assembly() {
                    \x20   return fib(n - 1) + fib(n - 2)\n}\n\
                    main :: fn() -> i64 {\n\
                    \x20   var i : i64 = 0\n\
-                   \x20   while (i < 10) {\n        print_int_line(fib(i))\n        i = i + 1\n    }\n\
-                   \x20   print_int_line(6 * 7)\n    0\n}\n";
+                   \x20   while (i < 10) {\n        print(\"{}\\n\", fib(i))\n        i = i + 1\n    }\n\
+                   \x20   print(\"{}\\n\", 6 * 7)\n    0\n}\n";
     let input = directory.join("frost_mfasm_input.frost");
     std::fs::write(&input, program).unwrap();
 
@@ -4573,27 +4573,27 @@ fn native_backend_covers_the_language() {
     let cases: &[(&str, &str, &str)] = &[
         (
             "arith",
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    print_int_line(2 + 3 * 4)\n    print_int_line(20 / 6)\n    print_int_line(20 % 6)\n    print_int_line(-7)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    print(\"{}\\n\", 2 + 3 * 4)\n    print(\"{}\\n\", 20 / 6)\n    print(\"{}\\n\", 20 % 6)\n    print(\"{}\\n\", -7)\n    0\n}\n",
             "14\n3\n2\n-7\n",
         ),
         (
             "compare",
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    print_bool_line(1 < 2)\n    print_bool_line(2 <= 2)\n    print_bool_line(3 > 4)\n    print_bool_line(3 >= 4)\n    print_bool_line(5 == 5)\n    print_bool_line(5 != 5)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    print(\"{}\\n\", 1 < 2)\n    print(\"{}\\n\", 2 <= 2)\n    print(\"{}\\n\", 3 > 4)\n    print(\"{}\\n\", 3 >= 4)\n    print(\"{}\\n\", 5 == 5)\n    print(\"{}\\n\", 5 != 5)\n    0\n}\n",
             "1\n1\n0\n0\n1\n0\n",
         ),
         (
             "recursion",
-            "import \"io.frost\"\nfib :: fn(n: i64) -> i64 {\n    if (n < 2) { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nmain :: fn() -> i64 {\n    print_int_line(fib(12))\n    0\n}\n",
+            "import \"io.frost\"\nfib :: fn(n: i64) -> i64 {\n    if (n < 2) { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nmain :: fn() -> i64 {\n    print(\"{}\\n\", fib(12))\n    0\n}\n",
             "144\n",
         ),
         (
             "loops",
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    var total : i64 = 0\n    var i : i64 = 1\n    while (i <= 100) {\n        total = total + i\n        i = i + 1\n    }\n    print_int_line(total)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    var total : i64 = 0\n    var i : i64 = 1\n    while (i <= 100) {\n        total = total + i\n        i = i + 1\n    }\n    print(\"{}\\n\", total)\n    0\n}\n",
             "5050\n",
         ),
         (
             "structs",
-            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    print_int_line(sum(a))\n    bump(a)\n    print_int_line(a.x)\n    b := a\n    print_int_line(b.x)\n    print_int_line(sizeof(P))\n    0\n}\n",
+            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    print(\"{}\\n\", sum(a))\n    bump(a)\n    print(\"{}\\n\", a.x)\n    b := a\n    print(\"{}\\n\", b.x)\n    print(\"{}\\n\", sizeof(P))\n    0\n}\n",
             "7\n103\n103\n16\n",
         ),
         (
@@ -4602,28 +4602,28 @@ fn native_backend_covers_the_language() {
              Outer :: struct { first: i64, mid: Inner, last: i64 }\n\
              main :: fn() -> i64 {\n\
              \x20   var o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3, c = 4 }, last = 5 }\n\
-             \x20   print_int_line(o.first)\n    print_int_line(o.mid.a)\n    print_int_line(o.mid.c)\n    print_int_line(o.last)\n\
-             \x20   print_int_line(sizeof(Outer))\n    o.mid.b = 99\n    print_int_line(o.mid.b)\n    print_int_line(o.last)\n    0\n}\n",
+             \x20   print(\"{}\\n\", o.first)\n    print(\"{}\\n\", o.mid.a)\n    print(\"{}\\n\", o.mid.c)\n    print(\"{}\\n\", o.last)\n\
+             \x20   print(\"{}\\n\", sizeof(Outer))\n    o.mid.b = 99\n    print(\"{}\\n\", o.mid.b)\n    print(\"{}\\n\", o.last)\n    0\n}\n",
             "1\n2\n4\n5\n40\n99\n5\n",
         ),
         (
             "pointers",
-            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    unsafe { print_int_line(r^.y) }\n    unsafe { r^.y = 55 }\n    print_int_line(a.y)\n    0\n}\n",
+            "import \"io.frost\"\nP :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    var a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    unsafe { print(\"{}\\n\", r^.y) }\n    unsafe { r^.y = 55 }\n    print(\"{}\\n\", a.y)\n    0\n}\n",
             "4\n55\n",
         ),
         (
             "match",
-            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    var r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print_int_line(classify(0))\n    print_int_line(classify(1))\n    print_int_line(classify(9))\n    0\n}\n",
+            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    var r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print(\"{}\\n\", classify(0))\n    print(\"{}\\n\", classify(1))\n    print(\"{}\\n\", classify(9))\n    0\n}\n",
             "100\n200\n300\n",
         ),
         (
             "manyargs",
-            "import \"io.frost\"\nsix :: fn(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {\n    return a + b + c + d + e + f\n}\nmain :: fn() -> i64 {\n    print_int_line(six(1, 2, 3, 4, 5, 6))\n    print_int_line(six(10, 20, 30, 40, 50, 60))\n    0\n}\n",
+            "import \"io.frost\"\nsix :: fn(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {\n    return a + b + c + d + e + f\n}\nmain :: fn() -> i64 {\n    print(\"{}\\n\", six(1, 2, 3, 4, 5, 6))\n    print(\"{}\\n\", six(10, 20, 30, 40, 50, 60))\n    0\n}\n",
             "21\n210\n",
         ),
         (
             "nested_calls",
-            "import \"io.frost\"\nadd :: fn(a: i64, b: i64) -> i64 { return a + b }\nmain :: fn() -> i64 {\n    print_int_line(add(add(1, 2), add(3, 4)))\n    0\n}\n",
+            "import \"io.frost\"\nadd :: fn(a: i64, b: i64) -> i64 { return a + b }\nmain :: fn() -> i64 {\n    print(\"{}\\n\", add(add(1, 2), add(3, 4)))\n    0\n}\n",
             "10\n",
         ),
     ];
@@ -4809,13 +4809,13 @@ fn self_hosted_errors_name_a_position() {
     let source = "import \"io.frost\"\nPoint :: struct { x: i64, y: i64 }\n\
          main :: fn() -> i64 {\n\
          \x20   p := Point { x = 1, y = 2 }\n\
-         \x20   print_int_line(p.z)\n    0\n}\n";
+         \x20   print(\"{}\\n\", p.z)\n    0\n}\n";
     let Some(message) = self_hosted_rejects("position", source) else {
         return;
     };
     assert!(
-        message.contains(":5:22:")
-            && message.contains("print_int_line(p.z)")
+        message.contains(":5:21:")
+            && message.contains("print(\"{}\\n\", p.z)")
             && message.contains("^ struct 'Point' has no field 'z'"),
         "expected a located error with the source line and a caret, got:\n{message}"
     );
@@ -4859,7 +4859,7 @@ fn a_file_may_only_name_what_it_imported() {
         &entry,
         "import \"io.frost\"\nimport \"middle.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(deep())\n\
+         \x20   print(\"{}\\n\", deep())\n\
          \x20   0\n\
          }\n",
     )
@@ -4907,7 +4907,7 @@ fn a_file_may_only_name_what_it_imported() {
         "import \"io.frost\"\nimport \"middle.frost\"\n\
          import \"deep.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(deep())\n\
+         \x20   print(\"{}\\n\", deep())\n\
          \x20   0\n\
          }\n",
     )
@@ -4961,7 +4961,7 @@ const PREDECLARED_NAMES: &str = "import \"io.frost\"\n\
      \x20   str := 2\n\
      \x20   usize := i64 + str\n\
      \x20   held : i64 = usize\n\
-     \x20   print_int_line(held)\n\
+     \x20   print(\"{}\\n\", held)\n\
      \x20   0\n}\n";
 
 #[test]
@@ -5030,19 +5030,19 @@ const SELF_HOSTED_BY_VALUE: &str = "import \"io.frost\"\nView :: struct { data: 
      mixed :: extern fn(before: i64, value p: Pair, after: i64) -> i64\n\
      main :: fn() -> i64 {\n\
      \x20   v := View { data = \"hello\", len = 5 }\n\
-     \x20   print_int_line(unsafe { view_len(v) })\n\
+     \x20   print(\"{}\\n\", unsafe { view_len(v) })\n\
      \x20   p := Pair { x = 3, y = 4 }\n\
-     \x20   print_int_line(unsafe { pair_sum(p) })\n\
-     \x20   print_f64_line(unsafe { single_ten(Single { a = 2.5 }) })\n\
+     \x20   print(\"{}\\n\", unsafe { pair_sum(p) })\n\
+     \x20   print(\"{}\\n\", unsafe { single_ten(Single { a = 2.5 }) })\n\
      \x20   t := Triple { a = 1, b = 2, c = 3 }\n\
-     \x20   print_int_line(unsafe { triple_sum(t) })\n\
-     \x20   print_int_line(unsafe { clobber(t) })\n\
-     \x20   print_int_line(unsafe { triple_sum(t) })\n\
-     \x20   print_int_line(unsafe { mixed(7, p, 9) })\n\
+     \x20   print(\"{}\\n\", unsafe { triple_sum(t) })\n\
+     \x20   print(\"{}\\n\", unsafe { clobber(t) })\n\
+     \x20   print(\"{}\\n\", unsafe { triple_sum(t) })\n\
+     \x20   print(\"{}\\n\", unsafe { mixed(7, p, 9) })\n\
      \x20   w := Wide { a = 1, b = 2, c = 3, d = 4 }\n\
-     \x20   print_int_line(unsafe { wide_sum(w) })\n\
-     \x20   print_f64_line(unsafe { wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 }) })\n\
-     \x20   print_int_line(unsafe { wide_after(5, w, 6) })\n\
+     \x20   print(\"{}\\n\", unsafe { wide_sum(w) })\n\
+     \x20   print(\"{}\\n\", unsafe { wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 }) })\n\
+     \x20   print(\"{}\\n\", unsafe { wide_after(5, w, 6) })\n\
      \x20   0\n\
      }\n";
 
@@ -5084,18 +5084,18 @@ const SELF_HOSTED_FOR: &str = "import \"io.frost\"\nsum_slice :: fn(xs: []i64) -
      \x20   for value in numbers {\n\
      \x20       total = total + value\n\
      \x20   }\n\
-     \x20   print_int_line(total)\n\
-     \x20   print_int_line(sum_slice(numbers))\n\
+     \x20   print(\"{}\\n\", total)\n\
+     \x20   print(\"{}\\n\", sum_slice(numbers))\n\
      \x20   var weighted : i64 = 0\n\
      \x20   for index, value in numbers {\n\
      \x20       weighted = weighted + index * value\n\
      \x20   }\n\
-     \x20   print_int_line(weighted)\n\
+     \x20   print(\"{}\\n\", weighted)\n\
      \x20   var bytes : i64 = 0\n\
      \x20   for byte in \"abc\" {\n\
      \x20       bytes = bytes + byte\n\
      \x20   }\n\
-     \x20   print_int_line(bytes)\n\
+     \x20   print(\"{}\\n\", bytes)\n\
      \x20   0\n\
      }\n";
 
@@ -5141,16 +5141,16 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
      }
      main :: fn() -> i64 {
          quotient, remainder := divide(17, 5)
-         print_int_line(quotient)
-         print_int_line(remainder)
+         print(\"{}\\n\", quotient)
+         print(\"{}\\n\", remainder)
          high, low := split_bytes(700)
-         print_int_line(high)
-         print_int_line(low)
+         print(\"{}\\n\", high)
+         print(\"{}\\n\", low)
          magnitude, var negative := classify(-9)
-         print_int_line(magnitude)
-         if (negative) { print_int_line(1) } else { print_int_line(0) }
+         print(\"{}\\n\", magnitude)
+         if (negative) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
          negative = false
-         if (negative) { print_int_line(1) } else { print_int_line(0) }
+         if (negative) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
          0
      }
 ";
@@ -5207,13 +5207,13 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
      show :: fn(items: []i64, count: i64) {
          var i := 0
          while (i < count) {
-             print_int_line(items[i])
+             print(\"{}\\n\", items[i])
              i = i + 1
          }
      }
      main :: fn() -> i64 {
-         print_int_line(apply($double, 21))
-         print_int_line(apply($negate, 9))
+         print(\"{}\\n\", apply($double, 21))
+         print(\"{}\\n\", apply($negate, 9))
          var numbers : [5]i64 = [5, 3, 9, 1, 7]
          order($i64, $ascending, numbers, 5)
          show(numbers, 5)
@@ -5282,14 +5282,14 @@ const SELF_HOSTED_INFERRED_VARIANTS: &str =
      }
      main :: fn() -> i64 {
          s : Shape = .Circle { radius = 4 }
-         print_int_line(area(s))
-         print_int_line(area(.Square { side = 5 }))
-         print_int_line(paint(.Green))
-         print_int_line(later(.Blue))
-         print_int_line(area(round(2)))
+         print(\"{}\\n\", area(s))
+         print(\"{}\\n\", area(.Square { side = 5 }))
+         print(\"{}\\n\", paint(.Green))
+         print(\"{}\\n\", later(.Blue))
+         print(\"{}\\n\", area(round(2)))
          t := Theme { primary = .Red, accent = .Blue }
-         print_int_line(paint(t.primary))
-         print_int_line(paint(t.accent))
+         print(\"{}\\n\", paint(t.primary))
+         print(\"{}\\n\", paint(t.accent))
          0
      }
      later :: fn(c: Color) -> i64 { paint(c) * 10 }
@@ -5350,12 +5350,12 @@ const SELF_HOSTED_INFERRED_LITERALS: &str = "import \"io.frost\"\nPoint :: struc
      }\n\
      main :: fn() -> i64 {\n\
      \x20   p : Point = { x = 3, y = 4 }\n\
-     \x20   print_int_line(sum(p))\n\
-     \x20   print_int_line(sum({ x = 10, y = 20 }))\n\
-     \x20   print_int_line(length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }))\n\
-     \x20   print_int_line(sum(origin()))\n\
-     \x20   print_int_line(paint({ at = { x = 7, y = 0 }, colour = .Green }))\n\
-     \x20   print_int_line(later({ x = 2, y = 3 }))\n\
+     \x20   print(\"{}\\n\", sum(p))\n\
+     \x20   print(\"{}\\n\", sum({ x = 10, y = 20 }))\n\
+     \x20   print(\"{}\\n\", length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }))\n\
+     \x20   print(\"{}\\n\", sum(origin()))\n\
+     \x20   print(\"{}\\n\", paint({ at = { x = 7, y = 0 }, colour = .Green }))\n\
+     \x20   print(\"{}\\n\", later({ x = 2, y = 3 }))\n\
      \x20   0\n\
      }\n\
      later :: fn(p: Point) -> i64 { sum(p) * 10 }\n";
@@ -5403,13 +5403,13 @@ const SELF_HOSTED_TUPLE_PATTERNS: &str = "import \"io.frost\"\nlabel :: fn(n: i6
      \x20   }\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(label(15))\n\
-     \x20   print_int_line(label(9))\n\
-     \x20   print_int_line(label(10))\n\
-     \x20   print_int_line(label(7))\n\
-     \x20   print_int_line(shape(1, 2, 3))\n\
-     \x20   print_int_line(shape(1, 9, 3))\n\
-     \x20   print_int_line(shape(4, 5, 6))\n\
+     \x20   print(\"{}\\n\", label(15))\n\
+     \x20   print(\"{}\\n\", label(9))\n\
+     \x20   print(\"{}\\n\", label(10))\n\
+     \x20   print(\"{}\\n\", label(7))\n\
+     \x20   print(\"{}\\n\", shape(1, 2, 3))\n\
+     \x20   print(\"{}\\n\", shape(1, 9, 3))\n\
+     \x20   print(\"{}\\n\", shape(4, 5, 6))\n\
      \x20   0\n\
      }\n";
 
@@ -5450,13 +5450,13 @@ const SELF_HOSTED_ENUM_EQUALITY: &str = "import \"io.frost\"\nKind :: enum { Num
      \x20   a := Kind::Var\n\
      \x20   b := Kind::Var\n\
      \x20   c := Kind::Bin\n\
-     \x20   if (a == b) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   if (a == c) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   if (a != c) { print_int_line(1) } else { print_int_line(0) }\n\
+     \x20   if (a == b) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+     \x20   if (a == c) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+     \x20   if (a != c) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
      \x20   node := Node { kind = Kind::Var, weight = 7 }\n\
-     \x20   print_int_line(is_var(node))\n\
+     \x20   print(\"{}\\n\", is_var(node))\n\
      \x20   held := node.kind\n\
-     \x20   if (held == Kind::Var) { print_int_line(1) } else { print_int_line(0) }\n\
+     \x20   if (held == Kind::Var) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
      \x20   0\n\
      }\n";
 
@@ -5492,14 +5492,14 @@ const SELF_HOSTED_CALLBACK_BY_VALUE: &str = "import \"io.frost\"\nView :: struct
      fire :: extern fn()\n\
      fire_wide :: extern fn()\n\
      handler :: fn(status: i32, value message: View, tail: i64) {\n\
-     \x20   print_int_line(status)\n\
-     \x20   print_int_line(message.len)\n\
-     \x20   print_int_line(tail)\n\
+     \x20   print(\"{}\\n\", status)\n\
+     \x20   print(\"{}\\n\", message.len)\n\
+     \x20   print(\"{}\\n\", tail)\n\
      }\n\
      wide_handler :: fn(status: i32, value w: Wide, tail: i64) {\n\
-     \x20   print_int_line(status)\n\
-     \x20   print_int_line(w.a + w.d)\n\
-     \x20   print_int_line(tail)\n\
+     \x20   print(\"{}\\n\", status)\n\
+     \x20   print(\"{}\\n\", w.a + w.d)\n\
+     \x20   print(\"{}\\n\", tail)\n\
      }\n\
      main :: fn() -> i64 {\n\
      \x20   unsafe { install(handler) }\n\
@@ -5688,7 +5688,7 @@ fn self_hosted_rejects_a_stray_byte() {
 // an operator, so it used to take the same silent path as any stray byte.
 #[test]
 fn self_hosted_skips_a_byte_order_mark() {
-    let source = "\u{feff}import \"io.frost\"\nmain :: fn() -> i64 {\n    print_int_line(7)\n    0\n}\n";
+    let source = "\u{feff}import \"io.frost\"\nmain :: fn() -> i64 {\n    print(\"{}\\n\", 7)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("bom", source) else {
         return;
     };
@@ -5822,7 +5822,7 @@ const SELF_HOSTED_ALLOCATION_SOURCES: &str = "import \"io.frost\"\nArena :: stru
      \x20   var arena : Arena = Arena { offset = 0 }\n\
      \x20   var result : i64 = 0\n\
      \x20   with arena { result = nested() }\n\
-     \x20   print_int_line(result)\n    print_int_line(arena.offset)\n    0\n}\n";
+     \x20   print(\"{}\\n\", result)\n    print(\"{}\\n\", arena.offset)\n    0\n}\n";
 
 #[test]
 fn self_hosted_allocation_sources_through_c() {
@@ -5987,7 +5987,7 @@ fn self_hosted_accepts_a_region_pointer_held_inside() {
                   \x20   var result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = unsafe { held^ }\n    }\n\
-                  \x20   print_int_line(result)\n    0\n}\n";
+                  \x20   print(\"{}\\n\", result)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("regionheld", source) else {
         return;
     };
@@ -6023,7 +6023,7 @@ fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
                   \x20   var result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = unsafe { held^ }\n    }\n\
-                  \x20   print_int_line(result)\n    0\n}\n";
+                  \x20   print(\"{}\\n\", result)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("regionhandback", source)
     else {
         return;
@@ -6062,8 +6062,8 @@ fn self_hosted_resolves_imports() {
         "import \"io.frost\"\nimport \"lib/extra.frost\"\n\
          import \"lib/math.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(square(7))\n    print_int_line(cube(3))\n\
-         \x20   p := Pair { a = 4, b = 5 }\n    print_int_line(p.a + p.b)\n    0\n}\n",
+         \x20   print(\"{}\\n\", square(7))\n    print(\"{}\\n\", cube(3))\n\
+         \x20   p := Pair { a = 4, b = 5 }\n    print(\"{}\\n\", p.a + p.b)\n    0\n}\n",
     )
     .unwrap();
 
@@ -6183,9 +6183,9 @@ fn a_name_can_be_read_under_another_on_import() {
          import \"tree.frost\" (insert as tree_insert)\n\
          import \"plain.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(list_insert(4))\n\
-         \x20   print_int_line(tree_insert(4))\n\
-         \x20   print_int_line(doubled(4))\n\
+         \x20   print(\"{}\\n\", list_insert(4))\n\
+         \x20   print(\"{}\\n\", tree_insert(4))\n\
+         \x20   print(\"{}\\n\", doubled(4))\n\
          \x20   0\n\
          }\n",
     )
@@ -6268,7 +6268,7 @@ fn self_hosted_survives_an_import_cycle() {
         &root,
         "import \"io.frost\"\nimport \"second.frost\"\n\
          alpha :: fn() -> i64 { 3 }\n\
-         main :: fn() -> i64 { print_int_line(alpha() + beta())\n    0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", alpha() + beta())\n    0 }\n",
     )
     .unwrap();
 
@@ -6361,7 +6361,7 @@ fn a_constant_may_stand_for_one_from_another_module() {
         &root,
         "import \"io.frost\"\nimport \"lib/formats.frost\"\n\
          DEPTH :: TEXTURE_DEPTH24\n\
-         main :: fn() -> i64 {\n    print_int_line(DEPTH)\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", DEPTH)\n    0\n}\n",
     )
     .unwrap();
 
@@ -6437,10 +6437,10 @@ fn a_stated_layout_crosses_a_module() {
         &root,
         "import \"io.frost\"\nimport \"lib/shape.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(sizeof(Header))\n\
-         \x20   print_int_line(sizeof(Block))\n\
-         \x20   for field in fields(Header) { print_int_line(offset_of(field)) }\n\
-         \x20   for field in fields(Block) { print_int_line(offset_of(field)) }\n\
+         \x20   print(\"{}\\n\", sizeof(Header))\n\
+         \x20   print(\"{}\\n\", sizeof(Block))\n\
+         \x20   for field in fields(Header) { print(\"{}\\n\", offset_of(field)) }\n\
+         \x20   for field in fields(Block) { print(\"{}\\n\", offset_of(field)) }\n\
          \x20   0\n}\n",
     )
     .unwrap();
@@ -6523,8 +6523,8 @@ fn a_compile_time_call_crosses_a_module() {
          LANES :: round_up(300, 64)\n\
          Buffer :: struct { bytes: [next_power_of_two(300)]u8 }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(LANES)\n\
-         \x20   print_int_line(sizeof(Buffer))\n\
+         \x20   print(\"{}\\n\", LANES)\n\
+         \x20   print(\"{}\\n\", sizeof(Buffer))\n\
          \x20   0\n}\n",
     )
     .unwrap();
@@ -6588,7 +6588,7 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
         &input,
         "import \"io.frost\"\nFIRST :: SECOND + 1\n\
          SECOND :: FIRST + 1\n\
-         main :: fn() -> i64 {\n    print_int_line(FIRST)\n    0\n}\n",
+         main :: fn() -> i64 {\n    print(\"{}\\n\", FIRST)\n    0\n}\n",
     )
     .unwrap();
     let exe = directory
@@ -6633,8 +6633,8 @@ fn a_value_moved_inside_a_call_argument_is_moved() {
          take :: fn(move h: Held) -> i64 { h.value }\n\
          main :: fn() -> i64 {\n\
          \x20   a := Held { value = 1 }\n\
-         \x20   print_int_line(take(a))\n\
-         \x20   print_int_line(a.value)\n    0\n}\n",
+         \x20   print(\"{}\\n\", take(a))\n\
+         \x20   print(\"{}\\n\", a.value)\n    0\n}\n",
     )
     .unwrap();
     let exe = directory
@@ -6694,7 +6694,7 @@ fn the_assembly_backend_writes_a_line_table_when_asked() {
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   a := 1\n\
          \x20   b := a + 2\n\
-         \x20   print_int_line(b)\n    0\n}\n",
+         \x20   print(\"{}\\n\", b)\n    0\n}\n",
     )
     .unwrap();
 
@@ -6803,7 +6803,7 @@ fn the_bootstrap_shows_the_line_a_failure_is_about() {
         &input,
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   a : u8 = 300\n\
-         \x20   print_int_line(a)\n    0\n}\n",
+         \x20   print(\"{}\\n\", a)\n    0\n}\n",
     )
     .unwrap();
     let exe = directory
@@ -6859,8 +6859,8 @@ fn a_self_hosted_diagnostic_points_at_the_construct_it_is_about() {
              \x20   n : i64 = p\n\
              \n\
              \n\
-             \x20   print_int_line(1)\n\
-             \x20   print_int_line(2)\n    0\n}\n",
+             \x20   print(\"{}\\n\", 1)\n\
+             \x20   print(\"{}\\n\", 2)\n    0\n}\n",
             6,
             5,
             "n : i64 = p",
@@ -6870,7 +6870,7 @@ fn a_self_hosted_diagnostic_points_at_the_construct_it_is_about() {
              \x20   a : u8 = 300\n\
              \n\
              \n\
-             \x20   print_int_line(a)\n    0\n}\n",
+             \x20   print(\"{}\\n\", a)\n    0\n}\n",
             3,
             14,
             "a : u8 = 300",
@@ -6911,19 +6911,19 @@ fn a_literal_that_does_not_fit_its_type_is_refused() {
     let directory = std::env::temp_dir();
     for (source, wanted) in [
         (
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    a : u8 = 300\n    print_int_line(a)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    a : u8 = 300\n    print(\"{}\\n\", a)\n    0\n}\n",
             "u8",
         ),
         (
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    b : i8 = 200\n    print_int_line(b)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    b : i8 = 200\n    print(\"{}\\n\", b)\n    0\n}\n",
             "i8",
         ),
         (
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    c : i16 = 40000\n    print_int_line(c)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    c : i16 = 40000\n    print(\"{}\\n\", c)\n    0\n}\n",
             "i16",
         ),
         (
-            "import \"io.frost\"\nmain :: fn() -> i64 {\n    d : u8 = -1\n    print_int_line(d)\n    0\n}\n",
+            "import \"io.frost\"\nmain :: fn() -> i64 {\n    d : u8 = -1\n    print(\"{}\\n\", d)\n    0\n}\n",
             "u8",
         ),
     ] {
@@ -6969,7 +6969,7 @@ fn the_self_hosted_compiler_refuses_a_literal_that_does_not_fit() {
         .with_extension("frost");
     std::fs::write(
         &input,
-        "import \"io.frost\"\nmain :: fn() -> i64 {\n    a : u8 = 300\n    print_int_line(a)\n    0\n}\n",
+        "import \"io.frost\"\nmain :: fn() -> i64 {\n    a : u8 = 300\n    print(\"{}\\n\", a)\n    0\n}\n",
     )
     .unwrap();
     let emitted = directory.join(unique("frost_shrange")).with_extension("c");
@@ -7001,31 +7001,31 @@ const NARROWING_REFUSALS: &[(&str, &str, &str)] = &[
     (
         "assign",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n    total : i64 = 5000000000\n    \
-         count : i32 = total\n    print_int_line(count)\n    0\n}\n",
+         count : i32 = total\n    print(\"{}\\n\", count)\n    0\n}\n",
         "i32",
     ),
     (
         "argument",
         "import \"io.frost\"\ntake :: fn(b: u8) -> i64 { b }\n\
-         main :: fn() -> i64 {\n    n : i64 = 7\n    print_int_line(take(n))\n    0\n}\n",
+         main :: fn() -> i64 {\n    n : i64 = 7\n    print(\"{}\\n\", take(n))\n    0\n}\n",
         "u8",
     ),
     (
         "return",
         "import \"io.frost\"\nshrink :: fn(n: i64) -> u16 { n }\n\
-         main :: fn() -> i64 { print_int_line(shrink(9))  0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", shrink(9))  0 }\n",
         "u16",
     ),
     (
         "float",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n    tall : f64 = 3.9\n    short : f32 = tall\n \
-         \x20  print_int_line(short)\n    0\n}\n",
+         \x20  print(\"{}\\n\", short)\n    0\n}\n",
         "f32",
     ),
     (
         "truncate",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n    tall : f64 = 3.9\n    whole : i64 = tall\n \
-         \x20  print_int_line(whole)\n    0\n}\n",
+         \x20  print(\"{}\\n\", whole)\n    0\n}\n",
         "i64",
     ),
 ];
@@ -7086,18 +7086,18 @@ const CASTS: &str = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
      \x20   big : i64 = 300\n\
      \x20   small : u8 = cast($u8, big)\n\
      \x20   wide : i64 = small\n\
-     \x20   print_int_line(wide)\n\
+     \x20   print(\"{}\\n\", wide)\n\
      \x20   over : i64 = 200\n\
      \x20   signed : i8 = cast($i8, over)\n\
-     \x20   print_int_line(cast($i64, signed))\n\
+     \x20   print(\"{}\\n\", cast($i64, signed))\n\
      \x20   tall : f64 = 3.9\n\
-     \x20   print_int_line(cast($i64, tall))\n\
-     \x20   print_int_line(cast($i64, -tall))\n\
+     \x20   print(\"{}\\n\", cast($i64, tall))\n\
+     \x20   print(\"{}\\n\", cast($i64, -tall))\n\
      \x20   span : i64 = -1\n\
      \x20   unsigned : u32 = cast($u32, span)\n\
-     \x20   print_int_line(cast($i64, unsigned))\n\
+     \x20   print(\"{}\\n\", cast($i64, unsigned))\n\
      \x20   narrow : f32 = cast($f32, tall)\n\
-     \x20   print_int_line(cast($i64, narrow * 10.0))\n\
+     \x20   print(\"{}\\n\", cast($i64, narrow * 10.0))\n\
      \x20   0\n\
      }\n";
 
@@ -7144,12 +7144,12 @@ const CONSTANTS_ARE_LITERALS: &str = "import \"io.frost\"\nLIMIT :: 200\n\
      SHIFT :: 32\n\
      main :: fn() -> i64 {\n\
      \x20   top : u8 = LIMIT\n\
-     \x20   print_int_line(cast($i64, top))\n\
+     \x20   print(\"{}\\n\", cast($i64, top))\n\
      \x20   var byte : u8 = 65\n\
      \x20   byte = byte + SHIFT\n\
-     \x20   print_int_line(cast($i64, byte))\n\
+     \x20   print(\"{}\\n\", cast($i64, byte))\n\
      \x20   room : i16 = LIMIT * 2\n\
-     \x20   print_int_line(cast($i64, room))\n\
+     \x20   print(\"{}\\n\", cast($i64, room))\n\
      \x20   0\n\
      }\n";
 
@@ -7197,7 +7197,7 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     let source = "import \"io.frost\"\nLIMIT :: 200\n\
                   main :: fn() -> i64 {\n\
                   \x20   over : u8 = LIMIT * 2\n\
-                  \x20   print_int_line(cast($i64, over))\n\
+                  \x20   print(\"{}\\n\", cast($i64, over))\n\
                   \x20   0\n\
                   }\n";
     let complaint = compile_error("constrange", source);
@@ -7220,14 +7220,14 @@ const FLOAT_CONSTANTS: &str = "import \"io.frost\"\nLIMIT :: 1.5607963267948966
      narrow :: fn(value: f32) -> i64 { cast($i64, value * 1000.0) }
      main :: fn() -> i64 {
          held : f32 = LIMIT
-         print_int_line(narrow(held))
-         print_int_line(narrow(STEP))
-         print_int_line(narrow(-STEP))
+         print(\"{}\\n\", narrow(held))
+         print(\"{}\\n\", narrow(STEP))
+         print(\"{}\\n\", narrow(-STEP))
          var count : i64 = 2
          mixed : f32 = 0.25 + count
-         print_int_line(narrow(mixed))
+         print(\"{}\\n\", narrow(mixed))
          also : f32 = STEP * count
-         print_int_line(narrow(also))
+         print(\"{}\\n\", narrow(also))
          0
      }
 ";
@@ -7285,15 +7285,15 @@ const TYPE_NAMES: &str =
      name_of :: fn($T: Type) -> str { typename($T) }
      width :: fn($T: Type) -> i64 { str_len(typename($T)) }
      main :: fn() -> i64 {
-         print_str_line(typename($Position))
-         print_str_line(typename($i64))
-         print_str_line(typename($Meters))
-         print_str_line(name_of($Health))
-         print_str_line(name_of($Position))
-         print_int_line(width($Health))
+         print(\"{}\\n\", typename($Position))
+         print(\"{}\\n\", typename($i64))
+         print(\"{}\\n\", typename($Meters))
+         print(\"{}\\n\", name_of($Health))
+         print(\"{}\\n\", name_of($Position))
+         print(\"{}\\n\", width($Health))
          held := typename($Position)
-         print_int_line(str_len(held))
-         print_int_line(held[0])
+         print(\"{}\\n\", str_len(held))
+         print(\"{}\\n\", held[0])
          0
      }
 ";
@@ -7359,13 +7359,13 @@ const NAMED_TEXT: &str = "import \"io.frost\"\nSECTION :: \".debug_line\"\n\
      EMPTY :: \"\"\n\
      width :: fn(text: str) -> i64 { str_len(text) }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(str_len(SECTION))\n\
-     \x20   print_int_line(str_len(EMPTY))\n\
-     \x20   print_int_line(width(SECTION))\n\
-     \x20   unsafe { print_int_line(SECTION[1]) }\n\
+     \x20   print(\"{}\\n\", str_len(SECTION))\n\
+     \x20   print(\"{}\\n\", str_len(EMPTY))\n\
+     \x20   print(\"{}\\n\", width(SECTION))\n\
+     \x20   unsafe { print(\"{}\\n\", SECTION[1]) }\n\
      \x20   held := SECTION\n\
-     \x20   print_int_line(str_len(held))\n\
-     \x20   print_int_line(str_len(SECTION) + 1)\n\
+     \x20   print(\"{}\\n\", str_len(held))\n\
+     \x20   print(\"{}\\n\", str_len(SECTION) + 1)\n\
      \x20   0\n\
      }\n";
 
@@ -7427,11 +7427,11 @@ const MINUS_OPENS_A_STATEMENT: &str = "import \"io.frost\"\nmain :: fn() -> i64 
      \x20   var total : i64 = 10\n\
      \x20   var count : i64 = 0\n\
      \x20   count = 4\n\
-     \x20   print_int_line(total)\n\
-     \x20   print_int_line(count)\n\
+     \x20   print(\"{}\\n\", total)\n\
+     \x20   print(\"{}\\n\", count)\n\
      \x20   held := count -\n\
      \x20       total\n\
-     \x20   print_int_line(held)\n\
+     \x20   print(\"{}\\n\", held)\n\
      \x20   0\n\
      }\n";
 
@@ -7443,7 +7443,7 @@ const MINUS_THAT_GOES_NOWHERE: &str = "import \"io.frost\"\nmain :: fn() -> i64 
      \x20   var count : i64 = 4\n\
      \x20   held := count\n\
      \x20       - total\n\
-     \x20   print_int_line(held)\n\
+     \x20   print(\"{}\\n\", held)\n\
      \x20   0\n\
      }\n";
 
@@ -7514,20 +7514,20 @@ fn the_self_hosted_compiler_reads_a_leading_minus_the_same_way() {
 const BOOL_IS_A_BYTE: &str = "import \"io.frost\"\nPacked :: struct { a: bool, b: bool, c: bool }\n\
      Flagged :: struct { on: bool, count: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(sizeof(bool))\n\
-     \x20   print_int_line(sizeof(Packed))\n\
-     \x20   print_int_line(sizeof(Flagged))\n\
+     \x20   print(\"{}\\n\", sizeof(bool))\n\
+     \x20   print(\"{}\\n\", sizeof(Packed))\n\
+     \x20   print(\"{}\\n\", sizeof(Flagged))\n\
      \x20   var packed := Packed { a = true, b = false, c = true }\n\
-     \x20   if (packed.a) { print_int_line(1) }\n\
-     \x20   if (packed.b) { print_int_line(2) }\n\
-     \x20   if (packed.c) { print_int_line(3) }\n\
+     \x20   if (packed.a) { print(\"{}\\n\", 1) }\n\
+     \x20   if (packed.b) { print(\"{}\\n\", 2) }\n\
+     \x20   if (packed.c) { print(\"{}\\n\", 3) }\n\
      \x20   packed.b = true\n\
-     \x20   if (packed.a) { print_int_line(4) }\n\
-     \x20   if (packed.b) { print_int_line(5) }\n\
-     \x20   if (packed.c) { print_int_line(6) }\n\
+     \x20   if (packed.a) { print(\"{}\\n\", 4) }\n\
+     \x20   if (packed.b) { print(\"{}\\n\", 5) }\n\
+     \x20   if (packed.c) { print(\"{}\\n\", 6) }\n\
      \x20   flagged := Flagged { on = false, count = 77 }\n\
-     \x20   if (flagged.on) { print_int_line(7) }\n\
-     \x20   print_int_line(flagged.count)\n\
+     \x20   if (flagged.on) { print(\"{}\\n\", 7) }\n\
+     \x20   print(\"{}\\n\", flagged.count)\n\
      \x20   0\n\
      }\n";
 
@@ -8017,8 +8017,8 @@ fn self_hosted_keeps_unexported_names_private() {
     let program = "import \"io.frost\"\nimport \"lib/a.frost\"\n\
                    import \"lib/b.frost\"\n\
                    main :: fn() -> i64 {\n\
-                   \x20   print_int_line(helper())\n    print_int_line(other())\n\
-                   \x20   t := Thing { value = 5 }\n    print_int_line(t.value)\n    0\n}\n";
+                   \x20   print(\"{}\\n\", helper())\n    print(\"{}\\n\", other())\n\
+                   \x20   t := Thing { value = 5 }\n    print(\"{}\\n\", t.value)\n    0\n}\n";
     std::fs::write(&root, program).unwrap();
 
     let emit = Command::new(&compiler)
@@ -8087,7 +8087,7 @@ fn both_compilers_refuse_a_name_an_import_already_offers() {
         "import \"io.frost\"\nimport \"lib.frost\"\n\
          shared :: fn(n: i64) -> i64 { n * 100 }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(shared(2))\n\
+         \x20   print(\"{}\\n\", shared(2))\n\
          \x20   0\n}\n",
     )
     .unwrap();
@@ -8134,8 +8134,8 @@ const SELF_HOSTED_FAILURE_SETS: &str = "import \"io.frost\"\nOpenError :: struct
      payload :: fn(n: i64) -> i64 {\n\
      \x20   match twice(n) { case .Ok { value }: value case .Err { error }: error.code }\n}\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(side(8))\n    print_int_line(payload(8))\n\
-     \x20   print_int_line(side(6))\n    print_int_line(payload(6))\n\
+     \x20   print(\"{}\\n\", side(8))\n    print(\"{}\\n\", payload(8))\n\
+     \x20   print(\"{}\\n\", side(6))\n    print(\"{}\\n\", payload(6))\n\
      \x20   0\n}\n";
 
 #[test]
@@ -8197,8 +8197,8 @@ const SELF_HOSTED_ENUMS: &str = "import \"io.frost\"\nShape :: enum {\n\
      \x20   c := Shape::Circle { radius = 5 }\n\
      \x20   r := Shape::Rectangle { width = 4, height = 6 }\n\
      \x20   pt := Shape::Point\n\
-     \x20   print_int_line(area(c))\n    print_int_line(area(r))\n    print_int_line(area(pt))\n\
-     \x20   print_int_line(sizeof(Shape))\n    0\n}\n";
+     \x20   print(\"{}\\n\", area(c))\n    print(\"{}\\n\", area(r))\n    print(\"{}\\n\", area(pt))\n\
+     \x20   print(\"{}\\n\", sizeof(Shape))\n    0\n}\n";
 
 #[test]
 fn self_hosted_enums_through_c() {
@@ -8241,16 +8241,18 @@ fn an_enum_is_the_same_width_under_both_compilers() {
          Small :: enum { One { a: i32 }, Two { b: i32, c: i32 } }\n\
          Bare :: enum { Yes, No }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(sizeof(Shape))\n\
-         \x20   print_int_line(sizeof(Small))\n\
-         \x20   print_int_line(sizeof(Bare))\n\
+         \x20   print(\"{}\\n\", sizeof(Shape))\n\
+         \x20   print(\"{}\\n\", sizeof(Small))\n\
+         \x20   print(\"{}\\n\", sizeof(Bare))\n\
          \x20   s := Shape::Rectangle { width = 4, height = 6 }\n\
-         \x20   print_int_line(match s {\n\
+         \x20   print(\"{}\\n\",
+    match s {\n\
          \x20       case .Circle { radius }: radius\n\
          \x20       case .Rectangle { width, height }: width * height\n\
          \x20       case .Point: 0\n    })\n\
          \x20   t := Small::Two { b = 7, c = 9 }\n\
-         \x20   print_int_line(match t {\n\
+         \x20   print(\"{}\\n\",
+    match t {\n\
          \x20       case .One { a }: a\n\
          \x20       case .Two { b, c }: b + c\n    })\n\
          \x20   0\n}\n";
@@ -8295,9 +8297,9 @@ fn self_hosted_rejects_an_unknown_variant() {
 fn self_hosted_native_indexes_bytes() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   s : ^i8 = \"hello\"\n\
-                  \x20   unsafe { print_int_line(s[0]) }\n    unsafe { print_int_line(s[1]) }\n\
-                  \x20   unsafe { print_int_line(s[4]) }\n\
-                  \x20   print_int_line(sizeof(i8))\n    0\n}\n";
+                  \x20   unsafe { print(\"{}\\n\", s[0]) }\n    unsafe { print(\"{}\\n\", s[1]) }\n\
+                  \x20   unsafe { print(\"{}\\n\", s[4]) }\n\
+                  \x20   print(\"{}\\n\", sizeof(i8))\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("bytes", source) else {
         return;
     };
@@ -8320,7 +8322,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   got :: fn() -> i64 {\n\
                   \x20   match run() { case .Ok { value }: value case .Err { error }: -1 }\n}\n\
                   main :: fn() -> i64 {\n\
-                  \x20   print_int_line(got())\n    0\n}\n";
+                  \x20   print(\"{}\\n\", got())\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("trywhile", source) else {
         return;
     };
@@ -8337,7 +8339,7 @@ fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
                   unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
                   main :: fn() -> i64 {\n\
                   \x20   b := wrap($i64, 41)\n\
-                  \x20   print_int_line(unwrap(b) + 1)\n    0\n}\n";
+                  \x20   print(\"{}\\n\", unwrap(b) + 1)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("genericonly", source)
     else {
         return;
@@ -8357,20 +8359,20 @@ fn both_compilers_refuse_a_defer_inside_a_block() {
     let cases = [
         (
             "deferif",
-            "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }\n\
+            "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }\n\
              f :: fn(x: i64) -> i64 {\n\
              \x20   if (x > 0) {\n        defer trace(1)\n    }\n\
              \x20   0\n}\n\
-             main :: fn() -> i64 { print_int_line(f(1))  0 }\n",
+             main :: fn() -> i64 { print(\"{}\\n\", f(1))  0 }\n",
         ),
         (
             "deferloop",
-            "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }\n\
+            "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }\n\
              f :: fn() -> i64 {\n\
              \x20   var i : i64 = 0\n\
              \x20   while (i < 2) {\n        defer trace(i)\n        i = i + 1\n    }\n\
              \x20   0\n}\n\
-             main :: fn() -> i64 { print_int_line(f())  0 }\n",
+             main :: fn() -> i64 { print(\"{}\\n\", f())  0 }\n",
         ),
     ];
     // Both halves assert the same sentence, so neither compiler can refuse it
@@ -8411,10 +8413,10 @@ fn both_compilers_refuse_an_address_of_a_loop_variable() {
         ),
         (
             "loopref",
-            "import \"io.frost\"\npick :: fn(v: []i64) -> ref i64 {\n\
+            "pick :: fn(v: []i64) -> ref i64 {\n\
              \x20   for x in v {\n        return x\n    }\n\
              \x20   v[0]\n}\n\
-             main :: fn() -> i64 { xs := [1, 2]  print_int_line(pick(xs))  0 }\n",
+             main :: fn() -> i64 { xs := [1, 2]  held := pick(xs)  0 }\n",
         ),
     ];
     // The sentence both compilers end on, rather than the word only one of them
@@ -8492,7 +8494,7 @@ fn both_compilers_refuse_a_pointer_kept_by_something_that_outlives_it() {
              var seed : i64 = 0
              var t := Table { held = Slot { at = ptr_to(seed) } }
              put(t, Slot { at = ptr_to(n) })
-             print_int_line(n)
+             print(\"{}\\n\", n)
              0
          }
 ";
@@ -8512,14 +8514,14 @@ fn both_compilers_refuse_a_pointer_kept_by_something_that_outlives_it() {
 // the one the line has.
 #[test]
 fn both_compilers_refuse_a_defer_over_a_rebound_name() {
-    let source = "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }\n\
+    let source = "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }\n\
          shadowed :: fn(c: i64) -> i64 {\n\
          \x20   x := 1\n\
          \x20   defer trace(x)\n\
          \x20   if (c > 0) {\n        x := 99\n        trace(x)\n\
          \x20       return 0\n    }\n\
          \x20   7\n}\n\
-         main :: fn() -> i64 { print_int_line(shadowed(1))  0 }\n";
+         main :: fn() -> i64 { print(\"{}\\n\", shadowed(1))  0 }\n";
     let bootstrap = compile_error("defershadow", source);
     assert!(
         bootstrap.contains("bound again below this `defer`"),
@@ -8540,7 +8542,7 @@ fn both_compilers_refuse_a_defer_over_a_rebound_name() {
 // on the list for whatever was parsed next to run.
 #[test]
 fn a_defer_in_a_test_body_runs() {
-    let source = "import \"io.frost\"\ntrace :: fn(n: i64) { print_int_line(n) }\n\
+    let source = "import \"io.frost\"\ntrace :: fn(n: i64) { print(\"{}\\n\", n) }\n\
          test \"a defer runs where the test body ends\" {\n\
          \x20   defer trace(7)\n\
          \x20   trace(1)\n}\n\
@@ -8706,23 +8708,23 @@ fn self_hosted_backends_agree() {
          \x20   o.mid.b = o.mid.b + 1\n    o.mid.b\n}\n\
          main :: fn() -> i64 {\n\
          \x20   var o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3 }, last = 4 }\n\
-         \x20   print_int_line(bump(o))\n    print_int_line(o.mid.b)\n    print_int_line(sizeof(Outer))\n\
+         \x20   print(\"{}\\n\", bump(o))\n    print(\"{}\\n\", o.mid.b)\n    print(\"{}\\n\", sizeof(Outer))\n\
          \x20   var bs : Bytes = Bytes { flag = 1, count = 77, mark = 2 }\n\
-         \x20   print_int_line(bs.flag)\n    print_int_line(bs.count)\n    bs.mark = 5\n\
-         \x20   print_int_line(bs.mark)\n    print_int_line(sizeof(Bytes))\n\
-         \x20   print_int_line(sum_kind(Kind::None))\n\
-         \x20   print_int_line(sum_kind(Kind::One { x = 6 }))\n\
-         \x20   print_int_line(sum_kind(Kind::Two { x = 6, y = 7 }))\n\
-         \x20   b := wrap($i64, 41)\n    print_int_line(unwrap(b) + 1)\n\
+         \x20   print(\"{}\\n\", bs.flag)\n    print(\"{}\\n\", bs.count)\n    bs.mark = 5\n\
+         \x20   print(\"{}\\n\", bs.mark)\n    print(\"{}\\n\", sizeof(Bytes))\n\
+         \x20   print(\"{}\\n\", sum_kind(Kind::None))\n\
+         \x20   print(\"{}\\n\", sum_kind(Kind::One { x = 6 }))\n\
+         \x20   print(\"{}\\n\", sum_kind(Kind::Two { x = 6, y = 7 }))\n\
+         \x20   b := wrap($i64, 41)\n    print(\"{}\\n\", unwrap(b) + 1)\n\
          \x20   buf := unsafe { malloc(8) }\n\
          \x20   unsafe { buf[0] = 65 }\n    unsafe { buf[1] = 66 }\n\
-         \x20   unsafe { print_int_line(buf[0]) }\n    unsafe { print_int_line(buf[1]) }\n\
+         \x20   unsafe { print(\"{}\\n\", buf[0]) }\n    unsafe { print(\"{}\\n\", buf[1]) }\n\
          \x20   var acc : i64 = 0\n    var i : i64 = 0\n\
          \x20   while (i < 5) {\n\
          \x20       if (i % 2 == 0) { acc = acc + i } else { acc = acc - i }\n\
          \x20       i = i + 1\n    }\n\
-         \x20   print_int_line(acc)\n    print_int_line((3 < 4) && (5 >= 5))\n\
-         \x20   print_int_line(17 / 5)\n    print_int_line(-17 % 5)\n    0\n}\n";
+         \x20   print(\"{}\\n\", acc)\n    print(\"{}\\n\", (3 < 4) && (5 >= 5))\n\
+         \x20   print(\"{}\\n\", 17 / 5)\n    print(\"{}\\n\", -17 % 5)\n    0\n}\n";
     let expected =
         "4\n4\n32\n1\n77\n5\n24\n0\n6\n13\n42\n65\n66\n2\n1\n3\n-2\n";
 
@@ -9327,10 +9329,10 @@ const SELFHOSTED_SLAB: &str = concat!(
     "    reset(world)\n",
     "    hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})\n",
     "    foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})\n",
-    "    print_int_line(world[hero].hp)\n",
+    "    print(\"{}\\n\", world[hero].hp)\n",
     "    world[hero].hp = world[hero].hp - 25\n",
-    "    print_int_line(world[hero].hp)\n",
-    "    print_int_line(world[foe].mana)\n",
+    "    print(\"{}\\n\", world[hero].hp)\n",
+    "    print(\"{}\\n\", world[foe].mana)\n",
     "    0\n",
     "}\n",
 );
@@ -9378,7 +9380,7 @@ const SELFHOSTED_SLAB_STALE: &str = concat!(
     "    old : Handle<Entity> = insert(world, Entity{hp=100, mana=0})\n",
     "    release(world, old)\n",
     "    insert(world, Entity{hp=7, mana=0})\n",
-    "    print_int_line(world[old].hp)\n",
+    "    print(\"{}\\n\", world[old].hp)\n",
     "    0\n",
     "}\n",
 );
@@ -9417,9 +9419,9 @@ const SELFHOSTED_VALUE_GENERIC: &str = concat!(
     "}\n",
     "main :: fn() -> i64 {\n",
     "    b : Buf<4> = Buf { data = [10, 20, 30, 40], count = 4 }\n",
-    "    print_int_line(b.data[0])\n",
-    "    print_int_line(b.data[3])\n",
-    "    print_int_line(sum($4, b))\n",
+    "    print(\"{}\\n\", b.data[0])\n",
+    "    print(\"{}\\n\", b.data[3])\n",
+    "    print(\"{}\\n\", sum($4, b))\n",
     "    0\n",
     "}\n",
 );
@@ -9468,10 +9470,10 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "    slab_reset($Entity, $4, world)\n",
     "    hero := slab_insert($Entity, $4, world, Entity{hp=100, mana=30})\n",
     "    foe := slab_insert($Entity, $4, world, Entity{hp=40, mana=10})\n",
-    "    print_int_line(world[hero].hp)\n",
+    "    print(\"{}\\n\", world[hero].hp)\n",
     "    world[hero].hp = world[hero].hp - 25\n",
-    "    print_int_line(world[hero].hp)\n",
-    "    print_int_line(world[foe].mana)\n",
+    "    print(\"{}\\n\", world[hero].hp)\n",
+    "    print(\"{}\\n\", world[foe].mana)\n",
     "    0\n",
     "}\n",
 );
@@ -9501,8 +9503,8 @@ const SELFHOSTED_GENERIC_ENUM: &str = concat!(
     "main :: fn() -> i64 {\n",
     "    a : Option<i64> = Option::Some { value = 42 }\n",
     "    b : Option<i64> = Option::None\n",
-    "    print_int_line(unwrap_or($i64, a, 0))\n",
-    "    print_int_line(unwrap_or($i64, b, 99))\n",
+    "    print(\"{}\\n\", unwrap_or($i64, a, 0))\n",
+    "    print(\"{}\\n\", unwrap_or($i64, b, 99))\n",
     "    0\n",
     "}\n",
 );
@@ -9525,9 +9527,9 @@ const SELFHOSTED_NESTED_GENERIC: &str = concat!(
     "Pair :: struct($A: Type, $B: Type) { first: A, second: B }\n",
     "main :: fn() -> i64 {\n",
     "    p : Pair<i64, Pair<i64, i64>> = Pair { first = 1, second = Pair { first = 2, second = 3 } }\n",
-    "    print_int_line(p.first)\n",
-    "    print_int_line(p.second.first)\n",
-    "    print_int_line(p.second.second)\n",
+    "    print(\"{}\\n\", p.first)\n",
+    "    print(\"{}\\n\", p.second.first)\n",
+    "    print(\"{}\\n\", p.second.second)\n",
     "    0\n",
     "}\n",
 );
@@ -9576,9 +9578,9 @@ const SELFHOSTED_VEC: &str = concat!(
     "    vec_push($i64, v, 10)\n",
     "    vec_push($i64, v, 20)\n",
     "    vec_push($i64, v, 30)\n",
-    "    print_int_line(vec_len($i64, v))\n",
-    "    print_int_line(vec_get($i64, v, 0))\n",
-    "    print_int_line(vec_get($i64, v, 2))\n",
+    "    print(\"{}\\n\", vec_len($i64, v))\n",
+    "    print(\"{}\\n\", vec_get($i64, v, 0))\n",
+    "    print(\"{}\\n\", vec_get($i64, v, 2))\n",
     "    vec_free($i64, v)\n",
     "    0\n",
     "}\n",
@@ -9606,10 +9608,10 @@ const SELFHOSTED_STD_MAP: &str = concat!(
     "    map_put($i64, $i64, $i64_keys, m, 100, 42)\n",
     "    map_put($i64, $i64, $i64_keys, m, 200, 99)\n",
     "    map_put($i64, $i64, $i64_keys, m, 100, 7)\n",
-    "    print_int_line(map_len($i64, $i64, m))\n",
-    "    print_int_line(map_get($i64, $i64, $i64_keys, m, 100, 0))\n",
-    "    print_int_line(map_get($i64, $i64, $i64_keys, m, 200, 0))\n",
-    "    if (map_has($i64, $i64, $i64_keys, m, 300)) { print_int_line(1) } else { print_int_line(0) }\n",
+    "    print(\"{}\\n\", map_len($i64, $i64, m))\n",
+    "    print(\"{}\\n\", map_get($i64, $i64, $i64_keys, m, 100, 0))\n",
+    "    print(\"{}\\n\", map_get($i64, $i64, $i64_keys, m, 200, 0))\n",
+    "    if (map_has($i64, $i64, $i64_keys, m, 300)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
     "    map_free($i64, $i64, m)\n",
     "    0\n",
     "}\n",
@@ -9631,9 +9633,9 @@ fn self_hosted_standard_library_map() {
 const SELFHOSTED_STD_IO: &str = concat!(
     "import \"io.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    print_str(\"hi \")\n",
-    "    print_int_line(42)\n",
-    "    print_str_line(\"done\")\n",
+    "    print(\"hi \")\n",
+    "    print(\"{}\\n\", 42)\n",
+    "    print(\"done\\n\")\n",
     "    0\n",
     "}\n",
 );
@@ -9658,7 +9660,7 @@ const SELFHOSTED_STD_FORMAT: &str = concat!(
     "    builder_str_value(b, \"count = \")\n",
     "    builder_int(b, 12345)\n",
     "    builder_int(b, -99)\n",
-    "    print_str_line(builder_str(b))\n",
+    "    print(\"{}\\n\", builder_str(b))\n",
     "    builder_free(b)\n",
     "    0\n",
     "}\n",
@@ -9682,26 +9684,26 @@ const SELFHOSTED_STD_MATH: &str = concat!(
     "import \"io.frost\"\n",
     "import \"math.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    print_f64_line(vec3_dot(vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)))\n",
+    "    print(\"{}\\n\", vec3_dot(vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)))\n",
     "    c := vec3_cross(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))\n",
-    "    print_f64_line(c.z)\n",
-    "    print_f64_line(vec3_length(vec3(3.0, 4.0, 0.0)))\n",
+    "    print(\"{}\\n\", c.z)\n",
+    "    print(\"{}\\n\", vec3_length(vec3(3.0, 4.0, 0.0)))\n",
     "    n := vec3_normalize(vec3(3.0, 4.0, 0.0))\n",
-    "    print_f64_line(n.x)\n",
+    "    print(\"{}\\n\", n.x)\n",
     "    p := mat4_transform_point(mat4_translation(vec3(1.0, 2.0, 3.0)), vec3(10.0, 20.0, 30.0))\n",
-    "    print_f64_line(p.x)\n",
+    "    print(\"{}\\n\", p.x)\n",
     "    id := mat4_mul(mat4_identity(), mat4_identity())\n",
-    "    print_f64_line(id.m[0])\n",
+    "    print(\"{}\\n\", id.m[0])\n",
     "    rotated := mat4_transform_dir(mat4_rotation_z(radians(90.0)), vec3(3.0, 4.0, 0.0))\n",
-    "    print_f64_line(vec3_length(rotated))\n",
+    "    print(\"{}\\n\", vec3_length(rotated))\n",
     "    persp := mat4_perspective(radians(90.0), 1.0, 1.0, 10.0)\n",
-    "    print_f64_line(persp.m[0])\n",
+    "    print(\"{}\\n\", persp.m[0])\n",
     "    view := mat4_look_at(vec3(0.0, 0.0, 5.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))\n",
     "    vp := mat4_transform_point(view, vec3(0.0, 0.0, 0.0))\n",
-    "    print_f64_line(vp.z)\n",
+    "    print(\"{}\\n\", vp.z)\n",
     "    q := quat_from_axis_angle(vec3(0.0, 0.0, 1.0), radians(90.0))\n",
     "    qr := quat_rotate_vec3(q, vec3(2.0, 0.0, 0.0))\n",
-    "    print_f64_line(vec3_length(qr))\n",
+    "    print(\"{}\\n\", vec3_length(qr))\n",
     "    0\n",
     "}\n",
 );
@@ -9739,13 +9741,13 @@ const SELFHOSTED_COLUMNS: &str = concat!(
     "    columns_reset($Particle, $8, c)\n",
     "    a := columns_insert($Particle, $8, c, Particle { x = 10, y = 1 })\n",
     "    columns_insert($Particle, $8, c, Particle { x = 20, y = 2 })\n",
-    "    print_int_line(c[a].x + c[a].y)\n",
+    "    print(\"{}\\n\", c[a].x + c[a].y)\n",
     "    c[a].x = 100\n",
-    "    print_int_line(c[a].x)\n",
-    "    print_int_line(sum_col(c.x))\n",
-    "    if (columns_alive($Particle, $8, c, a)) { print_int_line(1) } else { print_int_line(0) }\n",
+    "    print(\"{}\\n\", c[a].x)\n",
+    "    print(\"{}\\n\", sum_col(c.x))\n",
+    "    if (columns_alive($Particle, $8, c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
     "    columns_release($Particle, $8, c, a)\n",
-    "    if (columns_alive($Particle, $8, c, a)) { print_int_line(1) } else { print_int_line(0) }\n",
+    "    if (columns_alive($Particle, $8, c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
     "    0\n",
     "}\n",
 );
@@ -9830,10 +9832,10 @@ fn bootstrap_columns_container_both_backends() {
 const IO_WRITERS: &str = concat!(
     "import \"io.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    print_int_line(42)\n",
-    "    print_int_line(7 * 6)\n",
+    "    print(\"{}\\n\", 42)\n",
+    "    print(\"{}\\n\", 7 * 6)\n",
     "    x : f32 = 0.5\n",
-    "    print_f64_line(x)\n",
+    "    print(\"{}\\n\", x)\n",
     "    0\n",
     "}\n",
 );
@@ -9865,10 +9867,10 @@ const CONST_EXPRESSIONS: &str = concat!(
     "NEG :: -5\n",
     "main :: fn() -> i64 {\n",
     "    data : [STRIDE]i64 = [1, 2, 3, 4, 5, 6, 7, 8]\n",
-    "    print_int_line(STRIDE)\n",
-    "    print_int_line(FLAGS)\n",
-    "    print_int_line(NEG)\n",
-    "    print_int_line(data[STRIDE - 1])\n",
+    "    print(\"{}\\n\", STRIDE)\n",
+    "    print(\"{}\\n\", FLAGS)\n",
+    "    print(\"{}\\n\", NEG)\n",
+    "    print(\"{}\\n\", data[STRIDE - 1])\n",
     "    0\n",
     "}\n",
 );
@@ -9902,7 +9904,7 @@ fn bootstrap_const_expressions_both_backends() {
 // answers exactly as an ordinary function would.
 const SELFHOSTED_INLINE: &str = concat!(
     "square :: inline fn(x: i64) -> i64 { x * x }\n",
-    "import \"io.frost\"\nmain :: fn() -> i64 { print_int_line(square(7))  0 }\n",
+    "import \"io.frost\"\nmain :: fn() -> i64 { print(\"{}\\n\", square(7))  0 }\n",
 );
 
 #[test]
@@ -9956,8 +9958,8 @@ const SELFHOSTED_FUNCTION_POINTER: &str = concat!(
     "double :: fn(x: i64) -> i64 { x * 2 }\n",
     "inc :: fn(x: i64) -> i64 { x + 1 }\n",
     "main :: fn() -> i64 {\n",
-    "    print_int_line(apply(double, 21))\n",
-    "    print_int_line(apply(inc, 41))\n",
+    "    print(\"{}\\n\", apply(double, 21))\n",
+    "    print(\"{}\\n\", apply(inc, 41))\n",
     "    0\n",
     "}\n",
 );
@@ -9984,7 +9986,7 @@ const SELFHOSTED_CLOSURE: &str = concat!(
     "}\n",
     "main :: fn() -> i64 {\n",
     "    plus10 : Adder = Adder { amount = 10 }\n",
-    "    print_int_line(apply_each(add_by, plus10, 1, 2))\n",
+    "    print(\"{}\\n\", apply_each(add_by, plus10, 1, 2))\n",
     "    0\n",
     "}\n",
 );
@@ -10068,7 +10070,7 @@ fn a_slice_may_not_be_built_with_a_negative_length() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   arr := [1, 2, 3, 4]\n\
          \x20   bad := unsafe { slice_from($i64, ptr_to(arr[0]), 0 - 1) }\n\
-         \x20   print_int_line(slice_len(bad))\n\
+         \x20   print(\"{}\\n\", slice_len(bad))\n\
          \x20   0\n}\n";
     let Some((succeeded, stderr)) = compile_and_run_status("neglen", source)
     else {
@@ -10098,7 +10100,7 @@ fn a_sub_slice_may_not_reach_past_the_run_it_came_from() {
              main :: fn() -> i64 {{\n\
              \x20   xs := heap_slice($i64, 4)\n\
              \x20   wide := {view}\n\
-             \x20   print_int_line(slice_len(wide))\n\
+             \x20   print(\"{{}}\\n\", slice_len(wide))\n\
              \x20   0\n}}\n"
         );
         let Some((succeeded, stderr)) = compile_and_run_status(name, &source)
@@ -10122,22 +10124,22 @@ fn arithmetic_that_leaves_its_type_stops_there() {
     let cases = [
         (
             "ovadd",
-            "a : i64 = 9223372036854775807\n    print_int_line(a + 1)\n",
+            "a : i64 = 9223372036854775807\n    print(\"{}\\n\", a + 1)\n",
             "this addition overflowed",
         ),
         (
             "ovmul",
-            "huge : i64 = 4611686018427387904\n    print_int_line(huge * 4)\n",
+            "huge : i64 = 4611686018427387904\n    print(\"{}\\n\", huge * 4)\n",
             "multiplication overflowed",
         ),
         (
             "ovnarrow",
-            "a : u8 = 200\n    b : u8 = 100\n    print_int_line(a + b)\n",
+            "a : u8 = 200\n    b : u8 = 100\n    print(\"{}\\n\", a + b)\n",
             "this addition overflowed",
         ),
         (
             "ovdiv",
-            "a : i64 = 1\n    b : i64 = 0\n    print_int_line(a / b)\n",
+            "a : i64 = 1\n    b : i64 = 0\n    print(\"{}\\n\", a / b)\n",
             "division by zero",
         ),
     ];
@@ -10163,7 +10165,7 @@ fn arithmetic_that_leaves_its_type_stops_there() {
 // and three under the other.
 #[test]
 fn a_literal_spanning_lines_does_not_carry_the_carriage_return() {
-    let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n    s := \"a\r\nb\"\n    print_int_line(str_len(s))\n    0\n}\n";
+    let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n    s := \"a\r\nb\"\n    print(\"{}\\n\", str_len(s))\n    0\n}\n";
     let Some(output) = compile_and_run_unaudited("crlfliteral", source) else {
         return;
     };
@@ -10220,7 +10222,7 @@ fn an_exhausted_stack_says_what_happened() {
          \x20   down(n - 1) + 1\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(down(100000000))\n\
+         \x20   print(\"{}\\n\", down(100000000))\n\
          \x20   0\n}\n";
     let Some((succeeded, stderr)) = compile_and_run_status("stackout", source)
     else {
@@ -10240,7 +10242,7 @@ fn a_slice_of_no_elements_is_still_allowed() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   arr := [1, 2, 3, 4]\n\
          \x20   none := unsafe { slice_from($i64, ptr_to(arr[0]), 0) }\n\
-         \x20   print_int_line(slice_len(none))\n\
+         \x20   print(\"{}\\n\", slice_len(none))\n\
          \x20   0\n}\n";
     let Some((succeeded, stderr)) = compile_and_run_status("zerolen", source)
     else {
@@ -10257,7 +10259,7 @@ fn a_slice_of_no_elements_is_still_allowed() {
 fn an_allocation_size_that_wraps_is_refused() {
     let source = "import \"io.frost\"\nfrost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64\n\
          main :: fn() -> i64 {\n\
-         \x20   print_int_line(frost_rt_check_size(2305843009213693952, 8))\n\
+         \x20   print(\"{}\\n\", frost_rt_check_size(2305843009213693952, 8))\n\
          \x20   0\n}\n";
     let Some((succeeded, stderr)) = compile_and_run_status("sizewrap", source)
     else {
@@ -10279,7 +10281,7 @@ fn an_allocation_that_fails_aborts_rather_than_answering_null() {
     let source = "import \"io.frost\"\nfrost_rt_heap_alloc :: extern fn(size: i64) -> ^u8\n\
          main :: fn() -> i64 {\n\
          \x20   held := unsafe { frost_rt_heap_alloc(9000000000000000) }\n\
-         \x20   print_int_line(1)\n\
+         \x20   print(\"{}\\n\", 1)\n\
          \x20   0\n}\n";
     let Some((succeeded, stderr)) = compile_and_run_status("allocfail", source)
     else {
@@ -11431,11 +11433,11 @@ const SELF_HOSTED_GENERIC_WRITTEN: &str = "import \"io.frost\"\nPair :: struct($
      }\n\
      main :: fn() -> i64 {\n\
      \x20   p := Pair<i64, bool> { first = 7, second = true }\n\
-     \x20   print_int_line(p.first)\n\
-     \x20   if (p.second) { print_int_line(1) } else { print_int_line(0) }\n\
+     \x20   print(\"{}\\n\", p.first)\n\
+     \x20   if (p.second) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
      \x20   var b := filled($i64, $4, 3)\n\
      \x20   b.items[1] = 9\n\
-     \x20   print_int_line(b.items[0] + b.items[1] + b.count)\n\
+     \x20   print(\"{}\\n\", b.items[0] + b.items[1] + b.count)\n\
      \x20   0\n\
      }\n";
 
@@ -11480,9 +11482,9 @@ const SELF_HOSTED_GENERIC_BOOL: &str = "import \"io.frost\"\nPair :: struct($A: 
      count :: fn($A: Type, a: $A) -> i64 { 1 }\n\
      main :: fn() -> i64 {\n\
      \x20   q := make($i64, $bool, 9, true)\n\
-     \x20   print_int_line(q.first)\n\
-     \x20   if (q.second) { print_int_line(1) } else { print_int_line(0) }\n\
-     \x20   print_int_line(count($bool, false))\n\
+     \x20   print(\"{}\\n\", q.first)\n\
+     \x20   if (q.second) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+     \x20   print(\"{}\\n\", count($bool, false))\n\
      \x20   0\n\
      }\n";
 
@@ -12882,7 +12884,7 @@ fn a_view_traced_to_storage_that_outlives_the_call_is_allowed() {
                   bump :: fn(mut v: i64) -> i64 { v }\n\
                   main :: fn() -> i64 {\n\
                   \x20   var h : Holder = Holder { a = [1, 2, 3, 4] }\n\
-                  \x20   print_int_line(bump(through(h)))\n\
+                  \x20   print(\"{}\\n\", bump(through(h)))\n\
                   \x20   0\n}\n";
     let directory = std::env::temp_dir();
     let source_path = directory.join("frost_traced_view.frost");
@@ -12995,7 +12997,7 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
                    bump :: fn(mut v: i64) -> i64 { v }\n\
                    main :: fn() -> i64 {\n\
                    \x20   var h : Holder = Holder { a = [1, 2, 3, 4] }\n\
-                   \x20   print_int_line(bump(through(h)))\n\
+                   \x20   print(\"{}\\n\", bump(through(h)))\n\
                    \x20   0\n}\n";
     let input = directory.join("frost_shframe_allowed.frost");
     std::fs::write(&input, allowed).unwrap();
@@ -13044,7 +13046,7 @@ fn reading_a_local_through_a_pointer_is_still_allowed() {
                   \x20   var x : i64 = 42\n\
                   \x20   p := unsafe { ptr_to(x) }\n\
                   \x20   unsafe { p^ }\n}\n\
-                  main :: fn() -> i64 { print_int_line(read())\n0 }\n";
+                  main :: fn() -> i64 { print(\"{}\\n\", read())\n0 }\n";
     let Some(output) = compile_and_run_unaudited("okderef", source) else {
         return;
     };
@@ -13085,7 +13087,7 @@ fn a_match_naming_every_variant_is_allowed() {
          \x20       case .Rect {{ w, h }}: w * h\n\
          \x20       case .Point: 0\n\
          \x20   }}\n}}\n\
-         main :: fn() -> i64 {{ print_int_line(area(Shape::Rect {{ w = 3, h = 4 }}))\n0 }}\n"
+         main :: fn() -> i64 {{ print(\"{{}}\\n\", area(Shape::Rect {{ w = 3, h = 4 }}))\n0 }}\n"
     );
     let Some(output) = compile_and_run_unaudited("exhaustiveall", &source)
     else {
@@ -13103,7 +13105,7 @@ fn a_match_with_a_wildcard_need_not_name_every_variant() {
          \x20       case .Circle {{ r }}: r * r * 3\n\
          \x20       case _: 0\n\
          \x20   }}\n}}\n\
-         main :: fn() -> i64 {{ print_int_line(area(Shape::Point {{}}))\n0 }}\n"
+         main :: fn() -> i64 {{ print(\"{{}}\\n\", area(Shape::Point {{}}))\n0 }}\n"
     );
     let Some(output) = compile_and_run_unaudited("exhaustivewild", &source)
     else {
@@ -13225,7 +13227,7 @@ fn a_linear_value_consumed_inside_an_unsafe_block_is_consumed() {
                   close :: fn(move f: File) -> i64 { f.fd }\n\
                   main :: fn() -> i64 {\n\
                   \x20   f := File { fd = 1 }\n\
-                  \x20   print_int_line(unsafe { close(f) })\n\
+                  \x20   print(\"{}\\n\", unsafe { close(f) })\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("linearinunsafe", source)
     else {
@@ -13279,7 +13281,7 @@ fn reading_the_value_an_arena_pointer_names_is_allowed() {
          \x20       unsafe {{ p^ = 7 }}\n\
          \x20       total = unsafe {{ p^ }}\n\
          \x20   }}\n\
-         \x20   print_int_line(total)\n\
+         \x20   print(\"{{}}\\n\", total)\n\
          \x20   0\n}}\n\
          main :: fn() -> i64 {{ grab() }}\n"
     );
@@ -13398,23 +13400,23 @@ const IO_PRINTS: &str = r#"import "io.frost"
 Point :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    print_str_line("hello")
+    print("hello\n")
     name := "world"
-    print_str_line(name)
-    print_str("hp ")
-    print_int(7)
-    print_str(" of ")
-    print_int_line(20)
-    print_str("a then ")
-    print_int(2)
-    print_str(" then ")
-    print_f64_line(3.5)
-    print_str_line("braces { and } stay")
+    print("{}\n", name)
+    print("hp ")
+    print("{}", 7)
+    print(" of ")
+    print("{}\n", 20)
+    print("a then ")
+    print("{}", 2)
+    print(" then ")
+    print("{}\n", 3.5)
+    print("braces {{ and }} stay\n")
     p := Point { x = 3, y = 4 }
-    print_str("point ")
-    print_int(p.x)
-    print_char(32)
-    print_int_line(p.y)
+    print("point ")
+    print("{}", p.x)
+    print(" ")
+    print("{}\n", p.y)
     0
 }
 "#;
@@ -13552,10 +13554,10 @@ const SELF_HOSTED_WHERE: &str = "import \"io.frost\"\ntwice :: fn($T: Type, v: $
      \x20   xs[0]\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   print_int_line(twice($i64, 21))\n\
-     \x20   print_f64_line(twice($f64, 1.5))\n\
+     \x20   print(\"{}\\n\", twice($i64, 21))\n\
+     \x20   print(\"{}\\n\", twice($f64, 1.5))\n\
      \x20   var numbers : [3]i64 = [7, 8, 9]\n\
-     \x20   print_int_line(first($i64, numbers))\n\
+     \x20   print(\"{}\\n\", first($i64, numbers))\n\
      \x20   0\n\
      }\n";
 
@@ -13597,12 +13599,12 @@ pick :: fn(n: i64) -> Kind {
 }
 
 main :: fn() -> i64 {
-    if (is_one(Kind::One)) { print_int_line(1) } else { print_int_line(0) }
-    if (is_one(Kind::Two)) { print_int_line(1) } else { print_int_line(0) }
-    if (pick(5) == Kind::One) { print_int_line(1) } else { print_int_line(0) }
-    if (pick(0) == Kind::One) { print_int_line(1) } else { print_int_line(0) }
+    if (is_one(Kind::One)) { print("{}\n", 1) } else { print("{}\n", 0) }
+    if (is_one(Kind::Two)) { print("{}\n", 1) } else { print("{}\n", 0) }
+    if (pick(5) == Kind::One) { print("{}\n", 1) } else { print("{}\n", 0) }
+    if (pick(0) == Kind::One) { print("{}\n", 1) } else { print("{}\n", 0) }
     k := pick(1)
-    if (is_one(k)) { print_int_line(1) } else { print_int_line(0) }
+    if (is_one(k)) { print("{}\n", 1) } else { print("{}\n", 0) }
     0
 }
 "#;
@@ -13659,11 +13661,11 @@ make_point :: fn(n: i64) -> Point { Point { x = n, y = n * 2 } }
 main :: fn() -> i64 {
     ops := Ops { less = i64_less, combine = i64_add, scale = f64_double,
         origin = make_point }
-    if (ops.less(1, 2)) { print_int_line(1) } else { print_int_line(0) }
-    print_int_line(ops.combine(20, 22))
-    print_f64_line(ops.scale(1.5, 3))
+    if (ops.less(1, 2)) { print("{}\n", 1) } else { print("{}\n", 0) }
+    print("{}\n", ops.combine(20, 22))
+    print("{}\n", ops.scale(1.5, 3))
     p := ops.origin(7)
-    print_int_line(p.x + p.y)
+    print("{}\n", p.x + p.y)
     0
 }
 "#;
@@ -13723,8 +13725,8 @@ fn a_program_declares_its_own_ordering_for_its_own_type() {
          main :: fn() -> i64 {\n\
          \x20   var points := [Point { x = 3, y = 0 }, Point { x = 1, y = 0 }]\n\
          \x20   sort($Point, $point_order, points)\n\
-         \x20   print_int_line(points[0].x)\n\
-         \x20   print_int_line(points[1].x)\n    0\n}\n",
+         \x20   print(\"{}\\n\", points[0].x)\n\
+         \x20   print(\"{}\\n\", points[1].x)\n    0\n}\n",
     )
     .unwrap();
     let exe = directory.join(format!(
@@ -13781,8 +13783,8 @@ number :: fn(text: str) -> i64 ! Parse {
 
 report :: fn(text: str) {
     match number(text) {
-        case .Ok { value }: { print_int_line(value) }
-        case .Err { error }: { print_int_line(0 - error.at) }
+        case .Ok { value }: { print("{}\n", value) }
+        case .Err { error }: { print("{}\n", 0 - error.at) }
     }
 }
 
@@ -13857,9 +13859,9 @@ held :: fn(n: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(use_it(3))
-    print_int_line(use_it(-2))
-    print_int_line(held(5))
+    print("{}\n", use_it(3))
+    print("{}\n", use_it(-2))
+    print("{}\n", held(5))
     0
 }
 "#;
@@ -13912,8 +13914,8 @@ Kind :: enum { One, Two { n: i64 } }
 main :: fn() -> i64 {
     held := Kind::Two { n = 7 }
     match held {
-        case .One: { print_int_line(1) }
-        case .Two { n }: { print_int_line(n)  print_int_line(n + 1) }
+        case .One: { print("{}\n", 1) }
+        case .Two { n }: { print("{}\n", n)  print("{}\n", n + 1) }
     }
     0
 }
@@ -13976,8 +13978,8 @@ pick :: fn($T: Type, $ops: Element<T>, a: $T, b: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print_int_line(pick($i64, $i64_element, 7, 3))
-    print_int_line(i64_element.hashing.hash(2))
+    print("{}\n", pick($i64, $i64_element, 7, 3))
+    print("{}\n", i64_element.hashing.hash(2))
     0
 }
 "#;
@@ -14021,8 +14023,8 @@ take :: fn(a: Answer) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(take(Answer::Some { file = File { fd = 4 } }))
-    print_int_line(take(Answer::None))
+    print("{}\n", take(Answer::Some { file = File { fd = 4 } }))
+    print("{}\n", take(Answer::None))
     0
 }
 "#;
@@ -14074,18 +14076,18 @@ double :: fn(mut n: i64) -> i64 {
     n
 }
 
-take :: fn(v: i64) { print_int_line(v) }
+take :: fn(v: i64) { print("{}\n", v) }
 
 main :: fn() -> i64 {
     var counter : i64 = 0
     bump(counter)
-    print_int_line(counter)
+    print("{}\n", counter)
     bump(counter)
-    print_int_line(counter)
-    print_int_line(double(counter))
-    print_int_line(counter)
+    print("{}\n", counter)
+    print("{}\n", double(counter))
+    print("{}\n", counter)
     take(double(counter))
-    print_int_line(counter)
+    print("{}\n", counter)
     0
 }
 "#;
@@ -14142,7 +14144,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
     std::fs::write(
         &source,
         "import \"io.frost\"\nhelper :: fn(n: i64) -> i64 { n * 3 }\n\
-         main :: fn() -> i64 { print_int_line(helper(7))  0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", helper(7))  0 }\n",
     )
     .unwrap();
     let build = directory.join("build");
@@ -14204,7 +14206,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
     std::fs::write(
         &source,
         "import \"io.frost\"\nhelper :: fn(n: i64) -> i64 { n * 4 }\n\
-         main :: fn() -> i64 { print_int_line(helper(7))  0 }\n",
+         main :: fn() -> i64 { print(\"{}\\n\", helper(7))  0 }\n",
     )
     .unwrap();
     let edited = run(&exe, &build);
@@ -14228,7 +14230,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             &source,
             format!(
                 "import \"io.frost\"\nhelper :: fn(n: i64) -> i64 {{ {body} }}\n\
-                 main :: fn() -> i64 {{ print_int_line(helper(7))  0 }}\n"
+                 main :: fn() -> i64 {{ print(\"{{}}\\n\", helper(7))  0 }}\n"
             ),
         )
         .unwrap();
@@ -14297,11 +14299,11 @@ Vertex :: struct {
 }
 
 main :: fn() -> i64 {
-    print_int_line(field_count(Vertex))
+    print("{}\n", field_count(Vertex))
     for field in fields(Vertex) {
-        print_int_line(offset_of(field))
-        print_int_line(sizeof(field))
-        if (is_struct(field)) { print_int_line(1) } else { print_int_line(0) }
+        print("{}\n", offset_of(field))
+        print("{}\n", sizeof(field))
+        if (is_struct(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
     }
     0
 }
@@ -14367,16 +14369,16 @@ show :: fn($T: Type) {
     count := describe($T, table)
     var i : i64 = 0
     while (i < count) {
-        print_int_line(table[i].offset)
-        print_int_line(table[i].size)
-        if (table[i].floating) { print_int_line(1) } else { print_int_line(0) }
+        print("{}\n", table[i].offset)
+        print("{}\n", table[i].size)
+        if (table[i].floating) { print("{}\n", 1) } else { print("{}\n", 0) }
         i = i + 1
     }
 }
 
 main :: fn() -> i64 {
     show($Vertex)
-    print_int_line(-1)
+    print("{}\n", -1)
     show($Particle)
     0
 }
@@ -14408,7 +14410,7 @@ fn self_hosted_walks_the_fields_of_a_type_argument() {
 fn a_field_used_as_a_value_is_refused() {
     let source = "import \"io.frost\"\nPoint :: struct { x: i64, y: i64 }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   for field in fields(Point) { print_int_line(field) }\n\
+                  \x20   for field in fields(Point) { print(\"{}\\n\", field) }\n\
                   \x20   0\n}\n";
     let message = compile_error("fieldvalue", source);
     assert!(
@@ -14427,18 +14429,18 @@ const COMPILE_TIME_LIST: &str = r#"import "io.frost"
 
 printall :: fn(args: $...) {
     for value in args {
-        print_int_line(value)
+        print("{}\n", value)
     }
 }
 
 show :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
-            print_int_line(1)
-            print_f64_line(value)
+            print("{}\n", 1)
+            print("{}\n", value)
         } else {
-            print_int_line(0)
-            print_int_line(value)
+            print("{}\n", 0)
+            print("{}\n", value)
         }
     }
 }
@@ -14457,9 +14459,9 @@ main :: fn() -> i64 {
     printall(1, 2, 3)
     printall(7)
     show(4, 2.5, 9)
-    print_int_line(first(11, 22))
-    print_int_line(count(100, 1, 2, 3, 4))
-    print_int_line(count(100))
+    print("{}\n", first(11, 22))
+    print("{}\n", count(100, 1, 2, 3, 4))
+    print("{}\n", count(100))
     0
 }
 "#;
@@ -14507,11 +14509,11 @@ bump :: fn(mut n: i64) -> i64 {
 twice :: fn(args: $...) {
     for value in args {
         if (is_float(value)) {
-            print_f64_line(value)
-            print_f64_line(value)
+            print("{}\n", value)
+            print("{}\n", value)
         } else {
-            print_int_line(value)
-            print_int_line(value)
+            print("{}\n", value)
+            print("{}\n", value)
         }
     }
 }
@@ -14519,7 +14521,7 @@ twice :: fn(args: $...) {
 main :: fn() -> i64 {
     var counter : i64 = 0
     twice(bump(counter))
-    print_int_line(counter)
+    print("{}\n", counter)
     twice(1.5)
     twice(3, 4)
     0
@@ -14556,8 +14558,8 @@ tally :: fn(base: i64, args: $...) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(tally(10))
-    print_int_line(tally(10, 1, 2))
+    print("{}\n", tally(10))
+    print("{}\n", tally(10, 1, 2))
     0
 }
 "#;
@@ -14624,13 +14626,13 @@ chosen :: fn(ops: Ordering<i64>, a: i64, b: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print_int_line(smaller($i64, $ascending, 7, 3))
-    print_int_line(smaller($i64, $descending, 7, 3))
-    print_int_line(ascending.less(1, 2))
-    print_int_line(chosen(ascending, 2, 9))
-    print_int_line(chosen(descending, 2, 9))
+    print("{}\n", smaller($i64, $ascending, 7, 3))
+    print("{}\n", smaller($i64, $descending, 7, 3))
+    print("{}\n", ascending.less(1, 2))
+    print("{}\n", chosen(ascending, 2, 9))
+    print("{}\n", chosen(descending, 2, 9))
     held := descending
-    print_int_line(chosen(held, 4, 5))
+    print("{}\n", chosen(held, 4, 5))
     0
 }
 "#;
@@ -15202,12 +15204,12 @@ fn both_compilers_refuse_an_address_read_as_a_float_or_a_bool() {
         (
             "ptrfloat",
             "f : f64 = p
-             print_int_line(1)",
+             print(\"{}\\n\", 1)",
         ),
         (
             "ptrbool",
             "b : bool = p
-             if (b) { print_int_line(1) }",
+             if (b) { print(\"{}\\n\", 1) }",
         ),
     ] {
         let source = format!(
@@ -15239,7 +15241,7 @@ fn both_compilers_refuse_an_address_read_as_a_float_or_a_bool() {
              p := unsafe { ptr_cast($i64, ptr_to(data[0])) }
              q : i64 = p
              back : ^i64 = q
-             print_int_line(unsafe { back[0] })
+             print(\"{}\\n\", unsafe { back[0] })
              0
          }
 ";
@@ -15651,15 +15653,15 @@ fn c_calls_back_with_a_struct_by_value() {
          fire :: extern fn()\n\
          fire_wide :: extern fn()\n\
          handler :: fn(status: i32, value message: View, tail: i64) {\n\
-         \x20   print_int_line(status)\n\
-         \x20   print_int_line(message.len)\n\
-         \x20   unsafe { print_int_line(message.data[0]) }\n\
-         \x20   print_int_line(tail)\n\
+         \x20   print(\"{}\\n\", status)\n\
+         \x20   print(\"{}\\n\", message.len)\n\
+         \x20   unsafe { print(\"{}\\n\", message.data[0]) }\n\
+         \x20   print(\"{}\\n\", tail)\n\
          }\n\
          wide_handler :: fn(status: i32, value w: Wide, tail: i64) {\n\
-         \x20   print_int_line(status)\n\
-         \x20   print_int_line(w.a + w.d)\n\
-         \x20   print_int_line(tail)\n\
+         \x20   print(\"{}\\n\", status)\n\
+         \x20   print(\"{}\\n\", w.a + w.d)\n\
+         \x20   print(\"{}\\n\", tail)\n\
          }\n\
          main :: fn() -> i64 {\n\
          \x20   unsafe { install(handler) }\n\
@@ -16467,12 +16469,12 @@ fn the_standard_json_reader_walks_a_nested_document() {
                   \x20   text := \"{\\\"name\\\":\\\"color\\\",\\\"members\\\":[{\\\"n\\\":1},{\\\"n\\\":22}],\\\"ok\\\":true}\"\n\
                   \x20   var document := json_parse(text)\n\
                   \x20   root := json_root(document)\n\
-                  \x20   if (json_kind(document, root) == JsonKind::Object) { print_int_line(6) } else { print_int_line(0) }\n\
-                  \x20   if (json_text_eq(document, json_member(document, root, \"name\"), \"color\")) { print_int_line(1) } else { print_int_line(0) }\n\
+                  \x20   if (json_kind(document, root) == JsonKind::Object) { print(\"{}\\n\", 6) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (json_text_eq(document, json_member(document, root, \"name\"), \"color\")) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
                   \x20   members := json_member(document, root, \"members\")\n\
-                  \x20   print_int_line(json_count(document, members))\n\
-                  \x20   print_int_line(json_number(document, json_member(document, json_at(document, members, 1), \"n\")))\n\
-                  \x20   if (json_kind(document, json_member(document, root, \"ok\")) == JsonKind::True) { print_int_line(1) } else { print_int_line(0) }\n\
+                  \x20   print(\"{}\\n\", json_count(document, members))\n\
+                  \x20   print(\"{}\\n\", json_number(document, json_member(document, json_at(document, members, 1), \"n\")))\n\
+                  \x20   if (json_kind(document, json_member(document, root, \"ok\")) == JsonKind::True) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
                   \x20   json_free(document)\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("stdjson", source) else {
@@ -16492,12 +16494,12 @@ fn the_standard_json_reader_answers_with_whole_numbers() {
                   \x20   text := \"{\\\"a\\\":2.75,\\\"b\\\":-0.25,\\\"c\\\":1.5e2,\\\"d\\\":7}\"\n\
                   \x20   var document := json_parse(text)\n\
                   \x20   root := json_root(document)\n\
-                  \x20   if (json_real(document, json_member(document, root, \"a\")) == 2.75) { print_int_line(1) } else { print_int_line(0) }\n\
-                  \x20   if (json_real(document, json_member(document, root, \"b\")) == -0.25) { print_int_line(1) } else { print_int_line(0) }\n\
-                  \x20   if (json_real(document, json_member(document, root, \"c\")) == 150.0) { print_int_line(1) } else { print_int_line(0) }\n\
-                  \x20   if (json_real(document, json_member(document, root, \"d\")) == 7.0) { print_int_line(1) } else { print_int_line(0) }\n\
-                  \x20   print_int_line(json_number(document, json_member(document, root, \"a\")))\n\
-                  \x20   if (json_real(document, json_member(document, root, \"missing\")) == 0.0) { print_int_line(1) } else { print_int_line(0) }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"a\")) == 2.75) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"b\")) == -0.25) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"c\")) == 150.0) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (json_real(document, json_member(document, root, \"d\")) == 7.0) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   print(\"{}\\n\", json_number(document, json_member(document, root, \"a\")))\n\
+                  \x20   if (json_real(document, json_member(document, root, \"missing\")) == 0.0) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
                   \x20   json_free(document)\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("stdjsonreal", source) else {
@@ -16514,10 +16516,10 @@ fn the_standard_option_covers_both_variants() {
                   main :: fn() -> i64 {\n\
                   \x20   a := option_some($i64, 42)\n\
                   \x20   b := option_none($i64)\n\
-                  \x20   print_int_line(option_unwrap_or($i64, a, 0))\n\
-                  \x20   print_int_line(option_unwrap_or($i64, b, 7))\n\
-                  \x20   if (option_is_some($i64, a)) { print_int_line(1) } else { print_int_line(0) }\n\
-                  \x20   if (option_is_some($i64, b)) { print_int_line(1) } else { print_int_line(0) }\n\
+                  \x20   print(\"{}\\n\", option_unwrap_or($i64, a, 0))\n\
+                  \x20   print(\"{}\\n\", option_unwrap_or($i64, b, 7))\n\
+                  \x20   if (option_is_some($i64, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (option_is_some($i64, b)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("stdoption", source) else {
         return;
@@ -16615,7 +16617,7 @@ fn a_consumed_generic_linear_is_accepted() {
                   take :: fn($T: Type, move b: Box<T>) -> i64 { b.value }\n\
                   main :: fn() -> i64 {\n\
                   \x20   held := make($i64, 5)\n\
-                  \x20   print_int_line(take($i64, held))\n\
+                  \x20   print(\"{}\\n\", take($i64, held))\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("genericlinearok", source)
     else {
@@ -16630,7 +16632,7 @@ fn a_struct_holding_a_resource_is_one() {
                   Holder :: struct { held: Resource }\n\
                   main :: fn() -> i64 {\n\
                   \x20   h := Holder { held = Resource { id = 1 } }\n\
-                  \x20   print_int_line(h.held.id)\n\
+                  \x20   print(\"{}\\n\", h.held.id)\n\
                   \x20   0\n}\n";
     let message = compile_error("linearheld", source);
     assert!(
@@ -17254,7 +17256,7 @@ fn compile_reporting_unsafe(
 fn an_idle_block_warns_on_an_ordinary_build() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   x := unsafe { 1 + 1 }\n\
-                  \x20   print_int_line(x)\n\
+                  \x20   print(\"{}\\n\", x)\n\
                   \x20   0\n}\n";
     let (message, built) = compile_reporting_unsafe("warn", source, false);
     assert!(
@@ -17274,7 +17276,7 @@ fn an_idle_block_warns_on_an_ordinary_build() {
 fn the_audit_reports_a_block_that_vouches_for_nothing() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   x := unsafe { 1 + 1 }\n\
-                  \x20   print_int_line(x)\n\
+                  \x20   print(\"{}\\n\", x)\n\
                   \x20   0\n}\n";
     let message = audit_unsafe("idle", source);
     assert!(
@@ -17288,7 +17290,7 @@ fn the_audit_reports_a_block_inside_another() {
     let source = "import \"io.frost\"\nheld :: extern fn(x: i64) -> i64\n\
                   main :: fn() -> i64 {\n\
                   \x20   x := unsafe { unsafe { held(1) } }\n\
-                  \x20   print_int_line(x)\n\
+                  \x20   print(\"{}\\n\", x)\n\
                   \x20   0\n}\n";
     let message = audit_unsafe("nested", source);
     assert!(
@@ -17302,7 +17304,7 @@ fn the_audit_is_quiet_when_every_block_earns_itself() {
     let source = "import \"io.frost\"\nheld :: extern fn(x: i64) -> i64\n\
                   main :: fn() -> i64 {\n\
                   \x20   x := unsafe { held(1) }\n\
-                  \x20   print_int_line(x)\n\
+                  \x20   print(\"{}\\n\", x)\n\
                   \x20   0\n}\n";
     let message = audit_unsafe("clean", source);
     assert!(
@@ -17319,7 +17321,7 @@ fn the_self_hosted_compiler_gates_an_index_through_a_raw_pointer() {
     let source = "import \"io.frost\"\nhold :: extern fn(size: i64) -> ^u8\n\
                   at :: fn(block: ^u8, offset: i64) -> ^u8 { ptr_to(block[offset]) }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   print_int_line(0)\n\
+                  \x20   print(\"{}\\n\", 0)\n\
                   \x20   0\n}\n";
     let Some(compiler) = build_self_hosted_compiler("ckrawindex") else {
         return;
@@ -17359,8 +17361,8 @@ fn an_imported_call_inside_an_array_literal_resolves() {
                   main :: fn() -> i64 {\n\
                   \x20   listed : [2]Held = [ Held { p = point(1) }, Held { p = point(2) } ]\n\
                   \x20   repeated : [2]Held = [ Held { p = point(3) }; 2 ]\n\
-                  \x20   print_int_line(listed[1].p.x)\n\
-                  \x20   print_int_line(repeated[0].p.x)\n\
+                  \x20   print(\"{}\\n\", listed[1].p.x)\n\
+                  \x20   print(\"{}\\n\", repeated[0].p.x)\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("arraylit", source) else {
         return;
@@ -18067,7 +18069,7 @@ const AWAY_FROM_THE_CHECKOUT: &str = "import \"io.frost\"\nimport \"vec.frost\"
          var numbers := vec_new($i64, 4)
          vec_push($i64, numbers, 20)
          vec_push($i64, numbers, 22)
-         print_int_line(vec_get($i64, numbers, 0) + vec_get($i64, numbers, 1))
+         print(\"{}\\n\", vec_get($i64, numbers, 0) + vec_get($i64, numbers, 1))
          vec_free($i64, numbers)
          0
      }
@@ -18309,24 +18311,24 @@ const CALLS_C_STRUCT_RETURNS: &str =
 
      main :: fn() -> i64 {
          pair := unsafe { make_pair(21) }
-         print_int_line(pair.id)
-         print_int_line(pair.generation)
+         print(\"{}\\n\", pair.id)
+         print(\"{}\\n\", pair.generation)
          three := unsafe { make_three(10) }
-         print_int_line(three.a)
-         print_int_line(three.c)
+         print(\"{}\\n\", three.a)
+         print(\"{}\\n\", three.c)
          single := unsafe { make_float(1.5) }
-         print_f64_line(single.only)
+         print(\"{}\\n\", single.only)
          doubles := unsafe { make_doubles(2.0) }
-         print_f64_line(doubles.x)
-         print_f64_line(doubles.y)
+         print(\"{}\\n\", doubles.x)
+         print(\"{}\\n\", doubles.y)
          big := unsafe { make_big(5) }
-         print_int_line(big.a)
-         print_int_line(big.c)
-         print_int_line(unsafe { small_u8() })
-         print_int_line(unsafe { neg_i32() })
-         print_int_line(unsafe { big_u32() })
-         if (unsafe { dirty_false() }) { print_int_line(999) } else { print_int_line(0) }
-         if (unsafe { dirty_true() }) { print_int_line(1) } else { print_int_line(999) }
+         print(\"{}\\n\", big.a)
+         print(\"{}\\n\", big.c)
+         print(\"{}\\n\", unsafe { small_u8() })
+         print(\"{}\\n\", unsafe { neg_i32() })
+         print(\"{}\\n\", unsafe { big_u32() })
+         if (unsafe { dirty_false() }) { print(\"{}\\n\", 999) } else { print(\"{}\\n\", 0) }
+         if (unsafe { dirty_true() }) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 999) }
          0
      }
 ";
@@ -18676,7 +18678,7 @@ fn the_assembler_writes_the_line_table_the_system_assembler_writes() {
          \x20   while (sum < 40) {\n\
          \x20       sum = add(sum, 5)\n\
          \x20   }\n\
-         \x20   print_int_line(sum)\n\
+         \x20   print(\"{}\\n\", sum)\n\
          \x20   0\n\
          }\n",
     )
@@ -19226,9 +19228,9 @@ fn the_assembler_encodes_what_the_system_assembler_does() {
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
          \x20   var x : f64 = 1.5\n\
          \x20   var y : f64 = 0.25\n\
-         \x20   print_f64_line(x + y)\n    print_f64_line(x - y)\n    print_f64_line(x * y)\n    print_f64_line(x / y)\n\
-         \x20   if (x > y) { print_int_line(1) }\n\
-         \x20   var n : i64 = 3\n    z := x * 2.0\n    print_f64_line(z)\n    print_int_line(n)\n    0\n}\n",
+         \x20   print(\"{}\\n\", x + y)\n    print(\"{}\\n\", x - y)\n    print(\"{}\\n\", x * y)\n    print(\"{}\\n\", x / y)\n\
+         \x20   if (x > y) { print(\"{}\\n\", 1) }\n\
+         \x20   var n : i64 = 3\n    z := x * 2.0\n    print(\"{}\\n\", z)\n    print(\"{}\\n\", n)\n    0\n}\n",
     )
     .unwrap();
 
@@ -19373,8 +19375,8 @@ fn include_str_reads_the_same_bytes_through_both_compilers() {
     .unwrap();
     let source = "import \"io.frost\"\nDATA :: include_str(\"frost_include_data.txt\")\n\
          main :: fn() -> i64 {\n\
-         \x20   print_str_line(DATA)\n\
-         \x20   print_int_line(str_len(DATA))\n\
+         \x20   print(\"{}\\n\", DATA)\n\
+         \x20   print(\"{}\\n\", str_len(DATA))\n\
          \x20   0\n}\n";
     let want = "line one\nsays \"quoted\" and back\\slash\nend\n\n42\n";
     let Some(bootstrap) = bootstrap_output("includestr", source) else {
@@ -19703,10 +19705,10 @@ fn no_operator_carries_an_expression_across_a_line_outside_brackets() {
 fn a_dropped_operator_inside_brackets_does_not_parse() {
     let joined = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   x := (10\n        + 3)\n\
-                  \x20   print_int_line(x)\n    0\n}\n";
+                  \x20   print(\"{}\\n\", x)\n    0\n}\n";
     let dropped = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                    \x20   x := (10\n        3)\n\
-                   \x20   print_int_line(x)\n    0\n}\n";
+                   \x20   print(\"{}\\n\", x)\n    0\n}\n";
     let directory = std::env::temp_dir().join(unique("frost_join"));
     std::fs::create_dir_all(&directory).unwrap();
     let file = directory.join("joined.frost");
@@ -19733,7 +19735,7 @@ fn a_dropped_operator_inside_brackets_does_not_parse() {
 fn the_line_rule_is_the_same_through_every_backend() {
     let source = "import \"io.frost\"\nmain :: fn() -> i64 {\n\
                   \x20   x := (10\n        + 3\n        + 7)\n\
-                  \x20   print_int_line(x)\n    0\n}\n";
+                  \x20   print(\"{}\\n\", x)\n    0\n}\n";
     let directory = std::env::temp_dir().join(unique("frost_backends"));
     std::fs::create_dir_all(&directory).unwrap();
     let file = directory.join("wrapped.frost");

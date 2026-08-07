@@ -940,7 +940,8 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
                 first = vnode.val
             } else {
                 arena_push(p.gargs,
-                    GArg { value = vnode.val, is_type = 0, pending = -1 })
+                    GArg { value = vnode.val, is_type = 0, pending = -1,
+                        node = -1 })
             }
             count = count + 1
         }
@@ -1073,7 +1074,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
         entry := arena_at(p.type_args, i)
         if (entry.arg == arg && entry.xarg_count == xarg_count
             && entry.is_pack == is_pack && entry.owner == owner
-            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
+            && gargs_alike(p, entry.xarg_start, xarg_start, xarg_count)) {
             return
         }
         i = i + 1
@@ -1153,9 +1154,19 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
         value := held.value
         is_type := held.is_type
         pending := held.pending
+        node := held.node
         var settled := value
         if (pending >= 0) {
             settled = pending_ret_type(p, pending)
+            // What the call answers with is the base. A field or an element
+            // written over it is read off that, the same walk the parse ran
+            // over the guess it had to use.
+            if (node >= 0) {
+                settled = project_type(p, node, settled)
+            }
+            if (settled < 0) {
+                settled = value
+            }
         }
         // What an element reads again is kept only until it changes. The answer
         // is recorded once and never revised, so reading it after that answers
@@ -1166,8 +1177,13 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
             differs = true
             later = -1
         }
+        var keep := node
+        if (later < 0) {
+            keep = -1
+        }
         arena_push(p.argbuf,
-            GArg { value = settled, is_type = is_type, pending = later })
+            GArg { value = settled, is_type = is_type, pending = later,
+                node = keep })
         k = k + 1
     }
     var fresh: i64 = -1
@@ -1281,7 +1297,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     var pid := sym.params
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
-        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0,
+        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0, node = -1,
                 pending = -1 })
         count = count + 1
         pid = pnode.next
@@ -1395,6 +1411,56 @@ parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // written. Either way the name's type was read off the expression while the
 // expression was still being parsed, so a reader that comes after wants the
 // expression.
+// The name a chain of fields and elements is written over. `held.x` and
+// `rows[i].x` are both read off `held` and `rows`, and what those stand for is
+// what decides the whole expression's type.
+pack_arg_base :: fn(mut p: Parser, value: i64) -> i64 {
+    var held := value
+    while (true) {
+        node := arena_at(p.arena, held)
+        if (node.kind != NodeKind::Field && node.kind != NodeKind::Index) {
+            return held
+        }
+        held = node.a
+    }
+    held
+}
+
+// That chain applied to the type the base turned out to have. An element whose
+// base is a call to a generic is written down before the call's answer is
+// worked out, so the same walk runs again over the answer rather than over the
+// guess the parse had to use.
+project_type :: fn(mut p: Parser, value: i64, base_ty: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind == NodeKind::Field) {
+        var held := project_type(p, node.a, base_ty)
+        if (held < 0) {
+            return -1
+        }
+        if (is_borrow(held) && is_aggregate(pointee(p, held))) {
+            held = pointee(p, held)
+        }
+        return field_type_by_range(p, held, node.val, node.c)
+    }
+    if (node.kind == NodeKind::Index) {
+        var held := project_type(p, node.a, base_ty)
+        if (held < 0) {
+            return -1
+        }
+        if (is_borrow(held)) {
+            held = pointee(p, held)
+        }
+        if (is_array_ty(held)) {
+            return array_element(p, held)
+        }
+        if (is_raw_pointer(held)) {
+            return pointee(p, held)
+        }
+        return -1
+    }
+    base_ty
+}
+
 bound_value :: fn(mut p: Parser, value: i64) -> i64 {
     node := arena_at(p.arena, value)
     if (node.kind != NodeKind::Var) {
@@ -1425,7 +1491,7 @@ bound_value :: fn(mut p: Parser, value: i64) -> i64 {
 // it writes are in scope only during this parse, and the type that
 // monomorphization returns is read from the tuple later.
 pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
-    value := bound_value(p, written)
+    value := bound_value(p, pack_arg_base(p, written))
     node := arena_at(p.arena, value)
     if (node.kind != NodeKind::Call) {
         return -1
@@ -1464,18 +1530,123 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
             xarg_start = xarg_start, xarg_count = xarg_count })
 }
 
+// What a name the declaration being parsed bound stands for, and what an
+// element or a field of one does. `type_of` reads the table the emitters fill,
+// which holds nothing while the declaration is still being parsed, so an
+// argument built out of a name would be answered a default there and the real
+// type later. The two answers name two specializations, and only one of them
+// gets a body.
+//
+// The emitters' table answers wherever it knows the name, and this one only
+// where it does not. Both are consulted because neither is filled the whole
+// time: the parse's is all there is while a declaration is being read, and the
+// emitters' is the one that has seen the instantiations a generic call's answer
+// is worked out from. A name bound to a generic call is recorded here as i64,
+// since `mono_ret_type` has nothing to look up until every instance has been
+// walked, and letting that stand would key a call on a type the callee never
+// has.
+pack_local_type :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind == NodeKind::Var) {
+        if (local_exists(p, node.val, node.c)) {
+            return -1
+        }
+        return parse_local_type(p, node.val, node.c)
+    }
+    if (node.kind == NodeKind::Index) {
+        var base := pack_local_type(p, node.a)
+        if (base < 0) {
+            return -1
+        }
+        if (is_borrow(base)) {
+            base = pointee(p, base)
+        }
+        if (is_array_ty(base)) {
+            return array_element(p, base)
+        }
+        if (is_raw_pointer(base)) {
+            return pointee(p, base)
+        }
+        return -1
+    }
+    if (node.kind == NodeKind::Field) {
+        var base := pack_local_type(p, node.a)
+        if (base < 0) {
+            return -1
+        }
+        if (is_borrow(base) && is_aggregate(pointee(p, base))) {
+            base = pointee(p, base)
+        }
+        return field_type_by_range(p, base, node.val, node.c)
+    }
+    // An operator over two values answers with the wider of them, which is the
+    // rule `type_of` reads off the emitters' table once there is one. A side
+    // this cannot name is left out of the comparison rather than counted as an
+    // i64, since a literal beside an f64 does not make the answer an integer.
+    if (node.kind == NodeKind::Bin) {
+        if (op_answers_truth(node.val)) {
+            return -1
+        }
+        left := pack_local_type(p, node.a)
+        right := pack_local_type(p, node.b)
+        if (left < 0) {
+            return right
+        }
+        if (right < 0) {
+            return left
+        }
+        if (is_float(left) && is_float(right) == false) {
+            return left
+        }
+        if (is_float(right) && is_float(left) == false) {
+            return right
+        }
+        if (scalar_size(left) >= scalar_size(right)) {
+            return left
+        }
+        return right
+    }
+    // A call through a pointer answers with what that signature says, which the
+    // parse knows already: there is no instance to work out and so nothing to
+    // wait for. Only the name the pointer is read off has to be looked up here.
+    if (node.kind == NodeKind::CallPtr) {
+        callee := pack_local_type(p, node.a)
+        if (callee < 0 || is_proc(callee) == false) {
+            return -1
+        }
+        return proc_ret(p, callee)
+    }
+    -1
+}
+
 // The type of one argument given to a compile-time list. A name is what the
 // declaration being parsed bound it to. Anything else is derived the ordinary
 // way.
 pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
-    node := arena_at(p.arena, value)
-    if (node.kind == NodeKind::Var) {
-        held := parse_local_type(p, node.val, node.c)
-        if (held >= 0) {
-            return held
-        }
+    // A string literal is a run of bytes here, the way it is everywhere else a
+    // `str` is read. `type_of` answers `^i8` for one, which is what a C
+    // function taking a terminated buffer wants and what a list element is not.
+    // A name standing for such a literal is the literal, so it answers the same.
+    if (is_str_literal(p, value)) {
+        return array_of(p, TY_U8, -1)
     }
-    type_of(p, value)
+    var held := pack_local_type(p, value)
+    if (held < 0) {
+        held = type_of(p, value)
+    }
+    // A read-mode aggregate parameter is auto-borrowed, so what names it holds
+    // a borrow rather than the value. What the call passed is the value, which
+    // is what the element has to be: a body asking `is_slice` of it is asking
+    // about what was handed over, not about how the parameter carries it.
+    //
+    // Both readings of this run this: the parse knows the local, and the
+    // emitters no longer do and reach `type_of` instead. A specialization is
+    // named by one and defined by the other, so stripping in one place only
+    // names a body nothing emits.
+    if (is_borrow(held) && is_slice_ty(p, pointee(p, held))) {
+        return pointee(p, held)
+    }
+    held
 }
 
 // Which runtime argument of a call to this generic carries the type parameter,
@@ -1742,7 +1913,8 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
                 primary = vnode.val
             } else {
                 arena_push(p.argbuf,
-                    GArg { value = vnode.val, is_type = 0, pending = -1 })
+                    GArg { value = vnode.val, is_type = 0, pending = -1,
+                        node = -1 })
             }
             types_seen = types_seen + 1
         }
@@ -1763,7 +1935,8 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
         if (vnode.kind == NodeKind::TypeVal) {
             if (seen >= declared) {
                 arena_push(p.argbuf,
-                    GArg { value = vnode.val, is_type = 1, pending = -1 })
+                    GArg { value = vnode.val, is_type = 1, pending = -1,
+                        node = -1 })
                 count = count + 1
             }
             seen = seen + 1
@@ -1771,13 +1944,21 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
             if (index >= fixed) {
                 later := pack_arg_pending(p, value)
                 held := pack_arg_type(p, value)
+                var written := value
+                if (later < 0) {
+                    written = -1
+                }
                 arena_push(p.argbuf,
-                    GArg { value = held, is_type = 0, pending = later })
+                    GArg { value = held, is_type = 0, pending = later,
+                        node = written })
                 count = count + 1
             }
             index = index + 1
         }
         id = next_id
+    }
+    if (gfn.pack_format >= 0) {
+        check_format_call(p, args, gfn.pack_format, buf_start, count)
     }
     xstart := copy_run(p, buf_start)
     p.argbuf.count = buf_start
@@ -1785,6 +1966,99 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     p.call_xarg_count = gfn.xparam_count + count
     p.call_pack_primary = primary
     true
+}
+
+// What a formatted value may be: a number, a yes or no, or text. Read through
+// any name a type carries, the same way the bounds vocabulary reads one.
+writable_by_format :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_integer(ty) || is_float(ty)) {
+        return true
+    }
+    if (distinct_repr(ty) == TY_BOOL) {
+        return true
+    }
+    is_slice_ty(p, ty) && array_element(p, ty) == TY_U8
+}
+
+// The literal a `format` parameter took, read where the call is written. How
+// many values a line names is settled here, so the literal is read here too:
+// the holes it opens are counted against the list that follows, and a type
+// nothing can write is refused against the line the reader wrote rather than
+// inside a body they never saw.
+check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
+    count: i64) {
+    node_id := nth_value_arg(p, args, at)
+    if (node_id < 0) {
+        return
+    }
+    node := arena_at(p.arena, node_id)
+    if (node.kind != NodeKind::StrLit) {
+        report_where(p.modules, p.src, node.pos)
+        report("a format string is written as a literal, since how many values follow it is settled where the call is written")
+        frost_rt_recover_escape()
+        return
+    }
+    off := node.val
+    length := node.c
+    var holes: i64 = 0
+    var k: i64 = 0
+    while (k < length) {
+        byte := p.src[off + k]
+        if (byte == 123) {
+            if (k + 1 >= length) {
+                report_where(p.modules, p.src, node.pos)
+                report("a '{' in a format string opens a hole or stands for one brace, so write '{}' or '{{'")
+                frost_rt_recover_escape()
+                return
+            }
+            next := p.src[off + k + 1]
+            if (next == 125) {
+                holes = holes + 1
+            } else {
+                if (next != 123) {
+                    report_where(p.modules, p.src, node.pos)
+                    report("a '{' in a format string opens a hole or stands for one brace, so write '{}' or '{{'")
+                    frost_rt_recover_escape()
+                    return
+                }
+            }
+            k = k + 2
+            continue
+        }
+        if (byte == 125 && k + 1 < length && p.src[off + k + 1] == 125) {
+            k = k + 2
+            continue
+        }
+        k = k + 1
+    }
+    if (holes != count) {
+        report_where(p.modules, p.src, node.pos)
+        report("this format string opens ")
+        report_int(holes)
+        report(" hole(s) and the call gives ")
+        report_int(count)
+        report(" value(s)")
+        frost_rt_recover_escape()
+        return
+    }
+    var i: i64 = 0
+    while (i < count) {
+        held := arena_at(p.argbuf, buf_start + i)
+        if (held.is_type == 1) {
+            report_where(p.modules, p.src, node.pos)
+            report("a format string writes a value, and a type is not one")
+            frost_rt_recover_escape()
+            return
+        }
+        if (writable_by_format(p, held.value) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report("a format string writes a number, a yes or no, or a str, and this is a ")
+            report_type_name(p, held.value)
+            frost_rt_recover_escape()
+            return
+        }
+        i = i + 1
+    }
 }
 
 // The run built on the argument stack from `at` upward, moved into `gargs` in
@@ -1797,8 +2071,10 @@ copy_run :: fn(mut p: Parser, at: i64) -> i64 {
         value := held.value
         is_type := held.is_type
         pending := held.pending
+        written := held.node
         arena_push(p.gargs,
-            GArg { value = value, is_type = is_type, pending = pending })
+            GArg { value = value, is_type = is_type, pending = pending,
+                node = written })
         k = k + 1
     }
     start

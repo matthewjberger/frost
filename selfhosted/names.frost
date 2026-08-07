@@ -10,6 +10,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     check_name_is_free,
     mark_safe, place_renames,
     bytes_equal, const_value, value_const_node, digits_in, gargs_equal,
+    gargs_alike,
     generic_index_for,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
     is_distinct, distinct_repr, distinct_id, distinct_type,
@@ -334,7 +335,8 @@ record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_len: i64, tparam_is_value: i64, tparam_is_fn: i64,
     tparam_is_slot: i64, xparam_start: i64, xparam_count: i64,
     token_start: i64,
-    bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64) {
+    bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64,
+    pack_format: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
@@ -343,7 +345,8 @@ record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
             xparam_start = xparam_start,
             xparam_count = xparam_count, token_start = token_start,
             bound_token = bound_token, pack_off = pack_off,
-            pack_len = pack_len, pack_fixed = pack_fixed },
+            pack_len = pack_len, pack_fixed = pack_fixed,
+            pack_format = pack_format },
     )
 }
 
@@ -1493,6 +1496,26 @@ gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool
         left := arena_at(p.gargs, a_start + i)
         right := arena_at(p.gargs, b_start + i)
         if (left.value != right.value) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// The same, and waiting on the same answers. An element whose type is what a
+// call to a generic returns holds the default until that answer is worked out,
+// so two runs can read alike while standing for different types. Which call
+// each waits on tells them apart, and a run that waits on nothing is never the
+// same as one that does. Once both are settled the wait is gone from each and
+// this is `gargs_equal` again, which is what lets two that settled alike
+// collapse into one instance.
+gargs_alike :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool {
+    var i: i64 = 0
+    while (i < count) {
+        left := arena_at(p.gargs, a_start + i)
+        right := arena_at(p.gargs, b_start + i)
+        if (left.value != right.value || left.pending != right.pending) {
             return false
         }
         i = i + 1

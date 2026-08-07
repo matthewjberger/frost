@@ -120,19 +120,19 @@ and its own types, and the specialization takes one ordinary parameter per
 element.
 
 ```frost,sketch
-printall :: fn(args: $...) {
+widths :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) {
-            print_f64_line(value)
-        } else if (is_slice(value)) {
-            print_str_line(value)
+        if (is_slice(value)) {
+            print("{} bytes\n", slice_len(value))
+        } else if (is_float(value)) {
+            print("{} rounds to {}\n", value, cast($i64, value))
         } else {
-            print_int_line(value)
+            print("{}\n", value)
         }
     }
 }
 
-printall(1, 2.5, "three")
+widths(1, 2.5, "three")
 ```
 
 The list is always last, since what followed it would have nothing to say which
@@ -153,9 +153,15 @@ answered while the body is expanded, and the branch that cannot run is dropped
 before anything checks it:
 
 ```frost
+import "io.frost"
+
 show :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) { print_f64_line(value) } else { print_int_line(value) }
+        if (is_slice(value)) {
+            print("{} bytes\n", slice_len(value))
+        } else {
+            print("{}\n", value)
+        }
     }
 }
 ```
@@ -195,6 +201,35 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 }
 ```
 
+## 11.1c.0 `format`, a literal counted against the list
+
+A parameter written `format name: str` must be given a string literal, and the
+holes that literal opens are counted against the compile-time list declared
+after it. `std/io.frost` is the one declaration that uses it:
+
+```frost,sketch
+print :: fn(format fmt: str, args: $...)
+```
+
+A `{}` in the literal opens a hole, `{{` and `}}` stand for one brace each, and
+a `{` that does neither is a fault. Four things are refused where the call is
+written rather than anywhere later:
+
+| Written | Refused because |
+| --- | --- |
+| `print("{} of {}\n", 1)` | Two holes, one value |
+| `print("{}\n", 1, 2)` | One hole, two values |
+| `print("{ x }\n", 1)` | A `{` that opens neither a hole nor a brace |
+| `print(chosen, 1)` | The literal is what is counted, so it has to be one |
+
+What a hole accepts is decided by the function that has the parameter, not by
+the word: `print` takes a number, a `bool` or a `str`, and refuses anything
+else with the type it was given.
+
+The word is contextual, the same way `value` and `mut` are. A parameter named
+`format` still parses as a parameter named `format`, since the word only takes
+effect when a name follows it.
+
 ## 11.1c.1 `type_id`
 
 `type_id(T)` is a number the build gives that type: the same wherever the type
@@ -206,11 +241,16 @@ while it runs. `std/ecs.frost` registers a component under a type and is given
 an index in return. `type_id` is what lets a query later name the component by
 writing the type, since the index is not something a type can say.
 
-**What this deliberately is not.** There is no compile-time string parsing, no
-recursion, no unbounded loop, and nothing that reads the world. Every construct
-here iterates a list whose length is known once the generic is instantiated, so
-what expansion costs is bounded by the program's own text. That is the whole
-difference between this and a compile-time interpreter.
+**What this deliberately is not.** Expansion has no recursion, no unbounded
+loop, and nothing that reads the world. Every construct here iterates a list
+whose length is known once the generic is instantiated, so what expansion costs
+is bounded by the program's own text.
+
+A literal is read where a `format` parameter takes one, and a constant or a
+length may be a call the build runs early. Both are bounded: the reader counts
+the holes in one literal, and the evaluator runs a fixed number of steps to a
+depth it will not exceed. Neither hands the program a string it computed, which
+is the line between this and a compile-time interpreter.
 
 ## 11.1d Walking a type's fields
 

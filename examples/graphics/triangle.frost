@@ -112,7 +112,7 @@ HEIGHT :: 540
 
 main :: fn() -> i64 {
     if (sdl_init(InitFlags::Video) == false) {
-        print_int_line(0)
+        print("{}\n", 0)
         return 1
     }
     window := window_create("Frost triangle", WIDTH, HEIGHT,

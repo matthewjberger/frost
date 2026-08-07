@@ -46,9 +46,9 @@ main :: fn() -> i64 {
     q := unsafe { ptr_cast($i64, alloc(a, 8)) }
     unsafe { q^ = 7 }
 
-    print_int_line(unsafe { p^ }) // 42
-    print_int_line(unsafe { q^ }) // 7
-    print_int_line(unsafe { p^ } + unsafe { q^ }) // 49
-    print_int_line(bump.offset) // 16, two 8-byte allocations
+    print("{}\n", unsafe { p^ }) // 42
+    print("{}\n", unsafe { q^ }) // 7
+    print("{}\n", unsafe { p^ } + unsafe { q^ }) // 49
+    print("{}\n", bump.offset) // 16, two 8-byte allocations
     0
 }

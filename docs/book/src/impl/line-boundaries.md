@@ -110,6 +110,6 @@ Sets no column, since it is indented relative to nothing:
 
 ```frost
 import "io.frost"
-main :: fn() -> i64 { print_int_line(1)
+main :: fn() -> i64 { print("{}\n", 1)
     0 }
 ```
