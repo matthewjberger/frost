@@ -1050,6 +1050,21 @@ skip_brace_group :: fn(mut p: Parser) {
     }
 }
 
+// Whether the token at `index` ends where the one after it begins.
+//
+// `!` carries two meanings and the space after it is what tells them apart:
+// written against what follows it, it negates; written with a space on both
+// sides in a return type, it marks a failure set. So this is the question the
+// rule about it asks.
+tokens_touch :: fn(mut p: Parser, index: i64) -> bool {
+    if (index < 0 || index + 1 >= p.tokens.count) {
+        return false
+    }
+    held := arena_at(p.tokens, index)
+    next := arena_at(p.tokens, index + 1)
+    held.off + held.len == next.off
+}
+
 // Forward to just past the brace that closes the match the cursor sits inside.
 // A refusal among the arms leaves the cursor where no statement begins, and a
 // resync from there reads patterns as statements: `_` before a colon is a
@@ -1613,6 +1628,14 @@ parse_unary :: fn(mut p: Parser) -> i64 {
         return new_arith(p, zero, operand, OP_SUB, start)
     }
     if (kind == TokenKind::Bang) {
+        // Reported rather than escaped. The expression reads one way whichever
+        // spacing it was written with, so the parse carries on and the reader
+        // is told the one thing that is wrong.
+        if (tokens_touch(p, p.ti) == false) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a `!` with a space after it marks a failure set, and this one negates; write it against what it negates, as `!ready`")
+            frost_rt_recover_note()
+        }
         advance(p)
         operand := parse_unary(p)
         zero := new_node_at(p, NodeKind::Num, 0, 0, 0, start)
@@ -5470,6 +5493,11 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // the failure set beside it.
     p.ok_ty = ret
     if (cur(p) == TokenKind::Bang) {
+        if (tokens_touch(p, p.ti - 1) || tokens_touch(p, p.ti)) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a `!` against what follows it negates, and this one marks a failure set; write `-> T ! E`, with a space on both sides")
+            frost_rt_recover_note()
+        }
         advance(p)
         failure = parse_type(p)
         ret = synth_result_struct(p, ret, failure)

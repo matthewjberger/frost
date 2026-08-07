@@ -856,6 +856,34 @@ Holder :: struct { a: i64, b: i64 }
 ",
         "'!' answers the opposite of a yes or no, and this is a 'Pair'",
     ),
+    // `!` carries two meanings and the space around it says which. A failure
+    // set is written `-> T ! E` and a negation against what it negates, and
+    // each written the other way says the other thing. The compiler is never
+    // confused, since either has one parse; a reader skimming is, and a corpus
+    // where `!` beside a space is a failure set and `!` against a name is a
+    // negation is what the rule buys.
+    (
+        "a_failure_set_written_without_its_spaces",
+        "Bad :: enum { Nope }
+         tight :: fn(n: i64) -> i64 !Bad {
+             n
+}
+         main :: fn() -> i64 { 0 }
+",
+        "a `!` against what follows it negates, and this one marks a failure set; write `-> T ! E`, with a space on both sides",
+    ),
+    (
+        "a_negation_written_with_a_space",
+        "ready :: fn() -> bool { true }
+         main :: fn() -> i64 {
+             if (! ready()) {
+                 return 1
+             }
+             0
+}
+",
+        "a `!` with a space after it marks a failure set, and this one negates; write it against what it negates, as `!ready`",
+    ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
     // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
@@ -4857,6 +4885,30 @@ Fault :: enum { Bad }
 1
 1
 1
+1
+",
+    ),
+    // The three roles `!` reads in, side by side: a failure set with a space on
+    // both sides, a negation against what it negates, and `!=`, which is one
+    // token and untouched by either rule.
+    (
+        "the_three_roles_a_bang_reads_in",
+        "import \"io.frost\"
+Bad :: enum { Nope }
+         risky :: fn(n: i64) -> i64 ! Bad {
+             if (n < 0) {
+                 return .Nope
+             }
+             n
+}
+         ready :: fn() -> bool { true }
+         main :: fn() -> i64 {
+             print(\"{}\n\", !ready())
+             print(\"{}\n\", 1 != 2)
+             0
+}
+",
+        "0
 1
 ",
     ),
