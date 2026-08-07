@@ -843,9 +843,9 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     emit_text("(")
-    emit_expr(p, left)
+    emit_coerced(p, left, operand_type(p, left))
     emit_op(op)
-    emit_expr(p, right)
+    emit_coerced(p, right, operand_type(p, right))
     emit_text(")")
 }
 
@@ -912,7 +912,7 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     emit_text("(frost_t[")
     frost_rt_emit_int(slot)
     emit_text("] = (")
-    emit_expr(p, left)
+    emit_coerced(p, left, operand_type(p, left))
     emit_text("), ")
     // A shift moves by less than the width of what it shifts, and the answer
     // then fits by construction, so the amount is what is answered for.
@@ -935,7 +935,7 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
         }
         emit_op(op)
         emit_text("frost_shift((")
-        emit_expr(p, right)
+        emit_coerced(p, right, operand_type(p, right))
         emit_text("), ")
         frost_rt_emit_int(scalar_size(ty) * 8)
         emit_text("))")
@@ -961,7 +961,7 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
         emit_text("(frost_t[")
         frost_rt_emit_int(slot)
         emit_text("], (")
-        emit_expr(p, right)
+        emit_coerced(p, right, operand_type(p, right))
         emit_text(")))")
         return
     }
@@ -970,7 +970,7 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     emit_text("]")
     emit_op(op)
     emit_text("(")
-    emit_expr(p, right)
+    emit_coerced(p, right, operand_type(p, right))
     emit_text(")), ")
     frost_rt_emit_int(scalar_size(ty) * 8)
     emit_text(", ")

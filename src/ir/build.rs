@@ -6714,8 +6714,14 @@ impl<'a> FunctionLowering<'a> {
         right: ExprId,
     ) -> Result<(IrOperand, Type)> {
         let result = self.fresh_local(Type::Bool, None);
-        let (left_operand, _) =
+        // Each side is read the way an operand of any other operator is, which
+        // for a borrow of a yes or no is the value it borrows. Left alone, the
+        // branch tested the address the borrow holds, which is never zero, and
+        // the assignment of the other side put an address in a `bool`.
+        let (left_value, left_type) =
             self.lower_expression(left, Some(&Type::Bool))?;
+        let left_read = unify(&left_type, &Type::Bool);
+        let left_operand = self.coerce(left_value, &left_type, &left_read)?;
 
         let evaluate_right = self.new_block();
         let shortcut = self.new_block();
@@ -6735,8 +6741,11 @@ impl<'a> FunctionLowering<'a> {
         }
 
         self.switch_to(evaluate_right);
-        let (right_operand, _) =
+        let (right_value, right_type) =
             self.lower_expression(right, Some(&Type::Bool))?;
+        let right_read = unify(&right_type, &Type::Bool);
+        let right_operand =
+            self.coerce(right_value, &right_type, &right_read)?;
         self.emit(IrStatement::Assign(result, IrRvalue::Use(right_operand)));
         self.set_terminator(IrTerminator::Jump(merge));
 
@@ -11180,16 +11189,19 @@ fn through_borrow(ty: &Type) -> &Type {
 }
 
 fn unify(left: &Type, right: &Type) -> Type {
-    if left == right {
-        return left.clone();
-    }
     // A borrow of a value put beside that value is the two of them, which is
-    // what the operator is about. Left alone, `at(bag, 2) == 9` compared the
-    // address the borrow holds against nine and answered no for every bag.
+    // what the operator is about, and two borrows of one type are two of them
+    // as well. Left alone, `at(bag, 2) == 9` compared the address the borrow
+    // holds against nine and answered no for every bag, and read before the
+    // equality below, `at(bag, 1) < at(bag, 2)` compared two addresses and
+    // answered about where the numbers sit rather than about the numbers.
     match (borrowed_value(left), borrowed_value(right)) {
         (Some(inner), _) => return unify(inner, right),
         (_, Some(inner)) => return unify(left, inner),
         _ => {}
+    }
+    if left == right {
+        return left.clone();
     }
     match (left, right) {
         (wide, narrow) | (narrow, wide)

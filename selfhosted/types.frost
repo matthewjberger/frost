@@ -22,7 +22,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
-    borrow_kept, pack_local_type, read_borrowed_operands,
+    borrow_kept, pack_local_type, operand_type,
     reads_through_borrow,
     record_local, record_mono_ret, type_cache_prepare, type_of, binding_type,
     place_type,
@@ -232,10 +232,10 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
         // only float in `0.3 + count` is the literal, and the integer converts
         // to whatever float the context asks for. One typed float on either
         // side does fix the width, and then it is not one of these.
-        if (untyped_literal(p, node.a) && is_integer(type_of(p, node.b))) {
+        if (untyped_literal(p, node.a) && is_integer(operand_type(p, node.b))) {
             return true
         }
-        if (untyped_literal(p, node.b) && is_integer(type_of(p, node.a))) {
+        if (untyped_literal(p, node.b) && is_integer(operand_type(p, node.a))) {
             return true
         }
     }
@@ -837,8 +837,8 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         if (op_answers_truth(node.val)) {
             return TY_I64
         }
-        left := type_of(p, node.a)
-        right := type_of(p, node.b)
+        left := operand_type(p, node.a)
+        right := operand_type(p, node.b)
         // Two vectors answer with a vector. The operation is done once per
         // lane, and what comes out is as wide as what went in, so a borrow the
         // operand arrived as is read through here.
@@ -1367,11 +1367,27 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
 // Reading a borrow reads what it borrows. An aggregate is reached by address
 // either way, so a field access through one already does it and there is
 // nothing to add; a scalar has no field to reach through, so the read is here
-// or nowhere. Four walks apply this and the rule is written once: the parse
-// wrapping a name, the pass reading an operator's operands, and each backend
-// coercing a value to the type a place wants.
+// or nowhere. Two walks apply this and the rule is written once: the parse,
+// wrapping a name that holds one, and each backend's coercion, which is what
+// every value in a value position goes through.
 reads_through_borrow :: fn(mut p: Parser, ty: i64) -> bool {
     is_borrow(ty) && is_aggregate(pointee(p, ty)) == false
+}
+
+// The type an operand of an operator is read at.
+//
+// A name holding a borrow of a scalar reads through where it is written, which
+// the parse does. A call answering one is known to answer a borrow only once
+// every signature has been read, and a call may be written above the
+// declaration it names, so its operands say here what they are read at and the
+// coercion does the reading. Left alone, `at(bag, 2) == 9` compared the address
+// the borrow holds against nine and answered no for every bag there is.
+operand_type :: fn(mut p: Parser, value: i64) -> i64 {
+    ty := type_of(p, value)
+    if (reads_through_borrow(p, ty)) {
+        return pointee(p, ty)
+    }
+    ty
 }
 
 // A borrow where a borrow is wanted, undoing the read a name holding one takes
@@ -1387,61 +1403,6 @@ borrow_kept :: fn(mut p: Parser, value: i64, want: i64) -> i64 {
         return held.a
     }
     value
-}
-
-// A borrow of a scalar put beside a value is the value it borrows.
-//
-// A name holding one reads through where it is written, which the parse does.
-// A call answering one is known to answer a borrow only once every signature
-// has been read, and a call may be written above the declaration it names, so
-// its operands are read through here instead. Left alone, `at(bag, 2) == 9`
-// compared the address the borrow holds against nine and answered no for every
-// bag there is.
-read_borrowed_operands :: fn(mut p: Parser, from: i64) {
-    var i: i64 = from
-    while (i < p.arena.count) {
-        node := arena_at(p.arena, i)
-        kind := node.kind
-        left := node.a
-        right := node.b
-        if (kind == NodeKind::Bin) {
-            read_left := read_borrow_through(p, left)
-            read_right := read_borrow_through(p, right)
-            again := arena_at(p.arena, i)
-            again.a = read_left
-            again.b = read_right
-        }
-        i = i + 1
-    }
-}
-
-// The value a borrow of a scalar names, or the expression unchanged. An
-// aggregate is reached by address already, so reading one through its borrow
-// is what a field access does and there is nothing to add here.
-read_borrow_through :: fn(mut p: Parser, value: i64) -> i64 {
-    if (value < 0) {
-        return value
-    }
-    // Only a call, and its answer read off the table rather than worked out.
-    // Every other producer of a borrow is a name, and a name reads through
-    // where it is written. Asked of `type_of` instead, this put a question the
-    // parse had already answered, and the answering wrote every generic
-    // argument it walked into the table a second time until the table was full.
-    node := arena_at(p.arena, value)
-    if (node.kind != NodeKind::Call || node.val < 0
-        || node.val >= p.fns.count) {
-        return value
-    }
-    ty := arena_at(p.fns, node.val).ret_type
-    if (reads_through_borrow(p, ty) == false) {
-        return value
-    }
-    made := new_unary(p, NodeKind::Deref, value)
-    // Read through a borrow rather than through a raw pointer, which is what
-    // the unsafety gate reads off the node.
-    read := arena_at(p.arena, made)
-    read.val = 1
-    made
 }
 
 // Record what a name binds for the rest of this declaration's parse.
@@ -1845,6 +1806,30 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
                     found = position
                     p.tparam_through = through
                 }
+                // `Bag<$T>` names the parameter through a generic struct's
+                // argument list, so what it binds to is the argument's own
+                // argument rather than the argument. Read as if it named
+                // nothing, the tuple fell through to the first argument whose
+                // type was known, which is the struct: `outer` was compiled for
+                // `Bag<i64>`, whose parameter is a `Bag<Bag<i64>>` nothing
+                // wrote, and each round of the fixpoint went one deeper.
+                if (compile_time == 0 && found < 0 && through == 0
+                    && cur(p) == TokenKind::Ident
+                    && peek_kind(p, 1) == TokenKind::Lt) {
+                    var ahead: i64 = 2
+                    while (peek_kind(p, ahead) != TokenKind::Gt
+                        && peek_kind(p, ahead) != TokenKind::Eof) {
+                        if (peek_kind(p, ahead) == TokenKind::Dollar
+                            && peek_kind(p, ahead + 1) == TokenKind::Ident
+                            && peek_len(p, ahead + 1) == name_len
+                            && bytes_equal(p.src, peek_off(p, ahead + 1),
+                                name_off, name_len)) {
+                            found = position
+                            p.tparam_through = 2
+                        }
+                        ahead = ahead + 1
+                    }
+                }
             }
             continue
         }
@@ -1877,7 +1862,8 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
 // The type of the nth runtime argument of a call, with a pointer read through,
 // or -1 where nothing here says what it is. `through` is 1 where the declaration
 // wrote the parameter inside brackets, so what it binds to is the argument's
-// element rather than the argument.
+// element rather than the argument, and 2 where it wrote it inside a generic
+// struct's argument list, so what it binds to is that instance's own argument.
 call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
     through: i64) -> i64 {
     var id := args
@@ -1897,10 +1883,30 @@ call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
                 }
                 return array_element(p, held)
             }
+            if (through == 2) {
+                if (held < 0 || is_struct_ty(held) == false) {
+                    return -1
+                }
+                return instance_arg_of(p, struct_index_of(held))
+            }
             return held
         }
         seen = seen + 1
         id = next_id
+    }
+    -1
+}
+
+// The argument a generic struct's instance was made with, or -1 for a struct
+// that is no instance of one.
+instance_arg_of :: fn(mut p: Parser, struct_index: i64) -> i64 {
+    var i: i64 = 0
+    while (i < p.instances.count) {
+        inst := arena_at(p.instances, i)
+        if (inst.struct_index == struct_index) {
+            return inst.arg
+        }
+        i = i + 1
     }
     -1
 }

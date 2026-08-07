@@ -14,7 +14,7 @@ export expand_includes, instance_fits_kind, tuple_is_first_for,
     instance_params,
     parse_generic_instance, parse_program,
     record_mono_rets,
-    resolve_variant_fixups, settle_parsed_tree
+    resolve_variant_fixups
 
 // A file's bytes, spliced in where `include_str("path")` was written. The
 // four tokens become one string literal before anything is parsed, so nothing
@@ -6106,20 +6106,11 @@ check_discarded_resources :: fn(mut p: Parser) {
 // Everything an earlier parse left unresolved, now that every signature is
 // parsed: a literal that named no type, and a field of a list binding whose
 // callee was written later.
-// Everything a freshly parsed tree still owes, from the node at `from` on.
 //
 // A body is parsed in two places: the whole file, once, and a generic's body
 // again for every instance, which happens while the checks and the emitters
-// run. Anything that has to see every body has to be listed here rather than
-// beside the first of those, or it walks the file and never walks an instance:
-// `read_borrowed_operands` was added beside the first alone, so an operator
-// over a borrow of a number inside a generic still compared the address, which
-// is where `arena_at` on an arena of numbers lives.
-settle_parsed_tree :: fn(mut p: Parser, from: i64) {
-    resolve_variant_fixups(p)
-    read_borrowed_operands(p, from)
-}
-
+// run. Anything that has to see every body is called from both places, or it
+// walks the file and never walks an instance.
 resolve_variant_fixups :: fn(mut p: Parser) {
     var i: i64 = 0
     while (i < p.variant_fixups.count) {
@@ -7465,12 +7456,11 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     // sees the instance's settled types, writes to it.
     saved_cache := p.type_cache_on
     p.type_cache_on = 0
-    made_from := p.arena.count
     node := parse_function(p)
     // An instance is parsed after every signature is known, so anything its
     // body still owes is settled here rather than waiting for a pass that has
     // already run.
-    settle_parsed_tree(p, made_from)
+    resolve_variant_fixups(p)
     p.type_cache_on = saved_cache
     p.gbindings.count = mark
     p.ti = saved_ti

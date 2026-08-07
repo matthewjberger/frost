@@ -766,11 +766,9 @@ main :: fn() -> i64 {
         frost_rt_die()
     }
     // Everything the parse still owes, now that every signature is known: the
-    // `.Variant` an argument left unresolved, and every operand that is a
-    // borrow of a scalar read as the value it borrows. A generic's body is
-    // parsed again per instance and owes the same, which is why both are one
-    // step called from both places rather than a list written out here.
-    settle_parsed_tree(parser, 0)
+    // `.Variant` an argument left unresolved. A generic's body is parsed again
+    // per instance and owes the same, so this is called from there too.
+    resolve_variant_fixups(parser)
     // The resources a `_` would drop, once every declaration has said whether
     // it holds one.
     check_discarded_resources(parser)

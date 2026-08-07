@@ -883,6 +883,14 @@ emit_asm_coerce :: fn(mut p: Parser, value_in: i64, want: i64) {
     emit_asm_convert(p, have, want)
 }
 
+// An operand of an operator, at the type the operation reads it as. That is the
+// operand's own type for everything but a borrow of a scalar, where it is the
+// value borrowed, and the coercion is what does the reading.
+emit_asm_operand :: fn(mut p: Parser, value: i64) {
+    emit_asm_expr(p, value)
+    emit_asm_coerce(p, value, operand_type(p, value))
+}
+
 // Both operands arrive as f64 bit patterns, the left in %rax and the right in
 // %r11. A comparison answers 0 or 1 in %rax like an integer one does, so
 // everything downstream of it is unchanged.
@@ -1857,6 +1865,11 @@ simple_operand_kind :: fn(mut p: Parser, id: i64) -> i64 {
     if (is_aggregate(lookup_local(p, off, len))) {
         return SIMPLE_NONE
     }
+    // A borrow of a scalar is the value it borrows, which is a load through the
+    // load this path emits rather than the one load it knows how to write.
+    if (reads_through_borrow(p, lookup_local(p, off, len))) {
+        return SIMPLE_NONE
+    }
     SIMPLE_LOCAL
 }
 
@@ -2115,7 +2128,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // sides makes that a bounds failure rather than a false.
     if (kind == NodeKind::Bin && (node.val == OP_AND || node.val == OP_OR)) {
         done := new_label(p)
-        emit_asm_expr(p, node.a)
+        emit_asm_operand(p, node.a)
         asm("cmpq $0, %rax")
         if (node.val == OP_AND) {
             // The answer is already settled if the left side settled it, and
@@ -2128,7 +2141,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         emit_label(".Lend", done)
         emit_text("\n")
-        emit_asm_expr(p, node.b)
+        emit_asm_operand(p, node.b)
         asm("cmpq $0, %rax")
         asm("setne %al")
         asm("movzbq %al, %rax")
@@ -2148,15 +2161,15 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             emit_asm_packed(p, bin.a, op, bin.b, answered)
             return
         }
-        left_ty := type_of(p, bin.a)
-        right_ty := type_of(p, bin.b)
+        left_ty := operand_type(p, bin.a)
+        right_ty := operand_type(p, bin.b)
         if (is_float(left_ty) || is_float(right_ty)) {
             // Every float operation is done at f64 and narrowed after, so
             // the arithmetic follows one path rather than one per width.
-            emit_asm_expr(p, bin.a)
+            emit_asm_operand(p, bin.a)
             emit_asm_convert(p, left_ty, TY_F64)
             emit_asm_spill(p)
-            emit_asm_expr(p, bin.b)
+            emit_asm_operand(p, bin.b)
             emit_asm_convert(p, right_ty, TY_F64)
             asm("movq %rax, %r11")
             emit_asm_unspill(p)
@@ -2183,22 +2196,22 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
                 && asm_folds_immediate(op, unsigned)) {
                 value := asm_immediate_operand(p, bin.b, simple)
                 if (asm_immediate_fits(value)) {
-                    emit_asm_expr(p, bin.a)
+                    emit_asm_operand(p, bin.a)
                     emit_asm_binop_imm(op, unsigned, value)
                     emit_asm_arith_check(p, op, type_of(p, id), unsigned)
                     return
                 }
             }
-            emit_asm_expr(p, bin.a)
+            emit_asm_operand(p, bin.a)
             emit_asm_simple_into_r11(p, bin.b, simple)
             emit_asm_arith_pre(p, op, type_of(p, id))
             emit_asm_binop(op, unsigned)
             emit_asm_arith_check(p, op, type_of(p, id), unsigned)
             return
         }
-        emit_asm_expr(p, bin.a)
+        emit_asm_operand(p, bin.a)
         emit_asm_spill(p)
-        emit_asm_expr(p, bin.b)
+        emit_asm_operand(p, bin.b)
         asm("movq %rax, %r11")
         emit_asm_unspill(p)
         unsigned := binop_is_unsigned(left_ty, right_ty)

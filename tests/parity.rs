@@ -4895,6 +4895,98 @@ main :: fn() -> i64 {
 12
 ",
     ),
+    // The same rule, at every operator that reads an operand rather than only
+    // at the two a comparison has. A borrow of a scalar is read as the value it
+    // borrows by the coercion each backend already puts every value through, so
+    // a truth value under `&&`, a decimal under `+`, a byte under checked
+    // arithmetic, a shift amount and an operand inside a generic's body all
+    // read the same. Each of those is a path of its own in at least one
+    // backend: the short-circuit that jumps, the one done at f64 and narrowed,
+    // the one done at 64 bits and held to its width, the amount handed to
+    // `frost_shift`, and the body parsed again per instance.
+    (
+        "a_borrow_of_a_number_beside_every_operator",
+        "import \"io.frost\"
+         Truths :: struct { data: ^bool, count: i64 }
+         Reals :: struct { data: ^f64, count: i64 }
+         Bytes :: struct { data: ^u8, count: i64 }
+         truth :: fn(t: Truths, i: i64) -> ref bool {
+             unsafe {
+                 ref v := t.data[i]
+                 v
+             }
+}
+         real :: fn(r: Reals, i: i64) -> ref f64 {
+             unsafe {
+                 ref v := r.data[i]
+                 v
+             }
+}
+         byte :: fn(b: Bytes, i: i64) -> ref u8 {
+             unsafe {
+                 ref v := b.data[i]
+                 v
+             }
+}
+         widened :: fn(b: Bytes, v: $T) -> i64 { byte(b, 0) + sizeof(T) }
+         main :: fn() -> i64 {
+             var flags : [2]bool = [true, false]
+             var reals : [2]f64 = [1.5, 2.5]
+             var bytes : [2]u8 = [200, 3]
+             var six : i64 = 6
+             t := Truths { data = ptr_to(flags[0]), count = 2 }
+             r := Reals { data = ptr_to(reals[0]), count = 2 }
+             b := Bytes { data = ptr_to(bytes[0]), count = 2 }
+             print(\"{}\\n\", truth(t, 0) && truth(t, 1) == false)
+             print(\"{}\\n\", truth(t, 1) || truth(t, 0))
+             print(\"{}\\n\", real(r, 0) + real(r, 1) > 3.9)
+             print(\"{}\\n\", real(r, 1) > real(r, 0))
+             print(\"{}\\n\", byte(b, 0) + byte(b, 1))
+             print(\"{}\\n\", six << byte(b, 1))
+             print(\"{}\\n\", widened(b, 0))
+    0
+}
+",
+        "1
+1
+1
+1
+203
+48
+208
+",
+    ),
+    // A generic whose parameter is written `Bag<$T>` calling another one
+    // written the same way. Which argument stands for the type parameter is
+    // read off the declaration, and a parameter naming it inside a generic
+    // struct's argument list read as naming it nowhere, so the tuple fell
+    // through to the first argument whose type was known: the struct itself.
+    // `outer` was then compiled for `Bag<i64>`, whose own parameter is a
+    // `Bag<Bag<i64>>` nothing wrote, and each round of the instantiation
+    // fixpoint went one level deeper until the arena holding them was full.
+    // A caller that is not itself generic never reached that, because the
+    // argument's type is known there and the instance it names carries the
+    // tuple.
+    (
+        "a_generic_hands_its_own_argument_to_another",
+        "import \"io.frost\"\nBag :: struct($T: Type) { one: T }
+         only :: fn(a: Bag<$T>) -> ref T {
+             ref held := a.one
+    held
+}
+         plus :: fn(a: Bag<$T>, n: i64) -> i64 { only(a) + n }
+         width :: fn(a: Bag<$T>) -> i64 { sizeof(T) }
+         main :: fn() -> i64 {
+             var carrier : Bag<i64> = Bag { one = 7 }
+             print(\"{}\\n\", plus(carrier, 5))
+             print(\"{}\\n\", width(carrier))
+             0
+}
+",
+        "12
+8
+",
+    ),
     // `!` wherever a boolean expression is written: over a comparison, over a
     // call answering one, doubled, beside `&&` and `||`, and with brackets
     // deciding what it applies to. `!=` is a token of its own and `-> T ! E`
