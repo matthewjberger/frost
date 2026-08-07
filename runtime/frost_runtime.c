@@ -402,26 +402,50 @@ void frost_rt_emit_char(int64_t byte) {
     fputc((int)byte, frost_rt_emit_where());
 }
 
-/* What std/io.frost writes through. Each writes one piece to standard output
-   with no newline of its own, so a line built from several values is several
-   calls and one trailing `frost_rt_write_char(10)`. Pinned to stdout rather
-   than the emit target, so a program that redirects the compiler's emitted
-   text still prints its own output where a reader looks for it. An integer
-   writes as %lld and a float as %g. */
+/* What std/io.frost writes through. A whole formatted line arrives in one
+   call, since the line is composed before any of it leaves, so this is one
+   write per `print` rather than one per value. Pinned to stdout rather than
+   the emit target, so a program that redirects the compiler's emitted text
+   still prints its own output where a reader looks for it. */
 void frost_rt_write_bytes(const char *data, int64_t length) {
     fwrite(data, 1, (size_t)length, stdout);
 }
 
+/* Digits and one byte, for a program that has no library to reach for. The
+   self-hosted compiler's built-in program is one of these: it imports nothing,
+   so it declares these itself and writes with them, which is what makes it a
+   test that the compiler works with nothing else present. std/io.frost
+   composes its own digits and does not call these. */
 void frost_rt_write_i64(int64_t value) {
     printf("%lld", (long long)value);
 }
 
-void frost_rt_write_f64(double value) {
-    printf("%g", value);
-}
-
 void frost_rt_write_char(int64_t byte) {
     fputc((int)byte, stdout);
+}
+
+/* A float spelled the way C writes %g, into a buffer rather than out to a
+   stream, so the line it belongs to can be finished before anything is
+   written. Shortest-round-trip decimal is the one piece of formatting Frost
+   does not do for itself: writing it again here would be a second
+   implementation of the C library's, differing only where it was wrong.
+
+   Answers how many bytes were written, which is never more than `room`.
+   snprintf answers what it would have written, so a value that does not fit
+   is reported as the truncated length rather than the wanted one. */
+int64_t frost_rt_format_f64(double value, char *out, int64_t room) {
+    int wanted;
+    if (room <= 0) {
+        return 0;
+    }
+    wanted = snprintf(out, (size_t)room, "%g", value);
+    if (wanted < 0) {
+        return 0;
+    }
+    if ((int64_t)wanted >= room) {
+        return room - 1;
+    }
+    return (int64_t)wanted;
 }
 
 const char *frost_rt_getenv(const char *name) {

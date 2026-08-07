@@ -14,7 +14,7 @@ caller.
 ## `std/io.frost`, writing to standard output
 
 ```frost
-export Sink, to_stdout, print, write
+export to_stdout, print, write, LINE
 ```
 
 This module is the whole of how a program writes output: there is no print
@@ -84,39 +84,46 @@ deleted, so what a call compiles to is one direct write per value with the
 choice already made. Nothing is dispatched at run time and nothing is boxed.
 
 What is left at run time is a walk over the literal's own bytes, looking for the
-next hole. A literal with no doubled brace in it is written in one call per run.
+next hole.
+
+### One line, one write
+
+The line is composed before any of it leaves. `print("a {} b {}\n", x, y)` is
+one write, not five: the digits, the float and the runs of literal text all land
+in a buffer on the stack, and that buffer goes out once.
+
+Nothing is held back after the call returns. There is no buffer between calls,
+so `print` never needs a `flush`, a program that stops partway loses nothing it
+had already printed, and `print` cannot arrive out of order with the compiler's
+own emitted text. Output that wants to be batched says so by naming a
+destination that batches it, which is a value with a lifetime a reader can see.
+
+A line longer than the buffer leaves in pieces of that size. Nothing is lost and
+nothing allocates.
 
 ### Where the bytes go
 
-A destination is a `Sink`: the three writes a formatted line is made of.
-
-```frost
-Sink :: struct {
-    bytes: fn(str),
-    int: fn(i64),
-    float: fn(f64),
-}
-```
-
-`print` is `write` to `to_stdout`. A program that wants its text somewhere else
-declares its own `Sink` and calls `write`:
+A destination is a function taking bytes.
 
 ```frost,sketch
-var log := Sink { bytes = to_file, int = digits_to_file, float = real_to_file }
-write($log, "frame {} took {}ms\n", index, elapsed)
+to_file :: fn(text: str) { ... }
+write(to_file, "frame {} took {}ms\n", index, elapsed)
 ```
 
-The `$` is what keeps that call direct: a compile-time argument is folded, so
-`sink.bytes(...)` inside `write` is a call to `to_file` by name rather than a
-call through a field.
+`print` is `write` to `to_stdout`. A destination is called once per line rather
+than once per value, so what it does with a whole formatted line is its own
+business and it never sees the pieces.
 
-The writers behind `to_stdout` go through the runtime's write helpers, which are
-pinned to standard output rather than following the compiler's emit target, so a
-program that redirects emitted text still prints where a reader looks. Two of
-the three externs behind them are `safe extern`, because each takes a number and
-there is nothing a caller can hand one that misbehaves. The byte writer takes a
+`to_stdout` goes through the runtime's byte writer, which is pinned to standard
+output rather than following the compiler's emit target, so a program that
+redirects emitted text still prints where a reader looks. That writer takes a
 pointer and a length, so its one call sits in an `unsafe` block, where the
 length comes from the same `str` as the pointer and the two cannot disagree.
+
+Integers are written by `std/io.frost` itself. A float is the one thing it asks
+the C library for, through a runtime helper that spells `%g` into a buffer
+rather than writing it out, so the line can still be finished before anything
+leaves.
 
 ## `std/strings.frost`, questions about text
 
