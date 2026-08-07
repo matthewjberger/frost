@@ -766,8 +766,12 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // element that copy is for.
     aliased_off, aliased_len := alias_for(p, offset, length)
     if (aliased_off != offset || aliased_len != length) {
+        // Named for the element and placed where the reader wrote the name it
+        // stands for. Placed at the name instead, a fault about it pointed into
+        // the room past the source where that name was made up, so the line a
+        // reader was shown read ` items__0 items__0 `.
         return new_named_node_at(p, NodeKind::Var, 0, aliased_off, aliased_len,
-            aliased_off)
+            offset)
     }
     // A compile-time parameter bound to a name stands for that name, so what is
     // recorded here is the name the call site passed. The binding is in force
@@ -1283,7 +1287,7 @@ pack_element_at :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
     }
     name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len, at)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+        index_node.pos)
 }
 
 parse_factor :: fn(mut p: Parser) -> i64 {
@@ -1371,7 +1375,7 @@ names_the_pack :: fn(mut p: Parser) -> bool {
 // One argument per element of the list, in order: a value element is the
 // parameter this instance took it under, a type element is the type itself.
 splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
-    index_in: i64) -> (head: i64, tail: i64, index: i64) {
+    index_in: i64, at: i64) -> (head: i64, tail: i64, index: i64) {
     var head := head_in
     var tail := tail_in
     var index := index_in
@@ -1385,7 +1389,7 @@ splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
             name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
                 k)
             value = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-                name_off)
+                at)
         }
         arg := new_node(p, NodeKind::Arg, value, 0, 0)
         if (head == (-1)) {
@@ -1507,9 +1511,10 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         // has to go with it.
         pending_mark := p.pending.count
         if (names_the_pack(p)) {
+            pack_at := cur_off(p)
             advance(p)
             spliced_head, spliced_tail, spliced_index :=
-            splice_pack_arguments(p, head, tail, index)
+            splice_pack_arguments(p, head, tail, index, pack_at)
             head = spliced_head
             tail = spliced_tail
             index = spliced_index

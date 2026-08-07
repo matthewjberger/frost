@@ -1883,7 +1883,11 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
         return
     }
     arena_push(p.told_moves, ToldMove { said = said })
-    report_where(p.modules, p.src, name_off)
+    // Where the node is, not where its name is. For a name the source wrote
+    // those are one offset; for one an unrolled list made up they are not, and
+    // the made-up name lives in the room past the source, so the line a reader
+    // was shown for a fault about `items__0` was ` items__0 items__0 `.
+    report_where(p.modules, p.src, arena_at(p.arena, id).pos)
     report_fmt("use of moved value '{}'", said)
     // Where the value went, said the way the fault itself is said, so the
     // reader sees the move and the use as two placed lines of one story. The
@@ -1892,7 +1896,7 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     report("\n")
     moved_root := strip_place(p, moved_slot, place_depth(p, moved_slot))
     moved_node := arena_at(p.arena, moved_root)
-    report_where(p.modules, p.src, moved_node.val)
+    report_where(p.modules, p.src, moved_node.pos)
     report_fmt("'{}' was moved here", said)
     // The walk goes on. What is refused is this use, and the uses after it are
     // their own faults about their own places, so abandoning here would report
