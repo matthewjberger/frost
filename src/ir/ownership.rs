@@ -15,7 +15,7 @@ const CONSUMED: u8 = 4;
 type State = HashMap<LocalId, u8>;
 
 pub fn check_linearity(module: &IrModule) -> Result<()> {
-    let reports = check_linearity_recovering(module);
+    let reports = check_linearity_recovering(module, &HashSet::new());
     if reports.is_empty() {
         return Ok(());
     }
@@ -27,19 +27,27 @@ pub fn check_linearity(module: &IrModule) -> Result<()> {
 /// Check each function, reporting one failure per function rather than
 /// stopping at the first. The ownership state a walk builds belongs to the
 /// function it walked, so a fault in one says nothing about the next.
+/// `pooled` names the container types already refused as pools of resources.
+/// Nothing consumes such a value the way the language asks, which is the
+/// refusal, so telling its holder to consume it is telling them to do something
+/// that fixes nothing.
 pub fn check_linearity_recovering(
     module: &IrModule,
+    pooled: &HashSet<String>,
 ) -> Vec<crate::diagnostic::Diagnostic> {
     let mut reports = Vec::new();
     for function in &module.functions {
-        if let Err(fault) = check_function(function) {
+        if let Err(fault) = check_function(function, pooled) {
             reports.push(fault);
         }
     }
     reports
 }
 
-fn check_function(function: &IrFunction) -> Result<(), Diagnostic> {
+fn check_function(
+    function: &IrFunction,
+    pooled: &HashSet<String>,
+) -> Result<(), Diagnostic> {
     let linear_locals: Vec<LocalId> = (0..function.locals.len())
         .filter(|&local| function.locals[local].linear)
         .collect();
@@ -84,7 +92,13 @@ fn check_function(function: &IrFunction) -> Result<(), Diagnostic> {
     let referenced = referenced_locals(function);
     for (block_id, entry) in block_entry.iter().enumerate() {
         if let Some(entry) = entry {
-            report_block(function, block_id, entry.clone(), &referenced)?;
+            report_block(
+                function,
+                block_id,
+                entry.clone(),
+                &referenced,
+                pooled,
+            )?;
         }
     }
     Ok(())
@@ -199,6 +213,7 @@ fn report_block(
     block_id: BlockId,
     mut state: State,
     referenced: &HashSet<LocalId>,
+    pooled: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     for statement in &function.blocks[block_id].statements {
         if let IrStatement::Consume(local) = statement {
@@ -224,6 +239,13 @@ fn report_block(
                 continue;
             }
             if owned & OWNED == 0 {
+                continue;
+            }
+            // A pool of resources is refused where it is written, and the
+            // obligation it carries cannot be answered: no consumer discharges
+            // it. Telling its holder to consume it as well points at a second
+            // line with nothing the reader can do about it.
+            if pooled.contains(&function.locals[local].ty.to_string()) {
                 continue;
             }
             if function.locals[local].name.is_some() {

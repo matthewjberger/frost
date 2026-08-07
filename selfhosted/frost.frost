@@ -564,6 +564,8 @@ main :: fn() -> i64 {
         instances = arena_make($Instance, 4096),
         const_faults = arena_make($i64, 256),
         const_repeat = 0,
+        refused_pools = arena_make($i64, 64),
+        told_moves = arena_make($ToldMove, 256),
         generic_fns = arena_make($GenericFn, 4096),
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),

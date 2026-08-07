@@ -16291,19 +16291,29 @@ fn an_error_inside_a_specialization_names_the_call() {
         message.contains("generic_diagnostic_app.frost:5:5"),
         "the error did not name the call site:\n{message}"
     );
-    // Named the way it was written, not as `add__Point`.
+    // Named the way it was written, not as `add__Point`, and in the words the
+    // fault itself uses. The instance is not announced by a phrase of the
+    // compiler's in front of the claim: for a fault that carried its own place
+    // that left two places in one report, so the sentence a reader had to act
+    // on began with a file name.
     assert!(
-        message.contains("instantiating 'add<Point>'"),
+        message.contains("'add<Point>'"),
         "the error did not name the instantiation:\n{message}"
     );
     assert!(
         !message.contains("add__Point"),
         "a mangled name reached the reader:\n{message}"
     );
-    // And the template position is still there for whoever owns the generic.
+    // And one place, which is the call. The template's own position used to
+    // ride along inside the words, so the sentence a reader had to act on began
+    // `at lib/g.frost:2:41:` and the renderer showed the call above it: two
+    // places in one report, one of them a file name in the middle of a
+    // sentence. The generic is named in the claim, which is the hop to its
+    // body; where a fault has a second line worth pointing at it says so as a
+    // placed line of its own, the way "was moved here" does.
     assert!(
-        message.contains("lib/g.frost:2:"),
-        "the error lost the template position:\n{message}"
+        !message.contains("lib/g.frost:2:"),
+        "the claim carries a second place:\n{message}"
     );
 }
 

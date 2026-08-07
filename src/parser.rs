@@ -1059,6 +1059,23 @@ impl<'a> Parser<'a> {
     // The error a site raises when the token it is looking at is the mistake:
     // the position is that token's, captured now, not wherever the cursor
     // ends up once recovery has skipped ahead.
+    // Forward to just past the brace that closes the match the cursor is
+    // inside. A refusal among the arms leaves it where no statement begins, and
+    // recovery from there reads the match's own closing brace as the one that
+    // ends the function: what the reader is then told is that the brace ending
+    // the function is not a declaration, about a line with nothing wrong.
+    fn skip_past_match(&mut self) {
+        let mut depth = 1;
+        while depth > 0 && !matches!(self.peek_nth(0), Token::EndOfFile) {
+            match self.peek_nth(0) {
+                Token::LeftBrace => depth += 1,
+                Token::RightBrace => depth -= 1,
+                _ => {}
+            }
+            self.read_token();
+        }
+    }
+
     fn here(&self, message: String) -> anyhow::Error {
         anyhow::Error::new(crate::diagnostic::LocatedError {
             position: self.current_position().unwrap_or_default(),
@@ -3264,7 +3281,9 @@ impl<'a> Parser<'a> {
                 Pattern::EnumVariant { bindings, .. }
                     if !bindings.is_empty() =>
                 {
-                    return Err(self.here(BINDING_ALTERNATIVE.to_string()));
+                    let held = self.here(BINDING_ALTERNATIVE.to_string());
+                    self.skip_past_match();
+                    return Err(held);
                 }
                 _ => {}
             }
