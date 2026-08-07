@@ -2179,6 +2179,12 @@ note_format_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
 // This is the one place a value's type is judged: the parse cannot tell a
 // `[]i64` from an `i64` while the call that answers with it is still waiting to
 // be worked out, and by the time this runs there is nothing left waiting.
+// Where a string literal begins, which is its opening quote. A literal's
+// offset is the first byte of its text, and the text starts after the quote.
+literal_at :: fn(node: Node) -> i64 {
+    node.val - 1
+}
+
 check_format_types :: fn(mut p: Parser) {
     var i: i64 = 0
     while (i < p.format_calls.count) {
@@ -2192,11 +2198,11 @@ check_format_types :: fn(mut p: Parser) {
         while (k < count) {
             garg := arena_at(p.gargs, start + k)
             if (garg.is_type == 1) {
-                report_where(p.modules, p.src, node.pos)
+                report_where(p.modules, p.src, literal_at(node))
                 report("a format string writes a value, and a type is not one")
                 frost_rt_recover_escape()
             } else if (writable_by_format(p, garg.value) == false) {
-                report_where(p.modules, p.src, node.pos)
+                report_where(p.modules, p.src, literal_at(node))
                 report("a format string writes a number, a yes or no, or a str, and this is a ")
                 report_type_name(p, garg.value)
                 frost_rt_recover_escape()
@@ -2335,7 +2341,7 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
         if (forwards_own_format(p, args)) {
             return
         }
-        report_where(p.modules, p.src, node.pos)
+        report_where(p.modules, p.src, literal_at(node))
         report("a format string is written as a literal, since how many values follow it is settled where the call is written")
         frost_rt_recover_escape()
         return
@@ -2348,7 +2354,7 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
         byte := p.src[off + k]
         if (byte == 123) {
             if (k + 1 >= length) {
-                report_where(p.modules, p.src, node.pos)
+                report_where(p.modules, p.src, literal_at(node))
                 report("a '{' in a format string opens a hole or stands for one brace, so write '{}' or '{{'")
                 frost_rt_recover_escape()
                 return
@@ -2358,7 +2364,7 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
                 holes = holes + 1
             } else {
                 if (next != 123) {
-                    report_where(p.modules, p.src, node.pos)
+                    report_where(p.modules, p.src, literal_at(node))
                     report("a '{' in a format string opens a hole or stands for one brace, so write '{}' or '{{'")
                     frost_rt_recover_escape()
                     return
@@ -2374,7 +2380,7 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
         k = k + 1
     }
     if (holes != count) {
-        report_where(p.modules, p.src, node.pos)
+        report_where(p.modules, p.src, literal_at(node))
         report_fmt("this format string opens {} hole(s) and the call gives {} value(s)",
             holes, count)
         frost_rt_recover_escape()

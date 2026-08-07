@@ -5818,6 +5818,13 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
+    // Where an expression is written, for a fault about one the walk is not
+    // lowering: an argument weighed against the parameter it lands in is read
+    // by the call around it, so nothing has put the argument's own place on.
+    fn at_expression(&self, expression: ExprId) -> Position {
+        self.ast.position_of(self.ast.expr_span(expression))
+    }
+
     fn lower_expression(
         &mut self,
         expression: ExprId,
@@ -7415,7 +7422,10 @@ impl<'a> FunctionLowering<'a> {
                 && index < arguments.len()
                 && !self.forwards_its_own_format(arguments[index], arguments)
             {
-                check_format(self.ast, arguments[index], &pack_elements)?;
+                locate(
+                    check_format(self.ast, arguments[index], &pack_elements),
+                    self.at_expression(arguments[index]),
+                )?;
             }
         }
 
@@ -7889,10 +7899,13 @@ impl<'a> FunctionLowering<'a> {
                 (aggregate_name(&given), aggregate_name(target))
             && from != into
         {
-            bail!(
-                "this argument is a '{}' and a '{}' is what is wanted here",
-                spelled(&given),
-                spelled(target)
+            return locate(
+                Err(anyhow::anyhow!(
+                    "this argument is a '{}' and a '{}' is what is wanted here",
+                    spelled(&given),
+                    spelled(target)
+                )),
+                self.at_expression(argument),
             );
         }
         // A raw pointer where a slice is wanted. A slice is an address and a
@@ -7905,10 +7918,13 @@ impl<'a> FunctionLowering<'a> {
             && slice_element_wanted(target).is_some()
             && matches!(given, Type::Ptr(_))
         {
-            bail!(
-                "this argument is a '{}' and a '{}' is what is wanted here",
-                spelled(&given),
-                spelled(target)
+            return locate(
+                Err(anyhow::anyhow!(
+                    "this argument is a '{}' and a '{}' is what is wanted here",
+                    spelled(&given),
+                    spelled(target)
+                )),
+                self.at_expression(argument),
             );
         }
         // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice
