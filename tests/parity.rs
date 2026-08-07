@@ -760,6 +760,24 @@ Holder :: struct { a: i64, b: i64 }
 ",
         "a format string writes a number, a yes or no, or a str, and this is a Holder",
     ),
+    // A borrow named in a report, which is spelled the way a reader writes one.
+    // The bootstrap files a type under a name that round-trips through the
+    // reader monomorphization reads its arguments back with, and there a borrow
+    // takes `&T` and `&mut T`, two forms the surface dropped; the self-hosted
+    // compiler wrote `^T`, which is a raw pointer and a different thing.
+    (
+        "a_borrow_named_in_a_report",
+        "Holder :: struct { a: i64, b: i64 }
+         Other :: struct { x: i64 }
+         take :: fn(o: Other) -> i64 { o.x }
+         main :: fn() -> i64 {
+             var h : Holder = Holder { a = 1, b = 2 }
+             ref r := h
+             take(r)
+}
+",
+        "this argument is a 'ref Holder' and a 'Other' is what is wanted here",
+    ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
     // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
