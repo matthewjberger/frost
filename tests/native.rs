@@ -8973,7 +8973,7 @@ fn self_hosted_rejects_a_linear_value_never_consumed() {
         return;
     };
     assert!(
-        message.contains("never consumed"),
+        message.contains("not consumed"),
         "expected a linear-not-consumed error, got:\n{message}"
     );
 }
@@ -8993,7 +8993,7 @@ fn self_hosted_rejects_a_linear_consumed_on_one_branch() {
         return;
     };
     assert!(
-        message.contains("never consumed"),
+        message.contains("not consumed"),
         "expected a linear-leak error for the untaken branch, got:\n{message}"
     );
 }
@@ -16869,7 +16869,7 @@ fn the_self_hosted_compiler_refuses_a_leaked_generic_linear() {
         return;
     };
     assert!(
-        message.contains("never consumed"),
+        message.contains("not consumed"),
         "expected a linearity error, got:\n{message}"
     );
 }

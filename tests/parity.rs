@@ -1926,6 +1926,7 @@ fn both_compilers_refuse_the_same_programs() {
         return;
     };
     let directory = std::env::temp_dir();
+    let mut drifted = Vec::new();
     for (name, source, wanted) in REFUSED_BY_BOTH {
         let bootstrap = bootstrap_refusal(name, source);
         assert!(
@@ -1948,7 +1949,117 @@ fn both_compilers_refuse_the_same_programs() {
             hosted.contains(wanted),
             "the self-hosted compiler did not say '{wanted}' about {name}:\n{hosted}"
         );
+        // Containing the phrase is not saying the same thing. Two compilers can
+        // both carry it and differ in every word around it, which is how one
+        // came to quote a name the other left bare and to explain a leak in
+        // another sentence entirely. What each said is what is compared.
+        let said = spoken(&bootstrap);
+        let hosted_said = spoken(&hosted);
+        if said != hosted_said {
+            drifted.push(format!(
+                "{name}\n  bootstrap: {}\n  self-hosted: {}",
+                said.join(" | "),
+                hosted_said.join(" | ")
+            ));
+        }
     }
+    let unexpected: Vec<&String> = drifted
+        .iter()
+        .filter(|report| {
+            let name = report.split('\n').next().unwrap_or("");
+            !WORDED_DIFFERENTLY.contains(&name)
+        })
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "the two compilers refuse these for different words, and nothing said \
+         they would ({} of {}):\n{}",
+        unexpected.len(),
+        REFUSED_BY_BOTH.len(),
+        unexpected
+            .iter()
+            .map(|held| held.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let mended: Vec<&str> = WORDED_DIFFERENTLY
+        .iter()
+        .filter(|name| {
+            !drifted
+                .iter()
+                .any(|report| report.split('\n').next() == Some(name))
+        })
+        .copied()
+        .collect();
+    assert!(
+        mended.is_empty(),
+        "these are worded the same now, so take them off the list:\n{}",
+        mended.join("\n")
+    );
+}
+
+// The refusals the two compilers still word differently. Each is a place one
+// says something the other does not, and the list is here rather than in a
+// comment so it can only shrink: a new one fails the test above, and one that
+// is mended fails it too until the name is taken off. Written down after the
+// harness learned to compare what was said rather than to look for a phrase
+// inside it, which is what let forty of these drift unseen.
+const WORDED_DIFFERENTLY: &[&str] = &[
+    // One names the place the resource left by, the other names the whole.
+    "field_twice",
+    "element_twice",
+    "borrowed_field_twice",
+    "consumed_through_a_borrow_twice",
+    "handed_out_of_a_borrow_twice",
+    "write_into_consumed",
+    "moved_through_a_compile_time_list",
+    // One names the pool's instance and what it holds, the other the template.
+    "generic_pool",
+    "pool_nobody_named",
+    "concrete_pool",
+    "handed_out_by_element",
+    // One names what was passed and where, the other names the callee.
+    "an_aggregate_of_the_wrong_type_is_refused",
+    "pointer_for_text",
+    "one_value_passed_to_two_mut_parameters",
+    "a_c_function_called_outside_an_unsafe_block",
+    // One opens with what kind of fault it is, the other with the fault.
+    "distinct_through_a_field",
+    "flags_through_a_field",
+    // One reports a second fault where the other stops at the first. A `case`
+    // the self-hosted compiler refuses leaves it looking for a declaration at
+    // the brace that closes the match, so the reader is told twice and once
+    // wrongly.
+    "a_live_walk_over_a_computed_container",
+    "a_literal_of_an_undeclared_type",
+    "two_vectors_compared",
+    "a_compile_time_call_over_a_size_parameter",
+    "an_alternative_that_binds_a_payload",
+    "a_case_after_one_that_covers_everything",
+    "a_tuple_case_after_one_that_covers_everything",
+    "a_case_two_earlier_spans_cover_between_them",
+    "a_case_an_earlier_span_covers",
+    "a_case_an_earlier_alternative_covers",
+    "a_match_over_spans_still_needs_the_rest",
+    // One says it without a position, so there is no caret to read it off.
+    "a_declaration_of_a_compiler_name",
+    "an_include_of_a_file_that_is_not_there",
+    "an_include_whose_path_is_not_a_literal",
+    // One writes the bound with the brackets it was read through.
+    "a_resource_against_a_bound_that_refuses_one",
+    // One names the instance the fault is inside.
+];
+
+// What a compiler said, apart from where it said it. A diagnostic is a header
+// naming the position, the line it is about, and a caret with the words after
+// it. The words are the claim; the rest is the place, which the two count from
+// their own file tables and spell their own way.
+fn spoken(report: &str) -> Vec<String> {
+    report
+        .lines()
+        .filter_map(|line| line.split_once("^ "))
+        .map(|(_, said)| said.trim_end().to_string())
+        .collect()
 }
 
 // Where the range ends is one answer, and two things have to give it: the fold

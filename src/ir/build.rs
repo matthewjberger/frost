@@ -7425,7 +7425,7 @@ impl<'a> FunctionLowering<'a> {
                         &self.builder.linear,
                     )
                 {
-                    bail!("linearity: {report}");
+                    bail!("{report}");
                 }
             }
         }

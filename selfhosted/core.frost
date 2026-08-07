@@ -35,7 +35,8 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
     emit_to_memory, emit_memory_text,
-    report, report_cstr, report_fmt, report_int, report_src, SearchRoot,
+    report, report_cstr, report_fmt, report_int, report_src, source_text,
+    SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
     cstr_len,
     frost_rt_arg_at, frost_rt_arg_count,
@@ -212,6 +213,19 @@ report_span :: fn(fmt: str, from: i64, count: i64) {
         return
     }
     report_src(fmt, from, count)
+}
+
+// A run of the source as text, so a message quoting what the reader wrote puts
+// it in a hole like any other value rather than in a call of its own.
+//
+// The run is one the caller already has an offset and a length for, which is
+// the same claim `report_src` is written against: the bytes are there because
+// they were read from there.
+source_text :: fn(src: str, off: i64, len: i64) -> str {
+    if (len == 0) {
+        return ""
+    }
+    unsafe { slice_from($u8, ptr_to(src[off]), len) }
 }
 
 // A diagnostic as one call. What it writes is text and whole numbers, which is

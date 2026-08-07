@@ -17,6 +17,12 @@ rustup component add clippy >/dev/null 2>&1 || true
 # left alone, so the library has to be named instead. Without this a handful of
 # tests fail for a reason belonging to this script rather than to the code.
 export FROST_STD=/w/std
+# The Frost half of the runtime is found the same way and moves for the same
+# reason. It is also the one file allowed to define names in the runtime's own
+# name space, and that permission is given to whichever file this compiler
+# resolved as the runtime, so a compiler that cannot find it refuses the runtime
+# for holding the names it exists to hold.
+export FROST_RUNTIME_FROST=/w/runtime/runtime.frost
 # A toolchain that went missing would otherwise hide behind tests that skip
 # themselves, and the run would be green for the wrong reason.
 export FROST_REQUIRE_LINKER=1
