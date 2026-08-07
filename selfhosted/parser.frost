@@ -1708,9 +1708,7 @@ report_operand :: fn(mut p: Parser, ty: i64) {
         report_type_name(p, ty)
         return
     }
-    report("a vector of ")
-    report_int(array_length(p, held))
-    report(" ")
+    report_fmt("a vector of {} ", array_length(p, held))
     report_type_name(p, array_element(p, held))
 }
 
@@ -1750,19 +1748,15 @@ new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
     }
     if (count <= 0 || (count & (count - 1)) != 0) {
         report_where(p.modules, p.src, start)
-        report("elementwise arithmetic is over a vector whose length is a ")
-        report("power of two, and ")
-        report_int(count)
-        report(" is not one")
+        report_fmt("elementwise arithmetic is over a vector whose length is a power of two, and {} is not one",
+            count)
         frost_rt_recover_escape()
     }
     bytes := type_size(p, element) * count
     if (bytes > VECTOR_LIMIT) {
         report_where(p.modules, p.src, start)
-        report("elementwise arithmetic is over a vector of at most ")
-        report_int(VECTOR_LIMIT)
-        report(" bytes, which is a register's worth, and this one is ")
-        report_int(bytes)
+        report_fmt("elementwise arithmetic is over a vector of at most {} bytes, which is a register's worth, and this one is {}",
+            VECTOR_LIMIT, bytes)
         frost_rt_recover_escape()
     }
     whole := is_integer(element)
@@ -2292,9 +2286,8 @@ parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
     advance(p)
     if (value <= 0 || (value & (value - 1)) != 0) {
         report_where(p.modules, p.src, at)
-        report("`align` takes a power of two, and ")
-        report_int(value)
-        report(" is not one; an address is a multiple of a power of two or of nothing")
+        report_fmt("`align` takes a power of two, and {} is not one; an address is a multiple of a power of two or of nothing",
+            value)
         frost_rt_recover_escape()
     }
     // `packed` says no field is padded and `align` says this one is, so a
@@ -2805,15 +2798,13 @@ parse_case_number :: fn(mut p: Parser) -> i64 {
     }
     if (holds == false) {
         report_where(p.modules, p.src, at)
-        report("the case range ")
-        report_int(low)
+        report_fmt("the case range {}", low)
         if (form == ALT_INCLUSIVE) {
             report("..=")
         } else {
             report("..")
         }
-        report_int(high)
-        report(" covers nothing")
+        report_fmt("{} covers nothing", high)
         frost_rt_recover_escape()
     }
     new_case_alt(p, low, high, form, ALT_NUMBER)
@@ -3601,9 +3592,8 @@ const_size_here :: fn(mut p: Parser) -> i64 {
     }
     if (held.value < 0) {
         report_where(p.modules, p.src, at)
-        report("a compile-time size is a whole number that is not negative, ")
-        report("and this answers with ")
-        report_int(held.value)
+        report_fmt("a compile-time size is a whole number that is not negative, and this answers with {}",
+            held.value)
         frost_rt_recover_escape()
     }
     held.value

@@ -35,7 +35,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
     emit_to_memory, emit_memory_text,
-    report, report_cstr, report_int, report_src, SearchRoot,
+    report, report_cstr, report_fmt, report_int, report_src, SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
     cstr_len,
     frost_rt_arg_at, frost_rt_arg_count,
@@ -172,6 +172,72 @@ report_cstr :: fn(s: ^i8) {
     unsafe {
         frost_rt_error_bytes(ptr_cast($u8, s), cstr_len(s))
     }
+}
+
+// The literal from `at` up to the next hole, written, and the index past that
+// hole answered. A doubled brace stands for one and goes out on its own, and a
+// `{` that opens nothing was refused where the call is written.
+report_run :: fn(fmt: str, at: i64) -> i64 {
+    length := str_len(fmt)
+    var start := at
+    var index := at
+    while (index < length) {
+        byte := fmt[index]
+        if (byte == 123 || byte == 125) {
+            if (index + 1 < length) {
+                next := fmt[index + 1]
+                if (byte == 123 && next == 125) {
+                    report_span(fmt, start, index - start)
+                    return index + 2
+                }
+                if (next == byte) {
+                    report_span(fmt, start, index + 1 - start)
+                    index = index + 2
+                    start = index
+                    continue
+                }
+            }
+        }
+        index = index + 1
+    }
+    report_span(fmt, start, index - start)
+    index
+}
+
+// A run of the literal, written by where it starts and how long it is. An empty
+// run has no first byte to take the address of, so it answers before asking for
+// one.
+report_span :: fn(fmt: str, from: i64, count: i64) {
+    if (count == 0) {
+        return
+    }
+    report_src(fmt, from, count)
+}
+
+// A diagnostic as one call. What it writes is text and whole numbers, which is
+// what the compiler has to say about a program: a count, a width, a position,
+// and the words around them. The choice between them is answered while the body
+// is expanded, so a call is the literal walk and one direct write per value.
+//
+// A source range and a type name are not values this writes. Each needs
+// something besides the value to say it, the source or the parser, so those
+// stay the calls they were and follow this one.
+//
+// `report` and `report_int` are the floor and stay reachable unwrapped. This is
+// a generic, so the diagnostic path would otherwise rest on the specialization
+// machinery, which is the part a probe is most often watching when it is
+// broken.
+report_fmt :: fn(format fmt: str, args: $...) {
+    var at: i64 = 0
+    for value in args {
+        at = report_run(fmt, at)
+        if (is_slice(value)) {
+            report(value)
+        } else {
+            report_int(cast($i64, value))
+        }
+    }
+    at = report_run(fmt, at)
 }
 
 // The command line, and the two things a compiler does with the world once it

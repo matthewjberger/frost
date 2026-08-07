@@ -391,13 +391,10 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
         held := literal_value(p, value)
         if (held < integer_low(to) || held > integer_high(to)) {
             report_where(p.modules, p.src, arena_at(p.arena, value).pos)
-            report_int(held)
-            report(" does not fit in a '")
+            report_fmt("{} does not fit in a '", held)
             report_type_name(p, to)
-            report("', which holds ")
-            report_int(integer_low(to))
-            report(" to ")
-            report_int(integer_high(to))
+            report_fmt("', which holds {} to {}",
+                integer_low(to), integer_high(to))
             frost_rt_recover_escape()
         }
     }
@@ -2288,11 +2285,8 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
     }
     if (holes != count) {
         report_where(p.modules, p.src, node.pos)
-        report("this format string opens ")
-        report_int(holes)
-        report(" hole(s) and the call gives ")
-        report_int(count)
-        report(" value(s)")
+        report_fmt("this format string opens {} hole(s) and the call gives {} value(s)",
+            holes, count)
         frost_rt_recover_escape()
         return
     }
