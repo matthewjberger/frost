@@ -202,8 +202,8 @@ that is meant to leave the range, and they are the analogue of Rust's
 
 A fixed array of numbers takes the arithmetic operators, once per lane:
 `a + b` over two `[4]f32` is four adds, and `a * 2.0` is that number in every
-lane. There is no vector type. `[4]f32` is the array Frost already had, where
-Rust has `Simd<f32, 4>` and Zig has `@Vector`. The length is a power of two and
+lane. Where Rust has `Simd<f32, 4>` and Zig has `@Vector`, Frost has the fixed
+array it already had and no SIMD type. The length is a power of two and
 the whole thing is at most a register's sixty-four bytes, so an operator stays a
 handful of instructions.
 
