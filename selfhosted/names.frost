@@ -1046,9 +1046,46 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
         report_type_name(p, array_element(p, held))
         return
     }
+    // A function type is written `fn(params) -> ret`, and a parameter of one is
+    // written by the mode it was declared with: a write borrow is `mut T`
+    // there, and a read borrow is the type itself, which is what an unmarked
+    // aggregate parameter is. A function answering nothing is written with no
+    // arrow at all.
+    if (is_proc(held)) {
+        report("fn(")
+        count := proc_param_count(p, held)
+        var k: i64 = 0
+        while (k < count) {
+            if (k > 0) {
+                report(", ")
+            }
+            param := proc_param_at(p, held, k)
+            if (is_borrow(param)) {
+                report("mut ")
+                report_type_name(p, pointee(p, param))
+            } else {
+                report_type_name(p, param)
+            }
+            k = k + 1
+        }
+        report(")")
+        answer := proc_ret(p, held)
+        if (answer != TY_VOID) {
+            report(" -> ")
+            report_type_name(p, answer)
+        }
+        return
+    }
+    // A generic struct is named the way the reader wrote it, arguments and
+    // all. `Arena` and `Arena<256>` are one template and one of its instances,
+    // and a report naming the template says the rule of every instance
+    // including the ones that are fine.
     if (is_struct_ty(held)) {
-        def := arena_at(p.structs, struct_index_of(held))
-        report_src(p.src, def.name_off, def.name_len)
+        // Bound first. A `str` crosses a call by address, and the C backend
+        // writes the address of what it was handed, so handing it a call's
+        // answer directly emits `&f(..)`, which C has no lvalue for.
+        text := instance_text(p, held)
+        report(text)
         return
     }
     report("a value")
@@ -1080,6 +1117,16 @@ type_text :: fn(mut p: Parser, ty: i64) -> str {
 // template says it of every instance including the ones that are fine.
 instance_text :: fn(mut p: Parser, struct_ty: i64) -> str {
     start := p.synth_next
+    write_instance_name(p, struct_ty)
+    length := p.synth_next - start
+    p.src[p.synth_next] = 0
+    p.synth_next = p.synth_next + 1
+    source_text(p.src, start, length)
+}
+
+// The same name written into the room past the source without a terminator
+// after it, so a walk that is part way through a larger name can use it.
+write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
     index := struct_index_of(struct_ty)
     def := arena_at(p.structs, index)
     synth_range(p, def.name_off, def.name_len)
@@ -1107,10 +1154,6 @@ instance_text :: fn(mut p: Parser, struct_ty: i64) -> str {
         }
         synth_bytes(p, ">")
     }
-    length := p.synth_next - start
-    p.src[p.synth_next] = 0
-    p.synth_next = p.synth_next + 1
-    source_text(p.src, start, length)
 }
 
 // One argument of an instance. A number stands for itself and a type for its
@@ -1269,9 +1312,34 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
         write_type_name(p, array_element(p, held))
         return
     }
+    // The same shape `report_type_name` writes, in bytes.
+    if (is_proc(held)) {
+        synth_bytes(p, "fn(")
+        count := proc_param_count(p, held)
+        var k: i64 = 0
+        while (k < count) {
+            if (k > 0) {
+                synth_bytes(p, ", ")
+            }
+            param := proc_param_at(p, held, k)
+            if (is_borrow(param)) {
+                synth_bytes(p, "mut ")
+                write_type_name(p, pointee(p, param))
+            } else {
+                write_type_name(p, param)
+            }
+            k = k + 1
+        }
+        synth_bytes(p, ")")
+        answer := proc_ret(p, held)
+        if (answer != TY_VOID) {
+            synth_bytes(p, " -> ")
+            write_type_name(p, answer)
+        }
+        return
+    }
     if (is_struct_ty(held)) {
-        def := arena_at(p.structs, struct_index_of(held))
-        synth_range(p, def.name_off, def.name_len)
+        write_instance_name(p, held)
         return
     }
     synth_bytes(p, "a value")

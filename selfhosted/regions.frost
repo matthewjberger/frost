@@ -868,7 +868,7 @@ check_capability_as_value :: fn(mut p: Parser, off: i64, len: i64, at: i64) {
     report("'")
     report_src(p.src, off, len)
     report("' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else")
-    frost_rt_recover_note()
+    frost_rt_recover_escape()
 }
 
 // `$f` names a function as a compile-time argument, which is carried as
@@ -884,7 +884,7 @@ check_capability_as_argument :: fn(mut p: Parser, index: i64, at: i64) {
     report("'")
     report_src(p.src, sym.off, sym.len)
     report("' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else")
-    frost_rt_recover_note()
+    frost_rt_recover_escape()
 }
 
 check_types_expr :: fn(mut p: Parser, id: i64) {
