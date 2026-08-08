@@ -1375,9 +1375,10 @@ emit_asm_push :: fn() {
 // naming it. One slot per depth of nesting, made the first time that depth is
 // reached and reused by every expression that reaches it after.
 //
-// This is only for a value the emitter puts back where it took it from. An
-// argument waiting for a call is not one of those: those are read positionally
-// off the stack pointer by the call that consumes them.
+// This is for a value the emitter puts back where it took it from. A call's
+// arguments pass through here too, because the order they are worked out in and
+// the order they are pushed in are opposite ones, and a slot holds one while the
+// rest of them are worked out.
 emit_asm_spill :: fn(mut p: Parser) {
     if (p.spill_depth >= p.spill_slots.count) {
         p.frame_used = p.frame_used + 8
@@ -2733,8 +2734,15 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         emit_asm_push()
     }
     generic := generic_fn_of(p, fn_index) >= 0
-    var i: i64 = value_count - 1
-    while (i >= 0) {
+    // Two orders, and a call needs both. A program reads its arguments first to
+    // last, so that is the order they are worked out in, each one held in a
+    // spill slot as soon as it is finished. The stack wants them last to first,
+    // since a push moves down and the first argument has to land highest, so the
+    // slots are taken back after and pushed then. The slots are a stack
+    // themselves, which is why taking them back hands them over in exactly the
+    // order the pushes want.
+    var i: i64 = 0
+    while (i < value_count) {
         argument := nth_value_arg(p, args, i)
         // A parameter that borrows what it is given takes an address, and a
         // scalar in a slot is not one until it is taken. An aggregate already
@@ -2769,8 +2777,14 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 emit_asm_coerce(p, argument, want)
             }
         }
+        emit_asm_spill(p)
+        i = i + 1
+    }
+    var back: i64 = value_count
+    while (back > 0) {
+        back = back - 1
+        emit_asm_unspill(p)
         emit_asm_push()
-        i = i - 1
     }
 
     // A `value` argument is one or several slots rather than one word, so the

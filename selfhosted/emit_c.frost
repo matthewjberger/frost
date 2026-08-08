@@ -487,11 +487,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // that field names, with nothing loaded and nothing dispatched.
         direct := bundle_field_fn(p, node.a)
         if (direct >= 0) {
+            base := emit_call_pins(p, node.b, direct)
             emit_text("mf_")
             frost_rt_emit_int(direct)
             emit_text("(")
-            emit_args(p, node.b, direct)
+            emit_args(p, node.b, direct, base)
             emit_text(")")
+            emit_call_close(base)
             return
         }
         callee_ty := type_of(p, node.a)
@@ -519,22 +521,24 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         }
         if (generic_fn_of(p, fn_index) >= 0) {
             arg := call_args_for(p, args, fn_index)
-            emit_mono_name(
-                p,
-                fn_index,
-                arg,
-                p.call_xarg_start,
-                p.call_xarg_count
-            )
+            // Read off before the arguments are, since working one out names
+            // whatever generics it calls and leaves their tuple here instead.
+            xstart := p.call_xarg_start
+            xcount := p.call_xarg_count
+            base := emit_call_pins(p, args, fn_index)
+            emit_mono_name(p, fn_index, arg, xstart, xcount)
             emit_text("(")
-            emit_args(p, args, fn_index)
+            emit_args(p, args, fn_index, base)
             emit_text(")")
+            emit_call_close(base)
             return
         }
+        base := emit_call_pins(p, args, fn_index)
         emit_fn_symbol(p, fn_index)
         emit_text("(")
-        emit_args(p, args, fn_index)
+        emit_args(p, args, fn_index, base)
         emit_text(")")
+        emit_call_close(base)
         return
     }
     if (kind == NodeKind::Field) {
@@ -920,16 +924,10 @@ arith_checked :: fn(mut p: Parser, op: i64, ty: i64) -> bool {
 // answered with the two calls the other way round.
 emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     signed := is_unsigned(ty) == false
-    slot := p.arith_site
-    if (slot >= ARITH_SLOTS) {
-        report("frost: more checked arithmetic in one function than there are ")
-        report("slots to read its operands into\n")
-        frost_rt_die()
-    }
-    p.arith_site = slot + 1
+    slot := next_slot(p, 1)
     emit_text("(frost_t[")
     frost_rt_emit_int(slot)
-    emit_text("] = (")
+    emit_text("].i = (")
     emit_coerced(p, left, operand_type(p, left))
     emit_text("), ")
     // A shift moves by less than the width of what it shifts, and the answer
@@ -945,11 +943,11 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
         if (unsigned_form) {
             emit_text("(int64_t)((uint64_t)frost_t[")
             frost_rt_emit_int(slot)
-            emit_text("]")
+            emit_text("].i")
         } else {
             emit_text("frost_t[")
             frost_rt_emit_int(slot)
-            emit_text("]")
+            emit_text("].i")
         }
         emit_op(op)
         emit_text("frost_shift((")
@@ -978,14 +976,14 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
         emit_text(helper)
         emit_text("(frost_t[")
         frost_rt_emit_int(slot)
-        emit_text("], (")
+        emit_text("].i, (")
         emit_coerced(p, right, operand_type(p, right))
         emit_text(")))")
         return
     }
     emit_text("frost_narrow((frost_t[")
     frost_rt_emit_int(slot)
-    emit_text("]")
+    emit_text("].i")
     emit_op(op)
     emit_text("(")
     emit_coerced(p, right, operand_type(p, right))
@@ -1004,10 +1002,24 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     emit_text("))")
 }
 
-// How many checked operations one function may hold. Reaching it is a refusal
+// How many values one function may read into slots. Reaching it is a refusal
 // rather than a wrong slot, since two sites sharing one would read each other's
-// operand.
+// value.
 ARITH_SLOTS :: 256
+
+// One slot, or a run of them, taken for as long as the expression that reads
+// into it. The counter only goes up inside a function, so no two sites are ever
+// handed the same slot and nothing has to say when one is free again.
+next_slot :: fn(mut p: Parser, wanted: i64) -> i64 {
+    slot := p.arith_site
+    if (slot + wanted > ARITH_SLOTS) {
+        report("frost: this function reads more values into slots ahead of ")
+        report("the rest of their expressions than there are slots\n")
+        frost_rt_die()
+    }
+    p.arith_site = slot + wanted
+    slot
+}
 
 arith_wide_helper :: fn(op: i64, signed: bool) -> str {
     if (op == OP_ADD) {
@@ -1030,6 +1042,358 @@ arith_wide_helper :: fn(op: i64, signed: bool) -> str {
     "frost_rem_u64"
 }
 
+// Which of the three shapes a slot holds a value as. An address covers a
+// borrow, a raw pointer and a function, since all three are one word. An
+// aggregate is wider than a slot, so it is held by its address and read back
+// through it. A type a template has not bound yet says nothing about which of
+// these it is, so a value of one is left where it was written.
+PIN_NONE :: -1
+PIN_INT :: 0
+PIN_DOUBLE :: 1
+PIN_PTR :: 2
+PIN_AGG :: 3
+
+pin_class_of :: fn(ty: i64) -> i64 {
+    if (ty == TY_PARAM || ty == TY_VOID) { return PIN_NONE }
+    if (is_proc(ty) || is_pointer(ty)) { return PIN_PTR }
+    if (is_float(ty)) { return PIN_DOUBLE }
+    if (is_aggregate(ty)) { return PIN_AGG }
+    PIN_INT
+}
+
+// Whether working an expression out can do anything beyond reading. A call can,
+// and Frost writes nothing else inside an expression, so the shapes below are
+// the ones that cannot. Anything this does not recognize is taken to be one
+// that can, which costs a slot and nothing else.
+arg_only_reads :: fn(mut p: Parser, id: i64) -> bool {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Num || kind == NodeKind::Float
+        || kind == NodeKind::StrLit || kind == NodeKind::TypeVal
+        || kind == NodeKind::Var || kind == NodeKind::Sizeof
+        || kind == NodeKind::Alignof) {
+        return true
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::SliceLen) {
+        return arg_only_reads(p, node.a)
+    }
+    if (kind == NodeKind::Bin || kind == NodeKind::Index) {
+        return arg_only_reads(p, node.a) && arg_only_reads(p, node.b)
+    }
+    false
+}
+
+// The last argument that can run something. Everything written before it is
+// read into a slot so that the order the arguments are written in is the order
+// they happen in. Everything after it only reads, and nothing after them
+// writes, so those are left in the argument list where they were written.
+//
+// One argument is left alone whatever it does: there is nothing for its order
+// to be against.
+last_calling_arg :: fn(mut p: Parser, head: i64) -> i64 {
+    var id := head
+    var position: i64 = 0
+    var last: i64 = -1
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind != NodeKind::TypeVal) {
+            if (arg_only_reads(p, value) == false) {
+                last = position
+            }
+            position = position + 1
+        }
+        id = node.next
+    }
+    if (position < 2) { return -1 }
+    last
+}
+
+// What one argument does on its way to its parameter: whether an address is
+// taken, what type it arrives as, and which of the shapes in `emit_arg_value`
+// writes it. Decided once, so that the pass reading a value into a slot and the
+// pass writing the argument list cannot disagree about what it is.
+ArgPlan :: struct {
+    have_param: i64,
+    param_next: i64,
+    param_ty: i64,
+    param_auto: i64,
+    want_ty: i64,
+    borrow: i64,
+    literal_slice: bool,
+    literal_value: bool,
+    by_value: bool,
+}
+
+arg_plan :: fn(
+    mut p: Parser,
+    value: i64,
+    param: i64,
+    param_from_instance: i64,
+    fn_index: i64
+) -> ArgPlan {
+    var plan := ArgPlan {
+        have_param = 0,
+        param_next = -1,
+        param_ty = -1,
+        param_auto = 0,
+        want_ty = -1,
+        borrow = 0,
+        literal_slice = false,
+        literal_value = false,
+        by_value = false
+    }
+    if (param != (-1)) {
+        pnode := arena_at(p.arena, param)
+        plan.param_auto = pnode.a
+        plan.param_ty = pnode.b
+        plan.param_next = pnode.next
+        plan.have_param = 1
+        arg_ty := type_of(p, value)
+        // Auto-borrow: an argument passed to a mode-borrow (pointer) parameter
+        // has its address taken here, unless it is already a pointer (a borrow
+        // forwarded onward).
+        if (plan.param_auto == 1 && is_pointer(arg_ty) == false) {
+            plan.borrow = 1
+        }
+        // A string literal is already a pointer, so the rule above leaves it
+        // alone, but a `str` parameter wants a slice built from it and handed
+        // over by address like any other aggregate. An array reached through a
+        // borrow is the same shape: the argument is an address and the
+        // parameter wants the slice made from it. Only an argument that is
+        // already a slice is passed through, since there is nothing left to
+        // build.
+        if (plan.param_auto == 1 && is_pointer(plan.param_ty)
+            && is_slice_ty(p, pointee(p, plan.param_ty))
+            && is_pointer(arg_ty)
+            && is_slice_ty(p, pointee(p, arg_ty)) == false) {
+            plan.borrow = 1
+        }
+        // A generic call whose instance could not be resolved has no parameter
+        // list of its own: the symbol's belongs to whichever instantiation was
+        // parsed last, so it cannot say how this call passes its arguments. The
+        // rule is then the one the parameter modes encode, read off the
+        // argument alone: a struct borrows, everything else is passed as it is.
+        // Where the instance did answer, its list is exact and this is not,
+        // since a `mut` parameter takes an address whatever it is bound to.
+        if (param_from_instance == 0 && generic_fn_of(p, fn_index) >= 0) {
+            plan.borrow = 0
+            if (plan.param_auto != 2 && is_aggregate(arg_ty)) {
+                plan.borrow = 1
+            }
+        }
+    }
+    plan.want_ty = plan.param_ty
+    if (is_pointer(plan.want_ty)) {
+        plan.want_ty = pointee(p, plan.want_ty)
+    }
+    // A string literal reaching a parameter of slice type, where the parameter
+    // belongs to a generic: the literal is a pointer to bytes, the parameter
+    // wants the slice built from it, and an aggregate travels by address.
+    // `map_put($str, ..., "ada", 36)` is this, and without it C is handed the
+    // bytes where a slice belongs.
+    //
+    // Only where the parameter borrows. A generic taking its value outright is
+    // handed the slice itself, and handing it an address there is the wrong
+    // type rather than an extra indirection.
+    plan.literal_slice = (plan.have_param == 1 && plan.param_auto == 1
+        && arena_at(p.arena, value).kind == NodeKind::StrLit
+        && is_array_ty(plan.want_ty) && is_slice_ty(p, plan.want_ty))
+    plan.literal_value = (plan.have_param == 1 && plan.param_auto != 1
+        && arena_at(p.arena, value).kind == NodeKind::StrLit
+        && is_array_ty(plan.want_ty) && is_slice_ty(p, plan.want_ty))
+    if (plan.borrow == 1 && plan.have_param == 1
+        && param_node_by_value(p, param)) {
+        plan.borrow = 0
+        plan.by_value = true
+    }
+    plan
+}
+
+emit_arg_value :: fn(mut p: Parser, value: i64, plan: ArgPlan) {
+    if (plan.literal_slice) {
+        emit_text("(&")
+        emit_coerced(p, value, plan.want_ty)
+        emit_text(")")
+        return
+    }
+    if (plan.literal_value) {
+        emit_coerced(p, value, plan.want_ty)
+        return
+    }
+    if (plan.by_value) {
+        emit_expr(p, value)
+        return
+    }
+    if (plan.borrow == 1) {
+        // A borrowed parameter takes an address, and an array reaching a slice
+        // parameter has to become one first. The slice itself is what the
+        // callee is handed the address of.
+        want := pointee(p, plan.param_ty)
+        if (is_array_ty(want) && is_slice_ty(p, want)) {
+            emit_text("(&")
+            emit_coerced(p, value, want)
+            emit_text(")")
+        } else if (is_place_node(p, value)) {
+            emit_text("(&(")
+            emit_expr(p, value)
+            emit_text("))")
+        } else {
+            // A value with nowhere to point at: what a call answered with. C
+            // refuses `&f()`, and a literal of one element gives it somewhere,
+            // since an array's element is an lvalue and a compound literal
+            // lives as long as the block it is written in, which outlasts the
+            // call it is an argument to.
+            emit_text("(&((")
+            emit_ctype(p, want)
+            emit_text("[1]){ ")
+            emit_expr(p, value)
+            emit_text(" })[0])")
+        }
+        return
+    }
+    if (plan.have_param == 1) {
+        emit_coerced(p, value, plan.param_ty)
+        return
+    }
+    emit_expr(p, value)
+}
+
+// The type the argument arrives as, which is what a slot holding a whole
+// aggregate is read back through. A type a template has not bound yet says
+// nothing, so the argument's own type answers instead.
+arg_pin_type :: fn(mut p: Parser, value: i64, plan: ArgPlan) -> i64 {
+    var ty: i64 = type_of(p, value)
+    if (plan.literal_value) {
+        ty = plan.want_ty
+    } else if (plan.by_value == false && plan.have_param == 1) {
+        ty = plan.param_ty
+    }
+    if (ty == TY_PARAM) {
+        return type_of(p, value)
+    }
+    ty
+}
+
+arg_pin_class :: fn(mut p: Parser, value: i64, plan: ArgPlan) -> i64 {
+    if (plan.literal_slice || plan.borrow == 1) {
+        return PIN_PTR
+    }
+    pin_class_of(arg_pin_type(p, value, plan))
+}
+
+// The slot an expression is about to be read into, up to the value itself.
+emit_slot_open :: fn(mut p: Parser, pin: i64, ty: i64, slot: i64) {
+    emit_text("frost_t[")
+    frost_rt_emit_int(slot)
+    if (pin == PIN_INT) {
+        emit_text("].i = (")
+        return
+    }
+    if (pin == PIN_DOUBLE) {
+        emit_text("].d = (")
+        return
+    }
+    if (pin == PIN_PTR) {
+        emit_text("].p = (void*)(")
+        return
+    }
+    // A literal of one element gives the aggregate somewhere to live, the same
+    // way a borrow of a value with no storage does.
+    emit_text("].p = (void*)&((")
+    emit_ctype(p, ty)
+    emit_text("[1]){ ")
+}
+
+emit_slot_close :: fn(pin: i64) {
+    if (pin == PIN_AGG) {
+        emit_text(" })[0], ")
+        return
+    }
+    emit_text("), ")
+}
+
+emit_slot_read :: fn(mut p: Parser, pin: i64, ty: i64, slot: i64) {
+    if (pin == PIN_AGG) {
+        emit_text("(*(")
+        emit_ctype(p, ty)
+        emit_text("*)frost_t[")
+        frost_rt_emit_int(slot)
+        emit_text("].p)")
+        return
+    }
+    emit_text("frost_t[")
+    frost_rt_emit_int(slot)
+    if (pin == PIN_INT) {
+        emit_text("].i")
+        return
+    }
+    if (pin == PIN_DOUBLE) {
+        emit_text("].d")
+        return
+    }
+    emit_text("].p")
+}
+
+// The signature says how each argument to a call through a value travels, the
+// same as a direct call's parameter list does: a mode borrow is a pointer
+// there, so a value handed to one has its address taken. Without this a `mut`
+// parameter of a function pointer was handed the struct itself.
+indirect_arg_by_address :: fn(
+    mut p: Parser,
+    callee_ty: i64,
+    count: i64,
+    at: i64,
+    value: i64
+) -> bool {
+    var param_ty: i64 = -1
+    if (at < count) {
+        param_ty = proc_param_at(p, callee_ty, at)
+    }
+    arg_ty := type_of(p, value)
+    if (param_ty >= 0 && is_pointer(arg_ty) == false) {
+        if (is_aggregate(param_ty)) {
+            return true
+        }
+        if (is_pointer(param_ty) && is_aggregate(pointee(p, param_ty))) {
+            return true
+        }
+    }
+    false
+}
+
+emit_indirect_arg :: fn(
+    mut p: Parser,
+    callee_ty: i64,
+    count: i64,
+    at: i64,
+    value: i64
+) {
+    if (indirect_arg_by_address(p, callee_ty, count, at, value)) {
+        emit_text("(&(")
+        emit_expr(p, value)
+        emit_text("))")
+        return
+    }
+    emit_expr(p, value)
+}
+
+indirect_arg_class :: fn(
+    mut p: Parser,
+    callee_ty: i64,
+    count: i64,
+    at: i64,
+    value: i64
+) -> i64 {
+    if (indirect_arg_by_address(p, callee_ty, count, at, value)) {
+        return PIN_PTR
+    }
+    pin_class_of(type_of(p, value))
+}
+
 // A call through a function-pointer value. The value is a `void*`, so it is
 // cast back to the real signature, `ret(*)(params)`, and called. Aggregate
 // parameter and return types are `char*`, since aggregates travel by address,
@@ -1046,6 +1410,50 @@ emit_indirect_call :: fn(
 ) {
     ret := proc_ret(p, callee_ty)
     count := proc_param_count(p, callee_ty)
+    // The callee is written first and so happens first, which puts it at
+    // position zero of what the slots hold in order. Everything up to the last
+    // one that can run something is read into a slot ahead of the call, for the
+    // reason a direct call's arguments are.
+    var places: i64 = 1
+    var last: i64 = -1
+    if (callee_node >= 0 && arg_only_reads(p, callee_node) == false) {
+        last = 0
+    }
+    var scan := args
+    while (scan != (-1)) {
+        snode := arena_at(p.arena, scan)
+        if (arg_only_reads(p, snode.a) == false) {
+            last = places
+        }
+        places = places + 1
+        scan = snode.next
+    }
+    if (places < 2) {
+        last = -1
+    }
+    var base: i64 = -1
+    if (last >= 0) {
+        base = next_slot(p, last + 1)
+        emit_text("(")
+        if (callee_node >= 0) {
+            emit_slot_open(p, PIN_PTR, callee_ty, base)
+            emit_expr(p, callee_node)
+            emit_slot_close(PIN_PTR)
+        }
+        var pid := args
+        var pat: i64 = 0
+        while (pid != (-1)) {
+            pnode := arena_at(p.arena, pid)
+            if (pat + 1 <= last) {
+                pin := indirect_arg_class(p, callee_ty, count, pat, pnode.a)
+                emit_slot_open(p, pin, type_of(p, pnode.a), base + pat + 1)
+                emit_indirect_arg(p, callee_ty, count, pat, pnode.a)
+                emit_slot_close(pin)
+            }
+            pat = pat + 1
+            pid = pnode.next
+        }
+    }
     emit_text("((")
     // The return type as the callee was compiled with it. A Frost function
     // answers with a struct by value in C, so a cast saying otherwise would
@@ -1074,7 +1482,11 @@ emit_indirect_call :: fn(
     emit_text("))(")
     if (callee_node >= 0) {
         emit_text("(")
-        emit_expr(p, callee_node)
+        if (base >= 0) {
+            emit_slot_read(p, PIN_PTR, callee_ty, base)
+        } else {
+            emit_expr(p, callee_node)
+        }
         emit_text(")")
     } else {
         emit_local_name(p, off, len)
@@ -1088,41 +1500,37 @@ emit_indirect_call :: fn(
         if (first == false) {
             emit_text(", ")
         }
-        // The signature says how each argument travels, the same as a direct
-        // call's parameter list does: a mode borrow is a pointer there, so a
-        // value handed to one has its address taken. Without this a `mut`
-        // parameter of a function pointer was handed the struct itself.
-        var param_ty: i64 = -1
-        if (at < count) {
-            param_ty = proc_param_at(p, callee_ty, at)
-        }
-        arg_ty := type_of(p, node.a)
-        var by_address: bool = false
-        if (param_ty >= 0 && is_pointer(arg_ty) == false) {
-            if (is_aggregate(param_ty)) {
-                by_address = true
-            } else if (is_pointer(param_ty)
-                && is_aggregate(pointee(p, param_ty))) {
-                by_address = true
-            }
-        }
-        if (by_address) {
-            emit_text("(&(")
-            emit_expr(p, node.a)
-            emit_text("))")
+        if (base >= 0 && at + 1 <= last) {
+            emit_slot_read(
+                p,
+                indirect_arg_class(p, callee_ty, count, at, node.a),
+                type_of(p, node.a),
+                base + at + 1
+            )
         } else {
-            emit_expr(p, node.a)
+            emit_indirect_arg(p, callee_ty, count, at, node.a)
         }
         first = false
         at = at + 1
         id = node.next
     }
     emit_text(")")
+    emit_call_close(base)
 }
 
-// Emit call arguments, skipping type-value arguments (they are erased since a
-// type parameter is not a runtime value).
-emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
+// One walk of a call's arguments, skipping type-value arguments (they are
+// erased since a type parameter is not a runtime value). Pass 0 reads the
+// arguments up to `last` into slots, ahead of the call. Pass 1 writes the
+// argument list itself, naming a slot where pass 0 read one. Both passes decide
+// how each argument travels the same way, from the same plan, so the two can
+// only agree.
+emit_arg_walk :: fn(
+    mut p: Parser,
+    head: i64,
+    fn_index: i64,
+    base: i64,
+    pass: i64
+) {
     var id := head
     var first: bool = true
     sym := arena_at(p.fns, fn_index)
@@ -1138,134 +1546,63 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
         param = sym.params
         param_from_instance = 0
     }
+    var last: i64 = -1
+    if (base >= 0) {
+        last = last_calling_arg(p, head)
+    }
+    var position: i64 = 0
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
         if (vnode.kind != NodeKind::TypeVal) {
-            if (first == false) {
-                emit_text(", ")
+            plan := arg_plan(p, value, param, param_from_instance, fn_index)
+            var pin: i64 = PIN_NONE
+            if (position <= last) {
+                pin = arg_pin_class(p, value, plan)
             }
-            first = false
-            // Auto-borrow: an argument passed to a mode-borrow (pointer)
-            // parameter has its address taken here, unless it is already a
-            // pointer (a borrow forwarded onward).
-            var borrow: i64 = 0
-            var param_next: i64 = -1
-            var have_param: i64 = 0
-            var param_ty: i64 = -1
-            var param_auto: i64 = 0
-            if (param != (-1)) {
-                pnode := arena_at(p.arena, param)
-                param_auto = pnode.a
-                param_ty = pnode.b
-                param_next = pnode.next
-                have_param = 1
-                arg_ty := type_of(p, value)
-                if (param_auto == 1 && is_pointer(arg_ty) == false) {
-                    borrow = 1
+            if (pass == 0) {
+                if (pin != PIN_NONE) {
+                    emit_slot_open(
+                        p,
+                        pin,
+                        arg_pin_type(p, value, plan),
+                        base + position
+                    )
+                    emit_arg_value(p, value, plan)
+                    emit_slot_close(pin)
                 }
-                // A string literal is already a pointer, so the rule above
-                // leaves it alone, but a `str` parameter wants a slice built
-                // from it and handed over by address like any other aggregate.
-                // An array reached through a borrow is the same shape: the
-                // argument is an address and the parameter wants the slice made
-                // from it. Only an argument that is already a slice is passed
-                // through, since there is nothing left to build.
-                if (param_auto == 1 && is_pointer(param_ty)
-                    && is_slice_ty(p, pointee(p, param_ty))
-                    && is_pointer(arg_ty)
-                    && is_slice_ty(p, pointee(p, arg_ty)) == false) {
-                    borrow = 1
-                }
-                // A generic call whose instance could not be resolved has no
-                // parameter list of its own: the symbol's belongs to whichever
-                // instantiation was parsed last, so it cannot say how this call
-                // passes its arguments. The rule is then the one the parameter
-                // modes encode, read off the argument alone: a struct borrows,
-                // everything else is passed as it is. Where the instance did
-                // answer, its list is exact and this is not, since a `mut`
-                // parameter takes an address whatever it is bound to.
-                if (param_from_instance == 0 && generic_fn_of(p, fn_index) >= 0) {
-                    borrow = 0
-                    if (param_auto != 2 && is_aggregate(arg_ty)) {
-                        borrow = 1
-                    }
-                }
-            // Check the argument against the parameter. A generic
-            // template's parameter types are placeholders bound per
-            // instantiation, so they carry nothing to check against. An
-            // auto-borrowed argument is a value whose address is taken
-            // here, so it answers to the pointee rather than the pointer.
-            }
-            // A string literal reaching a parameter of slice type, where the
-            // parameter belongs to a generic: the literal is a pointer to
-            // bytes, the parameter wants the slice built from it, and an
-            // aggregate travels by address. `map_put($str, ..., "ada", 36)` is
-            // this, and without it C is handed the bytes where a slice belongs.
-            var want_ty := param_ty
-            if (is_pointer(want_ty)) {
-                want_ty = pointee(p, want_ty)
-            }
-            // Only where the parameter borrows. A generic taking its value
-            // outright is handed the slice itself, and handing it an address
-            // there is the wrong type rather than an extra indirection.
-            literal_slice := (have_param == 1 && param_auto == 1
-                && arena_at(p.arena, value).kind == NodeKind::StrLit
-                && is_array_ty(want_ty) && is_slice_ty(p, want_ty))
-            literal_value := (have_param == 1 && param_auto != 1
-                && arena_at(p.arena, value).kind == NodeKind::StrLit
-                && is_array_ty(want_ty) && is_slice_ty(p, want_ty))
-            if (literal_slice) {
-                emit_text("(&")
-                emit_coerced(p, value, want_ty)
-                emit_text(")")
-            } else if (literal_value) {
-                emit_coerced(p, value, want_ty)
-            } else if (borrow == 1 && have_param == 1
-                && param_node_by_value(p, param)) {
-                borrow = 0
-                emit_expr(p, value)
-            } else if (borrow == 1) {
-                // A borrowed parameter takes an address, and an array reaching
-                // a slice parameter has to become one first. The slice itself
-                // is what the callee is handed the address of.
-                want := pointee(p, param_ty)
-                if (is_array_ty(want) && is_slice_ty(p, want)) {
-                    emit_text("(&")
-                    emit_coerced(p, value, want)
-                    emit_text(")")
-                } else if (is_place_node(p, value)) {
-                    emit_text("(&(")
-                    emit_expr(p, value)
-                    emit_text("))")
-                } else {
-                    // A value with nowhere to point at: what a call answered
-                    // with. C refuses `&f()`, and a literal of one element
-                    // gives it somewhere, since an array's element is an
-                    // lvalue and a compound literal lives as long as the block
-                    // it is written in, which outlasts the call it is an
-                    // argument to.
-                    emit_text("(&((")
-                    emit_ctype(p, want)
-                    emit_text("[1]){ ")
-                    emit_expr(p, value)
-                    emit_text(" })[0])")
-                }
-            } else if (have_param == 1) {
-                emit_coerced(p, value, param_ty)
             } else {
-                emit_expr(p, value)
+                if (first == false) {
+                    emit_text(", ")
+                }
+                first = false
+                if (pin != PIN_NONE) {
+                    emit_slot_read(
+                        p,
+                        pin,
+                        arg_pin_type(p, value, plan),
+                        base + position
+                    )
+                } else {
+                    emit_arg_value(p, value, plan)
+                }
             }
-            if (have_param == 1) {
-                param = param_next
+            if (plan.have_param == 1) {
+                param = plan.param_next
             }
+            position = position + 1
         }
         id = next_id
     }
+    if (pass == 0) {
+        return
+    }
     // The capabilities are the last arguments, supplied by the caller's
     // context rather than written at the call, one per source the callee draws.
+    // Naming one reads a variable or takes its address, so there is nothing for
+    // a slot to hold.
     var cap: i64 = 0
     while (cap < cap_count_of(p, fn_index)) {
         if (first == false || cap > 0) {
@@ -1274,6 +1611,33 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
         emit_capability_argument(p, fn_index, cap)
         cap = cap + 1
     }
+}
+
+// The arguments read into slots ahead of the call, and the parenthesis the
+// comma chain they form lives in. C sequences neither a call's arguments nor an
+// operator's operands, and the comma operator does, so an argument that can run
+// something is written as an assignment into a slot before the call rather than
+// inside its argument list. Answers where the slots start, or -1 where this
+// call needed none, which the caller hands back to `emit_args`.
+emit_call_pins :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
+    last := last_calling_arg(p, head)
+    if (last < 0) {
+        return -1
+    }
+    base := next_slot(p, last + 1)
+    emit_text("(")
+    emit_arg_walk(p, head, fn_index, base, 0)
+    base
+}
+
+emit_call_close :: fn(base: i64) {
+    if (base >= 0) {
+        emit_text(")")
+    }
+}
+
+emit_args :: fn(mut p: Parser, head: i64, fn_index: i64, base: i64) {
+    emit_arg_walk(p, head, fn_index, base, 1)
 }
 
 // The name a match compares its value out of. A node id is unique, so two
@@ -1877,13 +2241,15 @@ emit_fallthrough_return :: fn(mut p: Parser) {
 }
 
 emit_function_body :: fn(mut p: Parser, body: i64) {
-    // Somewhere to read a checked operation's left operand into. C sequences
-    // neither a call's arguments nor an operator's operands, and the comma
-    // operator does, so a checked operation reads its left side into a slot
-    // here and the whole of its right side happens after that. One slot per
-    // site, since a site's own value is dead by the time the next one starts.
+    // Somewhere to read a value into ahead of the rest of the expression that
+    // uses it. C sequences neither a call's arguments nor an operator's
+    // operands, and the comma operator does, so a checked operation reads its
+    // left side into a slot here and the whole of its right side happens after
+    // that, and a call reads the arguments that can run something into slots
+    // before it is made. One slot per site, since a site's own value is dead by
+    // the time the next one starts.
     p.arith_site = 0
-    emit_text("int64_t frost_t[")
+    emit_text("frost_slot frost_t[")
     frost_rt_emit_int(ARITH_SLOTS)
     emit_text("]; (void)frost_t;\n")
     if (body == (-1)) {
@@ -2168,6 +2534,11 @@ emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("static inline int64_t frost_shift(int64_t by, int64_t bits) {\n")
     emit_text("  if (by < 0 || by >= bits) frost_rt_arith_trap(7);\n")
     emit_text("  return by;\n}\n")
+    // Somewhere to read a value into before the rest of an expression runs. One
+    // slot holds whichever of the three shapes a value has: a number, a double,
+    // or an address. An aggregate is wider than any of them and is held by its
+    // address.
+    emit_text("typedef union { int64_t i; double d; void *p; } frost_slot;\n")
     emit_text("int64_t frost_rt_check_length(int64_t);\n")
     emit_text("static inline int64_t frost_length(int64_t n) {\n")
     emit_text("  if (n < 0) { frost_rt_check_length(n); }\n")

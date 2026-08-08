@@ -2747,6 +2747,33 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A call's arguments happen in the order they are written. C sequences
+    // neither a call's arguments nor an operator's operands, so both backends
+    // that go through C read whatever runs something into a slot ahead of the
+    // call, and the one that emits instructions works the arguments out
+    // forwards and pushes them backwards.
+    (
+        "call_arguments_happen_in_the_order_they_are_written",
+        "import \"io.frost\"\n\
+         Counter :: struct { n: i64 }\n\
+         bump :: fn(mut c: Counter) -> i64 { c.n = c.n + 10\n c.n }\n\
+         two :: fn(a: i64, b: i64) -> i64 { a * 100 + b }\n\
+         three :: fn(a: i64, b: i64, c: i64) -> i64 {\n\
+         \x20   a * 10000 + b * 100 + c\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var c := Counter { n = 0 }\n\
+         \x20   print(\"{}\n\", two(bump(c), c.n))\n\
+         \x20   var d := Counter { n = 0 }\n\
+         \x20   print(\"{}\n\", two(d.n, bump(d)))\n\
+         \x20   var e := Counter { n = 0 }\n\
+         \x20   print(\"{}\n\", three(bump(e), bump(e), e.n))\n\
+         \x20   var f := Counter { n = 0 }\n\
+         \x20   print(\"{} {}\n\", bump(f), f.n)\n\
+         \x20   0\n\
+         }\n",
+        "1010\n10\n102020\n10 10\n",
+    ),
     // A carve through a capability bundle: the function that does the taking is
     // named at the call, so neither check can walk it, and what it answers with
     // is worth the arguments it was handed. The allocator here is the caller's,
