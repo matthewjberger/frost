@@ -6,7 +6,7 @@ use crate::ir::{
     IrFunction, IrModule, IrOperand, IrRvalue, IrStatement, IrTerminator,
     LocalId,
 };
-use crate::types::Type;
+use crate::types::{Type, spelled};
 
 struct Signature {
     param_types: Vec<Type>,
@@ -299,10 +299,12 @@ fn check_rvalue(
                             let given = operand_type(function, argument);
                             if !fits(&given, wanted) {
                                 bail!(
-                                    "{}argument {} of the call to '{}' is a {given}, and it takes a {wanted}",
+                                    "{}argument {} of the call to '{}' is a {}, and it takes a {}",
                                     at(function, argument),
                                     index + 1,
-                                    callee
+                                    callee,
+                                    spelled(&given),
+                                    spelled(wanted)
                                 );
                             }
                         }

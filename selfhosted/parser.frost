@@ -7532,6 +7532,15 @@ parse_test :: fn(mut p: Parser) -> i64 {
     name_off := cur_off(p)
     name_len := cur_len(p)
     advance(p)
+    // A `test` whose body does not open where one should says what is in the
+    // way. Without this the words after the name were read as an expression
+    // and the reader was told a struct had no field named after the first
+    // thing inside the body.
+    if (cur(p) == TokenKind::KwUses) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("a `test` body is run by the test runner, which supplies nothing, so a test draws no capability")
+        frost_rt_recover_escape()
+    }
     // A test body is a body like any other and names no type parameter, so the
     // state a generic template left behind is cleared here the way parsing a
     // function clears it. Without this, a `test` written under a template read

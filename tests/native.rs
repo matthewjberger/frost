@@ -15085,10 +15085,16 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T) -> $T { x }
 main :: fn() -> i64 { best($i64, $wrong, 1) }
 ";
     let message = compile_error("constfnbadsig", source);
+    // Spelled the way a reader writes a function type. This used to pin
+    // `proc(..)`, which is the name the type table files one under and not
+    // syntax the surface has.
     assert!(
-        message.contains("'wrong'")
-            && message.contains("proc(i64, i64) -> bool"),
+        message.contains("'wrong'") && message.contains("fn(i64, i64) -> bool"),
         "expected the signature mismatch to name both signatures:\n{message}"
+    );
+    assert!(
+        !message.contains("proc("),
+        "the signature mismatch named a function type as `proc`:\n{message}"
     );
 }
 
@@ -20010,4 +20016,49 @@ fn the_line_rule_is_the_same_through_every_backend() {
         }
     }
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+// A report names a type the way a reader writes one. `proc(..)` and `&mut T`
+// are the names the type table files a function type and a borrow under, and
+// they round-trip through `type_from_string` for monomorphization, so the table
+// keeps them. A reader writes `fn(..)` and `mut T`, and a report that says
+// otherwise is describing syntax the surface dropped.
+//
+// The bootstrap alone, because the self-hosted compiler does not reach this
+// message: two function values of different signatures are compatible there,
+// which is its own defect and a wider one than the spelling.
+#[test]
+fn a_report_spells_a_function_type_the_way_it_is_written() {
+    let source = "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+                  bump :: fn($N: usize, mut a: Arena<N>) -> i64 {
+                      a.offset = a.offset + 8
+                      a.offset
+}
+                  plain :: fn(n: i64, mut a: Arena<256>) -> i64 {
+                      bump($256, a) + n
+}
+                  call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
+                  main :: fn() -> i64 { call_it(plain, 3) }
+";
+    let report = bootstrap_refusal("spelledfn", source);
+    assert!(
+        report.contains("fn(i64, mut Arena<256>) -> i64"),
+        "the report did not spell the signature the way it is written:
+{report}"
+    );
+    assert!(
+        report.contains("fn(i64) -> i64"),
+        "the report did not spell the wanted signature:
+{report}"
+    );
+    assert!(
+        !report.contains("proc("),
+        "the report named a function type as `proc`:
+{report}"
+    );
+    assert!(
+        !report.contains("&mut "),
+        "the report named a borrow as `&mut`:
+{report}"
+    );
 }
