@@ -846,15 +846,53 @@ first_break_at :: fn(src: str, from: i64, to: i64) -> i64 {
     to
 }
 
+// Whether a comment opens at `pos`. Both spellings are one thing to a walk over
+// the gaps between tokens: a run of source the formatter carries rather than
+// decides.
+comment_opens :: fn(src: str, pos: i64, to: i64) -> bool {
+    if (pos + 1 >= to) {
+        return false
+    }
+    if (src[pos] != CH_SLASH) {
+        return false
+    }
+    src[pos + 1] == CH_SLASH || src[pos + 1] == CH_STAR
+}
+
+// Where the comment opening at `pos` ends. A line comment ends at its line's
+// break; a block comment ends past its close, which the lexer finds the same
+// way, at the first `*/`, since these do not nest.
+//
+// A block comment is kept whole, over as many lines as it was written across.
+// Its inside is the writer's: everything the formatter settles is where a line
+// starts, and re-indenting the lines inside one would be rewriting what was put
+// there. Reading only `//` here left the bytes of one to the step that walks a
+// character at a time and keeps nothing, so formatting a file that held one
+// wrote the file back without it.
+comment_ends :: fn(src: str, pos: i64, to: i64) -> i64 {
+    if (pos + 1 < to && src[pos + 1] == CH_STAR) {
+        var end := pos + 2
+        while (end + 1 < to) {
+            if (src[end] == CH_STAR && src[end + 1] == CH_SLASH) {
+                return end + 2
+            }
+            end = end + 1
+        }
+        return to
+    }
+    var end := pos
+    while (end < to && src[end] != CH_LF) {
+        end = end + 1
+    }
+    end
+}
+
 // The comments in a span, each put at the end of the line already written.
 emit_trailing_span :: fn(src: str, from: i64, to: i64) {
     var index := from
     while (index + 1 < to) {
-        if (src[index] == CH_SLASH && src[index + 1] == CH_SLASH) {
-            var stop := index
-            while (stop < to && src[stop] != CH_LF) {
-                stop = stop + 1
-            }
+        if (comment_opens(src, index, to)) {
+            stop := comment_ends(src, index, to)
             emit_text(" ")
             emit_src(src, index, stop - index)
             index = stop
@@ -877,12 +915,8 @@ write_between :: fn(src: str, from: i64, to: i64, line_depth: i64) {
             }
             breaks = breaks + 1
             index = index + 1
-        } else if (index + 1 < to && src[index] == CH_SLASH
-            && src[index + 1] == CH_SLASH) {
-            var stop := index
-            while (stop < to && src[stop] != CH_LF) {
-                stop = stop + 1
-            }
+        } else if (comment_opens(src, index, to)) {
+            stop := comment_ends(src, index, to)
             emit_spaces(line_depth * 4)
             emit_src(src, index, stop - index)
             emit_text("\n")
@@ -979,7 +1013,7 @@ breaks_in :: fn(src: str, from: i64, to: i64) -> bool {
 comment_in :: fn(src: str, from: i64, to: i64) -> bool {
     var index := from
     while (index + 1 < to) {
-        if (src[index] == CH_SLASH && src[index + 1] == CH_SLASH) {
+        if (comment_opens(src, index, to)) {
             return true
         }
         index = index + 1
@@ -1044,12 +1078,8 @@ write_gap :: fn(
             }
             breaks = breaks + 1
             pos = pos + 1
-        } else if (pos + 1 < to && src[pos] == CH_SLASH
-            && src[pos + 1] == CH_SLASH) {
-            var end := pos
-            while (end < to && src[end] != CH_LF) {
-                end = end + 1
-            }
+        } else if (comment_opens(src, pos, to)) {
+            end := comment_ends(src, pos, to)
             var stop := end
             while (stop > pos
                 && (src[stop - 1] == CH_SPACE || src[stop - 1] == CH_TAB
@@ -1090,12 +1120,8 @@ emit_trailing_comments :: fn(src: str, from: i64, to: i64, braces: i64) {
             breaks = breaks + 1
             starting = true
             pos = pos + 1
-        } else if (pos + 1 < stop && src[pos] == CH_SLASH
-            && src[pos + 1] == CH_SLASH) {
-            var end := pos
-            while (end < stop && src[end] != CH_LF) {
-                end = end + 1
-            }
+        } else if (comment_opens(src, pos, stop)) {
+            end := comment_ends(src, pos, stop)
             var trimmed := end
             while (trimmed > pos
                 && (src[trimmed - 1] == CH_SPACE || src[trimmed - 1] == CH_TAB
@@ -1125,11 +1151,8 @@ last_comment_end :: fn(src: str, from: i64, to: i64) -> i64 {
     var found := from
     var pos := from
     while (pos + 1 < to) {
-        if (src[pos] == CH_SLASH && src[pos + 1] == CH_SLASH) {
-            var end := pos
-            while (end < to && src[end] != CH_LF) {
-                end = end + 1
-            }
+        if (comment_opens(src, pos, to)) {
+            end := comment_ends(src, pos, to)
             found = end
             pos = end
         } else {
