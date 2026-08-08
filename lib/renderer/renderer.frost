@@ -49,6 +49,10 @@ Renderer :: struct {
     // What is drawn and in what order, made with the device and sized with the
     // surface. Empty until something declares passes into it.
     graph: Graph,
+    // The CAMetalLayer-backed view the surface is chained off on Apple
+    // platforms, held so closing can destroy it before the window goes. Null
+    // everywhere else.
+    metal_view: ^u8,
     opened: bool,
 }
 
@@ -63,23 +67,40 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         // Made here so every path out of this call has one to give back. The
         // device it records against arrives below, once there is one.
         graph = graph_new(no_device()),
+        metal_view = no_pointer(),
         opened = false,
     }
     r.instance = create_instance(no_pointer())
 
     // The surface, chained off whatever handle this platform names a window
-    // with.
+    // with: a CAMetalLayer on Apple platforms, an HWND on Windows. Which one
+    // this is, the window itself answers, by carrying the one property and not
+    // the other.
     properties := window_properties(window)
-    hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
-    if (hwnd == no_pointer()) {
-        return r
+    cocoa := window_pointer_property(properties, PROP_COCOA_WINDOW)
+    if (cocoa != no_pointer()) {
+        r.metal_view = metal_view_create(window)
+        if (r.metal_view == no_pointer()) {
+            return r
+        }
+        var source := surface_source_metal_layer_init()
+        source.chain.stype = S_TYPE_SURFACE_SOURCE_METAL_LAYER
+        source.layer = metal_view_layer(r.metal_view)
+        var descriptor := surface_descriptor_init()
+        descriptor.next_in_chain = ptr_to(source)
+        r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
+    } else {
+        hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
+        if (hwnd == no_pointer()) {
+            return r
+        }
+        var source := surface_source_windows_HWND_init()
+        source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
+        source.hwnd = hwnd
+        var descriptor := surface_descriptor_init()
+        descriptor.next_in_chain = ptr_to(source)
+        r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
     }
-    var source := surface_source_windows_HWND_init()
-    source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
-    source.hwnd = hwnd
-    var descriptor := surface_descriptor_init()
-    descriptor.next_in_chain = ptr_to(source)
-    r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
 
     // The same adapter and device a program with no window asks for, told
     // which surface this one has to be able to draw at.
@@ -131,6 +152,9 @@ renderer_close :: fn(move r: Renderer) {
     adapter_release(r.adapter)
     surface_release(r.surface)
     instance_release(r.instance)
+    if (r.metal_view != no_pointer()) {
+        metal_view_destroy(r.metal_view)
+    }
 }
 
 // A surface has to be told the window changed. Every target tested against it
@@ -237,6 +261,7 @@ test "a renderer that never opened is closed without touching a handle" {
         format = 0,
         configuration = surface_configuration_init(),
         graph = graph_new(no_device()),
+        metal_view = no_pointer(),
         opened = false,
     }
     assert(renderer_ok(r) == false)

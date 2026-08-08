@@ -222,7 +222,7 @@ app name:
 # Builds and runs a graphics example: `just app spinning` (Unix)
 [unix]
 app name:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
+    cargo run -r -q -p frost --bin frost -- --link {{unix_sdl}} {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
     ./examples/graphics/{{name}}
 
 # Builds and runs the engine-app starting point: `just template`. Copy
@@ -234,7 +234,7 @@ template:
 # Builds and runs the engine-app starting point: `just template` (Unix)
 [unix]
 template:
-    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 {{unix_wgpu}} -o examples/template examples/template.frost
+    cargo run -r -q -p frost --bin frost -- --link {{unix_sdl}} {{unix_wgpu}} -o examples/template examples/template.frost
     ./examples/template
 
 # Fetches the libraries the graphics examples link against, and the schema the
@@ -266,6 +266,11 @@ template:
 # needing `LD_LIBRARY_PATH` on Linux or `DYLD_LIBRARY_PATH` on macOS. SDL3 comes
 # from the system on both.
 unix_wgpu := "--libs=-Llib/renderer/wgpu --libs=-Wl,-rpath,$PWD/lib/renderer/wgpu --libs=-lwgpu_native"
+
+# Where a Unix build finds SDL3. Linux package managers install into a
+# directory the linker already searches; Homebrew on Apple Silicon installs
+# into /opt/homebrew/lib, which it does not, so macOS passes the prefix along.
+unix_sdl := if os() == "macos" { "--libs=-L$(brew --prefix)/lib --libs=-lSDL3" } else { "--libs=-lSDL3" }
 
 sdl_version := "3.4.12"
 wgpu_version := "v29.0.1.1"

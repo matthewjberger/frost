@@ -134,19 +134,35 @@ main :: fn() -> i64 {
     if (is_no_window(window)) { return 2 }
 
     properties := window_properties(window)
-    hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
 
     instance := create_instance(null_handle())
 
-    // The surface, chained off the platform window handle.
-    var source := surface_source_windows_HWND_init()
-    source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
-    source.hwnd = hwnd
-
-    var surface_descriptor := surface_descriptor_init()
-    surface_descriptor.next_in_chain = ptr_to(source)
-    surface := instance_create_surface(instance, ptr_to(surface_descriptor))
-    if (hwnd == null_handle()) { return 23 }
+    // The surface, chained off the platform's own handle for the window: a
+    // CAMetalLayer on Apple platforms, an HWND on Windows. Which one this is,
+    // the window answers, by carrying the one property and not the other.
+    var surface := no_surface()
+    var metal_view := null_handle()
+    cocoa := window_pointer_property(properties, PROP_COCOA_WINDOW)
+    if (cocoa != null_handle()) {
+        metal_view = metal_view_create(window)
+        if (metal_view == null_handle()) { return 23 }
+        var metal_source := surface_source_metal_layer_init()
+        metal_source.chain.stype = S_TYPE_SURFACE_SOURCE_METAL_LAYER
+        metal_source.layer = metal_view_layer(metal_view)
+        var metal_descriptor := surface_descriptor_init()
+        metal_descriptor.next_in_chain = ptr_to(metal_source)
+        surface = instance_create_surface(instance, ptr_to(metal_descriptor))
+    } else {
+        hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
+        if (hwnd == null_handle()) { return 23 }
+        var source := surface_source_windows_HWND_init()
+        source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
+        source.hwnd = hwnd
+        var surface_descriptor := surface_descriptor_init()
+        surface_descriptor.next_in_chain = ptr_to(source)
+        surface = instance_create_surface(instance, ptr_to(surface_descriptor))
+    }
+    if (surface == no_surface()) { return 23 }
 
     // The adapter.
     var adapter_slot: AdapterSlot =
@@ -449,6 +465,9 @@ main :: fn() -> i64 {
         }
     }
 
+    if (metal_view != null_handle()) {
+        metal_view_destroy(metal_view)
+    }
     window_destroy(window)
     sdl_quit()
     0

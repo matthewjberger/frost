@@ -20,6 +20,7 @@ export Window, is_no_window, Event, event_new, event_kind, event_number,
     PROP_WIN32_HWND, PROP_X11_DISPLAY, PROP_X11_WINDOW, PROP_COCOA_WINDOW,
     sdl_init, sdl_quit, sdl_ticks, sdl_delay, sdl_error,
     window_create, window_destroy, window_properties, window_pointer_property,
+    metal_view_create, metal_view_layer, metal_view_destroy,
     poll_event
 
 // The C entry points, declared with the types this binding hands out rather
@@ -46,6 +47,9 @@ SDL_GetPointerProperty :: extern fn(
 SDL_GetTicks :: safe extern fn() -> u64
 SDL_Delay :: safe extern fn(milliseconds: u32)
 SDL_GetError :: extern fn() -> ^i8
+SDL_Metal_CreateView :: extern fn(window: Window) -> ^u8
+SDL_Metal_GetLayer :: extern fn(view: ^u8) -> ^u8
+SDL_Metal_DestroyView :: extern fn(view: ^u8)
 
 // A window is a pointer SDL owns, under a name of its own, so it cannot be
 // handed to a call that wants some other pointer and no pointer from elsewhere
@@ -265,6 +269,23 @@ window_pointer_property :: fn(properties: u32, name: str) -> ^u8 {
     }
     heap_release($u8, held)
     found
+}
+
+// A CAMetalLayer-backed view, made and attached to the window, which is the
+// handle a Metal surface is chained off on Apple platforms the way an HWND is
+// on Windows. SDL answers null everywhere Metal is not, so asking is also how
+// a program finds out it is somewhere else. Destroyed before the window is,
+// by whoever made it.
+metal_view_create :: fn(w: Window) -> ^u8 {
+    unsafe { SDL_Metal_CreateView(w) }
+}
+
+metal_view_layer :: fn(view: ^u8) -> ^u8 {
+    unsafe { SDL_Metal_GetLayer(view) }
+}
+
+metal_view_destroy :: fn(view: ^u8) {
+    unsafe { SDL_Metal_DestroyView(view) }
 }
 
 // The next event, written into the caller's own buffer, which is the right size
