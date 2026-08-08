@@ -155,10 +155,10 @@ less-than in expression position. Frost passes a type as an ordinary argument
 marked with `$` (`foo($u32)`), sidestepping the `<` disambiguation entirely, one
 of the ugliest corners of Rust's grammar.
 
-## 9. How many spellings a multi-return has
+## 9. A multi-return names its values
 
-A function that answers with several values is written four ways over its
-lifetime:
+A function that answers with several values declares a return type list, and
+every value in the list has a name:
 
 ```frost,sketch
 split :: fn(value: i64) -> (high: i64, low: i64) {   // the type list
@@ -168,77 +168,43 @@ split :: fn(value: i64) -> (high: i64, low: i64) {   // the type list
 high, low := split(4096)                             // taken apart
 ```
 
-Four spellings of one idea is more ceremony than any keyword in the language
-carries, so each was asked what it pays for. What the parsers say first:
-
-- The braced `return` is the inferred struct literal of 6.5, over the struct
-  the list becomes. The bootstrap rewrites an unnamed `StructInit` to name that
-  struct; the self-hosted parser sets the expected type to it and reads an
-  ordinary literal. So this spelling costs no grammar of its own.
-- The destructure is a statement form until lowering and nothing afterwards.
-  The bootstrap carries a `LetMultiple` node that `lower_multiple_returns`
-  expands into a binding of a temporary plus one field read per name; the
-  self-hosted parser emits those statements as it reads the names, so it has no
-  node at all.
-- The struct has no name a program can write. The bootstrap derives one from
-  the rendered types, so two functions with the same list share it; the
-  self-hosted compiler makes one per function. Both refuse any attempt to write
-  the name down.
-
-The type list stays: without the parentheses a signature carrying
-`uses Arena<256>` after it puts two comma-separated lists back to back, and a
-return type that is itself `fn(i64) -> i64` makes a comma in return position
-ambiguous. The destructure is the payoff and has no cheaper form.
-
-Both `return` forms stay, and the corpus is what settled it. `mat4_inverse` in
-`std/math.frost` answers `(inverse: Mat4, ok: bool)` and `tally` in
-`examples/tour.frost` answers `(total: i64, strongest: i64)`, where two `i64`
-values could silently swap and the names are the guard. `mnemonic_of` in
+Return by order where the function is a table of answers: `mnemonic_of` in
 `selfhosted/assemble.frost` is forty-five consecutive lines of
-`return M_ADDQ, 0`, and writing those as `return { op = M_ADDQ, cc = 0 }` makes
-a lookup table three times as wide for nothing. Forcing either form out makes
-real code in the tree worse, so both earn their place.
+`return M_ADDQ, 0`, and naming the fields on each would triple its width.
+Return by name where two values share a type and could be swapped without
+anyone noticing, as in `mat4_inverse`, which answers `(inverse: Mat4, ok: bool)`.
 
-What does not earn its place is the unnamed list, `-> (i64, i64)`. Its only
-effect would be to call the fields `value0` and `value1`, names the compiler
-picked and no program is allowed to write. **A return type list names every
-value**, which deletes a rule rather than adding one: there is no `valueN`
-synthesis in either parser, and no refusal guarding it.
+The parentheses on the type list are load-bearing. Without them, a signature
+carrying `uses Arena<256>` puts two comma-separated lists back to back, and a
+return type that is itself `fn(i64) -> i64` makes a comma in return position
+ambiguous.
+
+An unnamed list, `-> (i64, i64)`, is refused:
 
 ```
 a return type list names every value; write `-> (name: T, name: T)`
 ```
 
-Frost is alone in that. Go, Odin, Jai, C# and Swift all make the names optional,
-and Rust and Zig sidestep the question by having no multi-return at all: you
-return a struct, and its fields are named. The direction of travel where it has
-been revisited is toward names, though. C# 7 added named tuple elements because
-`Item1` and `Item2` failed readers, which is the same failure as `value0`, and
-Go's optionality is tangled with naked return, a job Frost's names do not have.
-The precedent that decides it is internal: Frost has no positional struct
-literal and no positional variant payload, so the return type list was the one
-aggregate whose fields a person had not named.
+Go, Odin, Jai, C# and Swift all make the names optional. Rust and Zig have no
+multi-return at all: you return a struct, and its fields are named. Where the
+question has been revisited the direction is toward names, and C# 7 added named
+tuple elements because `Item1` and `Item2` failed readers. Frost has no
+positional struct literal and no positional variant payload, so an unnamed
+return list would have been the one aggregate whose fields nobody named.
 
-At the other end, `_` takes a value the caller has no use for:
+Use `_` for a value you have no use for:
 
 ```frost,sketch
 high, _ := split(4096)
 _, low := split(770)
 ```
 
-The list binds one name per value, so without this a caller wanting the first
-has to invent a name for the rest, and the corpus did exactly that three times
-under the name `unused`, which is a live binding somebody can read by mistake.
-The value is still read into storage the compiler names, so a linear one taken
-by a `_` is still owed a consumer.
+The value is still read, into storage the compiler names, so a linear value
+taken by a `_` still owes a consumer.
 
-The alternative worth naming and refusing is exposing the synthesized struct as
-a nameable type, which would make the multi-return an ordinary struct return
-with sugar at the call site. It removes a concept rather than renaming one, and
-it contradicts goal 1: `(A, B)` would become a type, and a program could pass a
-pair around without anyone naming the aggregate. The two compilers also derive
-different names and share the struct on different terms, so exposing it means
-picking one and rewriting the other.
+The struct the list becomes has no name a program can write, and there is no
+tuple type. Exposing that struct would make `(A, B)` a type, and a pair could
+then travel through a program with nobody naming the aggregate.
 
 ## 10. A stated layout is a word, not a sigil or an attribute
 
@@ -258,8 +224,8 @@ every marker on a type declaration already takes, so a reader who knows one
 knows the other. Neither word is reserved: `packed` marks the declaration only
 where `struct` follows it, and `align` only where `(` follows it. Reserving them
 would cost every program that has a local called `packed`, and `std/slab.frost`
-is one. The shape after a word is what says what it means, which is how `flags`,
-`value`, `test` and `export` already read.
+is one. The shape after a word decides what the word means, the same way
+`flags`, `value`, `test` and `export` read.
 
 There is one form for alignment, on a field, and none for the declaration. A
 struct's alignment is the widest its fields ask for, so a second form saying the
@@ -279,15 +245,13 @@ promise it. A promise that can be made can be broken, so it becomes an ABI
 question, and the answer has been rewritten in three C++ standards.
 
 The position already carries the information. A constant's value and an array's
-length are the two places a compile-time value is read, and both were already
-worked out before the program ran; what changed is that the vocabulary there is
-now a call rather than only arithmetic. The same function is called normally
-wherever a program calls it normally.
+length are the two places a compile-time value is read, and both are worked out
+before the program runs. The vocabulary there is a call as well as arithmetic.
+The same function is called normally wherever a program calls it normally.
 
-What that costs is that a call which cannot be worked out is a refusal rather
-than a fallback to running it later. That is the trade taken on purpose: falling
-back would mean `LANES` was a number in one place and a call in another, which
-is two meanings for one declaration.
+The cost is that a call the compiler cannot work out is refused, with no
+fallback to running it later. Falling back would make `LANES` a number in one
+place and a call in another, which is two meanings for one declaration.
 
 ## 12. A vector is an array, not a type of its own
 

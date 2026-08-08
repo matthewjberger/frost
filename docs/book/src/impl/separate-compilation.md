@@ -11,7 +11,7 @@ module only when its own source or an imported interface changes.
 
 Goal 9 in [philosophy.md](../design/philosophy.md) makes compilation speed a
 promise. The constant factor is already handled: the bootstrap's full native
-build clears the bar, which `just bench-scaling` is what says. Separate
+build clears the bar, as `just bench-scaling` shows. Separate
 compilation is the other half, and it grows with the program.
 `just bench-incremental` is the recipe for it.
 
