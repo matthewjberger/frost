@@ -27,7 +27,7 @@ insertion :: fn(
     mut items: []T,
     low: i64,
     high: i64
-) {
+    ) {
     var i := low + 1
     while (i <= high) {
         var j := i
@@ -45,7 +45,7 @@ quicksort :: fn(
     mut items: []T,
     low: i64,
     high: i64
-) {
+    ) {
     if (high - low < 12) {
         insertion($T, $ops, items, low, high)
         return

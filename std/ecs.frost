@@ -2324,15 +2324,15 @@ Stage :: enum {
 // rather than a system that quietly runs in the wrong one.
 stage_order :: fn(s: Stage) -> i64 {
     match s {
-        case.Startup: 0
-        case.First: 1
-        case.Update: 2
-        case.LateUpdate: 3
-        case.FrameStart: 4
-        case.FrameUpdate: 5
-        case.FramePostUpdate: 6
-        case.Render: 7
-        case.Last: 8
+        case .Startup: 0
+        case .First: 1
+        case .Update: 2
+        case .LateUpdate: 3
+        case .FrameStart: 4
+        case .FrameUpdate: 5
+        case .FramePostUpdate: 6
+        case .Render: 7
+        case .Last: 8
     }
 }
 
@@ -2407,7 +2407,7 @@ schedule_add_in_state :: fn(
     stage: Stage,
     state: i64,
     run: fn(mut World)
-) {
+    ) {
     vec_push(
         $System,
         s.systems,
@@ -4703,7 +4703,7 @@ test_three :: fn(
     v: []TestVelocity,
     h: []TestHealth,
     count: i64
-) {
+    ) {
     var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x + h[i].points

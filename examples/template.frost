@@ -112,8 +112,8 @@ main :: fn() -> i64 {
     var config := app_config("Frost template", WIDTH, HEIGHT)
     config.drawn = DRAWN
     match app_open(config) {
-        case.Ok { value }: run(value)
-        case.Err { error }: app_failed(error)
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
     }
 }
 

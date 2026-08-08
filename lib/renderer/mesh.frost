@@ -374,7 +374,7 @@ quad :: fn(
     b: Vec3,
     c: Vec3,
     d: Vec3
-) {
+    ) {
     base := at * 4
     vertices[base] = Vertex {
         position = a,

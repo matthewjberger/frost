@@ -309,7 +309,7 @@ lit_write_lights :: fn(
     height: i64,
     z_near: f32,
     z_far: f32
-) {
+    ) {
     cluster_write(
         s.cluster,
         queue,
