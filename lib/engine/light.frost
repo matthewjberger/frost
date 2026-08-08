@@ -131,7 +131,7 @@ lights_of :: fn(
     mut world: World,
     ids: LightIds,
     mut out: []GpuLight
-    ) -> LightCounts {
+) -> LightCounts {
     directional := gather_lights(world, ids, out, 0, true)
     total := gather_lights(world, ids, out, directional, false)
     LightCounts { total = total, directional = directional }
@@ -145,7 +145,7 @@ gather_lights :: fn(
     mut out: []GpuLight,
     written: i64,
     wanted_directional: bool
-    ) -> i64 {
+) -> i64 {
     var q := query_begin(world)
     query_with(q, ids.light)
     query_with(q, ids.global_transform)
