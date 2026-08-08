@@ -49,11 +49,11 @@ IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
 ```
 
 The single underscore `_` is a distinct token, the wildcard, and never names a
-binding. It stands in a `match` arm that covers the rest (7.4) and in a binding
-list for a value the caller has no use for (5.2a). Everywhere else it has
-nowhere to parse: `_ := 5` is refused, and `_` is refused where an expression
-is expected. It is also refused as one alternative of a `case` naming several
-(6.7).
+binding. It stands in a `match` arm that covers the rest (6.7), in a binding
+list for a value the caller has no use for (5.2a), and on its own before a `:=`
+for an answer meant to go unread (chapter 7). Everywhere else it has nowhere to
+parse: `_` is refused where an expression is expected. It is also refused as
+one alternative of a `case` naming several (6.7).
 
 `..`, `..=` and `|` carry their usual meanings inside a `case` pattern: the
 first two open a span of whole numbers and the third joins alternatives (6.7).
@@ -92,7 +92,9 @@ declaration (5.4) and `export` only on a top-level export line (5.5). `flags`
 is read as a declaration only when a scalar type and a brace follow it (3.6b),
 and `value` only as a parameter mode, where a name follows it (chapter 12).
 `packed` marks a declaration only where `struct` follows it, and `align` marks
-a field's alignment only where `(` follows it (3.2a).
+a field's alignment only where `(` follows it (3.2a). `format` marks a
+parameter that takes a string literal, and only where a name follows it
+(11.1c.0).
 `Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
 identifier recognized in that position. The lowercase `type` is a keyword.
 The type builtins `sizeof`, `typename` and `type_id` are ordinary names read
@@ -133,7 +135,7 @@ Boolean. `true`, `false`, of type `bool`.
 ## 2.6 Operators and punctuation
 
 ```
-::  :=  :   =   ->  ..  ..=  .   ^   $   ?   #
+::  :=  :   =   ->  ..  ..=  ...  .   ^   $   ?
 +   -   *   /   %   &   |   &&  ||  <<  >>
 ==  !=  <   <=  >   >=  !
 (   )   {   }   [   ]   ,   ;

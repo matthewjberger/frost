@@ -109,7 +109,8 @@ nothing, in two shapes:
 - a block holding no gated operation at all;
 - a block written inside another, which already covers what is in it.
 
-It is off by default, and passing the flag makes each report a build error.
+Every build makes the report as a warning. Passing the flag makes each one a
+build error.
 
 ## 6a.7 Where the guarantee stops
 

@@ -16,7 +16,7 @@ externs, and imports.
 | `NAME :: expr` | declare a constant, evaluated once |
 
 Bindings are immutable unless `var`. A `var` local is reassigned with `=`.
-`mut` is not a binding form: it is the parameter mode of chapter 4, and a
+`mut` is not a binding form: it is the parameter mode of 3.3, and a
 `mut` written at statement position is refused with the words that say so.
 
 `ref name := place` binds a borrow rather than a copy, so writing through the
@@ -82,10 +82,11 @@ main :: fn() -> Pair {
 > 'main' is called by the C runtime and its answer is the process exit code, so
 > it answers i64
 
-A value constant's `<expr>` is an integer constant expression: an integer
-literal, an earlier constant by name, a call the compiler works out (5.2c), or
-those combined with the integer operators `+ - * / % << >> & |` and
-parentheses, folded to a value at compile time. So
+A value constant's `<expr>` is worked out at compile time. An integer one is an
+integer literal, an earlier constant by name, a call the compiler works out
+(5.2c), or those combined with the integer operators `+ - * / % << >> & |` and
+parentheses, folded to a value. A constant may also hold a run of values, a set
+of named ones, or a run of bytes, which 5.2c writes out. So
 `STRIDE :: POSITION + NORMAL + UV` and `MASK :: 1 << FLAG_BIT` name a
 computed value, and the result may be used where a compile-time integer is
 required, such as an array length `[STRIDE]f32`. A constant whose value is a
@@ -174,9 +175,9 @@ this `_` drops a 'File', which is consumed exactly once; bind it to a name and
 consume it
 ```
 
-`_` is the wildcard token of 2.3 and never a binding name, so `_ := 5` has
-nowhere to parse and `_` is not an expression. A single value is discarded by
-calling and binding nothing.
+`_` is the wildcard token of 2.3 and never a binding name, and `_` is not an
+expression. A list of one is a list, so a single value is discarded the same
+way, with `_ := call()` (chapter 7).
 
 The struct a list becomes holds a resource when one of its values does, and it
 is the one aggregate that carries no obligation of its own: the lowering builds

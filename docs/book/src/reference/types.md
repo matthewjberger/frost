@@ -23,12 +23,12 @@ widens to the wider type.
 
 ## 3.1a Conversions
 
-A value converts to another scalar type on its own only when the destination
-can hold every value the source can. `i32` to `i64`, `u16` to `u32`, `f32` to
-`f64`, and any integer to a float wide enough for it all happen silently at an
+A value converts to another scalar type on its own only where the destination
+is at least as wide. `i32` to `i64`, `u16` to `u32`, `f32` to `f64`, any
+integer to a float, and a change of sign at one width all happen silently at an
 assignment, an argument, a return, or a field.
 
-Every other conversion is refused, and the diagnostic names both types:
+A conversion that narrows is refused, and the diagnostic names both types:
 
 ```
 count : i32 = total    // total is an i64

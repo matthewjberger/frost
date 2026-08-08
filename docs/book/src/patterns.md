@@ -353,9 +353,10 @@ Three language rules carry this: a compile-time list may hold types, a list may
 be handed on by naming it, and `g(T) for T in list` in an argument list expands
 to one argument per element.
 
-## Shapes the two compilers disagree about
+## Shapes that misread, and the form to write
 
-The two compilers differ on these four shapes. Write the form both accept.
+Four shapes read differently than they look, and the report you get points
+somewhere else. Write the plain form.
 
 - Write a match as `match value { case .Variant: ... }`. The scrutinee takes no
   parentheses, and the error you get from the other form names a later line.

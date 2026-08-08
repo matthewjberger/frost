@@ -117,5 +117,5 @@ ordinary refusal:
 
 ```
 h := opened(1)
-^ linear value 'h' is never consumed
+^ linear value 'h' is not consumed on every path before return
 ```
