@@ -828,6 +828,15 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text(")")
         return
     }
+    // The number the compiler laid the type out to, written out rather than
+    // asked of C. A `packed struct` or an `align(N)` is Frost's own rule, and
+    // the emitted C carries no attribute saying so, so `_Alignof` on it would
+    // answer for a type C laid out its own way and the two backends would
+    // disagree.
+    if (kind == NodeKind::Alignof) {
+        emit_wide_int(align_of(p, node.val))
+        return
+    }
     if (kind == NodeKind::StructLit) {
         struct_ty := node.val
         inits := node.a

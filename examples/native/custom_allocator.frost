@@ -60,11 +60,12 @@ bump_used :: fn($N: usize, b: Bump<N>) -> i64 {
 // end. The reinterpret from bytes to `T` is the one unchecked step, and it is
 // the only `unsafe` block in the file.
 //
-// The run starts at the next multiple of 8, which is what every type this
-// program carves is aligned to. There is no `alignof` to ask, so an allocator
-// for types that want more than 8 needs the alignment written into it.
+// The run starts on `alignof(T)`, the multiple the compiler laid `T` out to, so
+// a type carrying `align(16)` is carved onto sixteen without this being told
+// about it.
 bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
-    start := (b.offset + 7) / 8 * 8
+    align := alignof(T)
+    start := (b.offset + align - 1) / align * align
     width := count * sizeof(T)
     bytes := slice_range($u8, b.data, start, width)
     b.offset = start + width

@@ -239,10 +239,10 @@ and aborts where it happens. It may not outlive its storage, which the region
 check enforces:
 
 ```frost,sketch
-draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite) -> i64 {
+draw_frame :: fn(mut scratch: Arena, world: []Sprite) -> i64 {
     var total : i64 = 0
     with scratch {
-        run := arena_carve($Sprite, $4096, scratch, 16)
+        run := arena_carve($Sprite, scratch, 16)
         var visible := fixed_over($Sprite, run)
         for sprite in world { fixed_push($Sprite, visible, sprite) }
         total = tally(fixed_slice($Sprite, visible))
@@ -267,12 +267,31 @@ refused. Both compilers refuse the same programs.
 
 ## 8a.5b The type after `uses`
 
-The type after `uses` is concrete. `uses Arena<256>` names one allocator type at
-one size, and a signature has no way to stand for whatever allocator the caller
-has, so a library function leaves `uses` to the program that built the
-allocator. `std/arena.frost` takes `mut a: Arena<N>` as an ordinary parameter.
-Inside a `with` block the region check keys off the block, so a call there is
-checked either way.
+The type after `uses` is concrete. `uses Arena` names one allocator type, and a
+signature has no way to stand for whatever allocator the caller has, so a
+library function leaves `uses` to the program that built the allocator.
+`std/arena.frost` takes `mut a: Arena` as an ordinary parameter. Inside a `with`
+block the region check keys off the block, so a call there is checked either
+way.
+
+What would lift this is a capability bundle after `uses`, since a bundle is what
+the language already uses to say what can be done with a type. It does not work
+yet, and the thing in the way is not the `uses` clause. A call to a function
+supplied at compile time, whether a bundle's field or a `$f` argument, is one
+the checks cannot see the body of, so a view it answers with has no traceable
+storage and both the unsafety check and the frame check refuse it:
+
+```
+indexing a value whose type is not known here is unchecked, so it belongs in an
+`unsafe` block
+region: a pointer into the frame of 'carve' is the call's answer; the storage it
+names dies when the call returns
+```
+
+That refusal is why no container in the standard library is generic over its
+allocator today. Until a compile-time call can answer with a view, a container
+that draws from an arena is a separate type (`Fixed<T>`) rather than `Vec<T>`
+told where to draw from.
 
 [Writing an allocator](../writing-an-allocator.md) is the worked version of this
 chapter: one program that declares an allocator, carves from it, draws it

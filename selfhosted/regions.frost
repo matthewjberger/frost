@@ -4993,7 +4993,8 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
         return TY_F64
     }
     if (kind == NodeKind::SliceLen
-        || kind == NodeKind::TrailingZeros || kind == NodeKind::Sizeof) {
+        || kind == NodeKind::TrailingZeros || kind == NodeKind::Sizeof
+        || kind == NodeKind::Alignof) {
         return TY_I64
     }
     frame_place_type(p, id)
@@ -5355,7 +5356,8 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
         || kind == NodeKind::StrLit || kind == NodeKind::TypeVal
         || kind == NodeKind::Bin || kind == NodeKind::SliceLen
         || kind == NodeKind::TrailingZeros
-        || kind == NodeKind::Sizeof || kind == NodeKind::Assert) {
+        || kind == NodeKind::Sizeof || kind == NodeKind::Alignof
+        || kind == NodeKind::Assert) {
         return PROV_OUTLIVES
     }
     // Listed rather than caught by a fallthrough. Frost has no exhaustiveness
@@ -6046,7 +6048,7 @@ answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     }
     if (kind == NodeKind::Num || kind == NodeKind::Float
         || kind == NodeKind::StrLit || kind == NodeKind::Sizeof
-        || kind == NodeKind::SliceLen
+        || kind == NodeKind::Alignof || kind == NodeKind::SliceLen
         || kind == NodeKind::TrailingZeros || kind == NodeKind::TypeVal
         || kind == NodeKind::Bin) {
         return 0

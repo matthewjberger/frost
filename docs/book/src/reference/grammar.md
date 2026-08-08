@@ -147,9 +147,9 @@ Prefix =
     | "-" Expr
     | "!" Expr
     | "$" Type                                // type value (11.3)
-    | TypeBuiltin "(" "$"? Type ")"           // sizeof / typename / type_id (6.8)
+    | TypeBuiltin "(" "$"? Type ")"           // sizeof / alignof / typename / type_id (6.8)
 
-TypeBuiltin = "sizeof" | "typename" | "type_id"
+TypeBuiltin = "sizeof" | "alignof" | "typename" | "type_id"
 
 Primary =
       INTEGER | FLOAT | STRING | "true" | "false"

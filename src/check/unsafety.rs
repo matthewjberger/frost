@@ -523,7 +523,7 @@ impl Checker<'_> {
                 // constants, so their types are known here without a
                 // declaration to read.
                 match ast.name(*name) {
-                    "sizeof" | "type_id" => return Some(Type::I64),
+                    "sizeof" | "alignof" | "type_id" => return Some(Type::I64),
                     "typename" => return Some(Type::Str),
                     _ => {}
                 }

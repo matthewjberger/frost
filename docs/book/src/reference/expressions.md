@@ -229,13 +229,17 @@ compares one value per part.
 consumes it (chapter 9). An arm consumes it once however many patterns the arm
 names, since the alternatives are one arm.
 
-## 6.8 `sizeof`, `cast`, `typename`, and `unsafe`
+## 6.8 `sizeof`, `alignof`, `cast`, `typename`, and `unsafe`
 
-`sizeof`, `typename` and `type_id` are builtin names, recognized where one is
-called with a type argument the same way `ptr_to` and `cast` are recognized at
-a call, and each stays usable as an ordinary identifier elsewhere.
+`sizeof`, `alignof`, `typename` and `type_id` are builtin names, recognized
+where one is called with a type argument the same way `ptr_to` and `cast` are
+recognized at a call, and each stays usable as an ordinary identifier elsewhere.
 
 - `sizeof(T)` is a compile-time constant.
+- `alignof(T)` is the multiple an address of `T` is laid out on, also a
+  compile-time constant. It reads a stated layout: a field written `align(16)`
+  gives its struct that alignment and `alignof` answers with it. An allocator
+  starts a run of `T` on this rather than on a number written into it.
 - `cast($T, value)` converts a scalar to `T` where the conversion loses
   something (3.1a). It is safe and needs no block.
 - `type_id(T)` is a number standing for the type, and `typename(T)` is its name

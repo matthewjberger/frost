@@ -2362,22 +2362,26 @@ impl<'a> Parser<'a> {
     fn parse_expression(&mut self, precedence: Precedence) -> Result<ExprId> {
         let start = self.mark();
         let mut expression = match self.peek_nth(0) {
-            // `sizeof(T)`, `typename(T)` and `type_id(T)` read as calls and
-            // take a type, so they are recognized here rather than left to the
-            // ordinary call path, which would have to parse a type as an
-            // expression. What comes out is the same `Call` every other builtin
-            // is: the type rides along as an argument, so no pass has a node
-            // form to enumerate for these.
+            // `sizeof(T)`, `alignof(T)`, `typename(T)` and `type_id(T)` read as
+            // calls and take a type, so they are recognized here rather than
+            // left to the ordinary call path, which would have to parse a type
+            // as an expression. What comes out is the same `Call` every other
+            // builtin is: the type rides along as an argument, so no pass has a
+            // node form to enumerate for these.
             Token::Identifier(word)
                 if matches!(
                     word.as_str(),
-                    "sizeof" | "typename" | "type_id"
+                    "sizeof" | "alignof" | "typename" | "type_id"
                 ) && matches!(self.peek_nth(1), Token::LeftParentheses) =>
             {
                 let word = word.clone();
                 self.read_token();
                 self.read_token();
-                if word != "sizeof" && matches!(self.peek_nth(0), Token::Dollar)
+                // The two that measure a type keep a leading `$`, so
+                // `sizeof($P)` and `alignof($P)` read the constant a call was
+                // given rather than the type its name would otherwise be.
+                if !matches!(word.as_str(), "sizeof" | "alignof")
+                    && matches!(self.peek_nth(0), Token::Dollar)
                 {
                     self.read_token();
                 }

@@ -491,6 +491,32 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_type_node(p, NodeKind::Sizeof, 0, ty)
         }
+        // What a type is aligned to, which is what an allocator has to start a
+        // run of it on. Read the way `sizeof` is, and for the same reasons: a
+        // `$` says the name is a type, and a name a `for` over `fields(T)`
+        // bound is the field's type rather than a type of its own.
+        if (str_range_eq(p.src, offset, length, "alignof")) {
+            advance(p)
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
+            held := field_binding_of(p, cur_off(p), cur_len(p))
+            if (held >= 0) {
+                entry := arena_at(p.field_bindings, held)
+                field_ty := entry.ty
+                advance(p)
+                advance(p)
+                return new_type_node(p, NodeKind::Alignof, 0, field_ty)
+            }
+            if (unbound_template(p)) {
+                advance(p)
+                advance(p)
+                return new_type_node(p, NodeKind::Alignof, 0, TY_I64)
+            }
+            ty := parse_type(p)
+            advance(p)
+            return new_type_node(p, NodeKind::Alignof, 0, ty)
+        }
         // A type's own name, as text. The compiler knows it well enough to put
         // it in a diagnostic, and a registry that wants to be readable in a
         // file or a debugger wants the same string.

@@ -2044,11 +2044,12 @@ Holder :: struct { a: i64, b: i64 }
          import \"fixed.frost\"
          Sprite :: struct { x: i64 }
          main :: fn() -> i64 {
-             var scratch : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var bytes : [256]u8 = [0; 256]
+             var scratch := arena_over(bytes)
              var backing : [1]Sprite = [Sprite { x = 0 }]
              var escaped := fixed_over($Sprite, backing)
              with scratch {
-                 run := arena_carve($Sprite, $256, scratch, 4)
+                 run := arena_carve($Sprite, scratch, 4)
                  escaped = fixed_over($Sprite, run)
              }
              fixed_len($Sprite, escaped)
@@ -2689,6 +2690,47 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `alignof` reads the layout each compiler worked out rather than asking
+    // the backend, so a stated alignment reaches it and the two agree. The C
+    // backend writes the number out for exactly this reason: the emitted struct
+    // carries no attribute saying what Frost aligned it to, so `_Alignof` on it
+    // would answer for a type C laid out its own way.
+    (
+        "alignof_reads_the_layout_the_compiler_made",
+        "import \"io.frost\"\n\
+         Wide :: struct { a: i64, b: i8 }\n\
+         Narrow :: struct { a: i8, b: i8 }\n\
+         Stated :: struct { x: f32, y: f32, z: f32, w: f32 align(16) }\n\
+         through :: fn($T: Type) -> i64 { alignof(T) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{} {} {}\n\", alignof(i8), alignof(i32), alignof(i64))\n\
+         \x20   print(\"{} {}\n\", alignof(Wide), alignof(Narrow))\n\
+         \x20   print(\"{} {}\n\", alignof(Stated), sizeof(Stated))\n\
+         \x20   print(\"{}\n\", through($Wide))\n\
+         \x20   0\n\
+         }\n",
+        "1 4 8\n8 1\n16 32\n8\n",
+    ),
+    // An arena is a view of bytes somebody else owns, so a carve starts on what
+    // the element is aligned to and the offset lands in the caller's arena.
+    (
+        "an_arena_carves_onto_the_element_alignment",
+        "import \"io.frost\"\nimport \"arena.frost\"\n\
+         Wide :: struct { v: f32 align(16) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var backing: [256]u8 = [0; 256]\n\
+         \x20   var a := arena_over(backing)\n\
+         \x20   var one := arena_carve($u8, a, 1)\n\
+         \x20   one[0] = 3\n\
+         \x20   var wide := arena_carve($Wide, a, 2)\n\
+         \x20   print(\"{} {}\n\", arena_used(a), slice_len(wide))\n\
+         \x20   print(\"{} {}\n\", one[0], arena_left(a))\n\
+         \x20   arena_reset(a, 0)\n\
+         \x20   print(\"{}\n\", arena_used(a))\n\
+         \x20   0\n\
+         }\n",
+        "48 2\n3 208\n0\n",
+    ),
     // One `print` writes every kind of value, with the writer for each chosen
     // while the body is expanded. The chain of predicates is four arms long,
     // which the self-hosted compiler refused until `parse_expansion_if` learned

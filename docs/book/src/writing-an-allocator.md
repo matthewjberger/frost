@@ -61,7 +61,8 @@ import "mem.frost"
 Bump :: struct($N: usize) { data: [N]u8, offset: i64 }
 
 bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
-    start := (b.offset + 7) / 8 * 8
+    align := alignof(T)
+    start := (b.offset + align - 1) / align * align
     width := count * sizeof(T)
     bytes := slice_range($u8, b.data, start, width)
     b.offset = start + width
@@ -78,9 +79,9 @@ The `unsafe` block is the reinterpret from bytes to `T`, and it is the only one
 in the file. A caller of `bump_carve` writes none of its own, because the
 unchecked step is inside.
 
-The run starts at the next multiple of 8. There is no `alignof` to ask, so an
-allocator handing out types that want more alignment than that needs the number
-written into it.
+The run starts on `alignof(T)`, which is what the compiler laid `T` out to, so
+a type carrying `align(16)` is carved onto sixteen without the allocator being
+told about it.
 
 `mut b` moves the offset in the caller's allocator, so the bump is still there
 after the call returns.

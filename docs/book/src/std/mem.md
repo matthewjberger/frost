@@ -129,31 +129,39 @@ program has already allocated.
 ## `std/arena.frost`, the other allocator
 
 An arena is the second way a program gets storage, and the one a scratch region
-uses. It holds its own bytes and an offset:
+uses. It is a view of bytes somebody else owns, and an offset into them:
 
 ```frost
-Arena :: struct($N: usize) {
-    data: [N]u8,
+Arena :: struct {
+    data: []u8,
     offset: i64,
 }
 ```
 
-`Arena<4096>` is 4096 bytes and an offset, and nothing under it allocates. A
-program builds one where it wants the storage to live and hands it to the calls
-that draw from it.
+A program builds the backing where it wants the storage to live and hands the
+view over, so the arena itself allocates nothing:
+
+```frost,sketch
+var backing: [4096]u8 = [0; 4096]
+var scratch := arena_over(backing)
+```
 
 | Call | What it does |
 | --- | --- |
-| `arena_carve($T, $N, mut a, count) -> []T` | A run of `count` elements, taken from the front of what is left |
-| `arena_mark($N, a) -> i64` | Where the arena is now, to roll back to |
-| `arena_reset($N, mut a, mark)` | Everything carved since the mark, reclaimed |
-| `arena_used($N, a) -> i64` | How many bytes are out |
+| `arena_over(backing) -> Arena` | An arena over a run of bytes |
+| `arena_carve($T, mut a, count) -> []T` | A run of `count` elements, taken from the front of what is left |
+| `arena_mark(a) -> i64` | Where the arena is now, to roll back to |
+| `arena_reset(mut a, mark)` | Everything carved since the mark, reclaimed |
+| `arena_used(a) -> i64` | How many bytes are out |
+| `arena_left(a) -> i64` | How many are still there |
+| `arena_take(mut a, size, align) -> []u8` | The byte-level carve the typed one is built on |
+| `arena_resize(mut a, block, size, align) -> []u8` | A bigger run holding what the old one held |
+| `arena_give(mut a, block)` | Nothing; an arena reclaims by reset |
 
 `arena_carve` hands back a `[]T`, so everything built on it is bounds-checked,
-and the one `unsafe` block in the file is the reinterpret from bytes to `T`. A
-run starts at the next multiple of 8, the alignment of every type laid out
-without `align(N)` written on it. There is no `alignof` to ask, so a type
-wanting more than that is a gap this does not fill.
+and there is no `unsafe` block in the file at all: `arena_take` answers for the
+run against the backing and `bytes_as` holds the one reinterpret. A run starts
+on `alignof(T)`, so a type wanting more than a word gets it.
 
 Freeing is by the block: `arena_reset` puts the offset back and the next carve
 takes the same bytes. That is the whole lifetime story. The container over a
