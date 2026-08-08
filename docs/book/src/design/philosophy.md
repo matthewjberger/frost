@@ -109,7 +109,6 @@ actual work predictable.
    is a rate about one machine on one day, and it goes stale without anyone
    noticing it has. See [self-hosting.md](../impl/self-hosted.md) and
    [separate-compilation.md](../impl/separate-compilation.md).
-   [roadmap.md](../roadmap.md) is the surrounding order of work.
 
 ## Non-goals
 

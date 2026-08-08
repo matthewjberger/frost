@@ -22,9 +22,7 @@ index and generation arithmetic over those two fields. No call, and the same
 class of code generation arrays already get.
 
 The argument below is what decided that shape, and the distinction underlying
-it is the part that applies again elsewhere. How the spike that proved it out
-went, and the five steps that took the pool out of C, are in
-[history.md](../appendix/history.md).
+it is the part that applies again elsewhere.
 
 ## The question it answers
 

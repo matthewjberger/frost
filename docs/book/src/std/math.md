@@ -173,9 +173,10 @@ both, so a formula that survived the copy wrong fails.
 
 ## What is not here
 
-The library is value-typed. It does not provide SIMD-packed vectors,
-and the language is not going to grow them: the layout that makes vectorization
-possible is what `columns<T, N>` and the `inline` marker already give a C
-compiler, and [roadmap.md](../roadmap.md) says why intrinsics would put the work
-where it pays least. Nor does it provide a general N-dimensional matrix. It is
+The library is value-typed. There are no SIMD-packed vectors and no intrinsics.
+`columns<T, N>` gives a C compiler separate homogeneous arrays with nothing
+aliasing between them, the small math functions are marked `inline` so it sees
+through them, and clang at `-O2` vectorizes what that layout allows. A program
+that needs intrinsics writes the kernel in C and calls it through the FFI.
+Nor is there a general N-dimensional matrix. This is
 the graphics math a renderer and a game loop reach for, and nothing more.

@@ -1,13 +1,14 @@
 # Where a statement ends
 
-A line break ends a statement. An expression that runs past one continues when
-the next line opens with an operator, and a leading `-` opens a new statement
-rather than continuing with a subtraction. This is what the rule costs, what was
-measured, and what was done about it.
+A line break ends a statement, and an expression runs past one only inside
+brackets. This chapter is what that rule buys, what it costs, and the three
+other rules it was chosen over.
 
-## The hazard, measured
+## The hazard it removes
 
-A single token at a line boundary decided the answer, silently:
+The alternative every brace-free language reaches for is continuation by leading
+operator, and under it a single token at a line boundary decides the answer
+silently:
 
 ```frost,sketch
 x := 10
@@ -19,21 +20,22 @@ x := 10
     20          // x is 10, and nothing was said
 ```
 
-Both compilers accepted the second and answered 10. Three neighbouring shapes
-were probed at the same time:
+Under a leading-operator rule the second of those compiles and answers 10.
+Nothing in the program says the `+` went missing, and the four single-token
+edits around it behave differently from each other:
 
-| edit | before | now |
+| edit | under leading-operator continuation | in Frost |
 | --- | --- | --- |
-| drop the leading `+` | compiled, answered 10 | refused |
+| drop the leading `+` | compiles, answers 10 | refused |
 | add a leading `+` in front of a statement | parse error | parse error |
-| change the `+` to a `-` | refused, with the rule named | unchanged |
-| drop a `+` inside brackets | parse error | unchanged |
+| change the `+` to a `-` | a subtraction, silently | refused, with the rule named |
+| drop a `+` inside brackets | parse error | parse error |
 
-Only the first was open, and only outside brackets: inside any bracket a line
-break is insignificant already, and the same drop leaves two expressions side by
-side, which does not parse.
+Only the first row is a silent change of meaning, and only outside brackets:
+inside any bracket a line break is insignificant, so the same drop leaves two
+expressions side by side, which does not parse.
 
-## Four designs, and the one taken
+## Four rules, and the one taken
 
 **(a) Continuation by syntactic incompleteness.** A line that cannot be a
 complete statement continues. Trailing-operator style. Rejected: it reproduces
@@ -52,12 +54,11 @@ language deliberately does not have one.
 **(d) Explicit continuation marker.** A trailing `\` or similar. Unambiguous in
 both directions, and it is a token whose only job is to be dropped.
 
-**What was taken: a line break ends a statement, and brackets are where an
+**What Frost takes: a line break ends a statement, and brackets are where an
 expression runs on.** Outside brackets a line cannot open with an operator that
-joins it to the line above; inside brackets a line break says nothing, which was
-already true. The 129 places in the tree that used the old form were wrapped in
-the brackets their expressions already needed, mechanically, by the migration
-kept in `tests/grammar.rs`.
+joins it to the line above; inside brackets a line break says nothing. An
+expression too long for a line is wrapped in the brackets a reader would have
+put round it anyway.
 
 ## The grammar property
 

@@ -77,9 +77,9 @@ the same compilation-speed promise, goal 9, which matters more for the Frost one
 because it is what a user's edit-compile loop runs. The self-hosted compiler
 carries the speed work: it emits one unit per module, keys a build cache on the
 bytes it just emitted, and rebuilds only what an edit reaches under
-`--incremental`. What it does not do yet is generate code on every core.
-[The self-hosted compiler](self-hosted.md) has what it implements, and
-[roadmap.md](../roadmap.md) has the measurements.
+`--incremental`. Code generation on every core is the bootstrap's alone so far.
+[The self-hosted compiler](self-hosted.md) has what it implements and what the
+`just` recipes measure.
 
 ## How the axes interact
 

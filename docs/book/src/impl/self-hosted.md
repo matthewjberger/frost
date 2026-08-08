@@ -159,12 +159,11 @@ means a byte comparison against a build from a different tree.
 
 ## Compile speed
 
-Both compilers clear the 100,000 lines per second target.
-[roadmap.md](../roadmap.md) lists the `just` recipe for each thing worth
-measuring, rather than recording what one machine answered on one day.
-`just bench-selfhost` is the one for this compiler, on its own source, through
-both of its backends; the assembly backend is the faster of the two, since it
-writes machine code rather than handing text to a C compiler.
+Both compilers clear the 100,000 lines per second target. Measure it with
+`just bench-selfhost`, which runs this compiler over its own source through both
+backends; the assembly backend is the faster of the two, since it writes machine
+code rather than handing text to a C compiler. The recipes are the record. A
+rate written into a page is a rate about one machine on one day.
 
 The language is built to compile fast. There are no traits or typeclasses, so no
 constraint solving. No lifetimes, so the region check is a cheap flow pass. No

@@ -226,7 +226,7 @@ place to start. [Coming from Rust](docs/book/src/coming-from-rust.md) is the
 same ground for someone who already thinks in ownership and borrows.
 [Patterns](docs/book/src/patterns.md) is what to write instead, once the syntax
 is familiar. The [language reference](docs/book/src/reference/conformance.md) is
-normative, and [the roadmap](docs/book/src/roadmap.md) is what is left.
+normative.
 
 ## Getting started
 
