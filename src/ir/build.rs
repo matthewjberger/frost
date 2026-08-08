@@ -7698,6 +7698,27 @@ impl<'a> FunctionLowering<'a> {
         for (index, argument) in arguments.iter().enumerate() {
             let held_target;
             let expected = parameter_types.get(index);
+            // A function value is its signature, and two that differ are two
+            // different functions. Compared here, where both are still spelled
+            // the way the reader wrote them and where the self-hosted compiler
+            // compares them too. The IR check below does catch it, in lowered
+            // terms and in a sentence of its own, so the two compilers named
+            // one fault two ways. The rule is that check's, reused rather than
+            // written again.
+            if let Some(wanted @ Type::Proc(..)) = expected
+                && let Some(given) = self.value_signature(*argument)
+                && matches!(given, Type::Proc(..))
+                && !crate::ir::typecheck::fits(&given, wanted)
+            {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "this argument is a '{}' and a '{}' is what is wanted here",
+                        spelled(&given),
+                        spelled(wanted)
+                    )),
+                    self.at_expression(*argument),
+                );
+            }
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
@@ -7817,6 +7838,27 @@ impl<'a> FunctionLowering<'a> {
         for (index, argument) in arguments.iter().enumerate() {
             let held_target;
             let expected = parameter_types.get(index);
+            // A function value is its signature, and two that differ are two
+            // different functions. Compared here, where both are still spelled
+            // the way the reader wrote them and where the self-hosted compiler
+            // compares them too. The IR check below does catch it, in lowered
+            // terms and in a sentence of its own, so the two compilers named
+            // one fault two ways. The rule is that check's, reused rather than
+            // written again.
+            if let Some(wanted @ Type::Proc(..)) = expected
+                && let Some(given) = self.value_signature(*argument)
+                && matches!(given, Type::Proc(..))
+                && !crate::ir::typecheck::fits(&given, wanted)
+            {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "this argument is a '{}' and a '{}' is what is wanted here",
+                        spelled(&given),
+                        spelled(wanted)
+                    )),
+                    self.at_expression(*argument),
+                );
+            }
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
@@ -8314,6 +8356,29 @@ impl<'a> FunctionLowering<'a> {
     // Best-effort static type of a place expression, without lowering it. Used to
     // recognize a raw-pointer base for indexing. Handles the identifier, deref,
     // and field-access chains that a pointer flows through.
+    // The type of an expression used as a function value. `probe_type` answers
+    // for locals, and a function named as a value is not one: it resolves to a
+    // declaration, the way the identifier arm of `lower_expression` resolves it
+    // when it takes the function's address.
+    fn value_signature(&self, expression: ExprId) -> Option<Type> {
+        if let Some(held) = self.probe_type(expression) {
+            return Some(held);
+        }
+        let Expression::Identifier(name) = self.ast.expr(expression) else {
+            return None;
+        };
+        let name = self.ast.name(*name).to_string();
+        if self.resolve_variable(&name).is_some() {
+            return None;
+        }
+        self.builder.signature(&name).map(|signature| {
+            Type::Proc(
+                signature.parameters.clone(),
+                Box::new(signature.return_type.clone()),
+            )
+        })
+    }
+
     fn probe_type(&self, expression: ExprId) -> Option<Type> {
         match self.ast.expr(expression) {
             Expression::Identifier(name) => self
@@ -8438,8 +8503,8 @@ impl<'a> FunctionLowering<'a> {
             bail!("str_len expects one argument");
         }
         let base = self.str_value_address(arguments[0])?;
-        let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
-        Ok((length, Type::Usize))
+        let length = self.str_field(base, STR_LEN_OFFSET, Type::I64);
+        Ok((length, Type::I64))
     }
 
     fn str_byte_address(
@@ -8625,14 +8690,14 @@ impl<'a> FunctionLowering<'a> {
             return Ok((
                 IrOperand::Constant(IrConstant::Integer(
                     count as i64,
-                    Type::Usize,
+                    Type::I64,
                 )),
-                Type::Usize,
+                Type::I64,
             ));
         }
         let base = self.slice_value_address(arguments[0])?;
-        let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
-        Ok((length, Type::Usize))
+        let length = self.str_field(base, SLICE_LEN_OFFSET, Type::I64);
+        Ok((length, Type::I64))
     }
 
     // `flags_has(chosen, InitFlags::Video)`: whether every bit on the right is

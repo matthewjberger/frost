@@ -354,6 +354,28 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
             while (i < len && byte_of(src, i, len) != CH_LF) {
                 i = i + 1
             }
+        } else if (c == CH_SLASH && byte_of(src, i + 1, len) == CH_STAR) {
+            // A block comment. It does not nest, so the first `*/` closes it
+            // whatever sits between. One that is never closed pushes an
+            // Illegal token where it opened, which the parser refuses with a
+            // position, the same way a stray byte is handled above: running to
+            // the end of the file quietly would take every declaration after
+            // it with it.
+            start := i
+            i = i + 2
+            var closed: bool = false
+            while (i < len && !closed) {
+                if (byte_of(src, i, len) == CH_STAR
+                    && byte_of(src, i + 1, len) == CH_SLASH) {
+                    i = i + 2
+                    closed = true
+                } else {
+                    i = i + 1
+                }
+            }
+            if (!closed) {
+                push_token(tokens, TokenKind::Illegal, start, 2, 0)
+            }
         } else if (is_digit(c)) {
             start := i
             var value: i64 = 0
