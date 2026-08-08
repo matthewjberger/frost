@@ -49,12 +49,11 @@ directly. With no flag, `frost file.frost` compiles, links, and runs the program
 natively. Because all three backends emit from one IR, a differential test runs
 each program through them and asserts their output matches.
 
-There is one execution surface. An earlier bytecode VM was retired once the
-native path covered the language, so the data-oriented native language is the
-only language.
+There is one execution surface. The native path covers the whole language, and
+the data-oriented native language is the only language.
 
 Which backend runs, what the executable depends on at run time, and what the
-compiler itself is written in are three separate questions that sound alike.
+compiler itself is written in are three separate questions.
 [build-modes.md](build-modes.md) separates them.
 
 ## The AST is flat arenas
@@ -62,26 +61,25 @@ compiler itself is written in are three separate questions that sound alike.
 Every expression, statement, pattern, and signature in `src/ast.rs` lives in a
 flat `Vec` on `Ast` and is named by a typed
 index (`ExprId`, `StmtId`, and so on), names are interned to `Symbol`
-indices, child lists are runs in side arrays rather than per-node
-allocations, and a node's source extent is a `TokenSpan` into one
-token-position table. This is the shape the self-hosted compiler has always
-had, so the two compilers walk their programs the same way, and it is what
-keeps the front end's time on a 58k-line program in the low hundreds of
+indices, child lists are runs in side arrays, and a node's source extent is a
+`TokenSpan` into one token-position table. The self-hosted compiler has the
+same shape, so the two compilers walk their programs the same way, and the
+front end's time on a 58k-line program stays in the low hundreds of
 milliseconds.
 
-## Faults are diagnostics, not exits
+## Faults are diagnostics
 
 The lexer turns a byte it cannot read into a token the parser refuses in
 place, the parser recovers at declaration and statement boundaries, and
 lowering, type checking, and the ownership check each walk every function and
 collect what they find (`src/diagnostic.rs`). A program with any diagnostic
-is still refused before a backend writes a word: tolerance is about reporting
-more, never about accepting more. The self-hosted compiler does the same
-with a runtime recovery mark, and a harness test holds the two to the same
-faults, on the same lines, in the same words. `src/tools/query.rs` answers what an
-editor asks of a checked program (symbols, definitions, fields, local types)
-from the same arenas and IR the build reads; the self-hosted compiler
-answers the same questions through `FROST_QUERY`.
+is refused before a backend writes a word. Recovery raises how many faults one
+run reports, and the set of programs a build accepts stays the same. The
+self-hosted compiler does the same with a runtime recovery mark, and a harness
+test holds the two to the same faults, on the same lines, in the same words.
+`src/tools/query.rs` answers what an editor asks of a checked program (symbols,
+definitions, fields, local types) from the same arenas and IR the build reads.
+The self-hosted compiler answers the same questions through `FROST_QUERY`.
 
 ## Modules
 
@@ -89,9 +87,9 @@ answers the same questions through `FROST_QUERY`.
 file does not `export`, and splices the result into one statement list. A
 module's private names are tagged `__m<tag>_<name>`, where the tag is an FNV-1a
 hash of the module's path relative to the project root, so a module's symbols
-are a property of the module rather than of the order it was reached in. The tag
-is undone in diagnostics by `demangle_private_names`, which lives next to the
-code that applies it.
+follow from its path whatever order it is reached in. The tag is undone in
+diagnostics by `demangle_private_names`, which lives next to the code that
+applies it.
 
 Positions carry a file id into `src/source_map.rs`, stamped during import
 resolution and, for the entry file, by the driver. Without it a diagnostic from
@@ -99,8 +97,8 @@ an imported module would name a line number in a flattened program that matches
 no file the reader has open.
 
 A specialization additionally carries the call that asked for it and the name
-the reader wrote, so an error inside a stamped-out body leads with the line they
-wrote rather than a line in a template they may not own, and never shows a
+the reader wrote, so an error inside a stamped-out body leads with the line the
+reader wrote, in place of a line in a template they may not own, and shows no
 mangled symbol.
 
 `src/modules/interface.rs` derives what a caller would need to compile against a module
@@ -109,25 +107,24 @@ without seeing the rest of it, and checks it. The checks run under
 the whole suite runs a second time under `FROST_BUILD_FROM_INTERFACES`, which
 reduces every imported module to its interface.
 
-`src/modules/build_cache.rs` is what makes that pay. Under `--incremental` it keeps a
-record and an object per module, and a module whose own source and whose
+`src/modules/build_cache.rs` spends those interfaces. Under `--incremental` it
+keeps a record and an object per module, and a module whose own source and whose
 imported interfaces are unchanged is neither parsed nor code generated: it
 contributes what the record already holds and its object is linked.
 
-What it contributes is signatures rather than bodies. `Statement::Declared` is a
-Frost function's signature with no body, which is all a caller needs for a
-function it is not going to emit, and it is not an `extern` because an extern
-means C linkage and a C ABI. Generic bodies still come, because the caller is
-what stamps out the template. See
+What it contributes is signatures. `Statement::Declared` is a Frost function's
+signature with no body, which is all a caller needs for a function it will not
+emit. `extern` stays reserved for C linkage and a C ABI. Generic bodies still
+come, because the caller is what stamps out the template. See
 [separate-compilation.md](separate-compilation.md) for the fingerprint rule.
 
 ## Code generation is parallel
 
 `src/ir/codegen.rs` builds and compiles each function on its own thread, then
 defines them into the object serially, since a module is one mutable thing.
-Functions are handed out from a shared atomic cursor rather than split into
-equal chunks, because cost per function varies by more than an order of
-magnitude and the expensive ones sit next to each other. Results are sorted back
+Functions are handed out from a shared atomic cursor, because cost per function
+varies by more than an order of magnitude and the expensive ones sit next to
+each other, so equal chunks would leave threads idle. Results are sorted back
 into module order so a build's output does not depend on how threads
 interleaved. `FROST_THREADS` caps the pool and `FROST_TIMINGS` reports the
 split between declaring, generating, defining and emitting.
@@ -135,7 +132,7 @@ split between declaring, generating, defining and emitting.
 ## Typed IR
 
 The IR (`src/ir.rs`) is a typed, CFG-based intermediate representation in the
-spirit of a compiler "middle end" (MIR):
+shape of a compiler middle end (MIR):
 
 - A module is a set of functions and extern declarations.
 - Each function has typed locals, a list of basic blocks, and an entry block.
@@ -144,32 +141,31 @@ spirit of a compiler "middle end" (MIR):
 - Values are explicit operands (a constant or a local). Every operand has a
   concrete type, so lowering never has to guess widths or signedness.
 - Short-circuit `&&` / `||` and `if`/`else` expressions are lowered to
-  explicit control flow, not special-cased in the backend.
+  explicit control flow before a backend sees them.
 - Address-taken locals are marked `in_memory`. The backend gives them stack
   slots. `&`, `&mut`, and `^` (dereference) lower to address-of, load, and
   store.
 
 Lowering (`src/ir/build.rs`) folds light bidirectional type inference into the
 translation so each value carries a real type. Anything outside the supported
-subset fails loudly with a `native backend: ...` error rather than emitting
-incorrect code.
+subset fails with a `native backend: ...` error, so a form the backend cannot
+lower stops the build.
 
 ## The C ABI is classified per target
 
-`src/c_abi.rs` decides how C returns a struct, which is not how Frost returns
-one. Frost returns every aggregate through a hidden out-pointer, uniformly. C
-returns a small one in registers and a large one through a pointer, and where
-the line falls depends on the target and, on Windows, not at all on the field
-types even though it does everywhere else. So an `extern fn` returning a struct
-is classified per target rather than pushed through Frost's own convention.
+`src/c_abi.rs` decides how C returns a struct. Frost returns every aggregate
+through a hidden out-pointer, uniformly. C returns a small one in registers and
+a large one through a pointer, and where the line falls depends on the target
+and, on Windows, on the size alone, where everywhere else the field types decide
+it. So an `extern fn` returning a struct is classified per target and follows
+the target's rule.
 
 The Cranelift backend builds the signature from that classification and writes
-the returned registers into the caller's storage. The C backend does not
-reimplement any of it: it declares a real struct type, field for field with
-explicit padding, and lets the C compiler classify it. An aggregate *parameter*
-to an extern stays a pointer by convention, which is a different kind of answer
-and is why the two are described separately in
-[c-compatibility.md](c-compatibility.md).
+the returned registers into the caller's storage. The C backend declares a real
+struct type, field for field with explicit padding, and lets the C compiler
+classify it. An aggregate *parameter* to an extern stays a pointer by
+convention, and [c-compatibility.md](c-compatibility.md) sets the two side by
+side.
 
 ## Native backends
 
@@ -179,7 +175,8 @@ same IR (`--emit-c`), which the system C compiler builds. Both use the
 correct type and operation for each value because the IR is fully typed, and
 `tests/native.rs` checks that the two backends agree on every program.
 
-Working today, verified by running native binaries (`tests/native.rs`):
+What the two backends carry, verified by running native binaries
+(`tests/native.rs`):
 
 - Integer arithmetic at every width with correct signedness, float
   arithmetic, bitwise and shift operators.
@@ -217,11 +214,11 @@ Working today, verified by running native binaries (`tests/native.rs`):
   index aborts (see [memory-safety.md](../design/memory-safety.md)).
 - Vectors: the arithmetic operators over a fixed array of numbers, once per
   lane, with a number on either side standing in every lane. The bootstrap
-  writes the lanes out in the IR, so all three of its backends carry it with
-  the code they already had and the C compiler folds the run back into packed
+  writes the lanes out in the IR, so all three of its backends emit ordinary
+  scalar arithmetic for it and the C compiler folds the run back into packed
   instructions. The self-hosted compiler leaves a float vector as one node and
   its assembly backend emits `movups` and the packed arithmetic sixteen bytes
-  at a time; a vector of whole numbers is written out lane by lane there too,
+  at a time. A vector of whole numbers is written out lane by lane there too,
   because an overflow aborts and names where, and a packed add cannot say which
   lane it was.
 - Enums and tagged unions: construction, and `match` over a value or a
@@ -231,8 +228,8 @@ Working today, verified by running native binaries (`tests/native.rs`):
   with literal, wildcard, and identifier-binding sub-patterns.
 - Function pointers: a function used as a value becomes its address, a
   `fn(...) -> T` parameter or local holds one, and calling through it is an
-  indirect call. This is the design's "function pointers, not closures"
-  higher-order story (`apply(f: fn(i64) -> i64, x: i64)`).
+  indirect call. That pointer is the language's higher-order form
+  (`apply(f: fn(i64) -> i64, x: i64)`).
 - `defer`: function-scoped, run in LIFO order at each return and at the
   trailing expression. A `return` nested inside a branch alongside `defer`
   is rejected (it would need runtime tracking), so defers always run.
@@ -270,8 +267,8 @@ resolve). Construction uses the annotated instance type. This works over
 scalars and structs, with multiple type parameters, array fields of the
 parameter, by-reference passing, and nesting inside other structs.
 
-`columns<T, N>` is synthesized by the same pre-pass by reflecting over `T`'s
-fields rather than substituting a template: for each field it registers one
+`columns<T, N>` is synthesized by the same pre-pass, reflecting over `T`'s
+fields in place of substituting a template: for each field it registers one
 `[N]field` array named after the field, plus the `generations` / `free_list` /
 `free_count` free list a slab carries. The deref `c[handle].field` and the
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
@@ -279,35 +276,30 @@ scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 `columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
 slab. See [pools-and-columns.md](../design/pools-and-columns.md).
 
-Growable storage is a library rather than a backend feature. `std/vec.frost` is
-one heap block that doubles when it fills, presented as a `[]T` so every access
-goes through the bounds-checked slice path, and `std/map.frost`,
-`std/json.frost` and `std/format.frost` are written on top of it. Capturing
-closures are absent by design, since the language uses function pointers and
-non-capturing function literals, both of which the native backend supports.
-There is no other backend to fall back to, so a construct a backend cannot lower
-is a compile error rather than silently miscompiled code.
+Growable storage is a library. `std/vec.frost` is one heap block that doubles
+when it fills, presented as a `[]T` so every access goes through the
+bounds-checked slice path, and `std/map.frost`, `std/json.frost` and
+`std/format.frost` are written on top of it. Higher-order code uses function
+pointers and non-capturing function literals, both of which the native backend
+supports, and the language has no capturing closures. A construct a backend
+cannot lower is a compile error, since there is no other backend to fall back
+to.
 
-The emitted C is an internal detail, not an interface for external C callers,
-so Frost function names are prefixed (`frost_`) to avoid C keyword clashes.
-`extern` names and `main` are left untouched so FFI and the entry point link.
-Frost-to-C interop (`extern fn`) works on both the Cranelift and C paths.
-
-This replaces the previous AST-walking `codegen.rs`, which treated most
-values as `i64`, hardcoded `if`-expression result types, resolved struct
-field offsets by first-name match, and emitted `iconst 0` for anything it did
-not handle.
+The emitted C is an internal detail, so Frost function names are prefixed
+(`frost_`) to avoid C keyword clashes. `extern` names and `main` are left
+untouched so FFI and the entry point link. Frost-to-C interop (`extern fn`)
+works on both the Cranelift and C paths.
 
 ## Direction
 
 See [philosophy.md](../design/philosophy.md) for the design philosophy, goals and
-non-goals, and why Frost is data-oriented rather than object-oriented.
+non-goals, and what data-oriented means here.
 
-Frost is being reshaped toward a data-oriented language with:
+Frost is a data-oriented language with:
 
 - Plain data (copy/move), linear resources that must be consumed exactly
   once, and generational handles into explicit pools.
-- Parameter modes rather than reference syntax: unmarked reads, `mut`
+- Parameter modes in place of reference syntax: unmarked reads, `mut`
   writes, `move` takes ownership, and the compiler inserts the borrow at the
   call. `&`/`&mut` are not surface syntax, so a borrow has nowhere to be stored
   and is second-class by construction (`src/lower/param_modes.rs`).
@@ -321,11 +313,10 @@ Frost is being reshaped toward a data-oriented language with:
 - Failure sets: `-> T ! E` says how a function fails and `?` hands a failure
   on, desugared to an ordinary enum and match (`src/lower/failure_sets.rs`).
 - Compile-time arguments: `$T` for types, `$N` for values, and `$f` for a
-  function, so a generic algorithm calls its comparator directly rather than
-  through a pointer. A function argument may declare the signature it needs
-  (`$before: fn(T, T) -> bool`), checked at the call with that call's type
-  arguments substituted in. That is the only bound in the language and it is not
-  a trait system.
+  function, so a generic algorithm calls its comparator directly, with the
+  callee known at the call. A function argument may declare the signature it
+  needs (`$before: fn(T, T) -> bool`), checked at the call with that call's type
+  arguments substituted in. That is the only bound in the language.
 - Free functions only, with signatures that declare their effects.
 - The typed IR as the single point where ownership, borrow, and linearity
   checking are discharged, cross-checked by three independent execution paths:
@@ -334,8 +325,8 @@ Frost is being reshaped toward a data-oriented language with:
 
 ## Ownership checking
 
-`src/check/ownership.rs` runs after parsing, over one top-level item at a time. The
-rules it enforces are the language's rather than the pass's:
+`src/check/ownership.rs` runs after parsing, over one top-level item at a time.
+It enforces the language's rules, which are written down elsewhere:
 [ownership.md](../reference/ownership.md) has second-class borrows, mutable
 exclusivity and the move rule, and [linear.md](../reference/linear.md) has
 consume-exactly-once. What this pass does with them:
@@ -358,29 +349,28 @@ consume-exactly-once. What this pass does with them:
   next iteration, and a linear value consumed inside one, which would be a
   second consumption.
 
-Two things about how it reports. It checks every top-level item rather than
-stopping at the first failure, so a program with a move error in three functions
-names all three. And it remembers what it has already said, because past a move
-the state stays moved and every later mention of that name would otherwise fail
-the same way.
+It checks every top-level item before it stops, so a program with a move error
+in three functions names all three. It also remembers what it has already said,
+because past a move the state stays moved and every later mention of that name
+would otherwise fail the same way.
 
-That gives "at most once" for a `linear` resource. The other half, the leak
-check that makes it exactly once, is discharged on the IR.
+That gives at most once for a `linear` resource. The leak check that makes it
+exactly once is discharged on the IR.
 
 ## Linearity checking on the IR
 
-`src/ir/ownership.rs` discharges the "consumed exactly once" discipline as a
-dataflow pass over each function's control-flow graph, which is where the design
-always intended ownership to be checked. Lowering marks a local as linear when
-its type is a `linear` struct or enum, emits an `own` marker where such a value
-is constructed, and emits a `consume` marker where it is moved (an identifier
-read, or an aggregate passed by value, which lowers to an address and would
-otherwise be invisible). Both markers are metadata that every backend skips.
+`src/ir/ownership.rs` discharges the consumed-exactly-once discipline as a
+dataflow pass over each function's control-flow graph. Lowering marks a local as
+linear when its type is a `linear` struct or enum, emits an `own` marker where
+such a value is constructed, and emits a `consume` marker where it is moved (an
+identifier read, or an aggregate passed by value, which lowers to an address and
+would otherwise be invisible). Both markers are metadata that every backend
+skips.
 
 The pass runs a forward dataflow to a fixpoint over an unowned / owned / consumed
 lattice, joining at merge points, so it handles `if`, `match`, and loop back
-edges directly rather than by structured approximation. It reports a value
-consumed more than once, consumed before it holds a resource, or a linear local
-still owned on a path to a return (a leak), each located at the source line the
-value was created on. A leak is caught here. A use-after-move is caught on the
-AST. Both point at a line.
+edges as ordinary control flow. It reports a value consumed more than once,
+consumed before it holds a resource, or a linear local still owned on a path to
+a return (a leak), each located at the source line the value was created on. A
+leak is caught here. A use-after-move is caught on the AST. Both point at a
+line.
