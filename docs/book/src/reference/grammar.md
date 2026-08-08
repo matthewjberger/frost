@@ -111,6 +111,10 @@ A constant's `Expr`, and an array's length, may call a function the file can
 name. The grammar carries no marker for such a call. It is written as any call
 is, and a call in either position is worked out before the program runs (5.2c).
 
+A `TypeParam` reads `usize` as well, which declares a value parameter (11.1a),
+and a function's `$` parameter reads a declared struct type, which declares a
+capability bundle (11.4b).
+
 `value` (chapter 12) carries its meaning without being reserved, so a parameter
 may still be named `value`. A mode is followed by the parameter's name and a
 name is followed by its type.
@@ -215,6 +219,9 @@ PatternAlt =
 Bound      = "-"? ( INTEGER | IDENT )        // a whole number, written or named
 ```
 
+An `else` may be followed by another `if`, which the parser reads as a `Block`
+holding that `IfExpr`, so a chain of them is one nested expression.
+
 A name is a `Bound` and nothing else: it is the value a `::` declaration
 settled it on, and a name that settled on no whole number is refused. `_` is
 the only pattern that covers the rest. A decimal and a string literal are
@@ -296,7 +303,9 @@ Type =
     | "$" IDENT                              // type parameter
 ```
 
-A length is a `SizeExpr`, which is arithmetic and nothing else (3.2):
+A length is a `SizeExpr` (3.2). A call the compiler works out stands where a
+`SizeAtom` does, and so does an index or a field of a constant that holds a run
+(5.2c):
 
 ```
 SizeExpr = SizeTerm ( ( "+" | "-" ) SizeTerm )*

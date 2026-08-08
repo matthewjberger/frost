@@ -41,10 +41,12 @@ p := Pair<i64, bool> { first = 7, second = true }
 Both forms name every field. There is no positional struct literal, generic or
 otherwise.
 
-In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
-the contextual word `Type` (or the keyword `type`). In a function's parameter
-list it may instead be followed by a function signature, which declares a
-compile-time function parameter (11.1b).
+In a struct or enum type-parameter list, `$` IDENT `:` is followed by the
+contextual word `Type` (or the keyword `type`), or by `usize`, which declares a
+value parameter (11.1a). In a function's parameter list it may also be followed
+by a function signature, which declares a compile-time function parameter
+(11.1b), or by a declared struct type, which declares a capability bundle
+(11.4b).
 
 ## 11.1a Value parameters
 
@@ -446,8 +448,8 @@ program, and a file's `export` line is the complete set of names another file
 can use from it. Everything else is private and mangled so it cannot collide.
 
 An import is looked for beside the importing file first, then in directories
-given with `-L`, then in `FROST_PATH`, then in those a `frost.json` beside the
-entry file declares, then in the standard library. A module's identity is its
-path relative to whichever of those it was found under, and private symbol names
-and the build cache are keyed on it. See
+given with `-L`, then in `FROST_PATH`, then in those the nearest `frost.json`
+at or above the entry file declares, then in the standard library. A module's
+identity is its path relative to whichever of those it was found under, and
+private symbol names and the build cache are keyed on it. See
 [modules.md](../impl/modules.md).

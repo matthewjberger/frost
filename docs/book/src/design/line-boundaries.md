@@ -1,7 +1,7 @@
 # Where a statement ends
 
-A line break ends a statement, and an expression runs past one only inside
-brackets.
+A line break ends a statement. An expression runs past one inside brackets, and
+where the line above was left unfinished by an operator written at its end.
 
 ## The hazard it removes
 
@@ -55,9 +55,12 @@ both directions, and it is a token whose only job is to be dropped.
 
 The rule Frost takes: a line break ends a statement, and brackets are where an
 expression runs on. Outside brackets a line cannot open with an operator that
-joins it to the line above. Inside brackets a line break says nothing. An
-expression too long for a line is wrapped in the brackets a reader would have
-put round it anyway.
+joins it to the line above, and a line indented past the statement above it is
+refused for reading as a continuation while parsing as a statement. Inside
+brackets a line break says nothing. An expression too long for a line is wrapped
+in the brackets a reader would have put round it anyway, or carries the operator
+at the end of the line it continues from, which is where `count -` says a
+subtraction is meant.
 
 ## The grammar property
 
@@ -78,7 +81,7 @@ that could carry an expression across one:
 | --- | --- | --- |
 | add a leading operator | refused, naming the operator | a parse error |
 | drop a leading operator | the shape does not exist | a parse error |
-| drop a trailing operator | the shape does not exist | a parse error |
+| drop a trailing operator | refused, naming the indentation | a parse error |
 | alter `+` to `-` | a statement whose value nothing reads, refused | a subtraction, which is an ordinary edit |
 
 Nothing in that table silently changes how many statements the surrounding text

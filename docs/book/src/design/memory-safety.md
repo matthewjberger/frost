@@ -31,8 +31,8 @@ small number of local rules.
    reads that summary against the places the caller wrote, so a function that
    gives away part of what it is lent cannot be called twice.
 5. No use-after-free through a stale handle. A generational handle whose slot
-   has been freed and reused reports "not contained". It can never silently read
-   a live value.
+   has been freed and reused answers false to `slab_alive`, and reading through
+   it aborts naming both generations. It can never silently read a live value.
 6. No out-of-bounds array access. Every array index is bounds-checked against
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
@@ -412,12 +412,12 @@ arr := [10, 20, 30]
 arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
 ```
 
-The check is a single call to a small runtime routine
-(`frost_rt_bounds_check(index, length)`) that aborts if the index is out of
-range. The comparison is unsigned, so a negative index (which would wrap to a
-huge unsigned value) is caught too. Valid accesses are unaffected. The classic C
-memory-safety hole, a silent out-of-bounds read or write, becomes a
-deterministic abort.
+Each backend emits the comparison inline and calls the runtime routine
+(`frost_rt_bounds_check(index, length)`) only on the branch that has already
+failed, so an index in range costs the compare and reaches no call. The
+comparison is unsigned, so a negative index (which would wrap to a huge unsigned
+value) is caught by the same one. The classic C memory-safety hole, a silent
+out-of-bounds read or write, becomes a deterministic abort.
 
 Pool access does not need this check. `pool[handle]` is guarded by the
 generational check instead (section 5).
@@ -530,8 +530,9 @@ nobody has to find out by reading the passes.
 - `slice_from($T, p, n)` is a trusted primitive. It asserts that `n` elements of
   `T` live at `p`, and nothing checks that assertion. Every bounds-check
   guarantee downstream of a slice is conditional on it, which is why the call is
-  gated on an `unsafe` block and why `std/mem.frost` is the one place in the
-  containers that writes one.
+  gated on an `unsafe` block and why the containers built on `std/mem.frost`
+  never write one. `std/arena.frost` is the only other allocator that calls it,
+  once.
 
   The part of that claim which can be checked is: `n` is refused where it is
   negative. The bounds check compares unsigned, so one comparison answers for a

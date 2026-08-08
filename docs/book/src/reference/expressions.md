@@ -182,11 +182,11 @@ sideways :: fn(k: Step) -> i64 {
 ```
 
 Such an arm covers the union of its alternatives, so the rule that every
-variant is covered goes on counting. Three shapes may not be an
+variant is covered goes on counting. Two shapes may not be an
 alternative. A variant pattern binding payload fields may not, because two
 variants hold two shapes and a name reading a field out of them would mean two
-things. Such a pattern takes an arm of its own. `_` and a bare identifier may
-not, because each already covers everything.
+things. Such a pattern takes an arm of its own. `_` may not, because it already
+covers everything.
 
 A range arm covers a span of whole numbers, with the two spellings meaning what
 they do after `in` (6.9). Both ends are whole numbers, written out or named by

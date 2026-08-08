@@ -57,7 +57,7 @@ is a value.
 
 `_ := Expr` evaluates the expression and binds nothing anyone can name. A list
 of one is a list, so it reads the way the `_` in a longer binding list does
-(5.1a), and it binds storage under a name no source can spell: a resource taken
+(5.2a), and it binds storage under a name no source can spell: a resource taken
 this way is still owed a consumer.
 
 Writing output is `import "io.frost"` and a call, one writer per type

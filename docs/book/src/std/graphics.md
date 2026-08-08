@@ -124,7 +124,7 @@ The combination is a `WindowFlags` because both operands are, so no annotation
 is written. `InitFlags` and `WindowFlags` are separate types, so a video flag
 cannot be passed where a window flag belongs.
 
-`sdl.frost` covers what the two graphics examples need, which is a small part of
+`sdl.frost` covers what the graphics examples need, which is a small part of
 SDL. A call added to it is one line beside its extern.
 
 ## The generated wgpu binding

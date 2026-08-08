@@ -247,10 +247,13 @@ surface, leaving the internal lowering free to change.
 | Frost calls C    | Yes        | `extern fn`, natural C ABI, real linker              |
 | Frost links C    | Yes        | support runtime + `--libs`, compiled and linked by `cc` |
 | Frost emits C    | Yes        | `--emit-c`, an internal lowering / differential oracle |
-| C calls Frost    | No (non-goal) | emitted C is mangled internal detail, not an API   |
+| C calls Frost    | By name    | an `extern fn` with a body keeps the name it is written under (12.5a) |
 
-Frost calls C going out and uses C as a portable assembler going down. It
-promises C nothing coming in.
+Frost calls C going out and uses C as a portable assembler going down. Coming
+in, the one door is a definition written `name :: extern fn(..) { .. }`, which
+is emitted under that name from both compilers and all four backends. An
+ordinary Frost function is emitted under a name the compiler chose, and the
+emitted C is an internal lowering with no stable ABI behind it.
 
 ## Building
 
