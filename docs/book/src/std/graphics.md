@@ -20,22 +20,31 @@ Each layer may name the ones below it and none may name the ones above.
 
 | File | What it is |
 | --- | --- |
-| `wgpu.frost` | The whole WebGPU API. Generated, and gitignored |
+| `wgpu.frost` | The whole WebGPU API. Generated |
+| `gpu.frost` | Bringing a device up, with or without a window to draw at |
 | `renderer.frost` | The device, the surface and the frame under one handle |
+| `frame.frost` | The frame the surface hands over, and where a pass draws into |
 | `graph.frost` | A render graph: passes declare their targets, the order follows |
 | `mesh.frost` | Geometry on the device, and the cache a program names it through |
+| `geometry.frost` | Every mesh in one pair of buffers, and a mesh as a span of them |
 | `material.frost` | A registry of surfaces, so a thing that is drawn carries a number |
 | `texture.frost` | Images on the device, and render targets to draw into |
+| `uniform.frost` | A uniform buffer, the layout that describes it and the group that binds it |
+| `cluster.frost` | The lights of a frame, and the grid that says which of them reach where |
+| `lit.frost` | The pass that draws a run of things, lit, with no shader to write |
 | `render_world.frost` | What the renderer needs of an entity, and the run a pass walks |
 
 **`lib/engine/`** works out where everything ended up and hands that over.
 
 | File | What it is |
 | --- | --- |
-| `world.frost` | Placements, turns, a tree and the schedule that resolves them |
+| `app.frost` | The window, the device, the world and the tables, opened once and given back once |
+| `world.frost` | Transforms, a tree and the schedule that resolves them |
 | `camera.frost` | Where the eye is and what it looks at |
+| `light.frost` | A light in the world, and what the renderer reads instead of it |
 | `scene_sync.frost` | The walk from a world to the flat run a pass draws |
 | `gltf.frost` | A binary glTF file, read into geometry, materials and nodes |
+| `log.frost` | Lines a program writes as it runs, kept in a file |
 
 **`examples/graphics/`** are the programs.
 
@@ -49,12 +58,17 @@ Each layer may name the ones below it and none may name the ones above.
 | `textured.frost` | The same field with its surfaces read off an image |
 | `shadowed.frost` | An ECS schedule driving compute, shadows, a bloom chain and a second view |
 | `gltf_model.frost` | A model read out of a file and spawned into the world |
+| `lit.frost` | A world drawn with no line of shader in it |
+| `swarm.frost` | Five hundred and twelve things, lit by lamps that stop |
+| `spin.frost` | A plugin that turns things, which is a game's idea rather than an engine's |
 
-Frost has no crates, so the compiler accepts a file that reaches the wrong way.
-A test refuses it: `the_graphics_layers_only_reach_downwards` reads every import
-in `lib/` and fails on one that names a layer above. A crossing is visible where
-it is written, because reaching another layer is a path and reaching a neighbour
-is a bare name:
+Frost has no crates, so the four names and the order they may reach in are
+declared in `frost.json`, and both compilers refuse a crossing while they
+resolve the import: `layer: 'lib/renderer' may not reach 'lib/engine'`. The
+tests `both_compilers_refuse_a_layer_reaching_upward` and
+`both_compilers_refuse_a_layer_reached_through_an_absolute_root` hold the two to
+the same answer. A crossing is visible where it is written, because reaching
+another layer is a path and reaching a neighbour is a bare name:
 
 ```frost,sketch
 import "wgpu.frost"              // beside it, in the same layer
@@ -79,7 +93,7 @@ just app gltf_model
 
 An unsafe block is a perimeter. The `extern` declarations, the pointer casts and
 the NUL-terminated copies all live in `sdl.frost`, and calling a function that
-contains one does not require one. The binding writes ten of them and the
+contains one does not require one. The binding writes twelve of them and the
 program writes none.
 
 Beyond declaring the externs, the binding does four things.
@@ -115,8 +129,8 @@ SDL. A call added to it is one line beside its extern.
 
 ## The generated wgpu binding
 
-`lib/renderer/wgpu.frost` is gitignored. It has to be built before
-`just app triangle` will compile:
+`lib/renderer/wgpu.frost` is generated. Rebuild it whenever the schema under it
+moves:
 
 ```bash
 just bindgen
@@ -129,13 +143,14 @@ just app triangle
 `lib/renderer/wgpu.frost`. Both paths are constants at
 the top of the tool, so neither is configurable.
 
-`lib/renderer/wgpu/` is gitignored too, all of it. A reader has to put a
-wgpu-native distribution there: `webgpu.json` for the bindgen to read, and the
-library itself to link against. On Windows the `triangle` recipe links
-`lib/renderer/wgpu/wgpu_native.dll` and copies it beside the executable. On
-Unix it links `-lwgpu_native` from the system. SDL3 is the same story, from the
-system on Unix and from `lib/platform/SDL3.dll` on Windows, with `SDL3_DIR`
-to point the recipe somewhere else.
+`lib/renderer/wgpu/` is gitignored except for the two the tree carries:
+`webgpu.json`, which the bindgen reads, and `wgpu_native.dll`, which a Windows
+build links against. `just deps` fetches the rest of a wgpu-native
+distribution. On Windows the recipe links `lib/renderer/wgpu/wgpu_native.dll`
+and copies it beside the executable. On Unix it links `-lwgpu_native` from the
+system. SDL3 is the same story, from the system on Unix and from
+`lib/platform/SDL3.dll` on Windows, with `SDL3_DIR` to point the recipe
+somewhere else.
 
 `just bindgen` prints ten numbers when it finishes: how many handles,
 enumerations, flag families, structs, methods, callback infos, free functions,
@@ -196,11 +211,11 @@ pulls the platform handle out of it (`PROP_WIN32_HWND` on Windows, and the X11
 and Cocoa property names are in the binding for the others), builds a wgpu
 surface on that handle, and runs a render pass per frame.
 
-It writes `unsafe` twenty-one times, all of them either `ptr_cast` to hand a
-descriptor's address to C as a `^u8`, or a write through the userdata pointer
-inside a callback. Every wgpu and SDL entry point it uses is a safe Frost
-function, because the two binding files are the perimeter. The twenty-one are
-the cost of passing a struct C wants a pointer to.
+It writes no `unsafe` block at all. A descriptor goes to C as `ptr_to` on a
+struct the program owns, which is the surface address-of and is checked like any
+other place, and a callback writes its context through a `mut` parameter rather
+than through a userdata pointer it casts back. Every wgpu and SDL entry point it
+uses is a safe Frost function, because the two binding files are the perimeter.
 
 Three details in it carry beyond graphics.
 
@@ -211,10 +226,14 @@ and System V passes it in two registers, so a parameter declared `^u8` reads
 that says "as C passes a struct". See section 12.1 of
 [ffi.md](../reference/ffi.md).
 
-The projection is `mat4_perspective_zo`, not `mat4_perspective`. WebGPU's clip
-space runs z from 0 to 1, and the wrong one puts half the scene behind the near
-plane without any error at all. Both matrices and the three vertex positions
-come from `std/math.frost`, so the GPU is handed exactly what Frost computed.
+The projection is `mat4_perspective_infinite_reverse_z`, not `mat4_perspective`.
+WebGPU's clip space runs z from 0 to 1, and a matrix built for the `[-1, 1]`
+range puts half the scene behind the near plane without any error at all. One
+triangle needs no depth buffer to sort it, so nothing here reads the result; the
+projection is the reverse-Z one so that a program starting from this file starts
+from the convention the rest of the tree keeps. Both matrices and the three
+vertex positions come from `std/math.frost`, so the GPU is handed exactly what
+Frost computed.
 
 The window's own event loop is a poll, which is SDL3's API. A C callback
 declared through an extern's parameter list takes its context first, and Win32's
@@ -336,15 +355,15 @@ child, so a caller that also freed its own copy would free the same tables
 twice, and the obligation on the type refuses that at compile time.
 
 Ordering, resource lifetimes and pool assignment are all arithmetic over tables
-and touch no device, so `graph.frost` carries twenty `test` blocks that run
+and touch no device, so `graph.frost` carries twenty-four `test` blocks that run
 under `just test` with `no_device()` in place of a GPU: what runs first, which
 transients share a texture, what the load ops come out as, the phase and enabled
 state a pass carries, and each of the five graphs that cannot run at all.
 
 ## From a world to a run
 
-Four of the five demos draw what an ECS world holds, and the walk from one to
-the other is where two of the layers meet.
+Every demo past the triangle draws what an ECS world holds, and the walk from
+one to the other is where two of the layers meet.
 
 `lib/renderer/render_world.frost` is the renderer's side. It asks an entity for
 two components and no more:
@@ -413,12 +432,11 @@ scene_sync(world, list, slot_table, device, queue, registry, cache,
     all_drawn(model, drawn))
 ```
 
-Each entity gets a uniform buffer and a binding of its own, made once and
-written every frame, keyed by the entity itself. Both halves of the handle are
-matched, so a slot left behind by a despawn stays where it is and the new entity
-gets a slot of its own. A thing spawned while the program runs is drawn on the
-next frame with no table to resize and nothing to renumber, and the renderer
-never has to know how many things there are.
+Nothing per entity is made or kept. The walk fills one flat array, one entry per
+thing, built from nothing every frame: a thing spawned while the program runs is
+drawn on the next frame because the walk finds it, and a thing despawned stops
+being drawn because the walk does not. There is no table to resize and nothing
+to renumber, and the renderer never has to know how many things there are.
 
 A pass walks a flat run:
 
@@ -473,11 +491,13 @@ its own tree stays untouched.
 
 ### Grouping by material
 
-`Drawable` carries a material number, and `draw_list_group_by_material` sorts a
-run so the things sharing one sit together. `textured.frost` sets group 2 where
-that number changes, which is four binding changes across thirty-six things.
-A material means whatever its pass decides: `textured` binds an image for it,
-and `spinning` reads the colour already in the uniform.
+`Drawn` carries a material number, and the run is sorted by it so the things
+sharing one sit together. `textured.frost` puts its four images in one
+`texture_2d_array`, binds group 2 once for the whole frame, and gives each of
+its thirty-six things the layer number its material names, so the count of draws
+is the count of meshes. A material means whatever its pass decides: `textured`
+reads an image layer for it, and `spinning` reads the colour already in the
+uniform.
 
 ## The frame is linear
 

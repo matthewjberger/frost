@@ -128,7 +128,7 @@ and the rest of what the gate covers.
 The audit is about the signature. `sqrtf :: safe extern fn(x: f32) -> f32` in
 `std/math.frost` takes and returns a number and touches no memory of the
 caller's, so there is nothing a call site could get wrong that the type checker
-has not already caught. `malloc :: safe extern fn(size: i64) -> ^u8` in
+has not already caught. `frost_rt_alloc :: safe extern fn(size: i64) -> ^u8` in
 `selfhosted/core.frost` is safe for a different reason: it hands memory back and
 reads none of the caller's, so it cannot corrupt what the caller holds. It still
 returns a raw pointer, and reading through one is gated on its own.
@@ -264,5 +264,7 @@ frost program.frost --link --incremental -o program  # rebuild only what changed
 
 Both `--link` paths compile and link both halves of the runtime on their own, so
 the bounds and generation checks, the assertions and the IO helpers are there
-with no extra flags. `FROST_RUNTIME` and `FROST_RUNTIME_FROST` say where they
-are for a checkout you are not standing in.
+with no extra flags. The bootstrap carries the C half inside itself and reads
+`FROST_RUNTIME_FROST` for the Frost one; the self-hosted compiler looks both up
+on disk, and `FROST_RUNTIME` and `FROST_RUNTIME_FROST` say where they are for a
+checkout you are not standing in.

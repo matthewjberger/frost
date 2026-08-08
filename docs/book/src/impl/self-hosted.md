@@ -15,7 +15,8 @@ its memory comes from the language's own allocator.
 It checks its own programs. Behind the assembly backend nothing downstream
 catches a mistake.
 
-- Types and layout. `i64`, `i8`, `u8`, `bool`, `str`, pointers `^T`, fixed
+- Types and layout. The whole scalar set (`i8` through `i64` and `isize`, their
+  unsigned twins, `f32`, `f64`, `bool`), `str`, pointers `^T`, fixed
   arrays `[N]T`, slices `[]T`, `Handle<T>`, structs passed and returned by
   value, and `e^`, `e[i]`, `ptr_to`, `ptr_cast`, `sizeof`.
 - Ownership and linearity. Use after move, and `linear` values that must be
@@ -51,9 +52,9 @@ catches a mistake.
 - Diagnostics carrying a file, line and column, so a refusal names the position
   it refused.
 
-Both backends emit from the same checked program: C through `frost_emit_*`
-helpers, or x86-64 assembly directly. A form neither compiler supports is
-refused with the position it was written at.
+Both backends emit from the same checked program: C through the `emit_*`
+helpers in `emit.frost`, or x86-64 assembly directly. A form neither compiler
+supports is refused with the position it was written at.
 
 ## The modules
 
@@ -69,8 +70,9 @@ works out sizes and offsets, both backends write through `emit`, and
 `query` answers what an editor asks of a checked program, and `frost` is the
 driver.
 
-The import order is acyclic. The assembly backend depends on `emit` alone, and
-the C backend writes through the same interface.
+The import order is acyclic. Both backends write through `emit`, and `emit_c`
+reads the argument and unit-membership walks out of `emit_asm` rather than
+writing them a second time.
 
 ## How the two compilers differ
 
@@ -80,7 +82,9 @@ itself, and no seed binary enters the build. A divergence is a hole in that,
 whichever side it is on.
 
 Parallelism. The bootstrap generates code on every core from a shared work
-queue. The self-hosted compiler emits and assembles one unit at a time.
+queue. The self-hosted compiler emits one unit at a time, and threads only the
+assembler runs it hands to the toolchain, since each of those is a process it
+waits on.
 
 Output. The bootstrap emits an object through Cranelift, portable C, or runs the
 IR directly. This one emits C or x86-64 assembly of its own, and encodes that
@@ -190,7 +194,7 @@ calling convention, so the ELF half can be checked from Windows.
 
 Whole-program monomorphization specializes generics per type, the
 specializations are a cross product, and no incremental or separate compilation
-bounds the work. `just bench-scaling` spans 917 to 58,107 generated lines and
+bounds the work. `just bench-scaling` spans 1,020 to 64,608 generated lines and
 640 to 10,240 specializations, and four times the input costs roughly four times
 the time on both the front-end and the full-native curves. The pipeline is close
 to linear, with a mild superlinear term that grows with function count. Read
@@ -214,8 +218,8 @@ its own object, and a module whose emitted assembly is byte for byte last
 build's is not encoded again. The cache key is that assembly: the compiler has
 just produced what the module compiles to, so nothing else has to be hashed or
 walked. Where the encoder runs, the unit stays in memory and no assembly file is
-written at all. Where the toolchain does the encoding it is written to
-`<build>/m<n>.s` for that program to read.
+written at all. Where the toolchain does the encoding, which is the C backend,
+the unit is written to `<build>/m<n>.c` for the C compiler to read.
 
 `just bench-selfhost-incremental` puts a whole-program build, a first
 incremental build and one where nothing changed side by side on its own source.

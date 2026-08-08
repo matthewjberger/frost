@@ -23,7 +23,7 @@ is required. With `--test` it may be a directory.
 | `--test` | Build the file's `test` blocks into an executable and run it |
 | `--freestanding` | Link with no libc: a minimal runtime and a custom entry point |
 | `--incremental` | Reuse a module's cached object unless its source or an imported interface changed |
-| `--audit-unsafe` | Also report every `unsafe` block that vouches for nothing |
+| `--audit-unsafe` | Fail the build when an `unsafe` block vouches for nothing. Every build already warns about one |
 | `--build-dir <DIR>` | Where `--incremental` keeps interfaces and objects. Defaults to `.frost-build` |
 | `-L`, `--lib-path <DIR>` | A directory to find imports under, after the importing file's own. Repeatable |
 | `-h`, `--help` | The flag list |
@@ -32,8 +32,9 @@ There is no `--version`.
 
 The modes are tried in one order and the first that matches wins: `--test`,
 then `--run-ir`, then `--emit-c`, then `--native` or `--link`, then the bare
-run. So `--test` goes through Cranelift whatever backend flag came with it, and
-`--run-ir` ignores `-o` and exits 3 when the interpreter declines the program.
+run. So `--test` still reads `--emit-c` and runs its bodies through whichever
+backend that names, and `--run-ir` ignores `-o` and exits 3 when the interpreter
+declines the program.
 [Native, freestanding, self-hosted](../impl/build-modes.md) says which backend
 means what.
 
@@ -102,25 +103,30 @@ the same list. This is that list with what each flag implies.
 | --- | --- |
 | `-o <PATH>` | Where the result goes. Without it the emitted text goes to standard output |
 | `-L <DIR>` | A directory to find imports under. Repeatable |
-| `--emit-c` | Emit a C translation unit. This is the default |
+| `--emit-c` | Emit a C translation unit. This is the default for a build that does not link |
 | `--emit-asm` | Emit x86-64 assembly |
-| `--native` | The same as `--emit-asm` |
-| `--link` | Assemble and link an executable |
+| `-n`, `--native` | Encode that assembly into an object file |
+| `-l`, `--link` | Assemble and link an executable. With no backend flag this picks the assembly one |
+| `--libs <ITEM>` | An object file or library to pass to the linker. Repeatable |
 | `--incremental` | One object per module, assembling only what changed. Implies `--link` |
 | `--build-dir <DIR>` | Where those objects are kept. Defaults to `.frost-build` |
+| `--assemble` | Read an assembly file and write the object it stands for, compiling nothing |
 | `--test` | Build and run the file's `test` blocks. Implies `--link` |
-| `--audit-unsafe` | Also report every `unsafe` block that vouches for nothing |
+| `--audit-unsafe` | Fail the build when an `unsafe` block vouches for nothing. Every build already warns about one |
 | `-h`, `--help` | The flag list |
 
-The differences from the bootstrap: the default backend is C, output goes to
-standard output when nothing asked for a file, a `--link` build with no `-o`
-writes `a.exe` on Windows and `a.out` elsewhere, `--test` takes a file, and the
-`--libs`, `--freestanding` and `--run-ir` flags are absent. An argument
-starting with `-` that none of the above claims ends the run with an error.
+The differences from the bootstrap: emitting on its own goes through C, output
+goes to standard output when nothing asked for a file, a `--link` build with no
+`-o` writes `a.exe` on Windows and `a.out` elsewhere, `--test` takes a file and
+never a directory, and the `--freestanding` and `--run-ir` flags have no path
+here, which the compiler says in those words rather than calling them unknown.
+An argument starting with `-` that none of the above claims ends the run with an
+error.
 
 `--audit-unsafe` exists on both compilers and means the same thing on each: a
-build fails if any `unsafe` block covers no operation that needed one. It is
-off by default, since a build pays for the checks that keep a program correct.
+build fails if any `unsafe` block covers no operation that needed one. The
+report is not what the flag turns on. Every build names such a block already,
+and the flag is what turns naming one into a refusal.
 
 ## Environment variables
 
@@ -129,6 +135,8 @@ off by default, since a build pays for the checks that keep a program correct.
 | Variable | Effect |
 | --- | --- |
 | `FROST_PATH` | Import search directories. The bootstrap splits it the way the platform splits a path list and places it after `-L` and before `frost.json`; the self-hosted compiler takes it as one directory, ahead of `std` and `.` |
+| `FROST_STD` | Where the bundled standard library is. Wins over a `std` beside the compiler and over the one at the repository root |
+| `FROST_RUNTIME_FROST` | Where the runtime's Frost half is. Both compilers otherwise look for it beside themselves and then up the directories a checkout puts it under. The runtime is two files: `runtime.frost` holds the checks an index and a slice compile to, and `frost_runtime.c` holds what cannot be written in Frost |
 
 The rest of the search order is [finding a module](../impl/modules.md).
 
@@ -136,7 +144,6 @@ The rest of the search order is [finding a module](../impl/modules.md).
 
 | Variable | Effect |
 | --- | --- |
-| `FROST_STD` | Where the bundled standard library is. Wins over a `std` beside the compiler and over the one at the repository root |
 | `FROST_THREADS` | Cap on code-generation threads. Defaults to the machine's parallelism; a value that is not a positive number is ignored |
 | `FROST_TIMINGS` | Anything but `0`: report the split between generating code for each function and writing the object, on stderr |
 | `FROST_MODULE_REPORT` | Anything but `0`: report how many duplicated specializations separate compilation costs, on stderr |
@@ -152,10 +159,10 @@ ordinary build.
 | Variable | Effect |
 | --- | --- |
 | `FROST_INPUT` | The file to compile, when the command line named none |
-| `FROST_BACKEND` | `asm` picks the assembly emitter, when no backend flag was given |
-| `FROST_RUNTIME` | Where the runtime's C stub is. Looked for beside the compiler and then up the directories a checkout puts it under. Set it to compile from a checkout you are standing outside of |
-| `FROST_RUNTIME_FROST` | Where the runtime's Frost half is, found the same way. The runtime is two files: `runtime.frost` holds the checks an index and a slice compile to, and `frost_runtime.c` holds what cannot be written in Frost |
+| `FROST_BACKEND` | `asm` picks the assembly emitter and `c` the C one, when no backend flag was given |
+| `FROST_RUNTIME` | Where the runtime's C stub is. Looked for beside the compiler and then up the directories a checkout puts it under. Set it to compile from a checkout you are standing outside of. The bootstrap needs no such variable, since it carries that file inside itself |
 | `FROST_ABI` | `sysv` or `win` overrides the host's calling convention, so either target's output can be read from either host |
+| `FROST_OBJECT` | `elf` or `coff` overrides the host's object format, the way `FROST_ABI` overrides the convention |
 | `FROST_QUERY` | Answer an editor's question about the checked program instead of building it: `symbols`, `definition NAME`, `fields NAME`, or `local FN NAME`. Answers go to stderr, one line each, and nothing is emitted |
 | `CC` | The C compiler the emitted C and the link go to. Defaults to `gcc` on Windows and `cc` elsewhere |
 

@@ -227,9 +227,10 @@ What the two backends carry, verified by running native binaries
   `fn(...) -> T` parameter or local holds one, and calling through it is an
   indirect call. That pointer is the language's higher-order form
   (`apply(f: fn(i64) -> i64, x: i64)`).
-- `defer`: function-scoped, run in LIFO order at each return and at the
-  trailing expression. A `return` nested inside a branch alongside `defer`
-  is rejected (it would need runtime tracking), so defers always run.
+- `defer`: function-scoped, run in LIFO order at each return wherever that
+  return is written, where the body falls off the end, and where a `?` hands a
+  failure on. A `defer` written inside a nested block is refused, since it
+  answers to the function's exits rather than to that block's.
 
 ### Generic functions, specialization, and sizeof
 

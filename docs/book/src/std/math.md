@@ -14,7 +14,10 @@ rest of the standard library follows. Every value is `f32`.
 `std/math64.frost` is the same library at double precision: the same shapes and
 the same column-major convention, with `f64` in place of `f32` and a `d` on
 every name (`Vec3d`, `vec3d_add`, `mat4d_perspective`, `radiansd`). The two can
-be imported together, since no name is shared.
+be imported together, since no name is shared. It carries the vectors, the
+quaternions and the four `[-1, 1]` and `[0, 1]` projections; the reverse-Z
+projections, the inverse and the frustum planes are single-precision only,
+because what asks for them is a renderer.
 
 The transcendentals it needs (`sqrtf`, `sinf`, `cosf`, `tanf`) are the C standard
 library's single-precision ones, declared `safe extern` because each takes and
@@ -76,15 +79,24 @@ transforms apply.
 - `mat4_transform_point`, `mat4_transform_dir`: carry a `Vec3` through a matrix. A
   point carries an implicit `w` of 1, so a translation moves it. A direction
   carries `w` of 0, so a translation leaves it alone.
-- `mat4_perspective`, `mat4_perspective_zo`, `mat4_ortho`, `mat4_look_at`: a
-  right-handed perspective projection into the `[-1, 1]` depth range (the OpenGL
-  clip convention), the same projection into `[0, 1]` (what Direct3D, Metal,
-  Vulkan and WebGPU take, and what `examples/graphics/triangle.frost` uses), an
-  orthographic projection, and a view matrix looking from an eye toward a center.
+- `mat4_perspective`, `mat4_perspective_zo`, `mat4_ortho`, `mat4_ortho_zo`,
+  `mat4_look_at`: a right-handed perspective projection into the `[-1, 1]` depth
+  range (the OpenGL clip convention), the same projection into `[0, 1]` (what
+  Direct3D, Metal, Vulkan and WebGPU take), an orthographic projection in each
+  of those two ranges, and a view matrix looking from an eye toward a center.
 
   The projection has to match the depth range of the API being drawn with. A
   matrix built for the other range puts half the scene behind the near plane,
   and it does so without any error.
+- `mat4_perspective_reverse_z`, `mat4_perspective_infinite_reverse_z`,
+  `mat4_ortho_reverse_z`: the same three with the near plane at one and the far
+  plane at zero, which is what the renderer under `lib/` draws with and what
+  `examples/graphics/triangle.frost` uses. The infinite one takes a near plane
+  and no far plane.
+- `mat4_inverse`: the inverse, answering `(inverse: Mat4, ok: bool)`, with `ok`
+  false where the matrix flattens space and has none.
+- `mat4_frustum_planes`: the six planes of a view-projection, as `[6]Vec4`,
+  facing inwards, for culling what the camera cannot see.
 
 ## Quaternions
 
@@ -131,15 +143,15 @@ main :: fn() -> i64 {
 
 ## Tests
 
-Every exported function has a `test` block beside it in `std/math.frost`, run
-with:
+The tests sit beside the functions they check in `std/math.frost`, run with:
 
 ```bash
 frost --test std/math.frost
 ```
 
-The same twenty run over `std/math64.frost`, which is where a copy that changed
-a formula shows up. The suite runs both through both backends of both
+Thirty-three blocks, and the twenty-three of them that name a shape both copies
+have run over `std/math64.frost` too, which is where a copy that changed a
+formula shows up. The suite runs both through both backends of both
 compilers. Each test checks an answer. A differential test would only say the
 backends agree, and a rotation that turns the wrong way, a projection with its
 depth range inverted and a quaternion that is its own inverse all agree across
@@ -165,8 +177,8 @@ would have to take the transcendentals as compile-time arguments at every call,
 since `sqrt` and `sqrtf` are different C functions, which costs more at every
 use than a copy costs once. That is the trade
 [philosophy.md](../design/philosophy.md) names: no traits, so write the one you need over
-the layout you have. The copy is mechanical and the same twenty tests run over
-both, so a formula that survived the copy wrong fails.
+the layout you have. The copy is mechanical and the same twenty-three tests run
+over both, so a formula that survived the copy wrong fails.
 
 ## Scope
 

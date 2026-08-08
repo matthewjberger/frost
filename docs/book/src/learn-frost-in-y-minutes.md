@@ -1,9 +1,9 @@
 # Learn Frost in Y minutes
 
 Frost is a systems language for data-oriented programs. It is compiled ahead of
-time, has no garbage collector, no runtime, no exceptions, and no hidden
-allocation. It is memory-safe without lifetimes: a borrow is a parameter mode
-and cannot escape the call it was made for.
+time, has no garbage collector, no exceptions, and no hidden allocation. It is
+memory-safe without lifetimes: a borrow is a parameter mode and cannot escape
+the call it was made for.
 
 This page covers the whole language in order, then the standard library, as
 code. The test suite compiles every block below, so the compiler accepts
@@ -300,7 +300,8 @@ main :: fn() -> i64 {
 The contexts that supply the type are the ones that state it: an annotation, a
 parameter's declared type, a field's declared type, a declared return type, the
 place being assigned to, and an array's element type. Where none of those is
-present, the compiler reports an error naming the type it could not resolve.
+present, the compiler names the variant or the literal and says there is no
+type to take one from.
 
 Layout can be stated where it has to match something outside the program.
 
@@ -802,7 +803,7 @@ draw :: extern fn(value rect: Rect)
 A file is a module. `import` names another file whose declarations join this
 one's, and `export` says which of this file's names leave it. The namespace is
 flat, so a name is the same name everywhere and one grep finds every use of it.
-Two modules exporting one name is a refusal.
+Where two imported modules export one name, writing that name is the refusal.
 
 ```frost,sketch
 import "io.frost"
@@ -846,11 +847,11 @@ main :: fn() -> i64 {
 
 ## What Frost leaves out, and what to write instead
 
-No garbage collector, no runtime, no exceptions, no panics to catch, no
-destructors, no traits, no interfaces, no inheritance, no methods, no operator
-overloading, no capturing closures, no iterators, no macros, no lifetimes, no
-tuples, no null, no implicit conversion, no truthiness, no positional struct
-literals, and no hidden allocation.
+No garbage collector, no exceptions, no panics to catch, no destructors, no
+traits, no interfaces, no inheritance, no methods, no operator overloading, no
+capturing closures, no iterators, no macros, no lifetimes, no tuples, no null,
+no implicit narrowing, no truthiness, no positional struct literals, and no
+hidden allocation.
 
 Each has a replacement above: a `linear` type instead of a destructor, a
 capability bundle instead of a trait, a compile-time function parameter instead

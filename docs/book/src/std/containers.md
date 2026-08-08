@@ -106,8 +106,8 @@ Slot :: enum { Empty, Used, Gone }
 `Gone` is a tombstone, left where a key was removed. A probe run passes through
 a tombstone and keeps going, so keys placed after a removed key are still found.
 The table doubles when it is half full, which keeps probe runs short, and the
-capacity is a power of two so the starting slot comes from a mask instead of a
-division.
+capacity is a power of two. The starting slot is the hash taken modulo the
+capacity, made positive where the hash was negative.
 
 | Call | What it does |
 | --- | --- |
@@ -138,9 +138,10 @@ Hashing :: struct($K: Type) {
 calls and the map stores no function pointer. This is the shape
 [sort.md](sort.md) describes for `Ordering<T>`, with two different fields.
 
-The library ships `i64_keys` and `text_keys`, built from `i64_hash`/`i64_same`
-and `text_hash`/`text_same`. For a key of any other type, write the constant
-where you need it. The module's own tests do that for a two-field struct:
+The library ships `i64_keys`, `str_keys` and `text_keys`, built from
+`i64_hash`/`i64_same`, `str_hash`/`str_same` and `text_hash`/`text_same`. For a
+key of any other type, write the constant where you need it. The module's own
+tests do that for a two-field struct:
 
 ```frost,sketch
 Cell :: struct { x: i64, y: i64 }
@@ -159,9 +160,12 @@ separate runs of slots. `str_hash` is a multiply-and-add over the bytes, masked
 to stay positive because the slot is a remainder of it. Both are exported, along
 with `str_same`, for building a `Hashing` over a type that contains one.
 
-### `Text`, the string key
+### `Text`, a key that carries more than its bytes
 
-A string key goes through a one-field wrapper:
+A `str` is a key on its own. `str_keys` hashes and compares the bytes bare, so
+`map_new($str, $i64, 8)` holds a run of slices and the module's own test puts
+`"ada"` and `"grace"` into one. `Text` is the same key wrapped in a one-field
+struct:
 
 ```frost,sketch
 Text :: struct { bytes: str }
@@ -171,12 +175,9 @@ map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
 held := map_get($Text, $i64, $text_keys, ages, text("ada"), 0)
 ```
 
-`str_hash` and `str_same` are written over `str` directly, and a `str` works as
-a key on its own. The wrapper is there because the key run is a `[]K`, and a run
-of slices is a shape the self-hosted compiler does not hold. Wrapping the slice
-in a struct puts a single concrete layout in the array. Once the self-hosted
-compiler holds a run of slices, the wrapper goes and `str` becomes a key on its
-own.
+`text_hash` and `text_same` are `str_hash` and `str_same` reaching through the
+one field, so the wrapper costs nothing. Reach for it where the key carries
+something beside its bytes, and for `str_keys` otherwise.
 
 The hash is over the contents, so two strings that read the same are one key
 however each was built, and a string key survives the table growing. Both are
@@ -185,7 +186,8 @@ tested.
 ## `std/slab.frost`, the generational slab
 
 Fixed-capacity storage with handles that go stale when the slot they name is
-reused. No allocation, no runtime call, generic over element type and capacity.
+reused. No allocation, generic over element type and capacity. Its one runtime
+call is the number a slab is stamped with when it is reset.
 
 ```frost
 Slab :: struct($T: Type, $N: usize) {
@@ -202,13 +204,14 @@ Slab :: struct($T: Type, $N: usize) {
 | `slab_full($T, $N, s) -> bool` | Whether there is any room left |
 | `slab_insert($T, $N, mut s, move value) -> Handle<T>` | Takes a free slot. The caller checks `slab_full` first |
 | `slab_alive($T, $N, s, handle) -> bool` | Whether the handle names a live slot |
+| `slab_slot($T, $N, s, handle) -> i64` | The slot a handle names, or -1 where it is stale |
 | `slab_release($T, $N, mut s, handle) -> bool` | Frees the slot, bumping its generation |
 
 A handle is `Handle<T>` to callers and an `i64` inside, with the slot index in
-the low thirty-two bits and the generation above them. The two convert freely,
-because a handle is an `i64` at the ABI. `slab_release` bumps the generation,
-which makes every outstanding handle to that slot stale. A later read through
-one aborts.
+the low thirty-two bits and, above them, the slab's own number in seven bits
+and the slot's generation in twenty-four. The two convert freely, because a
+handle is an `i64` at the ABI. `slab_release` bumps the generation, which makes
+every outstanding handle to that slot stale. A later read through one aborts.
 
 There is no in-band "no handle" value, since a handle naming nothing is the
 thing generations exist to catch. Ask `slab_full` before inserting.
@@ -219,7 +222,7 @@ The compiler recognizes a struct as slab-shaped when it has a `storage` array
 and a parallel `generations` array, and it supplies the indexing:
 `world[handle]` checks the generation, aborts on a mismatch, and otherwise names
 the place in `storage`. That place-deref is the only part of this file the
-compiler provides. The storage, the free list and all five operations above are
+compiler provides. The storage, the free list and all six operations above are
 ordinary Frost you can read, copy, or replace.
 
 The compiler supplies it because "return a validated reference into storage"
@@ -259,8 +262,9 @@ handle scheme is the slab's, unchanged.
 | `columns_release($T, $N, mut c, handle) -> bool` | Frees the slot, bumping its generation |
 
 The type itself is synthesized: `columns<T, N>` is one `[N]field` array per
-field of `T`, plus the same `generations`, `free_list` and `free_count`
-bookkeeping a slab has. `columns_new()` builds a zeroed one. The deref
+field of `T`, plus the same `generations`, `free_list`, `free_count`,
+`live_words` and `live_count` bookkeeping a slab has. `columns_new()` builds a
+zeroed one. The deref
 `c[handle].field` and the element scatter `c[handle] = value` are
 compiler-supplied, because both select a column before indexing and that is not
 writable where a struct is one value. Everything in the file is ordinary Frost

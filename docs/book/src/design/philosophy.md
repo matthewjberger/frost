@@ -129,8 +129,8 @@ walks it keeps the layout visible and the machine's actual work predictable.
   languages call an interface is a struct whose fields are function pointers.
   Do not reach for a generic sort, hash or equality that works over everything.
   Write the one you need over the layout you have, and pass
-  `$compare` or `$hash` when it varies. The self-hosted compiler is 5,000 lines
-  and wanted a generic function three times.
+  `$compare` or `$hash` when it varies. The self-hosted compiler is forty
+  thousand lines and wanted a generic function three times.
 
   Coherence checking, bound solving and method resolution dominate other
   compilers' front ends. Leaving them out keeps this front end near-linear.

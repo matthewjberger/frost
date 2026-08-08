@@ -1,8 +1,8 @@
 # Text, files, and JSON
 
 Five modules that between them are enough to read a file, pick it apart, build
-an answer and write it back out. `tools/wgpu_bindgen.frost` uses four of the
-five and nothing else.
+an answer and write it back out. `tools/wgpu_bindgen.frost` uses all five and
+nothing else.
 
 They all agree on one thing: a `str` is a pointer and a length. A writer taking
 a `^i8` relies on the bytes ending in a NUL, a promise the caller makes silently
@@ -136,6 +136,8 @@ with no allocation anywhere.
 | `str_to_f64(s) -> f64` | A decimal number, fraction and `e` exponent included |
 | `str_byte_is_digit(byte) -> bool` | Whether the byte is `0` through `9` |
 | `str_byte_is_space(byte) -> bool` | Space, tab, newline or carriage return |
+| `str_slice(s, from, count) -> str` | A view of `count` bytes from `from` |
+| `str_span(s, from, count) -> str` | The same, stopping at the end |
 
 Every call here answers a question about text you already have. Building a new
 string needs storage, and this module leaves the choice of storage to the
@@ -214,6 +216,7 @@ ReadResult :: linear struct {
 | `fs_free(move result)` | Releases that block. Consumes the result |
 | `fs_write(path, text) -> bool` | Writes the whole file. Answers whether it worked |
 | `fs_exists(path) -> bool` | Whether the path is there |
+| `fs_remove(path) -> bool` | Deletes it. Answers whether it worked |
 
 A read owns the buffer its text borrows, so `ReadResult` is `linear` and the
 compiler refuses a read whose buffer nothing frees. `ok` is false when the file
@@ -286,20 +289,20 @@ and the node fields are exported for that walk.
 
 `tools/wgpu_bindgen.frost` reads `lib/renderer/wgpu/webgpu.json` with
 `fs_read`, walks it with `json_member` and `json_at`, classifies bytes with
-`str_byte_is_digit` and friends, assembles the whole generated module in two
-`Builder`s, and writes it with `fs_write`. That is a code generator in eleven
-hundred lines, importing four of these five modules and nothing else. See
+`str_byte_is_digit` and friends, assembles the whole generated module in three
+`Builder`s, and writes it with `fs_write`. That is a code generator in fourteen
+hundred lines, importing these five modules and nothing else. See
 [graphics.md](graphics.md).
 
 ## Tests
 
-`std/strings.frost` has six test blocks:
+`std/strings.frost` has twelve test blocks and `std/fs.frost` two:
 
 ```bash
 frost --test std/strings.frost
 ```
 
-`io.frost`, `format.frost`, `fs.frost` and `json.frost` are covered where they
-are used. The bindgen exercises the last three end to end on a 119 KB document
+`io.frost`, `format.frost` and `json.frost` are covered where they are used. The
+bindgen exercises those three and `fs.frost` end to end on a 182 KB document
 every time `just bindgen` runs, and a difference in any of them shows up as a
 generated file that does not compile.

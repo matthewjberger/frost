@@ -75,8 +75,8 @@ that rules out.
 
 In its place Frost has a declaration. A function says `uses Arena<256>` in its
 signature, which gives its body one implicit write parameter reached by the
-source type's own name lowercased, and a `with arena { ... }` block around a
-call supplies it. A call that draws a source neither its caller holds nor a
+source type's own name with its first letter lowercased, and a
+`with arena { ... }` block around a call supplies it. A call that draws a source neither its caller holds nor a
 surrounding block provides is refused at the call. The allocator is still
 threaded explicitly in the sense that matters. It is a real parameter, inserted
 at a place the compiler can name, and a program cannot allocate from a source it
