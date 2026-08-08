@@ -86,7 +86,9 @@ many files failed. A single module is the same command with the file named:
 frost --test std/map.frost
 ```
 
-Eight of the seventeen carry tests: `ecs.frost` (72 blocks), `math.frost` and
-`math64.frost` (20 each), `map.frost` (12), `mem.frost` (9), `strings.frost`
-(6), `vec.frost` (5) and `sort.frost` (3). The rest are covered where they are
-used, which each page says.
+Fourteen of the twenty carry tests: `ecs.frost` (116 blocks), `math.frost` (33),
+`math64.frost` (23), `map.frost` and `mem.frost` (13 each), `strings.frost`
+(12), `snapshot.frost` (6), `vec.frost` (5), `arena.frost` and `fixed.frost`
+(4 each), `sort.frost` and `thread.frost` (3 each), and `fs.frost` and
+`slab.frost` (2 each). The other six are covered where they are used, and each
+page says where.
