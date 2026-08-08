@@ -2,8 +2,8 @@
 
 `std/ecs.frost` is an archetype ECS: entities holding the same set of components
 share a table, a table keeps one contiguous column per component, and a system
-walks columns rather than chasing entities. It is the shape a game or an editor
-wants from its world, and it is ordinary Frost you can read, copy, or replace.
+walks columns rather than chasing entities. It is ordinary Frost you can read,
+copy, or replace.
 
 Everything else follows from one decision: a component is plain data. No
 destructor, no copy constructor, nothing a type knows that the compiler does
@@ -122,8 +122,6 @@ for_each($integrate, world, no_filters(), $Position, $Velocity)
 ```
 
 A body taking a fourth component is a fourth element and a fourth parameter.
-Write a query with the types it reads: `ecs_register($Position, world)` records
-the type it was registered under, and the query looks the index back up from it.
 
 ## Filters
 
@@ -143,7 +141,7 @@ body. A filter goes through the call that matches its level.
 
 `for_each` hands the body whole columns and a row count, which is the faster
 form and the one to reach for. `for_each_row` hands it one row at a time, which
-is what the row-level filters need, since `changed` is a question about a row.
+the row-level filters need, since `changed` is a question about a row.
 
 The `$body` argument folds to a direct call, so the sugar costs nothing over the
 cursor form.
@@ -193,11 +191,11 @@ place[0].frame = place[0].frame + 1
 Setting a resource moves the value into the world. A resource that has to be
 released is the world's from there, and the name that held it is free of it.
 
-Reading one back has two shapes. `ecs_resource` answers with the value, which is
-what a caller taking it back to release it wants. What comes back owns what it
-holds, so a system that only meant to look at a `Hierarchy` would be left with
-vectors to free. `ecs_resource_ref` answers with a borrow, reading the resource
-where it lives and owning nothing.
+Reading one back has two shapes. `ecs_resource` answers with the value, for a
+caller taking it back to release it. What comes back owns what it holds, so a
+system that only meant to look at a `Hierarchy` would be left with vectors to
+free. `ecs_resource_ref` answers with a borrow, reading the resource where it
+lives and owning nothing.
 
 ```frost,sketch
 tree := ecs_resource_register($Hierarchy, world)

@@ -12,7 +12,7 @@ externs, and imports.
 | `name : Type = expr` | bind a local, type explicit |
 | `var name := expr` / `var name : Type = expr` | bind an assignable local |
 | `a, b := call()` | bind the several values of one call (5.2a) |
-| `ref name := place` | bind a borrow of a place, not a copy of it |
+| `ref name := place` | bind a borrow of a place |
 | `NAME :: expr` | declare a constant, evaluated once |
 
 Bindings are immutable unless `var`. A `var` local is reassigned with `=`.
@@ -65,12 +65,11 @@ main :: fn(count: i64) -> i64 {
 > 'main' takes no parameters, and this one takes 1; what a call to it would
 > supply is whatever the platform left in a register
 
-A `uses` clause is counted with the written parameters, since that is what a
-capability becomes (8a.2), and `main` drawing one has nowhere to draw from.
+A `uses` clause is counted with the written parameters, since a capability
+becomes one (8a.2), and `main` drawing one has nowhere to draw from.
 
-What `main` answers is the process exit code, so it answers `i64`. A `main`
-that can fail, or that answers an aggregate, or that answers nothing, is
-refused:
+`main` answers the process exit code, so it answers `i64`. A `main` that can
+fail, or that answers an aggregate, or that answers nothing, is refused:
 
 ```frost,refused
 Pair :: struct { a: i64, b: i64 }
@@ -143,8 +142,7 @@ by name, and a function that is a table of answers returns by order:
 
 A name in the list is a label for one of the values. It is out of scope in the
 body, there is nothing to assign to it, and there is no bare `return` that hands
-back whatever the names hold. What a function answers with is written at the
-`return` that answers.
+back whatever the names hold. Each `return` writes the values it answers with.
 
 `return` lists the values in order, or names them, and it is required either
 way: a trailing expression is one value, so a function with a return type list
@@ -183,8 +181,8 @@ calling and binding nothing.
 The struct a list becomes holds a resource when one of its values does, and it
 is the one aggregate that carries no obligation of its own: the lowering builds
 it at the `return`, takes it apart at the binding, and reads every field exactly
-once, so what it owes is what its fields owe and each of those lands on a name
-the binding introduced.
+once, so it owes what its fields owe and each of those lands on a name the
+binding introduced.
 
 There is no tuple type. The list is not a value, cannot be named, stored in a
 field, passed as an argument, or returned from anything but the function that
@@ -193,11 +191,10 @@ that returns several values is bound by a list of names and used nowhere else.
 Binding it to a single name is a compile error that says so. A program that
 wants to pass a pair around declares a struct and gets a name for it.
 
-What the compiler does with the list is give it one struct, whose fields are the
-names the signature gave. The signature becomes a plain return of
-that struct, the `return` becomes a literal of it, and the binding becomes the
-call bound to a temporary and one field read per name. Nothing after the front
-end sees a return type list.
+The compiler gives the list one struct, whose fields are the names the signature
+gave. The signature becomes a plain return of that struct, the `return` becomes
+a literal of it, and the binding becomes the call bound to a temporary and one
+field read per name. Nothing after the front end sees a return type list.
 
 A return type list does not combine with a failure set: `-> (A, B) ! E` is
 rejected, because a fallible function answers with one value or one error. A
@@ -224,8 +221,7 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse {
 `-> T ! E` reads "answers with a T, or fails with an E". `E` is a type the
 program declares, a struct or an enum, and nothing about it is built in: there
 is no error interface to implement, no backtrace, no allocation, and no boxing.
-A failure is a value of a type you wrote, so what a failure carries is what you
-put in it.
+A failure is a value of a type you wrote, and it carries what you put in it.
 
 The signature becomes one enum with two variants:
 
@@ -233,10 +229,10 @@ The signature becomes one enum with two variants:
 Result :: enum { Ok { value: T }, Err { error: E } }
 ```
 
-That enum is what the function returns, and it is where the names at a `match`
-come from: `value` is the field the `Ok` variant carries and `error` is the
-field `Err` carries. A field like `error.at` is a field of `Parse`, the type
-this program declared. Nothing downstream knows failure sets exist.
+The function returns that enum, and the names at a `match` come from it:
+`value` is the field the `Ok` variant carries and `error` is the field `Err`
+carries. A field like `error.at` is a field of `Parse`, the type this program
+declared. Nothing downstream knows failure sets exist.
 
 A `return` whose expression builds the failure type is the failure, and anything
 else is the value:
@@ -283,8 +279,8 @@ match number(text) {
 ```
 
 A result carrying a `linear` value is itself linear, so it must be consumed, and
-matching it is what consumes it (chapter 9). Ignoring a call that answers with
-one is refused, since the resource would be dropped where nothing named it.
+matching it consumes it (chapter 9). Ignoring a call that answers with one is
+refused, since the resource would be dropped where nothing named it.
 
 ```frost,sketch
 open :: fn(n: i64) -> File ! Denied { ... }
@@ -298,8 +294,8 @@ use_it :: fn(n: i64) -> i64 {
 ```
 
 There is no other error channel. No exceptions, no panics to catch, no error
-return codes to check by convention, and no ignoring a failure by accident:
-what a function can fail with is in its signature, and the caller either matches
+return codes to check by convention, and no ignoring a failure by accident: a
+function's signature says what it can fail with, and the caller either matches
 it or hands it up with `?`. A failure that is not one, a bug in the program
 rather than a condition in the world, is an assertion, and an assertion aborts.
 
@@ -325,17 +321,17 @@ Table :: struct { slots: [next_power_of_two(300)]i64 }
 ```
 
 The function is an ordinary one. Nothing marks it, and the same function is
-called while the program runs wherever a program calls it. What decides that a
-call is worked out early is where it is written.
+called while the program runs wherever a program calls it. Where the call is
+written decides that it is worked out early.
 
-What such a call may do is the whole-number half of the language: parameters and
+Such a call may do the whole-number half of the language: parameters and
 locals, integer arithmetic and comparison, `if`, `while`, `break`, `continue`,
 `return`, a trailing expression, and calls to other functions written the same
 way. `&&` and `||` answer without asking the right side when the left one
 settles it, as they do where the program runs.
 
-A value may also be a run of values, a set of named ones, or a run of bytes,
-which is what a lookup table decided before the program runs is made of:
+A value may also be a run of values, a set of named ones, or a run of bytes, so
+a lookup table can be settled before the program runs:
 
 ```frost
 Point :: struct { x: i64, y: i64 }

@@ -51,8 +51,8 @@ written at is a compile error.
 inside `unsafe` (6.8).
 
 A `^T` and an integer convert to each other in either direction, since a pointer
-is an address and an address is a whole number. That is what a call into C hands
-over and what address arithmetic reads back. A pointer reaches no other scalar:
+is an address and an address is a whole number. A call into C hands the address
+over, and address arithmetic reads it back. A pointer reaches no other scalar:
 `f : f64 = p` and `b : bool = p` are refused and the diagnostic names the
 pointer.
 
@@ -85,8 +85,8 @@ pointer.
   in the argument, and handing the slice back out of the call is a view of
   storage that outlives it. The coercion holds in every position that takes a
   slice: a binding with an annotation, an assignment, a field of a literal, an
-  argument, and a `return`. What carries the length is the array's type, which
-  the borrow still names.
+  argument, and a `return`. The array's type carries the length, and the borrow
+  still names that type.
 
 Aggregates are move types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.
@@ -117,9 +117,9 @@ declaration.
 nothing. `align` inside a `packed struct` is refused: packed pads no field and
 `align` asks for this one to be padded.
 
-`packed` and `align` are words rather than keywords (2.4). A local, a field and
-a parameter may still be called either. What marks the declaration is the
-`struct` after `packed`, and what marks the field form is the `(` after `align`.
+`packed` and `align` carry meaning without being reserved (2.4). A local, a
+field and a parameter may still be called either. The `struct` after `packed`
+marks the declaration, and the `(` after `align` marks the field form.
 
 A stated layout reaches every backend, so `sizeof`, `offset_of` and a read
 through a field answer the same on all of them.
@@ -153,7 +153,7 @@ The shape is held to a register's worth. The length is a power of two, and the
 whole vector is at most 64 bytes. Both are refused where they do not hold,
 naming the length or the width.
 
-What a lane becomes is the backend's. The self-hosted compiler's assembly
+The backend decides what a lane becomes. The self-hosted compiler's assembly
 backend emits `addps`, `subps`, `mulps` and `divps` for a vector of `f32`, and
 the `pd` forms for one of `f64`, sixteen bytes at a time. Both C backends write
 the lanes out and the C compiler folds them back: `a * b + a` over `[4]f32`
@@ -161,8 +161,8 @@ comes out of `gcc -O2` as `mulps` and `addps`.
 
 ## 3.3 Borrows and pointer types
 
-A borrow is what a parameter mode means: an unmarked parameter of a non-copy
-type is read-borrowed, `mut` is write-borrowed, and `move` takes the value
+A parameter mode means a borrow: an unmarked parameter of a non-copy type is
+read-borrowed, `mut` is write-borrowed, and `move` takes the value
 (chapter 8). There is no `&` or `&mut` in the surface, so a borrow has nowhere
 to be stored in a struct and nowhere to be written in a field.
 
@@ -186,9 +186,9 @@ The borrow it answers with is the caller's to read and write and nobody's to
 keep.
 
 `ptr_to(place)` yields a `^T` to a place. `ptr_cast($T, p)` reinterprets a
-pointer as `^T` at no runtime cost. These are what an allocator uses to hand
-back typed memory from a byte buffer. A pointer carries no safety guarantee once
-it is formed.
+pointer as `^T` at no runtime cost. An allocator uses both to hand back typed
+memory from a byte buffer. A pointer carries no safety guarantee once it is
+formed.
 
 A pointer or a slice that names storage in the current frame may not be
 returned, and neither may one into an arena outlive its region (chapter 8).
@@ -200,8 +200,8 @@ value, an index plus a generation, and it may be stored in fields and returned.
 
 A pool is not a built-in type. It is an ordinary struct a program writes for
 itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
-provides the pieces to build one, not the pool itself, and `std/slab.frost` is
-one written out in the language.
+provides the pieces to build one, and `std/slab.frost` is one written out in the
+language.
 
 `columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
 elements of struct `T`, one array per field of `T` plus a generational free list
@@ -251,11 +251,11 @@ m = n                     // error: a distinct type is not its representation
 add_meters(m, f)          // error, where f is a Feet
 ```
 
-Reading one as its representation is allowed, which is what a call into C does:
-a `Meters` is an `i64` in memory. So `printf("%lld\n", m)` works, and
-`n : i64 = m` works. The checked direction is what goes in: a bare number, or a
-value that means something else, cannot become a `Meters`. There is no cast form
-for a distinct type.
+Reading one as its representation is allowed, and a call into C reads it that
+way: a `Meters` is an `i64` in memory. So `printf("%lld\n", m)` works, and
+`n : i64 = m` works. The other direction is checked: a bare number, or a value
+that means something else, cannot become a `Meters`. There is no cast form for a
+distinct type.
 
 A literal is exempt: it has no type of its own until the context gives it one,
 so `m : Meters = 3` holds.
@@ -316,8 +316,8 @@ number underneath. Both operands have to be the same set, so
 `flags_has(set, wanted)` answers whether every bit of `wanted` is on in `set`.
 Both are values of the same flags type.
 
-Reading one as its representation is allowed, and is what a call into C is, the
-same way it is for a distinct type.
+Reading one as its representation is allowed, and a call into C reads it that
+way, the same as for a distinct type.
 
 Printing a flags value writes the number, so `print("{}\n", set)` shows the bits
 as one integer. The names are not available at run time, and a program that

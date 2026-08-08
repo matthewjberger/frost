@@ -42,7 +42,7 @@ value is its trailing expression, when it has one.
   written, last first, whichever kind each is. A function with no failure set
   has no exit for one to name, so an `errdefer` in one is refused.
 
-  What it is for is the resource a `?` steps over. `f := open()?` followed by
+  It is for the resource a `?` steps over. `f := open()?` followed by
   `errdefer close(f)` says the failure path closes `f`. The straight-line path
   still owes a consumption, so the body's own `close(f)` is the first one. An
   `errdefer` answers for the failure path alone, and a body that leaves with an
@@ -57,8 +57,8 @@ is a value.
 
 `_ := Expr` evaluates the expression and binds nothing anyone can name. A list
 of one is a list, so it reads the way the `_` in a longer binding list does
-(5.1a), and what it binds is storage under a name no source can spell: a
-resource taken this way is still owed a consumer.
+(5.1a), and it binds storage under a name no source can spell: a resource taken
+this way is still owed a consumer.
 
 Writing output is `import "io.frost"` and a call, one writer per type
 ([text-and-io.md](../std/text-and-io.md)).

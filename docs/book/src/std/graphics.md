@@ -2,9 +2,8 @@
 
 `lib/` sits outside `std/`: two C libraries bound to Frost and the pieces a
 drawing program is built out of, with the programs that use them under
-`examples/graphics/`. The bindings are what a Frost program does when it has to
-talk to a real graphics API, and the math they use comes straight out of
-[math.md](math.md).
+`examples/graphics/`. The bindings are how a Frost program talks to a real
+graphics API, and the math they use comes straight out of [math.md](math.md).
 
 ## Four layers, reaching one way
 
@@ -95,10 +94,9 @@ A title is a `str`. `window_create` makes the NUL-terminated copy, calls
 
 An event kind is an enum. SDL numbers its events with gaps and a program handles
 a few of them, so `event_kind` maps the ones the examples need and answers
-`Other` for the rest, which means a kind a program did not ask about is still a
-kind it can see. `SDL_Event` is a 128-byte union with the kind in its first four
-bytes. Frost has no unions: the bytes are the value, and the kind is read out of
-them.
+`Other` for the rest. `SDL_Event` is a 128-byte union with the kind in its first
+four bytes. Frost has no unions: the bytes are the value, and the kind is read
+out of them.
 
 Flags are `flags` types, because SDL's flags are bits and a call takes several
 at once:
@@ -146,8 +144,8 @@ constants and initialisers it emitted, and the size of the file.
 ### What it generates
 
 The tool is written in Frost, over `std/json.frost`, `std/fs.frost`,
-`std/format.frost` and `std/strings.frost`. What comes out is one module with
-everything exported, in the shapes Frost prefers:
+`std/format.frost` and `std/strings.frost`. It writes one module with everything
+exported, in the shapes Frost prefers:
 
 An object becomes `distinct ^u8` plus a `no_<name>()` for the handle that names
 nothing, so an adapter cannot be written where a device belongs. A distinct type
@@ -190,7 +188,6 @@ is named for the object and the method as the schema spells them, so
 A wrapper whose method answers a handle checks it. C answers with nothing when
 the call fails, and a handle of nothing is no handle, so the generated wrapper
 prints `wgpu: device_create_buffer answered with nothing` and dies at that call.
-The failure is reported where it happened.
 
 ## The triangle
 
@@ -202,8 +199,8 @@ surface on that handle, and runs a render pass per frame.
 It writes `unsafe` twenty-one times, all of them either `ptr_cast` to hand a
 descriptor's address to C as a `^u8`, or a write through the userdata pointer
 inside a callback. Every wgpu and SDL entry point it uses is a safe Frost
-function, because the two binding files are the perimeter. What is left is the
-cost of passing a struct C wants a pointer to.
+function, because the two binding files are the perimeter. The twenty-one are
+the cost of passing a struct C wants a pointer to.
 
 Three details in it carry beyond graphics.
 
@@ -217,7 +214,7 @@ that says "as C passes a struct". See section 12.1 of
 The projection is `mat4_perspective_zo`, not `mat4_perspective`. WebGPU's clip
 space runs z from 0 to 1, and the wrong one puts half the scene behind the near
 plane without any error at all. Both matrices and the three vertex positions
-come from `std/math.frost`, so what the GPU is handed is what Frost computed.
+come from `std/math.frost`, so the GPU is handed exactly what Frost computed.
 
 The window's own event loop is a poll, which is SDL3's API. A C callback
 declared through an extern's parameter list takes its context first, and Win32's
@@ -269,11 +266,10 @@ every pass after loads what is there. A pass body picks no load op of its own.
 
 A colour or depth target, the window's own texture, and two more:
 
-A **buffer** is a run of bytes a pass writes and another reads. What it does is
-order the passes around it, which is all a compute step needs from a graph. It
-is never an attachment and decides no load op. `graph_compute_pass` declares one
-the same way a drawing pass declares a target, and is handed a compute pass
-encoder.
+A **buffer** is a run of bytes a pass writes and another reads. It orders the
+passes around it, which is all a compute step needs from a graph. It is never an
+attachment and decides no load op. `graph_compute_pass` declares one the same
+way a drawing pass declares a target, and is handed a compute pass encoder.
 
 `shadowed.frost` uses one: a compute pass writes a value per thing that is
 drawn, from the frame's clock and the index, and the scene pass reads the run to
@@ -315,10 +311,10 @@ a debug view toggles one every frame with no rescheduling. `graph_save_enabled`
 and `graph_restore_enabled` put back the state each pass had, so a pass that was
 already off stays off.
 
-A pass belongs to a phase, and `graph_run_phase` runs one. That is what renders
-the same graph once per camera: the shared work carries one phase, each view's
-work carries its own, and a program runs the shared phase once and each view's
-phase with a different external bound.
+A pass belongs to a phase, and `graph_run_phase` runs one. Rendering the same
+graph once per camera goes through phases: the shared work carries one phase,
+each view's work carries its own, and a program runs the shared phase once and
+each view's phase with a different external bound.
 
 ### Sub-graphs
 
@@ -387,8 +383,8 @@ is which travels in a `WorldIds` resource.
 
 `platform.frost` splits what a frame saw from what owns the window. `Platform`
 holds the window, the event queue and the clock. `Input` is the state a poll
-left behind, and `platform_input` hands out a copy. That copy is what a loop
-puts in the world:
+left behind, and `platform_input` hands out a copy. A loop puts that copy in the
+world:
 
 ```frost,sketch
 world_input(world, platform_input(p))
@@ -397,10 +393,10 @@ write_frame(queue, frame_uniform, world_camera(world), width(p), height(p))
 ```
 
 `move_camera` reads the `Input` and the `Camera` out of the world, moves one by
-the other, and writes it back. It captures nothing and holds no window, which is
-what a system is. How long the frame took rides along in the `Input`, so the
-clock has one reading and everything paced by it reads the same one:
-`turn_things` takes its step from there too.
+the other, and writes it back. It captures nothing and holds no window. How long
+the frame took rides along in the `Input`, so the clock has one reading and
+everything paced by it reads the same one: `turn_things` takes its step from
+there too.
 
 Every accessor comes in two forms, `key_down(p, KEY_W)` and
 `input_key_down(held, KEY_W)`, because a main loop has the window in hand and a
@@ -424,7 +420,7 @@ gets a slot of its own. A thing spawned while the program runs is drawn on the
 next frame with no table to resize and nothing to renumber, and the renderer
 never has to know how many things there are.
 
-What a pass walks is flat:
+A pass walks a flat run:
 
 ```frost,sketch
 list := unsafe { s^.list^ }
@@ -460,14 +456,13 @@ gltf_free(held)
 One entity per node, hung off whatever the file hung it off, and one child per
 primitive under a node that draws, because a glTF mesh is a list of primitives
 and each carries its own material. The geometry and the materials go to the
-device once, here. What the entities carry is the numbers they came back as, so
-after this the file has done its job and nothing spawned points into it.
+device once, here. The entities carry the numbers they came back as, so after
+this the file has done its job and nothing spawned points into it.
 
 A node that draws nothing has no `Drawn` component at all. A query asks for the
-components a thing carries, so a node carrying that component is a node the walk
-hands to a pass, and what it would hand over is a mesh that is not there. Most
-of a real file's nodes draw nothing: they are the joints and the groupings the
-model was built out of.
+components a thing carries, so giving such a node that component would put it in
+front of a pass with a mesh that is not there. Most of a real file's nodes draw
+nothing: they are the joints and the groupings the model was built out of.
 
 `Placement` carries a rotation for this. A glTF node gives a quaternion, and
 `Spin` is a turn applied on top of it about an axis of the thing's own, so a
@@ -481,8 +476,8 @@ its own tree stays untouched.
 `Drawable` carries a material number, and `draw_list_group_by_material` sorts a
 run so the things sharing one sit together. `textured.frost` sets group 2 where
 that number changes, which is four binding changes across thirty-six things.
-What a material means is the pass's own business: `textured` binds an image for
-it, and `spinning` reads the colour already in the uniform.
+A material means whatever its pass decides: `textured` binds an image for it,
+and `spinning` reads the colour already in the uniform.
 
 ## The frame is linear
 
@@ -492,8 +487,8 @@ while a texture of its swapchain is still held. A renderer that acquires a
 surface texture each frame and never gives it back draws correctly and then dies
 on the first window resize with `Invalid surface`.
 
-Rust reaches for `Drop` here. Frost has no destructors. What it has is the
-obligation on the type:
+Rust reaches for `Drop` here. Frost has no destructors, only the obligation on
+the type:
 
 ```frost,sketch
 Frame :: linear struct {

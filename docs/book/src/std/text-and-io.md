@@ -32,8 +32,8 @@ main :: fn() -> i64 {
 }
 ```
 
-`print` takes a format string and as many values as the line names. What it
-writes is the literal, with each `{}` replaced by the next value:
+`print` takes a format string and as many values as the line names. It writes
+the literal out, with each `{}` replaced by the next value:
 
 | Written | Means |
 | --- | --- |
@@ -78,8 +78,7 @@ questions are answered while the body is expanded and the arms that lose are
 deleted, so a call compiles to one direct write per value with the choice
 already made. Nothing is dispatched at run time and nothing is boxed.
 
-What is left at run time is a walk over the literal's own bytes, looking for the
-next hole.
+At run time the literal's own bytes are still walked, looking for the next hole.
 
 ### One line, one write
 
@@ -145,17 +144,17 @@ caller, so building goes through a `Builder` or an arena the caller owns.
 `str_index_of` answers an out-of-band -1, so a caller compares the result to -1
 where it stands. An enum here would cost a match at every call.
 
-`str_to_i64` answers 0 for anything it cannot read, which is what C's `atoi`
-does. It reads `"0"` and "not a number" the same way. A caller that needs the
-difference checks the bytes first with `str_byte_is_digit`. `str_to_f64` answers
-0.0 on the same terms.
+`str_to_i64` answers 0 for anything it cannot read, the way C's `atoi` does. It
+reads `"0"` and "not a number" the same way. A caller that needs the difference
+checks the bytes first with `str_byte_is_digit`. `str_to_f64` answers 0.0 on the
+same terms.
 
 `str_to_f64` reads the digits into one integer and turns where the point sat
 into a power of ten, so a number costs one scaling and not a rounding per digit.
 Where the integer is under 2^53 and the power is one of the twenty-three a
 double holds exactly, both sides are exact and the answer is the nearest double
-to what was written, which is what lets its tests compare with `==` instead of a
-tolerance. Past that the scaling goes in steps and the last place can differ.
+to what was written, so its tests compare with `==` and need no tolerance. Past
+that the scaling goes in steps and the last place can differ.
 
 ## `std/format.frost`, the builder
 
@@ -271,17 +270,17 @@ against bytes already in memory and the parse allocates nothing per string. The
 accessors take offsets and lengths for the same reason: the node names a span of
 a buffer the caller still owns.
 
-A number is read twice over. `json_number` answers with the integer part, which
-is what a count or a size is, and `json_real` answers with the whole of it,
-which is what a measurement is. A number node records where its digits sit the
-same way a string node does, so the second of those is `str_to_f64` over bytes
-already in memory and the parse still copies nothing per number.
+A number is read twice over. `json_number` answers with the integer part, for a
+count or a size, and `json_real` answers with the whole of it, for a
+measurement. A number node records where its digits sit the same way a string
+node does, so the second of those is `str_to_f64` over bytes already in memory
+and the parse still copies nothing per number.
 
 Children are chained with a `first` and a `next` index the way a linked list is,
 so an array of a thousand elements costs a thousand nodes and no reallocation of
 the parent. `json_at` walks that chain, so reading an array element by element
 with `json_at` is quadratic. Following `next` yourself reads it in linear time,
-which is what the node fields are exported for.
+and the node fields are exported for that walk.
 
 ## The five together
 

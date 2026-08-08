@@ -53,9 +53,9 @@ neither runs a deferred statement.
 Written inside any block, whether that is an `if`, a loop body, an `unsafe`
 block or a bare one, it is refused.
 
-What the function answers with is worked out before the deferred statements run
-and is held in a name of its own, so a deferred statement cannot change what the
-caller receives.
+The function's answer is worked out before the deferred statements run and held
+in a name of its own, so a deferred statement cannot change what the caller
+receives.
 
 A deferred statement is written out again at each exit, so the names it mentions
 are read there. A name it mentions that is bound again below the `defer` is
@@ -90,7 +90,7 @@ one is refused.
 `defer` and `errdefer` share one list, so they run in the order they were
 written, last first, whichever kind each is.
 
-What it is for is the resource a `?` steps over:
+It is for the resource a `?` steps over:
 
 ```frost,sketch
 work :: fn() -> i64 ! FileError {

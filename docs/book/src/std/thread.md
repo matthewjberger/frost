@@ -55,10 +55,6 @@ main :: fn() -> i64 {
 }
 ```
 
-The two work descriptions live in `main`'s frame, and `main` reads `total` only
-after both joins. The module requires that arrangement and the caller has to get
-it right.
-
 ## The caller's obligations
 
 This is the reasonable-C floor. Frost's memory-safety guarantees cover a single
@@ -79,8 +75,8 @@ same as it is in C.
 
 `atomic_add` is the whole memory model. The library defines no ordering between
 a write on one thread and a read on another, and offers no fences, no mutexes
-and no condition variables. What it offers is: a spawn starts a thread, a join
-waits for it to finish, and an atomic add on a single word is not torn by a
+and no condition variables. It offers three things: a spawn starts a thread, a
+join waits for it to finish, and an atomic add on a single word is not torn by a
 concurrent one.
 
 `self_hosted_threads_share_a_counter` in `tests/native.rs` writes this program
@@ -90,7 +86,6 @@ produce a smaller number, and a missed join would produce a smaller one too.
 
 ## Scope
 
-The module is spawn, join and atomic add. There is no thread pool, no channels,
-no locks, no thread-local storage, and no way for a thread body to return a
-value. A body communicates by writing into memory the spawner owns, and the
-spawner reads it after the join.
+There is no thread pool, no channels, no thread-local storage, and no way for a
+thread body to return a value. A body communicates by writing into memory the
+spawner owns, and the spawner reads it after the join.

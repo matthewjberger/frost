@@ -1,7 +1,7 @@
 # 8. Ownership and borrowing
 
-Frost is memory-safe, and the ownership and borrow rules below are what gives
-the guarantee. They run after parsing (`src/check/ownership.rs`).
+Frost is memory-safe, and the ownership and borrow rules below give the
+guarantee. They run after parsing (`src/check/ownership.rs`).
 
 ## 8.1 Copy and move
 
@@ -47,9 +47,9 @@ vec_push($i64, v, 1)         // fills, so the block is replaced
 print("{}\n", view[0])      // refused
 ```
 
-What makes it visible from the call is two summaries, worked out for every
-function in the program: which run under a parameter its answer views, and which
-run under a parameter it replaces. Both are runs of field names, since a
+Two summaries make it visible from the call, worked out for every function in
+the program: which run under a parameter its answer views, and which run under a
+parameter it replaces. Both are runs of field names, since a
 container with more than one run may grow one while a caller holds a view of
 another. Taking the view again after the growth clears it.
 
@@ -72,14 +72,14 @@ gated on an `unsafe` block (6a).
 ## 8.4 Reference escape through returns
 
 An implicit borrow cannot be returned, because there is nothing to write. It is
-what a parameter mode means (3.3) and has no type of its own, so a signature has
-no way to say it hands one back.
+a parameter mode (3.3) with no type of its own, so a signature has no way to say
+it hands one back.
 
 `ref T` is the explicit exception, and it is checked. A function may answer with
 one: `arena_at(...) -> ref T` reaches into an arena, and `std/slab.frost`
-reaches into its own storage the same way. What holds it to something that
-outlives the call is the pair of checks in 8.2, applied to a `ref` the same way
-they are applied to a `^T` or a slice. A `ref` naming storage in the returning
+reaches into its own storage the same way. The pair of checks in 8.2 holds it to
+something that outlives the call, applied to a `ref` the same way it is applied
+to a `^T` or a slice. A `ref` naming storage in the returning
 function's own frame is refused, and one into an arena may not outlive the
 `with` block that owns the arena (8a). Storing one is refused
 separately, whatever its provenance: no struct field, no array element, no
@@ -88,5 +88,5 @@ container.
 An `extern` return type may not contain a reference at all, since no check on
 this side governs what a C function's answer names.
 
-`Handle<T>` may be returned and stored freely, and it is what a program keeps
-when the value has to outlive the call that produced it.
+`Handle<T>` may be returned and stored freely, so a program keeps one when the
+value has to outlive the call that produced it.

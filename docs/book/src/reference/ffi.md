@@ -51,8 +51,8 @@ sqrtf :: safe extern fn(x: f32) -> f32
 The judgement is made once, at the declaration, and it is about the signature.
 `sqrtf` takes a float and answers a float, so no
 argument it can be given reaches memory. `malloc :: safe extern fn(size: i64)
--> ^u8` is also sound, because it is reading through the pointer it answers with
-that is unchecked, and that read is gated where it happens. Anything taking a
+-> ^u8` is also sound, because the unchecked part is reading through the pointer
+it answers with, and that read is gated where it happens. Anything taking a
 `^T` it will read through, or a length beside a pointer, is not `safe`. See
 [6a.4](unsafe.md#6a4-safe-extern-fn).
 
@@ -93,8 +93,7 @@ mean what C means by it and `-> ^Ctx` is how a returned pointer is written.
 
 `size_t`, `uintptr_t` and `ptrdiff_t` are all one machine word on every target
 Frost supports, and `i64`, `isize`, `u64` and `usize` are all eight bytes passed
-identically, so the choice cannot break the call. What it decides is
-arithmetic.
+identically, so the choice cannot break the call. It decides arithmetic.
 
 **Use `i64`.** Everything in Frost that is a length already is one: `slice_len`
 answers `i64`, `sizeof` answers `i64`, and an arena's count is `i64`. Declaring
@@ -122,10 +121,9 @@ frost --link --libs "C:/SDL3/SDL3.dll" -o window.exe window.frost
 frost --link --libs=-lSDL3 -o window window.frost
 ```
 
-What `--libs` names is passed to the linker in the order written, after the
-program's own objects and ahead of the platform's libraries, which is the order
-a linker resolves in: a library that itself needs libm has to be seen before
-libm is.
+The linker receives what `--libs` names in the order written, after the
+program's own objects and ahead of the platform's libraries, the order a linker
+resolves in: a library that itself needs libm has to be seen before libm is.
 
 ## 12.5a A Frost function C calls by name
 
@@ -142,12 +140,12 @@ frost_demo_double :: extern fn(value: i64) -> i64 {
 That is `int64_t frost_demo_double(int64_t)` in the emitted C and
 `.globl frost_demo_double` in the emitted assembly, from both compilers and all
 four backends. An ordinary function beside it is emitted as `frost_u_double` or
-`mf_7`, which is what keeps two Frost functions of the same name in different
+`mf_7`, a name that keeps two Frost functions of the same name in different
 modules apart.
 
 The body is ordinary Frost, and calling one from Frost needs no `unsafe`: the
-function is written here, so there is nothing unaudited about the call. What is
-outside the language is only who else may name it.
+function is written here, so there is nothing unaudited about the call. Only who
+else may name it is outside the language.
 
 Use it to supply a symbol something else already calls: a callback a C library
 takes by name, an entry point a platform expects, or the compiler's own
@@ -195,7 +193,7 @@ passes the handler's address and the context's address. There is no generated
 trampoline, because a `mut` parameter is already a pointer in the signature and
 Frost and C share a calling convention.
 
-Moving the context in is what makes this safe: the caller cannot touch the
+Moving the context in makes this safe: the caller cannot touch the
 context while the callback can fire. A registration is normally a `linear`
 value, so it must be consumed, and the region check holds it to the frame that
 holds its context.

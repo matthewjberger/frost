@@ -113,7 +113,7 @@ It is off by default, and passing the flag makes each report a build error.
 
 ## 6a.7 Where the guarantee stops
 
-`^T` is outside the six guarantees of 10.5, and so is what a C function does
-with what it is handed. Everything else in the language touches only memory it
+`^T` is outside the six guarantees of 10.5, and so is a C function's use of what
+it is handed. Everything else in the language touches only memory it
 has been shown to own, and every operation that reaches further is inside an
 `unsafe` block or behind a `safe extern` declaration.

@@ -220,20 +220,20 @@ settled it on, and a name that settled on no whole number is refused. `_` is
 the only pattern that covers the rest. A decimal and a string literal are
 refused too.
 
-An arm naming several patterns runs its body for any of them, and what it
-covers is their union. Two shapes may not be one of those alternatives: a
+An arm naming several patterns runs its body for any of them, and covers their
+union. Two shapes may not be one of those alternatives: a
 variant pattern binding payload fields, and `_`. A `|` and a range are also
 refused inside a tuple pattern, which compares one value per part.
 
-An arm every value of which the arms above it already take is refused. What an
-arm covers is read against the union of every arm above, so an arm that two
+An arm every value of which the arms above it already take is refused. An arm's
+coverage is read against the union of every arm above, so an arm that two
 earlier spans cover between them is refused, and an arm below a `case _` is
 refused by that same rule.
 
-`Bound` reads a name only where a `..` or `..=` follows it, and only where a
-`::` declaration settled that name on a whole number. Everywhere else a name in
-a pattern binds what was matched. An empty or backwards range is refused where
-it is written.
+`Bound` reads a name only where a `::` declaration settled it on a whole
+number. A name anywhere else in a pattern is the value it stands for, under the
+same rule (6.7), and a name that stands for no constant is refused. An empty or
+backwards range is refused where it is written.
 
 ## 13.6 Parenthesized groups and function literals
 

@@ -9,8 +9,8 @@ listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
 count is an integer, a constant, or a value parameter of the generic the literal
 is written in (11.1a).
 
-A call may go through a value rather than a name. A parameter, a binding, or a
-struct field of function-pointer type is called by writing the call on it:
+A call may go through a value. A parameter, a binding, or a struct field of
+function-pointer type is called by writing the call on it:
 
 ```frost,sketch
 System :: struct { run: fn(mut World), stage: i64 }
@@ -37,7 +37,7 @@ both are available.
 ## 6.3 References and dereference
 
 - `ptr_to(place)` the address of a place. There is no borrow operator: a
-  borrow is what a parameter mode means, inserted at the call.
+  parameter mode means the borrow, inserted at the call.
 - `expr^` dereferences a raw pointer to its pointee value and is assignable
   (`p^ = v`). Member access through a raw pointer is written `p^.field`.
 - A borrowed parameter needs no dereference at all, whatever its type. `p.field`
@@ -74,7 +74,7 @@ left of `{` or `::` is a bare identifier.
 type the surrounding code expects. It is the construction counterpart of the
 `case .Variant` a pattern writes (6.7).
 
-The contexts that supply a type are the ones that state it:
+The enum comes from a context that states the type:
 
 | Context | What supplies the enum |
 | --- | --- |
@@ -101,9 +101,8 @@ two nest: a literal's field supplies the type of a literal written inside it, so
 `{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
 
 Every field is still named. There is no positional literal, here or anywhere
-else in the language. A field's name is what says where the value lands, and
-the layout that shows the reader is goal 1 of
-[philosophy.md](../design/philosophy.md).
+else in the language. A field's name says where the value lands, and showing the
+reader that layout is goal 1 of [philosophy.md](../design/philosophy.md).
 
 A literal with nothing to take its type from is an error, the same as a bare
 dot. `p := { x = 1, y = 2 }` is rejected and the fix is `p : Point = { .. }` or
@@ -163,8 +162,8 @@ or the closing `}` begins. Patterns:
 A name in a pattern is the value it stands for, and a name that stands for no
 constant is refused. `_` is the arm that covers the rest, and the only one.
 
-What a `case` covers is a set a reader can count, so a decimal and a piece of
-text are both refused. A decimal covers one of the reals, and text is compared
+A `case` covers a set a reader can count, so a decimal and a piece of text are
+both refused. A decimal covers one of the reals, and text is compared
 rather than counted. `if (x == 1.5)` and `if (x == "hi")` are the spellings.
 
 An arm may name several patterns separated by `|`, and its body runs for any of
@@ -182,8 +181,8 @@ sideways :: fn(k: Step) -> i64 {
 }
 ```
 
-What such an arm covers is the union of its alternatives, so the rule that
-every variant is covered goes on counting. Three shapes may not be an
+Such an arm covers the union of its alternatives, so the rule that every
+variant is covered goes on counting. Three shapes may not be an
 alternative. A variant pattern binding payload fields may not, because two
 variants hold two shapes and a name reading a field out of them would mean two
 things. Such a pattern takes an arm of its own. `_` and a bare identifier may
@@ -214,11 +213,11 @@ kind_of :: fn(c: i64) -> i64 {
 
 A range never removes the need for a `case _`. Proving that a run of spans
 leaves no whole number out is analysis this language does not carry, so the arm
-naming the rest is what says the match is finished.
+naming the rest says the match is finished.
 
 An arm every value of which the arms above it already take is refused where it
-is written. What an arm covers is the union of what its alternatives name, read
-against the union of every arm above it: `case 1..5:`, `case 5..10:`,
+is written. An arm covers the union of what its alternatives name, read against
+the union of every arm above it: `case 1..5:`, `case 5..10:`,
 `case 3..7:` refuses the third, because between them the first two take every
 value it has. Since `_` covers everything, an arm below one is refused by that
 same rule.
