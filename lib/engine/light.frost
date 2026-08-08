@@ -52,9 +52,14 @@ Light :: struct {
 // a screen shows, so a sun much brighter than this leaves a pale floor with no
 // shape in it.
 sun :: fn() -> Light {
-    Light { light_type = LightType::Directional,
-        color = vec3(1.0, 0.98, 0.94), intensity = 1.5, range = 0.0,
-        inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
+    Light {
+        light_type = LightType::Directional,
+        color = vec3(1.0, 0.98, 0.94),
+        intensity = 1.5,
+        range = 0.0,
+        inner_cone_angle = 0.0,
+        outer_cone_angle = 0.0
+    }
 }
 
 // A lamp, bright enough to read at a couple of units and dark by ten. That
@@ -64,9 +69,14 @@ sun :: fn() -> Light {
 LAMP_RANGE :: 10.0
 
 lamp :: fn(color: Vec3, intensity: f32) -> Light {
-    Light { light_type = LightType::Point, color = color,
-        intensity = intensity, range = LAMP_RANGE,
-        inner_cone_angle = 0.0, outer_cone_angle = 0.0 }
+    Light {
+        light_type = LightType::Point,
+        color = color,
+        intensity = intensity,
+        range = LAMP_RANGE,
+        inner_cone_angle = 0.0,
+        outer_cone_angle = 0.0
+    }
 }
 
 // The same inside a cone, at full strength within the first angle and gone by
@@ -75,9 +85,14 @@ lamp :: fn(color: Vec3, intensity: f32) -> Light {
 SPOT_RANGE :: 25.0
 
 spot :: fn(color: Vec3, intensity: f32, inner: f32, outer: f32) -> Light {
-    Light { light_type = LightType::Spot, color = color,
-        intensity = intensity, range = SPOT_RANGE,
-        inner_cone_angle = inner, outer_cone_angle = outer }
+    Light {
+        light_type = LightType::Spot,
+        color = color,
+        intensity = intensity,
+        range = SPOT_RANGE,
+        inner_cone_angle = inner,
+        outer_cone_angle = outer
+    }
 }
 
 // Which component is which, asked of the world rather than written down twice.
@@ -112,7 +127,11 @@ LightCounts :: struct { total: i64, directional: i64 }
 // fragment walks the directional prefix whole and then only the lights near it.
 // Two walks of the world rather than one sort, since the answer is being built
 // from nothing either way.
-lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> LightCounts {
+lights_of :: fn(
+    mut world: World,
+    ids: LightIds,
+    mut out: []GpuLight
+) -> LightCounts {
     directional := gather_lights(world, ids, out, 0, true)
     total := gather_lights(world, ids, out, directional, false)
     LightCounts { total = total, directional = directional }
@@ -120,8 +139,13 @@ lights_of :: fn(mut world: World, ids: LightIds, mut out: []GpuLight) -> LightCo
 
 // The lights of one kind, appended from `written`, answering with where the
 // next one would go.
-gather_lights :: fn(mut world: World, ids: LightIds, mut out: []GpuLight,
-    written: i64, wanted_directional: bool) -> i64 {
+gather_lights :: fn(
+    mut world: World,
+    ids: LightIds,
+    mut out: []GpuLight,
+    written: i64,
+    wanted_directional: bool
+) -> i64 {
     var q := query_begin(world)
     query_with(q, ids.light)
     query_with(q, ids.global_transform)
@@ -134,8 +158,12 @@ gather_lights :: fn(mut world: World, ids: LightIds, mut out: []GpuLight,
             one := ecs_get($Light, world, entity, ids.light)
             is_directional := one.light_type == LightType::Directional
             if (is_directional == wanted_directional) {
-                placed := ecs_get($GlobalTransform, world, entity,
-                    ids.global_transform).matrix
+                placed := ecs_get(
+                    $GlobalTransform,
+                    world,
+                    entity,
+                    ids.global_transform
+                ).matrix
                 // The fourth column is where the entity ended up, and the third
                 // is its +Z, so what a light faces is the other way.
                 out[count] = GpuLight {

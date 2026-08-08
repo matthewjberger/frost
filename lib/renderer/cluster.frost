@@ -142,8 +142,10 @@ cluster_new :: fn(device: Device) -> Cluster {
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
-    made := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
+    made := device_create_pipeline_layout(
+        device,
+        ptr_to(pipeline_layout_descriptor)
+    )
     Cluster {
         lights = lights,
         uniforms = uniforms,
@@ -152,12 +154,28 @@ cluster_new :: fn(device: Device) -> Cluster {
         grid = grid,
         indices = indices,
         layout = layout,
-        group = build_group(device, layout, lights, uniforms, view, bounds,
-            grid, indices),
-        bounds_pipeline = step_of(device, shader, made,
-            StringView { data = "bounds", length = 6 }),
-        assign_pipeline = step_of(device, shader, made,
-            StringView { data = "assign", length = 6 }),
+        group = build_group(
+            device,
+            layout,
+            lights,
+            uniforms,
+            view,
+            bounds,
+            grid,
+            indices
+        ),
+        bounds_pipeline = step_of(
+            device,
+            shader,
+            made,
+            StringView { data = "bounds", length = 6 }
+        ),
+        assign_pipeline = step_of(
+            device,
+            shader,
+            made,
+            StringView { data = "assign", length = 6 }
+        ),
     }
 }
 
@@ -205,9 +223,19 @@ give_back :: fn(held: Buffer) {
 // The projection is inverted here rather than on the device, because every one
 // of the three thousand four hundred and fifty-six threads would otherwise
 // invert the same matrix.
-cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
-    total: i64, directional: i64, projection: Mat4, view: Mat4,
-    width: i64, height: i64, z_near: f32, z_far: f32) {
+cluster_write :: fn(
+    mut held: Cluster,
+    queue: Queue,
+    lights: []GpuLight,
+    total: i64,
+    directional: i64,
+    projection: Mat4,
+    view: Mat4,
+    width: i64,
+    height: i64,
+    z_near: f32,
+    z_far: f32
+) {
     var count := total
     if (count > MAX_LIGHTS) {
         count = MAX_LIGHTS
@@ -221,8 +249,13 @@ cluster_write :: fn(mut held: Cluster, queue: Queue, lights: []GpuLight,
         leading = count
     }
     if (count > 0) {
-        queue_write_buffer(queue, held.lights, 0, ptr_to(lights[0]),
-            LIGHT_BYTES * count)
+        queue_write_buffer(
+            queue,
+            held.lights,
+            0,
+            ptr_to(lights[0]),
+            LIGHT_BYTES * count
+        )
     }
 
     inverse, ok := mat4_inverse(projection)
@@ -281,14 +314,17 @@ cluster_record :: fn(mut s: Cluster, encoder: CommandEncoder) {
 // One thread per box, in groups of eight by eight, which is what the shader
 // declares. The grid is sixteen by nine by twenty-four, so the y dimension
 // rounds up to two groups and the threads past the end return.
-step :: fn(mut s: Cluster, encoder: CommandEncoder,
-    pipeline: ComputePipeline) {
+step :: fn(mut s: Cluster, encoder: CommandEncoder, pipeline: ComputePipeline) {
     var descriptor := compute_pass_descriptor_init()
     pass := command_encoder_begin_compute_pass(encoder, ptr_to(descriptor))
     compute_pass_encoder_set_pipeline(pass, pipeline)
     compute_pass_encoder_set_bind_group(pass, 0, s.group, 0, no_pointer())
-    compute_pass_encoder_dispatch_workgroups(pass, (CLUSTER_GRID_X + 7) / 8,
-        (CLUSTER_GRID_Y + 7) / 8, CLUSTER_GRID_Z)
+    compute_pass_encoder_dispatch_workgroups(
+        pass,
+        (CLUSTER_GRID_X + 7) / 8,
+        (CLUSTER_GRID_Y + 7) / 8,
+        CLUSTER_GRID_Z
+    )
     compute_pass_encoder_end(pass)
     compute_pass_encoder_release(pass)
 }
@@ -513,8 +549,12 @@ cluster_module :: fn(device: Device) -> ShaderModule {
     device_create_shader_module(device, ptr_to(module_descriptor))
 }
 
-step_of :: fn(device: Device, shader: ShaderModule, layout: PipelineLayout,
-    entry_point: StringView) -> ComputePipeline {
+step_of :: fn(
+    device: Device,
+    shader: ShaderModule,
+    layout: PipelineLayout,
+    entry_point: StringView
+) -> ComputePipeline {
     var descriptor := compute_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.compute.module = shader
@@ -542,15 +582,26 @@ build_layout :: fn(device: Device) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-build_group :: fn(device: Device, layout: BindGroupLayout, lights: Buffer,
-    uniforms: Buffer, view: Buffer, bounds: Buffer, grid: Buffer,
-    indices: Buffer) -> BindGroup {
+build_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    lights: Buffer,
+    uniforms: Buffer,
+    view: Buffer,
+    bounds: Buffer,
+    grid: Buffer,
+    indices: Buffer
+) -> BindGroup {
     var entries: [6]BindGroupEntry = [bind_group_entry_init(); 6]
     var held: [6]Buffer = [uniforms, bounds, grid, indices, lights, view]
-    var sizes: [6]i64 = [CLUSTER_UNIFORM_BYTES, TOTAL_CLUSTERS * BOUNDS_BYTES,
+    var sizes: [6]i64 = [
+        CLUSTER_UNIFORM_BYTES,
+        TOTAL_CLUSTERS * BOUNDS_BYTES,
         TOTAL_CLUSTERS * GRID_BYTES,
         TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
-        LIGHT_BYTES * MAX_LIGHTS, 64]
+        LIGHT_BYTES * MAX_LIGHTS,
+        64
+    ]
     var slot: i64 = 0
     while (slot < 6) {
         entries[slot].binding = cast($u32, slot)

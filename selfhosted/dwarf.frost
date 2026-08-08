@@ -165,11 +165,16 @@ dwarf_room :: fn(mut unit: Assembly, producer: str) -> i64 {
 dwarf_build :: fn(mut unit: Assembly, mut out: Blob, producer: str) -> Dwarf {
     var held := Dwarf {
         wanted = false,
-        line_at = 0, line_size = 0,
-        abbrev_at = 0, abbrev_size = 0,
-        info_at = 0, info_size = 0,
-        line_address = 0, info_address = 0,
-        info_abbrev = 0, info_stmt = 0,
+        line_at = 0,
+        line_size = 0,
+        abbrev_at = 0,
+        abbrev_size = 0,
+        info_at = 0,
+        info_size = 0,
+        line_address = 0,
+        info_address = 0,
+        info_abbrev = 0,
+        info_stmt = 0,
     }
     if (asm_loc_count(unit) == 0 || asm_file_count(unit) == 0) {
         return held
@@ -312,8 +317,12 @@ dwarf_abbrev :: fn(mut out: Blob, mut held: Dwarf) {
 
 // The compilation unit: what compiled it, what it was called, the run of code
 // it covers, and where its line program is.
-dwarf_info :: fn(mut unit: Assembly, mut out: Blob, mut held: Dwarf,
-    producer: str) {
+dwarf_info :: fn(
+    mut unit: Assembly,
+    mut out: Blob,
+    mut held: Dwarf,
+    producer: str
+) {
     held.info_at = out.count
 
     length_at := out.count

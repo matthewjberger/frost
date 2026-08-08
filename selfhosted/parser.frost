@@ -189,8 +189,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        return new_named_node_at(p, NodeKind::Float, 0, offset, length,
-            offset)
+        return new_named_node_at(p, NodeKind::Float, 0, offset, length, offset)
     }
     // `[a, b, c]`. The element type and the length both come from what is
     // written, so an array literal needs no annotation to have a type.
@@ -321,8 +320,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // at, which is the brace itself.
         span_end := cur_off(p)
         p.unsafe_depth = p.unsafe_depth - 1
-        arena_push(p.unsafe_spans,
-            UnsafeSpan { start = start, end = span_end, used = 0 })
+        arena_push(
+            p.unsafe_spans,
+            UnsafeSpan { start = start, end = span_end, used = 0 }
+        )
         return inner
     }
     // An `if` used where a value is wanted takes the same road a `match` does:
@@ -344,10 +345,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             answered = otherwise
         }
         bind_answer_type(p, bind, answered)
-        arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-                ty = 0, slot = 0 })
-        return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+        arena_push(
+            p.pending,
+            LocalVar { name_off = bind, name_len = chosen, ty = 0, slot = 0 }
+        )
+        return new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            name_off
+        )
     }
     // A match used where a value is wanted: bind a name, let each arm assign to
     // it, and stand for the name. The match itself is queued for the block,
@@ -361,10 +370,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         chosen := parse_match(p)
         answered := assign_match_values(p, chosen, name_off, name_len)
         bind_answer_type(p, bind, answered)
-        arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-                ty = 0, slot = 0 })
-        return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+        arena_push(
+            p.pending,
+            LocalVar { name_off = bind, name_len = chosen, ty = 0, slot = 0 }
+        )
+        return new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            name_off
+        )
     }
     // `.Circle { radius = 5 }`, whose enum comes from what the context expects.
     if (kind == TokenKind::Dot) {
@@ -601,8 +618,15 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return arena_push(
                 p.arena,
-                Node { kind = NodeKind::SliceLen, a = inner, b = 0, c = 0,
-                    val = written, next = -1, pos = offset },
+                Node {
+                    kind = NodeKind::SliceLen,
+                    a = inner,
+                    b = 0,
+                    c = 0,
+                    val = written,
+                    next = -1,
+                    pos = offset
+                },
             )
         }
         // `cast($u8, n)`: a conversion the reader asked for. Written the way
@@ -658,8 +682,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // end at. A reader told a call is wrong is told where the call is, and
         // for a call whose arguments run over three lines those are two
         // different lines.
-        made := new_node_at(p, NodeKind::Call, args, p.args_unbound_map,
-            fn_index, offset)
+        made := new_node_at(
+            p,
+            NodeKind::Call,
+            args,
+            p.args_unbound_map,
+            fn_index,
+            offset
+        )
         // What a compile-time list was given is the type of each argument past
         // the ordinary parameters, and only here are the names in scope to say
         // what those types are. Every later pass reads the tuple this noted.
@@ -670,9 +700,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // while the names this declaration gave them are still in scope.
         note_format_forward(p, args, fn_index)
         if (p.args_unbound_map == 0 && pack_call_args(p, args, fn_index)) {
-            note_type_args(p, p.call_pack_primary, p.call_xarg_start,
-                p.call_xarg_count, generic_fn_of(p, fn_index) + 1,
-                generic_fn_of(p, fn_index))
+            note_type_args(
+                p,
+                p.call_pack_primary,
+                p.call_xarg_start,
+                p.call_xarg_count,
+                generic_fn_of(p, fn_index) + 1,
+                generic_fn_of(p, fn_index)
+            )
             // Kept for the pass that reads what the list turned out to hold,
             // which is after every instance has been walked.
             note_format_call(p, args, fn_index)
@@ -681,8 +716,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             // and nowhere else, so the tuple is read here or not at all.
             held := parse_call_type_args(p, args, generic_fn_of(p, fn_index))
             if (held >= 0) {
-                note_type_args(p, held, p.gargs.count, 0, 0,
-                    generic_fn_of(p, fn_index))
+                note_type_args(
+                    p,
+                    held,
+                    p.gargs.count,
+                    0,
+                    0,
+                    generic_fn_of(p, fn_index)
+                )
             }
         }
         // Where the name was written, which is where a reader looks when the
@@ -719,8 +760,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // be.
         if (struct_ty == TY_INFER) {
             inits := parse_field_inits(p, TY_I64)
-            made := instantiate_inferred(p, generic_index_for(p, offset, length),
-                inits, offset, length)
+            made := instantiate_inferred(
+                p,
+                generic_index_for(p, offset, length),
+                inits,
+                offset,
+                length
+            )
             return new_struct_lit(p, made, inits)
         }
         inits := parse_field_inits(p, struct_ty)
@@ -743,7 +789,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // parameter, whose name stands for a number.
         if (cur(p) == TokenKind::Dot) {
             note_called_name(p, offset, length)
-            return new_named_node_at(p, NodeKind::Var, 0, offset, length, offset)
+            return new_named_node_at(
+                p,
+                NodeKind::Var,
+                0,
+                offset,
+                length,
+                offset
+            )
         }
         return new_node(p, NodeKind::Num, 0, 0, 0)
     }
@@ -771,8 +824,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // stands for. Placed at the name instead, a fault about it pointed into
         // the room past the source where that name was made up, so the line a
         // reader was shown read ` items__0 items__0 `.
-        return new_named_node_at(p, NodeKind::Var, 0, aliased_off, aliased_len,
-            offset)
+        return new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            aliased_off,
+            aliased_len,
+            offset
+        )
     }
     // A compile-time parameter bound to a name stands for that name, so what is
     // recorded here is the name the call site passed. The binding is in force
@@ -802,7 +861,10 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         bound := type_code_for(p, param.name_off, param.name_len)
-        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1, node = -1 })
+        arena_push(
+            p.gargs,
+            GArg { value = bound, is_type = 0, pending = -1, node = -1 }
+        )
         j = j + 1
     }
     instantiate(p, gi, p.type_binding, run_start, xparam_count)
@@ -840,8 +902,13 @@ TY_INFER :: -2
 // Only a field written as the bare parameter name answers. `storage: [N]T` says
 // what `T` is as well, but reading it means matching the shape of a type against
 // the shape of a value, and the arguments can be written out instead.
-param_typed_value :: fn(mut p: Parser, field_token: i64, tparam_off: i64,
-    tparam_len: i64, inits: i64) -> i64 {
+param_typed_value :: fn(
+    mut p: Parser,
+    field_token: i64,
+    tparam_off: i64,
+    tparam_len: i64,
+    inits: i64
+) -> i64 {
     saved := p.ti
     p.ti = field_token
     var found: i64 = -1
@@ -881,8 +948,12 @@ param_typed_value :: fn(mut p: Parser, field_token: i64, tparam_off: i64,
 }
 
 // The value a literal gives one named field, or -1 where it names no such field.
-init_value_for :: fn(mut p: Parser, inits: i64, name_off: i64,
-    name_len: i64) -> i64 {
+init_value_for :: fn(
+    mut p: Parser,
+    inits: i64,
+    name_off: i64,
+    name_len: i64
+) -> i64 {
     var id := inits
     while (id != (-1)) {
         init := arena_at(p.arena, id)
@@ -901,8 +972,13 @@ init_value_for :: fn(mut p: Parser, inits: i64, name_off: i64,
 
 // What one parameter is bound to, read off the value written for a field the
 // template declares as that parameter, or -1 where no field carries it.
-inferred_arg :: fn(mut p: Parser, field_token: i64, name_off: i64,
-    name_len: i64, inits: i64) -> i64 {
+inferred_arg :: fn(
+    mut p: Parser,
+    field_token: i64,
+    name_off: i64,
+    name_len: i64,
+    inits: i64
+) -> i64 {
     value := param_typed_value(p, field_token, name_off, name_len, inits)
     if (value < 0) {
         return -1
@@ -914,8 +990,13 @@ inferred_arg :: fn(mut p: Parser, field_token: i64, name_off: i64,
 // parameter is read off the field that declares it, so a generic taking several
 // resolves as a whole, and one whose parameter no field carries by itself is
 // left to the reader to write out.
-instantiate_inferred :: fn(mut p: Parser, gi: i64, inits: i64, offset: i64,
-    length: i64) -> i64 {
+instantiate_inferred :: fn(
+    mut p: Parser,
+    gi: i64,
+    inits: i64,
+    offset: i64,
+    length: i64
+) -> i64 {
     template := arena_at(p.structs, gi)
     xparam_start := template.xparam_start
     xparam_count := template.xparam_count
@@ -941,7 +1022,10 @@ instantiate_inferred :: fn(mut p: Parser, gi: i64, inits: i64, offset: i64,
         if (bound < 0) {
             report_uninferable(p, offset, length)
         }
-        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1, node = -1 })
+        arena_push(
+            p.gargs,
+            GArg { value = bound, is_type = 0, pending = -1, node = -1 }
+        )
         j = j + 1
     }
     instantiate(p, gi, primary, run_start, xparam_count)
@@ -1008,8 +1092,12 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // the literal stands in with a placeholder that is not a struct, and nothing of
 // that parse is emitted: the body is read again per instance with the arguments
 // bound, and there the name answers with the instance.
-refuse_unknown_lit_type :: fn(mut p: Parser, ty: i64, offset: i64,
-    length: i64) {
+refuse_unknown_lit_type :: fn(
+    mut p: Parser,
+    ty: i64,
+    offset: i64,
+    length: i64
+) {
     if (ty == TY_INFER || is_struct_ty(ty)) {
         return
     }
@@ -1100,15 +1188,13 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     p.try_count = p.try_count + 1
 
     bind := new_let_node(p, value, name_off, name_len, -1)
-    held := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+    held := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
     tag := new_field_node(p, held, p.name_tag, 3)
     zero := new_node(p, NodeKind::Num, 0, 0, 0)
     failed := new_node(p, NodeKind::Bin, tag, zero, OP_NE)
     carried := new_field_node(
         p,
-        new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off),
+        new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off),
         p.name_err_error,
         9,
     )
@@ -1123,11 +1209,13 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         1,
     )
     guard := new_node(p, NodeKind::If, failed, hand_on, -1)
-    arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0, slot = 0 })
+    arena_push(
+        p.pending,
+        LocalVar { name_off = bind, name_len = guard, ty = 0, slot = 0 }
+    )
     new_field_node(
         p,
-        new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off),
+        new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off),
         p.name_ok_value,
         8,
     )
@@ -1182,13 +1270,20 @@ lower_flags_has :: fn(mut p: Parser, set: i64, wanted: i64) -> i64 {
     name_len := 6 + digits_in(p.match_count)
     p.match_count = p.match_count + 1
     bind := new_let_node(p, wanted, name_off, name_len, -1)
-    arena_push(p.pending,
-        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
-    held := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+    arena_push(
+        p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+    )
+    held := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
     narrowed := new_node(p, NodeKind::Bin, set, held, OP_BITAND)
-    again := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+    again := new_named_node_at(
+        p,
+        NodeKind::Var,
+        0,
+        name_off,
+        name_len,
+        name_off
+    )
     new_node(p, NodeKind::Bin, narrowed, again, OP_EQ)
 }
 
@@ -1302,8 +1397,7 @@ pack_element_at :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
         frost_rt_recover_escape()
     }
     name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len, at)
-    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        index_node.pos)
+    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, index_node.pos)
 }
 
 parse_factor :: fn(mut p: Parser) -> i64 {
@@ -1357,12 +1451,14 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     name_len := 5 + digits_in(p.match_count)
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, -1)
-    arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    arena_push(
+        p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+    )
     // The name binds the call, so an argument written as the call reads the
     // same as one written as a name given the call.
     record_parse_local(p, name_off, name_len, binding_type(p, value), value)
-    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
 }
 
 // The arguments of a call, with the callee's index when there is one. Each
@@ -1390,8 +1486,13 @@ names_the_pack :: fn(mut p: Parser) -> bool {
 
 // One argument per element of the list, in order: a value element is the
 // parameter this instance took it under, a type element is the type itself.
-splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
-    index_in: i64, at: i64) -> (head: i64, tail: i64, index: i64) {
+splice_pack_arguments :: fn(
+    mut p: Parser,
+    head_in: i64,
+    tail_in: i64,
+    index_in: i64,
+    at: i64
+) -> (head: i64, tail: i64, index: i64) {
     var head := head_in
     var tail := tail_in
     var index := index_in
@@ -1402,10 +1503,20 @@ splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
         if (element.is_type == 1) {
             value = new_type_node(p, NodeKind::TypeVal, 0, element.value)
         } else {
-            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
-                k)
-            value = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-                at)
+            name_off, name_len := pack_element_name(
+                p,
+                p.pack_off,
+                p.pack_len,
+                k
+            )
+            value = new_named_node_at(
+                p,
+                NodeKind::Var,
+                0,
+                name_off,
+                name_len,
+                at
+            )
         }
         arg := new_node(p, NodeKind::Arg, value, 0, 0)
         if (head == (-1)) {
@@ -1425,8 +1536,14 @@ splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
 // name standing for it. The cursor is past the expression and on the `for`, so
 // the header is read once and then the expression is read again per element
 // from where it started.
-splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
-    head_in: i64, tail_in: i64, index_in: i64)
+splice_pack_map :: fn(
+    mut p: Parser,
+    argument_start: i64,
+    parsed: i64,
+    head_in: i64,
+    tail_in: i64,
+    index_in: i64
+)
     -> (head: i64, tail: i64, index: i64) {
     advance(p)
     item_off := cur_off(p)
@@ -1472,12 +1589,23 @@ splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
         var mark: i64 = p.aliases.count
         var type_mark: i64 = p.type_aliases.count
         if (element.is_type == 1) {
-            arena_push(p.type_aliases,
-                ConstDef { name_off = item_off, name_len = item_len,
-                    value = element_ty, kind = CONST_INT, count = 0 })
+            arena_push(
+                p.type_aliases,
+                ConstDef {
+                    name_off = item_off,
+                    name_len = item_len,
+                    value = element_ty,
+                    kind = CONST_INT,
+                    count = 0
+                }
+            )
         } else {
-            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
-                k)
+            name_off, name_len := pack_element_name(
+                p,
+                p.pack_off,
+                p.pack_len,
+                k
+            )
             mark = push_alias(p, item_off, item_len, name_off, name_len)
         }
         value := hold_struct_result(p, parse_expr(p))
@@ -1543,8 +1671,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             if (cur(p) == TokenKind::KwFor) {
                 p.pending.count = pending_mark
                 mapped_head, mapped_tail, mapped_index :=
-                splice_pack_map(p, argument_start, value, head, tail,
-                    index)
+                splice_pack_map(p, argument_start, value, head, tail, index)
                 head = mapped_head
                 tail = mapped_tail
                 index = mapped_index
@@ -1553,9 +1680,15 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
                     held := arena_at(p.arena, value)
                     if (held.kind == NodeKind::StructLit
                         && held.val == (-1)) {
-                        arena_push(p.variant_fixups,
-                            VariantFixup { lit = value, callee = callee,
-                                argument = index, kind = FixupKind::Literal })
+                        arena_push(
+                            p.variant_fixups,
+                            VariantFixup {
+                                lit = value,
+                                callee = callee,
+                                argument = index,
+                                kind = FixupKind::Literal
+                            }
+                        )
                     }
                 }
                 arg := new_node(p, NodeKind::Arg, value, 0, 0)
@@ -1617,8 +1750,14 @@ parse_unary :: fn(mut p: Parser) -> i64 {
             offset := cur_off(p)
             length := cur_len(p)
             advance(p)
-            made := new_named_node_at(p, NodeKind::Float, 0, offset, length,
-                start)
+            made := new_named_node_at(
+                p,
+                NodeKind::Float,
+                0,
+                offset,
+                length,
+                start
+            )
             var node := arena_at(p.arena, made)
             node.b = 1
             return made
@@ -1761,8 +1900,10 @@ hold_vector_operand :: fn(mut p: Parser, value: i64, ty: i64) -> i64 {
     name_len := 6 + digits_in(p.match_count)
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, ty)
-    arena_push(p.pending,
-        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    arena_push(
+        p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+    )
     record_parse_local(p, name_off, name_len, ty, value)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
 }
@@ -1799,8 +1940,13 @@ report_operand :: fn(mut p: Parser, ty: i64) {
 // does: a float rounds as one number does, and a whole number aborts on
 // overflow and says where. The lanes are written out as an array literal bound
 // to a name, so every backend carries this with the code it already has.
-new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
-    start: i64) -> i64 {
+new_arith :: fn(
+    mut p: Parser,
+    left: i64,
+    right: i64,
+    op: i64,
+    start: i64
+) -> i64 {
     left_ty := parse_time_type(p, left)
     right_ty := parse_time_type(p, right)
     left_vector := is_vector_ty(p, left_ty)
@@ -1828,15 +1974,20 @@ new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
     }
     if (count <= 0 || (count & (count - 1)) != 0) {
         report_where(p.modules, p.src, start)
-        report_fmt("elementwise arithmetic is over a vector whose length is a power of two, and {} is not one",
-            count)
+        report_fmt(
+            "elementwise arithmetic is over a vector whose length is a power of two, and {} is not one",
+            count
+        )
         frost_rt_recover_escape()
     }
     bytes := type_size(p, element) * count
     if (bytes > VECTOR_LIMIT) {
         report_where(p.modules, p.src, start)
-        report_fmt("elementwise arithmetic is over a vector of at most {} bytes, which is a register's worth, and this one is {}",
-            VECTOR_LIMIT, bytes)
+        report_fmt(
+            "elementwise arithmetic is over a vector of at most {} bytes, which is a register's worth, and this one is {}",
+            VECTOR_LIMIT,
+            bytes
+        )
         frost_rt_recover_escape()
     }
     whole := is_integer(element)
@@ -1857,10 +2008,22 @@ new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
     // overflow aborts and says which lane it was, and a packed add has no way
     // to say that.
     if (whole == false && bytes % 16 == 0) {
-        left_side := vector_operand(p, left, left_vector, vector, element,
-            count)
-        right_side := vector_operand(p, right, right_vector, vector, element,
-            count)
+        left_side := vector_operand(
+            p,
+            left,
+            left_vector,
+            vector,
+            element,
+            count
+        )
+        right_side := vector_operand(
+            p,
+            right,
+            right_vector,
+            vector,
+            element,
+            count
+        )
         return new_node_at(p, NodeKind::Bin, left_side, right_side, op, start)
     }
     var lhs := left
@@ -1878,12 +2041,20 @@ new_arith :: fn(mut p: Parser, left: i64, right: i64, op: i64,
         var a := lhs
         var b := rhs
         if (left_vector) {
-            a = new_index(p, clone_place(p, lhs),
-                new_node_at(p, NodeKind::Num, 0, 0, lane, start), start)
+            a = new_index(
+                p,
+                clone_place(p, lhs),
+                new_node_at(p, NodeKind::Num, 0, 0, lane, start),
+                start
+            )
         }
         if (right_vector) {
-            b = new_index(p, clone_place(p, rhs),
-                new_node_at(p, NodeKind::Num, 0, 0, lane, start), start)
+            b = new_index(
+                p,
+                clone_place(p, rhs),
+                new_node_at(p, NodeKind::Num, 0, 0, lane, start),
+                start
+            )
         }
         computed := new_node_at(p, NodeKind::Bin, a, b, op, start)
         item := new_node(p, NodeKind::Arg, computed, 0, 0)
@@ -1908,8 +2079,10 @@ bind_vector :: fn(mut p: Parser, value: i64, vector: i64) -> i64 {
     name_len := 6 + digits_in(p.match_count)
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, vector)
-    arena_push(p.pending,
-        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    arena_push(
+        p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+    )
     record_parse_local(p, name_off, name_len, vector, value)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
 }
@@ -1917,8 +2090,14 @@ bind_vector :: fn(mut p: Parser, value: i64, vector: i64) -> i64 {
 // One side of a packed operation as a vector. A number written beside a vector
 // is that number in every lane, which is a literal of N copies rather than an
 // instruction of its own.
-vector_operand :: fn(mut p: Parser, value: i64, is_vector: bool,
-    vector: i64, element: i64, count: i64) -> i64 {
+vector_operand :: fn(
+    mut p: Parser,
+    value: i64,
+    is_vector: bool,
+    vector: i64,
+    element: i64,
+    count: i64
+) -> i64 {
     if (is_vector) {
         return value
     }
@@ -2162,9 +2341,10 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (is_value == 1 && is_pointer(param_ty) == false) {
                 param_ty = borrow_of(p, param_ty)
             }
-            arena_push(p.proc_params,
-                GArg { value = param_ty, is_type = 0, pending = -1,
-                    node = -1 })
+            arena_push(
+                p.proc_params,
+                GArg { value = param_ty, is_type = 0, pending = -1, node = -1 }
+            )
             param_count = param_count + 1
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
@@ -2286,7 +2466,10 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (a == TY_PARAM) {
                     all_concrete = 0
                 }
-                arena_push(p.argbuf, GArg { value = a, is_type = 0, pending = -1, node = -1 })
+                arena_push(
+                    p.argbuf,
+                    GArg { value = a, is_type = 0, pending = -1, node = -1 }
+                )
                 count = count + 1
                 if (cur(p) == TokenKind::Comma) {
                     advance(p)
@@ -2302,9 +2485,15 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 var j: i64 = 1
                 while (j < count) {
                     entry := arena_at(p.argbuf, buf_start + j)
-                    arena_push(p.gargs,
-                        GArg { value = entry.value, is_type = 0, pending = -1,
-                            node = -1 })
+                    arena_push(
+                        p.gargs,
+                        GArg {
+                            value = entry.value,
+                            is_type = 0,
+                            pending = -1,
+                            node = -1
+                        }
+                    )
                     j = j + 1
                 }
                 xarg_count = count - 1
@@ -2366,8 +2555,10 @@ parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
     advance(p)
     if (value <= 0 || (value & (value - 1)) != 0) {
         report_where(p.modules, p.src, at)
-        report_fmt("`align` takes a power of two, and {} is not one; an address is a multiple of a power of two or of nothing",
-            value)
+        report_fmt(
+            "`align` takes a power of two, and {} is not one; an address is a multiple of a power of two or of nothing",
+            value
+        )
         frost_rt_recover_escape()
     }
     // `packed` says no field is padded and `align` says this one is, so a
@@ -2398,8 +2589,14 @@ parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
         field_align := parse_field_alignment(p, packed)
         field := arena_push(
             p.fields,
-            StructField { name_off = field_offset, name_len = field_length,
-                ty = field_ty, next = -1, variant = -1, align = field_align },
+            StructField {
+                name_off = field_offset,
+                name_len = field_length,
+                ty = field_ty,
+                next = -1,
+                variant = -1,
+                align = field_align
+            },
         )
         if (head == (-1)) {
             head = field
@@ -2462,9 +2659,15 @@ record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
         p.xparam_start = p.gparams.count
         p.xparam_count = 0
     } else {
-        arena_push(p.gparams,
-            GParam { name_off = off, name_len = len, is_value = is_value,
-                is_fn = 0 })
+        arena_push(
+            p.gparams,
+            GParam {
+                name_off = off,
+                name_len = len,
+                is_value = is_value,
+                is_fn = 0
+            }
+        )
         p.xparam_count = p.xparam_count + 1
     }
     p.saw_type_param = 1
@@ -2475,22 +2678,40 @@ record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
 // unchanged. The rest are pushed onto the `gbindings` stack from the argument
 // run and popped by restoring the stack's height afterwards. Returns the height
 // to restore to.
-push_bindings :: fn(mut p: Parser, tparam_off: i64, tparam_len: i64,
-    xparam_start: i64, xparam_count: i64, arg: i64, xarg_start: i64) -> i64 {
+push_bindings :: fn(
+    mut p: Parser,
+    tparam_off: i64,
+    tparam_len: i64,
+    xparam_start: i64,
+    xparam_count: i64,
+    arg: i64,
+    xarg_start: i64
+) -> i64 {
     mark := p.gbindings.count
     var i: i64 = 0
     while (i < xparam_count) {
         param := arena_at(p.gparams, xparam_start + i)
         garg := arena_at(p.gargs, xarg_start + i)
-        arena_push(p.gbindings, GBinding { name_off = param.name_off,
-                name_len = param.name_len, bound = garg.value })
+        arena_push(
+            p.gbindings,
+            GBinding {
+                name_off = param.name_off,
+                name_len = param.name_len,
+                bound = garg.value
+            }
+        )
         i = i + 1
     }
     mark
 }
 
-instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64) -> i64 {
+instantiate :: fn(
+    mut p: Parser,
+    generic_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
     var i: i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
@@ -2522,8 +2743,15 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     p.type_param_len = tparam_len
     p.type_binding = arg
     p.binding_active = 1
-    mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
-        arg, xarg_start)
+    mark := push_bindings(
+        p,
+        tparam_off,
+        tparam_len,
+        xparam_start,
+        xparam_count,
+        arg,
+        xarg_start
+    )
     p.ti = field_token
     // An enum's variants are recorded against the index this instance will take,
     // which is the current end of the table so long as the body creates no
@@ -2545,19 +2773,35 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     struct_index := p.structs.count
     arena_push(
         p.structs,
-        StructDef { name_off = name_off, name_len = name_len,
-            field_head = field_head, is_generic = 0, tparam_off = 0,
-            tparam_len = 0, field_token = 0, instance_id = struct_index,
+        StructDef {
+            name_off = name_off,
+            name_len = name_len,
+            field_head = field_head,
+            is_generic = 0,
+            tparam_off = 0,
+            tparam_len = 0,
+            field_token = 0,
+            instance_id = struct_index,
             is_linear = holds_linear(p, field_head, template_linear),
-            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0,
-            declared = 1, is_multi = 0, is_result = 0,
-            is_packed = template_packed },
+            emitted = 0,
+            xparam_start = 0,
+            xparam_count = 0,
+            is_enum = 0,
+            declared = 1,
+            is_multi = 0,
+            is_result = 0,
+            is_packed = template_packed
+        },
     )
     arena_push(
         p.instances,
-        Instance { generic_index = generic_index, arg = arg,
-            xarg_start = xarg_start, xarg_count = xarg_count,
-            struct_index = struct_index },
+        Instance {
+            generic_index = generic_index,
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count,
+            struct_index = struct_index
+        },
     )
     STRUCT_BASE + struct_index
 }
@@ -2608,8 +2852,14 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         col_ty := array_of(p, field_ty, count)
         node := arena_push(
             p.fields,
-            StructField { name_off = field_name_off, name_len = field_name_len,
-                ty = col_ty, next = -1, variant = -1, align = 0 },
+            StructField {
+                name_off = field_name_off,
+                name_len = field_name_len,
+                ty = col_ty,
+                next = -1,
+                variant = -1,
+                align = 0
+            },
         )
         if (head == (-1)) {
             head = node
@@ -2625,9 +2875,14 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     gen_off := synth_literal(p, "generations")
     gen_node := arena_push(
         p.fields,
-        StructField { name_off = gen_off,
+        StructField {
+            name_off = gen_off,
             name_len = cstr_len("generations"),
-            ty = i64_col, next = -1, variant = -1, align = 0 },
+            ty = i64_col,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     if (head == (-1)) {
         head = gen_node
@@ -2639,18 +2894,28 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     free_off := synth_literal(p, "free_list")
     free_node := arena_push(
         p.fields,
-        StructField { name_off = free_off,
+        StructField {
+            name_off = free_off,
             name_len = cstr_len("free_list"),
-            ty = i64_col, next = -1, variant = -1, align = 0 },
+            ty = i64_col,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     set_field_next(p, tail, free_node)
     tail = free_node
     count_off := synth_literal(p, "free_count")
     count_node := arena_push(
         p.fields,
-        StructField { name_off = count_off,
+        StructField {
+            name_off = count_off,
             name_len = cstr_len("free_count"),
-            ty = TY_I64, next = -1, variant = -1, align = 0 },
+            ty = TY_I64,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     set_field_next(p, tail, count_node)
     tail = count_node
@@ -2664,28 +2929,53 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     words_off := synth_literal(p, "live_words")
     words_node := arena_push(
         p.fields,
-        StructField { name_off = words_off,
+        StructField {
+            name_off = words_off,
             name_len = cstr_len("live_words"),
-            ty = words_col, next = -1, variant = -1, align = 0 },
+            ty = words_col,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     set_field_next(p, tail, words_node)
     tail = words_node
     live_off := synth_literal(p, "live_count")
     live_node := arena_push(
         p.fields,
-        StructField { name_off = live_off, name_len = cstr_len("live_count"),
-            ty = TY_I64, next = -1, variant = -1, align = 0 },
+        StructField {
+            name_off = live_off,
+            name_len = cstr_len("live_count"),
+            ty = TY_I64,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     set_field_next(p, tail, live_node)
 
     struct_index := p.structs.count
     arena_push(
         p.structs,
-        StructDef { name_off = name_off, name_len = name_len, field_head = head,
-            is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
-            instance_id = struct_index, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 0, is_result = 0, is_packed = 0 },
+        StructDef {
+            name_off = name_off,
+            name_len = name_len,
+            field_head = head,
+            is_generic = 0,
+            tparam_off = 0,
+            tparam_len = 0,
+            field_token = 0,
+            instance_id = struct_index,
+            is_linear = 0,
+            emitted = 0,
+            xparam_start = 0,
+            xparam_count = 0,
+            is_enum = 0,
+            declared = 1,
+            is_multi = 0,
+            is_result = 0,
+            is_packed = 0
+        },
     )
     STRUCT_BASE + struct_index
 }
@@ -2777,10 +3067,19 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
             field_off := cur_off(p)
             field_len := cur_len(p)
             advance(p)
-            qualified := synth_join(p, variant_off, variant_len, field_off,
-                field_len)
-            read := new_field_node(p, subject, qualified,
-                variant_len + field_len + 1)
+            qualified := synth_join(
+                p,
+                variant_off,
+                variant_len,
+                field_off,
+                field_len
+            )
+            read := new_field_node(
+                p,
+                subject,
+                qualified,
+                variant_len + field_len + 1
+            )
             bind := new_let_node(p, read, field_off, field_len, -1)
             if (bindings == (-1)) {
                 bindings = bind
@@ -2923,8 +3222,12 @@ alts_are_one :: fn(mut p: Parser, left: i64, right: i64) -> bool {
 // How far right the arms above reach from `at`, staying inside `family`. The
 // first answer says whether any of them stands on that number at all, since
 // there is no number below the smallest to stand for "none of them did".
-alt_reach_from :: fn(mut p: Parser, head: i64, family: i64,
-    at: i64) -> (found: bool, reach: i64) {
+alt_reach_from :: fn(
+    mut p: Parser,
+    head: i64,
+    family: i64,
+    at: i64
+) -> (found: bool, reach: i64) {
     var found: bool = false
     var best: i64 = 0
     var cid := head
@@ -3020,8 +3323,12 @@ bind_answer_type :: fn(mut p: Parser, bind: i64, answered: i64) {
 // Answers with the type the branch hands back, or -1 where it hands back
 // nothing. The name being written into is declared before any branch is parsed,
 // so this is the only place its type can come from.
-assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
-    name_len: i64) -> i64 {
+assign_block_value :: fn(
+    mut p: Parser,
+    head: i64,
+    name_off: i64,
+    name_len: i64
+) -> i64 {
     if (head == (-1)) {
         return -1
     }
@@ -3034,8 +3341,14 @@ assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
     body := arena_at(p.arena, last)
     if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
         answered := type_of(p, body.a)
-        place := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+        place := new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            name_off
+        )
         body.kind = NodeKind::Assign
         body.b = body.a
         body.a = place
@@ -3123,8 +3436,12 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
 // A match used where a value is wanted, whichever shape it took. A match on
 // one value is a NodeKind::Match with a case per arm. A match on several is the
 // chain of `if`s the tuple patterns stand for, so the arms are its branches.
-assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
-    name_len: i64) -> i64 {
+assign_match_values :: fn(
+    mut p: Parser,
+    chosen: i64,
+    name_off: i64,
+    name_len: i64
+) -> i64 {
     node := arena_at(p.arena, chosen)
     kind := node.kind
     if (kind == NodeKind::Match) {
@@ -3136,8 +3453,12 @@ assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
 // The last statement of every branch of an `if` chain, made into the answer it
 // already was. The chain's else is either another `if` or a block, so this is
 // the branching counterpart of assign_block_value.
-assign_chain_values :: fn(mut p: Parser, head: i64, name_off: i64,
-    name_len: i64) -> i64 {
+assign_chain_values :: fn(
+    mut p: Parser,
+    head: i64,
+    name_off: i64,
+    name_len: i64
+) -> i64 {
     if (head == (-1)) {
         return -1
     }
@@ -3161,8 +3482,12 @@ assign_chain_values :: fn(mut p: Parser, head: i64, name_off: i64,
     assign_block_value(p, last, name_off, name_len)
 }
 
-assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
-    name_len: i64) -> i64 {
+assign_case_values :: fn(
+    mut p: Parser,
+    match_node: i64,
+    name_off: i64,
+    name_len: i64
+) -> i64 {
     node := arena_at(p.arena, match_node)
     var answered: i64 = -1
     var cid := node.b
@@ -3189,8 +3514,14 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
             if (answered == (-1)) {
                 answered = type_of(p, body.a)
             }
-            place := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-                name_off)
+            place := new_named_node_at(
+                p,
+                NodeKind::Var,
+                0,
+                name_off,
+                name_len,
+                name_off
+            )
             body.kind = NodeKind::Assign
             body.b = body.a
             body.a = place
@@ -3249,8 +3580,10 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         name_off := synth_numbered(p, "__tup", unique + count)
         name_len := 5 + digits_in(unique + count)
         bind := new_let_node(p, value, name_off, name_len, -1)
-        arena_push(p.pending,
-            LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+        arena_push(
+            p.pending,
+            LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+        )
         count = count + 1
         if (cur(p) == TokenKind::Comma) {
             advance(p)
@@ -3287,15 +3620,25 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                     }
                     name_off := synth_numbered(p, "__tup", unique + index)
                     name_len := 5 + digits_in(unique + index)
-                    held := new_named_node(p, NodeKind::Var, 0, name_off,
-                        name_len)
+                    held := new_named_node(
+                        p,
+                        NodeKind::Var,
+                        0,
+                        name_off,
+                        name_len
+                    )
                     literal := new_node(p, NodeKind::Num, 0, 0, wanted)
                     equals := new_node(p, NodeKind::Bin, held, literal, OP_EQ)
                     if (condition == (-1)) {
                         condition = equals
                     } else {
-                        condition = new_node(p, NodeKind::Bin, condition,
-                            equals, OP_AND)
+                        condition = new_node(
+                            p,
+                            NodeKind::Bin,
+                            condition,
+                            equals,
+                            OP_AND
+                        )
                     }
                 } else if (cur(p) == TokenKind::Underscore) {
                     advance(p)
@@ -3371,10 +3714,18 @@ parse_match :: fn(mut p: Parser) -> i64 {
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
         bind := new_let_node(p, scrutinee, name_off, name_len, -1)
-        arena_push(p.pending, LocalVar { name_off = bind, name_len = bind,
-                ty = 0, slot = 0 })
-        subject = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+        arena_push(
+            p.pending,
+            LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 }
+        )
+        subject = new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            name_off
+        )
         scrutinee = new_field_node(p, subject, p.name_tag, 3)
     }
     var head: i64 = -1
@@ -3508,8 +3859,13 @@ parse_match :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         body := parse_arm(p)
-        case_node = new_case(p, append_node(p, bindings, body), value,
-            is_default, alts)
+        case_node = new_case(
+            p,
+            append_node(p, bindings, body),
+            value,
+            is_default,
+            alts
+        )
         if (is_default == 1) {
             saw_default = 1
         }
@@ -3542,8 +3898,10 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
             if ((covered & (1 << entry.tag)) == 0) {
                 if (missing == 0) {
                     report_where(p.modules, p.src, cur_off(p))
-                    report_fmt("match on '{}' does not cover '.",
-                        type_text(p, enum_ty))
+                    report_fmt(
+                        "match on '{}' does not cover '.",
+                        type_text(p, enum_ty)
+                    )
                     report_src(p.src, entry.name_off, entry.name_len)
                     report("'")
                 } else {
@@ -3691,8 +4049,10 @@ const_size_here :: fn(mut p: Parser) -> i64 {
     }
     if (held.value < 0) {
         report_where(p.modules, p.src, at)
-        report_fmt("a compile-time size is a whole number that is not negative, and this answers with {}",
-            held.value)
+        report_fmt(
+            "a compile-time size is a whole number that is not negative, and this answers with {}",
+            held.value
+        )
         frost_rt_recover_escape()
     }
     held.value
@@ -3773,8 +4133,15 @@ clone_place :: fn(mut p: Parser, node_id: i64) -> i64 {
 //
 // `for rank, slot in live_slots(c)` counts the elements as it goes, which is what
 // compacting into a packed buffer wants.
-parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
-    item_off: i64, item_len: i64, has_index: i64, container: i64) -> i64 {
+parse_for_live :: fn(
+    mut p: Parser,
+    first_off: i64,
+    first_len: i64,
+    item_off: i64,
+    item_len: i64,
+    has_index: i64,
+    container: i64
+) -> i64 {
     held := arena_at(p.arena, container)
     kind := held.kind
     at := held.pos
@@ -3788,29 +4155,52 @@ parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
 
     word_off := synth_numbered(p, "__live_w", unique)
     word_len := 8 + digits_in(unique)
-    bind_word := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
-        word_off, word_len, -1)
+    bind_word := new_let_node(
+        p,
+        new_node(p, NodeKind::Num, 0, 0, 0),
+        word_off,
+        word_len,
+        -1
+    )
 
     bits_off := synth_numbered(p, "__live_bits", unique)
     bits_len := 11 + digits_in(unique)
-    bind_bits := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
-        bits_off, bits_len, -1)
+    bind_bits := new_let_node(
+        p,
+        new_node(p, NodeKind::Num, 0, 0, 0),
+        bits_off,
+        bits_len,
+        -1
+    )
 
     base_off := synth_numbered(p, "__live_base", unique)
     base_len := 11 + digits_in(unique)
-    bind_base := new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
-        base_off, base_len, -1)
+    bind_base := new_let_node(
+        p,
+        new_node(p, NodeKind::Num, 0, 0, 0),
+        base_off,
+        base_len,
+        -1
+    )
 
     // The container is read here and nowhere else in the walk, so a name that
     // stands for storage is not copied and nothing is evaluated twice.
     words_name := synth_literal(p, "live_words")
-    words_field := new_field_node(p, container, words_name,
-        cstr_len("live_words"))
+    words_field := new_field_node(
+        p,
+        container,
+        words_name,
+        cstr_len("live_words")
+    )
     count_off := synth_numbered(p, "__live_n", unique)
     count_len := 8 + digits_in(unique)
-    bind_count := new_let_node(p,
-        new_unary(p, NodeKind::SliceLen, words_field), count_off, count_len,
-        -1)
+    bind_count := new_let_node(
+        p,
+        new_unary(p, NodeKind::SliceLen, words_field),
+        count_off,
+        count_len,
+        -1
+    )
 
     var rank_off: i64 = 0
     var rank_len: i64 = 0
@@ -3818,84 +4208,173 @@ parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
     if (has_index == 1) {
         rank_off = synth_numbered(p, "__live_rank", unique)
         rank_len = 11 + digits_in(unique)
-        bind_rank = new_let_node(p, new_node(p, NodeKind::Num, 0, 0, 0),
-            rank_off, rank_len, -1)
+        bind_rank = new_let_node(
+            p,
+            new_node(p, NodeKind::Num, 0, 0, 0),
+            rank_off,
+            rank_len,
+            -1
+        )
     }
 
     // More to walk while the word in hand still has a bit set, or there is
     // another word to take.
-    bits_live := new_node(p, NodeKind::Bin,
+    bits_live := new_node(
+        p,
+        NodeKind::Bin,
         new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
-        new_node(p, NodeKind::Num, 0, 0, 0), OP_NE)
-    words_left := new_node(p, NodeKind::Bin,
+        new_node(p, NodeKind::Num, 0, 0, 0),
+        OP_NE
+    )
+    words_left := new_node(
+        p,
+        NodeKind::Bin,
         new_named_node(p, NodeKind::Var, 0, word_off, word_len),
-        new_named_node(p, NodeKind::Var, 0, count_off, count_len), OP_LT)
+        new_named_node(p, NodeKind::Var, 0, count_off, count_len),
+        OP_LT
+    )
     condition := new_node(p, NodeKind::Bin, bits_live, words_left, OP_OR)
 
     // Taking the next word, when the one in hand is spent.
-    words_again := new_field_node(p,
-        clone_place(p, container), words_name, cstr_len("live_words"))
-    take_bits := new_node(p, NodeKind::Assign,
+    words_again := new_field_node(
+        p,
+        clone_place(p, container),
+        words_name,
+        cstr_len("live_words")
+    )
+    take_bits := new_node(
+        p,
+        NodeKind::Assign,
         new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
-        new_index(p, words_again,
-            new_named_node(p, NodeKind::Var, 0, word_off, word_len), at), 0)
-    take_base := new_node(p, NodeKind::Assign,
+        new_index(
+            p,
+            words_again,
+            new_named_node(p, NodeKind::Var, 0, word_off, word_len),
+            at
+        ),
+        0
+    )
+    take_base := new_node(
+        p,
+        NodeKind::Assign,
         new_named_node(p, NodeKind::Var, 0, base_off, base_len),
-        new_node(p, NodeKind::Bin,
+        new_node(
+            p,
+            NodeKind::Bin,
             new_named_node(p, NodeKind::Var, 0, word_off, word_len),
-            new_node(p, NodeKind::Num, 0, 0, 64), OP_MUL), 0)
-    bump_word := new_node(p, NodeKind::Assign,
+            new_node(p, NodeKind::Num, 0, 0, 64),
+            OP_MUL
+        ),
+        0
+    )
+    bump_word := new_node(
+        p,
+        NodeKind::Assign,
         new_named_node(p, NodeKind::Var, 0, word_off, word_len),
-        new_node(p, NodeKind::Bin,
+        new_node(
+            p,
+            NodeKind::Bin,
             new_named_node(p, NodeKind::Var, 0, word_off, word_len),
-            new_node(p, NodeKind::Num, 0, 0, 1), OP_ADD), 0)
+            new_node(p, NodeKind::Num, 0, 0, 1),
+            OP_ADD
+        ),
+        0
+    )
     again := new_node(p, NodeKind::Continue, 0, 0, 0)
     set_next(p, take_bits, take_base)
     set_next(p, take_base, bump_word)
     set_next(p, bump_word, again)
-    spent := new_node(p, NodeKind::Bin,
+    spent := new_node(
+        p,
+        NodeKind::Bin,
         new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
-        new_node(p, NodeKind::Num, 0, 0, 0), OP_EQ)
+        new_node(p, NodeKind::Num, 0, 0, 0),
+        OP_EQ
+    )
     refill := new_node(p, NodeKind::If, spent, take_bits, -1)
 
     // The lowest slot the word still names, and the word with that bit gone.
     bit_off := synth_numbered(p, "__live_bit", unique)
     bit_len := 10 + digits_in(unique)
-    bind_bit := new_let_node(p,
-        new_unary(p, NodeKind::TrailingZeros,
-            new_named_node(p, NodeKind::Var, 0, bits_off, bits_len)),
-        bit_off, bit_len, -1)
+    bind_bit := new_let_node(
+        p,
+        new_unary(
+            p,
+            NodeKind::TrailingZeros,
+            new_named_node(p, NodeKind::Var, 0, bits_off, bits_len)
+        ),
+        bit_off,
+        bit_len,
+        -1
+    )
     // Cleared before the reader's body, so a `continue` cannot leave the walk
     // reading the same slot for ever.
-    one_bit := new_node(p, NodeKind::Bin,
+    one_bit := new_node(
+        p,
+        NodeKind::Bin,
         new_node(p, NodeKind::Num, 0, 0, 1),
-        new_named_node(p, NodeKind::Var, 0, bit_off, bit_len), OP_SHL)
-    without := new_node(p, NodeKind::Bin,
-        new_node(p, NodeKind::Num, 0, 0, -1), one_bit, OP_SUB)
-    drop_bit := new_node(p, NodeKind::Assign,
+        new_named_node(p, NodeKind::Var, 0, bit_off, bit_len),
+        OP_SHL
+    )
+    without := new_node(
+        p,
+        NodeKind::Bin,
+        new_node(p, NodeKind::Num, 0, 0, -1),
+        one_bit,
+        OP_SUB
+    )
+    drop_bit := new_node(
+        p,
+        NodeKind::Assign,
         new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
-        new_node(p, NodeKind::Bin,
+        new_node(
+            p,
+            NodeKind::Bin,
             new_named_node(p, NodeKind::Var, 0, bits_off, bits_len),
-            without, OP_BITAND), 0)
-    bind_slot := new_let_node(p,
-        new_node(p, NodeKind::Bin,
+            without,
+            OP_BITAND
+        ),
+        0
+    )
+    bind_slot := new_let_node(
+        p,
+        new_node(
+            p,
+            NodeKind::Bin,
             new_named_node(p, NodeKind::Var, 0, base_off, base_len),
-            new_named_node(p, NodeKind::Var, 0, bit_off, bit_len), OP_ADD),
-        item_off, item_len, -1)
+            new_named_node(p, NodeKind::Var, 0, bit_off, bit_len),
+            OP_ADD
+        ),
+        item_off,
+        item_len,
+        -1
+    )
 
     set_next(p, refill, bind_bit)
     set_next(p, bind_bit, drop_bit)
     set_next(p, drop_bit, bind_slot)
     var tail := bind_slot
     if (has_index == 1) {
-        take_rank := new_let_node(p,
+        take_rank := new_let_node(
+            p,
             new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
-            first_off, first_len, -1)
-        bump_rank := new_node(p, NodeKind::Assign,
+            first_off,
+            first_len,
+            -1
+        )
+        bump_rank := new_node(
+            p,
+            NodeKind::Assign,
             new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
-            new_node(p, NodeKind::Bin,
+            new_node(
+                p,
+                NodeKind::Bin,
                 new_named_node(p, NodeKind::Var, 0, rank_off, rank_len),
-                new_node(p, NodeKind::Num, 0, 0, 1), OP_ADD), 0)
+                new_node(p, NodeKind::Num, 0, 0, 1),
+                OP_ADD
+            ),
+            0
+        )
         set_next(p, tail, take_rank)
         set_next(p, take_rank, bump_rank)
         tail = bump_rank
@@ -3923,9 +4402,16 @@ parse_for_live :: fn(mut p: Parser, first_off: i64, first_len: i64,
 // itself, so nothing is indexed and no element is bound. The bound is read into
 // a name once ahead of the loop, so a call in that position happens once rather
 // than once per turn, and `..=` reaches it.
-parse_for_range :: fn(mut p: Parser, first_off: i64, item_off: i64,
-    item_len: i64, has_index: i64, start: i64, finish: i64,
-    closed: i64) -> i64 {
+parse_for_range :: fn(
+    mut p: Parser,
+    first_off: i64,
+    item_off: i64,
+    item_len: i64,
+    has_index: i64,
+    start: i64,
+    finish: i64,
+    closed: i64
+) -> i64 {
     if (has_index == 1) {
         report_where(p.modules, p.src, first_off)
         report("a `for` over a range binds one name, which is the number")
@@ -4058,8 +4544,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.unsafe_depth = p.unsafe_depth + 1
         body := parse_block(p)
         p.unsafe_depth = p.unsafe_depth - 1
-        arena_push(p.unsafe_spans,
-            UnsafeSpan { start = start, end = cur_off(p), used = 0 })
+        arena_push(
+            p.unsafe_spans,
+            UnsafeSpan { start = start, end = cur_off(p), used = 0 }
+        )
         return body
     }
 
@@ -4080,8 +4568,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // The one call entitled to answer with a return type list, since this
         // is where the list is taken apart again. `check_multi_call_bound`
         // reads this and refuses every other one.
-        arena_push(p.multi_calls,
-            LocalVar { name_off = value, name_len = 0, ty = 0, slot = 0 })
+        arena_push(
+            p.multi_calls,
+            LocalVar { name_off = value, name_len = 0, ty = 0, slot = 0 }
+        )
         after := p.ti
         head := new_let_node(p, value, temp_off, temp_len, -1)
         var tail := head
@@ -4119,9 +4609,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 // settled. Said there rather than by the move walk, which runs
                 // on what this rewrite left behind and would name the storage
                 // below, a name nothing in the program spells.
-                arena_push(p.multi_discards,
-                    LocalVar { name_off = callee, name_len = index,
-                        ty = name_off, slot = 0 })
+                arena_push(
+                    p.multi_discards,
+                    LocalVar {
+                        name_off = callee,
+                        name_len = index,
+                        ty = name_off,
+                        slot = 0
+                    }
+                )
                 held := p.arena.count
                 name_off = synth_numbered(p, "__discard", held)
                 name_len = 9 + digits_in(held)
@@ -4136,9 +4632,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             // callee written later in the program has no signature yet, so the
             // name is patched once every one is parsed.
             if (resolve_multi_field(p, access, callee, index) == false) {
-                arena_push(p.variant_fixups,
-                    VariantFixup { lit = access, callee = callee,
-                        argument = index, kind = FixupKind::MultiField })
+                arena_push(
+                    p.variant_fixups,
+                    VariantFixup {
+                        lit = access,
+                        callee = callee,
+                        argument = index,
+                        kind = FixupKind::MultiField
+                    }
+                )
             }
             bind := new_let_node(p, access, name_off, name_len, -1)
             set_next(p, tail, bind)
@@ -4224,9 +4726,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // deferred statement names, which is what the check below refuses.
         bound := p.parse_locals.count
         parse_stmt(p)
-        arena_push(p.defers,
-            LocalVar { name_off = started, name_len = p.ti, ty = bound,
-                slot = on_failure })
+        arena_push(
+            p.defers,
+            LocalVar {
+                name_off = started,
+                name_len = p.ti,
+                ty = bound,
+                slot = on_failure
+            }
+        )
         return nothing_statement(p)
     }
     if (kind == TokenKind::KwReturn) {
@@ -4335,8 +4843,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             container := parse_expr(p)
             p.no_struct_lit = held_lit
             advance(p)
-            return parse_for_live(p, first_off, first_len, item_off, item_len,
-                has_index, container)
+            return parse_for_live(
+                p,
+                first_off,
+                first_len,
+                item_off,
+                item_len,
+                has_index,
+                container
+            )
         }
         // A name followed by a brace is a struct literal everywhere else, and
         // the brace here opens the body, so the literal is not available.
@@ -4357,8 +4872,16 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         p.no_struct_lit = held_no_lit
         if (range_end != (-1)) {
-            return parse_for_range(p, first_off, item_off, item_len, has_index,
-                sequence, range_end, range_closed)
+            return parse_for_range(
+                p,
+                first_off,
+                item_off,
+                item_len,
+                has_index,
+                sequence,
+                range_end,
+                range_closed
+            )
         }
 
         unique := p.arena.count
@@ -4815,8 +5338,10 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             ti = p.ti
         }
         escaped := unsafe {
-            frost_rt_recover_run(parse_stmt_guarded,
-                ptr_cast($u8, ptr_to(turn)))
+            frost_rt_recover_run(
+                parse_stmt_guarded,
+                ptr_cast($u8, ptr_to(turn))
+            )
         }
         if (escaped == 1) {
             p.pending.count = mark
@@ -4922,8 +5447,12 @@ struct_field_count :: fn(mut p: Parser, ty: i64) -> i64 {
 // name bound to that field, and answer the statements that came out. The cursor
 // is on the body's `{`, and it is left past the body however many times it was
 // read.
-unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
-    walked: i64) -> i64 {
+unroll_fields :: fn(
+    mut p: Parser,
+    item_off: i64,
+    item_len: i64,
+    walked: i64
+) -> i64 {
     if (is_struct_ty(walked) == false) {
         // A template is read once with nothing bound, so the type parameter is
         // still a placeholder there and there is nothing to walk yet. That
@@ -4949,15 +5478,23 @@ unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
         field := arena_at(p.fields, fid)
         field_ty := field.ty
         next_field := field.next
-        running = align_up(running,
-            field_align(p, packed, field.align, field_ty))
+        running = align_up(
+            running,
+            field_align(p, packed, field.align, field_ty)
+        )
         at := running
         running = running + type_size(p, field_ty)
         p.ti = body_start
         mark := p.field_bindings.count
-        arena_push(p.field_bindings,
-            LocalVar { name_off = item_off, name_len = item_len,
-                ty = field_ty, slot = at })
+        arena_push(
+            p.field_bindings,
+            LocalVar {
+                name_off = item_off,
+                name_len = item_len,
+                ty = field_ty,
+                slot = at
+            }
+        )
         copy := parse_block(p)
         p.field_bindings.count = mark
         any = 1
@@ -5066,8 +5603,12 @@ defer_copies :: fn(mut p: Parser, failing: i64) -> i64 {
 // A `return`, with whatever was deferred run in front of it. The value is worked
 // out first and bound to a name, because a deferred statement runs after the
 // answer is settled and must not be able to change what is handed back.
-defer_before_return :: fn(mut p: Parser, value: i64, start: i64,
-    failing: i64) -> i64 {
+defer_before_return :: fn(
+    mut p: Parser,
+    value: i64,
+    start: i64,
+    failing: i64
+) -> i64 {
     if (p.defers.count <= p.defer_base) {
         return new_node_at(p, NodeKind::Return, value, 0, 0, start)
     }
@@ -5078,8 +5619,14 @@ defer_before_return :: fn(mut p: Parser, value: i64, start: i64,
         name_len := 7 + digits_in(p.defer_count)
         p.defer_count = p.defer_count + 1
         head = new_let_node(p, value, name_off, name_len, -1)
-        answer = new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-            name_off)
+        answer = new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            name_off
+        )
     }
     head = append_node(p, head, defer_copies(p, failing))
     append_node(p, head, new_node_at(p, NodeKind::Return, answer, 0, 0, start))
@@ -5122,11 +5669,16 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
     name_len := 7 + digits_in(p.defer_count)
     p.defer_count = p.defer_count + 1
     bind := new_let_node(p, value, name_off, name_len, -1)
-    reader := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
-        name_off)
+    reader := new_named_node_at(
+        p,
+        NodeKind::Var,
+        0,
+        name_off,
+        name_len,
+        name_off
+    )
     var tail := append_node(p, bind, defer_copies(p, 0))
-    tail = append_node(p, tail,
-        new_unary_at(p, NodeKind::ExprStmt, reader, at))
+    tail = append_node(p, tail, new_unary_at(p, NodeKind::ExprStmt, reader, at))
     if (previous == (-1)) {
         return tail
     }
@@ -5163,12 +5715,23 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         var mark: i64 = p.aliases.count
         var type_mark: i64 = p.type_aliases.count
         if (element_is_type == 1) {
-            arena_push(p.type_aliases,
-                ConstDef { name_off = item_off, name_len = item_len,
-                    value = element_ty, kind = CONST_INT, count = 0 })
+            arena_push(
+                p.type_aliases,
+                ConstDef {
+                    name_off = item_off,
+                    name_len = item_len,
+                    value = element_ty,
+                    kind = CONST_INT,
+                    count = 0
+                }
+            )
         } else {
-            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
-                k)
+            name_off, name_len := pack_element_name(
+                p,
+                p.pack_off,
+                p.pack_len,
+                k
+            )
             mark = push_alias(p, item_off, item_len, name_off, name_len)
         }
         copy := parse_block(p)
@@ -5305,13 +5868,23 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 // A type element takes no parameter. It is a name the body
                 // writes where a type belongs, and nothing arrives for it.
                 if (element.is_type == 0) {
-                    name_off, name_len := pack_element_name(p, pack_off,
-                        pack_len, k)
+                    name_off, name_len := pack_element_name(
+                        p,
+                        pack_off,
+                        pack_len,
+                        k
+                    )
                     held := arena_push(
                         p.arena,
-                        Node { kind = NodeKind::Param, a = 0, b = element_ty,
-                            c = name_len, val = name_off, next = -1,
-                            pos = pack_off },
+                        Node {
+                            kind = NodeKind::Param,
+                            a = 0,
+                            b = element_ty,
+                            c = name_len,
+                            val = name_off,
+                            next = -1,
+                            pos = pack_off
+                        },
                     )
                     record_parse_local(p, name_off, name_len, element_ty, -1)
                     if (head == (-1)) {
@@ -5346,9 +5919,15 @@ parse_params :: fn(mut p: Parser) -> i64 {
             // kind after the colon does not decide what binds to it. A name
             // that turns out to stand for a type is never called, so nothing
             // is lost by holding it here.
-            arena_push(p.cfn_params,
-                GParam { name_off = poff, name_len = plen, is_value = 0,
-                    is_fn = 1 })
+            arena_push(
+                p.cfn_params,
+                GParam {
+                    name_off = poff,
+                    name_len = plen,
+                    is_value = 0,
+                    is_fn = 1
+                }
+            )
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
@@ -5397,19 +5976,40 @@ parse_params :: fn(mut p: Parser) -> i64 {
             }
             param := arena_push(
                 p.arena,
-                Node { kind = NodeKind::Param, a = auto_borrow, b = ty, c = length,
-                    val = offset, next = -1, pos = cur_off(p) },
+                Node {
+                    kind = NodeKind::Param,
+                    a = auto_borrow,
+                    b = ty,
+                    c = length,
+                    val = offset,
+                    next = -1,
+                    pos = cur_off(p)
+                },
             )
             // A `mut` parameter borrows exclusively. Record it so the exclusivity
             // check can tell it from a shared read of an aggregate, which the
             // auto-borrow flag alone cannot.
             if (mode == 1) {
-                arena_push(p.mut_params,
-                    LocalVar { name_off = param, name_len = 0, ty = 0, slot = 0 })
+                arena_push(
+                    p.mut_params,
+                    LocalVar {
+                        name_off = param,
+                        name_len = 0,
+                        ty = 0,
+                        slot = 0
+                    }
+                )
             }
             if (by_value == 1) {
-                arena_push(p.value_params,
-                    LocalVar { name_off = param, name_len = 0, ty = 0, slot = 0 })
+                arena_push(
+                    p.value_params,
+                    LocalVar {
+                        name_off = param,
+                        name_len = 0,
+                        ty = 0,
+                        slot = 0
+                    }
+                )
             }
             // What a name binds is recorded for the parse too, so an argument
             // at a call in this body can be typed where it is written.
@@ -5525,9 +6125,15 @@ parse_function :: fn(mut p: Parser) -> i64 {
             binding := synth_capability_name(p, cap_name_off, cap_name_len)
             capability := arena_push(
                 p.arena,
-                Node { kind = NodeKind::Param, a = 1, b = borrow_of(p, cap_ty),
-                    c = cap_name_len, val = binding, next = -1,
-                    pos = cur_off(p) },
+                Node {
+                    kind = NodeKind::Param,
+                    a = 1,
+                    b = borrow_of(p, cap_ty),
+                    c = cap_name_len,
+                    val = binding,
+                    next = -1,
+                    pos = cur_off(p)
+                },
             )
             params = append_node(p, params, capability)
             set_params(p, fn_index, params)
@@ -5644,24 +6250,54 @@ parse_struct :: fn(mut p: Parser) {
             }
             advance(p)
         }
-        record_struct(p, entry_index,
-            StructDef { name_off = name_offset, name_len = name_length,
-                field_head = -1, is_generic = 1, tparam_off = tparam_off,
-                tparam_len = tparam_len, field_token = field_token,
-                instance_id = -1, is_linear = linear_flag, emitted = 0,
-                xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 0, declared = 1, is_multi = 0, is_result = 0,
-                is_packed = packed_flag })
+        record_struct(
+            p,
+            entry_index,
+            StructDef {
+                name_off = name_offset,
+                name_len = name_length,
+                field_head = -1,
+                is_generic = 1,
+                tparam_off = tparam_off,
+                tparam_len = tparam_len,
+                field_token = field_token,
+                instance_id = -1,
+                is_linear = linear_flag,
+                emitted = 0,
+                xparam_start = xparam_start,
+                xparam_count = xparam_count,
+                is_enum = 0,
+                declared = 1,
+                is_multi = 0,
+                is_result = 0,
+                is_packed = packed_flag
+            }
+        )
     } else {
         head := parse_struct_fields(p, packed_flag)
-        record_struct(p, entry_index,
-            StructDef { name_off = name_offset, name_len = name_length,
-                field_head = head, is_generic = 0, tparam_off = 0,
-                tparam_len = 0, field_token = 0, instance_id = -1,
-                is_linear = holds_linear(p, head, linear_flag), emitted = 0,
-                xparam_start = 0, xparam_count = 0, is_enum = 0,
-                declared = 1, is_multi = 0, is_result = 0,
-                is_packed = packed_flag })
+        record_struct(
+            p,
+            entry_index,
+            StructDef {
+                name_off = name_offset,
+                name_len = name_length,
+                field_head = head,
+                is_generic = 0,
+                tparam_off = 0,
+                tparam_len = 0,
+                field_token = 0,
+                instance_id = -1,
+                is_linear = holds_linear(p, head, linear_flag),
+                emitted = 0,
+                xparam_start = 0,
+                xparam_count = 0,
+                is_enum = 0,
+                declared = 1,
+                is_multi = 0,
+                is_result = 0,
+                is_packed = packed_flag
+            }
+        )
     }
 }
 
@@ -5731,8 +6367,14 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     result_field_names(p)
     tag_field := arena_push(
         p.fields,
-        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I32,
-            next = -1, variant = -1, align = 0 },
+        StructField {
+            name_off = p.name_tag,
+            name_len = 3,
+            ty = TY_I32,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     var tail := tag_field
     var tag: i64 = 0
@@ -5742,8 +6384,12 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
         advance(p)
         arena_push(
             p.variants,
-            Variant { enum_ty = enum_ty, name_off = variant_off,
-                name_len = variant_len, tag = tag },
+            Variant {
+                enum_ty = enum_ty,
+                name_off = variant_off,
+                name_len = variant_len,
+                tag = tag
+            },
         )
         if (cur(p) == TokenKind::Lbrace) {
             advance(p)
@@ -5752,13 +6398,23 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
                 field_len := cur_len(p)
                 advance(p)
                 field_ty := parse_type_annotation(p)
-                qualified := synth_join(p, variant_off, variant_len, field_off,
-                    field_len)
+                qualified := synth_join(
+                    p,
+                    variant_off,
+                    variant_len,
+                    field_off,
+                    field_len
+                )
                 field := arena_push(
                     p.fields,
-                    StructField { name_off = qualified,
-                        name_len = variant_len + field_len + 1, ty = field_ty,
-                        next = -1, variant = tag, align = 0 },
+                    StructField {
+                        name_off = qualified,
+                        name_len = variant_len + field_len + 1,
+                        ty = field_ty,
+                        next = -1,
+                        variant = tag,
+                        align = 0
+                    },
                 )
                 set_next_field(p, tail, field)
                 tail = field
@@ -5830,13 +6486,29 @@ parse_enum :: fn(mut p: Parser) {
             }
             advance(p)
         }
-        record_struct(p, entry_index,
-            StructDef { name_off = name_offset, name_len = name_length,
-                field_head = -1, is_generic = 1, tparam_off = tparam_off,
-                tparam_len = tparam_len, field_token = field_token,
-                instance_id = -1, is_linear = linear_flag, emitted = 0,
-                xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 1, declared = 1, is_multi = 0, is_result = 0, is_packed = 0 })
+        record_struct(
+            p,
+            entry_index,
+            StructDef {
+                name_off = name_offset,
+                name_len = name_length,
+                field_head = -1,
+                is_generic = 1,
+                tparam_off = tparam_off,
+                tparam_len = tparam_len,
+                field_token = field_token,
+                instance_id = -1,
+                is_linear = linear_flag,
+                emitted = 0,
+                xparam_start = xparam_start,
+                xparam_count = xparam_count,
+                is_enum = 1,
+                declared = 1,
+                is_multi = 0,
+                is_result = 0,
+                is_packed = 0
+            }
+        )
         return
     }
     // The enum's own index is known before its body is, since a variant has to
@@ -5847,12 +6519,29 @@ parse_enum :: fn(mut p: Parser) {
     }
     enum_ty := STRUCT_BASE + enum_index
     field_head := parse_enum_body(p, enum_ty)
-    record_struct(p, entry_index,
-        StructDef { name_off = name_offset, name_len = name_length,
-            field_head = field_head, is_generic = 0, tparam_off = 0,
-            tparam_len = 0, field_token = 0, instance_id = -1,
-            is_linear = linear_flag, emitted = 0, xparam_start = 0,
-            xparam_count = 0, is_enum = 1, declared = 1, is_multi = 0, is_result = 0, is_packed = 0 })
+    record_struct(
+        p,
+        entry_index,
+        StructDef {
+            name_off = name_offset,
+            name_len = name_length,
+            field_head = field_head,
+            is_generic = 0,
+            tparam_off = 0,
+            tparam_len = 0,
+            field_token = 0,
+            instance_id = -1,
+            is_linear = linear_flag,
+            emitted = 0,
+            xparam_start = 0,
+            xparam_count = 0,
+            is_enum = 1,
+            declared = 1,
+            is_multi = 0,
+            is_result = 0,
+            is_packed = 0
+        }
+    )
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -5885,8 +6574,14 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
 // The `{ field = value }` of a variant literal and the literal itself, with the
 // enum already decided. `enum_off`/`enum_len` name the enum for the diagnostic;
 // a leading dot has no such name and passes its variant's range instead.
-parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
-    enum_len: i64, variant_off: i64, variant_len: i64) -> i64 {
+parse_variant_body :: fn(
+    mut p: Parser,
+    enum_ty: i64,
+    enum_off: i64,
+    enum_len: i64,
+    variant_off: i64,
+    variant_len: i64
+) -> i64 {
     // -1 is a `.Variant` whose enum is not decided yet, so there is nothing to
     // look the variant up in. The fixup pass resolves it once every signature
     // is known.
@@ -5928,15 +6623,28 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
             // An enum's fields are laid out under the name of the variant they
             // came from, so that is the name the field's type is looked up by,
             // and a nested literal is parsed under it.
-            qualified := synth_join(p, variant_off, variant_len, field_off,
-                field_len)
+            qualified := synth_join(
+                p,
+                variant_off,
+                variant_len,
+                field_off,
+                field_len
+            )
             saved_field_expected := p.expected_type
-            p.expected_type = field_type(p, enum_ty, qualified,
-                variant_len + field_len + 1)
+            p.expected_type = field_type(
+                p,
+                enum_ty,
+                qualified,
+                variant_len + field_len + 1
+            )
             value := parse_expr(p)
             p.expected_type = saved_field_expected
-            init := new_field_init(p, value, qualified,
-                variant_len + field_len + 1)
+            init := new_field_init(
+                p,
+                value,
+                qualified,
+                variant_len + field_len + 1
+            )
             set_next(p, tail, init)
             tail = init
             if (cur(p) == TokenKind::Comma) {
@@ -5980,8 +6688,14 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
     variant_len := cur_len(p)
     advance(p)
     enum_ty := expected_variant_enum(p, variant_off, variant_len)
-    parse_variant_body(p, enum_ty, variant_off, variant_len, variant_off,
-        variant_len)
+    parse_variant_body(
+        p,
+        enum_ty,
+        variant_off,
+        variant_len,
+        variant_off,
+        variant_len
+    )
 }
 
 // One literal that named no type, now that the type it is written into is
@@ -6033,8 +6747,11 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
         field_off := init.val
         field_len := init.c
         following := init.next
-        resolve_untyped_literal(p, value,
-            field_type(p, struct_ty, field_off, field_len))
+        resolve_untyped_literal(
+            p,
+            value,
+            field_type(p, struct_ty, field_off, field_len)
+        )
         id = following
     }
 }
@@ -6052,8 +6769,12 @@ call_target :: fn(mut p: Parser, value: i64) -> i64 {
 // Name one field of a list binding after the value the callee's return type
 // list declared at that position. False when the callee has no signature yet,
 // which leaves it for the fixup pass.
-resolve_multi_field :: fn(mut p: Parser, node_id: i64, callee: i64,
-    index: i64) -> bool {
+resolve_multi_field :: fn(
+    mut p: Parser,
+    node_id: i64,
+    callee: i64,
+    index: i64
+) -> bool {
     if (callee < 0) {
         return false
     }
@@ -6176,41 +6897,80 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     result_field_names(p)
     tag := arena_push(
         p.fields,
-        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
-            next = -1, variant = -1, align = 0 },
+        StructField {
+            name_off = p.name_tag,
+            name_len = 3,
+            ty = TY_I64,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     value := arena_push(
         p.fields,
-        StructField { name_off = p.name_ok_value, name_len = 8, ty = ok,
-            next = -1, variant = -1, align = 0 },
+        StructField {
+            name_off = p.name_ok_value,
+            name_len = 8,
+            ty = ok,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     bad_field := arena_push(
         p.fields,
-        StructField { name_off = p.name_err_error, name_len = 9, ty = bad,
-            next = -1, variant = -1, align = 0 },
+        StructField {
+            name_off = p.name_err_error,
+            name_len = 9,
+            ty = bad,
+            next = -1,
+            variant = -1,
+            align = 0
+        },
     )
     set_next_field(p, tag, value)
     set_next_field(p, value, bad_field)
     name := synth_numbered(p, "__Result", p.structs.count)
     index := arena_push(
         p.structs,
-        StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
-            field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = -1,
-            is_linear = result_is_linear(p, ok, bad), emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1,
-            is_multi = 0, is_result = 1, is_packed = 0 },
+        StructDef {
+            name_off = name,
+            name_len = 8 + digits_in(p.structs.count),
+            field_head = tag,
+            is_generic = 0,
+            tparam_off = 0,
+            tparam_len = 0,
+            field_token = 0,
+            instance_id = -1,
+            is_linear = result_is_linear(p, ok, bad),
+            emitted = 0,
+            xparam_start = 0,
+            xparam_count = 0,
+            is_enum = 1,
+            declared = 1,
+            is_multi = 0,
+            is_result = 1,
+            is_packed = 0
+        },
     )
     result_ty := STRUCT_BASE + index
     arena_push(
         p.variants,
-        Variant { enum_ty = result_ty, name_off = p.name_ok, name_len = 2,
-            tag = 0 },
+        Variant {
+            enum_ty = result_ty,
+            name_off = p.name_ok,
+            name_len = 2,
+            tag = 0
+        },
     )
     arena_push(
         p.variants,
-        Variant { enum_ty = result_ty, name_off = p.name_err, name_len = 3,
-            tag = 1 },
+        Variant {
+            enum_ty = result_ty,
+            name_off = p.name_err,
+            name_len = 3,
+            tag = 1
+        },
     )
     result_ty
 }
@@ -6274,8 +7034,14 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
         length := name_len
         field := arena_push(
             p.fields,
-            StructField { name_off = name, name_len = length,
-                ty = held, next = -1, variant = -1, align = 0 },
+            StructField {
+                name_off = name,
+                name_len = length,
+                ty = held,
+                next = -1,
+                variant = -1,
+                align = 0
+            },
         )
         if (head == (-1)) {
             head = field
@@ -6297,12 +7063,25 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
     struct_name := synth_numbered(p, "__Multi", p.structs.count)
     index := arena_push(
         p.structs,
-        StructDef { name_off = struct_name,
+        StructDef {
+            name_off = struct_name,
             name_len = 7 + digits_in(p.structs.count),
-            field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = -1, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1,
-            is_multi = 1, is_result = 0, is_packed = 0 },
+            field_head = head,
+            is_generic = 0,
+            tparam_off = 0,
+            tparam_len = 0,
+            field_token = 0,
+            instance_id = -1,
+            is_linear = 0,
+            emitted = 0,
+            xparam_start = 0,
+            xparam_count = 0,
+            is_enum = 0,
+            declared = 1,
+            is_multi = 1,
+            is_result = 0,
+            is_packed = 0
+        },
     )
     p.multi_count = count
     STRUCT_BASE + index
@@ -6331,15 +7110,23 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
         report("this `return` lists several values and the function returns one")
         frost_rt_recover_escape()
     }
-    init := new_field_init(p, first, multi_field_name_off(p, 0),
-        multi_field_name_len(p, 0))
+    init := new_field_init(
+        p,
+        first,
+        multi_field_name_off(p, 0),
+        multi_field_name_len(p, 0)
+    )
     var tail := init
     var count: i64 = 1
     while (cur(p) == TokenKind::Comma) {
         advance(p)
         value := parse_expr(p)
-        following := new_field_init(p, value, multi_field_name_off(p, count),
-            multi_field_name_len(p, count))
+        following := new_field_init(
+            p,
+            value,
+            multi_field_name_off(p, count),
+            multi_field_name_len(p, count)
+        )
         set_next(p, tail, following)
         tail = following
         count = count + 1
@@ -6380,12 +7167,25 @@ wrap_result :: fn(mut p: Parser, value: i64) -> i64 {
 // `Result { tag = <which>, <name> = <payload> }`, the value a fallible function
 // answers with. The other payload is left alone, since which one is live is
 // what the tag says.
-new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
-    name_len: i64, payload: i64) -> i64 {
+new_result_value :: fn(
+    mut p: Parser,
+    result_ty: i64,
+    which: i64,
+    name_off: i64,
+    name_len: i64,
+    payload: i64
+) -> i64 {
     which_node := arena_push(
         p.arena,
-        Node { kind = NodeKind::Num, a = 0, b = 0, c = 0, val = which,
-            next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::Num,
+            a = 0,
+            b = 0,
+            c = 0,
+            val = which,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
     tag_init := new_field_init(p, which_node, p.name_tag, 3)
     payload_init := new_field_init(p, payload, name_off, name_len)
@@ -6487,8 +7287,15 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     }
     arena_push(
         p.arena,
-        Node { kind = NodeKind::Extern, a = 0, b = params, c = ret, val = fn_index,
-            next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::Extern,
+            a = 0,
+            b = params,
+            c = ret,
+            val = fn_index,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
@@ -6566,9 +7373,13 @@ parse_distinct :: fn(mut p: Parser) {
     inner := parse_type(p)
     arena_push(
         p.type_aliases,
-        ConstDef { name_off = name_offset, name_len = name_length,
+        ConstDef {
+            name_off = name_offset,
+            name_len = name_length,
             value = distinct_type(inner, p.type_aliases.count),
-            kind = CONST_INT, count = 0 },
+            kind = CONST_INT,
+            count = 0
+        },
     )
 }
 
@@ -6594,8 +7405,13 @@ parse_flags :: fn(mut p: Parser) {
     ty := distinct_type(repr, p.type_aliases.count)
     arena_push(
         p.type_aliases,
-        ConstDef { name_off = name_offset, name_len = name_length,
-            value = ty, kind = CONST_INT, count = 0 },
+        ConstDef {
+            name_off = name_offset,
+            name_len = name_length,
+            value = ty,
+            kind = CONST_INT,
+            count = 0
+        },
     )
     advance(p)
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
@@ -6631,8 +7447,13 @@ parse_value_const :: fn(mut p: Parser) {
     value := parse_expr(p)
     arena_push(
         p.value_consts,
-        ConstDef { name_off = name_offset, name_len = name_length,
-            value = value, kind = CONST_INT, count = 0 },
+        ConstDef {
+            name_off = name_offset,
+            name_len = name_length,
+            value = value,
+            kind = CONST_INT,
+            count = 0
+        },
     )
 }
 
@@ -6681,16 +7502,25 @@ parse_const :: fn(mut p: Parser) {
 // A constant whatever kind it turned out to be. A whole number lands in the
 // table every other reader already looks at; the rest carry their kind beside
 // it, and only the compile-time evaluator reads those.
-register_const_value :: fn(mut p: Parser, off: i64, len: i64,
-    held: ConstValue) {
+register_const_value :: fn(
+    mut p: Parser,
+    off: i64,
+    len: i64,
+    held: ConstValue
+) {
     if (held.kind == CONST_INT) {
         register_const(p, off, len, held.value)
         return
     }
     arena_push(
         p.const_aggregates,
-        ConstDef { name_off = off, name_len = len, value = held.value,
-            kind = held.kind, count = held.count },
+        ConstDef {
+            name_off = off,
+            name_len = len,
+            value = held.value,
+            kind = held.kind,
+            count = held.count
+        },
     )
 }
 
@@ -6725,8 +7555,14 @@ parse_test :: fn(mut p: Parser) -> i64 {
     mark_defined(p, fn_index)
     set_ret_type(p, fn_index, TY_VOID)
     set_params(p, fn_index, -1)
-    arena_push(p.tests, TestCase { name_off = name_off, name_len = name_len,
-            fn_index = fn_index })
+    arena_push(
+        p.tests,
+        TestCase {
+            name_off = name_off,
+            name_len = name_len,
+            fn_index = fn_index
+        }
+    )
     // A test body is a function body and defers like one. Without its own mark
     // a `defer` written in a test was left on the list for whatever was parsed
     // next to run.
@@ -6789,12 +7625,25 @@ predeclare_types :: fn(mut p: Parser) {
                 }
                 arena_push(
                     p.structs,
-                    StructDef { name_off = cur_off(p), name_len = cur_len(p),
-                        field_head = -1, is_generic = generic,
-                        tparam_off = 0, tparam_len = 0, field_token = 0,
-                        instance_id = -1, is_linear = 0, emitted = 0,
-                        xparam_start = 0, xparam_count = 0,
-                        is_enum = holds_variants, declared = 0, is_multi = 0, is_result = 0, is_packed = 0 },
+                    StructDef {
+                        name_off = cur_off(p),
+                        name_len = cur_len(p),
+                        field_head = -1,
+                        is_generic = generic,
+                        tparam_off = 0,
+                        tparam_len = 0,
+                        field_token = 0,
+                        instance_id = -1,
+                        is_linear = 0,
+                        emitted = 0,
+                        xparam_start = 0,
+                        xparam_count = 0,
+                        is_enum = holds_variants,
+                        declared = 0,
+                        is_multi = 0,
+                        is_result = 0,
+                        is_packed = 0
+                    },
                 )
             }
         }
@@ -7121,12 +7970,25 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
         fn_index := node.val
         tparam_off := p.type_param_off
         tparam_len := p.type_param_len
-        record_generic_fn(p, fn_index, tparam_off, tparam_len,
-            p.tparam_is_value, p.tparam_called, p.tparam_is_slot,
+        record_generic_fn(
+            p,
+            fn_index,
+            tparam_off,
+            tparam_len,
+            p.tparam_is_value,
+            p.tparam_called,
+            p.tparam_is_slot,
             p.xparam_start,
-            p.xparam_count, start, p.bound_token, p.decl_pack_off,
-            p.decl_pack_len, p.decl_pack_fixed, p.decl_pack_format,
-            p.decl_format_off, p.decl_format_len)
+            p.xparam_count,
+            start,
+            p.bound_token,
+            p.decl_pack_off,
+            p.decl_pack_len,
+            p.decl_pack_fixed,
+            p.decl_pack_format,
+            p.decl_format_off,
+            p.decl_format_len
+        )
         return -1
     }
     item
@@ -7204,8 +8066,10 @@ parse_program :: fn(mut p: Parser) -> i64 {
             ti = p.ti
         }
         escaped := unsafe {
-            frost_rt_recover_run(parse_declaration_guarded,
-                ptr_cast($u8, ptr_to(turn)))
+            frost_rt_recover_run(
+                parse_declaration_guarded,
+                ptr_cast($u8, ptr_to(turn))
+            )
         }
         if (escaped == 1) {
             p.block_depth = turn.block_depth
@@ -7298,8 +8162,15 @@ instance_params :: fn(mut p: Parser, fn_index: i64, args: i64) -> i64 {
 // What a compile-time list was given is a run of ordinary types with no
 // parameters to bind them to, so it fits only the generic that takes a list,
 // and a generic that takes one fits nothing else.
-instance_fits_kind :: fn(mut p: Parser, gfn_index: i64, arg: i64,
-    xarg_start: i64, xarg_count: i64, is_pack: i64, owner: i64) -> bool {
+instance_fits_kind :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    is_pack: i64,
+    owner: i64
+) -> bool {
     if (owner >= 0 && owner != gfn_index) {
         return false
     }
@@ -7356,8 +8227,15 @@ tuple_is_first_for :: fn(mut p: Parser, gfn_index: i64, at: i64) -> bool {
         if (other.arg == arg && other.xarg_count == xcount
             && other.is_pack == is_pack
             && gargs_equal(p, other_start, xstart, xcount)
-            && instance_fits_kind(p, gfn_index, arg, other_start, xcount,
-                is_pack, other_owner)) {
+            && instance_fits_kind(
+                p,
+                gfn_index,
+                arg,
+                other_start,
+                xcount,
+                is_pack,
+                other_owner
+            )) {
             return false
         }
         i = i + 1
@@ -7394,8 +8272,13 @@ note_called_name :: fn(mut p: Parser, offset: i64, length: i64) {
     }
 }
 
-parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
-    xarg_start: i64, xarg_count: i64) -> i64 {
+parse_generic_instance :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
     var i: i64 = 0
     while (i < p.mono_nodes.count) {
         held := arena_at(p.mono_nodes, i)
@@ -7447,8 +8330,15 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     p.type_param_len = tparam_len
     p.type_binding = arg
     p.binding_active = 1
-    mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
-        arg, xarg_start)
+    mark := push_bindings(
+        p,
+        tparam_off,
+        tparam_len,
+        xparam_start,
+        xparam_count,
+        arg,
+        xarg_start
+    )
     p.ti = token_start
     // Parsing an instance derives types under the bindings just pushed, and the
     // implicit-return check calls type_of while they are live. Those answers hold
@@ -7474,10 +8364,17 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     p.type_param_len = saved_len
     p.type_binding = saved_bind
     p.binding_active = saved_active
-    arena_push(p.mono_nodes,
-        MonoNode { gfn_index = gfn_index, arg = arg, xarg_start = xarg_start,
-            xarg_count = xarg_count, node = node,
-            ret = p.last_return_type })
+    arena_push(
+        p.mono_nodes,
+        MonoNode {
+            gfn_index = gfn_index,
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count,
+            node = node,
+            ret = p.last_return_type
+        }
+    )
     node
 }
 
@@ -7496,12 +8393,17 @@ record_mono_rets :: fn(mut p: Parser) {
             xcount := used.xarg_count
             is_pack := used.is_pack
             owner := used.owner
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                    owner) && tuple_is_first_for(p, gi, ii)) {
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack, owner) && tuple_is_first_for(p, gi, ii)) {
                 node := parse_generic_instance(p, gi, arg, xstart, xcount)
                 fnode := arena_at(p.arena, node)
-                record_mono_ret(p, fnode.val, arg, xstart, xcount,
-                    p.last_return_type)
+                record_mono_ret(
+                    p,
+                    fnode.val,
+                    arg,
+                    xstart,
+                    xcount,
+                    p.last_return_type
+                )
             }
             ii = ii + 1
         }

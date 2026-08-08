@@ -46,17 +46,32 @@ ObjectIds :: struct {
 }
 
 // Everything that is drawn, whatever layer it is in.
-all_drawn :: fn(global_transform: i64, transform: i64,
-    drawn: i64) -> ObjectIds {
-    ObjectIds { global_transform = global_transform, transform = transform,
-        drawn = drawn, layer = -1 }
+all_drawn :: fn(
+    global_transform: i64,
+    transform: i64,
+    drawn: i64
+) -> ObjectIds {
+    ObjectIds {
+        global_transform = global_transform,
+        transform = transform,
+        drawn = drawn,
+        layer = -1
+    }
 }
 
 // One layer of what is drawn, for a program whose passes divide the world.
-drawn_in_layer :: fn(global_transform: i64, transform: i64, drawn: i64,
-    layer: i64) -> ObjectIds {
-    ObjectIds { global_transform = global_transform, transform = transform,
-        drawn = drawn, layer = layer }
+drawn_in_layer :: fn(
+    global_transform: i64,
+    transform: i64,
+    drawn: i64,
+    layer: i64
+) -> ObjectIds {
+    ObjectIds {
+        global_transform = global_transform,
+        transform = transform,
+        drawn = drawn,
+        layer = layer
+    }
 }
 
 // Everything the world says is drawn, pushed into the run. The caller empties
@@ -67,8 +82,13 @@ drawn_in_layer :: fn(global_transform: i64, transform: i64, drawn: i64,
 // renderer's own `Transform` here. That copy is what the boundary is: a pass
 // reads a component of the renderer's, and anything else that wants a position
 // reads `GlobalTransform` without ever naming a renderer type.
-scene_sync :: fn(mut world: World, mut render: RenderWorld,
-    registry: Materials, cache: MeshCache, ids: ObjectIds) {
+scene_sync :: fn(
+    mut world: World,
+    mut render: RenderWorld,
+    registry: Materials,
+    cache: MeshCache,
+    ids: ObjectIds
+) {
     var q := query_begin(world)
     query_with(q, ids.global_transform)
     query_with(q, ids.transform)
@@ -80,15 +100,29 @@ scene_sync :: fn(mut world: World, mut render: RenderWorld,
             entity := rows[row]
             shown := ecs_get($Drawn, world, entity, ids.drawn)
             if (ids.layer < 0 || shown.layer == ids.layer) {
-                placed := ecs_get($GlobalTransform, world, entity,
-                    ids.global_transform).matrix
-                ecs_set($Transform, world, entity, ids.transform,
-                    Transform { matrix = placed })
+                placed := ecs_get(
+                    $GlobalTransform,
+                    world,
+                    entity,
+                    ids.global_transform
+                ).matrix
+                ecs_set(
+                    $Transform,
+                    world,
+                    entity,
+                    ids.transform,
+                    Transform { matrix = placed }
+                )
                 // What it is made of and what shape it is are two numbers, not
                 // two things. Which draw they land in is worked out on the
                 // device from the material, so nothing here reads one.
-                render_world_push(render, placed, shown.mesh, shown.material,
-                    shown.layer)
+                render_world_push(
+                    render,
+                    placed,
+                    shown.mesh,
+                    shown.material,
+                    shown.layer
+                )
             }
             row = row + 1
         }

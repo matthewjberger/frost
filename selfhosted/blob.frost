@@ -107,8 +107,11 @@ blob_write :: fn(mut b: Blob, path: ^i8) {
     // standard library and is answered for the same way: the run is known here,
     // so a count past it is a false claim rather than an unverifiable one.
     written := unsafe {
-        slice_from($u8, ptr_to(b.bytes[0]),
-            frost_rt_check_span(0, b.count, str_len(b.bytes)))
+        slice_from(
+            $u8,
+            ptr_to(b.bytes[0]),
+            frost_rt_check_span(0, b.count, str_len(b.bytes))
+        )
     }
     emit_text(written)
     frost_rt_emit_close()

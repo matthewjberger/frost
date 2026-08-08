@@ -51,7 +51,12 @@ draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite, frame: i64) -> i64 {
                 fixed_push($Sprite, visible, sprite)
             }
         }
-        print("frame {} drew {} of {}\n", frame, fixed_len($Sprite, visible), slice_len(world))
+        print(
+            "frame {} drew {} of {}\n",
+            frame,
+            fixed_len($Sprite, visible),
+            slice_len(world)
+        )
         total = tally(fixed_slice($Sprite, visible))
     // escaped = visible
     //     region: a pointer into arena 'scratch' escapes its region

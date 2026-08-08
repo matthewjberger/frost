@@ -349,8 +349,12 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
 // ---------------------------------------------------------------------------
 
 // The IDL's own constants, the sentinels descriptors default to.
-emit_constants :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_constants :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     constants := json_member(document, root, "constants")
     total := json_count(document, constants)
     var index: i64 = 0
@@ -450,7 +454,10 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
     if (type_starts(document, kind, "string")
         || type_starts(document, kind, "out_string")
         || type_starts(document, kind, "nullable_string")) {
-        builder_str_value(out, "StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 }")
+        builder_str_value(
+            out,
+            "StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 }"
+        )
         return
     }
     if (type_starts(document, kind, "struct.")) {
@@ -480,8 +487,11 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
 }
 
 // The part after the dot, in SCREAMING_CASE.
-append_after_dot_screaming :: fn(mut out: Builder, mut document: Json,
-    node: i64) {
+append_after_dot_screaming :: fn(
+    mut out: Builder,
+    mut document: Json,
+    node: i64
+) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
     source := document.source
@@ -526,8 +536,12 @@ append_after_dot_snake :: fn(mut out: Builder, mut document: Json, node: i64) {
 }
 
 // One initialiser per struct, so a literal names only the fields it means.
-emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
-    root: i64) -> i64 {
+emit_inits :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     structs := json_member(document, root, "structs")
     total := json_count(document, structs)
     var index: i64 = 0
@@ -547,10 +561,16 @@ emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
         builder_str_value(names, "_init, ")
 
         if (json_text_eq(document, kind, "extensible")) {
-            builder_str_value(out, "        next_in_chain = unsafe { ptr_cast($u8, zero) },\n")
+            builder_str_value(
+                out,
+                "        next_in_chain = unsafe { ptr_cast($u8, zero) },\n"
+            )
         }
         if (json_text_eq(document, kind, "extension")) {
-            builder_str_value(out, "        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },\n")
+            builder_str_value(
+                out,
+                "        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },\n"
+            )
         }
         members := json_member(document, each, "members")
         count := json_count(document, members)
@@ -577,8 +597,12 @@ emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
     total
 }
 
-emit_enums :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_enums :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     enums := json_member(document, root, "enums")
     total := json_count(document, enums)
     var index: i64 = 0
@@ -682,8 +706,12 @@ named_value :: fn(mut document: Json, entries: i64, name: i64) -> i64 {
 // than by a prefix, so the type is what says which bits go together and a
 // buffer usage cannot be handed where a texture usage belongs. The numbers are
 // C's, which is why they are written out rather than chosen.
-emit_bitflags :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_bitflags :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     flags := json_member(document, root, "bitflags")
     total := json_count(document, flags)
     var index: i64 = 0
@@ -727,8 +755,12 @@ shift_left :: fn(places: i64) -> i64 {
     value
 }
 
-emit_structs :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_structs :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     structs := json_member(document, root, "structs")
     total := json_count(document, structs)
     var index: i64 = 0
@@ -786,8 +818,12 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
 // callback's own, then the two userdata pointers. A string argument arrives as
 // a WGPUStringView by value, which on this ABI reaches the callee as a pointer
 // and so occupies one argument slot.
-emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_callback_infos :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     callbacks := json_member(document, root, "callbacks")
     total := json_count(document, callbacks)
     var index: i64 = 0
@@ -838,8 +874,11 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         // parameter is an address in the signature and Frost shares C's
         // convention, so the two functions are one and the cast emits nothing.
         append_snake(out, document, name)
-        builder_str_value(out, "_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(")
+        builder_str_value(
+            out,
+            "_callback_info_of :: fn($Ctx: Type, mode: u32,
+    callback: fn("
+        )
         var typed: i64 = 0
         while (typed < count) {
             held := json_at(document, args, typed)
@@ -853,10 +892,13 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         builder_str_value(out, "CallbackInfo {
     ")
         append_pascal(out, document, name)
-        builder_str_value(out, "CallbackInfo {
+        builder_str_value(
+            out,
+            "CallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
-        callback = unsafe { ptr_cast($fn(")
+        callback = unsafe { ptr_cast($fn("
+        )
         var erased: i64 = 0
         while (erased < count) {
             held := json_at(document, args, erased)
@@ -865,13 +907,16 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
             builder_str_value(out, ", ")
             erased = erased + 1
         }
-        builder_str_value(out, "^u8, ^u8), callback) },
+        builder_str_value(
+            out,
+            "^u8, ^u8), callback) },
         userdata1 = unsafe { ptr_cast($u8, state) },
         userdata2 = null_handle(),
     }
 }
 
-")
+"
+        )
         append_snake(names, document, name)
         builder_str_value(names, "_callback_info_of, ")
         index = index + 1
@@ -929,8 +974,12 @@ append_args_forwarded :: fn(mut out: Builder, mut document: Json, args: i64) {
 // can be built from its representation, and the wrappers below have to do
 // exactly that to hand C's answer back. The guarantee is that the handles do
 // not mix, not that a pointer from nowhere cannot become one.
-emit_handles :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_handles :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     objects := json_member(document, root, "objects")
     total := json_count(document, objects)
     var index: i64 = 0
@@ -1001,8 +1050,12 @@ emit_handles :: fn(mut out: Builder, mut names: Builder,
     total
 }
 
-emit_free_functions :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_free_functions :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     functions := json_member(document, root, "functions")
     total := json_count(document, functions)
     var index: i64 = 0
@@ -1025,7 +1078,11 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
                 builder_str_value(out, ", ")
             }
             append_value_mode(out, document, held)
-            append_param_name(out, document, json_member(document, held, "name"))
+            append_param_name(
+                out,
+                document,
+                json_member(document, held, "name")
+            )
             builder_str_value(out, ": ")
             append_type(out, document, held)
             arg = arg + 1
@@ -1050,7 +1107,11 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
                 builder_str_value(out, ", ")
             }
             append_value_mode(out, document, held)
-            append_param_name(out, document, json_member(document, held, "name"))
+            append_param_name(
+                out,
+                document,
+                json_member(document, held, "name")
+            )
             builder_str_value(out, ": ")
             append_type(out, document, held)
             declared = declared + 1
@@ -1070,7 +1131,11 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
             if (forwarded > 0) {
                 builder_str_value(out, ", ")
             }
-            append_param_name(out, document, json_member(document, held, "name"))
+            append_param_name(
+                out,
+                document,
+                json_member(document, held, "name")
+            )
             forwarded = forwarded + 1
         }
         builder_str_value(out, ") }
@@ -1081,8 +1146,12 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
     total
 }
 
-emit_functions :: fn(mut out: Builder, mut names: Builder,
-    mut document: Json, root: i64) -> i64 {
+emit_functions :: fn(
+    mut out: Builder,
+    mut names: Builder,
+    mut document: Json,
+    root: i64
+) -> i64 {
     objects := json_member(document, root, "objects")
     total := json_count(document, objects)
     var emitted: i64 = 0
@@ -1150,8 +1219,11 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             // Every later call would read through it, so the failure is said
             // here rather than at whichever call happened to be next.
             hands_back_handle := (returns >= 0
-                && type_starts(document, json_member(document, returns, "type"),
-                    "object."))
+                && type_starts(
+                    document,
+                    json_member(document, returns, "type"),
+                    "object."
+                ))
             if (hands_back_handle) {
                 builder_str_value(out, " {
     held := unsafe { wgpu")
@@ -1162,18 +1234,24 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
                 if (callback >= 0) {
                     builder_str_value(out, ", callback_info")
                 }
-                builder_str_value(out, ") }
+                builder_str_value(
+                    out,
+                    ") }
     if (held == null_handle()) {
-        unsafe { frost_rt_error(\"wgpu: ")
+        unsafe { frost_rt_error(\"wgpu: "
+                )
                 append_snake(out, document, object_name)
                 builder_byte(out, 95)
                 append_snake(out, document, method_name)
-                builder_str_value(out, " answered with nothing\\n\") }
+                builder_str_value(
+                    out,
+                    " answered with nothing\\n\") }
         frost_rt_die()
     }
     held
 }
-")
+"
+                )
             } else {
                 builder_str_value(out, " {
     unsafe { wgpu")
@@ -1215,7 +1293,10 @@ main :: fn() -> i64 {
 
     var body := builder_new(262144)
     var names := builder_new(65536)
-    builder_str_value(names, "Chained, StringView, null_handle, surface_format_at, ")
+    builder_str_value(
+        names,
+        "Chained, StringView, null_handle, surface_format_at, "
+    )
 
     handles := emit_handles(body, names, document, root)
     constants := emit_constants(body, names, document, root)
@@ -1230,8 +1311,11 @@ main :: fn() -> i64 {
     // A module offers only what it exports, so the generated file names
     // everything it defined.
     var out := builder_new(393216)
-    builder_str_value(out, "// Generated from webgpu.json by tools/wgpu_bindgen.frost.
-")
+    builder_str_value(
+        out,
+        "// Generated from webgpu.json by tools/wgpu_bindgen.frost.
+"
+    )
     builder_str_value(out, "// Do not edit. Run `just bindgen` instead.
 
 ")
@@ -1252,21 +1336,27 @@ main :: fn() -> i64 {
     builder_str_value(out, "frost_rt_die   :: safe extern fn()
 
 ")
-    builder_str_value(out, "null_handle :: fn() -> ^u8 {
+    builder_str_value(
+        out,
+        "null_handle :: fn() -> ^u8 {
     zero := 0
     unsafe { ptr_cast($u8, zero) }
 }
 
-")
+"
+    )
     // What a surface accepts, at a place in the run it answered with.
-    builder_str_value(out, "surface_format_at :: fn(held: SurfaceCapabilities,
+    builder_str_value(
+        out,
+        "surface_format_at :: fn(held: SurfaceCapabilities,
     index: i64) -> u32 {
     span : []u32 = unsafe { slice_from($u32, ptr_cast($u32, held.formats),
         cast($i64, held.formats_count)) }
     span[index]
 }
 
-")
+"
+    )
     builder_str_value(out, builder_str(body))
 
     if (fs_write(OUT, builder_str(out)) == false) {
@@ -1279,9 +1369,19 @@ main :: fn() -> i64 {
         return 1
     }
 
-    print("{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
-        handles, enums, flags, structs, functions, infos, free_functions, constants, inits,
-        builder_len(out))
+    print(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        handles,
+        enums,
+        flags,
+        structs,
+        functions,
+        infos,
+        free_functions,
+        constants,
+        inits,
+        builder_len(out)
+    )
 
     builder_free(out)
     builder_free(body)

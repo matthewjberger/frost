@@ -159,8 +159,12 @@ gltf_node_at :: fn(mut model: Gltf, index: i64) -> GltfNode {
 // The children of a node, as the span of the flat run they were read into.
 gltf_node_children :: fn(mut model: Gltf, index: i64) -> []i64 {
     held := vec_slice($GltfNode, model.nodes)[index]
-    slice_range($i64, vec_slice($i64, model.children), held.child_first,
-        held.child_count)
+    slice_range(
+        $i64,
+        vec_slice($i64, model.children),
+        held.child_first,
+        held.child_count
+    )
 }
 
 gltf_root_count :: fn(model: Gltf) -> i64 { vec_len($i64, model.roots) }
@@ -172,8 +176,10 @@ gltf_root_at :: fn(mut model: Gltf, index: i64) -> i64 {
 // A node's own transform, which is its translation, its rotation and its scale
 // in that order.
 gltf_node_matrix :: fn(node: GltfNode) -> Mat4 {
-    mat4_mul(mat4_translation(node.translation),
-        mat4_mul(quat_to_mat4(node.rotation), mat4_scale(node.scale)))
+    mat4_mul(
+        mat4_translation(node.translation),
+        mat4_mul(quat_to_mat4(node.rotation), mat4_scale(node.scale))
+    )
 }
 
 gltf_free :: fn(move model: Gltf) {
@@ -310,8 +316,12 @@ real_or :: fn(mut document: Json, node: i64, fallback: f32) -> f32 {
 }
 
 // One element of a JSON array of numbers, as a float.
-element_or :: fn(mut document: Json, array: i64, index: i64,
-    fallback: f32) -> f32 {
+element_or :: fn(
+    mut document: Json,
+    array: i64,
+    index: i64,
+    fallback: f32
+) -> f32 {
     if (array < 0) { return fallback }
     real_or(document, json_at(document, array, index), fallback)
 }
@@ -328,24 +338,36 @@ read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
         pbr := json_member(document, node, "pbrMetallicRoughness")
         colour := json_member(document, pbr, "baseColorFactor")
         var held := material_of(
-            vec4(element_or(document, colour, 0, 1.0),
+            vec4(
+                element_or(document, colour, 0, 1.0),
                 element_or(document, colour, 1, 1.0),
                 element_or(document, colour, 2, 1.0),
-                element_or(document, colour, 3, 1.0)),
-            real_or(document,
-                json_member(document, pbr, "roughnessFactor"), 1.0),
-            real_or(document,
-                json_member(document, pbr, "metallicFactor"), 1.0))
+                element_or(document, colour, 3, 1.0)
+            ),
+            real_or(
+                document,
+                json_member(document, pbr, "roughnessFactor"),
+                1.0
+            ),
+            real_or(document, json_member(document, pbr, "metallicFactor"), 1.0)
+        )
         // How a surface handles its own alpha and whether both its sides are
         // drawn are the file's to say, and they decide which draw the thing
         // lands in rather than how it shades. A file that says nothing gets
         // the opaque, one-sided answer glTF names as the default.
-        held.alpha_cutoff = real_or(document,
-            json_member(document, node, "alphaCutoff"), 0.5)
-        held.alpha_mode = alpha_mode_of(document,
-            json_member(document, node, "alphaMode"))
-        held.double_sided = json_kind(document,
-            json_member(document, node, "doubleSided")) == JsonKind::True
+        held.alpha_cutoff = real_or(
+            document,
+            json_member(document, node, "alphaCutoff"),
+            0.5
+        )
+        held.alpha_mode = alpha_mode_of(
+            document,
+            json_member(document, node, "alphaMode")
+        )
+        held.double_sided = json_kind(
+            document,
+            json_member(document, node, "doubleSided")
+        ) == JsonKind::True
         vec_push($Material, model.materials, held)
         index = index + 1
         node = json_next(document, node)
@@ -371,16 +393,22 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
             mesh = number_or(document, json_member(document, node, "mesh"), -1),
             child_first = vec_len($i64, model.children),
             child_count = 0,
-            translation = vec3(element_or(document, translation, 0, 0.0),
+            translation = vec3(
+                element_or(document, translation, 0, 0.0),
                 element_or(document, translation, 1, 0.0),
-                element_or(document, translation, 2, 0.0)),
-            rotation = Quat { x = element_or(document, rotation, 0, 0.0),
+                element_or(document, translation, 2, 0.0)
+            ),
+            rotation = Quat {
+                x = element_or(document, rotation, 0, 0.0),
                 y = element_or(document, rotation, 1, 0.0),
                 z = element_or(document, rotation, 2, 0.0),
-                w = element_or(document, rotation, 3, 1.0) },
-            scale = vec3(element_or(document, scale, 0, 1.0),
+                w = element_or(document, rotation, 3, 1.0)
+            },
+            scale = vec3(
+                element_or(document, scale, 0, 1.0),
                 element_or(document, scale, 1, 1.0),
-                element_or(document, scale, 2, 1.0)),
+                element_or(document, scale, 2, 1.0)
+            ),
         }
         // A node may give a whole matrix instead of the three above, which is
         // what an exporter writes where a transform will not come apart into
@@ -390,8 +418,11 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
         if (matrix >= 0) {
             held = from_matrix(document, matrix, held)
         }
-        var child := json_at(document, json_member(document, node, "children"),
-            0)
+        var child := json_at(
+            document,
+            json_member(document, node, "children"),
+            0
+        )
         while (child >= 0) {
             vec_push($i64, model.children, json_number(document, child))
             held.child_count = held.child_count + 1
@@ -461,35 +492,53 @@ from_matrix :: fn(mut document: Json, matrix: i64, node: GltfNode) -> GltfNode {
         child_count = node.child_count,
         translation = vec3(column[12], column[13], column[14]),
         rotation = node.rotation,
-        scale = vec3(vec3_length(first), vec3_length(second),
-            vec3_length(third)),
+        scale = vec3(
+            vec3_length(first),
+            vec3_length(second),
+            vec3_length(third)
+        ),
     }
 }
 
-read_meshes :: fn(mut document: Json, root: i64, mut model: Gltf,
-    binary: ^u8, binary_length: i64) {
+read_meshes :: fn(
+    mut document: Json,
+    root: i64,
+    mut model: Gltf,
+    binary: ^u8,
+    binary_length: i64
+) {
     meshes := json_member(document, root, "meshes")
     var mesh := json_at(document, meshes, 0)
     while (mesh >= 0) {
         first := vec_len($GltfPrimitive, model.primitives)
         var count: i64 = 0
-        var primitive := json_at(document,
-            json_member(document, mesh, "primitives"), 0)
+        var primitive := json_at(
+            document,
+            json_member(document, mesh, "primitives"),
+            0
+        )
         while (primitive >= 0) {
-            if (read_primitive(document, primitive, model, binary,
-                    binary_length)) {
+            if (read_primitive(document, primitive, model, binary, binary_length)) {
                 count = count + 1
             }
             primitive = json_next(document, primitive)
         }
-        vec_push($GltfMesh, model.meshes, GltfMesh { first = first,
-                count = count })
+        vec_push(
+            $GltfMesh,
+            model.meshes,
+            GltfMesh { first = first, count = count }
+        )
         mesh = json_next(document, mesh)
     }
 }
 
-read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
-    binary: ^u8, binary_length: i64) -> bool {
+read_primitive :: fn(
+    mut document: Json,
+    primitive: i64,
+    mut model: Gltf,
+    binary: ^u8,
+    binary_length: i64
+) -> bool {
     // Only triangles. A file that draws strips or lines is a file this cannot
     // hand to a pipeline built for triangle lists, so it is left out rather
     // than drawn as something it is not.
@@ -498,15 +547,27 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
         return false
     }
     attributes := json_member(document, primitive, "attributes")
-    position := accessor_of(document, root_of(document),
-        json_member(document, attributes, "POSITION"), binary_length)
+    position := accessor_of(
+        document,
+        root_of(document),
+        json_member(document, attributes, "POSITION"),
+        binary_length
+    )
     if (position.ok == false || position.components < 3) {
         return false
     }
-    normal := accessor_of(document, root_of(document),
-        json_member(document, attributes, "NORMAL"), binary_length)
-    texcoord := accessor_of(document, root_of(document),
-        json_member(document, attributes, "TEXCOORD_0"), binary_length)
+    normal := accessor_of(
+        document,
+        root_of(document),
+        json_member(document, attributes, "NORMAL"),
+        binary_length
+    )
+    texcoord := accessor_of(
+        document,
+        root_of(document),
+        json_member(document, attributes, "TEXCOORD_0"),
+        binary_length
+    )
 
     var vertices := heap_slice($Vertex, position.count)
     var index: i64 = 0
@@ -531,8 +592,12 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
     // one run downstream either way rather than two shapes of mesh. How long it
     // is comes first, so the run is taken once: taking it twice and letting the
     // second stand would leave the first behind on every primitive read.
-    indices := accessor_of(document, root_of(document),
-        json_member(document, primitive, "indices"), binary_length)
+    indices := accessor_of(
+        document,
+        root_of(document),
+        json_member(document, primitive, "indices"),
+        binary_length
+    )
     var ordered := position.count
     if (indices.ok) {
         ordered = indices.count
@@ -548,10 +613,19 @@ read_primitive :: fn(mut document: Json, primitive: i64, mut model: Gltf,
         index = index + 1
     }
 
-    vec_push($GltfPrimitive, model.primitives, GltfPrimitive {
-            vertices = vertices, indices = order,
-            material = number_or(document,
-                json_member(document, primitive, "material"), -1) })
+    vec_push(
+        $GltfPrimitive,
+        model.primitives,
+        GltfPrimitive {
+            vertices = vertices,
+            indices = order,
+            material = number_or(
+                document,
+                json_member(document, primitive, "material"),
+                -1
+            )
+        }
+    )
     true
 }
 
@@ -565,26 +639,41 @@ root_of :: fn(mut document: Json) -> i64 {
 // Where an accessor's numbers sit and how they are laid out, checked against
 // the binary chunk it claims to be inside. An accessor whose run would leave
 // that chunk comes back with `ok` false and is treated as absent.
-accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
-    binary_length: i64) -> Accessor {
-    absent := Accessor { offset = 0, stride = 0, count = 0, component = 0,
-        components = 0, ok = false }
+accessor_of :: fn(
+    mut document: Json,
+    root: i64,
+    accessor: i64,
+    binary_length: i64
+) -> Accessor {
+    absent := Accessor {
+        offset = 0,
+        stride = 0,
+        count = 0,
+        component = 0,
+        components = 0,
+        ok = false
+    }
     if (accessor < 0) {
         return absent
     }
-    node := json_at(document, json_member(document, root, "accessors"),
-        json_number(document, accessor))
+    node := json_at(
+        document,
+        json_member(document, root, "accessors"),
+        json_number(document, accessor)
+    )
     if (node < 0) {
         return absent
     }
-    component := number_or(document,
-        json_member(document, node, "componentType"), 0)
+    component := number_or(
+        document,
+        json_member(document, node, "componentType"),
+        0
+    )
     width := component_bytes(component)
     if (width == 0) {
         return absent
     }
-    components := components_of(document,
-        json_member(document, node, "type"))
+    components := components_of(document, json_member(document, node, "type"))
     if (components == 0) {
         return absent
     }
@@ -599,13 +688,19 @@ accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
     if (json_member(document, node, "sparse") >= 0) {
         return absent
     }
-    view := json_at(document, json_member(document, root, "bufferViews"),
-        number_or(document, json_member(document, node, "bufferView"), -1))
+    view := json_at(
+        document,
+        json_member(document, root, "bufferViews"),
+        number_or(document, json_member(document, node, "bufferView"), -1)
+    )
     if (view < 0) {
         return absent
     }
-    stride := number_or(document, json_member(document, view, "byteStride"),
-        width * components)
+    stride := number_or(
+        document,
+        json_member(document, view, "byteStride"),
+        width * components
+    )
     offset := (number_or(document, json_member(document, view, "byteOffset"), 0)
         + number_or(document, json_member(document, node, "byteOffset"), 0))
     if (stride < width * components || offset < 0) {
@@ -618,8 +713,14 @@ accessor_of :: fn(mut document: Json, root: i64, accessor: i64,
         print("gltf: an accessor runs past the binary chunk\n")
         return absent
     }
-    Accessor { offset = offset, stride = stride, count = count,
-        component = component, components = components, ok = true }
+    Accessor {
+        offset = offset,
+        stride = stride,
+        count = count,
+        component = component,
+        components = components,
+        ok = true
+    }
 }
 
 component_bytes :: fn(component: i64) -> i64 {
@@ -648,8 +749,11 @@ read_vec3 :: fn(binary: ^u8, held: Accessor, index: i64) -> Vec3 {
     if (held.component != COMPONENT_FLOAT) {
         return vec3(0.0, 0.0, 0.0)
     }
-    floats := bytes_as($f32, bytes_at(binary, held.offset + index * held.stride),
-        3)
+    floats := bytes_as(
+        $f32,
+        bytes_at(binary, held.offset + index * held.stride),
+        3
+    )
     vec3(floats[0], floats[1], floats[2])
 }
 
@@ -657,8 +761,11 @@ read_vec2 :: fn(binary: ^u8, held: Accessor, index: i64) -> Vec2 {
     if (held.component != COMPONENT_FLOAT) {
         return vec2(0.0, 0.0)
     }
-    floats := bytes_as($f32, bytes_at(binary, held.offset + index * held.stride),
-        2)
+    floats := bytes_as(
+        $f32,
+        bytes_at(binary, held.offset + index * held.stride),
+        2
+    )
     vec2(floats[0], floats[1])
 }
 
@@ -847,9 +954,16 @@ test "a file that is not one is refused rather than read" {
 // entities carry is the numbers they came back as. After this the file has done
 // its job and `gltf_free` takes it away: nothing spawned points into it.
 
-gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
-    device: Device, queue: Queue, mut registry: Materials, mut cache: MeshCache,
-    ids: WorldIds) -> Entity {
+gltf_spawn :: fn(
+    mut world: World,
+    mut model: Gltf,
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    mut registry: Materials,
+    mut cache: MeshCache,
+    ids: WorldIds
+) -> Entity {
     if (gltf_ok(model) == false) {
         return no_entity()
     }
@@ -860,8 +974,10 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     var materials := heap_slice($i64, gltf_material_count(model))
     var index: i64 = 0
     while (index < gltf_material_count(model)) {
-        materials[index] = materials_add(registry, gltf_material_at(model,
-                index))
+        materials[index] = materials_add(
+            registry,
+            gltf_material_at(model, index)
+        )
         index = index + 1
     }
     index = 0
@@ -871,8 +987,13 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
         // back and nothing looks a loaded mesh up by name. The cache keeps the
         // vertices either way, so a model loaded and dropped gives its room
         // back like anything else.
-        meshes[index] = mesh_cache_add(cache, store, device, queue,
-            Mesh { vertices = held.vertices, indices = held.indices })
+        meshes[index] = mesh_cache_add(
+            cache,
+            store,
+            device,
+            queue,
+            Mesh { vertices = held.vertices, indices = held.indices }
+        )
         index = index + 1
     }
 
@@ -881,8 +1002,15 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
     root := spawn_node_entity(world, ids, local_at(vec3(0.0, 0.0, 0.0)))
     var at: i64 = 0
     while (at < gltf_root_count(model)) {
-        spawn_node(world, model, gltf_root_at(model, at), root, meshes,
-            materials, ids)
+        spawn_node(
+            world,
+            model,
+            gltf_root_at(model, at),
+            root,
+            meshes,
+            materials,
+            ids
+        )
         at = at + 1
     }
     heap_release_slice($i64, meshes)
@@ -891,15 +1019,28 @@ gltf_spawn :: fn(mut world: World, mut model: Gltf, mut store: Geometry,
 }
 
 // One node and everything under it, hung off what it was given.
-spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
-    meshes: []i64, materials: []i64, ids: WorldIds) {
+spawn_node :: fn(
+    mut world: World,
+    mut model: Gltf,
+    node: i64,
+    parent: Entity,
+    meshes: []i64,
+    materials: []i64,
+    ids: WorldIds
+) {
     if (node < 0 || node >= gltf_node_count(model)) {
         return
     }
     held := gltf_node_at(model, node)
-    entity := spawn_node_entity(world, ids, LocalTransform {
-            translation = held.translation, rotation = held.rotation,
-            scale = held.scale })
+    entity := spawn_node_entity(
+        world,
+        ids,
+        LocalTransform {
+            translation = held.translation,
+            rotation = held.rotation,
+            scale = held.scale
+        }
+    )
     tree := world_tree(world)
     hierarchy_attach(tree, entity, parent)
 
@@ -916,9 +1057,15 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
             }
             // The primitive sits where its node sits, so its own placement is
             // nothing at all and the node above carries the transform.
-            piece := spawn_drawn(world, ids, Drawn {
-                    mesh = meshes[first + part], material = wears,
-                    layer = ONE_LAYER })
+            piece := spawn_drawn(
+                world,
+                ids,
+                Drawn {
+                    mesh = meshes[first + part],
+                    material = wears,
+                    layer = ONE_LAYER
+                }
+            )
             var under := world_tree(world)
             hierarchy_attach(under, piece, entity)
             part = part + 1
@@ -928,8 +1075,15 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
     children := gltf_node_children(model, node)
     var child: i64 = 0
     while (child < slice_len(children)) {
-        spawn_node(world, model, children[child], entity, meshes, materials,
-            ids)
+        spawn_node(
+            world,
+            model,
+            children[child],
+            entity,
+            meshes,
+            materials,
+            ids
+        )
         child = child + 1
     }
 }
@@ -941,10 +1095,18 @@ spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
 // walk hands to the pass, and what it would hand over is a mesh that is not
 // there. Most of a real file's nodes draw nothing: they are the joints and the
 // groupings the model was built out of.
-spawn_node_entity :: fn(mut world: World, ids: WorldIds,
-    place: LocalTransform) -> Entity {
-    wanted := mask_with(mask_with(mask_with(mask_empty(),
-                ids.local_transform), ids.global_transform), ids.transform)
+spawn_node_entity :: fn(
+    mut world: World,
+    ids: WorldIds,
+    place: LocalTransform
+) -> Entity {
+    wanted := mask_with(
+        mask_with(
+            mask_with(mask_empty(), ids.local_transform),
+            ids.global_transform
+        ),
+        ids.transform
+    )
     entity := ecs_spawn_with(world, wanted)
     ecs_set($LocalTransform, world, entity, ids.local_transform, place)
     entity
@@ -952,12 +1114,24 @@ spawn_node_entity :: fn(mut world: World, ids: WorldIds,
 
 // One primitive: drawn, and sitting exactly where the node above it sits.
 spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
-    wanted := mask_with(mask_with(mask_with(mask_with(
-                    mask_empty(), ids.local_transform),
-                ids.global_transform), ids.transform), ids.drawn)
+    wanted := mask_with(
+        mask_with(
+            mask_with(
+                mask_with(mask_empty(), ids.local_transform),
+                ids.global_transform
+            ),
+            ids.transform
+        ),
+        ids.drawn
+    )
     entity := ecs_spawn_with(world, wanted)
-    ecs_set($LocalTransform, world, entity, ids.local_transform,
-        local_at(vec3(0.0, 0.0, 0.0)))
+    ecs_set(
+        $LocalTransform,
+        world,
+        entity,
+        ids.local_transform,
+        local_at(vec3(0.0, 0.0, 0.0))
+    )
     ecs_set($Drawn, world, entity, ids.drawn, shown)
     entity
 }

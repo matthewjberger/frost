@@ -35,8 +35,11 @@ CHANNELS :: 4
 Image :: struct { pixels: []u8, width: i64, height: i64 }
 
 image_new :: fn(width: i64, height: i64) -> Image {
-    Image { pixels = heap_slice($u8, width * height * CHANNELS),
-        width = width, height = height }
+    Image {
+        pixels = heap_slice($u8, width * height * CHANNELS),
+        width = width,
+        height = height
+    }
 }
 
 image_free :: fn(mut held: Image) {
@@ -194,8 +197,11 @@ Texture2D :: struct { texture: Texture, view: TextureView, sampler: Sampler }
 // The three of nothing, for a place that holds a texture before there is one to
 // hold.
 no_texture2d :: fn() -> Texture2D {
-    Texture2D { texture = no_texture(), view = no_texture_view(),
-        sampler = no_sampler() }
+    Texture2D {
+        texture = no_texture(),
+        view = no_texture_view(),
+        sampler = no_sampler()
+    }
 }
 
 texture_view_of :: fn(held: Texture2D) -> TextureView { held.view }
@@ -227,10 +233,14 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     layout.rows_per_image = cast($u32, held.height)
 
     var written := whole_extent(held.width, held.height)
-    queue_write_texture(queue, ptr_to(destination),
+    queue_write_texture(
+        queue,
+        ptr_to(destination),
         ptr_to(held.pixels[0]),
-        cast($u64, held.width * held.height * CHANNELS), ptr_to(layout),
-        ptr_to(written))
+        cast($u64, held.width * held.height * CHANNELS),
+        ptr_to(layout),
+        ptr_to(written)
+    )
 
     var view_descriptor := texture_view_descriptor_init()
     view_descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
@@ -271,8 +281,12 @@ texture_free :: fn(held: Texture2D) {
 //
 // This is what a post-process chain is made of, and a shadow map, and a picking
 // buffer. Nothing about it is special beyond being both at once.
-texture_render_target :: fn(device: Device, width: i64, height: i64,
-    format: u32) -> Texture2D {
+texture_render_target :: fn(
+    device: Device,
+    width: i64,
+    height: i64,
+    format: u32
+) -> Texture2D {
     var descriptor := texture_descriptor_init()
     descriptor.usage = (TextureUsage::RenderAttachment
         | TextureUsage::TextureBinding)
@@ -311,8 +325,12 @@ texture_render_target :: fn(device: Device, width: i64, height: i64,
 // The same, as depth. A shadow map is this: a pass writes depth from where the
 // light is, and the pass after reads it to ask whether a point is the nearest
 // thing the light can see.
-texture_depth_target :: fn(device: Device, width: i64, height: i64,
-    format: u32) -> Texture2D {
+texture_depth_target :: fn(
+    device: Device,
+    width: i64,
+    height: i64,
+    format: u32
+) -> Texture2D {
     var descriptor := texture_descriptor_init()
     descriptor.usage = (TextureUsage::RenderAttachment
         | TextureUsage::TextureBinding)
@@ -331,7 +349,11 @@ texture_depth_target :: fn(device: Device, width: i64, height: i64,
     view_descriptor.aspect = TEXTURE_ASPECT_DEPTH_ONLY
     view := texture_create_view(made, ptr_to(view_descriptor))
 
-    Texture2D { texture = made, view = view, sampler = comparison_sampler(device) }
+    Texture2D {
+        texture = made,
+        view = view,
+        sampler = comparison_sampler(device)
+    }
 }
 
 // A sampler that compares rather than reads. A depth texture sampled this way
@@ -375,8 +397,12 @@ comparison_sampler :: fn(device: Device) -> Sampler {
 // Every layer is the same size and format, which is what an array is. A program
 // with images of different sizes has an atlas or several arrays, and either way
 // that is its decision rather than this one's.
-texture_array_new :: fn(device: Device, width: i64, height: i64,
-    layers: i64) -> Texture2D {
+texture_array_new :: fn(
+    device: Device,
+    width: i64,
+    height: i64,
+    layers: i64
+) -> Texture2D {
     var descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
     descriptor.dimension = TEXTURE_DIMENSION_2D
@@ -411,8 +437,12 @@ texture_array_new :: fn(device: Device, width: i64, height: i64,
 
 // One layer's bytes. The image has to be the size the array was made at, since
 // a layer is a slice of one allocation rather than a texture of its own.
-texture_array_write :: fn(held: Texture2D, queue: Queue, layer: i64,
-    given: Image) {
+texture_array_write :: fn(
+    held: Texture2D,
+    queue: Queue,
+    layer: i64,
+    given: Image
+) {
     var destination := texel_copy_texture_info_init()
     destination.texture = held.texture
     destination.mip_level = 0
@@ -425,9 +455,14 @@ texture_array_write :: fn(held: Texture2D, queue: Queue, layer: i64,
     layout.rows_per_image = cast($u32, given.height)
 
     var written := layered_extent(given.width, given.height, 1)
-    queue_write_texture(queue, ptr_to(destination), ptr_to(given.pixels[0]),
-        cast($u64, given.width * given.height * CHANNELS), ptr_to(layout),
-        ptr_to(written))
+    queue_write_texture(
+        queue,
+        ptr_to(destination),
+        ptr_to(given.pixels[0]),
+        cast($u64, given.width * given.height * CHANNELS),
+        ptr_to(layout),
+        ptr_to(written)
+    )
 }
 
 // A layer's own corner of the allocation, which is where the third coordinate

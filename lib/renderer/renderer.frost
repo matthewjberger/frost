@@ -229,9 +229,13 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) {
 // the failed half of an open leaves behind.
 test "a renderer that never opened is closed without touching a handle" {
     var r := Renderer {
-        instance = no_instance(), surface = no_surface(),
-        adapter = no_adapter(), device = no_device(), queue = no_queue(),
-        format = 0, configuration = surface_configuration_init(),
+        instance = no_instance(),
+        surface = no_surface(),
+        adapter = no_adapter(),
+        device = no_device(),
+        queue = no_queue(),
+        format = 0,
+        configuration = surface_configuration_init(),
         graph = graph_new(no_device()),
         opened = false,
     }

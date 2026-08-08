@@ -100,8 +100,10 @@ mesh_cache_free :: fn(mut cache: MeshCache) {
 
 // Room for a mesh of this shape, for something filling one in.
 mesh_new :: fn(vertex_count: i64, index_count: i64) -> Mesh {
-    Mesh { vertices = heap_slice($Vertex, vertex_count),
-        indices = heap_slice($u32, index_count) }
+    Mesh {
+        vertices = heap_slice($Vertex, vertex_count),
+        indices = heap_slice($u32, index_count)
+    }
 }
 
 mesh_free :: fn(mut held: Mesh) {
@@ -115,8 +117,14 @@ mesh_free :: fn(mut held: Mesh) {
 // generation, so everything drawn as it is drawn as the new one. What it had is
 // freed and what it sat on in the buffers is left behind, which the rebuild
 // below is what reclaims.
-mesh_cache_insert :: fn(mut cache: MeshCache, mut store: Geometry,
-    device: Device, queue: Queue, name: str, move held: Mesh) -> i64 {
+mesh_cache_insert :: fn(
+    mut cache: MeshCache,
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    name: str,
+    move held: Mesh
+) -> i64 {
     span := geometry_add(store, device, queue, held.vertices, held.indices)
     existing := mesh_cache_find(cache, name)
     if (existing >= 0) {
@@ -146,8 +154,13 @@ mesh_cache_insert :: fn(mut cache: MeshCache, mut store: Geometry,
 // moment the same file is loaded twice.
 //
 // It is held and freed exactly like a named one, so a rebuild puts it back.
-mesh_cache_add :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
-    queue: Queue, move held: Mesh) -> i64 {
+mesh_cache_add :: fn(
+    mut cache: MeshCache,
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    move held: Mesh
+) -> i64 {
     span := geometry_add(store, device, queue, held.vertices, held.indices)
     at := take_slot(cache)
     if (at < 0) {
@@ -186,8 +199,13 @@ take_slot :: fn(mut cache: MeshCache) -> i64 {
 // What it held in the buffers is not given back here. Reclaiming it means
 // putting everything else back from the start, which is what `mesh_cache_clear`
 // does and what this asks for when enough has gone to be worth it.
-mesh_cache_remove :: fn(mut cache: MeshCache, mut store: Geometry,
-    device: Device, queue: Queue, name: str) -> bool {
+mesh_cache_remove :: fn(
+    mut cache: MeshCache,
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    name: str
+) -> bool {
     at := mesh_cache_find(cache, name)
     if (at < 0) {
         return false
@@ -195,8 +213,12 @@ mesh_cache_remove :: fn(mut cache: MeshCache, mut store: Geometry,
     var gone := cache.meshes[at]
     mesh_free(gone)
     cache.live[at] = false
-    cache.spans[at] = MeshSpan { first_index = 0, index_count = 0,
-        base_vertex = 0, radius = 0.0 }
+    cache.spans[at] = MeshSpan {
+        first_index = 0,
+        index_count = 0,
+        base_vertex = 0,
+        radius = 0.0
+    }
     cache.generations[at] = cache.generations[at] + 1
     cache.free[cache.free_count] = at
     cache.free_count = cache.free_count + 1
@@ -222,16 +244,24 @@ worth_rebuilding :: fn(cache: MeshCache, store: Geometry) -> bool {
         }
         index = index + 1
     }
-    worth_rebuilding_counts(live_vertices, live_indices,
-        geometry_vertex_room(store), geometry_index_room(store))
+    worth_rebuilding_counts(
+        live_vertices,
+        live_indices,
+        geometry_vertex_room(store),
+        geometry_index_room(store)
+    )
 }
 
 // The buffers have to be mostly empty and there has to be a real amount to get
 // back. Either test alone is wrong: a buffer one tenth used is not worth
 // touching if it is small, and one with a lot of slack is not worth touching if
 // most of it is live.
-worth_rebuilding_counts :: fn(live_vertices: i64, live_indices: i64,
-    vertex_room: i64, index_room: i64) -> bool {
+worth_rebuilding_counts :: fn(
+    live_vertices: i64,
+    live_indices: i64,
+    vertex_room: i64,
+    index_room: i64
+) -> bool {
     if (live_vertices == 0 || live_indices == 0) {
         return false
     }
@@ -248,14 +278,23 @@ worth_rebuilding_counts :: fn(live_vertices: i64, live_indices: i64,
 // Everything still here, put back from the start. Every live mesh gets a new
 // span wherever it now falls, which is why the cache had to keep the meshes:
 // there is nowhere else the vertices could come from.
-rebuild :: fn(mut cache: MeshCache, mut store: Geometry, device: Device,
-    queue: Queue) {
+rebuild :: fn(
+    mut cache: MeshCache,
+    mut store: Geometry,
+    device: Device,
+    queue: Queue
+) {
     geometry_reset(store)
     var index: i64 = 0
     while (index < cache.count) {
         if (cache.live[index]) {
-            cache.spans[index] = geometry_add(store, device, queue,
-                cache.meshes[index].vertices, cache.meshes[index].indices)
+            cache.spans[index] = geometry_add(
+                store,
+                device,
+                queue,
+                cache.meshes[index].vertices,
+                cache.meshes[index].indices
+            )
         }
         index = index + 1
     }
@@ -326,17 +365,37 @@ mesh_slot_alive :: fn(cache: MeshCache, held: MeshSlot) -> bool {
 // which is the winding the pipeline calls front. The four corners take the four
 // corners of the image in the same order, so every face reads the whole of it
 // and every face reads it the same way up.
-quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
-    normal: Vec3, a: Vec3, b: Vec3, c: Vec3, d: Vec3) {
+quad :: fn(
+    mut vertices: []Vertex,
+    mut indices: []u32,
+    at: i64,
+    normal: Vec3,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    d: Vec3
+) {
     base := at * 4
-    vertices[base] = Vertex { position = a, normal = normal,
-        texcoord = vec2(0.0, 1.0) }
-    vertices[base + 1] = Vertex { position = b, normal = normal,
-        texcoord = vec2(1.0, 1.0) }
-    vertices[base + 2] = Vertex { position = c, normal = normal,
-        texcoord = vec2(1.0, 0.0) }
-    vertices[base + 3] = Vertex { position = d, normal = normal,
-        texcoord = vec2(0.0, 0.0) }
+    vertices[base] = Vertex {
+        position = a,
+        normal = normal,
+        texcoord = vec2(0.0, 1.0)
+    }
+    vertices[base + 1] = Vertex {
+        position = b,
+        normal = normal,
+        texcoord = vec2(1.0, 1.0)
+    }
+    vertices[base + 2] = Vertex {
+        position = c,
+        normal = normal,
+        texcoord = vec2(1.0, 0.0)
+    }
+    vertices[base + 3] = Vertex {
+        position = d,
+        normal = normal,
+        texcoord = vec2(0.0, 0.0)
+    }
     corner := at * 6
     indices[corner] = cast($u32, base)
     indices[corner + 1] = cast($u32, base + 1)
@@ -358,24 +417,66 @@ cube_mesh :: fn() -> Mesh {
     half: f32 = 0.5
     low := -half
 
-    quad(vertices, indices, 0, vec3(1.0, 0.0, 0.0),
-        vec3(half, low, half), vec3(half, low, low),
-        vec3(half, half, low), vec3(half, half, half))
-    quad(vertices, indices, 1, vec3(-1.0, 0.0, 0.0),
-        vec3(low, low, low), vec3(low, low, half),
-        vec3(low, half, half), vec3(low, half, low))
-    quad(vertices, indices, 2, vec3(0.0, 1.0, 0.0),
-        vec3(low, half, half), vec3(half, half, half),
-        vec3(half, half, low), vec3(low, half, low))
-    quad(vertices, indices, 3, vec3(0.0, -1.0, 0.0),
-        vec3(low, low, low), vec3(half, low, low),
-        vec3(half, low, half), vec3(low, low, half))
-    quad(vertices, indices, 4, vec3(0.0, 0.0, 1.0),
-        vec3(low, low, half), vec3(half, low, half),
-        vec3(half, half, half), vec3(low, half, half))
-    quad(vertices, indices, 5, vec3(0.0, 0.0, -1.0),
-        vec3(half, low, low), vec3(low, low, low),
-        vec3(low, half, low), vec3(half, half, low))
+    quad(
+        vertices,
+        indices,
+        0,
+        vec3(1.0, 0.0, 0.0),
+        vec3(half, low, half),
+        vec3(half, low, low),
+        vec3(half, half, low),
+        vec3(half, half, half)
+    )
+    quad(
+        vertices,
+        indices,
+        1,
+        vec3(-1.0, 0.0, 0.0),
+        vec3(low, low, low),
+        vec3(low, low, half),
+        vec3(low, half, half),
+        vec3(low, half, low)
+    )
+    quad(
+        vertices,
+        indices,
+        2,
+        vec3(0.0, 1.0, 0.0),
+        vec3(low, half, half),
+        vec3(half, half, half),
+        vec3(half, half, low),
+        vec3(low, half, low)
+    )
+    quad(
+        vertices,
+        indices,
+        3,
+        vec3(0.0, -1.0, 0.0),
+        vec3(low, low, low),
+        vec3(half, low, low),
+        vec3(half, low, half),
+        vec3(low, low, half)
+    )
+    quad(
+        vertices,
+        indices,
+        4,
+        vec3(0.0, 0.0, 1.0),
+        vec3(low, low, half),
+        vec3(half, low, half),
+        vec3(half, half, half),
+        vec3(low, half, half)
+    )
+    quad(
+        vertices,
+        indices,
+        5,
+        vec3(0.0, 0.0, -1.0),
+        vec3(half, low, low),
+        vec3(low, low, low),
+        vec3(low, half, low),
+        vec3(half, half, low)
+    )
     held
 }
 
@@ -403,13 +504,19 @@ sphere_mesh :: fn(radius: f32, rings: i64, segments: i64) -> Mesh {
             around: f32 = segment
             span: f32 = segments
             phi: f32 = 6.283185307179586 * (around / span)
-            unit := vec3(cosf(phi) * sinf(theta), cosf(theta),
-                sinf(phi) * sinf(theta))
+            unit := vec3(
+                cosf(phi) * sinf(theta),
+                cosf(theta),
+                sinf(phi) * sinf(theta)
+            )
             // Longitude across and latitude down, which is the mapping that
             // makes the seam land where the duplicated column already is.
             vertices[ring * (segments + 1) + segment] =
-            Vertex { position = vec3_scale(unit, radius), normal = unit,
-                texcoord = vec2(around / span, tall / total) }
+            Vertex {
+                position = vec3_scale(unit, radius),
+                normal = unit,
+                texcoord = vec2(around / span, tall / total)
+            }
             segment = segment + 1
         }
         ring = ring + 1
@@ -479,8 +586,11 @@ filler_mesh :: fn(vertices: i64, indices: i64, mark: f32) -> Mesh {
         step: f32 = vertex
         // The mark and the position tell one mesh's vertices from another's
         // after a copy has moved both, which is what a readback checks.
-        held.vertices[vertex] = Vertex { position = vec3(mark, step, 0.0),
-            normal = vec3(0.0, 1.0, 0.0), texcoord = vec2(0.0, 0.0) }
+        held.vertices[vertex] = Vertex {
+            position = vec3(mark, step, 0.0),
+            normal = vec3(0.0, 1.0, 0.0),
+            texcoord = vec2(0.0, 0.0)
+        }
         vertex = vertex + 1
     }
     held
@@ -503,10 +613,22 @@ test "a buffer that runs out grows, and what is in it comes with it" {
     // the buffers rather than being refused.
     var store := geometry_new(device, 32, 32)
     var cache := mesh_cache_new(4)
-    first := mesh_cache_insert(cache, store, device, queue, "first",
-        filler_mesh(24, 30, 7.0))
-    second := mesh_cache_insert(cache, store, device, queue, "second",
-        filler_mesh(40, 60, 9.0))
+    first := mesh_cache_insert(
+        cache,
+        store,
+        device,
+        queue,
+        "first",
+        filler_mesh(24, 30, 7.0)
+    )
+    second := mesh_cache_insert(
+        cache,
+        store,
+        device,
+        queue,
+        "second",
+        filler_mesh(40, 60, 9.0)
+    )
     assert(geometry_vertex_room(store) >= 64)
     assert(geometry_index_room(store) >= 90)
     // The first mesh was copied into the new buffer at the offset it already
@@ -523,8 +645,7 @@ test "a buffer that runs out grows, and what is in it comes with it" {
     // and copies on the device, and a copy that ran with the wrong offset or
     // the wrong length would leave exactly these spans over the wrong bytes.
     var seen := heap_slice($Vertex, 64)
-    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
-            64 * VERTEX_STRIDE, ptr_to(seen[0])))
+    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0, 64 * VERTEX_STRIDE, ptr_to(seen[0])))
     var at: i64 = 0
     while (at < 24) {
         step: f32 = at
@@ -555,10 +676,22 @@ test "a cache that loses most of what it held puts the rest back at the start" {
     var cache := mesh_cache_new(4)
     // Big enough that dropping it leaves more than the floor worth reclaiming,
     // which is what a rebuild waits for.
-    var small := mesh_cache_insert(cache, store, device, queue, "small",
-        filler_mesh(24, 30, 1.0))
-    mesh_cache_insert(cache, store, device, queue, "big",
-        filler_mesh(BIG_VERTICES, 64, 2.0))
+    var small := mesh_cache_insert(
+        cache,
+        store,
+        device,
+        queue,
+        "small",
+        filler_mesh(24, 30, 1.0)
+    )
+    mesh_cache_insert(
+        cache,
+        store,
+        device,
+        queue,
+        "big",
+        filler_mesh(BIG_VERTICES, 64, 2.0)
+    )
     assert(geometry_vertex_room(store) >= BIG_VERTICES)
     // The small one is behind the big one in the buffer, so a rebuild is the
     // only thing that can move it back to the start.
@@ -577,8 +710,7 @@ test "a cache that loses most of what it held puts the rest back at the start" {
     // Put back rather than left where it was: the vertices at the start of the
     // smaller buffer are the small mesh's, marked as its own.
     var seen := heap_slice($Vertex, 24)
-    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0,
-            24 * VERTEX_STRIDE, ptr_to(seen[0])))
+    assert(gpu_read_buffer(g, geometry_vertex_buffer(store), 0, 24 * VERTEX_STRIDE, ptr_to(seen[0])))
     var at: i64 = 0
     while (at < 24) {
         step: f32 = at

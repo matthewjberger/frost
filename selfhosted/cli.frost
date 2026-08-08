@@ -389,8 +389,11 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
     if (key < 0) {
         key = -key
     }
-    object := join_number(join_two(temp_directory(), "/frost_runtime_"), key,
-        ".o")
+    object := join_number(
+        join_two(temp_directory(), "/frost_runtime_"),
+        key,
+        ".o"
+    )
     if (unsafe { frost_rt_file_exists(object) } == 1) {
         return object
     }
@@ -402,7 +405,8 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
     pending := join_number(join_two(object, "."), cstr_checksum(mark), ".tmp")
     build := join_two(
         join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
-        pending)
+        pending
+    )
     if (unsafe { frost_rt_run_command(build) } != 0) {
         report("frost: the runtime did not compile: ")
         report_cstr(build)
@@ -434,8 +438,11 @@ cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
     if (key < 0) {
         key = -key
     }
-    object := join_number(join_two(temp_directory(), "/frost_runtime_frost_"),
-        key, ".o")
+    object := join_number(
+        join_two(temp_directory(), "/frost_runtime_frost_"),
+        key,
+        ".o"
+    )
     if (unsafe { frost_rt_file_exists(object) } == 1) {
         return object
     }
@@ -445,11 +452,13 @@ cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
     build := join_two(
         join_two(
             join_two(
-                join_two(join_two("\"", frost_rt_arg_at(0)),
-                    "\" --native -o "),
-                pending),
-            " "),
-        runtime)
+                join_two(join_two("\"", frost_rt_arg_at(0)), "\" --native -o "),
+                pending
+            ),
+            " "
+        ),
+        runtime
+    )
     if (unsafe { frost_rt_run_command(build) } != 0) {
         report("frost: the runtime did not compile: ")
         report_cstr(build)
@@ -506,7 +515,8 @@ move_file :: fn(from: ^i8, to: ^i8) {
     if (frost_rt_is_windows() == 1) {
         command = join_two(
             join_two(join_two("move /Y \"", backslashed(from)), "\" \""),
-            backslashed(to))
+            backslashed(to)
+        )
         command = join_two(command, "\"")
     }
     command = join_two(command, " > ")
@@ -524,8 +534,7 @@ move_file :: fn(from: ^i8, to: ^i8) {
 make_directory :: fn(path: ^i8) {
     var command := join_two("mkdir -p ", path)
     if (frost_rt_is_windows() == 1) {
-        command = join_two(join_two("if not exist \"", path),
-            "\" mkdir \"")
+        command = join_two(join_two("if not exist \"", path), "\" mkdir \"")
         command = join_two(join_two(command, path), "\"")
     }
     unsafe { frost_rt_run_command(command) }
@@ -596,11 +605,15 @@ options_from_command_line :: fn() -> Options {
                 options.ok = 0
                 return options
             }
-            options.libs = join_two(join_two(options.libs, " "),
-                frost_rt_arg_at(index))
+            options.libs = join_two(
+                join_two(options.libs, " "),
+                frost_rt_arg_at(index)
+            )
         } else if (cstr_len(value_after(argument, "--libs=")) != 0) {
-            options.libs = join_two(join_two(options.libs, " "),
-                value_after(argument, "--libs="))
+            options.libs = join_two(
+                join_two(options.libs, " "),
+                value_after(argument, "--libs=")
+            )
         } else if (cstr_len(value_after(argument, "--build-dir=")) != 0) {
             options.build_dir = value_after(argument, "--build-dir=")
         } else if (cstr_len(value_after(argument, "-L")) != 0) {

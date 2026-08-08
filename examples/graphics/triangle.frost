@@ -45,16 +45,26 @@ DeviceSlot :: struct { handle: Device, ready: i64 }
 // a pointer to it. Windows hands a sixteen-byte struct to a callee as a pointer
 // to a copy, so declaring it `^u8` worked there and would have read `userdata1`
 // out of the wrong register on System V, where the struct takes two.
-fill_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
-    mut slot: AdapterSlot, userdata2: ^u8) {
+fill_adapter :: fn(
+    status: u32,
+    handle: Adapter,
+    value message: StringView,
+    mut slot: AdapterSlot,
+    userdata2: ^u8
+) {
     if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
         slot.handle = handle
     }
     slot.ready = 1
 }
 
-fill_device :: fn(status: u32, handle: Device, value message: StringView,
-    mut slot: DeviceSlot, userdata2: ^u8) {
+fill_device :: fn(
+    status: u32,
+    handle: Device,
+    value message: StringView,
+    mut slot: DeviceSlot,
+    userdata2: ^u8
+) {
     if (status == REQUEST_DEVICE_STATUS_SUCCESS) {
         slot.handle = handle
     }
@@ -115,8 +125,12 @@ main :: fn() -> i64 {
         print("{}\n", 0)
         return 1
     }
-    window := window_create("Frost triangle", WIDTH, HEIGHT,
-        WindowFlags::Resizable)
+    window := window_create(
+        "Frost triangle",
+        WIDTH,
+        HEIGHT,
+        WindowFlags::Resizable
+    )
     if (is_no_window(window)) { return 2 }
 
     properties := window_properties(window)
@@ -137,16 +151,23 @@ main :: fn() -> i64 {
     // The adapter.
     var adapter_slot: AdapterSlot =
     AdapterSlot { handle = no_adapter(), ready = 0 }
-    var adapter_info := request_adapter_callback_info_of($AdapterSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_adapter, ptr_to(adapter_slot))
+    var adapter_info := request_adapter_callback_info_of(
+        $AdapterSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        fill_adapter,
+        ptr_to(adapter_slot)
+    )
     // The adapter has to be chosen knowing which surface it will draw to, or
     // it may be one this surface cannot use, and the surface only says so when
     // it is asked for its capabilities.
     var adapter_options := request_adapter_options_init()
     adapter_options.feature_level = FEATURE_LEVEL_CORE
     adapter_options.compatible_surface = surface
-    instance_request_adapter(instance, ptr_to(adapter_options),
-        ptr_to(adapter_info))
+    instance_request_adapter(
+        instance,
+        ptr_to(adapter_options),
+        ptr_to(adapter_info)
+    )
     var adapter_spins: i64 = 0
     while (adapter_slot.ready == 0 && adapter_spins < 2000000) {
         instance_process_events(instance)
@@ -159,10 +180,13 @@ main :: fn() -> i64 {
     // The device.
     var device_slot: DeviceSlot =
     DeviceSlot { handle = no_device(), ready = 0 }
-    var device_info := request_device_callback_info_of($DeviceSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, fill_device, ptr_to(device_slot))
-    adapter_request_device(adapter,
-        null_handle(), ptr_to(device_info))
+    var device_info := request_device_callback_info_of(
+        $DeviceSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        fill_device,
+        ptr_to(device_slot)
+    )
+    adapter_request_device(adapter, null_handle(), ptr_to(device_info))
     var device_spins: i64 = 0
     while (device_slot.ready == 0 && device_spins < 2000000) {
         instance_process_events(instance)
@@ -177,7 +201,11 @@ main :: fn() -> i64 {
     // guess, because which formats a surface accepts is a property of the
     // driver and the window, not of the API.
     var capabilities := surface_capabilities_init()
-    capability_status := surface_get_capabilities(surface, adapter, ptr_to(capabilities))
+    capability_status := surface_get_capabilities(
+        surface,
+        adapter,
+        ptr_to(capabilities)
+    )
     if (capability_status != 1) { return 30 }
     if (capabilities.formats_count == 0) { return 31 }
     surface_format := surface_format_at(capabilities, 0)
@@ -221,16 +249,27 @@ main :: fn() -> i64 {
     var vertex_buffer_descriptor := buffer_descriptor_init()
     vertex_buffer_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
     vertex_buffer_descriptor.size = VERTEX_BYTES
-    vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
-    queue_write_buffer(queue, vertex_buffer, 0,
-        ptr_to(vertices[0]), VERTEX_BYTES)
+    vertex_buffer := device_create_buffer(
+        device,
+        ptr_to(vertex_buffer_descriptor)
+    )
+    queue_write_buffer(
+        queue,
+        vertex_buffer,
+        0,
+        ptr_to(vertices[0]),
+        VERTEX_BYTES
+    )
 
     // The uniform holding the matrix, rewritten every frame.
     var uniform_buffer_descriptor := buffer_descriptor_init()
     uniform_buffer_descriptor.usage =
     BufferUsage::Uniform | BufferUsage::CopyDst
     uniform_buffer_descriptor.size = UNIFORM_BYTES
-    uniform_buffer := device_create_buffer(device, ptr_to(uniform_buffer_descriptor))
+    uniform_buffer := device_create_buffer(
+        device,
+        ptr_to(uniform_buffer_descriptor)
+    )
 
     // What the shader may reach, and what it reaches there. The layout is the
     // promise, the group is the binding that keeps it.
@@ -243,7 +282,10 @@ main :: fn() -> i64 {
     var group_layout_descriptor := bind_group_layout_descriptor_init()
     group_layout_descriptor.entries_count = 1
     group_layout_descriptor.entries = ptr_to(layout_entry)
-    group_layout := device_create_bind_group_layout(device, ptr_to(group_layout_descriptor))
+    group_layout := device_create_bind_group_layout(
+        device,
+        ptr_to(group_layout_descriptor)
+    )
 
     var group_entry := bind_group_entry_init()
     group_entry.binding = 0
@@ -259,8 +301,10 @@ main :: fn() -> i64 {
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(group_layout)
-    pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
+    pipeline_layout := device_create_pipeline_layout(
+        device,
+        ptr_to(pipeline_layout_descriptor)
+    )
 
     // How the vertex buffer's bytes reach the shader's two inputs.
     var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
@@ -299,7 +343,10 @@ main :: fn() -> i64 {
     pipeline_descriptor.multisample.mask = 4294967295
     pipeline_descriptor.fragment = ptr_to(fragment)
 
-    pipeline := device_create_render_pipeline(device, ptr_to(pipeline_descriptor))
+    pipeline := device_create_render_pipeline(
+        device,
+        ptr_to(pipeline_descriptor)
+    )
 
     // The camera does not move, so the two matrices in front of the model are
     // built once. Depth here is what it is everywhere else in the tree:
@@ -309,10 +356,16 @@ main :: fn() -> i64 {
     // this one starts from the convention the rest of it keeps.
     width: f32 = WIDTH
     height: f32 = HEIGHT
-    projection := mat4_perspective_infinite_reverse_z(radians(60.0),
-        width / height, 0.1)
-    view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
-        vec3(0.0, 1.0, 0.0))
+    projection := mat4_perspective_infinite_reverse_z(
+        radians(60.0),
+        width / height,
+        0.1
+    )
+    view := mat4_look_at(
+        vec3(0.0, 0.0, 3.0),
+        vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0)
+    )
     view_projection := mat4_mul(projection, view)
     started := sdl_ticks()
 
@@ -345,8 +398,13 @@ main :: fn() -> i64 {
             milliseconds: f32 = elapsed
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
             var mvp := mat4_mul(view_projection, model)
-            queue_write_buffer(queue, uniform_buffer, 0,
-                ptr_to(mvp.m[0]), UNIFORM_BYTES)
+            queue_write_buffer(
+                queue,
+                uniform_buffer,
+                0,
+                ptr_to(mvp.m[0]),
+                UNIFORM_BYTES
+            )
 
             texture_view := texture_create_view(frame.texture, null_handle())
             encoder := device_create_command_encoder(device, null_handle())
@@ -363,12 +421,25 @@ main :: fn() -> i64 {
             pass_descriptor.color_attachments =
             ptr_to(attachment)
 
-            pass := command_encoder_begin_render_pass(encoder,
-                ptr_to(pass_descriptor))
+            pass := command_encoder_begin_render_pass(
+                encoder,
+                ptr_to(pass_descriptor)
+            )
             render_pass_encoder_set_pipeline(pass, pipeline)
-            render_pass_encoder_set_bind_group(pass, 0, bind_group, 0, null_handle())
-            render_pass_encoder_set_vertex_buffer(pass, 0, vertex_buffer, 0,
-                VERTEX_BYTES)
+            render_pass_encoder_set_bind_group(
+                pass,
+                0,
+                bind_group,
+                0,
+                null_handle()
+            )
+            render_pass_encoder_set_vertex_buffer(
+                pass,
+                0,
+                vertex_buffer,
+                0,
+                VERTEX_BYTES
+            )
             render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
             render_pass_encoder_end(pass)
 

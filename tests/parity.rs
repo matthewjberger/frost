@@ -5059,6 +5059,78 @@ Bad :: enum { Nope }
 // is a difference in the language. The C one wrote an integer literal without
 // the suffix that makes it sixty-four bits wide, so every shift past the
 // thirty-second bit answered with zero there and correctly everywhere else.
+// `frost fmt` is part of the language the same way a refusal is: a tree is
+// held to one rendering, and two compilers writing two renderings would make
+// which one formatted it decide what the file says. Nothing compared them until
+// now, and the moment something did it found five files the two laid out
+// differently.
+//
+// Every source in the repository, formatted by both. The corpus is already what
+// the bootstrap writes, so it is the file as committed that is compared against,
+// which makes this a check on the self-hosted compiler agreeing with a rendering
+// rather than on the two agreeing about nothing in particular.
+#[test]
+fn both_compilers_format_the_corpus_the_same_way() {
+    let Some(compiler) = build_self_hosted_compiler("formatparity") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut differing = Vec::new();
+    for file in corpus() {
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let scratch = std::env::temp_dir()
+            .join(support::unique("frost_fmt"))
+            .with_extension("frost");
+        if std::fs::write(&scratch, &source).is_err() {
+            continue;
+        }
+        let ran = Command::new(&compiler).arg("fmt").arg(&scratch).output();
+        let written = std::fs::read_to_string(&scratch).unwrap_or_default();
+        let _ = std::fs::remove_file(&scratch);
+        assert!(ran.is_ok(), "the self-hosted compiler could not format");
+        if written != source {
+            let shown = file.strip_prefix(&root).unwrap_or(&file);
+            differing.push(shown.display().to_string());
+        }
+    }
+    assert!(
+        differing.is_empty(),
+        "the self-hosted compiler formats these differently to the bootstrap:\n{}",
+        differing.join("\n")
+    );
+}
+
+// Every `.frost` file the repository tracks, which is what both formatters are
+// held to.
+fn corpus() -> Vec<std::path::PathBuf> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    let mut stack = vec![
+        root.join("std"),
+        root.join("lib"),
+        root.join("selfhosted"),
+        root.join("examples"),
+        root.join("tools"),
+    ];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "frost") {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 #[test]
 fn both_compilers_agree_on_these_programs() {
     let Some(compiler) = build_self_hosted_compiler("samelanguage") else {

@@ -20,8 +20,11 @@ import "wgpu.frost"
 
 export uniform_layout, uniform_buffer, uniform_group
 
-uniform_layout :: fn(device: Device, size: i64,
-    stages: ShaderStage) -> BindGroupLayout {
+uniform_layout :: fn(
+    device: Device,
+    size: i64,
+    stages: ShaderStage
+) -> BindGroupLayout {
     var entry := bind_group_layout_entry_init()
     entry.binding = 0
     entry.visibility = stages
@@ -40,8 +43,12 @@ uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
     device_create_buffer(device, ptr_to(descriptor))
 }
 
-uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
-    size: i64) -> BindGroup {
+uniform_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    held: Buffer,
+    size: i64
+) -> BindGroup {
     var entry := bind_group_entry_init()
     entry.binding = 0
     entry.buffer = held

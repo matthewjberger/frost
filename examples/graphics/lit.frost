@@ -70,34 +70,75 @@ run :: fn(move app: App) -> i64 {
 
     device := app_device(app)
     queue := app_queue(app)
-    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
-        cube_mesh())
-    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
-        sphere_mesh(0.7, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube", cube_mesh())
+    mesh_cache_insert(
+        app.meshes,
+        app.store,
+        device,
+        queue,
+        "sphere",
+        sphere_mesh(0.7, 16, 24)
+    )
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     var looks: [4]i64 = [0; 4]
-    looks[0] = materials_add(app.materials, material_of(vec4(0.85, 0.32, 0.30, 1.0), 0.35, 0.0))
-    looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.46, 1.0), 0.6, 0.0))
-    looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.2, 0.0))
+    looks[0] = materials_add(
+        app.materials,
+        material_of(vec4(0.85, 0.32, 0.30, 1.0), 0.35, 0.0)
+    )
+    looks[1] = materials_add(
+        app.materials,
+        material_of(vec4(0.32, 0.76, 0.46, 1.0), 0.6, 0.0)
+    )
+    looks[2] = materials_add(
+        app.materials,
+        material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.2, 0.0)
+    )
     // The floor, matte, so what the lights do to it reads as what the lights do.
-    looks[3] = materials_add(app.materials, material_of(vec4(0.72, 0.70, 0.66, 1.0), 0.9, 0.0))
+    looks[3] = materials_add(
+        app.materials,
+        material_of(vec4(0.72, 0.70, 0.66, 1.0), 0.9, 0.0)
+    )
 
     ids := app_ids(app)
     lights := light_ids(app.world)
-    drawn := mask_with(mask_with(mask_with(mask_with(mask_with(
-                        mask_empty(), ids.local_transform), spin), ids.drawn),
-            ids.global_transform), ids.transform)
+    drawn := mask_with(
+        mask_with(
+            mask_with(
+                mask_with(mask_with(mask_empty(), ids.local_transform), spin),
+                ids.drawn
+            ),
+            ids.global_transform
+        ),
+        ids.transform
+    )
     // A light needs somewhere to be and nothing to draw.
-    lighting := mask_with(mask_with(mask_with(mask_empty(),
-                ids.local_transform), ids.global_transform), lights.light)
+    lighting := mask_with(
+        mask_with(
+            mask_with(mask_empty(), ids.local_transform),
+            ids.global_transform
+        ),
+        lights.light
+    )
 
     floor := ecs_spawn_with(app.world, drawn)
-    app_place(app, floor, ids, spin, vec3(0.0, FLOOR_Y, 0.0),
-        vec3(9.0, 0.25, 9.0), 0.0)
-    ecs_set($Drawn, app.world, floor, ids.drawn, Drawn { mesh = cube,
-            material = looks[3], layer = ONE_LAYER })
+    app_place(
+        app,
+        floor,
+        ids,
+        spin,
+        vec3(0.0, FLOOR_Y, 0.0),
+        vec3(9.0, 0.25, 9.0),
+        0.0
+    )
+    ecs_set(
+        $Drawn,
+        app.world,
+        floor,
+        ids.drawn,
+        Drawn { mesh = cube, material = looks[3], layer = ONE_LAYER }
+    )
 
     half: f32 = 1.5
     var made: i64 = 0
@@ -107,16 +148,34 @@ run :: fn(move app: App) -> i64 {
         across: f32 = column
         along: f32 = row
         held := ecs_spawn_with(app.world, drawn)
-        app_place(app, held, ids, spin,
-            vec3((across - half) * SPACING, FLOOR_Y + 1.4,
-                (along - half) * SPACING),
-            vec3(0.8, 0.8, 0.8), 0.4 + 0.1 * made)
+        app_place(
+            app,
+            held,
+            ids,
+            spin,
+            vec3(
+                (across - half) * SPACING,
+                FLOOR_Y + 1.4,
+                (along - half) * SPACING
+            ),
+            vec3(0.8, 0.8, 0.8),
+            0.4 + 0.1 * made
+        )
         var shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
-        ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
-                material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
+        ecs_set(
+            $Drawn,
+            app.world,
+            held,
+            ids.drawn,
+            Drawn {
+                mesh = shape,
+                material = looks[made - (made / 3) * 3],
+                layer = ONE_LAYER
+            }
+        )
         made = made + 1
     }
 
@@ -132,15 +191,25 @@ run :: fn(move app: App) -> i64 {
     // not.
     held := ecs_spawn_with(app.world, lighting)
     app_aim(app, held, ids, vec3(-2.4, FLOOR_Y + 1.0, 2.4), 0.0, 0.0)
-    ecs_set($Light, app.world, held, lights.light,
-        lamp(vec3(1.0, 0.55, 0.25), 14.0))
+    ecs_set(
+        $Light,
+        app.world,
+        held,
+        lights.light,
+        lamp(vec3(1.0, 0.55, 0.25), 14.0)
+    )
 
     // The spot, above and pointing straight down, so the floor gets a disc with
     // an edge to it.
     pointed := ecs_spawn_with(app.world, lighting)
     app_aim(app, pointed, ids, vec3(2.6, 4.2, -1.0), -1.35, 0.0)
-    ecs_set($Light, app.world, pointed, lights.light,
-        spot(vec3(0.55, 0.75, 1.0), 40.0, 0.25, 0.45))
+    ecs_set(
+        $Light,
+        app.world,
+        pointed,
+        lights.light,
+        spot(vec3(0.55, 0.75, 1.0), 40.0, 0.25, 0.45)
+    )
 
     var eye := camera_default()
     eye.position = vec3(0.0, 1.6, 11.0)
@@ -154,22 +223,57 @@ run :: fn(move app: App) -> i64 {
 // Something drawn: at a place, at a size, turning at a rate. A light is placed
 // by `app_aim` instead, since it has no spin to set and setting one on an entity
 // that was not spawned with it stops the program.
-app_place :: fn(mut app: App, held: Entity, ids: WorldIds, spin: i64, at: Vec3,
-    size: Vec3, rate: f32) {
-    ecs_set($LocalTransform, app.world, held, ids.local_transform,
-        LocalTransform { translation = at, rotation = quat_identity(),
-            scale = size })
-    ecs_set($Spin, app.world, held, spin,
-        spinning(vec3(0.3, 1.0, 0.2), rate, quat_identity()))
+app_place :: fn(
+    mut app: App,
+    held: Entity,
+    ids: WorldIds,
+    spin: i64,
+    at: Vec3,
+    size: Vec3,
+    rate: f32
+) {
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        held,
+        ids.local_transform,
+        LocalTransform {
+            translation = at,
+            rotation = quat_identity(),
+            scale = size
+        }
+    )
+    ecs_set(
+        $Spin,
+        app.world,
+        held,
+        spin,
+        spinning(vec3(0.3, 1.0, 0.2), rate, quat_identity())
+    )
 }
 
 // The same, turned to face somewhere. A light is aimed by its transform, so
 // pitch and yaw become the rotation and the pass reads the matrix.
-app_aim :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3,
-    pitch: f32, yaw: f32) {
-    ecs_set($LocalTransform, app.world, held, ids.local_transform,
-        LocalTransform { translation = at,
-            rotation = quat_mul(quat_from_axis_angle(vec3(0.0, 1.0, 0.0), yaw),
-                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), pitch)),
-            scale = vec3(1.0, 1.0, 1.0) })
+app_aim :: fn(
+    mut app: App,
+    held: Entity,
+    ids: WorldIds,
+    at: Vec3,
+    pitch: f32,
+    yaw: f32
+) {
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        held,
+        ids.local_transform,
+        LocalTransform {
+            translation = at,
+            rotation = quat_mul(
+                quat_from_axis_angle(vec3(0.0, 1.0, 0.0), yaw),
+                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), pitch)
+            ),
+            scale = vec3(1.0, 1.0, 1.0)
+        }
+    )
 }

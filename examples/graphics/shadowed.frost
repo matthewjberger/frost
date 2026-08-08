@@ -457,23 +457,42 @@ fn fs_compose(in: Coverage) -> @location(0) vec4<f32> {
 draw_things :: fn(mut s: Scene, context: NodeContext) {
     held := render_world_at(s.render)
     batching_record(s.steps, held, context.encoder)
-    pass := encoder_pass_into(context.encoder, context.into,
-        context.color_load, context.clear, context.depth_load)
+    pass := encoder_pass_into(
+        context.encoder,
+        context.into,
+        context.color_load,
+        context.clear,
+        context.depth_load
+    )
     render_pass_encoder_set_pipeline(pass, s.pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
-        no_pointer())
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
     if (s.samples_shadow == 1) {
-        render_pass_encoder_set_bind_group(pass, 2,
-            s.shadow_group, 0, no_pointer())
-        render_pass_encoder_set_bind_group(pass, 3,
-            s.glow_group, 0, no_pointer())
+        render_pass_encoder_set_bind_group(
+            pass,
+            2,
+            s.shadow_group,
+            0,
+            no_pointer()
+        )
+        render_pass_encoder_set_bind_group(
+            pass,
+            3,
+            s.glow_group,
+            0,
+            no_pointer()
+        )
     }
 
     // What to draw came out of the world this frame, and which of it survived
     // came off the GPU. The pass binds the run once and issues one indirect
     // draw per batch, counting nothing.
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(held), 0, no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        1,
+        render_world_group(held),
+        0,
+        no_pointer()
+    )
     geometry_bind(pass, geometry_at(s.store))
     render_world_draw_all(pass, held)
     render_pass_encoder_end(pass)
@@ -490,8 +509,15 @@ before_frame :: fn(mut s: Built, mut app: App) {
     light := s.light
     s.elapsed = s.elapsed + input_delta_seconds(app_input(app))
     elapsed := s.elapsed
-    write_frame(queue, s.frame_uniform, app_camera(app), light,
-        elapsed, app_width(app), app_height(app))
+    write_frame(
+        queue,
+        s.frame_uniform,
+        app_camera(app),
+        light,
+        elapsed,
+        app_width(app),
+        app_height(app)
+    )
     // The second camera, looking back at the scene from the other side and fixed
     // rather than driven, so the inset shows what the first one cannot see.
     // Standing at +x and -z, so the scene is back along -x and +z. Zero yaw
@@ -501,8 +527,15 @@ before_frame :: fn(mut s: Built, mut app: App) {
     watcher.position = vec3(9.0, 5.0, -9.0)
     watcher.yaw = -2.4
     watcher.pitch = -0.35
-    write_frame(queue, s.inset_uniform, watcher, light, elapsed,
-        INSET_WIDTH, INSET_HEIGHT)
+    write_frame(
+        queue,
+        s.inset_uniform,
+        watcher,
+        light,
+        elapsed,
+        INSET_WIDTH,
+        INSET_HEIGHT
+    )
 
     ids := app_ids(app)
     everything := all_drawn(ids.global_transform, ids.transform, ids.drawn)
@@ -511,15 +544,24 @@ before_frame :: fn(mut s: Built, mut app: App) {
     scene_sync(app.world, shadow, app.materials, app.meshes, everything)
     // The box the light sees the world through, which is what the shadow pass
     // draws with and therefore what its run is culled by.
-    render_world_upload(shadow, queue, light_view_projection(light),
-        app.materials, app.meshes)
+    render_world_upload(
+        shadow,
+        queue,
+        light_view_projection(light),
+        app.materials,
+        app.meshes
+    )
 
     inset := render_world_at(s.inset)
     render_world_begin(inset)
     scene_sync(app.world, inset, app.materials, app.meshes, everything)
-    render_world_upload(inset, queue,
+    render_world_upload(
+        inset,
+        queue,
         camera_view_projection(watcher, INSET_WIDTH, INSET_HEIGHT),
-        app.materials, app.meshes)
+        app.materials,
+        app.meshes
+    )
     app_extract(app, everything, app_view(app))
 }
 
@@ -568,8 +610,12 @@ KEY_B :: 5
 watch_inset :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
     on := input_key_pressed(held, KEY_B) == false
-    ecs_resource_set($ShowInset, world, resource_of($ShowInset, world),
-        ShowInset { on = on })
+    ecs_resource_set(
+        $ShowInset,
+        world,
+        resource_of($ShowInset, world),
+        ShowInset { on = on }
+    )
 }
 
 // The graph, changed for this frame. Turning a pass off is not rescheduling it:
@@ -595,8 +641,15 @@ light_view_projection :: fn(direction: Vec3) -> Mat4 {
 
 // The camera, the light, and the light's matrix, as the bytes the shader reads
 // them as.
-write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
-    seconds: f32, w: i64, h: i64) {
+write_frame :: fn(
+    queue: Queue,
+    uniform: Buffer,
+    eye: Camera,
+    direction: Vec3,
+    seconds: f32,
+    w: i64,
+    h: i64
+) {
     var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
     var view_projection := camera_view_projection(eye, w, h)
     var element: i64 = 0
@@ -655,8 +708,12 @@ shadow_layout :: fn(device: Device) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-shadow_group_of :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
-    reader: Sampler) -> BindGroup {
+shadow_group_of :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    view: TextureView,
+    reader: Sampler
+) -> BindGroup {
     var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = view
@@ -709,8 +766,11 @@ make_shader :: fn(device: Device) -> ShaderModule {
 // the recorded depth away from the light, and away is downward now. The same
 // numbers with the sign they had pull it toward the light instead, which widens
 // the stripes rather than removing them.
-make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
-    layout: PipelineLayout) -> RenderPipeline {
+make_shadow_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     var buffer_layout := vertex_layout(attributes)
 
@@ -724,8 +784,10 @@ make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     var descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
-    descriptor.vertex.entry_point = StringView { data = "vs_shadow",
-        length = 9 }
+    descriptor.vertex.entry_point = StringView {
+        data = "vs_shadow",
+        length = 9
+    }
     descriptor.vertex.buffers_count = 1
     descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
@@ -737,8 +799,12 @@ make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
-make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
-    layout: PipelineLayout) -> RenderPipeline {
+make_scene_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    format: u32,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     var buffer_layout := vertex_layout(attributes)
 
@@ -800,16 +866,26 @@ Step :: struct {
 // vertex index, so there is nothing to bind but the texture being read.
 draw_cover :: fn(mut step: Step, pass: RenderPassEncoder) {
     if (step.at_width > 0.0) {
-        render_pass_encoder_set_viewport(pass, step.at_x,
-            step.at_y, step.at_width,
-            step.at_height, 0.0, 1.0)
+        render_pass_encoder_set_viewport(
+            pass,
+            step.at_x,
+            step.at_y,
+            step.at_width,
+            step.at_height,
+            0.0,
+            1.0
+        )
     }
     render_pass_encoder_set_pipeline(pass, step.pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, step.group, 0,
-        no_pointer())
+    render_pass_encoder_set_bind_group(pass, 0, step.group, 0, no_pointer())
     if (step.reads_two == 1) {
-        render_pass_encoder_set_bind_group(pass, 1,
-            step.second_group, 0, no_pointer())
+        render_pass_encoder_set_bind_group(
+            pass,
+            1,
+            step.second_group,
+            0,
+            no_pointer()
+        )
     }
     render_pass_encoder_draw(pass, 3, 1, 0, 0)
 }
@@ -818,12 +894,19 @@ draw_cover :: fn(mut step: Step, pass: RenderPassEncoder) {
 // bind group holds a view, and a resize throws the view away, so the binding is
 // built afresh from what the graph now holds.
 rebuild_step :: fn(mut step: Step, mut g: Graph) {
-    step.group = sampled_group(graph_device(g), step.layout,
-        graph_view(g, step.source), graph_sampler(g, step.source))
+    step.group = sampled_group(
+        graph_device(g),
+        step.layout,
+        graph_view(g, step.source),
+        graph_sampler(g, step.source)
+    )
     if (step.reads_two == 1) {
-        step.second_group = sampled_group(graph_device(g),
-            step.second_layout, graph_view(g, step.second_source),
-            graph_sampler(g, step.second_source))
+        step.second_group = sampled_group(
+            graph_device(g),
+            step.second_layout,
+            graph_view(g, step.second_source),
+            graph_sampler(g, step.second_source)
+        )
     }
 }
 
@@ -845,8 +928,12 @@ storage_layout :: fn(device: Device, writable: bool) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-storage_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
-    size: i64) -> BindGroup {
+storage_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    held: Buffer,
+    size: i64
+) -> BindGroup {
     var entry := bind_group_entry_init()
     entry.binding = 0
     entry.buffer = held
@@ -869,22 +956,37 @@ Pulse :: struct {
 
 dispatch_pulse :: fn(mut held: Pulse, pass: ComputePassEncoder) {
     compute_pass_encoder_set_pipeline(pass, held.pipeline)
-    compute_pass_encoder_set_bind_group(pass, 0, held.frame_group,
-        0, no_pointer())
-    compute_pass_encoder_set_bind_group(pass, 1, held.glow_group,
-        0, no_pointer())
+    compute_pass_encoder_set_bind_group(
+        pass,
+        0,
+        held.frame_group,
+        0,
+        no_pointer()
+    )
+    compute_pass_encoder_set_bind_group(
+        pass,
+        1,
+        held.glow_group,
+        0,
+        no_pointer()
+    )
     // One group covers every thing that is drawn, since the shader answers for
     // an index past the end rather than being dispatched exactly.
     compute_pass_encoder_dispatch_workgroups(pass, 1, 1, 1)
 }
 
-make_pulse_pipeline :: fn(device: Device, shader: ShaderModule,
-    layout: PipelineLayout) -> ComputePipeline {
+make_pulse_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    layout: PipelineLayout
+) -> ComputePipeline {
     var descriptor := compute_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.compute.module = shader
-    descriptor.compute.entry_point = StringView { data = "cs_pulse",
-        length = 8 }
+    descriptor.compute.entry_point = StringView {
+        data = "cs_pulse",
+        length = 8
+    }
     device_create_compute_pipeline(device, ptr_to(descriptor))
 }
 
@@ -905,8 +1007,12 @@ sampled_layout :: fn(device: Device) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-sampled_group :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
-    reader: Sampler) -> BindGroup {
+sampled_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    view: TextureView,
+    reader: Sampler
+) -> BindGroup {
     var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = view
@@ -920,8 +1026,13 @@ sampled_group :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
 }
 
 // A pipeline over the fullscreen triangle, with no vertex buffer and no depth.
-make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
-    entry: StringView, layout: PipelineLayout) -> RenderPipeline {
+make_cover_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    format: u32,
+    entry: StringView,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
@@ -935,8 +1046,7 @@ make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     var descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
-    descriptor.vertex.entry_point = StringView { data = "vs_cover",
-        length = 8 }
+    descriptor.vertex.entry_point = StringView { data = "vs_cover", length = 8 }
     descriptor.vertex.buffers_count = 0
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
@@ -949,16 +1059,22 @@ make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
 
 // A pipeline layout over up to four groups, which is what the scene wants: the
 // frame, the object, the shadow map and the run of pulses.
-wide_layout :: fn(device: Device, groups: i64,
-    mut layouts: [4]BindGroupLayout) -> PipelineLayout {
+wide_layout :: fn(
+    device: Device,
+    groups: i64,
+    mut layouts: [4]BindGroupLayout
+) -> PipelineLayout {
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = groups
     descriptor.bind_group_layouts = ptr_to(layouts[0])
     device_create_pipeline_layout(device, ptr_to(descriptor))
 }
 
-cover_layout :: fn(device: Device, groups: i64,
-    mut layouts: [2]BindGroupLayout) -> PipelineLayout {
+cover_layout :: fn(
+    device: Device,
+    groups: i64,
+    mut layouts: [2]BindGroupLayout
+) -> PipelineLayout {
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = groups
     descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -983,10 +1099,20 @@ make_post_shader :: fn(device: Device, source: StringView) -> ShaderModule {
 // writes, the same as everything else.
 declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
-    shadow_map := graph_depth(g, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
-        DEPTH_FORMAT)
-    depth := graph_transient_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED,
-        DEPTH_FORMAT)
+    shadow_map := graph_depth(
+        g,
+        "shadow map",
+        SHADOW_SIZE,
+        SHADOW_SIZE,
+        DEPTH_FORMAT
+    )
+    depth := graph_transient_depth(
+        g,
+        "depth",
+        WINDOW_SIZED,
+        WINDOW_SIZED,
+        DEPTH_FORMAT
+    )
     // The scene is drawn into a target rather than at the window, so the chain
     // has something to read. It and the two bloom steps are transient: written
     // and consumed inside one frame, so the graph hands them one texture
@@ -1000,19 +1126,38 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     glow := graph_buffer(g, "glow", GLOW_BYTES, BufferUsage::Storage)
     // What the second view is drawn into. Transient like the rest of the chain,
     // and a fixed size, so the binding that reads it is built once.
-    inset := graph_transient_color(g, "inset", INSET_WIDTH, INSET_HEIGHT,
-        format)
+    inset := graph_transient_color(
+        g,
+        "inset",
+        INSET_WIDTH,
+        INSET_HEIGHT,
+        format
+    )
 
-    shadow_pass := graph_node_pass($Scene, g, "shadow", draw_things,
-        ptr_to(s.shadow_scene))
+    shadow_pass := graph_node_pass(
+        $Scene,
+        g,
+        "shadow",
+        draw_things,
+        ptr_to(s.shadow_scene)
+    )
     graph_writes_depth(g, shadow_pass, shadow_map)
 
     // Declared second and reading what the first writes, which is the edge the
     // order follows. Declaring them the other way round changes nothing.
-    lit_pass := graph_node_pass($Scene, g, "scene", draw_things,
-        ptr_to(s.lit_scene))
-    graph_writes_color(g, lit_pass, lit,
-        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
+    lit_pass := graph_node_pass(
+        $Scene,
+        g,
+        "scene",
+        draw_things,
+        ptr_to(s.lit_scene)
+    )
+    graph_writes_color(
+        g,
+        lit_pass,
+        lit,
+        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 }
+    )
     graph_writes_depth(g, lit_pass, depth)
     graph_reads(g, lit_pass, shadow_map)
     graph_reads(g, lit_pass, glow)
@@ -1030,8 +1175,13 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
 
     // Declared after the pass that reads it, and it runs first: the buffer
     // between them is the whole of what says so.
-    pulse_pass := graph_compute_pass($Pulse, g, "pulse", dispatch_pulse,
-        ptr_to(s.pulse))
+    pulse_pass := graph_compute_pass(
+        $Pulse,
+        g,
+        "pulse",
+        dispatch_pulse,
+        ptr_to(s.pulse)
+    )
     graph_writes(g, pulse_pass, glow)
 
     // The chain. Each step is the same fullscreen triangle with a different
@@ -1039,27 +1189,49 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // order reads well: what runs when comes from the reads and writes.
     s.bright_step.source = lit
     s.bright_step.second_source = lit
-    bright_pass := graph_pass($Step, g, "bright", draw_cover,
-        ptr_to(s.bright_step))
-    graph_writes_color(g, bright_pass, bright,
-        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    bright_pass := graph_pass(
+        $Step,
+        g,
+        "bright",
+        draw_cover,
+        ptr_to(s.bright_step)
+    )
+    graph_writes_color(
+        g,
+        bright_pass,
+        bright,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
+    )
     graph_reads(g, bright_pass, lit)
     graph_rebuilds($Step, g, bright_pass, rebuild_step, ptr_to(s.bright_step))
 
     s.blur_step.source = bright
     s.blur_step.second_source = bright
     blur_pass := graph_pass($Step, g, "blur", draw_cover, ptr_to(s.blur_step))
-    graph_writes_color(g, blur_pass, blurred,
-        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_writes_color(
+        g,
+        blur_pass,
+        blurred,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
+    )
     graph_reads(g, blur_pass, bright)
     graph_rebuilds($Step, g, blur_pass, rebuild_step, ptr_to(s.blur_step))
 
     s.compose_step.source = lit
     s.compose_step.second_source = blurred
-    compose_pass := graph_pass($Step, g, "compose", draw_cover,
-        ptr_to(s.compose_step))
-    graph_writes_color(g, compose_pass, screen,
-        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    compose_pass := graph_pass(
+        $Step,
+        g,
+        "compose",
+        draw_cover,
+        ptr_to(s.compose_step)
+    )
+    graph_writes_color(
+        g,
+        compose_pass,
+        screen,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
+    )
     graph_reads(g, compose_pass, lit)
     graph_reads(g, compose_pass, blurred)
     graph_rebuilds($Step, g, compose_pass, rebuild_step, ptr_to(s.compose_step))
@@ -1067,12 +1239,26 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // The second view: its own target, its own depth, its own pass.
     var inset_graph := graph_new(device)
     inset_target := graph_external_color(inset_graph, "target")
-    inset_depth := graph_depth(inset_graph, "depth", INSET_WIDTH, INSET_HEIGHT,
-        DEPTH_FORMAT)
-    inset_scene_pass := graph_node_pass($Scene, inset_graph, "inset scene",
-        draw_things, ptr_to(s.inset_scene))
-    graph_writes_color(inset_graph, inset_scene_pass, inset_target,
-        Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 })
+    inset_depth := graph_depth(
+        inset_graph,
+        "depth",
+        INSET_WIDTH,
+        INSET_HEIGHT,
+        DEPTH_FORMAT
+    )
+    inset_scene_pass := graph_node_pass(
+        $Scene,
+        inset_graph,
+        "inset scene",
+        draw_things,
+        ptr_to(s.inset_scene)
+    )
+    graph_writes_color(
+        inset_graph,
+        inset_scene_pass,
+        inset_target,
+        Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 }
+    )
     graph_writes_depth(inset_graph, inset_scene_pass, inset_depth)
     if (graph_schedule(inset_graph) == false) {
         print("the inset graph cannot run\n")
@@ -1081,8 +1267,12 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     sub := graph_sub(g, inset_graph)
     inset_pass := graph_sub_pass(g, "inset view", sub)
     s.inset_pass = inset_pass
-    graph_writes_color(g, inset_pass, inset,
-        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_writes_color(
+        g,
+        inset_pass,
+        inset,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
+    )
     // What the child draws into is what this graph holds for `inset`, given
     // again every time the child runs.
     graph_takes(g, sub, inset_target, inset)
@@ -1092,11 +1282,20 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // order they were declared, so this one loads rather than clears.
     s.inset_step.source = inset
     s.inset_step.second_source = inset
-    corner_pass := graph_pass($Step, g, "corner", draw_cover,
-        ptr_to(s.inset_step))
+    corner_pass := graph_pass(
+        $Step,
+        g,
+        "corner",
+        draw_cover,
+        ptr_to(s.inset_step)
+    )
     s.corner_pass = corner_pass
-    graph_writes_color(g, corner_pass, screen,
-        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_writes_color(
+        g,
+        corner_pass,
+        screen,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
+    )
     graph_reads(g, corner_pass, inset)
     graph_rebuilds($Step, g, corner_pass, rebuild_step, ptr_to(s.inset_step))
 }
@@ -1107,13 +1306,24 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
 // the window so nothing else would rebuild it.
 rebuild_bindings :: fn(mut s: Built, mut g: Graph) {
     device := graph_device(g)
-    s.lit_scene.shadow_group = shadow_group_of(device, s.map_layout,
+    s.lit_scene.shadow_group = shadow_group_of(
+        device,
+        s.map_layout,
         graph_view(g, s.lit_scene.shadow_map),
-        graph_sampler(g, s.lit_scene.shadow_map))
-    s.pulse.glow_group = storage_group(device, s.written_glow,
-        graph_buffer_of(g, s.lit_scene.glow), GLOW_BYTES)
-    s.lit_scene.glow_group = storage_group(device, s.read_glow,
-        graph_buffer_of(g, s.lit_scene.glow), GLOW_BYTES)
+        graph_sampler(g, s.lit_scene.shadow_map)
+    )
+    s.pulse.glow_group = storage_group(
+        device,
+        s.written_glow,
+        graph_buffer_of(g, s.lit_scene.glow),
+        GLOW_BYTES
+    )
+    s.lit_scene.glow_group = storage_group(
+        device,
+        s.read_glow,
+        graph_buffer_of(g, s.lit_scene.glow),
+        GLOW_BYTES
+    )
     s.inset_scene.shadow_group = s.lit_scene.shadow_group
     s.inset_scene.glow_group = s.lit_scene.glow_group
 }
@@ -1137,20 +1347,37 @@ run :: fn(move app: App) -> i64 {
     device := app_device(app)
     queue := app_queue(app)
 
-    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
-        cube_mesh())
-    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
-        sphere_mesh(0.7, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube", cube_mesh())
+    mesh_cache_insert(
+        app.meshes,
+        app.store,
+        device,
+        queue,
+        "sphere",
+        sphere_mesh(0.7, 16, 24)
+    )
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     var looks: [4]i64 = [0; 4]
-    looks[0] = materials_add(app.materials, material_of(vec4(0.86, 0.33, 0.3, 1.0), 0.4, 0.0))
-    looks[1] = materials_add(app.materials, material_of(vec4(0.32, 0.76, 0.48, 1.0), 0.55, 0.0))
-    looks[2] = materials_add(app.materials, material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.25, 0.0))
+    looks[0] = materials_add(
+        app.materials,
+        material_of(vec4(0.86, 0.33, 0.3, 1.0), 0.4, 0.0)
+    )
+    looks[1] = materials_add(
+        app.materials,
+        material_of(vec4(0.32, 0.76, 0.48, 1.0), 0.55, 0.0)
+    )
+    looks[2] = materials_add(
+        app.materials,
+        material_of(vec4(0.36, 0.52, 0.92, 1.0), 0.25, 0.0)
+    )
     // The floor, which is matte so the shadow on it reads as a shadow rather
     // than as a change in the highlight.
-    looks[3] = materials_add(app.materials, material_of(vec4(0.68, 0.66, 0.62, 1.0), 0.9, 0.0))
+    looks[3] = materials_add(
+        app.materials,
+        material_of(vec4(0.68, 0.66, 0.62, 1.0), 0.9, 0.0)
+    )
 
     // One run per view, because culling is a question about a view and this
     // demo draws the same world from three: the camera, the light, and the
@@ -1158,11 +1385,24 @@ run :: fn(move app: App) -> i64 {
     // the other two, and the shadow pass is where that shows worst: a thing
     // behind the camera can still throw a shadow into it. The App holds the
     // camera's; the other two are this demo's own.
-    var shadow_render := render_world_new(device, MAX_DRAWN, MAX_MESHES, MAX_LOOKS)
-    var inset_render := render_world_new(device, MAX_DRAWN, MAX_MESHES, MAX_LOOKS)
+    var shadow_render := render_world_new(
+        device,
+        MAX_DRAWN,
+        MAX_MESHES,
+        MAX_LOOKS
+    )
+    var inset_render := render_world_new(
+        device,
+        MAX_DRAWN,
+        MAX_MESHES,
+        MAX_LOOKS
+    )
 
-    frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
+    frame_layout := uniform_layout(
+        device,
+        FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute
+    )
     object_layout := render_world_layout(app.render)
     map_layout := shadow_layout(device)
     // The same buffer through two bindings: the compute pass writes it, the
@@ -1173,21 +1413,37 @@ run :: fn(move app: App) -> i64 {
 
     // Two layouts, because the shadow pass has no shadow map to bind and a
     // pipeline may not name a group its shader never reads.
-    var shadow_layouts: [4]BindGroupLayout = [frame_layout, object_layout,
-        map_layout, read_glow]
+    var shadow_layouts: [4]BindGroupLayout = [
+        frame_layout,
+        object_layout,
+        map_layout,
+        read_glow
+    ]
     shadow_pipeline_layout := wide_layout(device, 2, shadow_layouts)
 
-    var scene_layouts: [4]BindGroupLayout = [frame_layout, object_layout,
-        map_layout, read_glow]
+    var scene_layouts: [4]BindGroupLayout = [
+        frame_layout,
+        object_layout,
+        map_layout,
+        read_glow
+    ]
     scene_pipeline_layout := wide_layout(device, 4, scene_layouts)
 
-    var pulse_layouts: [4]BindGroupLayout = [frame_layout, written_glow,
-        frame_layout, frame_layout]
+    var pulse_layouts: [4]BindGroupLayout = [
+        frame_layout,
+        written_glow,
+        frame_layout,
+        frame_layout
+    ]
     pulse_pipeline_layout := wide_layout(device, 2, pulse_layouts)
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
-    frame_group := uniform_group(device, frame_layout, frame_uniform,
-        FRAME_BYTES)
+    frame_group := uniform_group(
+        device,
+        frame_layout,
+        frame_uniform,
+        FRAME_BYTES
+    )
 
     // Which component is which, asked of the world the App opened.
     ids := app_ids(app)
@@ -1195,12 +1451,19 @@ run :: fn(move app: App) -> i64 {
     spin := component_of($Spin, app.world)
     drawn := ids.drawn
     global := ids.global_transform
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-                        mask_empty(), local), spin), drawn), global), ids.transform)
+    wanted := mask_with(
+        mask_with(
+            mask_with(mask_with(mask_with(mask_empty(), local), spin), drawn),
+            global
+        ),
+        ids.transform
+    )
     // The root has a place and a turn and nothing drawn, since it is what the
     // grid hangs off rather than a thing on the screen.
-    root_wanted := mask_with(mask_with(mask_with(mask_empty(), local),
-            spin), global)
+    root_wanted := mask_with(
+        mask_with(mask_with(mask_empty(), local), spin),
+        global
+    )
 
     // One more than the things that are drawn: the last is the root every
     // shape hangs off, placed by the systems and drawn by nothing.
@@ -1213,13 +1476,31 @@ run :: fn(move app: App) -> i64 {
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
     floor := ecs_spawn_with(app.world, wanted)
-    ecs_set($LocalTransform, app.world, floor, local, LocalTransform {
-            translation = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
-            scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
-    ecs_set($Spin, app.world, floor, spin,
-        spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity()))
-    ecs_set($Drawn, app.world, floor, drawn, Drawn { mesh = cube,
-            material = looks[3], layer = ONE_LAYER })
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        floor,
+        local,
+        LocalTransform {
+            translation = vec3(0.0, FLOOR_Y, 0.0),
+            rotation = quat_identity(),
+            scale = vec3(9.0, FLOOR_THICKNESS, 9.0)
+        }
+    )
+    ecs_set(
+        $Spin,
+        app.world,
+        floor,
+        spin,
+        spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity())
+    )
+    ecs_set(
+        $Drawn,
+        app.world,
+        floor,
+        drawn,
+        Drawn { mesh = cube, material = looks[3], layer = ONE_LAYER }
+    )
     entities[0] = floor
 
     // The middle column and the middle row, so the grid is centred on the
@@ -1233,25 +1514,49 @@ run :: fn(move app: App) -> i64 {
         across: f32 = column
         up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
-        ecs_set($LocalTransform, app.world, entity, local,
-            LocalTransform { translation = vec3((across - half) * COLUMN_SPACING,
+        ecs_set(
+            $LocalTransform,
+            app.world,
+            entity,
+            local,
+            LocalTransform {
+                translation = vec3(
+                    (across - half) * COLUMN_SPACING,
                     lowest + up * ROW_RISE,
-                    (up - half) * ROW_DEPTH),
-                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+                    (up - half) * ROW_DEPTH
+                ),
+                rotation = quat_identity(),
+                scale = vec3(1.0, 1.0, 1.0)
+            }
+        )
 
         // An axis that differs from one to the next, so the shadows underneath
         // move differently rather than as one shape.
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed: f32 = 0.5 + 0.11 * made
-        ecs_set($Spin, app.world, entity, spin,
-            spinning(turning, speed, quat_identity()))
+        ecs_set(
+            $Spin,
+            app.world,
+            entity,
+            spin,
+            spinning(turning, speed, quat_identity())
+        )
 
         var shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
-        ecs_set($Drawn, app.world, entity, drawn, Drawn { mesh = shape,
-                material = looks[made - (made / 3) * 3], layer = ONE_LAYER })
+        ecs_set(
+            $Drawn,
+            app.world,
+            entity,
+            drawn,
+            Drawn {
+                mesh = shape,
+                material = looks[made - (made / 3) * 3],
+                layer = ONE_LAYER
+            }
+        )
 
         // Nothing here makes a buffer or a binding. What is drawn and where it
         // is are the world's; the device side of it is worked out from the
@@ -1264,11 +1569,24 @@ run :: fn(move app: App) -> i64 {
     // the root turns too, so what a shape ends up doing is its own spin inside
     // an orbit and neither of them says anything about the other.
     root := ecs_spawn_with(app.world, root_wanted)
-    ecs_set($LocalTransform, app.world, root, local, LocalTransform {
-            translation = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
-            scale = vec3(1.0, 1.0, 1.0) })
-    ecs_set($Spin, app.world, root, spin,
-        spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity()))
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        root,
+        local,
+        LocalTransform {
+            translation = vec3(0.0, 0.0, 0.0),
+            rotation = quat_identity(),
+            scale = vec3(1.0, 1.0, 1.0)
+        }
+    )
+    ecs_set(
+        $Spin,
+        app.world,
+        root,
+        spin,
+        spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity())
+    )
     // Hung off the root before the root is put in the table, since putting it
     // there is handing it over and the name does not hold it afterwards.
     var hung: i64 = 1
@@ -1280,10 +1598,14 @@ run :: fn(move app: App) -> i64 {
     entities[INSTANCES] = root
 
     shader := make_shader(device)
-    post_shader := make_post_shader(device,
-        StringView { data = POST_SHADER, length = str_len(POST_SHADER) })
-    compose_shader := make_post_shader(device,
-        StringView { data = COMPOSE_SHADER, length = str_len(COMPOSE_SHADER) })
+    post_shader := make_post_shader(
+        device,
+        StringView { data = POST_SHADER, length = str_len(POST_SHADER) }
+    )
+    compose_shader := make_post_shader(
+        device,
+        StringView { data = COMPOSE_SHADER, length = str_len(COMPOSE_SHADER) }
+    )
     sampled := sampled_layout(device)
     var one_group: [2]BindGroupLayout = [sampled, sampled]
     one_layout := cover_layout(device, 1, one_group)
@@ -1294,66 +1616,144 @@ run :: fn(move app: App) -> i64 {
     // frame differs: the same slots, the same meshes and the same pipeline, so
     // a second camera costs one uniform and one binding.
     inset_uniform := uniform_buffer(device, FRAME_BYTES)
-    inset_frame_group := uniform_group(device, frame_layout, inset_uniform,
-        FRAME_BYTES)
+    inset_frame_group := uniform_group(
+        device,
+        frame_layout,
+        inset_uniform,
+        FRAME_BYTES
+    )
 
-    scene_pipeline := make_scene_pipeline(device, shader, app_format(app),
-        scene_pipeline_layout)
+    scene_pipeline := make_scene_pipeline(
+        device,
+        shader,
+        app_format(app),
+        scene_pipeline_layout
+    )
 
     // Everything the passes record with, in one place. What each pass gets is
     // the piece of this it needs, named rather than copied.
     var built := Built {
         shadow_scene = Scene {
-            pipeline = make_shadow_pipeline(device, shader,
-                shadow_pipeline_layout),
-            steps = render_world_batch_pipelines(device,
-                render_world_batch_layout(shadow_render)),
-            frame_group = frame_group, render = ptr_to(shadow_render),
-            store = ptr_to(app.store), shadow_group = no_bind_group(),
-            glow_group = no_bind_group(), samples_shadow = 0,
-            shadow_map = 0, glow = 0,
+            pipeline = make_shadow_pipeline(
+                device,
+                shader,
+                shadow_pipeline_layout
+            ),
+            steps = render_world_batch_pipelines(
+                device,
+                render_world_batch_layout(shadow_render)
+            ),
+            frame_group = frame_group,
+            render = ptr_to(shadow_render),
+            store = ptr_to(app.store),
+            shadow_group = no_bind_group(),
+            glow_group = no_bind_group(),
+            samples_shadow = 0,
+            shadow_map = 0,
+            glow = 0,
         },
         lit_scene = Scene {
             pipeline = scene_pipeline,
-            steps = render_world_batch_pipelines(device,
-                render_world_batch_layout(app.render)),
+            steps = render_world_batch_pipelines(
+                device,
+                render_world_batch_layout(app.render)
+            ),
             frame_group = frame_group,
-            render = ptr_to(app.render), store = ptr_to(app.store),
-            shadow_group = no_bind_group(), glow_group = no_bind_group(),
-            samples_shadow = 1, shadow_map = 0, glow = 0,
+            render = ptr_to(app.render),
+            store = ptr_to(app.store),
+            shadow_group = no_bind_group(),
+            glow_group = no_bind_group(),
+            samples_shadow = 1,
+            shadow_map = 0,
+            glow = 0,
         },
         inset_scene = Scene {
             pipeline = scene_pipeline,
-            steps = render_world_batch_pipelines(device,
-                render_world_batch_layout(inset_render)),
+            steps = render_world_batch_pipelines(
+                device,
+                render_world_batch_layout(inset_render)
+            ),
             frame_group = inset_frame_group,
-            render = ptr_to(inset_render), store = ptr_to(app.store),
-            shadow_group = no_bind_group(), glow_group = no_bind_group(),
-            samples_shadow = 1, shadow_map = 0, glow = 0,
+            render = ptr_to(inset_render),
+            store = ptr_to(app.store),
+            shadow_group = no_bind_group(),
+            glow_group = no_bind_group(),
+            samples_shadow = 1,
+            shadow_map = 0,
+            glow = 0,
         },
         pulse = Pulse {
-            pipeline = make_pulse_pipeline(device,
-                make_post_shader(device,
-                    StringView { data = PULSE_SHADER, length = str_len(PULSE_SHADER) }), pulse_pipeline_layout),
-            frame_group = frame_group, glow_group = no_bind_group(),
+            pipeline = make_pulse_pipeline(
+                device,
+                make_post_shader(
+                    device,
+                    StringView {
+                        data = PULSE_SHADER,
+                        length = str_len(PULSE_SHADER)
+                    }
+                ),
+                pulse_pipeline_layout
+            ),
+            frame_group = frame_group,
+            glow_group = no_bind_group(),
             groups = 2,
         },
-        bright_step = Step { pipeline = no_render_pipeline(), layout = sampled,
-            source = 0, group = no_bind_group(), second_layout = sampled,
-            second_source = 0, second_group = no_bind_group(), reads_two = 0,
-            at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0 },
-        blur_step = Step { pipeline = no_render_pipeline(), layout = sampled,
-            source = 0, group = no_bind_group(), second_layout = sampled,
-            second_source = 0, second_group = no_bind_group(), reads_two = 0,
-            at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0 },
-        compose_step = Step { pipeline = no_render_pipeline(), layout = sampled,
-            source = 0, group = no_bind_group(), second_layout = sampled,
-            second_source = 0, second_group = no_bind_group(), reads_two = 0,
-            at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0 },
-        inset_step = Step { pipeline = no_render_pipeline(), layout = sampled,
-            source = 0, group = no_bind_group(), second_layout = sampled,
-            second_source = 0, second_group = no_bind_group(), reads_two = 0,
-            at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0 },
+        bright_step = Step {
+            pipeline = no_render_pipeline(),
+            layout = sampled,
+            source = 0,
+            group = no_bind_group(),
+            second_layout = sampled,
+            second_source = 0,
+            second_group = no_bind_group(),
+            reads_two = 0,
+            at_x = 0.0,
+            at_y = 0.0,
+            at_width = 0.0,
+            at_height = 0.0
+        },
+        blur_step = Step {
+            pipeline = no_render_pipeline(),
+            layout = sampled,
+            source = 0,
+            group = no_bind_group(),
+            second_layout = sampled,
+            second_source = 0,
+            second_group = no_bind_group(),
+            reads_two = 0,
+            at_x = 0.0,
+            at_y = 0.0,
+            at_width = 0.0,
+            at_height = 0.0
+        },
+        compose_step = Step {
+            pipeline = no_render_pipeline(),
+            layout = sampled,
+            source = 0,
+            group = no_bind_group(),
+            second_layout = sampled,
+            second_source = 0,
+            second_group = no_bind_group(),
+            reads_two = 0,
+            at_x = 0.0,
+            at_y = 0.0,
+            at_width = 0.0,
+            at_height = 0.0
+        },
+        inset_step = Step {
+            pipeline = no_render_pipeline(),
+            layout = sampled,
+            source = 0,
+            group = no_bind_group(),
+            second_layout = sampled,
+            second_source = 0,
+            second_group = no_bind_group(),
+            reads_two = 0,
+            at_x = 0.0,
+            at_y = 0.0,
+            at_width = 0.0,
+            at_height = 0.0
+        },
         inset_pass = cast($PassId, 0),
         corner_pass = cast($PassId, 0),
         shadow = ptr_to(shadow_render),
@@ -1366,19 +1766,35 @@ run :: fn(move app: App) -> i64 {
         light = vec3_normalize(vec3(-0.55, -1.0, -0.4)),
         elapsed = 0.0,
     }
-    built.bright_step.pipeline = make_cover_pipeline(device, post_shader,
-        app_format(app), StringView { data = "fs_bright", length = 9 },
-        one_layout)
-    built.blur_step.pipeline = make_cover_pipeline(device, post_shader,
-        app_format(app), StringView { data = "fs_blur", length = 7 },
-        one_layout)
-    built.compose_step.pipeline = make_cover_pipeline(device, compose_shader,
-        app_format(app), StringView { data = "fs_compose", length = 10 },
-        two_layout)
+    built.bright_step.pipeline = make_cover_pipeline(
+        device,
+        post_shader,
+        app_format(app),
+        StringView { data = "fs_bright", length = 9 },
+        one_layout
+    )
+    built.blur_step.pipeline = make_cover_pipeline(
+        device,
+        post_shader,
+        app_format(app),
+        StringView { data = "fs_blur", length = 7 },
+        one_layout
+    )
+    built.compose_step.pipeline = make_cover_pipeline(
+        device,
+        compose_shader,
+        app_format(app),
+        StringView { data = "fs_compose", length = 10 },
+        two_layout
+    )
     built.compose_step.reads_two = 1
-    built.inset_step.pipeline = make_cover_pipeline(device, post_shader,
-        app_format(app), StringView { data = "fs_blit", length = 7 },
-        one_layout)
+    built.inset_step.pipeline = make_cover_pipeline(
+        device,
+        post_shader,
+        app_format(app),
+        StringView { data = "fs_blit", length = 7 },
+        one_layout
+    )
     built.inset_step.at_x = INSET_MARGIN
     built.inset_step.at_y = INSET_MARGIN
     built.inset_step.at_width = INSET_WIDTH

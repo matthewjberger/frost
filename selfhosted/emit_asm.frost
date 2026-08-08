@@ -157,9 +157,20 @@ asm_name_at :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    arena_push(p.asm_names, AsmName { name_off = off, name_len = len,
-            reads = 0, pinned = 0, writes = 0, binds = 0, ty = TY_VOID,
-            weight = 0, reg = 0 })
+    arena_push(
+        p.asm_names,
+        AsmName {
+            name_off = off,
+            name_len = len,
+            reads = 0,
+            pinned = 0,
+            writes = 0,
+            binds = 0,
+            ty = TY_VOID,
+            weight = 0,
+            reg = 0
+        }
+    )
     p.asm_names.count - 1
 }
 
@@ -683,8 +694,14 @@ emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
 // The same load into a register the caller names, so the widths are described
 // once however many registers a value is loaded into. `wide` is the whole
 // register and `narrow` its low 32 bits, which a zero extension writes instead.
-emit_asm_load_into :: fn(mut p: Parser, ty: i64, slot: i64, base: str,
-    wide: str, narrow: str) {
+emit_asm_load_into :: fn(
+    mut p: Parser,
+    ty: i64,
+    slot: i64,
+    base: str,
+    wide: str,
+    narrow: str
+) {
     size := scalar_size(ty)
     var op: str = "movq "
     var destination: str = wide
@@ -971,8 +988,15 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
-                emit_asm_columns_addr(p, cbase, cbase_ty, cthrough, node.val,
-                    node.c, cindex)
+                emit_asm_columns_addr(
+                    p,
+                    cbase,
+                    cbase_ty,
+                    cthrough,
+                    node.val,
+                    node.c,
+                    cindex
+                )
                 return
             }
         }
@@ -1159,8 +1183,13 @@ emit_asm_length_call :: fn(mut p: Parser) {
 // answers with the checked slot index. That index scales into the storage run.
 // frost_rt_slot takes the handle, the storage length, and the generations run, and
 // aborts on an index out of range or a generation that has moved on.
-emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
-    index_node: i64) {
+emit_asm_slab_addr :: fn(
+    mut p: Parser,
+    base: i64,
+    base_ty: i64,
+    through: i64,
+    index_node: i64
+) {
     storage_id := slab_field_id(p, through, "storage")
     generations_id := slab_field_id(p, through, "generations")
     storage_field := arena_at(p.fields, storage_id)
@@ -1171,8 +1200,12 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
     generations_name_off := generations_field.name_off
     generations_name_len := generations_field.name_len
     storage_off := field_offset(p, through, storage_name_off, storage_name_len)
-    generations_off := field_offset(p, through, generations_name_off,
-        generations_name_len)
+    generations_off := field_offset(
+        p,
+        through,
+        generations_name_off,
+        generations_name_len
+    )
     count := array_length(p, storage_ty)
     element := array_element(p, storage_ty)
     slot := alloc_temp(p, 8)
@@ -1216,15 +1249,26 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
 // index scales into the field's own `[N]field` array rather than one storage
 // run, so the field's element size and column offset take the place of the
 // slab's storage element size and offset.
-emit_asm_columns_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
-    field_off: i64, field_len: i64, index_node: i64) {
+emit_asm_columns_addr :: fn(
+    mut p: Parser,
+    base: i64,
+    base_ty: i64,
+    through: i64,
+    field_off: i64,
+    field_len: i64,
+    index_node: i64
+) {
     generations_id := slab_field_id(p, through, "generations")
     generations_field := arena_at(p.fields, generations_id)
     generations_name_off := generations_field.name_off
     generations_name_len := generations_field.name_len
     generations_ty := generations_field.ty
-    generations_off := field_offset(p, through, generations_name_off,
-        generations_name_len)
+    generations_off := field_offset(
+        p,
+        through,
+        generations_name_off,
+        generations_name_len
+    )
     count := array_length(p, generations_ty)
     col_ty := field_type_by_range(p, through, field_off, field_len)
     element := array_element(p, col_ty)
@@ -1268,8 +1312,14 @@ emit_asm_columns_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64
 // `c[h] = value` scatters the element's fields into the columns' per-field
 // arrays at the handle's validated slot, one field at a time: address of the
 // column element, then the element loaded out of `value` and stored into it.
-emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
-    cthrough: i64, cindex: i64, value: i64) {
+emit_asm_columns_scatter :: fn(
+    mut p: Parser,
+    cbase: i64,
+    cbase_ty: i64,
+    cthrough: i64,
+    cindex: i64,
+    value: i64
+) {
     value_ty := type_of(p, value)
     var value_struct := value_ty
     if (is_pointer(value_struct)) {
@@ -1285,8 +1335,15 @@ emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
         field_next := field.next
         if (is_columns_bookkeeping(p, field_off, field_len) == false) {
             element := array_element(p, field_col_ty)
-            emit_asm_columns_addr(p, cbase, cbase_ty, cthrough, field_off,
-                field_len, cindex)
+            emit_asm_columns_addr(
+                p,
+                cbase,
+                cbase_ty,
+                cthrough,
+                field_off,
+                field_len,
+                cindex
+            )
             emit_asm_spill(p)
             if (is_pointer(value_ty)) {
                 emit_asm_expr(p, value)
@@ -1324,9 +1381,15 @@ emit_asm_push :: fn() {
 emit_asm_spill :: fn(mut p: Parser) {
     if (p.spill_depth >= p.spill_slots.count) {
         p.frame_used = p.frame_used + 8
-        arena_push(p.spill_slots,
-            LocalVar { name_off = 0, name_len = 0, ty = 0,
-                slot = -p.frame_used })
+        arena_push(
+            p.spill_slots,
+            LocalVar {
+                name_off = 0,
+                name_len = 0,
+                ty = 0,
+                slot = -p.frame_used
+            }
+        )
     }
     held := arena_at(p.spill_slots, p.spill_depth)
     asm_i("movq %rax, ", held.slot, "(%rbp)")
@@ -1386,8 +1449,12 @@ emit_asm_arith_call :: fn(mut p: Parser, taken: str, code: i64) {
 // A result narrower than the register it was computed in, held to the range its
 // own type means. The arithmetic itself cannot overflow at 64 bits when both
 // operands are narrower, so this is the whole of the check for those widths.
-emit_asm_narrow_check :: fn(mut p: Parser, bits: i64, unsigned: bool,
-    what: i64) {
+emit_asm_narrow_check :: fn(
+    mut p: Parser,
+    bits: i64,
+    unsigned: bool,
+    what: i64
+) {
     shadow := abi_shadow(p)
     past := new_label(p)
     // A value fits `bits` signed exactly when shifting it up and back recovers
@@ -1893,8 +1960,14 @@ emit_asm_simple_into_r11 :: fn(mut p: Parser, id: i64, kind: i64) {
         emit_text(", %r11\n")
         return
     }
-    emit_asm_load_into(p, lookup_local(p, off, len), local_slot(p, off, len),
-        "(%rbp), ", "%r11", "%r11d")
+    emit_asm_load_into(
+        p,
+        lookup_local(p, off, len),
+        local_slot(p, off, len),
+        "(%rbp), ",
+        "%r11",
+        "%r11d"
+    )
 }
 
 // Whether the call goes through a local of function-pointer type rather than to
@@ -2301,8 +2374,13 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
 // so each answers with the address of its storage; the left one is put away in
 // a slot while the right is worked out, since working it out takes the
 // register the address is in.
-emit_asm_packed :: fn(mut p: Parser, left: i64, op: i64, right: i64,
-    vector: i64) {
+emit_asm_packed :: fn(
+    mut p: Parser,
+    left: i64,
+    op: i64,
+    right: i64,
+    vector: i64
+) {
     element := array_element(p, vector)
     width := type_size(p, vector)
     held := alloc_temp(p, 8)
@@ -2618,8 +2696,10 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             || (declared >= 0 && declared != type_of(p, argument))) {
             placed_directly = false
         }
-        arena_push(kinds, LocalVar { name_off = kind, name_len = 0, ty = 0,
-                slot = 0 })
+        arena_push(
+            kinds,
+            LocalVar { name_off = kind, name_len = 0, ty = 0, slot = 0 }
+        )
         probe = probe + 1
     }
     if (placed_directly) {
@@ -2628,12 +2708,15 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         var placing: i64 = 0
         while (placing < value_count) {
             held := arena_at(kinds, placing)
-            emit_asm_simple_into_arg(p, nth_value_arg(p, args, placing),
-                held.name_off, placing)
+            emit_asm_simple_into_arg(
+                p,
+                nth_value_arg(p, args, placing),
+                held.name_off,
+                placing
+            )
             placing = placing + 1
         }
-        emit_asm_call_tail(p, args, fn_index, shadow_only, ret, 0,
-            result_slot)
+        emit_asm_call_tail(p, args, fn_index, shadow_only, ret, 0, result_slot)
         return
     }
 
@@ -2833,15 +2916,29 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         r = r + 1
     }
 
-    emit_asm_call_tail(p, args, fn_index, frame + 16 * count, ret,
-        register_ret, result_slot)
+    emit_asm_call_tail(
+        p,
+        args,
+        fn_index,
+        frame + 16 * count,
+        ret,
+        register_ret,
+        result_slot
+    )
 }
 
 // The call itself, the stack given back, and whatever the answer needs doing to
 // it. Both ways of placing arguments end here, so how a call is made and how
 // its answer is read is written once.
-emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
-    ret: i64, register_ret: i64, result_slot: i64) {
+emit_asm_call_tail :: fn(
+    mut p: Parser,
+    args: i64,
+    fn_index: i64,
+    restore: i64,
+    ret: i64,
+    register_ret: i64,
+    result_slot: i64
+) {
     sym := arena_at(p.fns, fn_index)
     // A call through a local of function-pointer type is indirect. The value is
     // loaded into a scratch register the arguments do not use and called
@@ -2862,8 +2959,13 @@ emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
         emit_text("*%r11")
     } else if (generic_fn_of(p, fn_index) >= 0) {
         arg := call_args_for(p, args, fn_index)
-        emit_asm_mono_name(p, fn_index, arg, p.call_xarg_start,
-            p.call_xarg_count)
+        emit_asm_mono_name(
+            p,
+            fn_index,
+            arg,
+            p.call_xarg_start,
+            p.call_xarg_count
+        )
     } else {
         emit_asm_fn_symbol(p, fn_index)
     }
@@ -2961,8 +3063,14 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
-                emit_asm_columns_scatter(p, cbase, cbase_ty, cthrough, cindex,
-                    value)
+                emit_asm_columns_scatter(
+                    p,
+                    cbase,
+                    cbase_ty,
+                    cthrough,
+                    cindex,
+                    value
+                )
                 return
             }
         }
@@ -2973,8 +3081,11 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             into := asm_reg_of(p, place_node.val, place_node.c)
             if (into > 0) {
                 emit_asm_expr(p, value)
-                emit_asm_coerce(p, value, lookup_local(p, place_node.val,
-                        place_node.c))
+                emit_asm_coerce(
+                    p,
+                    value,
+                    lookup_local(p, place_node.val, place_node.c)
+                )
                 emit_text("    movq %rax, ")
                 emit_asm_saved_reg(into - 1)
                 emit_text("\n")
@@ -3153,8 +3264,13 @@ emit_asm_case_compare :: fn(value: i64) {
     asm("cmpq %r11, %rax")
 }
 
-emit_asm_case_test :: fn(mut p: Parser, slot: i64, cid: i64, body_id: i64,
-    skip_id: i64) {
+emit_asm_case_test :: fn(
+    mut p: Parser,
+    slot: i64,
+    cid: i64,
+    body_id: i64,
+    skip_id: i64
+) {
     var alt := case_alts(p, cid)
     while (alt != (-1)) {
         anode := arena_at(p.arena, alt)
@@ -3394,8 +3510,11 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
                         emit_text(", %r10\n")
                         int_next = int_next + 1
                     } else {
-                        asm_i("movq ", 16 + shadow + 8 * spilled,
-                            "(%rbp), %r10")
+                        asm_i(
+                            "movq ",
+                            16 + shadow + 8 * spilled,
+                            "(%rbp), %r10"
+                        )
                         spilled = spilled + 1
                         if (sse) {
                             sse_next = sse_next + 1
@@ -3542,8 +3661,13 @@ emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
     }
 }
 
-emit_asm_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64) {
+emit_asm_mono_name :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) {
     emit_text("mf_")
     frost_rt_emit_int(fn_index)
     emit_asm_mangled_arg(p, arg)
@@ -3556,8 +3680,14 @@ emit_asm_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64
 }
 
 // One monomorphization, under the name its call sites use.
-emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64, ret: i64) {
+emit_asm_mono_function :: fn(
+    mut p: Parser,
+    id: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    ret: i64
+) {
     node := arena_at(p.arena, id)
     fn_index := node.val
     body := node.a
@@ -3713,8 +3843,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                 xcount := used.xarg_count
                 is_pack := used.is_pack
                 owner := used.owner
-                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                        owner) && tuple_is_first_for(p, gi, ii)) {
+                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack, owner) && tuple_is_first_for(p, gi, ii)) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
@@ -3836,12 +3965,4 @@ count_args :: fn(mut p: Parser, head: i64) -> i64 {
     count
 }
 
-// ---------------------------------------------------------------------------
-// Regions. A `with arena { ... }` block is a region. A raw pointer derived from
-// the arena inside it dies with the block, so it may not be assigned to
-// anything declared outside the block or returned. There are no lifetimes and
-// no region types on pointers, only a walk over the block tracking which names
-// hold arena pointers. That is enough here because the language has no global
-// arenas and no closures, so a pointer can only reach an arena a function was
-// handed directly.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- // Regions. A `with arena { ... }` block is a region. A raw pointer derived from // the arena inside it dies with the block, so it may not be assigned to // anything declared outside the block or returned. There are no lifetimes and // no region types on pointers, only a walk over the block tracking which names // hold arena pointers. That is enough here because the language has no global // arenas and no closures, so a pointer can only reach an arena a function was // handed directly. // ---------------------------------------------------------------------------

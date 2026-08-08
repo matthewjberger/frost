@@ -70,8 +70,13 @@ columns_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>)
 // Bumping the generation makes every outstanding handle to this slot stale, so
 // a later `c[handle].field` through one aborts rather than reading the next
 // tenant.
-columns_release :: fn($T: Type, $N: usize, mut c: columns<T, N>,
-    handle: Handle<T>) -> bool {
+columns_release :: fn(
+    $T: Type,
+    $N: usize,
+    mut c: columns<T,
+    N>,
+    handle: Handle<T>
+) -> bool {
     raw: i64 = handle
     index := raw & 4294967295
     if (c.generations[index] != (raw >> 32)) {

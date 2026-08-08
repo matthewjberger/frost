@@ -375,10 +375,17 @@ widen_symbols :: fn(mut unit: Assembly) {
     var i: i64 = 0
     while (i < unit.syms.count) {
         held := arena_at(unit.syms, i)
-        arena_push(wider, AsmSym {
-                off = held.off, len = held.len, section = held.section,
-                value = held.value, global = held.global, index = held.index,
-            })
+        arena_push(
+            wider,
+            AsmSym {
+                off = held.off,
+                len = held.len,
+                section = held.section,
+                value = held.value,
+                global = held.global,
+                index = held.index,
+            }
+        )
         i = i + 1
     }
     unit.syms = wider
@@ -400,10 +407,17 @@ intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
         bucket := arena_at(unit.buckets, slot)
         held := bucket.sym
         if (held == (-1)) {
-            index := arena_push(unit.syms, AsmSym {
-                    off = off, len = len, section = SEC_UNDEF,
-                    value = 0, global = 0, index = -1,
-                })
+            index := arena_push(
+                unit.syms,
+                AsmSym {
+                    off = off,
+                    len = len,
+                    section = SEC_UNDEF,
+                    value = 0,
+                    global = 0,
+                    index = -1,
+                }
+            )
             bucket := arena_at(unit.buckets, slot)
             bucket.sym = index
             answer = index
@@ -668,24 +682,44 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
         if (register < 0) {
             assemble_fail(unit, "unknown register", i)
         }
-        return Operand { kind = OPND_REG, reg = register, disp = 0,
-            sym = -1, next = i + 1 + len }
+        return Operand {
+            kind = OPND_REG,
+            reg = register,
+            disp = 0,
+            sym = -1,
+            next = i + 1 + len
+        }
     }
     if (src[i] == CH_DOLLAR) {
         if (is_digit(src[i + 1]) || src[i + 1] == CH_MINUS) {
             value, after_number := read_number(src, i + 1)
-            return Operand { kind = OPND_IMM, reg = 0, disp = value,
-                sym = -1, next = after_number }
+            return Operand {
+                kind = OPND_IMM,
+                reg = 0,
+                disp = value,
+                sym = -1,
+                next = after_number
+            }
         }
         len := name_length(src, i + 1)
         sym := intern_symbol(unit, i + 1, len)
-        return Operand { kind = OPND_IMM_SYM, reg = 0, disp = 0, sym = sym,
-            next = i + 1 + len }
+        return Operand {
+            kind = OPND_IMM_SYM,
+            reg = 0,
+            disp = 0,
+            sym = sym,
+            next = i + 1 + len
+        }
     }
     if (src[i] == CH_STAR) {
         inner := parse_operand(unit, i + 1)
-        return Operand { kind = OPND_INDIRECT, reg = inner.reg, disp = 0,
-            sym = -1, next = inner.next }
+        return Operand {
+            kind = OPND_INDIRECT,
+            reg = inner.reg,
+            disp = 0,
+            sym = -1,
+            next = inner.next
+        }
     }
     // A displacement, or nothing before the parenthesis.
     var displacement: i64 = 0
@@ -704,8 +738,13 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
         if (reg_code(register) == REG_RIP) {
             assemble_fail(unit, "unit bare displacement off %rip", i)
         }
-        return Operand { kind = OPND_MEM, reg = register, disp = displacement,
-            sym = -1, next = after }
+        return Operand {
+            kind = OPND_MEM,
+            reg = register,
+            disp = displacement,
+            sym = -1,
+            next = after
+        }
     }
     // A name: either `name(%rip)` or a branch target.
     len := name_length(src, i)
@@ -718,11 +757,19 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
         rlen := name_length(src, after + 2)
         register := parse_register(src, after + 2, rlen)
         if (src[after + 1] != CH_PERCENT || reg_code(register) != REG_RIP) {
-            assemble_fail(unit, "unit name addressed off something other than %rip",
-                i)
+            assemble_fail(
+                unit,
+                "unit name addressed off something other than %rip",
+                i
+            )
         }
-        return Operand { kind = OPND_MEM_RIP, reg = 0, disp = 0, sym = sym,
-            next = after + 2 + rlen + 1 }
+        return Operand {
+            kind = OPND_MEM_RIP,
+            reg = 0,
+            disp = 0,
+            sym = sym,
+            next = after + 2 + rlen + 1
+        }
     }
     Operand { kind = OPND_SYM, reg = 0, disp = 0, sym = sym, next = after }
 }
@@ -784,7 +831,11 @@ text_word64 :: fn(mut unit: Assembly, value: i64) {
 // instruction, which is how this was found.
 text_imm32 :: fn(mut unit: Assembly, value: i64, here: i64) {
     if (value < (-2147483648) || value > 2147483647) {
-        assemble_fail(unit, "an immediate too wide for the four bytes this instruction carries", here)
+        assemble_fail(
+            unit,
+            "an immediate too wide for the four bytes this instruction carries",
+            here
+        )
     }
     text_word32(unit, value)
 }
@@ -798,7 +849,14 @@ fits_in_word32 :: fn(value: i64) -> bool {
 // REX, written only when one of its bits is needed. An eight-bit register
 // whose name exists only with the prefix forces it even when every bit is
 // zero, which is what makes `%sil` different from `%dh`.
-maybe_rex :: fn(mut unit: Assembly, w: i64, r: i64, x: i64, b: i64, force: i64) {
+maybe_rex :: fn(
+    mut unit: Assembly,
+    w: i64,
+    r: i64,
+    x: i64,
+    b: i64,
+    force: i64
+) {
     if (w == 1 || r == 1 || x == 1 || b == 1 || force == 1) {
         text_byte(unit, 64 + w * 8 + r * 4 + x * 2 + b)
     }
@@ -833,9 +891,18 @@ emit_address :: fn(mut unit: Assembly, field: i64, base: i64, disp: i64) {
 // The shape most of the set shares: an optional legacy prefix, REX, one or two
 // opcode bytes, then a register in the ModRM reg field and either a register or
 // an address in its rm field.
-emit_reg_rm :: fn(mut unit: Assembly, prefix: i64, w: i64, escape: i64,
-    opcode: i64, field: i64, rm_kind: i64, rm_reg: i64, rm_disp: i64,
-    force_rex: i64) {
+emit_reg_rm :: fn(
+    mut unit: Assembly,
+    prefix: i64,
+    w: i64,
+    escape: i64,
+    opcode: i64,
+    field: i64,
+    rm_kind: i64,
+    rm_reg: i64,
+    rm_disp: i64,
+    force_rex: i64
+) {
     if (prefix != 0) {
         text_byte(unit, prefix)
     }
@@ -905,16 +972,30 @@ note_reloc :: fn(mut unit: Assembly, sym: i64, addend: i64, kind: i64) {
         var i: i64 = 0
         while (i < unit.relocs.count) {
             held := arena_at(unit.relocs, i)
-            arena_push(wider, AsmReloc {
-                    section = held.section, offset = held.offset, sym = held.sym,
-                    addend = held.addend, kind = held.kind })
+            arena_push(
+                wider,
+                AsmReloc {
+                    section = held.section,
+                    offset = held.offset,
+                    sym = held.sym,
+                    addend = held.addend,
+                    kind = held.kind
+                }
+            )
             i = i + 1
         }
         unit.relocs = wider
     }
-    arena_push(unit.relocs, AsmReloc {
-            section = SEC_TEXT, offset = unit.text_count, sym = sym,
-            addend = addend, kind = kind })
+    arena_push(
+        unit.relocs,
+        AsmReloc {
+            section = SEC_TEXT,
+            offset = unit.text_count,
+            sym = sym,
+            addend = addend,
+            kind = kind
+        }
+    )
 }
 
 // A name used as an address: either this file works the distance out, or the
@@ -1027,8 +1108,18 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
         return
     }
     if (op == M_SETCC) {
-        emit_reg_rm(unit, 0, 0, 15, 144 + cc, 0, OPND_REG, reg_code(a_reg),
-            0, byte_reg_forces_rex(a_reg))
+        emit_reg_rm(
+            unit,
+            0,
+            0,
+            15,
+            144 + cc,
+            0,
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            byte_reg_forces_rex(a_reg)
+        )
         return
     }
     if (op == M_IDIVQ || op == M_DIVQ || op == M_MULQ) {
@@ -1056,8 +1147,18 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
         // different opcodes, and reading an immediate as the register form
         // shifts by the wrong number without saying so.
         if (a_kind == OPND_IMM) {
-            emit_reg_rm(unit, 0, 1, 0, 193, digit, OPND_REG, reg_code(b_reg),
-                0, 0)
+            emit_reg_rm(
+                unit,
+                0,
+                1,
+                0,
+                193,
+                digit,
+                OPND_REG,
+                reg_code(b_reg),
+                0,
+                0
+            )
             text_byte(unit, a_disp)
             return
         }
@@ -1066,20 +1167,43 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
     }
     if (op == M_LEAQ) {
         if (b_kind != OPND_REG) {
-            assemble_fail(unit, "leaq answering somewhere other than unit register",
-                here)
+            assemble_fail(
+                unit,
+                "leaq answering somewhere other than unit register",
+                here
+            )
         }
         if (a_kind == OPND_MEM_RIP) {
-            emit_reg_rm(unit, 0, 1, 0, 141, reg_code(b_reg), OPND_MEM, REG_RIP,
-                0, 0)
+            emit_reg_rm(
+                unit,
+                0,
+                1,
+                0,
+                141,
+                reg_code(b_reg),
+                OPND_MEM,
+                REG_RIP,
+                0,
+                0
+            )
             // emit_reg_rm wrote a zero displacement, so back over it and put
             // the real distance there.
             unit.text_count = unit.text_count - 4
             emit_rip_target(unit, a_sym, 0, FIXUP_DATA)
             return
         }
-        emit_reg_rm(unit, 0, 1, 0, 141, reg_code(b_reg), OPND_MEM,
-            reg_code(a_reg), a_disp, 0)
+        emit_reg_rm(
+            unit,
+            0,
+            1,
+            0,
+            141,
+            reg_code(b_reg),
+            OPND_MEM,
+            reg_code(a_reg),
+            a_disp,
+            0
+        )
         return
     }
     if (op == M_MOVZBQ || op == M_MOVZWQ || op == M_MOVSBQ || op == M_MOVSWQ
@@ -1092,48 +1216,129 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
         // store being neighbouring opcodes rather than one with its operands
         // the other way round.
         if (b_kind == OPND_REG) {
-            emit_reg_rm(unit, 0, 0, 15, 16, reg_code(b_reg), a_kind,
-                reg_code(a_reg), a_disp, 0)
+            emit_reg_rm(
+                unit,
+                0,
+                0,
+                15,
+                16,
+                reg_code(b_reg),
+                a_kind,
+                reg_code(a_reg),
+                a_disp,
+                0
+            )
         } else {
-            emit_reg_rm(unit, 0, 0, 15, 17, reg_code(a_reg), b_kind,
-                reg_code(b_reg), b_disp, 0)
+            emit_reg_rm(
+                unit,
+                0,
+                0,
+                15,
+                17,
+                reg_code(a_reg),
+                b_kind,
+                reg_code(b_reg),
+                b_disp,
+                0
+            )
         }
         return
     }
     if (op == M_MOVQ || op == M_MOVL || op == M_MOVW || op == M_MOVB
         || op == M_MOVD) {
-        encode_move(unit, op, a_kind, a_reg, a_disp, a_sym, b_kind, b_reg,
-            b_disp, b_sym, here)
+        encode_move(
+            unit,
+            op,
+            a_kind,
+            a_reg,
+            a_disp,
+            a_sym,
+            b_kind,
+            b_reg,
+            b_disp,
+            b_sym,
+            here
+        )
         return
     }
     if (op == M_IMULQ) {
         if (a_kind == OPND_IMM) {
             if (fits_in_byte(a_disp)) {
-                emit_reg_rm(unit, 0, 1, 0, 107, reg_code(b_reg), OPND_REG,
-                    reg_code(b_reg), 0, 0)
+                emit_reg_rm(
+                    unit,
+                    0,
+                    1,
+                    0,
+                    107,
+                    reg_code(b_reg),
+                    OPND_REG,
+                    reg_code(b_reg),
+                    0,
+                    0
+                )
                 text_byte(unit, a_disp)
             } else {
-                emit_reg_rm(unit, 0, 1, 0, 105, reg_code(b_reg), OPND_REG,
-                    reg_code(b_reg), 0, 0)
+                emit_reg_rm(
+                    unit,
+                    0,
+                    1,
+                    0,
+                    105,
+                    reg_code(b_reg),
+                    OPND_REG,
+                    reg_code(b_reg),
+                    0,
+                    0
+                )
                 text_imm32(unit, a_disp, here)
             }
             return
         }
-        emit_reg_rm(unit, 0, 1, 15, 175, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            0,
+            1,
+            15,
+            175,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     // `0F BC /r`, the same two-byte shape as `imulq` between registers: the
     // destination is the reg field and the source the r/m.
     if (op == M_BSFQ) {
-        emit_reg_rm(unit, 0, 1, 15, 188, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            0,
+            1,
+            15,
+            188,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     digit := arith_digit(op)
     if (digit >= 0) {
-        encode_arith(unit, digit, a_kind, a_reg, a_disp, a_sym, b_kind, b_reg,
-            b_disp, here)
+        encode_arith(
+            unit,
+            digit,
+            a_kind,
+            a_reg,
+            a_disp,
+            a_sym,
+            b_kind,
+            b_reg,
+            b_disp,
+            here
+        )
         return
     }
     encode_sse(unit, op, a_reg, b_reg, here)
@@ -1142,12 +1347,23 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
 // A jump, in the short form while the distance fits in one byte. The choice
 // only ever moves one way, from short to long, so re-laying the section out
 // after a jump grows terminates.
-encode_branch :: fn(mut unit: Assembly, index: i64, op: i64, cc: i64, sym: i64,
-    long: i64, here: i64) {
+encode_branch :: fn(
+    mut unit: Assembly,
+    index: i64,
+    op: i64,
+    cc: i64,
+    sym: i64,
+    long: i64,
+    here: i64
+) {
     if (resolved_here(unit, sym) == false) {
         // A call is the only thing that leaves the unit, so a branch to a name
         // this file does not define is a fault in the backend.
-        assemble_fail(unit, "unit branch to unit name this unit does not define", here)
+        assemble_fail(
+            unit,
+            "unit branch to unit name this unit does not define",
+            here
+        )
     }
     named := arena_at(unit.syms, sym)
     target := named.value
@@ -1172,8 +1388,14 @@ encode_branch :: fn(mut unit: Assembly, index: i64, op: i64, cc: i64, sym: i64,
 
 // The widening moves, which all read a narrow place and write a whole
 // register.
-encode_extend :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
-    a_disp: i64, b_reg: i64) {
+encode_extend :: fn(
+    mut unit: Assembly,
+    op: i64,
+    a_kind: i64,
+    a_reg: i64,
+    a_disp: i64,
+    b_reg: i64
+) {
     var escape: i64 = 15
     var opcode: i64 = 182
     if (op == M_MOVZWQ) { opcode = 183 }
@@ -1191,26 +1413,66 @@ encode_extend :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
     } else {
         rm = reg_code(a_reg)
     }
-    emit_reg_rm(unit, 0, 1, escape, opcode, reg_code(b_reg), a_kind, rm, a_disp,
-        force)
+    emit_reg_rm(
+        unit,
+        0,
+        1,
+        escape,
+        opcode,
+        reg_code(b_reg),
+        a_kind,
+        rm,
+        a_disp,
+        force
+    )
 }
 
 // add, sub, cmp, and, or and xor, which share every form.
-encode_arith :: fn(mut unit: Assembly, digit: i64, a_kind: i64, a_reg: i64,
-    a_disp: i64, a_sym: i64, b_kind: i64, b_reg: i64, b_disp: i64,
-    here: i64) {
+encode_arith :: fn(
+    mut unit: Assembly,
+    digit: i64,
+    a_kind: i64,
+    a_reg: i64,
+    a_disp: i64,
+    a_sym: i64,
+    b_kind: i64,
+    b_reg: i64,
+    b_disp: i64,
+    here: i64
+) {
     if (a_kind == OPND_IMM_SYM) {
         // The value arrives from a `.set` further down the file, so the width
         // is decided without it and the wide form is the only one that always
         // holds.
-        emit_reg_rm(unit, 0, 1, 0, 129, digit, b_kind, reg_code(b_reg), b_disp, 0)
+        emit_reg_rm(
+            unit,
+            0,
+            1,
+            0,
+            129,
+            digit,
+            b_kind,
+            reg_code(b_reg),
+            b_disp,
+            0
+        )
         text_word32(unit, symbol_value(unit, a_sym))
         return
     }
     if (a_kind == OPND_IMM) {
         if (fits_in_byte(a_disp)) {
-            emit_reg_rm(unit, 0, 1, 0, 131, digit, b_kind, reg_code(b_reg),
-                b_disp, 0)
+            emit_reg_rm(
+                unit,
+                0,
+                1,
+                0,
+                131,
+                digit,
+                b_kind,
+                reg_code(b_reg),
+                b_disp,
+                0
+            )
             text_byte(unit, a_disp)
             return
         }
@@ -1220,22 +1482,52 @@ encode_arith :: fn(mut unit: Assembly, digit: i64, a_kind: i64, a_reg: i64,
             text_imm32(unit, a_disp, here)
             return
         }
-        emit_reg_rm(unit, 0, 1, 0, 129, digit, b_kind, reg_code(b_reg), b_disp, 0)
+        emit_reg_rm(
+            unit,
+            0,
+            1,
+            0,
+            129,
+            digit,
+            b_kind,
+            reg_code(b_reg),
+            b_disp,
+            0
+        )
         text_imm32(unit, a_disp, here)
         return
     }
     if (a_kind != OPND_REG) {
-        assemble_fail(unit, "an arithmetic operand of an unsupported shape", here)
+        assemble_fail(
+            unit,
+            "an arithmetic operand of an unsupported shape",
+            here
+        )
     }
-    emit_reg_rm(unit, 0, 1, 0, arith_rm_opcode(digit), reg_code(a_reg), b_kind,
-        reg_code(b_reg), b_disp, 0)
+    emit_reg_rm(
+        unit,
+        0,
+        1,
+        0,
+        arith_rm_opcode(digit),
+        reg_code(a_reg),
+        b_kind,
+        reg_code(b_reg),
+        b_disp,
+        0
+    )
 }
 
 // The double-precision arithmetic, and the conversions between a float and an
 // integer. Every one is `op source, destination` with both in SSE registers,
 // but for the two that cross banks.
-encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
-    here: i64) {
+encode_sse :: fn(
+    mut unit: Assembly,
+    op: i64,
+    a_reg: i64,
+    b_reg: i64,
+    here: i64
+) {
     // The packed forms differ from the scalar ones only in the prefix: none at
     // all for four singles, 0x66 for two doubles, and the same opcode byte.
     if (op == M_ADDPS || op == M_SUBPS || op == M_MULPS || op == M_DIVPS
@@ -1249,70 +1541,200 @@ encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
         if (op == M_SUBPS || op == M_SUBPD) { opcode = 92 }
         if (op == M_MULPS || op == M_MULPD) { opcode = 89 }
         if (op == M_DIVPS || op == M_DIVPD) { opcode = 94 }
-        emit_reg_rm(unit, prefix, 0, 15, opcode, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            prefix,
+            0,
+            15,
+            opcode,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_ADDSD) {
-        emit_reg_rm(unit, 242, 0, 15, 88, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            0,
+            15,
+            88,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_SUBSD) {
-        emit_reg_rm(unit, 242, 0, 15, 92, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            0,
+            15,
+            92,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_MULSD) {
-        emit_reg_rm(unit, 242, 0, 15, 89, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            0,
+            15,
+            89,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_DIVSD) {
-        emit_reg_rm(unit, 242, 0, 15, 94, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            0,
+            15,
+            94,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_UCOMISD) {
-        emit_reg_rm(unit, 102, 0, 15, 46, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            102,
+            0,
+            15,
+            46,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_MOVAPD) {
-        emit_reg_rm(unit, 102, 0, 15, 40, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            102,
+            0,
+            15,
+            40,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_CVTSS2SD) {
-        emit_reg_rm(unit, 243, 0, 15, 90, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            243,
+            0,
+            15,
+            90,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_CVTSD2SS) {
-        emit_reg_rm(unit, 242, 0, 15, 90, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            0,
+            15,
+            90,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_CVTSI2SDQ) {
-        emit_reg_rm(unit, 242, 1, 15, 42, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            1,
+            15,
+            42,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_CVTTSD2SIQ) {
-        emit_reg_rm(unit, 242, 1, 15, 44, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            242,
+            1,
+            15,
+            44,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     // The same two opcodes under the single-precision prefix. 0xF3 selects the
     // `ss` form where 0xF2 selects `sd`, and nothing else about them differs.
     if (op == M_CVTSI2SSQ) {
-        emit_reg_rm(unit, 243, 1, 15, 42, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            243,
+            1,
+            15,
+            42,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (op == M_CVTTSS2SIQ) {
-        emit_reg_rm(unit, 243, 1, 15, 44, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            243,
+            1,
+            15,
+            44,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     assemble_fail(unit, "an instruction this assembler does not encode", here)
@@ -1320,9 +1742,19 @@ encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
 
 // The moves. Width comes from the mnemonic, and which bank each side is in
 // decides between the integer form and the one that crosses to SSE.
-encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
-    a_disp: i64, a_sym: i64, b_kind: i64, b_reg: i64, b_disp: i64,
-    b_sym: i64, here: i64) {
+encode_move :: fn(
+    mut unit: Assembly,
+    op: i64,
+    a_kind: i64,
+    a_reg: i64,
+    a_disp: i64,
+    a_sym: i64,
+    b_kind: i64,
+    b_reg: i64,
+    b_disp: i64,
+    b_sym: i64,
+    here: i64
+) {
     var w: i64 = 0
     var prefix: i64 = 0
     var load: i64 = 139
@@ -1338,8 +1770,19 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
     a_is_sse := a_kind == OPND_REG && reg_kind(a_reg) == REG_XMM
     b_is_sse := b_kind == OPND_REG && reg_kind(b_reg) == REG_XMM
     if (op == M_MOVD || a_is_sse || b_is_sse) {
-        encode_move_sse(unit, op, a_kind, a_reg, a_disp, b_kind, b_reg, b_disp,
-            a_is_sse, b_is_sse, here)
+        encode_move_sse(
+            unit,
+            op,
+            a_kind,
+            a_reg,
+            a_disp,
+            b_kind,
+            b_reg,
+            b_disp,
+            a_is_sse,
+            b_is_sse,
+            here
+        )
         return
     }
     var force: i64 = 0
@@ -1386,13 +1829,33 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
                 text_byte(unit, value)
                 return
             }
-            emit_reg_rm(unit, prefix, w, 0, 198, 0, b_kind, reg_code(b_reg),
-                b_disp, force)
+            emit_reg_rm(
+                unit,
+                prefix,
+                w,
+                0,
+                198,
+                0,
+                b_kind,
+                reg_code(b_reg),
+                b_disp,
+                force
+            )
             text_byte(unit, value)
             return
         }
-        emit_reg_rm(unit, prefix, w, 0, 199, 0, b_kind, reg_code(b_reg), b_disp,
-            force)
+        emit_reg_rm(
+            unit,
+            prefix,
+            w,
+            0,
+            199,
+            0,
+            b_kind,
+            reg_code(b_reg),
+            b_disp,
+            force
+        )
         if (op == M_MOVW) {
             text_byte(unit, value)
             text_byte(unit, value >> 8)
@@ -1402,68 +1865,172 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
         return
     }
     if (a_kind == OPND_MEM_RIP) {
-        emit_reg_rm(unit, prefix, w, 0, load, reg_code(b_reg), OPND_MEM, REG_RIP,
-            0, force)
+        emit_reg_rm(
+            unit,
+            prefix,
+            w,
+            0,
+            load,
+            reg_code(b_reg),
+            OPND_MEM,
+            REG_RIP,
+            0,
+            force
+        )
         unit.text_count = unit.text_count - 4
         emit_rip_target(unit, a_sym, 0, FIXUP_DATA)
         return
     }
     if (b_kind == OPND_MEM_RIP) {
-        emit_reg_rm(unit, prefix, w, 0, store, reg_code(a_reg), OPND_MEM, REG_RIP,
-            0, force)
+        emit_reg_rm(
+            unit,
+            prefix,
+            w,
+            0,
+            store,
+            reg_code(a_reg),
+            OPND_MEM,
+            REG_RIP,
+            0,
+            force
+        )
         unit.text_count = unit.text_count - 4
         emit_rip_target(unit, b_sym, 0, FIXUP_DATA)
         return
     }
     if (a_kind == OPND_MEM) {
-        emit_reg_rm(unit, prefix, w, 0, load, reg_code(b_reg), OPND_MEM,
-            reg_code(a_reg), a_disp, force)
+        emit_reg_rm(
+            unit,
+            prefix,
+            w,
+            0,
+            load,
+            reg_code(b_reg),
+            OPND_MEM,
+            reg_code(a_reg),
+            a_disp,
+            force
+        )
         return
     }
     if (a_kind != OPND_REG) {
         assemble_fail(unit, "unit move from an unsupported operand", here)
     }
-    emit_reg_rm(unit, prefix, w, 0, store, reg_code(a_reg), b_kind,
-        reg_code(b_reg), b_disp, force)
+    emit_reg_rm(
+        unit,
+        prefix,
+        w,
+        0,
+        store,
+        reg_code(a_reg),
+        b_kind,
+        reg_code(b_reg),
+        b_disp,
+        force
+    )
 }
 
 // A move with one side in an SSE register. The direction decides the opcode,
 // since the two are not one instruction with its operands swapped.
-encode_move_sse :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
-    a_disp: i64, b_kind: i64, b_reg: i64, b_disp: i64, a_is_sse: bool,
-    b_is_sse: bool, here: i64) {
+encode_move_sse :: fn(
+    mut unit: Assembly,
+    op: i64,
+    a_kind: i64,
+    a_reg: i64,
+    a_disp: i64,
+    b_kind: i64,
+    b_reg: i64,
+    b_disp: i64,
+    a_is_sse: bool,
+    b_is_sse: bool,
+    here: i64
+) {
     var w: i64 = 0
     if (op == M_MOVQ) {
         w = 1
     }
     if (a_is_sse && b_is_sse) {
-        emit_reg_rm(unit, 243, 0, 15, 126, reg_code(b_reg), OPND_REG,
-            reg_code(a_reg), 0, 0)
+        emit_reg_rm(
+            unit,
+            243,
+            0,
+            15,
+            126,
+            reg_code(b_reg),
+            OPND_REG,
+            reg_code(a_reg),
+            0,
+            0
+        )
         return
     }
     if (b_is_sse) {
         // Into an SSE register: from a general register through the same
         // opcode either width, and from memory through the load form.
         if (a_kind == OPND_REG) {
-            emit_reg_rm(unit, 102, w, 15, 110, reg_code(b_reg), OPND_REG,
-                reg_code(a_reg), 0, 0)
+            emit_reg_rm(
+                unit,
+                102,
+                w,
+                15,
+                110,
+                reg_code(b_reg),
+                OPND_REG,
+                reg_code(a_reg),
+                0,
+                0
+            )
             return
         }
-        emit_reg_rm(unit, 243, 0, 15, 126, reg_code(b_reg), a_kind,
-            reg_code(a_reg), a_disp, 0)
+        emit_reg_rm(
+            unit,
+            243,
+            0,
+            15,
+            126,
+            reg_code(b_reg),
+            a_kind,
+            reg_code(a_reg),
+            a_disp,
+            0
+        )
         return
     }
     if (a_is_sse) {
         if (b_kind == OPND_REG) {
-            emit_reg_rm(unit, 102, w, 15, 126, reg_code(a_reg), OPND_REG,
-                reg_code(b_reg), 0, 0)
+            emit_reg_rm(
+                unit,
+                102,
+                w,
+                15,
+                126,
+                reg_code(a_reg),
+                OPND_REG,
+                reg_code(b_reg),
+                0,
+                0
+            )
             return
         }
-        emit_reg_rm(unit, 102, 0, 15, 214, reg_code(a_reg), b_kind,
-            reg_code(b_reg), b_disp, 0)
+        emit_reg_rm(
+            unit,
+            102,
+            0,
+            15,
+            214,
+            reg_code(a_reg),
+            b_kind,
+            reg_code(b_reg),
+            b_disp,
+            0
+        )
         return
     }
-    assemble_fail(unit, "unit move between banks with neither side in one", here)
+    assemble_fail(
+        unit,
+        "unit move between banks with neither side in one",
+        here
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1473,8 +2040,13 @@ encode_move_sse :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
 // Define a name here: which section it belongs to and where in it. A name
 // defined twice is a fault in the backend rather than anything a program can
 // cause, so it is reported rather than taking the later definition.
-define_symbol :: fn(mut unit: Assembly, sym: i64, section: i64, value: i64,
-    at: i64) {
+define_symbol :: fn(
+    mut unit: Assembly,
+    sym: i64,
+    section: i64,
+    value: i64,
+    at: i64
+) {
     held := arena_at(unit.syms, sym)
     if (held.section != SEC_UNDEF) {
         assemble_fail(unit, "unit name defined twice", at)
@@ -1693,8 +2265,12 @@ DOUBLE_INFINITY :: 9218868437227405312
 
 // The double nearest `x * 2^scale`, as its bits. `sticky` says whether anything
 // below x's last bit was thrown away getting here, which decides a tie.
-double_from_big :: fn(mut x: Big, scale: i64, sticky: bool,
-    negative: bool) -> i64 {
+double_from_big :: fn(
+    mut x: Big,
+    scale: i64,
+    sticky: bool,
+    negative: bool
+) -> i64 {
     var sign: i64 = 0
     if (negative) {
         sign = 1 << 63
@@ -1891,12 +2467,24 @@ read_line :: fn(mut unit: Assembly, at: i64) -> i64 {
         if (unit.section == SEC_DATA) {
             define_symbol(unit, sym, SEC_DATA, unit.data_count, i)
         } else {
-            push_insn(unit, Insn {
-                    op = M_LABEL, cc = 0,
-                    a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
-                    b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = -1,
-                    offset = 0, size = 0, long = 0,
-                })
+            push_insn(
+                unit,
+                Insn {
+                    op = M_LABEL,
+                    cc = 0,
+                    a_kind = OPND_NONE,
+                    a_reg = 0,
+                    a_disp = 0,
+                    a_sym = sym,
+                    b_kind = OPND_NONE,
+                    b_reg = 0,
+                    b_disp = 0,
+                    b_sym = -1,
+                    offset = 0,
+                    size = 0,
+                    long = 0,
+                }
+            )
         }
         return read_line_rest(unit, i + len + 1, stop)
     }
@@ -2003,21 +2591,42 @@ read_loc_directive :: fn(mut unit: Assembly, at: i64) {
     file, after_file := read_number(src, at)
     line, after_line := read_number(src, skip_spaces(src, after_file))
     column, unused := read_number(src, skip_spaces(src, after_line))
-    push_loc(unit, AsmLoc {
-            file = file, line = line, column = column, insn = unit.insns.count,
-        })
+    push_loc(
+        unit,
+        AsmLoc {
+            file = file,
+            line = line,
+            column = column,
+            insn = unit.insns.count,
+        }
+    )
 }
 
-read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
+read_instruction :: fn(
+    mut unit: Assembly,
+    at: i64,
+    len: i64,
+    stop: i64
+) -> i64 {
     src := unit.src
     op, cc := mnemonic_of(src, at, len)
     if (op == M_NONE) {
         assemble_fail(unit, "an instruction this assembler does not know", at)
     }
-    var first := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = -1,
-        next = at + len }
-    var second := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = -1,
-        next = at + len }
+    var first := Operand {
+        kind = OPND_NONE,
+        reg = 0,
+        disp = 0,
+        sym = -1,
+        next = at + len
+    }
+    var second := Operand {
+        kind = OPND_NONE,
+        reg = 0,
+        disp = 0,
+        sym = -1,
+        next = at + len
+    }
     var i := skip_spaces(src, at + len)
     if (i < stop) {
         first = parse_operand(unit, i)
@@ -2027,14 +2636,24 @@ read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 
             second = parse_operand(unit, i)
         }
     }
-    push_insn(unit, Insn {
-            op = op, cc = cc,
-            a_kind = first.kind, a_reg = first.reg, a_disp = first.disp,
+    push_insn(
+        unit,
+        Insn {
+            op = op,
+            cc = cc,
+            a_kind = first.kind,
+            a_reg = first.reg,
+            a_disp = first.disp,
             a_sym = first.sym,
-            b_kind = second.kind, b_reg = second.reg, b_disp = second.disp,
+            b_kind = second.kind,
+            b_reg = second.reg,
+            b_disp = second.disp,
             b_sym = second.sym,
-            offset = 0, size = 0, long = 0,
-        })
+            offset = 0,
+            size = 0,
+            long = 0,
+        }
+    )
     stop + 1
 }
 
@@ -2207,14 +2826,24 @@ push_insn :: fn(mut unit: Assembly, record: Insn) {
         var i: i64 = 0
         while (i < unit.insns.count) {
             held := arena_at(unit.insns, i)
-            arena_push(wider, Insn {
-                    op = held.op, cc = held.cc,
-                    a_kind = held.a_kind, a_reg = held.a_reg,
-                    a_disp = held.a_disp, a_sym = held.a_sym,
-                    b_kind = held.b_kind, b_reg = held.b_reg,
-                    b_disp = held.b_disp, b_sym = held.b_sym,
-                    offset = held.offset, size = held.size, long = held.long,
-                })
+            arena_push(
+                wider,
+                Insn {
+                    op = held.op,
+                    cc = held.cc,
+                    a_kind = held.a_kind,
+                    a_reg = held.a_reg,
+                    a_disp = held.a_disp,
+                    a_sym = held.a_sym,
+                    b_kind = held.b_kind,
+                    b_reg = held.b_reg,
+                    b_disp = held.b_disp,
+                    b_sym = held.b_sym,
+                    offset = held.offset,
+                    size = held.size,
+                    long = held.long,
+                }
+            )
             i = i + 1
         }
         unit.insns = wider
@@ -2245,8 +2874,15 @@ push_loc :: fn(mut unit: Assembly, record: AsmLoc) {
         var i: i64 = 0
         while (i < unit.locs.count) {
             held := arena_at(unit.locs, i)
-            arena_push(wider, AsmLoc { file = held.file, line = held.line,
-                    column = held.column, insn = held.insn })
+            arena_push(
+                wider,
+                AsmLoc {
+                    file = held.file,
+                    line = held.line,
+                    column = held.column,
+                    insn = held.insn
+                }
+            )
             i = i + 1
         }
         unit.locs = wider

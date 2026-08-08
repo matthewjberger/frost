@@ -1,11 +1,17 @@
 // What `frost fmt` writes, and it is what the bootstrap's `src/format.rs`
 // writes, byte for byte.
 //
-// Which line a token is on is meaning in this language: a `+` at a line break
-// continues the expression above it and a leading `-` opens a new statement. So
-// an expression is never rewrapped. What is settled is the space inside a line,
-// the indentation in front of it, how many blank lines may sit between two of
-// them, the brace that opens a block, and the newline a file ends with.
+// Which statement is on which line is the author's. A `+` at a line break
+// continues the expression above it and a leading `-` opens a new statement, so
+// moving a statement would say something nobody wrote.
+//
+// Inside a bracket holding a list there is no statement boundary, and where each
+// element goes is a question of width. Those breaks are settled here: the run
+// goes on one line when it fits in `WIDTH`, and otherwise the bracket opens at
+// the end of a line, each element takes one of its own, and the bracket closes a
+// line back at the indentation it opened at. So is the space inside a line, the
+// indentation in front of it, how many blank lines may sit between two of them,
+// the brace that opens a block, and the newline a file ends with.
 //
 // A token carries the byte range it was read from, so the gaps between one
 // token's range and the next are exactly the whitespace and the comments the
@@ -82,6 +88,101 @@ kind_at :: fn(mut tokens: Arena<Token>, index: i64) -> TokenKind {
     arena_at(tokens, index).kind
 }
 
+// How wide a line is laid out to.
+//
+// The corpus was written to it by hand before anything measured it, and the
+// Rust beside it is held to the same number by `rustfmt.toml`.
+WIDTH :: 80
+
+// How many elements a bracket holds, counting the commas at its top level. A
+// run with one element is one expression, and where a line breaks inside it is
+// the author's answer rather than a width's.
+element_count :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> i64 {
+    var held: i64 = 0
+    var start := open + 1
+    var depth: i64 = 0
+    var index := open + 1
+    while (index < close) {
+        depth = depth + nesting_of(kind_at(tokens, index))
+        if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
+            held = held + 1
+            start = index + 1
+        }
+        index = index + 1
+    }
+    if (start < close) {
+        held = held + 1
+    }
+    held
+}
+
+// Whether every element between these braces is `name = value`, which is what a
+// value written out looks like and what no block does.
+//
+// A comma at the top level is what says this is a list at all. Statements are
+// separated by their lines, so a block has none, and without asking for one a
+// `for` body opening with `at = report_run(fmt, at)` read as a field and the
+// whole body was laid out as a value.
+holds_fields :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> bool {
+    if (element_count(tokens, open, close) < 2) {
+        return false
+    }
+    var start := open + 1
+    var depth: i64 = 0
+    var index := open + 1
+    while (index <= close) {
+        if (index == close
+            || (depth == 0 && kind_at(tokens, index) == TokenKind::Comma)) {
+            if (start < index) {
+                if (kind_at(tokens, start) != TokenKind::Ident
+                    || kind_at(tokens, start + 1) != TokenKind::Assign) {
+                    return false
+                }
+            }
+            start = index + 1
+        }
+        if (index < close) {
+            depth = depth + nesting_of(kind_at(tokens, index))
+        }
+        index = index + 1
+    }
+    true
+}
+
+// Where the bracket opened at `open` closes, when what it opens is something a
+// layout may break.
+//
+// A list of things separated by commas is: the arguments of a call, the
+// elements of an array, the fields of a value. Where each one goes is a question
+// of width, and a comma says where one ends.
+//
+// Anything else keeps the breaks it was written with. A bracket holding one
+// expression has no place to break that the author did not choose, and
+// `(a == b\n    || c == d)` reads the way it does because someone decided where
+// the `||` goes.
+//
+// A brace has the further question of whether it holds a value or a block, since
+// joining two statements onto one line would say something the author did not.
+// That is read off what is inside it rather than off what is in front of it,
+// because `match k {` and `Point {` both have a name there.
+reflowable :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
+    close := matching_close(tokens, open)
+    if (close < 0) {
+        return -1
+    }
+    kind := kind_at(tokens, open)
+    if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) {
+        if (element_count(tokens, open, close) > 1) {
+            return close
+        }
+        return -1
+    }
+    if (kind == TokenKind::Lbrace && holds_fields(tokens, open, close)) {
+        return close
+    }
+    -1
+}
+
 // Where the bracket opened at `open` closes.
 matching_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
     var depth: i64 = 0
@@ -145,8 +246,13 @@ opens_a_declaration :: fn(kind: TokenKind, next: TokenKind) -> bool {
 }
 
 // Whether these two tokens have a space between them.
-spaced :: fn(before: TokenKind, left: TokenKind, left_role: i64,
-    right: TokenKind, right_role: i64) -> bool {
+spaced :: fn(
+    before: TokenKind,
+    left: TokenKind,
+    left_role: i64,
+    right: TokenKind,
+    right_role: i64
+) -> bool {
     if (left == TokenKind::Coloncolon) {
         return left_role == ROLE_DECLARES
     }
@@ -271,8 +377,15 @@ format_source :: fn(src: str, length: i64) {
         if (token.kind == TokenKind::Rbrace) {
             braces_before = braces_before - 1
         }
-        arena_push(opens_line, LocalVar { name_off = opens,
-                name_len = braces_before, ty = 0, slot = 0 })
+        arena_push(
+            opens_line,
+            LocalVar {
+                name_off = opens,
+                name_len = braces_before,
+                ty = 0,
+                slot = 0
+            }
+        )
         if (token.kind == TokenKind::Lbrace) {
             braces_before = braces_before + 1
         }
@@ -282,11 +395,19 @@ format_source :: fn(src: str, length: i64) {
 
     roles := settle_roles(tokens, opens_line)
 
+    decided := decided_here(src, tokens)
+    joined := joined_tokens(src, tokens)
+
     var braces: i64 = 0
     var brackets: i64 = 0
-    var at_line_start: bool = true
-    var previous_opened: bool = false
     var at: i64 = 0
+    // The run of tokens waiting to be laid out, what it is indented by, and the
+    // span holding the comments that sit at the end of its last line.
+    var pending_from: i64 = -1
+    var pending_to: i64 = 0
+    var pending_indent: i64 = 0
+    var trail_from: i64 = 0
+    var trail_to: i64 = 0
     index = 0
     while (index < tokens.count) {
         token := arena_at(tokens, index)
@@ -299,15 +420,43 @@ format_source :: fn(src: str, length: i64) {
             line_depth = braces - 1
         }
 
-        joins := joins_the_line_above(src, tokens, index, gap_from, gap_to)
-        outcome := write_gap(src, gap_from, gap_to, line_depth, joins, index,
-            at_line_start)
-        at_line_start = outcome.at_line_start
+        joins := arena_at(joined, index).name_off == 1
+        // A comment in front of the first break in the gap sits at the end of
+        // the line above rather than on one of its own.
+        var rest_from := gap_from
+        if (pending_from >= 0) {
+            rest_from = first_break_at(src, gap_from, gap_to)
+            if (rest_from > gap_from) {
+                if (trail_to <= trail_from) {
+                    trail_from = gap_from
+                }
+                trail_to = rest_from
+            }
+        }
+        wrote_break := breaks_in(src, rest_from, gap_to)
+        var starts_line: bool = index == 0
+        if (wrote_break && joins == false
+            && (arena_at(decided, index).name_off == 0 || pending_from < 0)) {
+            starts_line = true
+        }
 
-        var opens_this_line: bool = false
-        if (joins) {
-            emit_text(" ")
-        } else if (at_line_start) {
+        if (starts_line) {
+            if (pending_from >= 0) {
+                write_run(
+                    src,
+                    tokens,
+                    roles,
+                    joined,
+                    pending_from,
+                    pending_to,
+                    pending_indent
+                )
+                emit_trailing_span(src, trail_from, trail_to)
+                emit_text("\n")
+                trail_from = 0
+                trail_to = 0
+            }
+            write_between(src, rest_from, gap_to, line_depth)
             var open_braces := braces
             if (token.kind == TokenKind::Rbrace) {
                 open_braces = braces - 1
@@ -324,8 +473,10 @@ format_source :: fn(src: str, length: i64) {
                 closes := (token.kind == TokenKind::Rbrace
                     || token.kind == TokenKind::Lbrace)
                 if (closes == false
-                    && opens_a_declaration(token.kind,
-                        kind_at(tokens, index + 1)) == false) {
+                    && opens_a_declaration(
+                        token.kind,
+                        kind_at(tokens, index + 1)
+                    ) == false) {
                     running_on = 1
                 }
             } else if (continues_a_line(token.kind)) {
@@ -338,26 +489,367 @@ format_source :: fn(src: str, length: i64) {
             if (running_on > 0) {
                 wanted = wanted + running_on
             }
-            emit_spaces(wanted * 4)
-            opens_this_line = true
-        } else if (index > 0) {
-            var before := TokenKind::Eof
-            if (previous_opened == false && index >= 2) {
-                before = kind_at(tokens, index - 2)
+            pending_indent = wanted * 4
+            pending_from = index
+            pending_to = index + 1
+        } else {
+            if (pending_from < 0) {
+                pending_from = index
             }
-            if (spaced(before, kind_at(tokens, index - 1),
-                    role_at(roles, index - 1), token.kind, role_at(roles, index))) {
-                emit_text(" ")
-            }
+            pending_to = index + 1
         }
-        emit_src(src, gap_to, at - gap_to)
-        at_line_start = false
-        previous_opened = opens_this_line
         braces = braces + brace_step(token.kind)
         brackets = brackets + bracket_step(token.kind)
         index = index + 1
     }
+    if (pending_from >= 0) {
+        write_run(
+            src,
+            tokens,
+            roles,
+            joined,
+            pending_from,
+            pending_to,
+            pending_indent
+        )
+        emit_trailing_span(src, trail_from, trail_to)
+    }
+    // The line the last run sits on is ended by whatever followed it, which is
+    // where the newline every file ends with comes from.
     emit_trailing_comments(src, at, length, braces)
+}
+
+// Whether the break in front of each token is one a layout decides rather than
+// one the author wrote.
+//
+// A break inside a bracket holding a list is a layout's to make: the tokens
+// either side of it are one expression and where it goes is a question of width.
+// A break at the top level separates two statements, and which statement is on
+// which line is the author's.
+//
+// A bracket holding a comment keeps every break it was written with. A comment
+// says which line it belongs to and a width does not know.
+decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
+    var held := arena_make($LocalVar, 262144)
+    var index: i64 = 0
+    while (index < tokens.count) {
+        arena_push(
+            held,
+            LocalVar { name_off = 0, name_len = 0, ty = 0, slot = 0 }
+        )
+        index = index + 1
+    }
+    var opens := arena_make($LocalVar, 4096)
+    index = 0
+    while (index < tokens.count) {
+        kind := kind_at(tokens, index)
+        var inside: i64 = -1
+        if (opens.count > 0) {
+            inside = arena_at(opens, opens.count - 1).name_off
+        }
+        if (inside >= 0) {
+            arena_at(held, index).name_off = 1
+        }
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbrace
+            || kind == TokenKind::Lbracket) {
+            var opened: i64 = -1
+            if (inside >= 0) {
+                // Already inside one, so the whole run travels together.
+                opened = index
+            } else if (reflowable(tokens, index) >= 0) {
+                opened = index
+            }
+            arena_push(
+                opens,
+                LocalVar { name_off = opened, name_len = 0, ty = 0, slot = 0 }
+            )
+        } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbrace
+            || kind == TokenKind::Rbracket) {
+            var closed: i64 = -1
+            if (opens.count > 0) {
+                closed = arena_at(opens, opens.count - 1).name_off
+                opens.count = opens.count - 1
+            }
+            var outer: i64 = -1
+            if (opens.count > 0) {
+                outer = arena_at(opens, opens.count - 1).name_off
+            }
+            // The bracket that closes a run belongs to that run rather than to
+            // whatever holds it, so the break in front of it is the same
+            // layout's to make. Read off the enclosing run instead, a literal
+            // written over several lines had its closing brace on a line of its
+            // own, and the run it closed was never a whole group for anything to
+            // lay out.
+            var decided: i64 = 0
+            if (closed >= 0 || outer >= 0) {
+                decided = 1
+            }
+            arena_at(held, index).name_off = decided
+            if (closed >= 0) {
+                // A comment anywhere inside puts every break back.
+                var commented: bool = false
+                var at := closed + 1
+                while (at <= index) {
+                    if (comment_in(src, token_end(tokens, at - 1), token_start(tokens, at))) {
+                        commented = true
+                    }
+                    at = at + 1
+                }
+                if (commented) {
+                    at = closed + 1
+                    while (at <= index) {
+                        arena_at(held, at).name_off = 0
+                        at = at + 1
+                    }
+                }
+            }
+        }
+        index = index + 1
+    }
+    held
+}
+
+// Which tokens sit at the end of the line above whatever they were written on.
+//
+// A brace that opens a block, and an `else` beside the brace that closes the arm
+// above it. A comment in between keeps its own line, so the join only happens
+// across whitespace. The space in front of one is what puts it there rather than
+// any rule about the pair, so it is carried into the layout beside the tokens.
+joined_tokens :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
+    var held := arena_make($LocalVar, 262144)
+    var index: i64 = 0
+    while (index < tokens.count) {
+        var joins: i64 = 0
+        if (index > 0
+            && comment_in(
+                src,
+                token_end(tokens, index - 1),
+                token_start(tokens, index)
+            ) == false) {
+            kind := kind_at(tokens, index)
+            previous := kind_at(tokens, index - 1)
+            if (kind == TokenKind::Lbrace) {
+                if (previous != TokenKind::Lbrace
+                    && previous != TokenKind::Rbrace
+                    && previous != TokenKind::Semi
+                    && previous != TokenKind::Comma) {
+                    joins = 1
+                }
+            } else if (kind == TokenKind::KwElse
+                && previous == TokenKind::Rbrace) {
+                joins = 1
+            }
+        }
+        arena_push(
+            held,
+            LocalVar { name_off = joins, name_len = 0, ty = 0, slot = 0 }
+        )
+        index = index + 1
+    }
+    held
+}
+
+// How wide a run of tokens is on one line, spaced the way the corpus spaces
+// them. Measured rather than built, since the rendering goes to the emit stream
+// and the question is only whether it fits.
+flat_width :: fn(
+    src: str,
+    mut tokens: Arena<Token>,
+    mut roles: Arena<LocalVar>,
+    mut joined: Arena<LocalVar>,
+    from: i64,
+    to: i64
+) -> i64 {
+    var held: i64 = 0
+    var index := from
+    while (index < to) {
+        if (index > from) {
+            var before := TokenKind::Eof
+            if (index - 1 > from && index >= 2) {
+                before = kind_at(tokens, index - 2)
+            }
+            if (arena_at(joined, index).name_off == 1
+                || spaced(
+                    before,
+                    kind_at(tokens, index - 1),
+                    role_at(roles, index - 1),
+                    kind_at(tokens, index),
+                    role_at(roles, index)
+                )) {
+                held = held + 1
+            }
+        }
+        held = held + (token_end(tokens, index) - token_start(tokens, index))
+        index = index + 1
+    }
+    held
+}
+
+// The same run, written out.
+emit_flat :: fn(
+    src: str,
+    mut tokens: Arena<Token>,
+    mut roles: Arena<LocalVar>,
+    mut joined: Arena<LocalVar>,
+    from: i64,
+    to: i64
+) {
+    var index := from
+    while (index < to) {
+        if (index > from) {
+            var before := TokenKind::Eof
+            if (index - 1 > from && index >= 2) {
+                before = kind_at(tokens, index - 2)
+            }
+            if (arena_at(joined, index).name_off == 1
+                || spaced(
+                    before,
+                    kind_at(tokens, index - 1),
+                    role_at(roles, index - 1),
+                    kind_at(tokens, index),
+                    role_at(roles, index)
+                )) {
+                emit_text(" ")
+            }
+        }
+        start := token_start(tokens, index)
+        emit_src(src, start, token_end(tokens, index) - start)
+        index = index + 1
+    }
+}
+
+// The first bracket at the top level of a run that a layout may break, or -1.
+breakable_open :: fn(mut tokens: Arena<Token>, from: i64, to: i64) -> i64 {
+    var depth: i64 = 0
+    var index := from
+    while (index < to) {
+        if (depth == 0) {
+            close := reflowable(tokens, index)
+            if (close >= 0 && close < to) {
+                return index
+            }
+        }
+        depth = depth + nesting_of(kind_at(tokens, index))
+        index = index + 1
+    }
+    -1
+}
+
+// A run written out at `indent`, over as many lines as it takes, with no line
+// break after the last of them.
+//
+// One line when it fits. Otherwise the outermost bracket is opened at the end of
+// a line, each of the elements inside it is written at one level further in, and
+// the bracket closes a line of its own back at the indentation it opened at. An
+// element too long for its own line is asked the same question again, so a call
+// inside a call breaks only as far as it has to.
+write_run :: fn(
+    src: str,
+    mut tokens: Arena<Token>,
+    mut roles: Arena<LocalVar>,
+    mut joined: Arena<LocalVar>,
+    from: i64,
+    to: i64,
+    indent: i64
+) {
+    if (indent + flat_width(src, tokens, roles, joined, from, to) <= WIDTH) {
+        emit_spaces(indent)
+        emit_flat(src, tokens, roles, joined, from, to)
+        return
+    }
+    open := breakable_open(tokens, from, to)
+    if (open < 0) {
+        // Nothing here opens a bracket holding a list, so there is nowhere to
+        // break that the author did not write. A long run is left long rather
+        // than broken somewhere it would read worse.
+        emit_spaces(indent)
+        emit_flat(src, tokens, roles, joined, from, to)
+        return
+    }
+    close := reflowable(tokens, open)
+    emit_spaces(indent)
+    emit_flat(src, tokens, roles, joined, from, open + 1)
+    emit_text("\n")
+    // Each element carries the comma that ends it, so a run written over several
+    // lines has exactly the commas the source had, a trailing one included.
+    var start := open + 1
+    var depth: i64 = 0
+    var index := open + 1
+    while (index < close) {
+        depth = depth + nesting_of(kind_at(tokens, index))
+        if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
+            write_run(src, tokens, roles, joined, start, index + 1, indent + 4)
+            emit_text("\n")
+            start = index + 1
+        }
+        index = index + 1
+    }
+    if (start < close) {
+        write_run(src, tokens, roles, joined, start, close, indent + 4)
+        emit_text("\n")
+    }
+    emit_spaces(indent)
+    emit_flat(src, tokens, roles, joined, close, to)
+}
+
+// Where the first line break in a span is, or the end of it when there is none.
+first_break_at :: fn(src: str, from: i64, to: i64) -> i64 {
+    var index := from
+    while (index < to) {
+        if (src[index] == CH_LF) {
+            return index
+        }
+        index = index + 1
+    }
+    to
+}
+
+// The comments in a span, each put at the end of the line already written.
+emit_trailing_span :: fn(src: str, from: i64, to: i64) {
+    var index := from
+    while (index + 1 < to) {
+        if (src[index] == CH_SLASH && src[index + 1] == CH_SLASH) {
+            var stop := index
+            while (stop < to && src[stop] != CH_LF) {
+                stop = stop + 1
+            }
+            emit_text(" ")
+            emit_src(src, index, stop - index)
+            index = stop
+        } else {
+            index = index + 1
+        }
+    }
+}
+
+// The blank lines and the whole-line comments between two runs.
+write_between :: fn(src: str, from: i64, to: i64, line_depth: i64) {
+    var breaks: i64 = 0
+    var index := from
+    while (index < to) {
+        if (src[index] == CH_LF) {
+            // One blank line between two lines, never more. Nothing in the
+            // corpus separates two things by two.
+            if (breaks == 1) {
+                emit_text("\n")
+            }
+            breaks = breaks + 1
+            index = index + 1
+        } else if (index + 1 < to && src[index] == CH_SLASH
+            && src[index + 1] == CH_SLASH) {
+            var stop := index
+            while (stop < to && src[stop] != CH_LF) {
+                stop = stop + 1
+            }
+            emit_spaces(line_depth * 4)
+            emit_src(src, index, stop - index)
+            emit_text("\n")
+            breaks = 0
+            index = stop
+        } else {
+            index = index + 1
+        }
+    }
 }
 
 brace_step :: fn(kind: TokenKind) -> i64 {
@@ -385,8 +877,10 @@ settle_roles :: fn(mut tokens: Arena<Token>, mut opens: Arena<LocalVar>)
     var roles := arena_make($LocalVar, 262144)
     var index: i64 = 0
     while (index < tokens.count) {
-        arena_push(roles, LocalVar { name_off = ROLE_PLAIN, name_len = 0,
-                ty = 0, slot = 0 })
+        arena_push(
+            roles,
+            LocalVar { name_off = ROLE_PLAIN, name_len = 0, ty = 0, slot = 0 }
+        )
         index = index + 1
     }
     index = 0
@@ -453,8 +947,13 @@ comment_in :: fn(src: str, from: i64, to: i64) -> bool {
 
 // A brace that opens a block sits at the end of the line that says what the
 // block is for, and an `else` sits beside the brace closing the arm above it.
-joins_the_line_above :: fn(src: str, mut tokens: Arena<Token>, index: i64,
-    gap_from: i64, gap_to: i64) -> bool {
+joins_the_line_above :: fn(
+    src: str,
+    mut tokens: Arena<Token>,
+    index: i64,
+    gap_from: i64,
+    gap_to: i64
+) -> bool {
     if (index == 0 || comment_in(src, gap_from, gap_to)) {
         return false
     }
@@ -480,8 +979,15 @@ GapOutcome :: struct {
 
 // The whitespace and the comments between two tokens: the newlines kept, one
 // blank line at most, and each comment on the line it was written on.
-write_gap :: fn(src: str, from: i64, to: i64, line_depth: i64, joins: bool,
-    index: i64, at_line_start: bool) -> GapOutcome {
+write_gap :: fn(
+    src: str,
+    from: i64,
+    to: i64,
+    line_depth: i64,
+    joins: bool,
+    index: i64,
+    at_line_start: bool
+) -> GapOutcome {
     var outcome := GapOutcome { at_line_start = at_line_start }
     var breaks: i64 = 0
     var starting := at_line_start

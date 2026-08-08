@@ -86,16 +86,22 @@ Lit :: struct {
     light_group: BindGroup,
 }
 
-lit_new :: fn(device: Device, format: u32, scene_layout: BindGroupLayout,
-    batch_layout: BindGroupLayout) -> Lit {
-    frame_layout := uniform_layout(device, LIT_FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
+lit_new :: fn(
+    device: Device,
+    format: u32,
+    scene_layout: BindGroupLayout,
+    batch_layout: BindGroupLayout
+) -> Lit {
+    frame_layout := uniform_layout(
+        device,
+        LIT_FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment
+    )
     frame_uniform := uniform_buffer(device, LIT_FRAME_BYTES)
 
     light_layout := lights_layout(device)
 
-    var layouts: [3]BindGroupLayout = [frame_layout, scene_layout,
-        light_layout]
+    var layouts: [3]BindGroupLayout = [frame_layout, scene_layout, light_layout]
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = 3
     descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -175,9 +181,15 @@ lit_free :: fn(mut held: Lit) {
 // an order of its own; declaring them as separate graph passes would put that
 // order in every program that draws a view, and a program with two views would
 // assemble it twice.
-lit_declare :: fn($Ctx: Type, mut g: Graph, record: fn(mut Ctx, NodeContext),
-    state: ^Ctx, screen: ResourceId, depth: ResourceId,
-    clear: Color) -> PassId {
+lit_declare :: fn(
+    $Ctx: Type,
+    mut g: Graph,
+    record: fn(mut Ctx, NodeContext),
+    state: ^Ctx,
+    screen: ResourceId,
+    depth: ResourceId,
+    clear: Color
+) -> PassId {
     made := graph_node_pass($Ctx, g, "lit", record, state)
     graph_writes_color(g, made, screen, clear)
     graph_writes_depth(g, made, depth)
@@ -192,8 +204,12 @@ lit_declare :: fn($Ctx: Type, mut g: Graph, record: fn(mut Ctx, NodeContext),
 //   the classes, shaded against the depth already written
 //
 // Each is its own pass on the encoder, which is what lets one wait on the last.
-lit_record :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
-    context: NodeContext) {
+lit_record :: fn(
+    mut s: Lit,
+    mut held: RenderWorld,
+    store: Geometry,
+    context: NodeContext
+) {
     cluster_record(s.cluster, context.encoder)
     batching_record(s.steps, held, context.encoder)
     record_depth(s, held, store, context)
@@ -203,10 +219,19 @@ lit_record :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
 // Depth and nothing else, for the two opaque classes and only their solid
 // halves. What blends does not cover what is behind it, and what drops its own
 // fragments has no stage here to drop them in.
-record_depth :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
-    context: NodeContext) {
-    pass := encoder_pass_into(context.encoder, depth_only(context.into),
-        LOAD_OP_LOAD, context.clear, context.depth_load)
+record_depth :: fn(
+    mut s: Lit,
+    mut held: RenderWorld,
+    store: Geometry,
+    context: NodeContext
+) {
+    pass := encoder_pass_into(
+        context.encoder,
+        depth_only(context.into),
+        LOAD_OP_LOAD,
+        context.clear,
+        context.depth_load
+    )
     render_pass_encoder_set_pipeline(pass, s.depth_pipeline)
     bind_scene(s, held, pass)
     geometry_bind(pass, store)
@@ -220,10 +245,19 @@ record_depth :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
 // is blended has something behind it, and the overlay after the world.
 //
 // Depth loads rather than clears, since the prepass just wrote it.
-record_classes :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
-    context: NodeContext) {
-    pass := encoder_pass_into(context.encoder, context.into,
-        context.color_load, context.clear, LOAD_OP_LOAD)
+record_classes :: fn(
+    mut s: Lit,
+    mut held: RenderWorld,
+    store: Geometry,
+    context: NodeContext
+) {
+    pass := encoder_pass_into(
+        context.encoder,
+        context.into,
+        context.color_load,
+        context.clear,
+        LOAD_OP_LOAD
+    )
     bind_scene(s, held, pass)
     geometry_bind(pass, store)
     draw_class(held, pass, CLASS_OPAQUE, s.opaque_pipeline)
@@ -240,13 +274,22 @@ record_classes :: fn(mut s: Lit, mut held: RenderWorld, store: Geometry,
 // lights with the grid over them.
 bind_scene :: fn(mut s: Lit, held: RenderWorld, pass: RenderPassEncoder) {
     render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(held), 0, no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        1,
+        render_world_group(held),
+        0,
+        no_pointer()
+    )
     render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
 }
 
-draw_class :: fn(held: RenderWorld, pass: RenderPassEncoder, class: i64,
-    pipeline: RenderPipeline) {
+draw_class :: fn(
+    held: RenderWorld,
+    pass: RenderPassEncoder,
+    class: i64,
+    pipeline: RenderPipeline
+) {
     render_pass_encoder_set_pipeline(pass, pipeline)
     render_world_draw_class(pass, held, class)
 }
@@ -254,16 +297,45 @@ draw_class :: fn(held: RenderWorld, pass: RenderPassEncoder, class: i64,
 // The lights of the frame and the numbers the grid is built from. The pass owns
 // the grid, so a program hands it the world's lights and the camera and says
 // nothing about froxels.
-lit_write_lights :: fn(mut s: Lit, queue: Queue, held: []GpuLight, total: i64,
-    directional: i64, projection: Mat4, view: Mat4, width: i64, height: i64,
-    z_near: f32, z_far: f32) {
-    cluster_write(s.cluster, queue, held, total, directional, projection, view,
-        width, height, z_near, z_far)
+lit_write_lights :: fn(
+    mut s: Lit,
+    queue: Queue,
+    held: []GpuLight,
+    total: i64,
+    directional: i64,
+    projection: Mat4,
+    view: Mat4,
+    width: i64,
+    height: i64,
+    z_near: f32,
+    z_far: f32
+) {
+    cluster_write(
+        s.cluster,
+        queue,
+        held,
+        total,
+        directional,
+        projection,
+        view,
+        width,
+        height,
+        z_near,
+        z_far
+    )
 }
 
 // The camera and the ambient term, as the bytes the shader reads them as.
-lit_write_frame :: fn(mut s: Lit, queue: Queue, view_projection: Mat4,
-    view: Mat4, eye: Vec3, ambient: Vec3, total: i64, directional: i64) {
+lit_write_frame :: fn(
+    mut s: Lit,
+    queue: Queue,
+    view_projection: Mat4,
+    view: Mat4,
+    eye: Vec3,
+    ambient: Vec3,
+    total: i64,
+    directional: i64
+) {
     var values: [44]f32 = [0.0; 44]
     var element: i64 = 0
     while (element < 16) {
@@ -309,14 +381,24 @@ lights_layout :: fn(device: Device) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-lights_group :: fn(device: Device, layout: BindGroupLayout,
-    grid: Cluster) -> BindGroup {
+lights_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    grid: Cluster
+) -> BindGroup {
     var entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
-    var held: [4]Buffer = [cluster_lights_buffer(grid),
-        cluster_grid_buffer(grid), cluster_indices_buffer(grid),
-        cluster_uniform_buffer(grid)]
-    var sizes: [4]i64 = [LIGHT_BYTES * MAX_LIGHTS, TOTAL_CLUSTERS * 8,
-        TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4, CLUSTER_UNIFORM_BYTES]
+    var held: [4]Buffer = [
+        cluster_lights_buffer(grid),
+        cluster_grid_buffer(grid),
+        cluster_indices_buffer(grid),
+        cluster_uniform_buffer(grid)
+    ]
+    var sizes: [4]i64 = [
+        LIGHT_BYTES * MAX_LIGHTS,
+        TOTAL_CLUSTERS * 8,
+        TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
+        CLUSTER_UNIFORM_BYTES
+    ]
     var slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
@@ -349,9 +431,15 @@ lit_module :: fn(device: Device) -> ShaderModule {
 // whether it writes depth is the other, and those two go together: a blended
 // thing that wrote depth would hide whatever is behind it from every blended
 // thing drawn after.
-make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
-    layout: PipelineLayout, cull_mode: u32, blended: bool,
-    compare: u32) -> RenderPipeline {
+make_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    format: u32,
+    layout: PipelineLayout,
+    cull_mode: u32,
+    blended: bool,
+    compare: u32
+) -> RenderPipeline {
     var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
@@ -419,8 +507,11 @@ make_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
 // surface is is the whole of what this produces.
 //
 // Reverse-Z, so the nearer fragment is the greater one and this keeps it.
-make_depth_pipeline :: fn(device: Device, shader: ShaderModule,
-    layout: PipelineLayout) -> RenderPipeline {
+make_depth_pipeline :: fn(
+    device: Device,
+    shader: ShaderModule,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var attributes: [1]VertexAttribute = [vertex_attribute_init(); 1]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET

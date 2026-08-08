@@ -128,8 +128,7 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.variant < 0) {
-            total = (align_up(total,
-                    field_align(p, packed, field.align, field.ty))
+            total = (align_up(total, field_align(p, packed, field.align, field.ty))
                 + type_size(p, field.ty))
         } else {
             if (field.variant != carried) {
@@ -167,8 +166,10 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
             carried = field.variant
             running = start
         }
-        running = align_up(running,
-            field_align(p, packed, field.align, field.ty))
+        running = align_up(
+            running,
+            field_align(p, packed, field.align, field.ty)
+        )
         if (field.name_len == len
             && bytes_equal(p.src, field.name_off, off, len)) {
             return running

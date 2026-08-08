@@ -1,10 +1,16 @@
 // What `frost fmt` writes.
 //
-// Which line a token is on is meaning in this language: a `+` at a line break
-// continues the expression above it and a leading `-` opens a new statement. So
-// an expression is never rewrapped. What is settled is the space inside a line,
-// the indentation in front of it, how many blank lines may sit between two of
-// them, the brace that opens a block, and the newline a file ends with.
+// Which statement is on which line is the author's. A `+` at a line break
+// continues the expression above it and a leading `-` opens a new statement, so
+// moving a statement would say something nobody wrote.
+//
+// Inside a bracket holding a list there is no statement boundary, and where
+// each element goes is a question of width. Those breaks are settled here: the
+// run goes on one line when it fits in `WIDTH`, and otherwise the bracket opens
+// at the end of a line, each element takes one of its own, and the bracket
+// closes a line back at the indentation it opened at. So is the space inside a
+// line, the indentation in front of it, how many blank lines may sit between
+// two of them, the brace that opens a block, and the newline a file ends with.
 //
 // The token stream drops whitespace and comments, and nothing is lost by that:
 // the lexer records where every token starts and stops, so the gaps between one
@@ -438,6 +444,79 @@ fn opens_a_declaration(token: &Token, next: Option<&Token>) -> bool {
         && matches!(next, Some(Token::DoubleColon))
 }
 
+/// How wide a line is laid out to.
+///
+/// The corpus was written to it by hand before anything measured it, and the
+/// Rust beside it is held to the same number by `rustfmt.toml`.
+const WIDTH: usize = 80;
+
+/// Where the bracket opened at `open` closes, when what it opens is something a
+/// layout may break.
+///
+/// A list of things separated by commas is: the arguments of a call, the
+/// elements of an array, the fields of a value. Where each one goes is a
+/// question of width, and a comma says where one ends.
+///
+/// Anything else keeps the breaks it was written with. A bracket holding one
+/// expression has no place to break that the author did not choose, and
+/// `(a == b\n    || c == d)` reads the way it does because someone decided
+/// where the `||` goes.
+///
+/// A brace has the further question of whether it holds a value or a block,
+/// since joining two statements onto one line would say something the author
+/// did not. That is read off what is inside it rather than off what is in front
+/// of it, because `match k {` and `Point {` both have a name there.
+fn reflowable(tokens: &[Token], open: usize) -> Option<usize> {
+    let close = matching(tokens, open)?;
+    let listed = elements_of(tokens, open, close).len() > 1;
+    match tokens[open] {
+        Token::LeftParentheses | Token::LeftBracket if listed => Some(close),
+        Token::LeftBrace if holds_fields(tokens, open, close) => Some(close),
+        _ => None,
+    }
+}
+
+/// Whether every element between these braces is `name = value`, which is what
+/// a value written out looks like and what no block does.
+///
+/// A comma at the top level is what says this is a list at all. Statements are
+/// separated by their lines, so a block has none, and without asking for one a
+/// `for` body opening with `at = report_run(fmt, at)` read as a field and the
+/// whole body was laid out as a value.
+fn holds_fields(tokens: &[Token], open: usize, close: usize) -> bool {
+    let elements = elements_of(tokens, open, close);
+    elements.len() > 1
+        && elements.iter().all(|element| {
+            matches!(tokens.get(element.start), Some(Token::Identifier(_)))
+                && matches!(tokens.get(element.start + 1), Some(Token::Assign))
+        })
+}
+
+/// The elements between a bracket and the one closing it, each holding the
+/// comma that ends it. The comma travels with the element so that a run written
+/// out over several lines has exactly the commas the source had, including a
+/// trailing one where the author wrote it.
+fn elements_of(
+    tokens: &[Token],
+    open: usize,
+    close: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let mut held = Vec::new();
+    let mut start = open + 1;
+    let mut depth = 0i32;
+    for (index, token) in tokens.iter().enumerate().take(close).skip(open + 1) {
+        depth += nesting(token);
+        if depth == 0 && matches!(token, Token::Comma) {
+            held.push(start..index + 1);
+            start = index + 1;
+        }
+    }
+    if start < close {
+        held.push(start..close);
+    }
+    held
+}
+
 /// Whether a line beginning with this token continues the line above rather than
 /// beginning something new.
 fn continues_a_line(token: &Token) -> bool {
@@ -486,13 +565,6 @@ pub fn format(source: &str) -> String {
     }
 
     let mut out = String::with_capacity(source.len());
-    // Whether the last thing written was a line break, so the next thing needs
-    // this line's indentation in front of it.
-    let mut at_line_start = true;
-    // Whether the token last written opened its line. A minus that opens a line
-    // opens a statement, so it signs the value after it however the line above
-    // ended.
-    let mut previous_opened_line = false;
     // What the author indented each line by, indexed by line number. A blank
     // line and a comment line hold no token, so the line a token sits on is
     // found from its offset rather than counted off as tokens are written.
@@ -515,12 +587,26 @@ pub fn format(source: &str) -> String {
         previous_end = extent.end;
     }
     let roles = roles(&tokens, &opens_line, &brace_depth);
+    let decided = decided_here(&tokens, &held, source);
+    let joined = joined_tokens(&tokens, &held, source);
+    let layout = Layout {
+        source,
+        tokens: &tokens,
+        extents: &held,
+        roles: &roles,
+        joined: &joined,
+    };
     // Braces are the statement nesting and the other brackets are an expression
     // running over more than one line. A line inside an unclosed bracket is
     // indented past the line that opened it, and a line that continues an
     // expression with no bracket open is indented one level past it.
     let mut braces: i32 = 0;
     let mut brackets: i32 = 0;
+    // The run of tokens waiting to be laid out, what it is indented by, and the
+    // comments that sit at the end of the last line it will be written over.
+    let mut pending: Option<std::ops::Range<usize>> = None;
+    let mut pending_indent = 0usize;
+    let mut trailing: Vec<String> = Vec::new();
 
     let mut at = 0usize;
     for (index, extent) in held.iter().enumerate() {
@@ -529,68 +615,56 @@ pub fn format(source: &str) -> String {
         let token = &tokens[index];
         // A closing bracket belongs to the level it closes, so it is counted
         // before the line it opens is indented.
-        let mut opens_this_line = false;
         let line_depth = if nesting(token) < 0 {
             braces - 1
         } else {
             braces
         };
 
-        // A brace that opens a block sits at the end of the line that says what
-        // the block is for, and an `else` sits beside the brace that closes the
-        // arm above it. A comment in between keeps its own line, so the join
-        // only happens across whitespace.
-        let joins_the_line_above = index > 0
-            && !gap.contains("//")
-            && match token {
-                Token::LeftBrace => !matches!(
-                    tokens[index - 1],
-                    Token::LeftBrace
-                        | Token::RightBrace
-                        | Token::Semicolon
-                        | Token::Comma
-                ),
-                Token::Else => matches!(tokens[index - 1], Token::RightBrace),
-                _ => false,
-            };
+        let joins_the_line_above = joined[index];
 
-        let mut breaks = 0usize;
-        for piece in trivia_in(gap) {
-            match piece {
-                Trivia::Break if joins_the_line_above => {}
-                Trivia::Break => {
-                    // Trailing space is never written, so a break is a break
-                    // whatever came before it on the line.
-                    while out.ends_with(' ') {
-                        out.pop();
+        // A comment in front of the first break in the gap sits at the end of
+        // the line above rather than on one of its own.
+        let pieces = trivia_in(gap);
+        let mut read = 0usize;
+        while let Some(Trivia::Comment(text)) = pieces.get(read) {
+            if pending.is_none() {
+                break;
+            }
+            trailing.push(text.clone());
+            read += 1;
+        }
+        let rest = &pieces[read..];
+        let wrote_break =
+            rest.iter().any(|piece| matches!(piece, Trivia::Break));
+        let starts_line = index == 0
+            || (wrote_break
+                && !joins_the_line_above
+                && !(decided[index] && pending.is_some()));
+
+        if starts_line {
+            if let Some(range) = pending.take() {
+                flush(&layout, range, pending_indent, &mut trailing, &mut out);
+            }
+            let mut breaks = 0usize;
+            for piece in rest {
+                match piece {
+                    Trivia::Break => {
+                        // One blank line between two lines, never more. Nothing
+                        // in the corpus separates two things by two.
+                        if breaks == 1 && !out.is_empty() {
+                            out.push('\n');
+                        }
+                        breaks += 1;
                     }
-                    // One blank line between two lines, never more. Nothing in
-                    // the corpus separates two things by two.
-                    if breaks < 2 || index == 0 {
-                        out.push('\n');
-                    }
-                    breaks += 1;
-                    at_line_start = true;
-                }
-                Trivia::Comment(text) => {
-                    if at_line_start {
+                    Trivia::Comment(text) => {
                         indent(&mut out, line_depth);
-                    } else if !out.is_empty() {
-                        out.push(' ');
+                        out.push_str(text);
+                        out.push('\n');
+                        breaks = 0;
                     }
-                    out.push_str(&text);
-                    at_line_start = false;
-                    // A blank line is two breaks with nothing between them, so
-                    // anything written resets the count and a block of comment
-                    // lines keeps every one of its breaks.
-                    breaks = 0;
                 }
             }
-        }
-
-        if joins_the_line_above {
-            out.push(' ');
-        } else if at_line_start {
             // One level per enclosing brace, one more for an expression still
             // inside a bracket, and one more for a line that continues the one
             // above with no bracket holding it open.
@@ -630,25 +704,14 @@ pub fn format(source: &str) -> String {
                     i32::from(continues_a_line(token))
                 }
             };
-            let wanted = (open_braces.max(0) + running_on.max(0)) as usize * 4;
-            out.push_str(&" ".repeat(wanted));
-            opens_this_line = true;
-        } else if index > 0
-            && spaced(
-                if previous_opened_line {
-                    None
-                } else {
-                    index.checked_sub(2).map(|held| &tokens[held])
-                },
-                (&tokens[index - 1], roles[index - 1]),
-                (token, roles[index]),
-            )
-        {
-            out.push(' ');
+            pending_indent =
+                (open_braces.max(0) + running_on.max(0)) as usize * 4;
+            pending = Some(index..index + 1);
+        } else if let Some(range) = pending.as_mut() {
+            range.end = index + 1;
+        } else {
+            pending = Some(index..index + 1);
         }
-        out.push_str(&source[extent.start..extent.end]);
-        at_line_start = false;
-        previous_opened_line = opens_this_line;
         match token {
             Token::LeftBrace => braces += 1,
             Token::RightBrace => braces -= 1,
@@ -657,29 +720,36 @@ pub fn format(source: &str) -> String {
             _ => {}
         }
     }
-
-    // Whatever followed the last token, and then the newline every file ends
-    // with. A comment after the last token keeps its own line, so the breaks
-    // here are written the same way as the breaks between tokens.
+    // Whatever followed the last token, written the way the trivia between two
+    // tokens is: a comment in front of the first break sits at the end of the
+    // line that token is on, and every other one keeps a line of its own.
+    let tail = trivia_in(&source[at..]);
+    let mut read = 0usize;
+    while let Some(Trivia::Comment(text)) = tail.get(read) {
+        if pending.is_none() {
+            break;
+        }
+        trailing.push(text.clone());
+        read += 1;
+    }
+    if let Some(range) = pending.take() {
+        flush(&layout, range, pending_indent, &mut trailing, &mut out);
+    }
     let mut breaks = 0usize;
-    for piece in trivia_in(&source[at..]) {
+    for piece in &tail[read..] {
         match piece {
             Trivia::Break => {
-                while out.ends_with(' ') {
-                    out.pop();
-                }
-                if breaks < 2 {
+                // The line the last run sits on was ended by writing it, so the
+                // first break here is that ending rather than a blank line.
+                if breaks == 1 {
                     out.push('\n');
                 }
                 breaks += 1;
             }
             Trivia::Comment(text) => {
-                if out.ends_with('\n') {
-                    indent(&mut out, braces);
-                } else {
-                    out.push(' ');
-                }
-                out.push_str(&text);
+                indent(&mut out, braces);
+                out.push_str(text);
+                out.push('\n');
                 breaks = 0;
             }
         }
@@ -693,6 +763,231 @@ pub fn format(source: &str) -> String {
 
 fn indent(out: &mut String, depth: i32) {
     out.push_str(&" ".repeat(depth.max(0) as usize * 4));
+}
+
+/// Which tokens sit at the end of the line above whatever they were written on.
+///
+/// A brace that opens a block, and an `else` beside the brace that closes the
+/// arm above it. A comment in between keeps its own line, so the join only
+/// happens across whitespace.
+fn joined_tokens(
+    tokens: &[Token],
+    extents: &[Extent],
+    source: &str,
+) -> Vec<bool> {
+    let mut held = vec![false; tokens.len()];
+    for index in 1..tokens.len() {
+        let gap = &source[extents[index - 1].end..extents[index].start];
+        if gap.contains("//") {
+            continue;
+        }
+        held[index] = match tokens[index] {
+            Token::LeftBrace => !matches!(
+                tokens[index - 1],
+                Token::LeftBrace
+                    | Token::RightBrace
+                    | Token::Semicolon
+                    | Token::Comma
+            ),
+            Token::Else => matches!(tokens[index - 1], Token::RightBrace),
+            _ => false,
+        };
+    }
+    held
+}
+
+/// A run of tokens written out, with whatever sat at the end of its last line
+/// put back there.
+fn flush(
+    layout: &Layout<'_>,
+    range: std::ops::Range<usize>,
+    indent: usize,
+    trailing: &mut Vec<String>,
+    out: &mut String,
+) {
+    let mut held = String::new();
+    layout.write(range, indent, &mut held);
+    if !trailing.is_empty() {
+        while held.ends_with('\n') {
+            held.pop();
+        }
+        for text in trailing.iter() {
+            held.push(' ');
+            held.push_str(text);
+        }
+        held.push('\n');
+        trailing.clear();
+    }
+    out.push_str(&held);
+}
+
+/// Whether the break in front of each token is one a layout decides rather than
+/// one the author wrote.
+///
+/// A break inside a round or square bracket, or inside a brace holding fields,
+/// is a layout's to make: the tokens either side of it are one expression and
+/// where it goes is a question of width. A break at the top level separates two
+/// statements, and which statement is on which line is the author's.
+///
+/// A bracket holding a comment keeps every break it was written with. A comment
+/// says which line it belongs to and a width does not know.
+fn decided_here(
+    tokens: &[Token],
+    extents: &[Extent],
+    source: &str,
+) -> Vec<bool> {
+    let mut held = vec![false; tokens.len()];
+    let mut opens: Vec<Option<usize>> = Vec::new();
+    for index in 0..tokens.len() {
+        if let Some(inside) = opens.last()
+            && inside.is_some()
+        {
+            held[index] = true;
+        }
+        match tokens[index] {
+            Token::LeftParentheses | Token::LeftBrace | Token::LeftBracket => {
+                let inside = if held[index] {
+                    // Already inside one, so the whole run travels together.
+                    Some(index)
+                } else {
+                    reflowable(tokens, index).map(|_| index)
+                };
+                opens.push(inside);
+            }
+            Token::RightParentheses
+            | Token::RightBrace
+            | Token::RightBracket => {
+                let closed = opens.pop().flatten();
+                // The bracket that closes a run belongs to that run rather than
+                // to whatever holds it, so the break in front of it is the same
+                // layout's to make. Read off the enclosing run instead, a
+                // literal written over several lines had its closing brace on a
+                // line of its own, and the run it closed was never a whole
+                // group for anything to lay out.
+                held[index] = closed.is_some()
+                    || opens.last().is_some_and(|inside| inside.is_some());
+                if let Some(open) = closed {
+                    // A comment anywhere inside puts every break back.
+                    let commented = (open + 1..=index).any(|at| {
+                        source[extents[at - 1].end..extents[at].start]
+                            .contains("//")
+                    });
+                    if commented {
+                        for slot in
+                            held.iter_mut().take(index + 1).skip(open + 1)
+                        {
+                            *slot = false;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    held
+}
+
+/// What a run of tokens needs to be written out.
+struct Layout<'a> {
+    source: &'a str,
+    tokens: &'a [Token],
+    extents: &'a [Extent],
+    roles: &'a [Role],
+    /// The tokens a space goes in front of whatever the spacing rules say: the
+    /// brace that opens a block, and the `else` beside the brace closing the
+    /// arm above it. Both sit at the end of a line they were not written on, so
+    /// the space is what puts them there rather than a rule about the pair.
+    joined: &'a [bool],
+}
+
+impl Layout<'_> {
+    /// A run of tokens on one line, spaced the way the corpus spaces them.
+    fn flat(&self, range: std::ops::Range<usize>) -> String {
+        let mut held = String::new();
+        for index in range.clone() {
+            if index > range.start {
+                // The token two back signs a minus and negates a bang, and the
+                // one that opened the line has nothing behind it.
+                let before = if index - 1 > range.start && index >= 2 {
+                    Some(&self.tokens[index - 2])
+                } else {
+                    None
+                };
+                if self.joined[index]
+                    || spaced(
+                        before,
+                        (&self.tokens[index - 1], self.roles[index - 1]),
+                        (&self.tokens[index], self.roles[index]),
+                    )
+                {
+                    held.push(' ');
+                }
+            }
+            let extent = &self.extents[index];
+            held.push_str(&self.source[extent.start..extent.end]);
+        }
+        held
+    }
+
+    /// The first bracket at the top level of this run that a layout may break,
+    /// and where it closes.
+    fn breakable(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<(usize, usize)> {
+        let mut depth = 0i32;
+        for index in range.clone() {
+            if depth == 0
+                && let Some(close) = reflowable(self.tokens, index)
+                && close < range.end
+            {
+                return Some((index, close));
+            }
+            depth += nesting(&self.tokens[index]);
+        }
+        None
+    }
+
+    /// This run written out at `indent`, over as many lines as it takes.
+    ///
+    /// One line when it fits. Otherwise the outermost bracket is opened at the
+    /// end of a line, each of the elements inside it is written at one level
+    /// further in, and the bracket closes a line of its own back at the
+    /// indentation it opened at. An element too long for its own line is asked
+    /// the same question again, so a call inside a call breaks only as far as
+    /// it has to.
+    fn write(
+        &self,
+        range: std::ops::Range<usize>,
+        indent: usize,
+        out: &mut String,
+    ) {
+        let flat = self.flat(range.clone());
+        if indent + flat.chars().count() <= WIDTH {
+            out.push_str(&" ".repeat(indent));
+            out.push_str(&flat);
+            out.push('\n');
+            return;
+        }
+        // Nothing here opens a bracket, so there is nowhere to break that the
+        // author did not write. A long run of text is left long rather than
+        // broken somewhere it would read worse.
+        let Some((open, close)) = self.breakable(range.clone()) else {
+            out.push_str(&" ".repeat(indent));
+            out.push_str(&flat);
+            out.push('\n');
+            return;
+        };
+        out.push_str(&" ".repeat(indent));
+        out.push_str(&self.flat(range.start..open + 1));
+        out.push('\n');
+        for element in elements_of(self.tokens, open, close) {
+            self.write(element, indent + 4, out);
+        }
+        out.push_str(&" ".repeat(indent));
+        out.push_str(&self.flat(close..range.end));
+        out.push('\n');
+    }
 }
 
 /// Whether a source is already what `format` writes.

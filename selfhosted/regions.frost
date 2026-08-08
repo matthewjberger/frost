@@ -97,8 +97,11 @@ is_column_field :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 report_pool :: fn(mut p: Parser, struct_ty: i64, element: i64) {
     def := arena_at(p.structs, struct_index_of(struct_ty))
     report_where(p.modules, p.src, def.name_off)
-    report_fmt("'{}' is a pool of '{}', which is a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it.",
-        instance_text(p, struct_ty), type_text(p, element))
+    report_fmt(
+        "'{}' is a pool of '{}', which is a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it.",
+        instance_text(p, struct_ty),
+        type_text(p, element)
+    )
     arena_push(p.refused_pools, struct_ty)
     // One pool is asked about on its own, so the next one is asked too.
     frost_rt_recover_note()
@@ -146,8 +149,15 @@ bound_predicate :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
 
 // What a compile-time parameter of this generic is bound to at this call, or -1
 // when the name is not one of its parameters.
-bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
-    arg: i64, xarg_start: i64, xarg_count: i64) -> i64 {
+bound_argument :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    off: i64,
+    len: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
     gfn := arena_at(p.generic_fns, gfn_index)
     if (gfn.tparam_len == len
         && bytes_equal(p.src, gfn.tparam_off, off, len)) {
@@ -168,8 +178,13 @@ bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
 
 // `pred(T)`, `!term`, and a parenthesized bound. The cursor is left just past
 // what was read.
-bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64) -> bool {
+bound_term :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> bool {
     if (cur(p) == TokenKind::Bang) {
         advance(p)
         return bound_term(p, gfn_index, arg, xarg_start, xarg_count) == false
@@ -193,12 +208,21 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     param_len := cur_len(p)
     advance(p)
     advance(p)
-    ty := bound_argument(p, gfn_index, param_off, param_len, arg, xarg_start,
-        xarg_count)
+    ty := bound_argument(
+        p,
+        gfn_index,
+        param_off,
+        param_len,
+        arg,
+        xarg_start,
+        xarg_count
+    )
     if (ty < 0) {
         report_where(p.modules, p.src, param_off)
-        report_fmt("the bound names '{}', which is not a compile-time parameter of this function",
-            source_text(p.src, param_off, param_len))
+        report_fmt(
+            "the bound names '{}', which is not a compile-time parameter of this function",
+            source_text(p.src, param_off, param_len)
+        )
         frost_rt_recover_escape()
     }
     answer := bound_predicate(p, pred_off, pred_len, ty)
@@ -213,8 +237,13 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
 }
 
 // Terms joined by `&&` and `||`, left to right, with `&&` binding tighter.
-bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
-    xarg_start: i64, xarg_count: i64) -> bool {
+bound_conjunction :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> bool {
     var held := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
     while (cur(p) == TokenKind::Andand) {
         advance(p)
@@ -224,8 +253,13 @@ bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     held
 }
 
-bound_expr :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64) -> bool {
+bound_expr :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> bool {
     var held := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
     while (cur(p) == TokenKind::Oror) {
         advance(p)
@@ -237,8 +271,13 @@ bound_expr :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
 
 // The bound of the generic this call names, against the arguments this call
 // gives it.
-check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
-    args: i64, at: i64) {
+check_bound_at_call :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    fn_index: i64,
+    args: i64,
+    at: i64
+) {
     gfn := arena_at(p.generic_fns, gfn_index)
     if (gfn.bound_token < 0) {
         return
@@ -333,15 +372,30 @@ check_types_guarded :: fn(raw: ^u8) {
     turn := unsafe { ptr_cast($TypeTurn, raw) }
     parser := unsafe { ptr_cast($Parser, turn^.parser) }
     unsafe {
-        check_types_in(parser^, turn^.body, turn^.params, turn^.fn_index,
-            turn^.ret)
+        check_types_in(
+            parser^,
+            turn^.body,
+            turn^.params,
+            turn^.fn_index,
+            turn^.ret
+        )
     }
 }
 
-check_types_one :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
-    ret: i64) {
-    var turn := TypeTurn { parser = unsafe { ptr_cast($u8, ptr_to(p)) },
-        body = body, params = params, fn_index = fn_index, ret = ret }
+check_types_one :: fn(
+    mut p: Parser,
+    body: i64,
+    params: i64,
+    fn_index: i64,
+    ret: i64
+) {
+    var turn := TypeTurn {
+        parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+        body = body,
+        params = params,
+        fn_index = fn_index,
+        ret = ret
+    }
     unsafe {
         frost_rt_recover_run(check_types_guarded, ptr_cast($u8, ptr_to(turn)))
     }
@@ -369,8 +423,7 @@ check_types :: fn(mut p: Parser, head: i64) {
             xcount := used.xarg_count
             is_pack := used.is_pack
             owner := used.owner
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
-                    owner) && tuple_is_first_for(p, gi, ii)) {
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack, owner) && tuple_is_first_for(p, gi, ii)) {
                 instance := parse_generic_instance(p, gi, arg, xstart, xcount)
                 // The return type worked out for this instance. The template's
                 // own still names its parameters.
@@ -384,8 +437,13 @@ check_types :: fn(mut p: Parser, head: i64) {
     }
 }
 
-check_types_in :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
-    ret: i64) {
+check_types_in :: fn(
+    mut p: Parser,
+    body: i64,
+    params: i64,
+    fn_index: i64,
+    ret: i64
+) {
     sym := arena_at(p.fns, fn_index)
     p.current_ret = ret
     p.current_fn_off = sym.off
@@ -556,8 +614,11 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         }
         if (fits == false) {
             report_where(p.modules, p.src, node.pos)
-            report_fmt("this place is a '{}' and the value is a '{}'",
-                type_text(p, place_ty), type_text(p, value_ty))
+            report_fmt(
+                "this place is a '{}' and the value is a '{}'",
+                type_text(p, place_ty),
+                type_text(p, value_ty)
+            )
             report_distinct_note(p, value, value_ty, place_ty)
             frost_rt_recover_escape()
         }
@@ -770,8 +831,11 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             field_len := fnode.c
             check_types_expr(p, value)
             if (is_struct_ty(struct_ty)) {
-                want_single(p, value,
-                    field_type(p, struct_ty, field_off, field_len))
+                want_single(
+                    p,
+                    value,
+                    field_type(p, struct_ty, field_off, field_len)
+                )
             }
             fid = next_field
         }
@@ -839,8 +903,10 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             if (answers_truth == false
                 && distinct_repr(operand_ty) != TY_BOOL) {
                 report_where(p.modules, p.src, node.pos)
-                report_fmt("'!' answers the opposite of a yes or no, and this is a '{}'",
-                    type_text(p, operand_ty))
+                report_fmt(
+                    "'!' answers the opposite of a yes or no, and this is a '{}'",
+                    type_text(p, operand_ty)
+                )
                 frost_rt_recover_note()
             }
         }
@@ -928,8 +994,10 @@ check_multi_call_bound :: fn(mut p: Parser, id: i64, fn_index: i64, at: i64) {
     report_where(p.modules, p.src, at)
     report("'")
     report_src(p.src, sym.off, sym.len)
-    report_fmt("' returns {} values, so its call is bound by a list of names",
-        multi_value_count(p, sym.ret_type))
+    report_fmt(
+        "' returns {} values, so its call is bound by a list of names",
+        multi_value_count(p, sym.ret_type)
+    )
     frost_rt_recover_escape()
 }
 
@@ -938,8 +1006,7 @@ check_multi_call_bound :: fn(mut p: Parser, id: i64, fn_index: i64, at: i64) {
 // argument answers to the pointee. A generic callee's parameter list belongs to
 // whichever instance was parsed last, so it says nothing about this call, and
 // the instances are checked in their own right.
-check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
-    at: i64) {
+check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
     sym := arena_at(p.fns, fn_index)
     generic := generic_fn_of(p, fn_index)
     if (generic >= 0) {
@@ -986,8 +1053,11 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                 }
                 if (expected != TY_PARAM && fits == false) {
                     report_where(p.modules, p.src, vnode.pos)
-                    report_fmt("this argument is a '{}' and a '{}' is what is wanted here",
-                        type_text(p, arg_ty), type_text(p, expected))
+                    report_fmt(
+                        "this argument is a '{}' and a '{}' is what is wanted here",
+                        type_text(p, arg_ty),
+                        type_text(p, expected)
+                    )
                     report_distinct_note(p, value, arg_ty, expected)
                     frost_rt_recover_escape()
                 }
@@ -1004,8 +1074,13 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
 // to say that the number is not what this is. Reading one as its representation
 // is still allowed, so a program that means the arithmetic writes the
 // conversion and gets it.
-check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
-    at: i64) {
+check_flags_operator :: fn(
+    mut p: Parser,
+    op: i64,
+    left: i64,
+    right: i64,
+    at: i64
+) {
     // A program with no flags declaration cannot break this rule, and asking
     // for both operand types is not free: deriving the type of a call is what
     // instantiates the generic it names. So the question is not asked at all
@@ -1103,8 +1178,12 @@ check_export_collisions :: fn(mut p: Parser) {
         while (j < p.exports.count) {
             second := arena_at(p.exports, j)
             if (first.module != second.module && first.len == second.len
-                && bytes_equal(p.export_names, first.off, second.off,
-                    first.len)) {
+                && bytes_equal(
+                    p.export_names,
+                    first.off,
+                    second.off,
+                    first.len
+                )) {
                 p.shared_exports = 1
                 return
             }
@@ -1137,8 +1216,13 @@ is_var_named :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
 // rather than borrows it, which is what consumes it: an aggregate given to a
 // parameter that does not borrow (a `move`, or an extern taking it by value) is
 // moved, the same rule the backend emits by.
-call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
-    len: i64) -> bool {
+call_consumes :: fn(
+    mut p: Parser,
+    args: i64,
+    fn_index: i64,
+    off: i64,
+    len: i64
+) -> bool {
     if (fn_index < 0 || fn_index >= p.fns.count) {
         return false
     }
@@ -1327,7 +1411,12 @@ match_subject_is :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
 
 // Whether every arm of a match consumes the value. A match with no default arm
 // leaves a path that runs none of them, so it cannot guarantee consumption.
-match_arms_consume :: fn(mut p: Parser, cases: i64, off: i64, len: i64) -> bool {
+match_arms_consume :: fn(
+    mut p: Parser,
+    cases: i64,
+    off: i64,
+    len: i64
+) -> bool {
     var has_default: bool = false
     var cid := cases
     while (cid != (-1)) {
@@ -1378,8 +1467,13 @@ consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
 //
 // `loops` is whether `break` and `continue` leave *this* block. They bind to
 // the nearest enclosing loop, so inside a loop written further in they do not.
-consumes_block :: fn(mut p: Parser, head: i64, off: i64, len: i64,
-    loops: bool) -> bool {
+consumes_block :: fn(
+    mut p: Parser,
+    head: i64,
+    off: i64,
+    len: i64,
+    loops: bool
+) -> bool {
     var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -1398,8 +1492,13 @@ consumes_block :: fn(mut p: Parser, head: i64, off: i64, len: i64,
 // Whether one statement consumes the value on every path through itself: it
 // hands it on outright, or it is an `if` whose branches both do, or a `match`
 // whose arms all do.
-stmt_consumes_all :: fn(mut p: Parser, id: i64, off: i64, len: i64,
-    loops: bool) -> bool {
+stmt_consumes_all :: fn(
+    mut p: Parser,
+    id: i64,
+    off: i64,
+    len: i64,
+    loops: bool
+) -> bool {
     if (stmt_consumes(p, id, off, len)) {
         return true
     }
@@ -1430,8 +1529,13 @@ stmt_consumes_all :: fn(mut p: Parser, id: i64, off: i64, len: i64,
 // Whether a statement has a path that leaves the block it sits in with the
 // value still held. Everything written after such a statement is off that path,
 // so a consumption down there is not on every one.
-exits_without :: fn(mut p: Parser, id: i64, off: i64, len: i64,
-    loops: bool) -> bool {
+exits_without :: fn(
+    mut p: Parser,
+    id: i64,
+    off: i64,
+    len: i64,
+    loops: bool
+) -> bool {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NodeKind::Return) {
@@ -1472,8 +1576,13 @@ exits_without :: fn(mut p: Parser, id: i64, off: i64, len: i64,
 // The same question of a block written inside a statement: does a path through
 // it leave the enclosing block with the value still held. A consumption reached
 // first discharges the obligation, so what follows it is no longer a leak.
-branch_exits_without :: fn(mut p: Parser, head: i64, off: i64, len: i64,
-    loops: bool) -> bool {
+branch_exits_without :: fn(
+    mut p: Parser,
+    head: i64,
+    off: i64,
+    len: i64,
+    loops: bool
+) -> bool {
     var id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -1800,8 +1909,10 @@ note_view :: fn(mut p: Parser, off: i64, len: i64, container: i64) {
         }
         i = i + 1
     }
-    arena_push(p.move_views, LocalVar { name_off = off, name_len = len,
-            ty = 0, slot = container })
+    arena_push(
+        p.move_views,
+        LocalVar { name_off = off, name_len = len, ty = 0, slot = container }
+    )
 }
 
 view_container_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
@@ -2017,15 +2128,22 @@ push_field_chain :: fn(mut p: Parser, place: i64) -> bool {
     if (push_field_chain(p, base) == false) {
         return false
     }
-    arena_push(p.summary_steps,
-        SummaryStep { name_off = name_off, name_len = name_len })
+    arena_push(
+        p.summary_steps,
+        SummaryStep { name_off = name_off, name_len = name_len }
+    )
     true
 }
 
 // Whether this run of field names is already recorded for this parameter, so a
 // round that learns nothing new leaves the table alone and the fixpoint closes.
-summary_known :: fn(mut p: Parser, fn_index: i64, param: i64, start: i64,
-    count: i64) -> bool {
+summary_known :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    param: i64,
+    start: i64,
+    count: i64
+) -> bool {
     var i: i64 = 0
     while (i < p.summaries.count) {
         entry := arena_at(p.summaries, i)
@@ -2043,8 +2161,12 @@ summary_known :: fn(mut p: Parser, fn_index: i64, param: i64, start: i64,
                 mine_len := mine.name_len
                 theirs := arena_at(p.summary_steps, held_start + k)
                 if (theirs.name_len != mine_len
-                    || bytes_equal(p.src, theirs.name_off, mine_off,
-                        mine_len) == false) {
+                    || bytes_equal(
+                        p.src,
+                        theirs.name_off,
+                        mine_off,
+                        mine_len
+                    ) == false) {
                     same = false
                 }
                 k = k + 1
@@ -2088,12 +2210,22 @@ note_summaries :: fn(mut p: Parser, fn_index: i64, params: i64) {
                         if (push_field_chain(p, place)) {
                             count := p.summary_steps.count - start
                             if (count > 0
-                                && summary_known(p, fn_index, index, start,
-                                    count) == false) {
-                                arena_push(p.summaries,
-                                    Summary { fn_index = fn_index,
-                                        param = index, step_start = start,
-                                        step_count = count })
+                                && summary_known(
+                                    p,
+                                    fn_index,
+                                    index,
+                                    start,
+                                    count
+                                ) == false) {
+                                arena_push(
+                                    p.summaries,
+                                    Summary {
+                                        fn_index = fn_index,
+                                        param = index,
+                                        step_start = start,
+                                        step_count = count
+                                    }
+                                )
                             } else {
                                 p.summary_steps.count = start
                             }
@@ -2143,9 +2275,15 @@ apply_summaries :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 root_off := rnode.val
                 root_len := rnode.c
                 report_if_moved(p, place, root_off, root_len)
-                arena_push(p.moved,
-                    LocalVar { name_off = root_off, name_len = root_len,
-                        ty = 0, slot = place })
+                arena_push(
+                    p.moved,
+                    LocalVar {
+                        name_off = root_off,
+                        name_len = root_len,
+                        ty = 0,
+                        slot = place
+                    }
+                )
             }
         }
         i = i + 1
@@ -2203,8 +2341,10 @@ push_run_chain :: fn(mut p: Parser, place: i64) -> bool {
             p.run_chain_open = 0
             return true
         }
-        arena_push(p.run_steps,
-            SummaryStep { name_off = name_off, name_len = name_len })
+        arena_push(
+            p.run_steps,
+            SummaryStep { name_off = name_off, name_len = name_len }
+        )
     }
     true
 }
@@ -2214,8 +2354,14 @@ push_run_chain :: fn(mut p: Parser, place: i64) -> bool {
 // `which` picks the table: 0 for what an answer views, 1 for what a call
 // replaces. One function reads both, since the two tables hold the same shape
 // and Frost has no way to be handed a field of the parser to work on.
-run_entry_known :: fn(mut p: Parser, which: i64, fn_index: i64, param: i64,
-    start: i64, count: i64) -> bool {
+run_entry_known :: fn(
+    mut p: Parser,
+    which: i64,
+    fn_index: i64,
+    param: i64,
+    start: i64,
+    count: i64
+) -> bool {
     var total := p.run_views.count
     if (which == 1) {
         total = p.run_replaces.count
@@ -2249,8 +2395,12 @@ run_entry_known :: fn(mut p: Parser, which: i64, fn_index: i64, param: i64,
                 mine_len := mine.name_len
                 theirs := arena_at(p.run_steps, held_start + k)
                 if (theirs.name_len != mine_len
-                    || bytes_equal(p.src, theirs.name_off, mine_off,
-                        mine_len) == false) {
+                    || bytes_equal(
+                        p.src,
+                        theirs.name_off,
+                        mine_off,
+                        mine_len
+                    ) == false) {
                     same = false
                 }
                 k = k + 1
@@ -2308,13 +2458,25 @@ note_run :: fn(mut p: Parser, which: i64, place: i64) -> bool {
                 return false
             }
             if (which == 1) {
-                arena_push(p.run_replaces,
-                    Summary { fn_index = p.runs_fn, param = index,
-                        step_start = start, step_count = count })
+                arena_push(
+                    p.run_replaces,
+                    Summary {
+                        fn_index = p.runs_fn,
+                        param = index,
+                        step_start = start,
+                        step_count = count
+                    }
+                )
             } else {
-                arena_push(p.run_views,
-                    Summary { fn_index = p.runs_fn, param = index,
-                        step_start = start, step_count = count })
+                arena_push(
+                    p.run_views,
+                    Summary {
+                        fn_index = p.runs_fn,
+                        param = index,
+                        step_start = start,
+                        step_count = count
+                    }
+                )
             }
             return true
         }
@@ -2411,8 +2573,10 @@ note_run_local :: fn(mut p: Parser, off: i64, len: i64, place: i64) {
         }
         i = i + 1
     }
-    arena_push(p.run_locals,
-        LocalVar { name_off = off, name_len = len, ty = 0, slot = place })
+    arena_push(
+        p.run_locals,
+        LocalVar { name_off = off, name_len = len, ty = 0, slot = place }
+    )
 }
 
 // Whether a name is one of this function's parameters.
@@ -2568,7 +2732,12 @@ run_arg_base :: fn(mut p: Parser, arg: i64, n: i64) -> i64 {
 }
 
 // A place with a summary's run of field names built under it.
-extend_run_place :: fn(mut p: Parser, base: i64, start: i64, count: i64) -> i64 {
+extend_run_place :: fn(
+    mut p: Parser,
+    base: i64,
+    start: i64,
+    count: i64
+) -> i64 {
     var place := base
     var k: i64 = 0
     while (k < count) {
@@ -2756,8 +2925,13 @@ walk_runs_block :: fn(mut p: Parser, head: i64) {
     }
 }
 
-walk_runs_body :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
-    answers_view: bool) {
+walk_runs_body :: fn(
+    mut p: Parser,
+    body: i64,
+    params: i64,
+    fn_index: i64,
+    answers_view: bool
+) {
     p.runs_fn = fn_index
     p.runs_params = params
     p.runs_answers_view = 0
@@ -2959,9 +3133,15 @@ note_view_runs :: fn(mut p: Parser, off: i64, len: i64, value: i64) {
     var n: i64 = 0
     var place := viewed_run_nth(p, value, n)
     while (place >= 0) {
-        arena_push(p.view_runs,
-            LocalVar { name_off = off, name_len = len, ty = borrowed,
-                slot = place })
+        arena_push(
+            p.view_runs,
+            LocalVar {
+                name_off = off,
+                name_len = len,
+                ty = borrowed,
+                slot = place
+            }
+        )
         n = n + 1
         place = viewed_run_nth(p, value, n)
     }
@@ -3054,9 +3234,15 @@ note_replaced_run :: fn(mut p: Parser, place: i64) {
         if (run >= 0 && place_reaches_raw(p, run) == false
             && place_maybe_within(p, run, place)
             && stale_view_of(p, held_off, held_len) < 0) {
-            arena_push(p.stale_views,
-                LocalVar { name_off = held_off, name_len = held_len, ty = 0,
-                    slot = place })
+            arena_push(
+                p.stale_views,
+                LocalVar {
+                    name_off = held_off,
+                    name_len = held_len,
+                    ty = 0,
+                    slot = place
+                }
+            )
             marked = true
         }
         i = i + 1
@@ -3100,9 +3286,15 @@ save_stale :: fn(mut p: Parser) -> i64 {
         held_off := entry.name_off
         held_len := entry.name_len
         held_slot := entry.slot
-        arena_push(p.stale_scratch,
-            LocalVar { name_off = held_off, name_len = held_len, ty = 0,
-                slot = held_slot })
+        arena_push(
+            p.stale_scratch,
+            LocalVar {
+                name_off = held_off,
+                name_len = held_len,
+                ty = 0,
+                slot = held_slot
+            }
+        )
         i = i + 1
     }
     base
@@ -3117,9 +3309,15 @@ restore_stale :: fn(mut p: Parser, base: i64, top: i64) {
         held_off := entry.name_off
         held_len := entry.name_len
         held_slot := entry.slot
-        arena_push(p.stale_views,
-            LocalVar { name_off = held_off, name_len = held_len, ty = 0,
-                slot = held_slot })
+        arena_push(
+            p.stale_views,
+            LocalVar {
+                name_off = held_off,
+                name_len = held_len,
+                ty = 0,
+                slot = held_slot
+            }
+        )
         i = i + 1
     }
 }
@@ -3135,9 +3333,15 @@ merge_stale :: fn(mut p: Parser, base: i64, top: i64) {
         held_len := entry.name_len
         held_slot := entry.slot
         if (stale_view_of(p, held_off, held_len) < 0) {
-            arena_push(p.stale_views,
-                LocalVar { name_off = held_off, name_len = held_len, ty = 0,
-                    slot = held_slot })
+            arena_push(
+                p.stale_views,
+                LocalVar {
+                    name_off = held_off,
+                    name_len = held_len,
+                    ty = 0,
+                    slot = held_slot
+                }
+            )
         }
         i = i + 1
     }
@@ -3223,9 +3427,15 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             }
             if (pnode.a != 1 && anode.kind == NodeKind::Var
                 && is_aggregate(ptype)) {
-                arena_push(p.moved,
-                    LocalVar { name_off = anode.val, name_len = anode.c,
-                        ty = 0, slot = arg })
+                arena_push(
+                    p.moved,
+                    LocalVar {
+                        name_off = anode.val,
+                        name_len = anode.c,
+                        ty = 0,
+                        slot = arg
+                    }
+                )
             } else if (pnode.a != 1 && is_linear_type(p, ptype)
                 && is_place_expr(p, arg)) {
                 // A resource reached through a field or an element is a place of
@@ -3236,9 +3446,15 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 // language has always taken.
                 root := strip_place(p, arg, place_depth(p, arg))
                 rnode := arena_at(p.arena, root)
-                arena_push(p.moved,
-                    LocalVar { name_off = rnode.val, name_len = rnode.c,
-                        ty = 0, slot = arg })
+                arena_push(
+                    p.moved,
+                    LocalVar {
+                        name_off = rnode.val,
+                        name_len = rnode.c,
+                        ty = 0,
+                        slot = arg
+                    }
+                )
             }
         }
         i = i + 1
@@ -3285,9 +3501,15 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     while (k < p.moved.count) {
         e := arena_at(p.moved, k)
         if (then_gone == false) {
-            arena_push(p.move_scratch,
-                LocalVar { name_off = e.name_off, name_len = e.name_len,
-                    ty = 0, slot = e.slot })
+            arena_push(
+                p.move_scratch,
+                LocalVar {
+                    name_off = e.name_off,
+                    name_len = e.name_len,
+                    ty = 0,
+                    slot = e.slot
+                }
+            )
         }
         k = k + 1
     }
@@ -3302,9 +3524,15 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
         e := arena_at(p.move_scratch, s)
         held := e.slot
         if (place_is_moved(p, held) < 0) {
-            arena_push(p.moved,
-                LocalVar { name_off = e.name_off, name_len = e.name_len,
-                    ty = 0, slot = held })
+            arena_push(
+                p.moved,
+                LocalVar {
+                    name_off = e.name_off,
+                    name_len = e.name_len,
+                    ty = 0,
+                    slot = held
+                }
+            )
         }
         s = s + 1
     }
@@ -3322,8 +3550,15 @@ collect_bound_names :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         if (kind == NodeKind::Let) {
-            arena_push(p.move_scratch,
-                LocalVar { name_off = node.val, name_len = node.c, ty = 0, slot = 0 })
+            arena_push(
+                p.move_scratch,
+                LocalVar {
+                    name_off = node.val,
+                    name_len = node.c,
+                    ty = 0,
+                    slot = 0
+                }
+            )
         }
         if (kind == NodeKind::If) {
             collect_bound_names(p, node.b)
@@ -3347,7 +3582,13 @@ collect_bound_names :: fn(mut p: Parser, head: i64) {
     }
 }
 
-in_scratch_range :: fn(mut p: Parser, base: i64, top: i64, off: i64, len: i64) -> bool {
+in_scratch_range :: fn(
+    mut p: Parser,
+    base: i64,
+    top: i64,
+    off: i64,
+    len: i64
+) -> bool {
     var i := base
     while (i < top) {
         e := arena_at(p.move_scratch, i)
@@ -3490,9 +3731,15 @@ note_handed_out :: fn(mut p: Parser, value: i64) {
     rnode := arena_at(p.arena, root)
     root_off := rnode.val
     root_len := rnode.c
-    arena_push(p.moved,
-        LocalVar { name_off = root_off, name_len = root_len, ty = 0,
-            slot = value })
+    arena_push(
+        p.moved,
+        LocalVar {
+            name_off = root_off,
+            name_len = root_len,
+            ty = 0,
+            slot = value
+        }
+    )
 }
 
 // A body, and the value it answers with. The last statement is that value when
@@ -3571,8 +3818,12 @@ instance_was_called :: fn(mut p: Parser, node_id: i64) -> bool {
 // went" is the whole container as far as a caller can act on it, and that would
 // refuse a container releasing its own elements one at a time, which is how
 // resources in containers are written.
-report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
-    node_id: i64) {
+report_unnameable :: fn(
+    mut p: Parser,
+    params: i64,
+    fn_index: i64,
+    node_id: i64
+) {
     // A template's own body is walked with nothing bound, so it is left to its
     // instances to answer for. Asked only where a candidate was found, since
     // that is rare and this walks every instance the program made.
@@ -3605,10 +3856,12 @@ report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
                         }
                         if (nameable == false && answerable) {
                             report_where(p.modules, p.src, root_off)
-                            report_fmt("'{}' gives away a resource out of '{}', which this function only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take '{}' by `move` and answer with it.",
+                            report_fmt(
+                                "'{}' gives away a resource out of '{}', which this function only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take '{}' by `move` and answer with it.",
                                 place_text(p, place),
                                 source_text(p.src, pname_off, pname_len),
-                                source_text(p.src, pname_off, pname_len))
+                                source_text(p.src, pname_off, pname_len)
+                            )
                             frost_rt_recover_escape()
                         }
                     }
@@ -3745,8 +3998,15 @@ walk_moves_match :: fn(mut p: Parser, cases: i64) {
         while (k < p.moved.count) {
             e := arena_at(p.moved, k)
             if (in_scratch(p, scratch_base, e.name_off, e.name_len) == false) {
-                arena_push(p.move_scratch,
-                    LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
+                arena_push(
+                    p.move_scratch,
+                    LocalVar {
+                        name_off = e.name_off,
+                        name_len = e.name_len,
+                        ty = 0,
+                        slot = 0
+                    }
+                )
             }
             k = k + 1
         }
@@ -3756,8 +4016,15 @@ walk_moves_match :: fn(mut p: Parser, cases: i64) {
     var s := scratch_base
     while (s < p.move_scratch.count) {
         e := arena_at(p.move_scratch, s)
-        arena_push(p.moved,
-            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
+        arena_push(
+            p.moved,
+            LocalVar {
+                name_off = e.name_off,
+                name_len = e.name_len,
+                ty = 0,
+                slot = 0
+            }
+        )
         s = s + 1
     }
     p.move_scratch.count = scratch_base
@@ -3856,8 +4123,12 @@ check_moves_guarded :: fn(raw: ^u8) {
     unsafe {
         check_linear_locals(parser^, turn^.body, answers)
         walk_moves_body(parser^, turn^.body, turn^.params, answers)
-        report_unnameable(parser^, turn^.params, turn^.fn_index,
-            turn^.func_node)
+        report_unnameable(
+            parser^,
+            turn^.params,
+            turn^.fn_index,
+            turn^.func_node
+        )
     }
 }
 
@@ -3886,11 +4157,17 @@ check_moves :: fn(mut p: Parser) {
             p.stale_views.count = 0
             var turn := MoveTurn {
                 parser = unsafe { ptr_cast($u8, ptr_to(p)) },
-                body = node.a, params = node.b, answers = answers,
-                fn_index = fn_index, func_node = i }
+                body = node.a,
+                params = node.b,
+                answers = answers,
+                fn_index = fn_index,
+                func_node = i
+            }
             unsafe {
-                frost_rt_recover_run(check_moves_guarded,
-                    ptr_cast($u8, ptr_to(turn)))
+                frost_rt_recover_run(
+                    check_moves_guarded,
+                    ptr_cast($u8, ptr_to(turn))
+                )
             }
         }
         i = i + 1
@@ -4085,7 +4362,12 @@ arg_borrows :: fn(mut p: Parser, args: i64, params: i64, index: i64) -> i64 {
     arg
 }
 
-check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) {
+check_call_exclusivity :: fn(
+    mut p: Parser,
+    args: i64,
+    fn_index: i64,
+    pos: i64
+) {
     sym := arena_at(p.fns, fn_index)
     params := sym.params
     count := count_value_args(p, args)
@@ -4103,11 +4385,16 @@ check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) 
                         && places_overlap(p, arg_i, arg_j)) {
                         report_where(p.modules, p.src, pos)
                         if (excl_i && excl_j) {
-                            report_fmt("'{}' and '{}' are both borrowed as mutable in a single call; mutable borrows are exclusive",
-                                place_text(p, arg_i), place_text(p, arg_j))
+                            report_fmt(
+                                "'{}' and '{}' are both borrowed as mutable in a single call; mutable borrows are exclusive",
+                                place_text(p, arg_i),
+                                place_text(p, arg_j)
+                            )
                         } else {
-                            report_fmt("'{}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive",
-                                place_text(p, arg_i))
+                            report_fmt(
+                                "'{}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive",
+                                place_text(p, arg_i)
+                            )
                         }
                         // One report per call, and the next call is still
                         // checked. Every other overlapping pair in this call is
@@ -4239,8 +4526,13 @@ prov_listed :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64)
 
 // Record what a name is worth, replacing whatever it was worth before. A name
 // reassigned holds what it now holds, not what it held when it was declared.
-note_prov :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
-    held: i64) {
+note_prov :: fn(
+    mut table: Arena<LocalVar>,
+    src: str,
+    off: i64,
+    len: i64,
+    held: i64
+) {
     var i: i64 = 0
     while (i < table.count) {
         var entry := arena_at(table, i)
@@ -4251,8 +4543,10 @@ note_prov :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
         }
         i = i + 1
     }
-    arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0,
-            slot = held })
+    arena_push(
+        table,
+        LocalVar { name_off = off, name_len = len, ty = 0, slot = held }
+    )
 }
 
 // The declared type recorded against a name, or -1.
@@ -4270,8 +4564,13 @@ type_listed :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64)
     -1
 }
 
-note_type :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
-    ty: i64) {
+note_type :: fn(
+    mut table: Arena<LocalVar>,
+    src: str,
+    off: i64,
+    len: i64,
+    ty: i64
+) {
     var i: i64 = 0
     while (i < table.count) {
         var entry := arena_at(table, i)
@@ -4282,8 +4581,10 @@ note_type :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
         }
         i = i + 1
     }
-    arena_push(table, LocalVar { name_off = off, name_len = len, ty = ty,
-            slot = 0 })
+    arena_push(
+        table,
+        LocalVar { name_off = off, name_len = len, ty = ty, slot = 0 }
+    )
 }
 
 // Whether a value of this type is, or holds, a view of storage it does not own.
@@ -4425,8 +4726,12 @@ view_reaches :: fn(mut p: Parser, answer: i64, param: i64, depth: i64) -> bool {
     }
     if (is_array_ty(answer)) {
         if (is_slice_ty(p, answer)) {
-            return type_holds_inline(p, array_element(p, answer), param,
-                FRAME_TYPE_DEPTH)
+            return type_holds_inline(
+                p,
+                array_element(p, answer),
+                param,
+                FRAME_TYPE_DEPTH
+            )
         }
         return view_reaches(p, array_element(p, answer), param, depth - 1)
     }
@@ -4705,8 +5010,13 @@ frame_block_prov :: fn(mut p: Parser, head: i64) -> i64 {
 
 // One argument's contribution, given what the callee answers with, the type it
 // declared for that parameter, and whether it was handed the argument's address.
-frame_held_arg :: fn(mut p: Parser, answer: i64, declared: i64,
-    addressed: bool, arg: i64) -> i64 {
+frame_held_arg :: fn(
+    mut p: Parser,
+    answer: i64,
+    declared: i64,
+    addressed: bool,
+    arg: i64
+) -> i64 {
     if (declared < 0) {
         return prov_max(frame_place_prov(p, arg), frame_value_prov(p, arg))
     }
@@ -4805,8 +5115,10 @@ frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
                 }
             }
         }
-        held = prov_max(held,
-            frame_held_arg(p, answer, declared, addressed, arg))
+        held = prov_max(
+            held,
+            frame_held_arg(p, answer, declared, addressed, arg)
+        )
         i = i + 1
     }
     held
@@ -4845,8 +5157,10 @@ frame_call_ptr_prov :: fn(mut p: Parser, id: i64) -> i64 {
         // A signature records no modes, so an aggregate parameter is read as
         // being handed the argument's address the way a read of one is, and
         // everything narrower as being handed a copy.
-        held = prov_max(held,
-            frame_held_arg(p, answer, declared, is_struct_ty(declared), value))
+        held = prov_max(
+            held,
+            frame_held_arg(p, answer, declared, is_struct_ty(declared), value)
+        )
         index = index + 1
     }
     held
@@ -4888,7 +5202,11 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Deref) {
         base := frame_place_type(p, child)
         if (base >= 0 && is_pointer(base)
-            && type_holds_view(p, pointee(p, base), FRAME_TYPE_DEPTH) == false) {
+            && type_holds_view(
+                p,
+                pointee(p, base),
+                FRAME_TYPE_DEPTH
+            ) == false) {
             return PROV_OUTLIVES
         }
         return frame_value_prov(p, child)
@@ -4899,8 +5217,7 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
         return frame_value_prov(p, child)
     }
     if (kind == NodeKind::SliceFrom) {
-        return prov_max(frame_value_prov(p, child),
-            frame_value_prov(p, node.b))
+        return prov_max(frame_value_prov(p, child), frame_value_prov(p, node.b))
     }
     // A value built around views is as short-lived as the shortest of them, so a
     // struct carrying a frame pointer out is caught the way a bare one is. An
@@ -4911,8 +5228,10 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     // A block used as a value answers with whichever branch runs, so it is worth
     // the shortest-lived of them.
     if (kind == NodeKind::If) {
-        return prov_max(frame_block_prov(p, node.b),
-            frame_block_prov(p, node.val))
+        return prov_max(
+            frame_block_prov(p, node.b),
+            frame_block_prov(p, node.val)
+        )
     }
     if (kind == NodeKind::Match) {
         var held: i64 = PROV_OUTLIVES
@@ -5007,8 +5326,10 @@ frame_expected_prov :: fn(mut p: Parser, id: i64, expected: i64) -> i64 {
         return worst
     }
     if (kind == NodeKind::If) {
-        return prov_max(frame_block_expected(p, node.b, expected),
-            frame_block_expected(p, node.val, expected))
+        return prov_max(
+            frame_block_expected(p, node.b, expected),
+            frame_block_expected(p, node.val, expected)
+        )
     }
     if (kind == NodeKind::Match) {
         var worst: i64 = PROV_OUTLIVES
@@ -5314,8 +5635,10 @@ frame_judge_kept :: fn(mut p: Parser, id: i64, pos: i64) {
                     var target: i64 = 0
                     while (target < count && target < KEPT_SLOTS) {
                         if (shape.mask & (1 << target) != 0
-                            && frame_place_prov(p,
-                                nth_value_arg(p, args, target))
+                            && frame_place_prov(
+                                p,
+                                nth_value_arg(p, args, target)
+                            )
                             != PROV_FRAME) {
                             escapes = true
                         }
@@ -5670,8 +5993,11 @@ answer_call_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
             }
         }
         if (weighed) {
-            found = found | answer_value_mask(p, nth_value_arg(p, args, i),
-                params)
+            found = found | answer_value_mask(
+                p,
+                nth_value_arg(p, args, i),
+                params
+            )
         }
         i = i + 1
     }
@@ -5679,8 +6005,12 @@ answer_call_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
 }
 
 // One exit, read as a place where the function answers with one.
-answer_exit_mask :: fn(mut p: Parser, id: i64, params: i64,
-    answers_place: bool) -> i64 {
+answer_exit_mask :: fn(
+    mut p: Parser,
+    id: i64,
+    params: i64,
+    answers_place: bool
+) -> i64 {
     if (answers_place) {
         return answer_place_mask(p, id, params)
     }
@@ -5689,8 +6019,12 @@ answer_exit_mask :: fn(mut p: Parser, id: i64, params: i64,
 
 // Walk a body, binding each local to the parameters its value reaches, and
 // gather what every exit answers with.
-answer_walk_block :: fn(mut p: Parser, head: i64, params: i64,
-    answers_place: bool) -> i64 {
+answer_walk_block :: fn(
+    mut p: Parser,
+    head: i64,
+    params: i64,
+    answers_place: bool
+) -> i64 {
     var found: i64 = 0
     var id := head
     while (id != (-1)) {
@@ -5813,19 +6147,29 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
             if (callee >= 0 && slot >= 0 && slot < p.kept_masks.count) {
                 shape := arena_at(p.kept_masks, slot)
                 if (shape.mask != 0) {
-                    held := answer_value_mask(p,
-                        nth_value_arg(p, args, index), params)
+                    held := answer_value_mask(
+                        p,
+                        nth_value_arg(p, args, index),
+                        params
+                    )
                     var target: i64 = 0
                     while (target < count && target < KEPT_SLOTS) {
                         if (shape.mask & (1 << target) != 0) {
-                            receiving := kept_container_mask(p,
-                                nth_value_arg(p, args, target), params)
+                            receiving := kept_container_mask(
+                                p,
+                                nth_value_arg(p, args, target),
+                                params
+                            )
                             var bit: i64 = 0
                             while (bit < KEPT_SLOTS) {
                                 if (held & (1 << bit) != 0) {
                                     grew = (grew
-                                        | kept_record(p, fn_index, bit,
-                                            receiving))
+                                        | kept_record(
+                                            p,
+                                            fn_index,
+                                            bit,
+                                            receiving
+                                        ))
                                 }
                                 bit = bit + 1
                             }
@@ -6070,10 +6414,14 @@ check_frame_escapes :: fn(mut p: Parser) {
             }
             var turn := FrameTurn {
                 parser = unsafe { ptr_cast($u8, ptr_to(p)) },
-                body = body, params = params }
+                body = body,
+                params = params
+            }
             unsafe {
-                frost_rt_recover_run(check_frame_escapes_guarded,
-                    ptr_cast($u8, ptr_to(turn)))
+                frost_rt_recover_run(
+                    check_frame_escapes_guarded,
+                    ptr_cast($u8, ptr_to(turn))
+                )
             }
         }
         i = i + 1
@@ -6095,7 +6443,10 @@ name_listed :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64)
 }
 
 list_name :: fn(mut table: Arena<LocalVar>, off: i64, len: i64) {
-    arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0, slot = 0 })
+    arena_push(
+        table,
+        LocalVar { name_off = off, name_len = len, ty = 0, slot = 0 }
+    )
 }
 
 // The name a place is rooted at, walking down through fields, indexes and
@@ -6349,8 +6700,12 @@ check_region_block :: fn(mut p: Parser, head: i64) {
                 var outside: bool = true
                 if (place != (-1)) {
                     pnode := arena_at(p.arena, place)
-                    outside = name_listed(p.inner, p.src, pnode.val,
-                        pnode.c) == false
+                    outside = name_listed(
+                        p.inner,
+                        p.src,
+                        pnode.val,
+                        pnode.c
+                    ) == false
                 }
                 if (outside) {
                     // Out of a `with` block the place is a binding the block
@@ -6426,8 +6781,10 @@ check_regions_guarded :: fn(raw: ^u8) {
 }
 
 check_region_once :: fn(mut p: Parser, body: i64) {
-    var turn := RegionTurn { parser = unsafe { ptr_cast($u8, ptr_to(p)) },
-        body = body }
+    var turn := RegionTurn {
+        parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+        body = body
+    }
     unsafe {
         frost_rt_recover_run(check_regions_guarded, ptr_cast($u8, ptr_to(turn)))
     }
@@ -6555,8 +6912,10 @@ check_unsafety :: fn(mut p: Parser) {
             report_where(p.modules, p.src, node.pos)
             if (named >= 0) {
                 held := arena_at(p.fns, named)
-                report_fmt("calling the C function '{}' is unchecked, so it belongs in an `unsafe` block",
-                    source_text(p.src, held.off, held.len))
+                report_fmt(
+                    "calling the C function '{}' is unchecked, so it belongs in an `unsafe` block",
+                    source_text(p.src, held.off, held.len)
+                )
             } else {
                 report_cstr(what)
                 report(" is unchecked, so it belongs in an `unsafe` block")
@@ -6777,8 +7136,7 @@ check_calls :: fn(mut p: Parser) {
             // `columns_new` is a compiler builtin standing for a zeroed
             // container, so it has no defined symbol. The emitter recognizes
             // it by name. Its zero arguments still satisfy the arity check.
-            is_columns_new := (str_range_eq(p.src, name_off, name_len,
-                    "columns_new")
+            is_columns_new := (str_range_eq(p.src, name_off, name_len, "columns_new")
                 || str_range_eq(p.src, name_off, name_len, "slab_new"))
             // A call to a `$f` parameter inside the template it belongs to
             // names no function, since which function it is comes from the

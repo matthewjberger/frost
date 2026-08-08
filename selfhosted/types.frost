@@ -395,8 +395,11 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
             report_where(p.modules, p.src, arena_at(p.arena, value).pos)
             report_fmt("{} does not fit in a '", held)
             report_type_name(p, to)
-            report_fmt("', which holds {} to {}",
-                integer_low(to), integer_high(to))
+            report_fmt(
+                "', which holds {} to {}",
+                integer_low(to),
+                integer_high(to)
+            )
             frost_rt_recover_escape()
         }
     }
@@ -584,8 +587,15 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     // backend's inner loop: quadratic in a function's locals, with a type's
     // size measured again on every step of it.
     p.frame_used = p.frame_used + align_up(type_size(p, ty), 8)
-    arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty,
-            slot = -p.frame_used })
+    arena_push(
+        p.locals,
+        LocalVar {
+            name_off = off,
+            name_len = len,
+            ty = ty,
+            slot = -p.frame_used
+        }
+    )
 }
 
 // The type of a struct field. The base type may be a pointer (a borrow of a
@@ -939,9 +949,15 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
             if (count == 0) {
                 first = vnode.val
             } else {
-                arena_push(p.gargs,
-                    GArg { value = vnode.val, is_type = 0, pending = -1,
-                        node = -1 })
+                arena_push(
+                    p.gargs,
+                    GArg {
+                        value = vnode.val,
+                        is_type = 0,
+                        pending = -1,
+                        node = -1
+                    }
+                )
             }
             count = count + 1
         }
@@ -1021,8 +1037,14 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
 // one already computed.
 // The value of the nth argument that survives to runtime, skipping the type
 // arguments, which are erased.
-record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64, ret: i64) {
+record_mono_ret :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    ret: i64
+) {
     // The discovery pass runs until it finds nothing new, so the same
     // monomorphization is offered more than once and only the first is kept.
     var i: i64 = 0
@@ -1035,9 +1057,16 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
         }
         i = i + 1
     }
-    arena_push(p.mono_rets,
-        MonoRet { fn_index = fn_index, arg = arg, xarg_start = xarg_start,
-            xarg_count = xarg_count, ret = ret })
+    arena_push(
+        p.mono_rets,
+        MonoRet {
+            fn_index = fn_index,
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count,
+            ret = ret
+        }
+    )
 }
 
 // The concrete argument tuples the generics in this program are used with. A
@@ -1051,8 +1080,14 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 // A tuple carries which generic it was written for, since a call names its
 // callee. A generic struct's instance names no function and carries -1, which
 // every generic accepts.
-note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
-    is_pack: i64, owner: i64) {
+note_type_args :: fn(
+    mut p: Parser,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    is_pack: i64,
+    owner: i64
+) {
     if (arg < 0 || arg == TY_PARAM) {
         return
     }
@@ -1079,8 +1114,16 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
         }
         i = i + 1
     }
-    arena_push(p.type_args, TypeArg { arg = arg, xarg_start = xarg_start,
-            xarg_count = xarg_count, is_pack = is_pack, owner = owner })
+    arena_push(
+        p.type_args,
+        TypeArg {
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count,
+            is_pack = is_pack,
+            owner = owner
+        }
+    )
 }
 
 collect_type_args :: fn(mut p: Parser) {
@@ -1104,8 +1147,14 @@ collect_type_args :: fn(mut p: Parser) {
                 // scope to say what those are.
                 if (takes_pack(p, node.val) == false) {
                     arg := call_type_args(p, node.a, owner)
-                    note_type_args(p, arg, p.call_xarg_start,
-                        p.call_xarg_count, 0, owner)
+                    note_type_args(
+                        p,
+                        arg,
+                        p.call_xarg_start,
+                        p.call_xarg_count,
+                        0,
+                        owner
+                    )
                 }
             }
         }
@@ -1181,9 +1230,15 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
         if (later < 0) {
             keep = -1
         }
-        arena_push(p.argbuf,
-            GArg { value = settled, is_type = is_type, pending = later,
-                node = keep })
+        arena_push(
+            p.argbuf,
+            GArg {
+                value = settled,
+                is_type = is_type,
+                pending = later,
+                node = keep
+            }
+        )
         k = k + 1
     }
     var fresh: i64 = -1
@@ -1205,8 +1260,13 @@ pending_ret_type :: fn(mut p: Parser, pending: i64) -> i64 {
     mono_ret_type(p, fn_index, arg, xarg_start, xarg_count)
 }
 
-mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
-    xarg_count: i64) -> i64 {
+mono_ret_type :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
     var i: i64 = 0
     while (i < p.mono_rets.count) {
         entry := arena_at(p.mono_rets, i)
@@ -1297,8 +1357,10 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     var pid := sym.params
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
-        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0, node = -1,
-                pending = -1 })
+        arena_push(
+            p.proc_params,
+            GArg { value = pnode.b, is_type = 0, node = -1, pending = -1 }
+        )
         count = count + 1
         pid = pnode.next
     }
@@ -1410,10 +1472,17 @@ borrow_kept :: fn(mut p: Parser, value: i64, want: i64) -> i64 {
 // off one, and -1 for a parameter, a list element or a name written with the
 // type it holds. The two tables move together, so a binding that shadows an
 // earlier one shadows what that one bound as well.
-record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64,
-    bound: i64) {
-    arena_push(p.parse_locals, LocalVar { name_off = off, name_len = len,
-            ty = ty, slot = 0 })
+record_parse_local :: fn(
+    mut p: Parser,
+    off: i64,
+    len: i64,
+    ty: i64,
+    bound: i64
+) {
+    arena_push(
+        p.parse_locals,
+        LocalVar { name_off = off, name_len = len, ty = ty, slot = 0 }
+    )
     arena_push(p.parse_local_values, BoundValue { node = bound })
 }
 
@@ -1592,8 +1661,15 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
         }
         i = i + 1
     }
-    arena_push(p.pending_rets, PendingRet { fn_index = fn_index, arg = arg,
-            xarg_start = xarg_start, xarg_count = xarg_count })
+    arena_push(
+        p.pending_rets,
+        PendingRet {
+            fn_index = fn_index,
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count
+        }
+    )
 }
 
 // What a name the declaration being parsed bound stands for, and what an
@@ -1822,8 +1898,12 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
                         if (peek_kind(p, ahead) == TokenKind::Dollar
                             && peek_kind(p, ahead + 1) == TokenKind::Ident
                             && peek_len(p, ahead + 1) == name_len
-                            && bytes_equal(p.src, peek_off(p, ahead + 1),
-                                name_off, name_len)) {
+                            && bytes_equal(
+                                p.src,
+                                peek_off(p, ahead + 1),
+                                name_off,
+                                name_len
+                            )) {
                             found = position
                             p.tparam_through = 2
                         }
@@ -1864,8 +1944,7 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
 // wrote the parameter inside brackets, so what it binds to is the argument's
 // element rather than the argument, and 2 where it wrote it inside a generic
 // struct's argument list, so what it binds to is that instance's own argument.
-call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
-    through: i64) -> i64 {
+call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64, through: i64) -> i64 {
     var id := args
     var seen: i64 = 0
     while (id != (-1)) {
@@ -2029,9 +2108,15 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
             if (types_seen == 0) {
                 primary = vnode.val
             } else {
-                arena_push(p.argbuf,
-                    GArg { value = vnode.val, is_type = 0, pending = -1,
-                        node = -1 })
+                arena_push(
+                    p.argbuf,
+                    GArg {
+                        value = vnode.val,
+                        is_type = 0,
+                        pending = -1,
+                        node = -1
+                    }
+                )
             }
             types_seen = types_seen + 1
         }
@@ -2051,9 +2136,15 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
         // parameter and evaluated nowhere.
         if (vnode.kind == NodeKind::TypeVal) {
             if (seen >= declared) {
-                arena_push(p.argbuf,
-                    GArg { value = vnode.val, is_type = 1, pending = -1,
-                        node = -1 })
+                arena_push(
+                    p.argbuf,
+                    GArg {
+                        value = vnode.val,
+                        is_type = 1,
+                        pending = -1,
+                        node = -1
+                    }
+                )
                 count = count + 1
             }
             seen = seen + 1
@@ -2065,9 +2156,15 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
                 if (later < 0) {
                     written = -1
                 }
-                arena_push(p.argbuf,
-                    GArg { value = held, is_type = 0, pending = later,
-                        node = written })
+                arena_push(
+                    p.argbuf,
+                    GArg {
+                        value = held,
+                        is_type = 0,
+                        pending = later,
+                        node = written
+                    }
+                )
                 count = count + 1
             }
             index = index + 1
@@ -2124,8 +2221,14 @@ forwards_own_format :: fn(mut p: Parser, args: i64) -> bool {
 // Which recorded tuple a call's arguments came to, matched the way
 // `note_type_args` matches so a call that deduped onto an earlier one finds
 // that one. -1 where nothing holds it.
-find_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
-    is_pack: i64, owner: i64) -> i64 {
+find_type_args :: fn(
+    mut p: Parser,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    is_pack: i64,
+    owner: i64
+) -> i64 {
     var i: i64 = 0
     while (i < p.type_args.count) {
         entry := arena_at(p.type_args, i)
@@ -2164,8 +2267,14 @@ note_format_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     if (arena_at(p.arena, fmt).kind != NodeKind::StrLit) {
         return
     }
-    tuple := find_type_args(p, p.call_pack_primary, p.call_xarg_start,
-        p.call_xarg_count, owner + 1, owner)
+    tuple := find_type_args(
+        p,
+        p.call_pack_primary,
+        p.call_xarg_start,
+        p.call_xarg_count,
+        owner + 1,
+        owner
+    )
     if (tuple < 0) {
         return
     }
@@ -2177,8 +2286,10 @@ note_format_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         }
         i = i + 1
     }
-    arena_push(p.format_calls,
-        FormatCall { fmt = fmt, tuple = tuple, owner = owner })
+    arena_push(
+        p.format_calls,
+        FormatCall { fmt = fmt, tuple = tuple, owner = owner }
+    )
 }
 
 // What every format call was given, read after the fixpoint has settled it.
@@ -2251,8 +2362,12 @@ note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
     node := arena_at(p.arena, held)
     if (node.kind != NodeKind::Var || node.c != p.decl_format_len
-        || bytes_equal(p.src, node.val, p.decl_format_off,
-            p.decl_format_len) == false) {
+        || bytes_equal(
+            p.src,
+            node.val,
+            p.decl_format_off,
+            p.decl_format_len
+        ) == false) {
         return
     }
     // What is handed on past the literal. A template's own parse still writes
@@ -2267,8 +2382,12 @@ note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
         given = given + 1
     }
     if (given == 1
-        && names_the_pack(p, nth_value_arg(p, args, at + 1), list_off,
-            list_len)) {
+        && names_the_pack(
+            p,
+            nth_value_arg(p, args, at + 1),
+            list_off,
+            list_len
+        )) {
         arena_push(p.format_forwards, BoundValue { node = args })
         return
     }
@@ -2294,8 +2413,12 @@ note_format_forward :: fn(mut p: Parser, args: i64, fn_index: i64) {
         gnode := arena_at(p.arena, held2)
         entry := arena_at(p.parse_locals, mine + k)
         if (gnode.kind != NodeKind::Var || gnode.c != entry.name_len
-            || bytes_equal(p.src, gnode.val, entry.name_off,
-                entry.name_len) == false) {
+            || bytes_equal(
+                p.src,
+                gnode.val,
+                entry.name_off,
+                entry.name_len
+            ) == false) {
             return
         }
         k = k + 1
@@ -2319,8 +2442,12 @@ pack_value_count :: fn(mut p: Parser) -> i64 {
     found
 }
 
-names_the_pack :: fn(mut p: Parser, held: i64, list_off: i64,
-    list_len: i64) -> bool {
+names_the_pack :: fn(
+    mut p: Parser,
+    held: i64,
+    list_off: i64,
+    list_len: i64
+) -> bool {
     if (held < 0) {
         return false
     }
@@ -2336,8 +2463,13 @@ names_the_pack :: fn(mut p: Parser, held: i64, list_off: i64,
 // the holes it opens are counted against the list that follows, and a type
 // nothing can write is refused against the line the reader wrote rather than
 // inside a body they never saw.
-check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
-    count: i64) {
+check_format_call :: fn(
+    mut p: Parser,
+    args: i64,
+    at: i64,
+    buf_start: i64,
+    count: i64
+) {
     node_id := nth_value_arg(p, args, at)
     if (node_id < 0) {
         return
@@ -2387,8 +2519,11 @@ check_format_call :: fn(mut p: Parser, args: i64, at: i64, buf_start: i64,
     }
     if (holes != count) {
         report_where(p.modules, p.src, literal_at(node))
-        report_fmt("this format string opens {} hole(s) and the call gives {} value(s)",
-            holes, count)
+        report_fmt(
+            "this format string opens {} hole(s) and the call gives {} value(s)",
+            holes,
+            count
+        )
         frost_rt_recover_escape()
         return
     }
@@ -2410,9 +2545,15 @@ copy_run :: fn(mut p: Parser, at: i64) -> i64 {
         is_type := held.is_type
         pending := held.pending
         written := held.node
-        arena_push(p.gargs,
-            GArg { value = value, is_type = is_type, pending = pending,
-                node = written })
+        arena_push(
+            p.gargs,
+            GArg {
+                value = value,
+                is_type = is_type,
+                pending = pending,
+                node = written
+            }
+        )
         k = k + 1
     }
     start
@@ -2430,8 +2571,13 @@ call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
     }
     if (generic_fn_of(p, fn_index) >= 0) {
         arg := call_args_for(p, args, fn_index)
-        return mono_ret_type(p, fn_index, arg, p.call_xarg_start,
-            p.call_xarg_count)
+        return mono_ret_type(
+            p,
+            fn_index,
+            arg,
+            p.call_xarg_start,
+            p.call_xarg_count
+        )
     }
     sym.ret_type
 }

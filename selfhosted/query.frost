@@ -79,8 +79,13 @@ word_is :: fn(question: ^i8, start: i64, text: str) -> bool {
     true
 }
 
-word_names :: fn(question: ^i8, start: i64, src: str, off: i64,
-    len: i64) -> bool {
+word_names :: fn(
+    question: ^i8,
+    start: i64,
+    src: str,
+    off: i64,
+    len: i64
+) -> bool {
     if (query_word_len(question, start) != len) {
         return false
     }
@@ -192,8 +197,13 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     while (si < p.structs.count) {
         def := arena_at(p.structs, si)
         if (def.declared == 1 && def.instance_id < 0
-            && word_names(question, name_at, p.src, def.name_off,
-                def.name_len)) {
+            && word_names(
+                question,
+                name_at,
+                p.src,
+                def.name_off,
+                def.name_len
+            )) {
             report_fmt("{}\n", query_line(p.modules, p.src, def.name_off))
             return
         }
@@ -211,8 +221,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     var ci: i64 = 0
     while (ci < p.consts.count) {
         held := arena_at(p.consts, ci)
-        if (word_names(question, name_at, p.src, held.name_off,
-                held.name_len)) {
+        if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
             report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }
@@ -221,8 +230,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     var vi: i64 = 0
     while (vi < p.value_consts.count) {
         held := arena_at(p.value_consts, vi)
-        if (word_names(question, name_at, p.src, held.name_off,
-                held.name_len)) {
+        if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
             report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }
@@ -242,8 +250,13 @@ query_fields :: fn(mut p: Parser, question: ^i8) {
         def := arena_at(p.structs, si)
         if (def.declared == 1 && def.instance_id < 0 && def.is_enum == 0
             && def.is_generic == 0
-            && word_names(question, name_at, p.src, def.name_off,
-                def.name_len)) {
+            && word_names(
+                question,
+                name_at,
+                p.src,
+                def.name_off,
+                def.name_len
+            )) {
             var fid := def.field_head
             while (fid != (-1)) {
                 field := arena_at(p.fields, fid)
@@ -279,12 +292,10 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
                 var li: i64 = 0
                 while (li < p.locals.count) {
                     held := arena_at(p.locals, li)
-                    if (word_names(question, name_at, p.src, held.name_off,
-                            held.name_len)) {
+                    if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
                         report_type_name(p, held.ty)
                         report(" ")
-                        report_int(query_line(p.modules, p.src,
-                                held.name_off))
+                        report_int(query_line(p.modules, p.src, held.name_off))
                         report("\n")
                         return
                     }

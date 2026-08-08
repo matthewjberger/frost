@@ -66,9 +66,14 @@ Material :: struct {
 }
 
 material_default :: fn() -> Material {
-    Material { base_color = vec4(0.8, 0.8, 0.8, 1.0), roughness = 0.5,
-        metallic = 0.0, alpha_cutoff = 0.5, alpha_mode = ALPHA_OPAQUE,
-        double_sided = false }
+    Material {
+        base_color = vec4(0.8, 0.8, 0.8, 1.0),
+        roughness = 0.5,
+        metallic = 0.0,
+        alpha_cutoff = 0.5,
+        alpha_mode = ALPHA_OPAQUE,
+        double_sided = false
+    }
 }
 
 // The three a program that just wants a colour has to say, with the rest left

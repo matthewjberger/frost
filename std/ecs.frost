@@ -523,8 +523,12 @@ World :: struct {
 
 ecs_new :: fn() -> World {
     var world := World {
-        registry = Registry { count = 0, sizes = vec_new($i64, 16),
-            types = vec_new($i64, 16), names = vec_new($str, 16) },
+        registry = Registry {
+            count = 0,
+            sizes = vec_new($i64, 16),
+            types = vec_new($i64, 16),
+            names = vec_new($str, 16)
+        },
         slots = vec_new($EntitySlot, 64),
         free_ids = vec_new($i64, 64),
         next_id = 0,
@@ -542,8 +546,11 @@ ecs_new :: fn() -> World {
     vec_push(
         $Table,
         world.tables,
-        Table { mask = mask_empty(), entities = vec_new($Entity, 16),
-            columns = vec_new($Column, 1) },
+        Table {
+            mask = mask_empty(),
+            entities = vec_new($Entity, 16),
+            columns = vec_new($Column, 1)
+        },
     )
     map_put($Mask, $i64, $mask_keys, world.lookup, mask_empty(), 0)
     world
@@ -600,15 +607,25 @@ ecs_now :: fn(world: World) -> i64 {
 }
 
 // Record a structural change, when the world was asked to keep them.
-note_change :: fn(mut world: World, kind: ChangeKind, entity: Entity,
-    component: i64) {
+note_change :: fn(
+    mut world: World,
+    kind: ChangeKind,
+    entity: Entity,
+    component: i64
+) {
     if (world.logging == false) {
         return
     }
-    vec_push($Change, world.log,
-        Change { kind = kind, entity = Entity { id = entity.id,
-                generation = entity.generation }, component = component,
-            tick = world.tick })
+    vec_push(
+        $Change,
+        world.log,
+        Change {
+            kind = kind,
+            entity = Entity { id = entity.id, generation = entity.generation },
+            component = component,
+            tick = world.tick
+        }
+    )
 }
 
 ecs_log_enable :: fn(mut world: World, on: bool) {
@@ -738,13 +755,19 @@ table_for :: fn(mut world: World, mask: Mask) -> i64 {
     if (held >= 0) {
         return held
     }
-    var table := Table { mask = mask, entities = vec_new($Entity, 8),
-        columns = vec_new($Column, 4) }
+    var table := Table {
+        mask = mask,
+        entities = vec_new($Entity, 8),
+        columns = vec_new($Column, 4)
+    }
     var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(mask, index)) {
-            vec_push($Column, table.columns,
-                column_new(vec_slice($i64, world.registry.sizes)[index]))
+            vec_push(
+                $Column,
+                table.columns,
+                column_new(vec_slice($i64, world.registry.sizes)[index])
+            )
         }
         index = index + 1
     }
@@ -769,15 +792,21 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     } else {
         id = world.next_id
         world.next_id = id + 1
-        vec_push($EntitySlot, world.slots,
-            EntitySlot { generation = 0, alive = false, table = 0, row = 0 })
+        vec_push(
+            $EntitySlot,
+            world.slots,
+            EntitySlot { generation = 0, alive = false, table = 0, row = 0 }
+        )
     }
     // Every live entity has a row, so an entity with no components sits in the
     // empty table and a component added later is a migration like any other.
     ref empty := vec_slice($Table, world.tables)[0]
     row := vec_len($Entity, empty.entities)
-    vec_push($Entity, empty.entities,
-        Entity { id = id, generation = generation })
+    vec_push(
+        $Entity,
+        empty.entities,
+        Entity { id = id, generation = generation }
+    )
     ref slot := vec_slice($EntitySlot, world.slots)[id]
     slot.generation = generation
     slot.alive = true
@@ -896,21 +925,30 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: Mask) -> i64 {
     from_mask := vec_slice($Table, world.tables)[from_index].mask
     // The destination row is the same for every column, since a table's columns
     // are the same length.
-    landed := vec_len($Entity, vec_slice($Table, world.tables)[to_index].entities)
+    landed := vec_len(
+        $Entity,
+        vec_slice($Table, world.tables)[to_index].entities
+    )
     var index: i64 = 0
     while (index < world.registry.count) {
         if (mask_has(target_mask, index)) {
             to_position := column_position(target_mask, index)
             if (mask_has(from_mask, index)) {
                 from_position := column_position(from_mask, index)
-                held := vec_slice($Column,
-                    vec_slice($Table, world.tables)[from_index].columns)[from_position]
-                ref to_column := vec_slice($Column,
-                    vec_slice($Table, world.tables)[to_index].columns)[to_position]
+                held := vec_slice(
+                    $Column,
+                    vec_slice($Table, world.tables)[from_index].columns
+                )[from_position]
+                ref to_column := vec_slice(
+                    $Column,
+                    vec_slice($Table, world.tables)[to_index].columns
+                )[to_position]
                 column_move_row(to_column, held, row)
             } else {
-                ref to_column := vec_slice($Column,
-                    vec_slice($Table, world.tables)[to_index].columns)[to_position]
+                ref to_column := vec_slice(
+                    $Column,
+                    vec_slice($Table, world.tables)[to_index].columns
+                )[to_position]
                 column_push_zero(to_column, world.tick)
             }
         }
@@ -919,8 +957,11 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: Mask) -> i64 {
     ref to_table := vec_slice($Table, world.tables)[to_index]
     // A fresh handle rather than the parameter: the push takes what it is given,
     // and the slot still has to be told where the entity landed.
-    vec_push($Entity, to_table.entities,
-        Entity { id = entity.id, generation = entity.generation })
+    vec_push(
+        $Entity,
+        to_table.entities,
+        Entity { id = entity.id, generation = entity.generation }
+    )
     table_swap_remove(world, from_index, row)
     ref slot_again := vec_slice($EntitySlot, world.slots)[entity.id]
     slot_again.table = to_index
@@ -938,8 +979,13 @@ ecs_has :: fn(world: World, entity: Entity, component: i64) -> bool {
 }
 
 // Give an entity a component, or overwrite the one it has.
-ecs_add :: fn($T: Type, mut world: World, entity: Entity, component: i64,
-    value: $T) {
+ecs_add :: fn(
+    $T: Type,
+    mut world: World,
+    entity: Entity,
+    component: i64,
+    value: $T
+) {
     if (ecs_alive(world, entity) == false) {
         return
     }
@@ -984,8 +1030,13 @@ ecs_get :: fn($T: Type, world: World, entity: Entity, component: i64) -> $T {
     column_of($T, column)[slot.row]
 }
 
-ecs_set :: fn($T: Type, mut world: World, entity: Entity, component: i64,
-    value: $T) {
+ecs_set :: fn(
+    $T: Type,
+    mut world: World,
+    entity: Entity,
+    component: i64,
+    value: $T
+) {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
     held_or_stop(table.mask, component)
@@ -1013,8 +1064,12 @@ held_or_stop :: fn(table_mask: Mask, component: i64) {
 }
 
 // One table's column as a slice, which is what a system writes through.
-ecs_slice :: fn($T: Type, world: World, table_index: i64,
-    component: i64) -> []T {
+ecs_slice :: fn(
+    $T: Type,
+    world: World,
+    table_index: i64,
+    component: i64
+) -> []T {
     ref table := vec_slice($Table, world.tables)[table_index]
     position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
@@ -1069,10 +1124,18 @@ Query :: struct {
 }
 
 query_begin :: fn(world: World) -> Query {
-    Query { wanted = mask_empty(), excluded = mask_empty(),
-        changed = mask_empty(), added = mask_empty(), since = 0,
-        tagged = no_marks(), untagged = no_marks(),
-        next_table = 0, table = -1, count = 0 }
+    Query {
+        wanted = mask_empty(),
+        excluded = mask_empty(),
+        changed = mask_empty(),
+        added = mask_empty(),
+        since = 0,
+        tagged = no_marks(),
+        untagged = no_marks(),
+        next_table = 0,
+        table = -1,
+        count = 0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,9 +1179,14 @@ Filters :: struct {
 }
 
 no_filters :: fn() -> Filters {
-    Filters { excluded = mask_empty(), changed = mask_empty(),
-        added = mask_empty(), since = 0,
-        tagged = no_marks(), untagged = no_marks() }
+    Filters {
+        excluded = mask_empty(),
+        changed = mask_empty(),
+        added = mask_empty(),
+        since = 0,
+        tagged = no_marks(),
+        untagged = no_marks()
+    }
 }
 
 // An empty run of marks, which is what a filter asking about no tag holds and
@@ -1255,8 +1323,7 @@ query_next :: fn(world: World, mut q: Query) -> bool {
     false
 }
 
-query_column :: fn($T: Type, world: World, q: Query,
-    component: i64) -> []T {
+query_column :: fn($T: Type, world: World, q: Query, component: i64) -> []T {
     ecs_slice($T, world, q.table, component)
 }
 
@@ -1301,8 +1368,12 @@ query_added :: fn(world: World, q: Query, component: i64) -> []i64 {
 
 // The same question about one entity, for code holding a handle rather than
 // walking a table.
-ecs_changed_since :: fn(world: World, entity: Entity, component: i64,
-    since: i64) -> bool {
+ecs_changed_since :: fn(
+    world: World,
+    entity: Entity,
+    component: i64,
+    since: i64
+) -> bool {
     if (ecs_has(world, entity, component) == false) {
         return false
     }
@@ -1313,8 +1384,12 @@ ecs_changed_since :: fn(world: World, entity: Entity, component: i64,
     column_changed(column)[slot.row] > since
 }
 
-ecs_added_since :: fn(world: World, entity: Entity, component: i64,
-    since: i64) -> bool {
+ecs_added_since :: fn(
+    world: World,
+    entity: Entity,
+    component: i64,
+    since: i64
+) -> bool {
     if (ecs_has(world, entity, component) == false) {
         return false
     }
@@ -1515,8 +1590,13 @@ EventReader :: struct {
 }
 
 events_new :: fn($T: Type) -> Events {
-    Events { data = heap_bytes(sizeof(T)), count = 0, capacity = 1,
-        item_size = sizeof(T), first = 0 }
+    Events {
+        data = heap_bytes(sizeof(T)),
+        count = 0,
+        capacity = 1,
+        item_size = sizeof(T),
+        first = 0
+    }
 }
 
 events_free :: fn(move e: Events) {
@@ -1672,8 +1752,10 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     }
     query_filter(q, f)
     while (query_next(world, q)) {
-        body(query_column($T, world, q, component_of($T, world))
-            for T in types, q.count)
+        body(
+            query_column($T, world, q, component_of($T, world)) for T in types,
+            q.count
+        )
     }
 }
 
@@ -1695,9 +1777,12 @@ for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     }
     query_filter(q, f)
     while (query_next(world, q)) {
-        rows_of($body, world, q,
-            query_column($T, world, q, component_of($T, world))
-            for T in types)
+        rows_of(
+            $body,
+            world,
+            q,
+            query_column($T, world, q, component_of($T, world)) for T in types
+        )
     }
 }
 
@@ -1815,8 +1900,11 @@ ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair> {
     while (first < total) {
         var second := first + 1
         while (second < total) {
-            vec_push($EntityPair, out,
-                EntityPair { a = names[first], b = names[second] })
+            vec_push(
+                $EntityPair,
+                out,
+                EntityPair { a = names[first], b = names[second] }
+            )
             second = second + 1
         }
         first = first + 1
@@ -1873,8 +1961,11 @@ ecs_compact :: fn(mut world: World) -> i64 {
 // The columns are the same allocations; what moves is who holds them, and the
 // empty Vecs left behind are what `vec_free` over the old run then releases.
 table_move :: fn(mut held: Table) -> Table {
-    out := Table { mask = held.mask, entities = held.entities,
-        columns = held.columns }
+    out := Table {
+        mask = held.mask,
+        entities = held.entities,
+        columns = held.columns
+    }
     held.entities = vec_new($Entity, 0)
     held.columns = vec_new($Column, 0)
     out
@@ -1992,14 +2083,22 @@ commands_free :: fn(move c: Commands) {
 // A queued spawn has no handle to answer with yet, since the entity does not
 // exist until the queue is applied.
 commands_spawn :: fn(mut c: Commands) {
-    vec_push($Command, c.queued,
-        Command { kind = CommandKind::Spawn,
-            entity = Entity { id = 0, generation = 0 } })
+    vec_push(
+        $Command,
+        c.queued,
+        Command {
+            kind = CommandKind::Spawn,
+            entity = Entity { id = 0, generation = 0 }
+        }
+    )
 }
 
 commands_despawn :: fn(mut c: Commands, entity: Entity) {
-    vec_push($Command, c.queued,
-        Command { kind = CommandKind::Despawn, entity = entity })
+    vec_push(
+        $Command,
+        c.queued,
+        Command { kind = CommandKind::Despawn, entity = entity }
+    )
 }
 
 // Run the queue in the order it was written and empty it.
@@ -2104,10 +2203,18 @@ hierarchy_attach :: fn(mut h: Hierarchy, child: Entity, parent: Entity) {
     hierarchy_detach(h, child)
     held := vec_get($Entity, h.first_child, parent.id)
     vec_set($Entity, h.next_sibling, child.id, held)
-    vec_set($Entity, h.first_child, parent.id,
-        Entity { id = child.id, generation = child.generation })
-    vec_set($Entity, h.parent, child.id,
-        Entity { id = parent.id, generation = parent.generation })
+    vec_set(
+        $Entity,
+        h.first_child,
+        parent.id,
+        Entity { id = child.id, generation = child.generation }
+    )
+    vec_set(
+        $Entity,
+        h.parent,
+        child.id,
+        Entity { id = parent.id, generation = parent.generation }
+    )
 }
 
 // Take a child out of its parent's list. Finding it is a walk of the siblings,
@@ -2123,15 +2230,23 @@ hierarchy_detach :: fn(mut h: Hierarchy, child: Entity) {
     }
     head := vec_get($Entity, h.first_child, parent.id)
     if (head.id == child.id) {
-        vec_set($Entity, h.first_child, parent.id,
-            vec_get($Entity, h.next_sibling, child.id))
+        vec_set(
+            $Entity,
+            h.first_child,
+            parent.id,
+            vec_get($Entity, h.next_sibling, child.id)
+        )
     } else {
         var walk := head
         while (is_no_entity(walk) == false) {
             next := vec_get($Entity, h.next_sibling, walk.id)
             if (next.id == child.id) {
-                vec_set($Entity, h.next_sibling, walk.id,
-                    vec_get($Entity, h.next_sibling, child.id))
+                vec_set(
+                    $Entity,
+                    h.next_sibling,
+                    walk.id,
+                    vec_get($Entity, h.next_sibling, child.id)
+                )
                 walk = no_entity()
             } else {
                 walk = next
@@ -2247,8 +2362,11 @@ schedule_free :: fn(move s: Schedule) {
 }
 
 schedule_add :: fn(mut s: Schedule, stage: Stage, run: fn(mut World)) {
-    vec_push($System, s.systems,
-        System { run = run, stage = stage, state = ANY_STATE })
+    vec_push(
+        $System,
+        s.systems,
+        System { run = run, stage = stage, state = ANY_STATE }
+    )
 }
 
 // Drops a system by handing back the same function it was registered with, and
@@ -2284,10 +2402,17 @@ schedule_remove :: fn(mut s: Schedule, run: fn(mut World)) -> bool {
 
 // A system that runs only while the world is in one state: the pause menu's
 // systems, the loading screen's.
-schedule_add_in_state :: fn(mut s: Schedule, stage: Stage, state: i64,
-    run: fn(mut World)) {
-    vec_push($System, s.systems,
-        System { run = run, stage = stage, state = state })
+schedule_add_in_state :: fn(
+    mut s: Schedule,
+    stage: Stage,
+    state: i64,
+    run: fn(mut World)
+) {
+    vec_push(
+        $System,
+        s.systems,
+        System { run = run, stage = stage, state = state }
+    )
 }
 
 schedule_count :: fn(s: Schedule) -> i64 {
@@ -2324,8 +2449,13 @@ highest_stage :: fn(s: Schedule) -> i64 {
     highest
 }
 
-run_stages :: fn(mut s: Schedule, mut world: World, state: i64, from: i64,
-    to: i64) {
+run_stages :: fn(
+    mut s: Schedule,
+    mut world: World,
+    state: i64,
+    from: i64,
+    to: i64
+) {
     var stage := from
     while (stage <= to) {
         var k: i64 = 0
@@ -2541,8 +2671,11 @@ world_clear :: fn(mut world: World) {
     vec_push(
         $Table,
         world.tables,
-        Table { mask = mask_empty(), entities = vec_new($Entity, 16),
-            columns = vec_new($Column, 1) },
+        Table {
+            mask = mask_empty(),
+            entities = vec_new($Entity, 16),
+            columns = vec_new($Column, 1)
+        },
     )
     map_put($Mask, $i64, $mask_keys, world.lookup, mask_empty(), 0)
 }
@@ -2746,8 +2879,11 @@ group_note :: fn(mut g: Group, kind: ChangeKind, entity: Entity) {
     if (g.logging == false) {
         return
     }
-    vec_push($Change, g.log,
-        Change { kind = kind, entity = entity, component = -1, tick = 0 })
+    vec_push(
+        $Change,
+        g.log,
+        Change { kind = kind, entity = entity, component = -1, tick = 0 }
+    )
 }
 
 group_log_enable :: fn(mut g: Group, on: bool) {
@@ -2776,8 +2912,11 @@ group_spawn :: fn(mut g: Group) -> Entity {
     } else {
         id = g.next_id
         g.next_id = id + 1
-        vec_push($GroupSlot, g.slots,
-            GroupSlot { generation = 0, alive = false })
+        vec_push(
+            $GroupSlot,
+            g.slots,
+            GroupSlot { generation = 0, alive = false }
+        )
     }
     ref slot := vec_slice($GroupSlot, g.slots)[id]
     slot.generation = generation
@@ -2805,8 +2944,11 @@ group_count :: fn(g: Group) -> i64 {
 // told about one it has not seen.
 member_adopt :: fn(mut world: World, entity: Entity) {
     while (vec_len($EntitySlot, world.slots) <= entity.id) {
-        vec_push($EntitySlot, world.slots,
-            EntitySlot { generation = 0, alive = false, table = 0, row = 0 })
+        vec_push(
+            $EntitySlot,
+            world.slots,
+            EntitySlot { generation = 0, alive = false, table = 0, row = 0 }
+        )
     }
     existing := vec_slice($EntitySlot, world.slots)[entity.id]
     if (existing.alive && existing.generation == entity.generation) {
@@ -2975,8 +3117,7 @@ TestPosition :: struct { x: f32, y: f32 }
 TestVelocity :: struct { x: f32, y: f32 }
 TestHealth :: struct { points: i64 }
 
-test_integrate :: fn(mut p: []TestPosition, mut v: []TestVelocity,
-    count: i64) {
+test_integrate :: fn(mut p: []TestPosition, mut v: []TestVelocity, count: i64) {
     var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x
@@ -3008,14 +3149,24 @@ test "a component is written and read back" {
     position := ecs_register($TestPosition, world)
     a := ecs_spawn(world)
     assert(ecs_has(world, a, position) == false)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 1.0, y = 2.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 1.0, y = 2.0 }
+    )
     assert(ecs_has(world, a, position))
     held := ecs_get($TestPosition, world, a, position)
     assert(held.x == 1.0)
     assert(held.y == 2.0)
-    ecs_set($TestPosition, world, a, position,
-        TestPosition { x = 5.0, y = 6.0 })
+    ecs_set(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 5.0, y = 6.0 }
+    )
     again := ecs_get($TestPosition, world, a, position)
     assert(again.x == 5.0)
     ecs_free(world)
@@ -3027,10 +3178,20 @@ test "adding a component carries the ones already there" {
     velocity := ecs_register($TestVelocity, world)
     health := ecs_register($TestHealth, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 3.0, y = 4.0 })
-    ecs_add($TestVelocity, world, a, velocity,
-        TestVelocity { x = 0.5, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 3.0, y = 4.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 0.5, y = 0.0 }
+    )
     ecs_add($TestHealth, world, a, health, TestHealth { points = 12 })
     // Two migrations later, the first component is still what it was.
     held := ecs_get($TestPosition, world, a, position)
@@ -3065,8 +3226,20 @@ test "an entity can start out in the archetype it belongs in" {
 
     // The columns are there, so writing into them migrates nothing. Reading
     // back is what says the row is the one the mask asked for.
-    ecs_set($TestPosition, world, a, position, TestPosition { x = 1.0, y = 2.0 })
-    ecs_set($TestVelocity, world, a, velocity, TestVelocity { x = 9.0, y = 0.0 })
+    ecs_set(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 1.0, y = 2.0 }
+    )
+    ecs_set(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 9.0, y = 0.0 }
+    )
     held := ecs_get($TestPosition, world, a, position)
     assert(held.x == 1.0)
     assert(held.y == 2.0)
@@ -3076,8 +3249,20 @@ test "an entity can start out in the archetype it belongs in" {
     // Landing there is the same archetype walking there reaches, so the two
     // share a table rather than the world holding one for each route.
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position, TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, b, velocity, TestVelocity { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        b,
+        velocity,
+        TestVelocity { x = 0.0, y = 0.0 }
+    )
     slots := vec_slice($EntitySlot, world.slots)
     table_a := slots[a.id].table
     table_b := slots[b.id].table
@@ -3127,13 +3312,28 @@ test "a query visits the tables holding every component it asks for" {
     velocity := ecs_register($TestVelocity, world)
     // One entity with both, one with only a position.
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, a, velocity,
-        TestVelocity { x = 1.0, y = 2.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 1.0, y = 2.0 }
+    )
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position,
-        TestPosition { x = 100.0, y = 100.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 100.0, y = 100.0 }
+    )
 
     var seen: i64 = 0
     var q := query_begin(world)
@@ -3163,18 +3363,37 @@ test "a system writes through the columns a query hands it" {
     position := ecs_register($TestPosition, world)
     velocity := ecs_register($TestVelocity, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 1.0, y = 1.0 })
-    ecs_add($TestVelocity, world, a, velocity,
-        TestVelocity { x = 0.25, y = 0.5 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 1.0, y = 1.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 0.25, y = 0.5 }
+    )
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position,
-        TestPosition { x = 10.0, y = 10.0 })
-    ecs_add($TestVelocity, world, b, velocity,
-        TestVelocity { x = 1.0, y = 1.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 10.0, y = 10.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        b,
+        velocity,
+        TestVelocity { x = 1.0, y = 1.0 }
+    )
 
-    for_each($test_integrate, world, no_filters(), $TestPosition,
-        $TestVelocity)
+    for_each($test_integrate, world, no_filters(), $TestPosition, $TestVelocity)
 
     first := ecs_get($TestPosition, world, a, position)
     assert(first.x == 1.25)
@@ -3212,11 +3431,21 @@ test "a tag marks an entity without moving it" {
     position := ecs_register($TestPosition, world)
     var selected := tag_new()
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     tag_add(selected, a)
     assert(tag_has(selected, a))
     assert(tag_has(selected, b) == false)
@@ -3255,8 +3484,12 @@ TestDamage :: struct { amount: i64 }
 // a program does too.
 first_system :: fn(mut world: World) {
     held := ecs_resource($TestOrder, world, 0)
-    ecs_resource_set($TestOrder, world, 0,
-        TestOrder { steps = held.steps * 2 + 1 })
+    ecs_resource_set(
+        $TestOrder,
+        world,
+        0,
+        TestOrder { steps = held.steps * 2 + 1 }
+    )
 }
 
 second_system :: fn(mut world: World) {
@@ -3279,14 +3512,20 @@ test "a resource is found by the type it is" {
     assert(resource_of($TestDamage, world) == damage)
     assert(resource_of($TestOrder, world) == order)
 
-    ecs_resource_set($TestOrder, world, resource_of($TestOrder, world),
-        TestOrder { steps = 7 })
-    ecs_resource_set($TestDamage, world, resource_of($TestDamage, world),
-        TestDamage { amount = 3 })
-    assert(ecs_resource($TestOrder, world,
-            resource_of($TestOrder, world)).steps == 7)
-    assert(ecs_resource($TestDamage, world,
-            resource_of($TestDamage, world)).amount == 3)
+    ecs_resource_set(
+        $TestOrder,
+        world,
+        resource_of($TestOrder, world),
+        TestOrder { steps = 7 }
+    )
+    ecs_resource_set(
+        $TestDamage,
+        world,
+        resource_of($TestDamage, world),
+        TestDamage { amount = 3 }
+    )
+    assert(ecs_resource($TestOrder, world, resource_of($TestOrder, world)).steps == 7)
+    assert(ecs_resource($TestDamage, world, resource_of($TestDamage, world)).amount == 3)
     ecs_free(world)
 }
 
@@ -3395,8 +3634,13 @@ test "a migration carries a row's history with it" {
     ecs_tick(world)
     // Gaining a second component moves the entity to another table. The health
     // was not written by that, so its stamp is still the one it had.
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     assert(ecs_changed_since(world, a, health, written_at) == false)
     assert(ecs_added_since(world, a, position, written_at))
     ecs_free(world)
@@ -3630,11 +3874,21 @@ test "a world full of components gives back every block it took" {
     var made: i64 = 0
     while (made < 64) {
         e := ecs_spawn(world)
-        ecs_add($TestPosition, world, e, position,
-            TestPosition { x = 1.0, y = 2.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            e,
+            position,
+            TestPosition { x = 1.0, y = 2.0 }
+        )
         if (made % 2 == 0) {
-            ecs_add($TestVelocity, world, e, velocity,
-                TestVelocity { x = 0.5, y = 0.5 })
+            ecs_add(
+                $TestVelocity,
+                world,
+                e,
+                velocity,
+                TestVelocity { x = 0.5, y = 0.5 }
+            )
         }
         if (made % 3 == 0) {
             ecs_add($TestHealth, world, e, health, TestHealth { points = made })
@@ -3966,8 +4220,13 @@ test "removing a component an entity does not hold changes nothing" {
     position := ecs_register($TestPosition, world)
     health := ecs_register($TestHealth, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 3.0, y = 4.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 3.0, y = 4.0 }
+    )
     ecs_remove(world, a, health)
     assert(ecs_has(world, a, position))
     assert(ecs_get($TestPosition, world, a, position).x == 3.0)
@@ -3994,16 +4253,36 @@ test "a table is made once for a set of components however many hold it" {
     position := ecs_register($TestPosition, world)
     velocity := ecs_register($TestVelocity, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, a, velocity,
-        TestVelocity { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 0.0, y = 0.0 }
+    )
     settled := vec_len($Table, world.tables)
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position,
-        TestPosition { x = 1.0, y = 1.0 })
-    ecs_add($TestVelocity, world, b, velocity,
-        TestVelocity { x = 1.0, y = 1.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 1.0, y = 1.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        b,
+        velocity,
+        TestVelocity { x = 1.0, y = 1.0 }
+    )
     assert(vec_len($Table, world.tables) == settled)
     ecs_free(world)
 }
@@ -4016,14 +4295,29 @@ test "the row a despawn moves keeps every one of its components" {
     b := ecs_spawn(world)
     c := ecs_spawn(world)
     var which: i64 = 0
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 1.0, y = 1.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 1.0, y = 1.0 }
+    )
     ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
-    ecs_add($TestPosition, world, b, position,
-        TestPosition { x = 2.0, y = 2.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 2.0, y = 2.0 }
+    )
     ecs_add($TestHealth, world, b, health, TestHealth { points = 2 })
-    ecs_add($TestPosition, world, c, position,
-        TestPosition { x = 3.0, y = 3.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        c,
+        position,
+        TestPosition { x = 3.0, y = 3.0 }
+    )
     ecs_add($TestHealth, world, c, health, TestHealth { points = 3 })
     ecs_despawn(world, a)
     // `c` filled the hole, and both of its columns came with it.
@@ -4100,8 +4394,13 @@ test "a component nothing asked about has no change to report" {
     position := ecs_register($TestPosition, world)
     health := ecs_register($TestHealth, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     // The entity does not hold this one, so nothing about it changed.
     assert(ecs_changed_since(world, a, health, 0) == false)
     assert(ecs_added_since(world, a, health, 0) == false)
@@ -4399,8 +4698,12 @@ test_hold :: fn(mut p: []TestPosition, count: i64) {
     }
 }
 
-test_three :: fn(mut p: []TestPosition, v: []TestVelocity, h: []TestHealth,
-    count: i64) {
+test_three :: fn(
+    mut p: []TestPosition,
+    v: []TestVelocity,
+    h: []TestHealth,
+    count: i64
+) {
     var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x + h[i].points
@@ -4420,16 +4723,46 @@ test "a query over three components reads all three" {
     velocity := ecs_register($TestVelocity, world)
     health := ecs_register($TestHealth, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position, TestPosition { x = 1.0, y = 0.0 })
-    ecs_add($TestVelocity, world, a, velocity, TestVelocity { x = 2.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        a,
+        velocity,
+        TestVelocity { x = 2.0, y = 0.0 }
+    )
     ecs_add($TestHealth, world, a, health, TestHealth { points = 3 })
     // And one that holds only two, which the query must not visit.
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position, TestPosition { x = 9.0, y = 0.0 })
-    ecs_add($TestVelocity, world, b, velocity, TestVelocity { x = 9.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 9.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        b,
+        velocity,
+        TestVelocity { x = 9.0, y = 0.0 }
+    )
 
-    for_each($test_three, world, no_filters(), $TestPosition, $TestVelocity,
-        $TestHealth)
+    for_each(
+        $test_three,
+        world,
+        no_filters(),
+        $TestPosition,
+        $TestVelocity,
+        $TestHealth
+    )
 
     assert(ecs_get($TestPosition, world, a, position).x == 6.0)
     assert(ecs_get($TestPosition, world, b, position).x == 9.0)
@@ -4443,15 +4776,29 @@ test "a query without a component skips the tables that hold it" {
     position := ecs_register($TestPosition, world)
     frozen := ecs_register($TestFrozen, world)
     moving := ecs_spawn(world)
-    ecs_add($TestPosition, world, moving, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        moving,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     still := ecs_spawn(world)
-    ecs_add($TestPosition, world, still, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        still,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     ecs_add($TestFrozen, world, still, frozen, TestFrozen { held = 1 })
 
-    for_each($test_hold, world, filter_without(no_filters(), frozen),
-        $TestPosition)
+    for_each(
+        $test_hold,
+        world,
+        filter_without(no_filters(), frozen),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, moving, position).x == 101.0)
     assert(ecs_get($TestPosition, world, still, position).x == 1.0)
@@ -4467,22 +4814,40 @@ test "a query for a tag visits only the rows carrying it" {
     var chosen := tag_new()
 
     marked_entity := ecs_spawn(world)
-    ecs_add($TestPosition, world, marked_entity, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        marked_entity,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     plain := ecs_spawn(world)
-    ecs_add($TestPosition, world, plain, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        plain,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     tag_add(chosen, marked_entity)
 
-    for_each_row($test_one_row, world, filter_tagged(no_filters(), chosen),
-        $TestPosition)
+    for_each_row(
+        $test_one_row,
+        world,
+        filter_tagged(no_filters(), chosen),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, marked_entity, position).y == 1000.0)
     assert(ecs_get($TestPosition, world, plain, position).y == 0.0)
 
     // And the other way round, which visits the rows the first run skipped.
-    for_each_row($test_one_row, world, filter_untagged(no_filters(), chosen),
-        $TestPosition)
+    for_each_row(
+        $test_one_row,
+        world,
+        filter_untagged(no_filters(), chosen),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, marked_entity, position).y == 1000.0)
     assert(ecs_get($TestPosition, world, plain, position).y == 1000.0)
@@ -4499,19 +4864,33 @@ test "a query for a tag does not read a stale mark" {
     var chosen := tag_new()
 
     first := ecs_spawn(world)
-    ecs_add($TestPosition, world, first, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        first,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     tag_add(chosen, first)
     ecs_despawn(world, first)
 
     reused := ecs_spawn(world)
-    ecs_add($TestPosition, world, reused, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        reused,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     assert(reused.id == first.id)
     assert(tag_has(chosen, reused) == false)
 
-    for_each_row($test_one_row, world, filter_tagged(no_filters(), chosen),
-        $TestPosition)
+    for_each_row(
+        $test_one_row,
+        world,
+        filter_tagged(no_filters(), chosen),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, reused, position).y == 0.0)
     tag_free(chosen)
@@ -4524,16 +4903,38 @@ test "a query for changed rows skips the rows nothing touched" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
     a := ecs_spawn(world)
-    ecs_add($TestPosition, world, a, position, TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     b := ecs_spawn(world)
-    ecs_add($TestPosition, world, b, position, TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        b,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     mark := ecs_now(world)
     ecs_tick(world)
     // Only one of them is written after the mark.
-    ecs_set($TestPosition, world, a, position, TestPosition { x = 5.0, y = 0.0 })
+    ecs_set(
+        $TestPosition,
+        world,
+        a,
+        position,
+        TestPosition { x = 5.0, y = 0.0 }
+    )
 
-    for_each_row($test_one_row, world,
-        filter_changed(no_filters(), position, mark), $TestPosition)
+    for_each_row(
+        $test_one_row,
+        world,
+        filter_changed(no_filters(), position, mark),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, a, position).y == 1000.0)
     assert(ecs_get($TestPosition, world, b, position).y == 0.0)
@@ -4546,16 +4947,30 @@ test "a query for added rows finds the ones given the component since" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
     early := ecs_spawn(world)
-    ecs_add($TestPosition, world, early, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        early,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
     mark := ecs_now(world)
     ecs_tick(world)
     late := ecs_spawn(world)
-    ecs_add($TestPosition, world, late, position,
-        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        late,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
 
-    for_each_row($test_one_row, world,
-        filter_added(no_filters(), position, mark), $TestPosition)
+    for_each_row(
+        $test_one_row,
+        world,
+        filter_added(no_filters(), position, mark),
+        $TestPosition
+    )
 
     assert(ecs_get($TestPosition, world, late, position).y == 1000.0)
     assert(ecs_get($TestPosition, world, early, position).y == 0.0)
@@ -4572,30 +4987,70 @@ test "with, without and changed in one query" {
 
     // Reads, changed since the mark: visited.
     wanted := ecs_spawn(world)
-    ecs_add($TestPosition, world, wanted, position,
-        TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, wanted, velocity,
-        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        wanted,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        wanted,
+        velocity,
+        TestVelocity { x = 1.0, y = 0.0 }
+    )
     // The same, but frozen: skipped with its whole table.
     held := ecs_spawn(world)
-    ecs_add($TestPosition, world, held, position,
-        TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, held, velocity,
-        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        held,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        held,
+        velocity,
+        TestVelocity { x = 1.0, y = 0.0 }
+    )
     ecs_add($TestFrozen, world, held, frozen, TestFrozen { held = 1 })
     // The same, unfrozen, but not written since the mark: skipped by its row.
     quiet := ecs_spawn(world)
-    ecs_add($TestPosition, world, quiet, position,
-        TestPosition { x = 0.0, y = 0.0 })
-    ecs_add($TestVelocity, world, quiet, velocity,
-        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        quiet,
+        position,
+        TestPosition { x = 0.0, y = 0.0 }
+    )
+    ecs_add(
+        $TestVelocity,
+        world,
+        quiet,
+        velocity,
+        TestVelocity { x = 1.0, y = 0.0 }
+    )
 
     mark := ecs_now(world)
     ecs_tick(world)
-    ecs_set($TestVelocity, world, wanted, velocity,
-        TestVelocity { x = 1.0, y = 0.0 })
-    ecs_set($TestVelocity, world, held, velocity,
-        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_set(
+        $TestVelocity,
+        world,
+        wanted,
+        velocity,
+        TestVelocity { x = 1.0, y = 0.0 }
+    )
+    ecs_set(
+        $TestVelocity,
+        world,
+        held,
+        velocity,
+        TestVelocity { x = 1.0, y = 0.0 }
+    )
 
     var f := no_filters()
     f = filter_without(f, frozen)
@@ -4733,8 +5188,12 @@ test "a walk of one member reads what another member holds" {
     while (index < 3) {
         entity := group_spawn(g)
         held: f32 = index
-        group_set($EngineTransform, g, entity,
-            EngineTransform { x = held, y = 0.0 })
+        group_set(
+            $EngineTransform,
+            g,
+            entity,
+            EngineTransform { x = held, y = 0.0 }
+        )
         group_set($GameSpeed, g, entity, GameSpeed { rate = held + 1.0 })
         made[index] = entity
         index = index + 1
@@ -4775,8 +5234,12 @@ test "a join gathers first and writes after" {
     while (index < 4) {
         entity := group_spawn(g)
         held: f32 = index
-        group_set($EngineTransform, g, entity,
-            EngineTransform { x = held, y = 0.0 })
+        group_set(
+            $EngineTransform,
+            g,
+            entity,
+            EngineTransform { x = held, y = 0.0 }
+        )
         index = index + 1
     }
 
@@ -4949,8 +5412,13 @@ test "a raw walk leaves the write times alone" {
     var index: i64 = 0
     while (index < 3) {
         entity := ecs_spawn(world)
-        ecs_add($TestPosition, world, entity, position,
-            TestPosition { x = 0.0, y = 0.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            entity,
+            position,
+            TestPosition { x = 0.0, y = 0.0 }
+        )
         index = index + 1
     }
     mark := ecs_now(world)
@@ -4995,8 +5463,13 @@ test "a raw walk marks the rows it wrote" {
     var index: i64 = 0
     while (index < 3) {
         entity := ecs_spawn(world)
-        ecs_add($TestPosition, world, entity, position,
-            TestPosition { x = 0.0, y = 0.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            entity,
+            position,
+            TestPosition { x = 0.0, y = 0.0 }
+        )
         held[index] = entity
         index = index + 1
     }
@@ -5030,8 +5503,13 @@ test "a whole column is marked at once" {
     var index: i64 = 0
     while (index < 4) {
         entity := ecs_spawn(world)
-        ecs_add($TestPosition, world, entity, position,
-            TestPosition { x = 0.0, y = 0.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            entity,
+            position,
+            TestPosition { x = 0.0, y = 0.0 }
+        )
         index = index + 1
     }
     mark := ecs_now(world)
@@ -5092,8 +5570,7 @@ test "a bundle comes off in one go" {
     velocity := ecs_register($TestVelocity, world)
     health := ecs_register($TestHealth, world)
 
-    entity := ecs_spawn_bundle(world, $TestPosition, $TestVelocity,
-        $TestHealth)
+    entity := ecs_spawn_bundle(world, $TestPosition, $TestVelocity, $TestHealth)
     assert(ecs_has_bundle(world, entity, $TestPosition, $TestVelocity))
 
     ecs_remove_bundle(world, entity, $TestPosition, $TestVelocity)
@@ -5136,14 +5613,24 @@ test "a single match answers and an ambiguous one does not" {
     assert(is_no_entity(ecs_single(world, no_filters(), $TestPosition)))
 
     first := ecs_spawn(world)
-    ecs_add($TestPosition, world, first, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        first,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
     found := ecs_single(world, no_filters(), $TestPosition)
     assert(found.id == first.id)
 
     second := ecs_spawn(world)
-    ecs_add($TestPosition, world, second, position,
-        TestPosition { x = 2.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        second,
+        position,
+        TestPosition { x = 2.0, y = 0.0 }
+    )
     assert(is_no_entity(ecs_single(world, no_filters(), $TestPosition)))
     ecs_free(world)
 }
@@ -5158,13 +5645,23 @@ test "a gather names every row a walk would visit" {
     var made: i64 = 0
     while (made < 5) {
         entity := ecs_spawn(world)
-        ecs_add($TestPosition, world, entity, position,
-            TestPosition { x = 0.0, y = 0.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            entity,
+            position,
+            TestPosition { x = 0.0, y = 0.0 }
+        )
         // Two of them land in a second archetype, so the gather is over more
         // than one table.
         if (made < 2) {
-            ecs_add($TestHealth, world, entity, health,
-                TestHealth { points = 1 })
+            ecs_add(
+                $TestHealth,
+                world,
+                entity,
+                health,
+                TestHealth { points = 1 }
+            )
         }
         made = made + 1
     }
@@ -5199,8 +5696,13 @@ test "a pair walk names each pair once" {
     var made: i64 = 0
     while (made < 4) {
         entity := ecs_spawn(world)
-        ecs_add($TestPosition, world, entity, position,
-            TestPosition { x = 0.0, y = 0.0 })
+        ecs_add(
+            $TestPosition,
+            world,
+            entity,
+            position,
+            TestPosition { x = 0.0, y = 0.0 }
+        )
         made = made + 1
     }
 
@@ -5259,13 +5761,23 @@ test "compaction drops the empty tables and leaves the world working" {
     health := ecs_register($TestHealth, world)
 
     kept := ecs_spawn(world)
-    ecs_add($TestPosition, world, kept, position,
-        TestPosition { x = 7.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        kept,
+        position,
+        TestPosition { x = 7.0, y = 0.0 }
+    )
     gone := ecs_spawn(world)
     ecs_add($TestHealth, world, gone, health, TestHealth { points = 3 })
     both := ecs_spawn_bundle(world, $TestPosition, $TestHealth)
-    ecs_set($TestPosition, world, both, position,
-        TestPosition { x = 9.0, y = 0.0 })
+    ecs_set(
+        $TestPosition,
+        world,
+        both,
+        position,
+        TestPosition { x = 9.0, y = 0.0 }
+    )
     ecs_despawn(world, gone)
 
     dropped := ecs_compact(world)
@@ -5280,8 +5792,13 @@ test "compaction drops the empty tables and leaves the world working" {
     // the archetype holding nothing, and what it is given afterwards has to
     // reach the columns of wherever it migrates to.
     fresh := ecs_spawn(world)
-    ecs_add($TestPosition, world, fresh, position,
-        TestPosition { x = 4.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        fresh,
+        position,
+        TestPosition { x = 4.0, y = 0.0 }
+    )
     assert(ecs_get($TestPosition, world, fresh, position).x == 4.0)
     assert(ecs_get($TestPosition, world, kept, position).x == 7.0)
     assert(ecs_count_matching(world, no_filters(), $TestPosition) == 3)
@@ -5320,8 +5837,10 @@ test "a channel is read from a mark and trimmed to the slowest reader" {
     assert(slice_len(from_second) == 2)
     assert(from_second[0].points == 2)
 
-    var readers: [2]EventReader = [EventReader { seen = fast.seen },
-        EventReader { seen = slow.seen }]
+    var readers: [2]EventReader = [
+        EventReader { seen = fast.seen },
+        EventReader { seen = slow.seen }
+    ]
     assert(readers_oldest(readers) == 0)
 
     // Trimming to the slowest drops nothing yet, since it has read nothing.
@@ -5413,8 +5932,13 @@ test "clearing a world keeps its registry and drops its rows" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
     entity := ecs_spawn(world)
-    ecs_add($TestPosition, world, entity, position,
-        TestPosition { x = 5.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        entity,
+        position,
+        TestPosition { x = 5.0, y = 0.0 }
+    )
     assert(ecs_count(world) == 1)
 
     world_clear(world)
@@ -5426,8 +5950,13 @@ test "clearing a world keeps its registry and drops its rows" {
     assert(ecs_component_by_name(world, "TestPosition") == position)
 
     again := ecs_spawn(world)
-    ecs_add($TestPosition, world, again, position,
-        TestPosition { x = 6.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        again,
+        position,
+        TestPosition { x = 6.0, y = 0.0 }
+    )
     assert(ecs_get($TestPosition, world, again, position).x == 6.0)
     ecs_free(world)
 }
@@ -5439,13 +5968,23 @@ test "a walk reads when a row arrived and when it changed" {
     var world := ecs_new()
     position := ecs_register($TestPosition, world)
     early := ecs_spawn(world)
-    ecs_add($TestPosition, world, early, position,
-        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $TestPosition,
+        world,
+        early,
+        position,
+        TestPosition { x = 1.0, y = 0.0 }
+    )
 
     mark := ecs_now(world)
     ecs_tick(world)
-    ecs_set($TestPosition, world, early, position,
-        TestPosition { x = 2.0, y = 0.0 })
+    ecs_set(
+        $TestPosition,
+        world,
+        early,
+        position,
+        TestPosition { x = 2.0, y = 0.0 }
+    )
 
     var q := query_begin(world)
     query_with(q, position)
@@ -5495,14 +6034,12 @@ test "a startup system runs once and a frame does not" {
 
     // `first_system` doubles and adds one, `second_system` doubles.
     schedule_start(frame, world, ANY_STATE)
-    assert(ecs_resource($TestOrder, world,
-            resource_of($TestOrder, world)).steps == 1)
+    assert(ecs_resource($TestOrder, world, resource_of($TestOrder, world)).steps == 1)
 
     schedule_run(frame, world, ANY_STATE)
     schedule_run(frame, world, ANY_STATE)
     // Two frames of doubling and no second startup.
-    assert(ecs_resource($TestOrder, world,
-            resource_of($TestOrder, world)).steps == 4)
+    assert(ecs_resource($TestOrder, world, resource_of($TestOrder, world)).steps == 4)
 
     schedule_free(frame)
     ecs_free(world)
@@ -5519,8 +6056,12 @@ test "a group holds tags named by type" {
 
     marked_entity := group_spawn(g)
     plain := group_spawn(g)
-    group_set($EngineTransform, g, marked_entity,
-        EngineTransform { x = 1.0, y = 0.0 })
+    group_set(
+        $EngineTransform,
+        g,
+        marked_entity,
+        EngineTransform { x = 1.0, y = 0.0 }
+    )
     group_set($EngineTransform, g, plain, EngineTransform { x = 2.0, y = 0.0 })
 
     // The type names the tag, so two places asking for the same one get the
@@ -5567,8 +6108,12 @@ test "a group removes, despawns a run, and clears its log" {
     while (index < 3) {
         entity := group_spawn(g)
         held: f32 = index
-        group_set($EngineTransform, g, entity,
-            EngineTransform { x = held, y = 0.0 })
+        group_set(
+            $EngineTransform,
+            g,
+            entity,
+            EngineTransform { x = held, y = 0.0 }
+        )
         group_set($GameHealth, g, entity, GameHealth { points = index })
         made[index] = entity
         index = index + 1
@@ -5595,5 +6140,4 @@ test "a group removes, despawns a run, and clears its log" {
     group_free(g)
 }
 
-// A world written down and read back is the same world: the same entities in
-// the same tables holding the same values, and the same handles still refused.
+// A world written down and read back is the same world: the same entities in // the same tables holding the same values, and the same handles still refused.
