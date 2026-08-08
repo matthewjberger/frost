@@ -1,9 +1,9 @@
 # The standard library
 
-`std/` is twenty files of Frost, compiled the way your own modules are
-compiled. Nothing in it is a compiler intrinsic a program does not also get:
-`Vec` and `Map` are structs over a heap slice, `Option` is a generic enum, and
-`Slab` and `columns` use the handle indexing of section 10.2 of
+`std/` is twenty files of Frost, compiled the way your own modules are compiled
+and written with the same language your own code has. `Vec` and `Map` are
+structs over a heap slice, `Option` is a generic enum, and `Slab` and `columns`
+use the handle indexing of section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md), which any struct of
 the same shape gets on the same terms.
 
@@ -13,8 +13,8 @@ would, with an `extern` declaration. `mem.frost` declares the C allocator,
 `thread.frost` its threading ones, and `math.frost` and `math64.frost` the C
 transcendentals. `ecs.frost` and `slab.frost` add one runtime call each, for
 reporting and for the identifier a container stamps into its handles. Those
-eight files hold every `extern` in the library. The other twelve declare none,
-which is why they are ordinary safe code.
+eight files hold every `extern` in the library. The other twelve are ordinary
+safe code.
 
 Nothing is imported implicitly. A program that wants to print says
 `import "io.frost"`, and the file is found on the standard library search path
@@ -45,29 +45,29 @@ standard library is the last of them.
 | `snapshot.frost` | A world written to bytes and read back, refusing a mismatched registry | [ecs.md](ecs.md) |
 | `ecs.frost` | An archetype entity-component system | [ecs.md](ecs.md) |
 
-[graphics.md](graphics.md) covers `lib/` and `examples/graphics/`, which are not part of
-`std/`. It is SDL3 and WebGPU bound to Frost, and it is the worked example of
-what a binding to a real C library looks like.
+[graphics.md](graphics.md) covers `lib/` and `examples/graphics/`, which sit
+outside `std/`. They are SDL3 and WebGPU bound to Frost, and they are the book's
+worked example of a binding to a real C library.
 
 ## What it stands on
 
 Almost everything allocating in the library goes through `mem.frost`, which is
 where the `unsafe` is concentrated. `arena.frost` is the one other allocator,
 and its single `unsafe` block is the reinterpret from bytes to `T`.
-`vec.frost`, `fixed.frost` and `map.frost` hold slices rather than raw pointers
-and contain no `unsafe` block of their own.
+`vec.frost`, `fixed.frost` and `map.frost` hold slices, so they contain no
+`unsafe` block of their own.
 `slab.frost` and `columns.frost` allocate nothing at all. `io.frost`,
 `fs.frost` and `thread.frost` each wrap a handful of `extern` declarations so a
 program that prints, reads a file or starts a thread names none of them.
 
-Two patterns recur and are worth learning once. A capability is a struct whose
-fields are functions, passed as a compile-time argument and folded at the call:
-`Ordering<T>` for the sort and `Hashing<K>` for the map. A container hands out
-its elements as a bounds-checked slice rather than taking a callback:
-`vec_slice`, `ecs_slice`, `world.x` on a `columns`. Both come out of the same
-decision, which [philosophy.md](../design/philosophy.md) argues for: no traits
-and no capturing closures, so the body goes where it is written and the dispatch
-folds away.
+Two patterns recur. A capability is a struct whose fields are functions, passed
+as a compile-time argument and folded at the call: `Ordering<T>` for the sort
+and `Hashing<K>` for the map. A container hands out its elements as a
+bounds-checked slice, the way `vec_slice`, `ecs_slice` and `world.x` on a
+`columns` do. Both come out of the same decision, which
+[philosophy.md](../design/philosophy.md) argues for. There are no traits and no
+capturing closures, so the body goes where it is written and the dispatch folds
+away.
 
 ## Running the tests
 

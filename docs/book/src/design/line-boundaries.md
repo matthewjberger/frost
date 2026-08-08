@@ -1,8 +1,8 @@
 # Where a statement ends
 
 A line break ends a statement, and an expression runs past one only inside
-brackets. This chapter is what that rule buys, what it costs, and the three
-other rules it was chosen over.
+brackets. This chapter gives the rule, what it costs, and the three other rules
+it was chosen over.
 
 ## The hazard it removes
 
@@ -37,25 +37,25 @@ expressions side by side, which does not parse.
 
 ## Four rules, and the one taken
 
-**(a) Continuation by syntactic incompleteness.** A line that cannot be a
+(a) Continuation by syntactic incompleteness. A line that cannot be a
 complete statement continues. Trailing-operator style. Rejected: it reproduces
 the hazard with the polarity flipped. Dropping a trailing `+` silently
-terminates the statement, which is the same failure read in a mirror, and the
-corpus would have to be rewritten to trailing operators to get there.
+terminates the statement, and the corpus would have to be rewritten to trailing
+operators to get there.
 
-**(b) Free wrapping inside brackets, incompleteness outside.** The bracket half
+(b) Free wrapping inside brackets, incompleteness outside. The bracket half
 is already true. The outside half is (a) and carries (a)'s hazard.
 
-**(c) Explicit statement terminators.** A semicolon after every statement. Kills
+(c) Explicit statement terminators. A semicolon after every statement. Kills
 the hazard outright: a dropped operator leaves a statement that does not
 terminate. Costs a terminator on every line of a 60,000-line corpus, and the
 language deliberately does not have one.
 
-**(d) Explicit continuation marker.** A trailing `\` or similar. Unambiguous in
+(d) Explicit continuation marker. A trailing `\` or similar. Unambiguous in
 both directions, and it is a token whose only job is to be dropped.
 
-**What Frost takes: a line break ends a statement, and brackets are where an
-expression runs on.** Outside brackets a line cannot open with an operator that
+The rule Frost takes: a line break ends a statement, and brackets are where an
+expression runs on. Outside brackets a line cannot open with an operator that
 joins it to the line above; inside brackets a line break says nothing. An
 expression too long for a line is wrapped in the brackets a reader would have
 put round it anyway.
@@ -64,17 +64,16 @@ put round it anyway.
 
 > The parse of line N never depends on the token that opens line N+1.
 
-By construction rather than by a check standing beside a rule. Outside brackets
-a line is a statement and the expression on it ends at the break, so nothing
-after it can change what it means. Inside brackets a line break carries no
-meaning at all, so there is nothing for a token to change.
+That holds by construction, with no check standing beside a rule. Outside
+brackets a line is a statement and the expression on it ends at the break, so
+nothing after it can change what it means. Inside brackets a line break carries
+no meaning at all, so there is nothing for a token to change.
 
-## No mirror hazard
+## Single-token edits at a boundary
 
-Every single-token edit at a boundary, for every operator that could carry an
-expression across one, held by
-`no_operator_carries_an_expression_across_a_line_outside_brackets` and its
-neighbours:
+The test `no_operator_carries_an_expression_across_a_line_outside_brackets` and
+its neighbours run every single-token edit at a boundary, for every operator
+that could carry an expression across one:
 
 | edit | outside brackets | inside brackets |
 | --- | --- | --- |
@@ -102,8 +101,8 @@ kept :: fn(a: i64, b: i64, c: i64) -> bool {
 }
 ```
 
-The brackets are the cost. They are one character at each end of an expression
-that was already going to be parenthesised by anyone reading it twice.
+The brackets are the cost: one character at each end of an expression that was
+already going to be parenthesised by anyone reading it twice.
 
 ## A statement that shares its block's opening line
 

@@ -9,11 +9,11 @@ lexer takes the longest token that matches. Identifiers are ASCII,
 ## 2.2 Whitespace and comments
 
 Whitespace (space, tab, carriage return, newline) separates tokens and is
-otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
-semicolon insertion. Statement terminators (`;`) are always optional.
+otherwise insignificant. There is no automatic semicolon insertion. Statement
+terminators (`;`) are always optional.
 
-A line break does decide one thing. A token that opens a line and could begin a
-statement of its own does begin one rather than continuing the line above. Three
+A line break decides one thing. A token that opens a line and could begin a
+statement of its own begins one, and the line above ends at the break. Three
 tokens are in that position, `(`, `[`, and `-`, so
 
 ```frost,sketch
@@ -24,20 +24,17 @@ count = 4
 -total
 ```
 
-is four statements: no call of the first line's value, and no subtraction from
-`4`. Every other operator has no prefix form, so a line opening with one can
-only be a continuation and is read as one. To spell a subtraction across a line
-break, put the `-` at the end of the first line:
+is four statements: a binding and a comparison, then an assignment and a
+negation. Every other operator has no prefix form, so a line opening with one
+continues the line above. To spell a subtraction across a line break, put the
+`-` at the end of the first line:
 
 ```frost,sketch
 held := count -
     total
 ```
 
-This is the only rule whitespace has. It exists because a statement beginning
-with a parenthesis or a negation is otherwise indistinguishable from a call or a
-subtraction written across two lines, and the reading that agrees with the
-indentation is the one a reader means.
+This is the only rule whitespace has.
 
 There are two comment forms:
 
@@ -51,16 +48,16 @@ There are two comment forms:
 IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
 ```
 
-The single underscore `_` is a distinct token, the wildcard, and is not a
-binding name. It stands in a `match` arm that covers the rest (7.4) and in a
-binding list for a value the caller has no use for (5.2a). Everywhere else it
-has nowhere to parse: `_ := 5` is refused and `_` is not an expression. It is
-also refused as one alternative of a `case` naming several, since an
-alternative covering everything leaves the others saying nothing (6.7).
+The single underscore `_` is a distinct token, the wildcard, and never names a
+binding. It stands in a `match` arm that covers the rest (7.4) and in a binding
+list for a value the caller has no use for (5.2a). Everywhere else it has
+nowhere to parse: `_ := 5` is refused, and `_` is refused where an expression
+is expected. It is also refused as one alternative of a `case` naming several
+(6.7).
 
 `..`, `..=` and `|` carry their usual meanings inside a `case` pattern: the
 first two open a span of whole numbers and the third joins alternatives (6.7).
-No token is new there, so nothing about lexing changes.
+The lexer reads them there as it reads them anywhere.
 
 ## 2.4 Keywords
 
@@ -86,8 +83,8 @@ no surface program writes it.
 
 `true` and `false`, the boolean literals of 2.5, are predeclared the same way:
 identifiers to the lexer, always the booleans in expression position. A
-binding, parameter or constant by either name could never be read back, so
-declaring one is refused where the declaration is read.
+binding, parameter or constant declared by either name is refused where the
+declaration is read.
 
 Several more words carry meaning without being reserved, so each stays usable
 as an ordinary identifier. `test` is read only at the start of a top-level test
@@ -97,7 +94,7 @@ and `value` only as a parameter mode, where a name follows it (chapter 12).
 `packed` marks a declaration only where `struct` follows it, and `align` marks
 a field's alignment only where `(` follows it (3.2a).
 `Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
-identifier recognized in that position, unlike the lowercase keyword `type`.
+identifier recognized in that position. The lowercase `type` is a keyword.
 The type builtins `sizeof`, `typename` and `type_id` are ordinary names read
 as the builtin only where one is called with a type argument (6.8), the way
 `ptr_to` and the other builtin functions are read at a call.
@@ -112,25 +109,24 @@ underscore may sit between digits and is dropped before the number is read, so
 non-negative; a negative value is the prefix `-` applied to one. An integer
 literal takes its type from context, defaulting to `i64`.
 
-A hex or binary literal is read as unsigned and reinterpreted, so the whole of
-a sixty-four bit mask can be written: `0xFFFFFFFFFFFFFFFF` is the all-ones
-sentinel a C header spells that way, and it is past what an `i64` holds as a
-positive number. A literal that does not fit the type it is written at is
-refused rather than truncated (3.2).
+A hex or binary literal is read as unsigned and reinterpreted, so a full
+sixty-four bit mask can be written. `0xFFFFFFFFFFFFFFFF` is the all-ones value,
+past what an `i64` holds as a positive number. A literal that does not fit the
+type it is written at is refused (3.2).
 
 Float. `FLOAT = DIGIT (DIGIT | "_")* ("." DIGIT (DIGIT | "_")*)? EXPONENT?`,
 where `EXPONENT = ("e" | "E") ("+" | "-")? DIGIT+`, with an optional `f` or
 `f32` suffix that makes it an `f32`, otherwise it is `f64`. Either a fraction
-or an exponent makes the number a float, so `1e3` is one, and `1` is not. A `.`
-is only taken as a decimal point when the following character is not another
+or an exponent makes the number a float, so `1e3` is a float and `1` is an
+integer. A `.` is only taken as a decimal point when the next character is not
 `.`, so `0..10` lexes as a range. An `e` is only taken as an exponent when
 digits, or a sign and then digits, follow it. There is no leading-dot form.
 
 String. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
 `\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
 string literal has type `str` (3.7) and denotes a view of its bytes. Where `^i8`
-is expected it instead denotes a pointer to the same bytes with a trailing NUL,
-which is how string literals interoperate with C.
+is expected it denotes a pointer to the same bytes with a trailing NUL, the form
+an `extern` function reads.
 
 Boolean. `true`, `false`, of type `bool`.
 
@@ -143,5 +139,5 @@ Boolean. `true`, `false`, of type `bool`.
 (   )   {   }   [   ]   ,   ;
 ```
 
-`>>` is a single shift token that the
-parser splits when it closes nested generic arguments (11.4).
+`>>` is a single shift token that the parser splits when it closes nested
+generic arguments (11.4).

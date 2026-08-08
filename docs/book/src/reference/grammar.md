@@ -42,9 +42,9 @@ Statement =
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 
-`LiveWalk = "live_slots" "(" Place ")"`, where `Place` is a name or a field of one
-(10.1b). It is written only after the `in` of a `for`: it is the subject of a
-walk, so there is no value for it to be anywhere else.
+`LiveWalk = "live_slots" "(" Place ")"`, where `Place` is a name or a field of
+one (10.1b). It is written only after the `in` of a `for`, where it is the
+subject of the walk.
 
 ```
 MultiNames = MultiName ( "," MultiName )+
@@ -62,7 +62,7 @@ literal and a `{` follow it, and a rename list only when its `(` opens on the
 same line as the import path.
 
 A name followed by a comma at statement position is a list binding and nothing
-else, which is what tells the two `:=` forms apart.
+else. That comma tells the two `:=` forms apart.
 
 The `var` / `:=` / `: =` / `::` forms are selected by the token after the
 identifier. These are `:=` (inferred binding), `:` then a non-`:` (typed
@@ -108,21 +108,19 @@ A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
 expression is a function literal (13.6).
 
 A constant's `Expr`, and an array's length, may call a function the file can
-name. Nothing in the grammar marks such a call: it is written as any call is,
-and where it stands is what says it is worked out before the program runs
-(5.2c).
+name. The grammar carries no marker for such a call. It is written as any call
+is, and a call in either position is worked out before the program runs (5.2c).
 
-`value` (chapter 12) is a word rather than a keyword, so a parameter may still
-be named `value`. What tells the two apart is that a mode is followed by the
-parameter's name and a name is followed by its type.
+`value` (chapter 12) carries its meaning without being reserved, so a parameter
+may still be named `value`. A mode is followed by the parameter's name and a
+name is followed by its type.
 
 `packed` and `align` (3.2a) are words too. `packed` marks the declaration only
 where `struct` follows it, and `align` marks the field's alignment only where
 `(` follows it, so a local, a field and a parameter may still be called either.
 
-`args: $...` takes no type, since its length and its element types arrive with
-each call, and it is last, because anything after it would have nothing to say
-which side of the list it belonged to.
+`args: $...` takes no type. Its length and its element types arrive with each
+call, and it is written last in the parameter list.
 
 ## 13.3 Blocks
 
@@ -196,7 +194,7 @@ token after `{` is not `case`.
 The `for` form of `Argument` is `g(T) for T in list` (11.1c): the expression is
 written once and the call takes one argument per element of the compile-time
 list, with the named variable standing for that element. An argument list is the
-only place it may be written, because what it produces is an argument count.
+only place it may be written.
 
 ## 13.5 `if` and `match`
 
@@ -220,20 +218,17 @@ Bound      = "-"? ( INTEGER | IDENT )        // a whole number, written or named
 A name is a `Bound` and nothing else: it is the value a `::` declaration
 settled it on, and a name that settled on no whole number is refused. `_` is
 the only pattern that covers the rest. A decimal and a string literal are
-refused too, since what a `case` covers is a set a reader can count.
+refused too.
 
 An arm naming several patterns runs its body for any of them, and what it
 covers is their union. Two shapes may not be one of those alternatives: a
-variant pattern binding payload fields (two variants hold two shapes, so a name
-reading a field would mean two things), and `_` (it already covers everything,
-so the others would say nothing). A `|` and a range are also refused inside a
-tuple pattern, which compares one value per part.
+variant pattern binding payload fields, and `_`. A `|` and a range are also
+refused inside a tuple pattern, which compares one value per part.
 
 An arm every value of which the arms above it already take is refused. What an
-arm covers is read against the union of every arm above, so an arm two earlier
-spans cover between them is refused as surely as one a single earlier span
-covers, and an arm below a `case _` is refused by that rule rather than by one
-of its own.
+arm covers is read against the union of every arm above, so an arm that two
+earlier spans cover between them is refused, and an arm below a `case _` is
+refused by that same rule.
 
 `Bound` reads a name only where a `..` or `..=` follows it, and only where a
 `::` declaration settled that name on a whole number. Everywhere else a name in
@@ -312,17 +307,17 @@ SizeAtom = INTEGER | IDENT | "(" SizeExpr ")"
 The two array forms are told apart by what follows the token after the `[`: a
 `;` there means the element type was written first.
 
-A type is a single prefix-constructed form. Nesting comes from the recursive
-constructors (`^`, `ref`, `[]`, `distinct`, `fn`), not a postfix loop. Closing
-`>` in the generic forms accepts a split `>>` (11.4).
+A type is a single prefix-constructed form, and nesting comes from the
+recursive constructors (`^`, `ref`, `[]`, `distinct`, `fn`). Closing `>` in the
+generic forms accepts a split `>>` (11.4).
 
-There is no `&` in either position, which is why neither this production nor
-`Prefix` in 13.4 has one. `&x` and `&mut x` are refused where an expression is
-expected, with an error pointing at the parameter mode or at `ptr_to`, and `&T`
-and `&mut T` are refused where a type is expected (3.3). The one place the
-parser reads them is an internal re-parse: `type_from_string` sets a flag that
-accepts them, so the compiler can read back the reference types its own
-parameter-mode lowering wrote out. No program text reaches that path.
+There is no `&` in either position, in this production or in `Prefix` of 13.4.
+`&x` and `&mut x` are refused where an expression is expected, with an error
+pointing at the parameter mode or at `ptr_to`, and `&T` and `&mut T` are
+refused where a type is expected (3.3). The one place the parser reads them is
+an internal re-parse: `type_from_string` sets a flag that accepts them, so the
+compiler can read back the reference types its own parameter-mode lowering
+wrote out. No program text reaches that path.
 
 ## 13.8 Comparison and equality precedence
 

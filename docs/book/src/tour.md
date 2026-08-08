@@ -1,9 +1,9 @@
 # A tour of Frost
 
-This is a walk through the language by example. Every snippet below compiles and
-runs on both native backends, and `examples/tour.frost` is a runnable program
-over most of the same ground. For the *why* behind these choices, see
-[philosophy.md](design/philosophy.md). For the safety rules, see
+This chapter walks through the language by example. Every snippet below
+compiles and runs on both native backends, and `examples/tour.frost` is a
+runnable program over most of the same ground. For the reasoning behind these
+choices, see [philosophy.md](design/philosophy.md). For the safety rules, see
 [memory-safety.md](design/memory-safety.md). Each section links the reference
 chapter that states its rules in full.
 
@@ -36,19 +36,19 @@ main :: fn() -> i64 {
 }
 ```
 
-Writing output is a library question. `import "io.frost"` brings in `print`,
-which takes a format string and as many values as the line names. Each `{}` is
-where the next value goes, and the value's type decides how it is written:
+Output goes through the library. `import "io.frost"` brings in `print`, which
+takes a format string and as many values as the line names. Each `{}` is where
+the next value goes, and the value's type decides how it is written:
 
 ```frost,sketch
 print("hp {} of {}\n", entity.hp, entity.max)
 ```
 
 An integer, a float, a `bool` and a `str` all go in a hole. Nothing is appended,
-so a line ends with the `\n` written into the literal. The count is checked
-where the call is written, and the choice of writer is made while the call is
-compiled, so what runs is one direct write per value. Printing lives entirely in
-the library ([text-and-io.md](std/text-and-io.md)).
+so a line ends with the `\n` written into the literal. The compiler checks the
+count where the call is written and picks the writer for each value while it
+compiles the call, so what runs is one direct write per value. Printing lives
+entirely in the library ([text-and-io.md](std/text-and-io.md)).
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
@@ -66,10 +66,10 @@ for index, value in numbers {   // the position as well
 }
 ```
 
-There is no iterator and nothing to implement. `for value in numbers` is the
-index-and-bound loop written out, so what the backend sees is what you would
-have written by hand. The sequence is evaluated once, so a call in that position
-happens once however many elements it answers with.
+Frost has no iterator protocol. `for value in numbers` is the index-and-bound
+loop written out, so the backend sees what you would have written by hand. The
+sequence is evaluated once, so a call in that position happens once however many
+elements it answers with.
 
 A function that answers with more than one value declares a return type list,
 and the caller binds the values by name:
@@ -82,19 +82,18 @@ divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
 quotient, remainder := divide(17, 5)      // 3 and 2
 ```
 
-Every value in the list carries a name, which says which is which and is the
-field a `return` by name writes:
-`return { high = value / 256, low = value % 256 }`. Returning by name is what
-keeps two values of one type from being swapped; returning by order is shorter
-and reads well where a function is a table of answers.
+Every value in the list carries a name, which says which is which and gives
+`return` by name a field to write:
+`return { high = value / 256, low = value % 256 }`. Reach for a named return
+when two values share a type and could be swapped. Return by order where the
+function is a short table of answers.
 
-There is no tuple type behind any of that. `(i64, i64)` is a return type list
-and nothing else: it cannot be stored in a field, passed as an argument, or
-bound to one name. A program that wants to pass a pair around declares a struct,
-so every aggregate has a name its author chose. A name in the list is a label
-for one of the values: there is nothing to assign to it and no bare `return`
-that hands back whatever it holds, so what a function answers with is always
-written at the `return`. The full rules are 5.2a of
+Frost has no tuple type. `(i64, i64)` is a return type list, and it appears in
+a signature and nowhere else: you cannot store it in a field, pass it as an
+argument, or bind it to one name. To pass a pair around, declare a struct. A
+name in the list labels one of the values. There is nothing to assign to it,
+and no bare `return` that hands back whatever it holds, so a function's answer
+is always written out at the `return`. The full rules are 5.2a of
 [declarations.md](reference/declarations.md).
 
 ## Structs and enums, plain data
@@ -129,8 +128,8 @@ main :: fn() -> i64 {
 
 Structs pass and return by value, and `match` binds payload fields.
 
-A variant can leave its enum out wherever the type is already stated, which is
-the construction counterpart of the `case .Circle` an arm writes:
+Wherever the type is already stated, a variant can leave its enum name out, the
+same shorthand a `case .Circle` arm uses:
 
 ```frost,sketch
 s : Shape = .Circle { radius = 4 }                    // the annotation says which
@@ -146,9 +145,9 @@ p : Point = { x = 3, y = 4 }
 ```
 
 Where there is nothing to read the type from, as in a bare `c := .Red` or
-`p := { x = 1, y = 2 }`, it is an error naming what could not be resolved rather
-than a guess. What never goes away is the field names: there is no positional
-literal in Frost, because the name is what says where a value lands.
+`p := { x = 1, y = 2 }`, the compiler reports what it could not resolve. The
+field names always stay. Frost has no positional literal, so the name says
+where a value lands.
 
 ## Borrowing is a parameter mode
 
@@ -177,14 +176,14 @@ main :: fn() -> i64 {
 }
 ```
 
-The borrow a parameter mode gives you is implicit, and an implicit borrow cannot
-escape: it may not be stored in a field, put in an array, or returned. That is
-the rule that removes lifetimes, because a borrow that cannot leave the call
-needs nothing said about how long it lives.
+A parameter mode gives you an implicit borrow, and an implicit borrow cannot
+escape: it may not be stored in a field, put in an array, or returned. A borrow
+that cannot leave the call needs nothing said about how long it lives, which is
+why Frost has no lifetimes.
 
-The explicit, checked exception is `ref T`. `ref name := place` binds a borrow
-of a place rather than a copy of it, and a function may answer with one, which
-is what lets a container hand back an element instead of a copy of it:
+`ref T` is the explicit, checked exception. `ref name := place` binds a borrow
+of a place instead of copying it, and a function may answer with one, so a
+container can hand back an element:
 
 ```frost,sketch
 import "io.frost"
@@ -209,10 +208,9 @@ other container. Chapter 3.3 of [types.md](reference/types.md) has the rule and
 chapter 8 of [ownership.md](reference/ownership.md) has the checks.
 
 A slice is storable. `[]T` is an address with a length beside it and an ordinary
-type, so a struct field may hold one, which is what a parser holding views into
-a buffer it does not own is made of. The frame and region checks are what keep a
-stored slice honest: they refuse a function that answers with a view whose
-storage they cannot trace. See
+type, so a struct field may hold one. A parser holds views into a buffer it
+does not own this way. The frame and region checks refuse a function that
+answers with a view whose storage they cannot trace. See
 [memory-safety.md](design/memory-safety.md).
 
 Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
@@ -279,29 +277,29 @@ match number(text) {
 }
 ```
 
-A match on an enum covers every variant, so there is no way to read the value
-without saying what happens when there is not one. The two failure types at a
-`?` have to be the same one, because there is no conversion and no `From` to
-write. And a result carrying a `linear` value is itself linear, so a fallible
-function that answers with a resource cannot be called and ignored.
+A match on an enum covers every variant, so reading the value means saying what
+happens when there is not one. The two failure types at a `?` have to be the
+same type, because there is no conversion and no `From` to write. A result
+carrying a `linear` value is itself linear, so a fallible function that answers
+with a resource cannot be called and ignored.
 
-That is the whole error story. No exceptions, no panics to catch, no error codes
-checked by convention. A failure that is a bug rather than a condition in the
-world is an assertion, and an assertion aborts. Chapter 5.2b of
+Frost has no exceptions, no panics to catch, and no error codes checked by
+convention. A failure that is a bug rather than a condition in the world is an
+assertion, and an assertion aborts. Chapter 5.2b of
 [declarations.md](reference/declarations.md) is the full account.
 
 ## Generational handles and slabs
 
-Long-lived data lives in a slab and is referenced by a `Handle<T>`, a small
-copyable value, not a pointer. A freed-and-reused slot bumps its generation, so
-an old handle can never read the new occupant.
+Long-lived data lives in a slab, and you reach it through a `Handle<T>`, a
+small copyable value. A freed-and-reused slot bumps its generation, so an old
+handle can never read the new occupant.
 
 The slab lives in the library. `std/slab.frost` is ordinary Frost: storage, a
 free list, generation counters, and the packing of a slot index and a generation
-into one handle, all written out. What the compiler supplies is the
-one piece that cannot be written where borrows are second-class, the place
-`world[handle]`, which it offers because the struct is slab-shaped (a `storage`
-array beside a parallel `generations` array).
+into one handle, all written out. The compiler supplies one piece, the place
+`world[handle]`, which it offers for a slab-shaped struct (a `storage` array
+beside a parallel `generations` array). Borrows are second-class, so the
+library cannot write that piece for itself.
 
 ```frost
 import "slab.frost"
@@ -326,8 +324,8 @@ main :: fn() -> i64 {
 ```
 
 The arrays are written out at construction because a struct literal cannot run
-code, and `slab_reset` is what fills in the free list. Passing `world[hero]` to
-a function borrows the element, and that borrow is a parameter mode like any
+code, and `slab_reset` fills in the free list. Passing `world[hero]` to a
+function borrows the element, and that borrow is a parameter mode like any
 other. `examples/native/entity_system.frost` is this over an entity enum, and
 chapter 10 of [handles-and-pools.md](reference/handles-and-pools.md) states the
 generational rule.
@@ -336,7 +334,7 @@ generational rule.
 
 `columns<T, N>` stores each field of `T` in its own array rather than storing
 whole elements back to back, so a pass reading one field across many elements
-walks a tight column. It keeps the slab's generational handle unchanged, so
+walks a tight column. The slab's generational handle carries over unchanged:
 `c[h]` is still a checked place, and `c.field` is the whole column, a slice for
 a hot loop:
 
@@ -401,27 +399,27 @@ main :: fn() -> i64 {
 }
 ```
 
-A parameter may also be an integer, written `$N: usize`, which is what sizes the
-`[N]T` field of a `Slab<T, N>`. Type parameters are erased, drive
-monomorphization, and carry no runtime cost.
+A parameter may also be an integer, written `$N: usize`, which sizes the `[N]T`
+field of a `Slab<T, N>`. Type parameters are erased: they drive
+monomorphization and carry no runtime cost.
 
-A generic may also say what it needs of a type, over a fixed vocabulary of
-questions the compiler already answers about one:
+A generic can also state what it needs of a type, drawn from a fixed vocabulary
+of questions the compiler already answers about a type:
 
 ```frost
 twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
 ```
 
-Nothing registers into that vocabulary and nothing implements it, so the bound
-is a precondition checked against the line the caller wrote. The vocabulary is
+Nothing registers into that vocabulary and nothing implements it. The bound is
+a precondition, checked against the line the caller wrote. The vocabulary is
 11.4a of [generics.md](reference/generics.md).
 
 ## Higher-order code without traits or closures
 
 A generic algorithm takes the operation it needs as a compile-time function
-parameter, which is Frost's answer to what a trait bound expresses. The
+parameter, which covers what you would write a trait bound for elsewhere. The
 parameter can state the signature it requires, and the call inside the
-specialization is direct rather than through a pointer:
+specialization is direct, with no pointer to go through:
 
 ```frost
 import "io.frost"
@@ -440,7 +438,8 @@ main :: fn() -> i64 {
 ```
 
 When several operations travel together, they go in a struct whose fields are
-functions. That is a capability bundle, and it is what stands in for a trait:
+functions. That struct is a capability bundle, and it stands where a trait
+would:
 
 ```frost,sketch
 Ordering :: struct($T: Type) {
@@ -460,14 +459,14 @@ sort($i64, $i64_ascending, view)
 
 The bundle is a type, an implementation is a constant of it, and the call names
 which one it means. Nothing registers, nothing is searched for, and there is no
-coherence rule to learn, because the answer is written at the call. Since `$ops`
-is a compile-time argument, `ops.less(a, b)` folds to a direct call to
-`i64_less`, and the specialization holds no function pointer at all.
+coherence rule to learn, because the call says which implementation it wants.
+Since `$ops` is a compile-time argument, `ops.less(a, b)` folds to a direct call
+to `i64_less`, and the specialization holds no function pointer at all.
 `std/ordering.frost` and `std/sort.frost` are this written out, and 11.4b of
 [generics.md](reference/generics.md) has the rest, including what dropping the
 `$` gives you.
 
-When the operation genuinely varies at runtime, drop the `$` and the same
+When the operation varies at runtime, drop the `$` and the same
 declaration gives an ordinary value. A `fn(...) -> T` parameter holds a pointer,
 and a bundle without the `$` is a struct holding several. There are no capturing
 closures.
@@ -512,12 +511,12 @@ main :: fn() -> i64 {
 
 The `for` is unrolled where it is written. The body is compiled once per element
 with `value` standing for that element, so what runs is three writes of three
-different types. The `if` over what a type is gets its answer at expansion time, and the
-branch that cannot run is dropped before anything checks it, which is what lets
-one body serve elements of different types.
+different types. The `if` over what a type is gets its answer at expansion time,
+and the branch that cannot run is dropped before anything checks it, so one body
+serves elements of different types.
 
-There is no compile-time string parsing, no recursion and no unbounded loop:
-everything here walks a list whose length the call fixed, so expansion costs
+There is no compile-time string parsing, no recursion and no unbounded loop.
+Everything here walks a list whose length the call fixed, so expansion costs
 what the program's own text costs and no more. 11.1c of
 [generics.md](reference/generics.md) has `args[0]`, handing a list on, and
 `g(T) for T in list` in an argument position.
@@ -525,9 +524,8 @@ what the program's own text costs and no more. 11.1c of
 ## A table over a type's fields
 
 A vertex format, a uniform layout and a descriptor table are all the same
-thing: offsets and sizes over a struct you already declared. The compiler worked
-those numbers out to lay the struct out, so write the table over them rather
-than beside them:
+thing: offsets and sizes over a struct you already declared. The compiler
+worked those numbers out to lay the struct out, so write the table over them:
 
 ```frost
 import "math.frost"
@@ -545,14 +543,13 @@ main :: fn() -> i64 {
 }
 ```
 
-This `for` is unrolled too: the body is compiled once per field. `T`
-may be a type parameter, so one description serves every type a call names, and
-the table cannot drift from the struct because it is not written twice.
+This `for` is unrolled too: the body is compiled once per field. `T` may be a
+type parameter, so one description serves every type a call names, and the
+table cannot drift from the struct because it is written once.
 
 A field is a name to ask questions of. `offset_of`, `sizeof` and the type
-predicates are what may be asked, and naming a field anywhere else is an error. There is no
-reading a field's name, which is what keeps this a layout question rather than a
-second language for asking about types (11.1d of
+predicates are the questions available, and naming a field anywhere else is an
+error. A field's name cannot be read, which keeps this to layout (11.1d of
 [generics.md](reference/generics.md)).
 
 ## Arrays are bounds-checked
@@ -592,7 +589,7 @@ works as a build gate.
 
 `extern fn` links against any C library with the natural ABI, with no glue. A
 string literal is laid down NUL-terminated as well, so it reaches a `^i8`
-parameter as a plain C string at no cost.
+parameter as a plain C string with no conversion.
 
 ```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
@@ -603,11 +600,11 @@ main :: fn() -> i64 {
 }
 ```
 
-Calling C is unchecked, so the call sits in an `unsafe` block. That is the point
-of the block: it is the complete list of places to look when memory has been
-corrupted. A foreign function that cannot go wrong, one taking and returning
-numbers with no pointer anywhere, is declared `safe extern fn` and needs no
-block, which is how `std/math.frost` reaches `sqrtf`. See
+Calling C is unchecked, so the call sits in an `unsafe` block. The blocks in a
+program are the complete list of places to look when memory has been corrupted.
+A foreign function that takes and answers with numbers, with no pointer
+anywhere, is declared `safe extern fn` and needs no block. That is how
+`std/math.frost` reaches `sqrtf`. See
 [c-compatibility.md](impl/c-compatibility.md).
 
 ## The standard library
@@ -639,9 +636,9 @@ to four habits:
   in context to know what it did.
 
 The exported namespace is flat and a name carries its own prefix by convention
-(`vec3_add` rather than a qualified `math.add`), which is what keeps every name
-a single token to search for. [modules.md](impl/modules.md) covers imports,
-exports, and the rename escape hatch for a collision.
+(`vec3_add` in place of a qualified `math.add`), so every name is a single token
+to search for. [modules.md](impl/modules.md) covers imports, exports, and the
+rename escape hatch for a collision.
 
 ## A complete program
 
@@ -680,9 +677,9 @@ main :: fn() -> i64 {
 }
 ```
 
-Handles are what get passed around and stored, the borrow of `world[goblin]`
-lasts only for the call to `delta`, and releasing a slot invalidates the handles
-to it by generation rather than by a lifetime the compiler had to track.
+Handles are what you pass around and store. The borrow of `world[goblin]` lasts
+only for the call to `delta`, and releasing a slot invalidates the handles to it
+by generation.
 
 ## Where to next
 
@@ -693,4 +690,4 @@ to it by generation rather than by a lifetime the compiler had to track.
 - [patterns.md](patterns.md) for what the language rewards and what it merely
   permits.
 - [architecture.md](impl/architecture.md) explains the compiler pipeline and
-  exactly what the native path supports today.
+  what the native path supports.

@@ -3,15 +3,14 @@
 `std/ecs.frost` is an archetype ECS: entities holding the same set of components
 share a table, a table keeps one contiguous column per component, and a system
 walks columns rather than chasing entities. It is the shape a game or an editor
-wants from its world, and it is written in ordinary Frost, so everything below
-is library code you can read, copy, or replace.
+wants from its world, and it is ordinary Frost you can read, copy, or replace.
 
-The one design decision everything else follows from: a component is plain
-data. No destructor, no copy constructor, nothing a type knows that the
-compiler does not. That removes the table of per-type function pointers an ECS
-in another language carries, because every operation a column performs is a move
-of `item_size` bytes: growing it, removing a row, carrying a row to another
-table. The registry holds a size per component and nothing else.
+Everything else follows from one decision: a component is plain data. No
+destructor, no copy constructor, nothing a type knows that the compiler does
+not. Every operation a column performs is a move of `item_size` bytes, whether
+it is growing, removing a row, or carrying a row to another table, so there is
+no table of per-type function pointers to carry. The registry holds a size per
+component and nothing else.
 
 ```frost
 import "ecs.frost"
@@ -51,8 +50,8 @@ main :: fn() -> i64 {
 An entity is an id and a generation. The id indexes the slot table. The
 generation is bumped when the id is freed, so a handle kept past a despawn names
 a generation the slot no longer has and every lookup refuses it. This is the
-rule `Handle<T>` follows for a pool, written out here because an entity is not
-stored in one place.
+rule `Handle<T>` follows for a pool, written out again here because an entity's
+rows live in whichever table matches its current component set.
 
 | Call | What it does |
 | --- | --- |
@@ -70,8 +69,8 @@ bits below it, so nothing maps a component to a column while the program runs. A
 world holds up to 256 component types, one per bit of a four-word mask.
 
 `ecs_register` also records which type the component was registered under, so a
-query can name one by writing its type. That is what `component_of($T, world)`
-answers, and what lets `for_each` take a list of types.
+query can name one by writing its type. `component_of($T, world)` answers that
+index, and `for_each` takes a list of types on the same footing.
 
 | Call | What it does |
 | --- | --- |
@@ -85,8 +84,8 @@ answers, and what lets `for_each` take a list of types.
 
 Adding or removing a component moves the entity to the table for its new set,
 carrying every column the two tables share. A despawn moves the last row into
-the hole it left and tells whichever entity moved where it went, which is what
-keeps a column contiguous.
+the hole it left and tells whichever entity moved where it went, which keeps
+every column contiguous.
 
 ## Queries
 
@@ -102,11 +101,11 @@ while (query_next(world, q)) {
 }
 ```
 
-Written this way a query has no arity limit and captures nothing: the body is
-where it is written, so what it reads is the enclosing function's own locals.
+Written this way a query has no arity limit and captures nothing. The body sits
+where you write it, so what it reads is the enclosing function's own locals.
 `for_each` is the same walk with the body handed in as a compile-time argument,
-for a system short enough that the cursor is the longer half. The components are
-a compile-time list of types, so there is no arity to name and no limit: the
+for a system short enough that the cursor is the longer half. Its components are
+a compile-time list of types, so there is no arity to name and no limit. The
 list drives the mask a table is matched against and the column each element
 reads through, and a `for` over it unrolls both where the call is written.
 
@@ -123,9 +122,8 @@ for_each($integrate, world, no_filters(), $Position, $Velocity)
 ```
 
 A body taking a fourth component is a fourth element and a fourth parameter.
-The types name the components: `ecs_register($Position, world)` records which
-type it was registered under, so a query is written with the types it reads
-rather than with the indices they were given.
+Write a query with the types it reads: `ecs_register($Position, world)` records
+the type it was registered under, and the query looks the index back up from it.
 
 ## Filters
 
@@ -141,12 +139,11 @@ for_each_row($move, world, f, $Position, $Velocity)
 `without` is matched against a table's mask, so a whole archetype is skipped
 before any of its rows is touched. `changed` and `added` read the per-row ticks
 a column already carries, so the table is still walked and what they save is the
-body. The distinction is the property that made archetype storage worth
-building, so it is visible in which function a filter goes through.
+body. A filter goes through the call that matches its level.
 
-`for_each` hands the body whole columns and a row count, which is the fast form
-and the one to reach for. `for_each_row` hands it one row at a time, which is
-what the row-level filters need, since `changed` is a question about a row.
+`for_each` hands the body whole columns and a row count, which is the faster
+form and the one to reach for. `for_each_row` hands it one row at a time, which
+is what the row-level filters need, since `changed` is a question about a row.
 
 The `$body` argument folds to a direct call, so the sugar costs nothing over the
 cursor form.
@@ -173,11 +170,11 @@ while (query_next(world, q)) {
 }
 ```
 
-The ticks are data, not a filter type, so the test is written where the decision
-is and a body that wants both the changed and the unchanged rows has them.
-`ecs_changed_since` and `ecs_added_since` ask the same question about one
-entity. A migration carries a row's ticks with it, so gaining a different
-component is not read as a write to the ones already there.
+The ticks are data, so you write the test where the decision is, and a body that
+wants both the changed and the unchanged rows has both. `ecs_changed_since` and
+`ecs_added_since` ask the same question about one entity. A migration carries a
+row's ticks with it, so gaining a different component leaves the ones already
+there reading as unwritten.
 
 ## Resources
 
@@ -193,16 +190,14 @@ var place := ecs_resource_slice($Time, world, time)
 place[0].frame = place[0].frame + 1
 ```
 
-Setting a resource hands it to the world, so the value moves: a resource that
-has to be released is the world's from there, and the name that held it does not
-have to release it.
+Setting a resource moves the value into the world. A resource that has to be
+released is the world's from there, and the name that held it is free of it.
 
-Reading one back has two shapes, and which to reach for follows from that. The
-owning read answers with the value, which is what a caller taking it back to
-release it wants. A resource holding something linear cannot be read that way by
-anyone else: what comes back owns what it holds, so a system that only meant to
-look at a `Hierarchy` would be left with vectors to free. `ecs_resource_ref`
-answers with a borrow, reading it where it lives and owning nothing.
+Reading one back has two shapes. `ecs_resource` answers with the value, which is
+what a caller taking it back to release it wants. What comes back owns what it
+holds, so a system that only meant to look at a `Hierarchy` would be left with
+vectors to free. `ecs_resource_ref` answers with a borrow, reading the resource
+where it lives and owning nothing.
 
 ```frost,sketch
 tree := ecs_resource_register($Hierarchy, world)
@@ -215,17 +210,16 @@ giving := ecs_resource($Hierarchy, world, tree)     // take it back
 hierarchy_free(giving)
 ```
 
-This is what a system reaches a resource through. A system is a
-`fn(mut World)` and captures nothing, so everything it works on is a component
-or a resource, and the borrowing read is the only way one of them holds
-something the world is responsible for.
+A system is a `fn(mut World)` and captures nothing, so everything it works on is
+a component or a resource. Reach a resource holding something the world is
+responsible for through the borrowing read.
 
 ## Events
 
 A channel one system writes and another reads. Events live in a column, so
 sending one is a push of bytes and reading them is a slice. A reader keeps its
-own place by sequence number rather than by index, so clearing the channel
-neither repeats what a reader saw nor hides what it did not:
+own place by sequence number, so clearing the channel leaves every reader on
+exactly the events it has yet to see:
 
 ```frost,sketch
 var damage := events_new($Damage)
@@ -236,15 +230,14 @@ held := events_read($Damage, damage, renderer)   // what this reader has not see
 events_clear(damage)                             // drop the frame's events
 ```
 
-A reader that fell behind a clear is caught up to the start rather than handed
-the wrong events.
+A reader that fell behind a clear is caught up to the start of what is left.
 
 ## Tags
 
-A tag marks an entity without costing a mask bit or moving a row, so it can be
-flipped in a loop without the migration a component would cost. The generation
-is stored beside the mark, so a tag left on a despawned id is not read as a mark
-on the entity that gets that id next.
+A tag marks an entity without costing a mask bit or moving a row, so a loop can
+flip one on and off at no migration cost. The generation is stored beside the
+mark, so a tag left on a despawned id stays off the entity that gets that id
+next.
 
 ```frost,sketch
 var selected := tag_new()
@@ -267,10 +260,9 @@ commands_apply(queued, world)
 
 ## Hierarchy
 
-A parent-child relation held beside the world rather than as a component,
-because it is a relation between entities. Three arrays indexed by entity id
-give a tree walked without allocating per node: the parent, the first child, and
-the next sibling.
+A parent-child relation held beside the world, since it is a relation between
+two entities. Three arrays indexed by entity id give a tree walked with no
+allocation per node: the parent, the first child, and the next sibling.
 
 ```frost,sketch
 var tree := hierarchy_new()
@@ -286,8 +278,7 @@ hierarchy_despawn_tree(tree, world, car)   // the car and everything under it
 ## Schedules, states and time
 
 A system is a function of the world. A schedule is a list of them with a stage
-each, run in ascending stage order, so ordering is a number rather than a graph
-of declared dependencies:
+each, run in ascending stage order, so ordering is a number:
 
 ```frost,sketch
 var frame := schedule_new()
@@ -299,23 +290,23 @@ schedule_add(frame, Stage::Last, upload)
 schedule_run(frame, world, states_current(states))
 ```
 
-The system is a function pointer, not a compile-time argument, because a
-schedule is built while the program runs. `for_each` and `for_each_row` are the
-other half of the pair, for the inner loop where the call has to fold away.
+The system is a function pointer, since a schedule is built while the program
+runs. `for_each` and `for_each_row` cover the other half, the inner loop where
+the call has to fold away.
 
 A state change is requested during a frame and taken between frames, so a system
-that asks to leave a state does not have the schedule change under it while it
-is still running. `Time` carries the frame number, the last delta, and the total
+that asks to leave a state keeps the schedule it started under until it
+finishes. `Time` carries the frame number, the last delta, and the total
 elapsed.
 
 ## The structural log
 
 Off until a program asks for it. With `ecs_log_enable(world, true)` the world
 records each spawn, despawn, add and remove with the tick it happened at, as a
-`ChangeKind` beside the entity and the component's mask, which is what a save
-file writing a delta or an editor keeping a list in step reads.
+`ChangeKind` beside the entity and the component's mask. A save file writing a
+delta, or an editor keeping a list in step, reads that log.
 
-## What is unsafe, and what is not
+## The unsafe floor
 
 The unsafe floor is the column: raw bytes with a width. Everything above it
 reaches an element through `column_of`, which hands out a bounds-checked `[]T`,

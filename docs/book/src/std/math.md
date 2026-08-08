@@ -2,20 +2,19 @@
 
 `std/math.frost` is a small single-precision math library for graphics and
 games: vectors, matrices, and quaternions as plain structs with free functions
-over them. It is an ordinary Frost library, not a language feature. It needs no
-compiler support, imports with `import "math.frost"`, and compiles and runs on
-both backends of both compilers.
+over them. It is an ordinary Frost library. It needs no compiler support,
+imports with `import "math.frost"`, and compiles and runs on both backends of
+both compilers.
 
-It is written the way the rest of the language is. There is no operator
-overloading and there are no methods, so it is `vec3_add(a, b)` rather than
-`a + b` and `mat4_mul(a, b)` rather than `a * b`. The type prefix on each name
-(`vec3_`, `mat4_`, `quat_`) is the namespace, the same convention the rest of the
-standard library follows. Every value is `f32`.
+The language has no operator overloading and no methods, so an addition is
+`vec3_add(a, b)` and a matrix product is `mat4_mul(a, b)`. The type prefix on
+each name (`vec3_`, `mat4_`, `quat_`) is the namespace, the same convention the
+rest of the standard library follows. Every value is `f32`.
 
-`std/math64.frost` is the same library at double precision: the same shapes, the
-same rules, the same column-major convention, with `f64` in place of `f32` and a
-`d` on every name (`Vec3d`, `vec3d_add`, `mat4d_perspective`, `radiansd`). The
-two can be imported together, since no name is shared.
+`std/math64.frost` is the same library at double precision: the same shapes and
+the same column-major convention, with `f64` in place of `f32` and a `d` on
+every name (`Vec3d`, `vec3d_add`, `mat4d_perspective`, `radiansd`). The two can
+be imported together, since no name is shared.
 
 The transcendentals it needs (`sqrtf`, `sinf`, `cosf`, `tanf`) are the C standard
 library's single-precision ones, declared `safe extern` because each takes and
@@ -36,19 +35,18 @@ They are plain data, passed and returned by value like any other struct. A `Mat4
 is its sixteen floats in a single array field, and a `Quat` stores its vector
 part in `x, y, z` with the scalar part in `w`.
 
-## A note on the language's own vectors
+## Components and lanes
 
-`Vec2`, `Vec3` and `Vec4` here are structs with named components, which is what
-reads well at a call site: `v.x` says which one it is. The language separately
-gives a fixed array of numbers the arithmetic operators, once per lane
-(3.2b of the reference), so `[4]f32` is what a program reaches for where the
-lanes are anonymous and the arithmetic is the point. The two do not compete: one
-names its components and the other is a register's worth of numbers.
+`Vec2`, `Vec3` and `Vec4` are structs with named components, so a call site
+reads `v.x` and says which component it means. The language separately gives a
+fixed array of numbers the arithmetic operators, once per lane (3.2b of the
+reference), so `[4]f32` is what a program reaches for where the lanes are
+anonymous and the arithmetic runs over all of them at once.
 
 ## Vectors
 
-`vec2`, `vec3`, and `vec4` construct a vector from its components. The operations
-are what a geometry pass reaches for:
+`vec2`, `vec3`, and `vec4` construct a vector from its components. The
+operations a geometry pass reaches for:
 
 - `vec3_add`, `vec3_sub`, `vec3_scale`, `vec3_neg`: componentwise arithmetic and
   scaling by a float. `vec2` and `vec4` carry the add/sub/scale set too.
@@ -58,8 +56,8 @@ are what a geometry pass reaches for:
 - `vec3_length`, `vec3_length_sq`, `vec3_distance`: the length, its square (which
   skips the square root when only a comparison is wanted), and the distance
   between two points.
-- `vec3_normalize`: the unit vector in the same direction, and the zero vector if
-  the input has no length rather than a division by zero.
+- `vec3_normalize`: the unit vector in the same direction. An input with no
+  length answers the zero vector.
 - `vec3_lerp`: the linear interpolation from `a` to `b` by `t`.
 
 ## Matrices
@@ -84,14 +82,14 @@ transforms apply.
   Vulkan and WebGPU take, and what `examples/graphics/triangle.frost` uses), an
   orthographic projection, and a view matrix looking from an eye toward a center.
 
-  The depth range is the one thing here that is not a matter of taste. A matrix
-  built for the wrong one puts half the scene behind the near plane, and it does
-  so without any error, so the projection has to match the API being drawn with.
+  The projection has to match the depth range of the API being drawn with. A
+  matrix built for the other range puts half the scene behind the near plane,
+  and it does so without any error.
 
 ## Quaternions
 
-A `Quat` represents a rotation and composes without the gimbal lock of Euler
-angles.
+A `Quat` is a rotation. Two of them compose by multiplication, free of the
+gimbal lock Euler angles have.
 
 - `quat_identity`, `quat_from_axis_angle`: the no-rotation quaternion and a
   rotation of an angle about a (normalized) axis.
@@ -142,11 +140,10 @@ frost --test std/math.frost
 
 The same twenty run over `std/math64.frost`, which is where a copy that changed
 a formula shows up. The suite runs both through both backends of both
-compilers. A differential test
-would only say the backends agree, and a rotation that turns the wrong way, a
-projection with its depth range inverted and a quaternion that is its own
-inverse all agree across backends while all being wrong, so these check the
-answers rather than the agreement.
+compilers. Each test checks an answer. A differential test would only say the
+backends agree, and a rotation that turns the wrong way, a projection with its
+depth range inverted and a quaternion that is its own inverse all agree across
+backends while all being wrong.
 
 Results are compared within a tolerance, because a square root or a
 trigonometric call does not land on an exact float. Where a rotation can be
@@ -163,20 +160,20 @@ anything crossing to a GPU are single-precision, and it is half the bytes.
 the answer: a simulation stepping for hours, world coordinates far from the
 origin, a solver. Reach for it there and convert at the boundary.
 
-It is a second copy rather than one library generic over the element type. A
-generic one would have to take the transcendentals as compile-time arguments at
-every call, since `sqrt` and `sqrtf` are different C functions, which costs more
-at every use than a copy costs once. That is the trade
+It is a second copy of the library. One library generic over the element type
+would have to take the transcendentals as compile-time arguments at every call,
+since `sqrt` and `sqrtf` are different C functions, which costs more at every
+use than a copy costs once. That is the trade
 [philosophy.md](../design/philosophy.md) names: no traits, so write the one you need over
 the layout you have. The copy is mechanical and the same twenty tests run over
 both, so a formula that survived the copy wrong fails.
 
-## What is not here
+## Scope
 
-The library is value-typed. There are no SIMD-packed vectors and no intrinsics.
-`columns<T, N>` gives a C compiler separate homogeneous arrays with nothing
-aliasing between them, the small math functions are marked `inline` so it sees
-through them, and clang at `-O2` vectorizes what that layout allows. A program
-that needs intrinsics writes the kernel in C and calls it through the FFI.
-Nor is there a general N-dimensional matrix. This is
-the graphics math a renderer and a game loop reach for, and nothing more.
+The library covers the graphics math a renderer and a game loop reach for, and
+it is value-typed: no SIMD-packed vectors, no intrinsics, and no general
+N-dimensional matrix. `columns<T, N>` gives a C compiler separate homogeneous
+arrays with nothing aliasing between them, the small math functions are marked
+`inline` so it sees through them, and clang at `-O2` vectorizes what that layout
+allows. A program that needs intrinsics writes the kernel in C and calls it
+through the FFI.

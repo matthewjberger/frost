@@ -1,8 +1,8 @@
 # Sorting, and orderings as values
 
 `std/sort.frost` orders a slice in place. `std/ordering.frost` says what "in
-order" means. They are two files because the answer to the second question is a
-value a caller passes, not a property the compiler looks up.
+order" means. They are two files because what counts as ordered is a value the
+caller passes in.
 
 ## An ordering is a struct
 
@@ -24,10 +24,9 @@ i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
 i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 ```
 
-There is no registry, no lookup and no coherence rule, because nothing was ever
-implicit. Two orderings over the same type are two constants and they do not
-conflict. Descending is a second constant with `less` wired to `i64_greater`,
-rather than a wrapper type or a reversal pass afterwards.
+There is no registry, no lookup and no coherence rule. Two orderings over the
+same type are two constants, and they do not conflict. Descending is a second
+constant with `less` wired to `i64_greater`.
 
 `std/ordering.frost` ships four of them:
 
@@ -55,10 +54,10 @@ sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T)
 sort_vec :: fn($T: Type, $ops: Ordering<T>, mut v: Vec<T>)
 ```
 
-`$ops` is a compile-time argument, so `ops.less(a, b)` inside the inner loop
-folds to a direct call to whichever function that constant's field names. The
-comparison ends up inside the loop. Nothing is stored, nothing is dispatched,
-and the sorted slice never holds a function pointer.
+`$ops` is a compile-time argument, so `ops.less(a, b)` in the inner loop folds
+to a direct call to whichever function that constant's field names. The
+comparison ends up inside the loop, and the sorted slice holds no function
+pointer.
 
 ```frost,sketch
 var items := [5, 2, 9, 1, 7]

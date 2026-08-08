@@ -3,12 +3,10 @@
 This guide explains Frost to someone who already thinks in Rust. It assumes you
 are comfortable with ownership, borrows, lifetimes, traits, `Drop`, and
 monomorphization, and it spends its time on where Frost agrees with Rust, where
-it deliberately diverges, and how to translate the Rust idioms you reach for by
-reflex.
+it differs, and how to translate the Rust idioms you reach for by reflex.
 
 Read [philosophy.md](design/philosophy.md) for the reasoning behind the design and
-[memory-safety.md](design/memory-safety.md) for the safety argument in full. This
-document is the practical bridge.
+[memory-safety.md](design/memory-safety.md) for the safety argument in full.
 
 ## Second-class borrows instead of lifetimes
 
@@ -18,24 +16,21 @@ its referent. That machinery is the price of letting references be first-class
 values you can store in structs, return from functions, and thread through data
 structures.
 
-Frost makes a different trade. The everyday borrow is second-class and is not a
-type at all. There is no `&` in the language. How a parameter is passed is
+Frost takes a different route. The everyday borrow is second-class, and it is
+not a type. There is no `&` in the language. How a parameter is passed is
 written on the parameter (`p: T` reads, `mut p: T` mutates, `move p: T` takes),
 and the call site writes nothing. A borrow obtained that way cannot be stored in
 a field, put in an array, or returned, and the shapes that would let it escape
-are not expressible rather than merely rejected. So there is nothing to annotate
-and nothing to infer. Frost has no lifetimes, no `'a`, no borrow regions, and no
-lifetime elision because it does not need them.
+have no spelling. So there is nothing to annotate and nothing to infer. Frost
+has no lifetimes, no `'a`, no borrow regions, and no lifetime elision.
 
-The one borrow a program writes down is `ref T`, covered below. It is an
-explicit, checked exception rather than a hole in the rule: it may be returned
-and it may not be stored.
+The one borrow a program writes down is `ref T`, covered below. It is checked:
+it may be returned, and it may not be stored.
 
 Everything else about the borrow system follows from that decision. Where Rust
 reaches for a reference that must live somewhere (a graph node, a back-pointer,
-a cache), Frost reaches for a generational handle into a slab instead. If you
-keep that substitution in mind, most of the surprises below stop being
-surprises.
+a cache), Frost reaches for a generational handle into a slab. That
+substitution explains most of what follows.
 
 ## The Rosetta table
 
@@ -95,9 +90,8 @@ There is no `let`. A name is introduced with one of three operators:
   written `name :: fn(..)`.
 
 Bindings are immutable by default, exactly as in Rust. `var` declares one the
-body may assign again. It is not Rust's `let mut`: `mut` in Frost means exactly
-one thing, the parameter mode, so a reader who sees it knows a caller's value
-is being written:
+body may assign again. `mut` is reserved for the parameter mode, so wherever you
+read it, a caller's value is being written:
 
 ```frost,inside
 var total : i64 = 0
@@ -111,21 +105,18 @@ Semicolons are not required. Line comments start with `//`, as in Rust.
 Program entry is `main :: fn() -> i64`, and its return value is the process exit
 code, which is why the examples end in a bare `0`.
 
-There are no attributes, no `#[derive(..)]`, and no macros. What you write is
-what runs.
+There are no attributes, no `#[derive(..)]`, and no macros.
 
-`println!` has no equivalent either, because printing is a library call rather
-than a macro. `import "io.frost"` brings in one writer per type, so
-`print("{}\n", x)` writes an integer and a newline, and a line built from
-several values is several calls. There is no format string anywhere: what would
-be a hole in one is a call in the order the pieces are written
-([text-and-io.md](std/text-and-io.md)).
+Printing is a library call, so `println!` has no equivalent.
+`import "io.frost"` brings in one writer per type, so `print("{}\n", x)` writes
+an integer and a newline, and a line built from several values is several calls.
+There is no format string anywhere: what would be a hole in one is a call in the
+order the pieces are written ([text-and-io.md](std/text-and-io.md)).
 
 ## Functions, and the absence of methods
 
-Frost is data-oriented, not object-oriented. There are no methods, no `self`,
-no `impl` blocks, and no traits. Behavior lives in free functions that take
-their data as parameters:
+Frost is data-oriented. There are no methods, no `self`, no `impl` blocks, and
+no traits. Behavior lives in free functions that take their data as parameters:
 
 ```frost
 Vec3 :: struct { x: i64, y: i64, z: i64 }
@@ -138,11 +129,8 @@ dot :: fn(a: Vec3, b: Vec3) -> i64 {
 Both parameters are borrowed to read, which is what an unmarked parameter means,
 so nothing is copied and nothing is consumed.
 
-Where Rust would write `a.dot(&b)`, Frost writes `dot(a, b)`. This is not a
-missing feature. It is the design. Separating data from the code that walks it
-is what keeps the memory layout visible and the control flow explicit.
-
-Higher-order code uses function pointers, covered below. There are no closures.
+Where Rust would write `a.dot(&b)`, Frost writes `dot(a, b)`. Higher-order code
+uses function pointers, covered below. There are no closures.
 
 ## Returning several values
 
@@ -158,10 +146,9 @@ divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
 quotient, remainder := divide(17, 5)
 ```
 
-Every value in the list is named, which is where Frost parts company with Go,
-Odin and Jai: they all make the names optional and Frost requires them. The
-names say which value is which at the declaration, they are what `frost api`
-shows, and they are the fields a `return` by name writes:
+Every value in the list is named. Go, Odin and Jai make those names optional;
+Frost requires them. The names say which value is which at the declaration, they
+are what `frost api` shows, and they are the fields a `return` by name writes:
 
 ```frost
 split :: fn(value: i64) -> (high: i64, low: i64) {
@@ -169,20 +156,19 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 }
 ```
 
-A name in the list is a label for one of the values. There is no naked `return`
-that hands back whatever the names hold, because that is control flow you cannot
-see at the `return`, which is the job Go's named results do and Frost's do not.
-The `return` is required either way: a trailing expression is one value. `var`
-goes in front of any name the body writes afterwards, as in
+A name in the list is a label for one of the values. Go's named results also let
+a naked `return` hand back whatever those names hold, and Frost has no such
+form. The `return` is required either way: a trailing expression is one value.
+`var` goes in front of any name the body writes afterwards, as in
 `magnitude, var negative := classify(value)`, and `_` takes a value the caller
 has no use for, as in `quotient, _ := divide(17, 5)`.
 
 What you cannot do is treat the list as a value. `(i64, i64)` is not a type, so
 it cannot be stored in a field, passed as an argument, or bound to one name. A
-program that wants to pass a pair around declares a struct, which is the point:
-every aggregate in a Frost program has a name its author chose. A fallible
-function still answers with one value, so `-> (A, B) ! E` is rejected and a
-function that wants both returns a struct it names.
+program that wants to pass a pair around declares a struct, so every aggregate
+in a Frost program has a name its author chose. A fallible function still
+answers with one value, so `-> (A, B) ! E` is rejected and a function that wants
+both returns a struct it names.
 
 ## Distinct types instead of the newtype
 
@@ -200,9 +186,9 @@ newtype buys: a `Meters` cannot be built from a bare number or from a `Feet`.
 
 The check is one-directional, which is where it differs from the newtype. Going
 out is free, so `print("{}\n", m)` and `n : i64 = m` both work, because a
-`Meters` is an `i64` in memory and nothing is at stake that way. Going in is checked, so a
-value that means something else cannot become a `Meters` by accident. There is
-no cast in either direction and none is needed.
+`Meters` is an `i64` in memory. Going in is checked, so a value that means
+something else cannot become a `Meters` by accident. There is no cast in either
+direction.
 
 ## Types and arithmetic
 
@@ -211,30 +197,30 @@ The scalar types are what you expect. They are `i8`, `i16`, `i32`, `i64`,
 all copy types.
 
 Integer arithmetic that leaves the range of the type it is computed at aborts
-and says where, on every backend. Rust panics in debug and wraps in release;
-Frost does the same thing in both, so a build that ran is a build whose
-arithmetic held. `wrap_add`, `wrap_sub` and `wrap_mul` keep the low bits, for a
-hash or a counter where leaving the range is what was wanted, and they are the
-analogue of Rust's `wrapping_*` family. (There are no `_` digit separators.)
+and says where, on every backend. Rust panics in debug and wraps in release.
+Frost aborts in both, so a build that ran is a build whose arithmetic held.
+`wrap_add`, `wrap_sub` and `wrap_mul` keep the low bits, for a hash or a counter
+where leaving the range is what was wanted, and they are the analogue of Rust's
+`wrapping_*` family. (There are no `_` digit separators.)
 
 A fixed array of numbers takes the arithmetic operators, once per lane:
 `a + b` over two `[4]f32` is four adds, and `a * 2.0` is that number in every
-lane. There is no vector type; `[4]f32` is the array Frost already had, which is
-the difference from Rust's `Simd<f32, 4>` and Zig's `@Vector`. The length is a
-power of two and the whole thing is at most a register's sixty-four bytes, so an
-operator is never a loop the reader did not write.
+lane. There is no vector type. `[4]f32` is the array Frost already had, where
+Rust has `Simd<f32, 4>` and Zig has `@Vector`. The length is a power of two and
+the whole thing is at most a register's sixty-four bytes, so an operator stays a
+handful of instructions.
 
 Mixed-width integer arithmetic is permitted, with the narrower operand widening
 to the wider one, so `an_i32 + an_i64` is an `i64`. This is looser than Rust,
 which would reject the mismatch and make you write an `as` cast.
 
 `str` is a byte-slice view, a pointer and a length, and it is the analogue of
-Rust's `&str` rather than `String`. It owns nothing, so it is a copy type you can
-duplicate freely. A string literal is a `str` into read-only data. `str_len(s)`
-is the constant-time length and `s[i]` is a bounds-checked `u8`, the same
-indexing rule as arrays. Unlike Rust there is no owned `String` in the language
-and no UTF-8 method library, `str` is just bytes. An owned or growable buffer is
-something you build as a struct over an array or slab and borrow back as a `str`.
+Rust's `&str`. It owns nothing, so it is a copy type you can duplicate freely. A
+string literal is a `str` into read-only data. `str_len(s)` is the
+constant-time length and `s[i]` is a bounds-checked `u8`, the same indexing rule
+as arrays. Frost has no owned `String` and no UTF-8 method library. A `str` is
+bytes. An owned or growable buffer is something you build as a struct over an
+array or slab and borrow back as a `str`.
 
 Crossing to C is explicit, since a `str` carries no NUL terminator. The one
 shortcut is the string literal, which the compiler also lays down NUL-terminated,
@@ -243,16 +229,17 @@ cost. That is why the FFI examples below pass `"..."` straight to `printf`.
 
 Structs and enums pass and return by value, copied at the call boundary, unless
 you pass a borrow. Slices and fixed arrays are copy: a slice is a pointer and a
-length, and copying one copies that pair rather than what it names. There is no
-implicit boxing and no hidden heap allocation anywhere.
+length, and copying one duplicates that pair and leaves the elements where they
+are. There is no implicit boxing and no hidden heap allocation anywhere.
 
 Fixed-size arrays are written `[N]T` and every index is bounds-checked. An
-out-of-range access aborts at runtime rather than reading past the end. This is
-always on, with no `get`/`get_unchecked` split.
+out-of-range access aborts at runtime. This is always on, with no
+`get`/`get_unchecked` split.
 
 ## Structs, enums, and pattern matching
 
-Structs and enums are plain data. Construction uses `=` for fields, not `:`:
+Structs and enums are plain data. Construction uses `=` for fields, where Rust
+uses `:`:
 
 ```frost,sketch
 Point :: struct { x: i64, y: i64 }
@@ -272,8 +259,8 @@ mix both:
 Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 ```
 
-`match` is the workhorse, and its arm syntax is `case <pattern>: <expr>`. A
-variant pattern leads with a dot and binds fields by name:
+A `match` arm is written `case <pattern>: <expr>`. A variant pattern leads with
+a dot and binds fields by name:
 
 ```frost,sketch
 delta :: fn(k: Kind) -> i64 {
@@ -309,21 +296,21 @@ fizz :: fn(i: i64) -> i64 {
 
 Or-patterns and range patterns carry over as they read in Rust: `case .Left |
 .Right:` runs one body for either variant, and `case 1..10:` or `case 'a'..='z'`
-written out as numbers covers a span. Guards do not exist: an `if` inside the
-arm is the spelling, and 13 of [syntax.md](design/syntax.md) says why. An
-alternative may not bind payload fields, and a range never removes the need for
-a `case _`.
+written out as numbers covers a span. There are no guards. An `if` inside the
+arm is the spelling, and 13 of [syntax.md](design/syntax.md) covers the
+reasoning. An alternative may not bind payload fields, and a range never removes
+the need for a `case _`.
 
 One thing that does not carry over: a bare name is not a binding. `case n:` in
-Rust catches everything and names it; in Frost a name in a pattern is the value
-it stands for, so `case CH_0:` compares against that constant and a name
+Rust catches everything and names it. In Frost a name in a pattern is the value
+it stands for, so `case CH_0:` compares against that constant, and a name
 standing for no constant is refused. `_` is the arm that covers the rest, and
 the matched value already has a name to read. Decimals and strings are refused
-in a pattern too, since what a `case` covers is a set a reader can count.
+in a pattern too.
 
 Matching a value of a `linear` type consumes it (see below). There is no
-`#[derive(Debug)]`, `PartialEq`, or the rest. Equality is written, and printing
-is a call to a writer named for the type rather than a trait a type opts into.
+`#[derive(Debug)]`, `PartialEq`, or the rest. Equality is written out, and
+printing is a call to a writer named for the type.
 
 ## The borrow system without lifetimes
 
@@ -339,8 +326,7 @@ it. There is no `&`. The mode is a property of the parameter:
 | `fn f(x: T)` | `f :: fn(move x: T)` | ownership transferred |
 
 The call is `f(x)` in all three cases. Which one it is comes from the signature
-you can go read, not from a sigil at the call, and the exclusivity check reads
-that signature too.
+you can go read, and the exclusivity check reads that signature too.
 
 ```frost,sketch
 scale :: fn(mut p: Point, k: i64) {
@@ -356,15 +342,14 @@ main :: fn() -> i64 {
 ```
 
 A borrow obtained from a parameter mode is implicit, and an implicit borrow
-cannot escape. The shapes are not expressible rather than merely rejected: there
-is no reference type to write in a struct field, so it cannot be stored in a
-struct or enum field, put in an array, or returned. You pass data in by borrow,
-operate on it, and the borrow dies at the end of the call.
+cannot escape. There is no reference type to write down, so such a borrow cannot
+be stored in a struct or enum field, put in an array, or returned. You pass data
+in by borrow, operate on it, and the borrow dies at the end of the call.
 
 ### `ref T`, the borrow you write down
 
 The exception is explicit and checked. `ref name := place` binds a borrow of a
-place rather than a copy of it, and a function may declare `-> ref T`:
+place, and a function may declare `-> ref T`:
 
 ```frost,sketch
 at :: fn(points: []Point, index: i64) -> ref Point {
@@ -377,11 +362,11 @@ held.x = 9                 // writes the element, not a copy of it
 ```
 
 That is Rust's `fn get(&mut self, i: usize) -> &mut T` without the lifetime, and
-it is what lets a container hand back an element rather than a read-and-write
-pair. What it may not do is be stored: no struct field, no array element, no
-container. So `fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` translates
-directly, and a cache of borrows still does not, which is the point at which you
-switch to handles. See 3.3 of [types.md](reference/types.md) and chapter 8 of
+it lets a container hand back an element instead of a read-and-write pair. What
+it may not do is be stored: no struct field, no array element, no container. So
+`fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` translates directly, and a
+cache of borrows still does not. That is where you switch to handles. See 3.3 of
+[types.md](reference/types.md) and chapter 8 of
 [ownership.md](reference/ownership.md).
 
 Deref rules to keep straight, since they differ from Rust's `*`:
@@ -405,9 +390,9 @@ unsafe { pe^.hp = pe^.hp - 25 }
 ```
 
 Raw pointers are where you step outside the safety guarantees, exactly as
-`unsafe` raw pointers are in Rust. The difference is that in Frost the common
-case (a slab of long-lived objects) is served by safe handles, so you reach for
-raw pointers far less often.
+`unsafe` raw pointers are in Rust. In Frost the common case, a slab of
+long-lived objects, is served by safe handles, so raw pointers stay in FFI and
+low-level library code.
 
 ## Moves, copies, and linear resources
 
@@ -421,10 +406,10 @@ consume(buf)
 // consume(buf)   // error: use of moved value 'buf'
 ```
 
-Copy-ness is decided by the type category, not by a `Copy` derive. Scalars,
-pointers, handles, `str`, slices, and fixed arrays are copy. Structs and enums
-are move. There is no `#[derive(Clone)]` and no `.clone()`. If you want a second
-copy of a struct, you construct one.
+Copy-ness is decided by the type category, where Rust uses a `Copy` derive.
+Scalars, pointers, handles, `str`, slices, and fixed arrays are copy. Structs
+and enums are move. There is no `#[derive(Clone)]` and no `.clone()`. If you
+want a second copy of a struct, you construct one.
 
 The larger divergence is how cleanup works. Frost has no `Drop`. In its
 place is the `linear` qualifier, which changes the affine rule (use *at most*
@@ -448,15 +433,14 @@ compile error, the mirror image of a leaked `Drop`. Consuming means moving it
 onward. That means returning it, passing it by value (often to an `extern` that
 takes ownership across the FFI boundary), or `match`ing it.
 
-Two consequences for a Rust programmer:
+So cleanup is a checked obligation you can see in the code. There is no drop
+order to reason about and no `mem::forget` footgun, and forgetting is a compile
+error.
 
-- Cleanup is a checked obligation you can see in the code, not an implicit call
-  that runs at a brace you have to imagine. There is no drop order to reason
-  about and no `mem::forget` footgun. Forgetting is a compile error.
-- A fallible function that answers with a `linear` value cannot be ignored.
-  Where Rust leans on `#[must_use]` as a lint, Frost makes must-use a type
-  rule: the result carrying a resource is itself linear, so dropping the call
-  drops the resource, and that is a compile error.
+A fallible function that answers with a `linear` value cannot be ignored either.
+Where Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule:
+the result carrying a resource is itself linear, so dropping the call drops the
+resource, and that is a compile error.
 
 ### `defer` for scope-exit actions
 
@@ -471,9 +455,8 @@ work :: fn() {
 }
 ```
 
-It is Go's `defer` rather than a Rust guard object. For resources with real
-ownership, prefer a `linear` type. Use `defer` for local, best-effort
-scope-exit actions.
+It is Go's `defer`. For resources with real ownership, prefer a `linear` type.
+Use `defer` for local, best-effort scope-exit actions.
 
 ## Errors, without `Result<T, E>` being a library type
 
@@ -498,26 +481,25 @@ match number(text) {
 `-> i64 ! Parse` is "answers with an i64, or fails with a Parse", the compiler
 makes that signature into one enum with `Ok { value }` and `Err { error }`
 variants, and `?` hands a failure up. 5.2b of
-[declarations.md](reference/declarations.md) is the mechanism in full. What is
-worth reading here is the four places it is not Rust's.
+[declarations.md](reference/declarations.md) is the mechanism in full. Four
+things differ from Rust.
 
 `Parse` is a plain struct the program declared. There is no `Error` trait to
 implement, no `source()`, no backtrace, no allocation, and no `Box<dyn Error>`
-to erase anything into, because there is nothing to erase into.
+to erase anything into.
 
 `?` does not convert. The failure type of the call and the failure type of the
 function it is written in have to be the same one, where Rust would insert a
 `From` impl. A function that calls something failing differently `match`es it
-and returns the failure it declares, so what a function fails with is what its
-signature says and nothing arrived through a conversion you did not read.
+and returns the failure it declares, so a function fails with what its signature
+says.
 
-`#[must_use]` has no equivalent because it is not needed for the case that
-matters. A result carrying a `linear` value is itself linear, so ignoring the
-call is a compile error rather than a lint. A result carrying an ordinary value
-may be ignored, exactly as in Rust with the lint off.
+`#[must_use]` has no equivalent. A result carrying a `linear` value is itself
+linear, so ignoring the call is a compile error. A result carrying an ordinary
+value may be ignored, exactly as in Rust with the lint off.
 
 There is no `panic!` to catch, no `unwind`, and no `catch_unwind`. A failure
-that is a bug rather than a condition in the world is an assertion, and an
+that is a bug, as opposed to a condition in the world, is an assertion, and an
 assertion aborts. There is also no `unwrap`, because the match on the enum
 covers every variant the way any other match does.
 
@@ -526,15 +508,15 @@ covers every variant the way any other match does.
 This is where you put everything that Rust would model with `Rc<RefCell<T>>`,
 `Arc`, a `Vec<T>` plus indices, or a graph of references. Long-lived, shared,
 or interlinked data lives in a slab and is named by a `Handle<T>`, a small
-copyable value that is an index plus a generation, not a pointer.
+copyable value holding an index and a generation.
 
 The slab lives in the library, with no runtime behind it. `std/slab.frost` is
 ordinary Frost: the storage, the free list, the generation
 counters, and the packing of an index and a generation into one handle are all
 written out, the way `slotmap` and `generational-arena` are written out in Rust.
-What the compiler adds is the subscript, because "hand back a validated
-reference into storage" is the one thing a language with second-class borrows
-cannot express in itself. It offers it for any struct that is slab-shaped: a
+The compiler adds the subscript, since handing back a validated reference into
+storage is the one operation a language with second-class borrows cannot write
+for itself. It offers that subscript for any struct that is slab-shaped: a
 `storage` array beside a parallel `generations` array.
 
 ```frost
@@ -563,8 +545,8 @@ modes as anything else, so that borrow cannot escape the call either.
 The generation is what makes this safe without a borrow checker. Releasing a
 slot bumps its generation counter. A handle carries the generation it was minted
 with, and a lookup with a stale generation aborts instead of reading whoever
-reused the slot. It gives you the "weak reference that safely goes dangling"
-behavior without reference counting or runtime borrow tracking.
+reused the slot. You get the behavior of a weak reference that goes dangling
+safely, with no reference counting and no runtime borrow tracking.
 
 The mental substitution is direct. A `Handle<T>` is what you store in fields and
 return from functions, precisely the things a `&T` may not do. A linked list, a
@@ -573,16 +555,16 @@ scene graph, or an entity system is a slab of nodes linked by handles.
 and chapter 10 of [handles-and-pools.md](reference/handles-and-pools.md) covers
 both.
 
-Frost claims memory safety without a garbage collector and without lifetimes on
-the strength of six guarantees, each with a mechanism behind it and raw pointers
-(`^T`) deliberately outside the set.
-[memory-safety.md](design/memory-safety.md) states them and argues each one.
+Frost's memory safety, with no garbage collector and no lifetimes, rests on six
+guarantees, each with a mechanism behind it and raw pointers (`^T`) outside
+the set. [memory-safety.md](design/memory-safety.md) states them and argues
+each one.
 
 ## Generics without traits
 
 Generics monomorphize, exactly as in Rust. Each instantiation is compiled to
-specialized code with no runtime dispatch. The differences are in how you spell
-them and, more importantly, in what you cannot say.
+specialized code with no runtime dispatch. The differences are in the spelling
+and in what you cannot say.
 
 A type parameter is written `$T`. It can appear on functions and on structs:
 
@@ -618,10 +600,10 @@ There are no traits, no associated types, and no `dyn Trait`. A generic
 function is generic over any type its body type-checks against once
 specialized.
 
-There is a `where` clause, and it is not a trait bound. It asks what the
-compiler already knows about a type, over a fixed vocabulary: `is_numeric`,
-`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice`, `is_pointer`,
-`is_linear`, combined with `&&`, `||` and `!`.
+There is a `where` clause. It asks what the compiler already knows about a type,
+over a fixed vocabulary: `is_numeric`, `is_integer`, `is_float`, `is_struct`,
+`is_array`, `is_slice`, `is_pointer`, `is_linear`, combined with `&&`, `||` and
+`!`.
 
 ```frost
 twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
@@ -629,8 +611,7 @@ twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
 
 Nothing registers into that vocabulary and nothing implements it, so there is
 no coherence rule, no orphan rule, and no solver. The bound is a precondition
-checked at the call, which is where the error belongs: the caller chose the
-type.
+checked at the call, so the error lands on the caller that chose the type.
 
 Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost passes the
 operation. For a single operation that is a compile-time function parameter,
@@ -649,9 +630,9 @@ smallest := best($i64, $ascending, 7, 3)
 ```
 
 The signature is checked at the call with that call's type arguments substituted
-in, so a wrong one is an error against the parameter list rather than a message
-pointing inside the specialized body. The call to `before` is direct, not through
-a pointer, because the specialization knows which function it is.
+in, so a wrong one is an error against the parameter list, and the message
+points there instead of inside the specialized body. The call to `before` is
+direct, with no pointer, because the specialization knows which function it is.
 
 ### A trait, and what replaces it
 
@@ -693,29 +674,27 @@ sort($i64, $i64_ascending, numbers)
 
 11.4b of [generics.md](reference/generics.md) has the mechanism, including how
 `ops.less(a, b)` folds to a direct call to `i64_less` so the specialization
-holds no function pointer. What matters coming from Rust is where the two part
-company.
+holds no function pointer.
 
 Two orderings for one type. In Rust this is the newtype dance or a wrapper. In
-Frost it is a second constant, `i64_descending`, and nothing conflicts because
-nothing was ever implicit.
+Frost it is a second constant, `i64_descending`, and the two never collide,
+because neither was ever implicit.
 
-Runtime dispatch from the same declaration. Drop the `$` and `ops` is an
+Runtime dispatch comes from the same declaration. Drop the `$` and `ops` is an
 ordinary value that can be chosen while the program runs, stored in an array, or
 swapped. Rust needs `dyn Trait` and a second signature for that.
 
-Composing bounds is a struct with struct fields rather than `T: A + B`, and the
-body reads `ops.ordering.less(a, b)`.
+Composing bounds is a struct with struct fields, where Rust writes `T: A + B`,
+and the body reads `ops.ordering.less(a, b)`.
 
-The visible cost is that every call carries the bundle: `sort($i64,
-$i64_ascending, numbers)` rather than `sort(&mut numbers)`. That verbosity is
-the feature. The call site says which comparison it used, and `i64_ascending`
-greps to exactly one definition.
+Every call carries the bundle: `sort($i64, $i64_ascending, numbers)` where Rust
+writes `sort(&mut numbers)`. In exchange the call site says which comparison it
+used, and `i64_ascending` greps to exactly one definition.
 
-What a bundle deliberately cannot do is be found for you. There is no lookup, so
-there is nothing to be coherent about, no orphan rule, and no solver. What you
-also cannot state is a requirement on `T` itself beyond the `where` vocabulary
-above. Anything narrower surfaces when the specialization is compiled.
+A bundle is never found for you. There is no lookup, so there is nothing to be
+coherent about, no orphan rule, and no solver. You also cannot state a
+requirement on `T` itself beyond the `where` vocabulary above. Anything narrower
+surfaces when the specialization is compiled.
 
 ## Function pointers, not closures
 
@@ -739,11 +718,11 @@ value alongside the function pointer, the same pattern C uses.
 Registering a callback with a C library is the one case where that pattern
 gets language support, because it is the case where the context outlives the
 call. It is written as a `$` function parameter on an `extern` plus a context
-taken by `move`, and it is closer to Rust's `Box::into_raw` plus a
+taken by `move`, and it sits closer to Rust's `Box::into_raw` plus an
 `extern "C" fn` shim than to a closure. The context is handed over, the caller
 cannot touch it while the callback can fire, and getting it back is what
-unregistration is for. Unlike the Rust version there is no `unsafe` and no raw
-pointer in what you write. See [callbacks.md](design/callbacks.md).
+unregistration is for. The Frost version has no `unsafe` and no raw pointer in
+what you write. See [callbacks.md](design/callbacks.md).
 
 ## Compile-time evaluation
 
@@ -753,13 +732,13 @@ kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which is
 Rust's const generics as values and is what sizes a `[N]T` field), a function
 (`$f: fn(..) -> ..`), a capability bundle (`$ops: Ordering<T>`), and a list of
 arguments (`args: $...`). They work on functions as well as structs, so an
-operation over a sized aggregate is written once rather than once per size, and
-unlike Rust's const generics the integer is usable as a plain value in the body
-rather than only in a type. A generic is stamped out once per distinct set of
-those arguments at the call site (chapter 11 of the spec), the way Rust
-monomorphizes generics.
+operation over a sized aggregate is written once and covers every size. Where
+Rust's const generics keep the integer in the type, Frost lets the body use it
+as a plain value. A generic is stamped out once per distinct set of those
+arguments at the call site (chapter 11 of the spec), the way Rust monomorphizes
+generics.
 
-A list is what a variadic macro is reached for in Rust, without being a macro. A
+A list covers what a variadic macro covers in Rust, without being a macro. A
 `for` over one unrolls, `list[K]` names an element, and an `if` over a type
 predicate keeps the branch that survives for that element:
 
@@ -782,9 +761,9 @@ printall(1, 2.5, "three")
 A call written where a compile-time value is read is worked out before the
 program runs, which is where `const fn` lands. Nothing marks the function:
 `LANES :: round_up(300, 64)` and `[next_power_of_two(300)]u8` call ordinary
-functions, and what says the call is early is that a constant and an array
-length are. Rust asks the author to promise `const` on the definition; Frost
-reads the position instead, so no function has two kinds.
+functions, and the position runs them early. Rust asks the author to promise
+`const` on the definition. Frost reads the position, so no function has two
+kinds.
 
 What such a call may do is the whole-number half of the language, plus the three
 things built out of it: a run of values, a set of named ones, and a run of bytes.
@@ -794,18 +773,18 @@ it with the index checked where it is written. `wrap_add`, `wrap_sub` and
 
 Everything else is refused where it is written: a function that reaches itself,
 a call into the world, a pointer, a number with a fraction, and a bound of a
-million steps. There is no falling back to running it later, since that would
-make one declaration a number in one place and a call in another.
+million steps. A refused call stays refused, so one declaration is never a
+number in one place and a call in another.
 
-What is deliberately missing is everything that would make this a language of
-its own: no compile-time string parsing, no recursion, no unbounded loop, and
-nothing that reads the world. Every construct walks a list whose length the call
-fixed, or a body whose steps are bounded, so expansion costs what the program's
-text costs. There is nothing that corresponds to a procedural macro.
+The compile-time layer stops well short of a language of its own. It has no
+string parsing, no recursion, no unbounded loop, and nothing that reads the
+world. Every construct walks a list whose length the call fixed, or a body whose
+steps are bounded, so expansion costs what the program's text costs. There is
+nothing that corresponds to a procedural macro.
 
 ## Calling C
 
-FFI is a zero-glue path. Declaring an external function is a
+FFI needs no glue. Declaring an external function is a
 constant whose value is an `extern fn`:
 
 ```frost
@@ -826,22 +805,21 @@ with no pointer anywhere is declared `safe extern fn` and needs no block, which
 is how `std/math.frost` reaches `sqrtf`.
 
 One asymmetry to note, coming from Rust's `extern "C"` and `#[no_mangle]`, is
-that Frost calls C, but C does not call Frost. There is no stable exported ABI
+that Frost calls C, and C does not call Frost. There is no stable exported ABI
 and no attribute to expose a Frost function to a C caller. The C that the
-compiler emits internally is a lowering detail, not an interface. If you need a
-library other languages link against, that is out of scope. The asymmetry is
-what keeps the backend simple. See [c-compatibility.md](impl/c-compatibility.md) for
-the full type mapping.
+compiler emits internally is a lowering detail rather than an interface. If you
+need a library other languages link against, that is out of scope. See
+[c-compatibility.md](impl/c-compatibility.md) for the full type mapping.
 
 ## Modules
 
 A module is a file, brought in with `import "x.frost"`. There is no `mod`, no
 crate graph, and no visibility modifier: a file's `export` line is the complete
 set of names another file may use from it, and everything else is private and
-mangled so it cannot collide. An import is not transitive, so a file names what
-it uses. Two imported modules exporting the same name is an error at the use,
-and `(old as new)` renames one of them for the importing file only. See
-[modules.md](impl/modules.md).
+mangled so it cannot collide. An import stops at the file that writes it, so
+each file names what it uses. Two imported modules exporting the same name is an
+error at the use, and `(old as new)` renames one of them for the importing file
+only. See [modules.md](impl/modules.md).
 
 ## What a Rust program leans on that Frost omits, and what to use instead
 
@@ -868,7 +846,8 @@ and `(old as new)` renames one of them for the importing file only. See
 - `if` and `while` conditions need parentheses, as in `if (x > 5) { .. }`.
 - There is no `let`. Use `:=`, `:`, or `::`, and every function, type, and
   constant is declared with `::`.
-- Struct fields are set with `=`, not `:`, as in `Point { x = 1, y = 2 }`.
+- Struct fields are set with `=`, as in `Point { x = 1, y = 2 }`, where Rust
+  uses `:`.
 - Match arms are `case <pattern>: <expr>`, and variant patterns lead with a dot,
   as in `case .Circle { radius }:`.
 - A variant can leave its enum out where the type is already stated, as in
@@ -884,11 +863,12 @@ and `(old as new)` renames one of them for the importing file only. See
 - There is no `&`. Borrowing is written on the parameter, not at the call.
 - To deref a raw pointer, use postfix `^`, as in `a^`, `p^.field`. A borrowed
   parameter needs no sigil, so field access on one is direct, as in `p.field`,
-  and assigning to the whole of a `mut` parameter is just `p = q`.
+  and assigning to the whole of a `mut` parameter is written `p = q`.
 - You cannot store a borrow, and only a `ref T` may be returned. Use a
   `Handle<T>` for anything that must live beyond the call and be kept.
 - A `linear` value must be consumed on every path, or it is a compile error.
-- Integer arithmetic wraps. Do not rely on overflow being caught.
+- Integer overflow aborts in every build. Reach for `wrap_add` and friends where
+  wrapping is what you want.
 - There is no `pub`. Visibility is the `export` line at the top of a file, and
   struct fields are always public.
 - Calling an `extern fn` needs an `unsafe` block unless it is a `safe extern`.
@@ -936,13 +916,11 @@ main :: fn() -> i64 {
 Entities are stored by value in the slab, handles are the things that get passed
 around and stored, the borrow of `world[goblin]` lasts only for the call to
 `delta`, and releasing a slot invalidates old handles by generation rather than
-by any lifetime the compiler had to track. That is the whole model. Once it
-clicks, the absence of lifetimes stops feeling like something missing and starts
-feeling like something removed.
+by any lifetime the compiler had to track.
 
 ## Where to go next
 
-- [tour.md](tour.md), the same language as a narrative rather than a mapping.
+- [tour.md](tour.md), the same language walked through end to end.
 - [philosophy.md](design/philosophy.md), why the language is shaped this way.
 - [memory-safety.md](design/memory-safety.md), the safety guarantees in depth.
 - [patterns.md](patterns.md), what the language rewards and what it merely

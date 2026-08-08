@@ -26,14 +26,13 @@ self-hosted parser (`selfhosted/`), and this grammar are three views of one
 language. A disagreement between them is a bug in whichever diverges from the
 intent expressed here.
 
-`tests/grammar.rs` is a corpus test, and it is worth knowing what it does and
-does not catch. It runs a fixed list of sources through the reference parser and
-asserts that each one parses, and a shorter list that each one does not. It
-never reads chapter 13. A form the grammar describes and the parser rejects is
-caught only if someone put that form in the corpus, and a form the parser
-accepts and the grammar never mentions is not caught at all. The corpus stops a
-parser change from silently breaking what it covers. Keeping this chapter honest
-is a reading job.
+`tests/grammar.rs` is a corpus test. It runs a fixed list of sources through
+the reference parser and asserts that each one parses, and a shorter list that
+each one does not. It never reads chapter 13. A form the grammar describes and
+the parser rejects is caught only when that form is in the corpus, and a form
+the parser accepts and the grammar never mentions lies outside its reach. The
+corpus holds a parser change to what it covers. Agreement between chapter 13
+and the parser beyond that is established by reading.
 
 ## 1.3 Conformance
 
