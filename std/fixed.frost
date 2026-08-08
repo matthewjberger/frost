@@ -12,7 +12,7 @@
 // and what it draws from is the `[]T` it is handed:
 //
 //     with scratch {
-//         var visible := fixed_over($Sprite, arena_carve($Sprite, $4096, scratch, 64))
+//         var visible := fixed_over($Sprite, arena_carve($Sprite, scratch, 64))
 //         fixed_push($Sprite, visible, sprite)
 //     }
 //

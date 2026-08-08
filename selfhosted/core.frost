@@ -317,6 +317,10 @@ NodeKind :: enum {
     Num, Var, Bin, Let, Assign, If, While, Return, Call, Func, Param,
     Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Cast,
     Sizeof,
+    // What a type is aligned to. Carried as its own node rather than folded
+    // where it is written, for the reason `Sizeof` is: the type may be a
+    // template's parameter, which has no layout until the instance is made.
+    Alignof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
     SliceLen, Assert, Ref, SliceFrom,
     // How many zero bits sit below the lowest set bit of an i64. The live walk

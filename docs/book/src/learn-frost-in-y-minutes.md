@@ -637,9 +637,9 @@ Every compile-time `for` walks a list whose length the call fixed.
 
 ## Compile-time questions about a type
 
-`sizeof`, `typename` and `type_id` are compile-time constants, and `fields(T)`
-walks a struct's layout. Use it to derive a vertex format or a descriptor table
-from the struct that the data already lives in.
+`sizeof`, `alignof`, `typename` and `type_id` are compile-time constants, and
+`fields(T)` walks a struct's layout. Use it to derive a vertex format or a
+descriptor table from the struct that the data already lives in.
 
 ```frost
 import "io.frost"
@@ -648,6 +648,7 @@ Vertex :: struct { x: f32, y: f32, id: i64 }
 
 main :: fn() -> i64 {
     print("{}\n", sizeof(Vertex))
+    print("{}\n", alignof(Vertex))
     print("{}\n", typename(Vertex))
     print("{}\n", field_count(Vertex))
     for field in fields(Vertex) {

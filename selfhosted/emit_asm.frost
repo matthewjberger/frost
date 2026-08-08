@@ -296,7 +296,7 @@ asm_scan_expr :: fn(mut p: Parser, id: i64, place: bool) {
     }
     if (kind == NodeKind::Num || kind == NodeKind::StrLit
         || kind == NodeKind::Float || kind == NodeKind::Sizeof
-        || kind == NodeKind::TypeVal) {
+        || kind == NodeKind::Alignof || kind == NodeKind::TypeVal) {
         return
     }
     // A shape this walk does not read pins every name under it, which is what
@@ -2314,6 +2314,10 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Sizeof) {
         asm_i("movq $", type_size(p, node.val), ", %rax")
+        return
+    }
+    if (kind == NodeKind::Alignof) {
+        asm_i("movq $", align_of(p, node.val), ", %rax")
         return
     }
     // A conversion between numbers, which is the same widening and narrowing

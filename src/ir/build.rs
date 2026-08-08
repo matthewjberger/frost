@@ -19,6 +19,7 @@ use crate::parser::Operator;
 use crate::types::{Type, spelled};
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
+    "alignof",
     "assert",
     "cast",
     "flags_has",
@@ -1367,6 +1368,10 @@ impl IrBuilder {
         size_and_align(ty, &self.structs, &self.enums).map(|(size, _)| size)
     }
 
+    fn measured_align(&self, ty: &Type) -> Option<usize> {
+        size_and_align(ty, &self.structs, &self.enums).map(|(_, align)| align)
+    }
+
     fn type_is_linear(&self, ty: &Type) -> bool {
         ty.is_linear_with(&self.linear)
     }
@@ -2625,14 +2630,15 @@ impl Expansion<'_> {
             ));
         }
         let node = ast.expr(expression).clone();
-        // `sizeof(field)` is the width of what that field holds, and
-        // `type_id(field)` its number. A field reads as a named type to the
-        // parser, which is what makes this the place that tells the two apart.
-        // A name a `for` over a list of types bound is a type here and nowhere
-        // else, and resolves the same way.
+        // `sizeof(field)` is the width of what that field holds,
+        // `alignof(field)` what it is aligned to, and `type_id(field)` its
+        // number. A field reads as a named type to the parser, which is what
+        // makes this the place that tells the two apart. A name a `for` over a
+        // list of types bound is a type here and nowhere else, and resolves the
+        // same way.
         if let Expression::Call(callee, arguments) = &node
             && let Expression::Identifier(named) = ast.expr(*callee)
-            && matches!(ast.name(*named), "sizeof" | "type_id")
+            && matches!(ast.name(*named), "sizeof" | "alignof" | "type_id")
             && arguments.len() == 1
         {
             let callee = *callee;
@@ -6898,10 +6904,10 @@ impl<'a> FunctionLowering<'a> {
         self.lower_direct_call(name, &rewritten)
     }
 
-    // `sizeof(T)`, `typename(T)` and `type_id(T)` are calls the parser
-    // committed to these names, carrying the type as their one argument. Each
-    // is a constant the compiler already knows, answered here so nothing
-    // downstream sees a call.
+    // `sizeof(T)`, `alignof(T)`, `typename(T)` and `type_id(T)` are calls the
+    // parser committed to these names, carrying the type as their one
+    // argument. Each is a constant the compiler already knows, answered here so
+    // nothing downstream sees a call.
     fn lower_type_builtin(
         &mut self,
         callee: ExprId,
@@ -6912,7 +6918,7 @@ impl<'a> FunctionLowering<'a> {
             return Ok(None);
         };
         let name = self.ast.name(*name);
-        if !matches!(name, "sizeof" | "typename" | "type_id") {
+        if !matches!(name, "sizeof" | "alignof" | "typename" | "type_id") {
             return Ok(None);
         }
         let name = name.to_string();
@@ -6953,6 +6959,23 @@ impl<'a> FunctionLowering<'a> {
                 let size = size as i64;
                 (
                     IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
+                    Type::I64,
+                )
+            }
+            // What the type is aligned to, which an allocator handing out a run
+            // of it has to start that run on. Refused for the same reason
+            // `sizeof` is: a type nothing was laid out for would answer zero,
+            // and a caller dividing by it would divide by zero rather than be
+            // told the type had no layout.
+            "alignof" => {
+                let Some(align) = self.builder.measured_align(&ty) else {
+                    bail!(
+                        "`alignof` has no layout for '{ty}', so there is no alignment to give"
+                    );
+                };
+                let align = align as i64;
+                (
+                    IrOperand::Constant(IrConstant::Integer(align, Type::I64)),
                     Type::I64,
                 )
             }

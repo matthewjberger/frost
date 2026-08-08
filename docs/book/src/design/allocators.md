@@ -34,9 +34,10 @@ in how they hand that memory out and take it back.
    marker and roll back to it, a stack discipline. That is O(1),
    fragmentation-free, and it removes a class of leak and use-after-free bug by
    batching lifetime instead of tracking it per object. `std/arena.frost` is
-   one over a fixed `[N]u8` inside the struct, handing out `[]T` runs so that
-   what is built on it is bounds-checked, with `ptr_to`, `ptr_cast` and
-   `slice_from` as the only primitives the compiler supplies.
+   one over a `[]u8` it was handed, handing out `[]T` runs so that what is built
+   on it is bounds-checked, with `ptr_to`, `ptr_cast` and `slice_from` as the
+   only primitives the compiler supplies. A run starts on `alignof(T)`, so a
+   type asking for more than a word gets it.
    `examples/native/arena.frost` is the same thing written out by hand, so it
    shows the layer with nothing under it.
 
@@ -117,9 +118,20 @@ against an arena, a static buffer, or the OS.
 This is a library pattern, separate from the language's mechanism. `uses` and
 `with` decide *which* source a call draws from, at compile time, and pay
 nothing. The struct above decides it at run time and costs an indirect call, so
-use it when the answer is not known until then. A data structure generic over
-its allocator type is the middle that costs nothing, and it covers most of what
-a swap is wanted for.
+use it when the answer is not known until then.
+
+The middle of those two would be a data structure generic over its allocator
+type, which costs nothing and covers most of what a swap is wanted for. It is
+not writable yet. A capability bundle expresses the interface, and a bundle
+holding `take`, `resize` and `give` over `[]u8` runs and mutates its state
+correctly on both compilers. What stops it is the checks: a call to a function
+supplied at compile time is one whose body they cannot see, so a view it answers
+with has no traceable storage, and `carve` reading a run back out of
+`source.take(...)` is refused twice, once for indexing a value of unknown type
+and once for answering with what reads as this frame's storage. A `$f` argument
+is refused the same way, so the bundle is not what is in the way. Until a
+compile-time call can answer with a view, `Fixed<T>` beside `Vec<T>` is what a
+container in an arena is.
 
 ## What is left in C
 

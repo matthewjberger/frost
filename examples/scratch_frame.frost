@@ -1,10 +1,11 @@
 // A per-frame scratch region: the storage a frame needs, carved out of an arena
 // inside the frame's own `with` block and reclaimed whole when the frame ends.
 //
-// The arena is built once, on the stack, and never grows. Each frame carves a
-// run out of it, fills a container over that run, reads the container, and
-// resets the arena back to empty. No allocation happens after startup and
-// nothing is freed one value at a time.
+// The backing is one array on the stack and the arena is a view of it, so the
+// storage lives where this program put it and the arena itself allocates
+// nothing. Each frame carves a run out of it, fills a container over that run,
+// reads the container, and resets the arena back to empty. No allocation
+// happens after startup and nothing is freed one value at a time.
 //
 // What the block buys over calling the arena directly is the check. `visible`
 // holds a view of the arena, so the region check refuses it leaving the block:
@@ -41,10 +42,10 @@ tally :: fn(drawn: []Sprite) -> i64 {
 
 // One frame. The arena is handed in, the run is carved inside the region, and
 // what leaves is a number.
-draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite, frame: i64) -> i64 {
+draw_frame :: fn(mut scratch: Arena, world: []Sprite, frame: i64) -> i64 {
     var total: i64 = 0
     with scratch {
-        run := arena_carve($Sprite, $4096, scratch, 16)
+        run := arena_carve($Sprite, scratch, 16)
         var visible := fixed_over($Sprite, run)
         for sprite in world {
             if (sprite.layer < visible_layers(frame)) {
@@ -65,7 +66,8 @@ draw_frame :: fn(mut scratch: Arena<4096>, world: []Sprite, frame: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var scratch: Arena<4096> = Arena { data = [0; 4096], offset = 0 }
+    var backing: [4096]u8 = [0; 4096]
+    var scratch := arena_over(backing)
     var world: [6]Sprite = [
         Sprite { x = 1, y = 2, layer = 0 },
         Sprite { x = 3, y = 4, layer = 0 },
@@ -80,9 +82,9 @@ main :: fn() -> i64 {
         total = total + draw_frame(scratch, world, frame)
         // The whole frame's storage, back in one step. Nothing was freed one
         // value at a time, and the next frame carves the same bytes again.
-        arena_reset($4096, scratch, 0)
+        arena_reset(scratch, 0)
         frame = frame + 1
     }
-    print("total {}\narena still holds {}\n", total, arena_used($4096, scratch))
+    print("total {}\narena still holds {}\n", total, arena_used(scratch))
     0
 }
