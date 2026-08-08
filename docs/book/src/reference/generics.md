@@ -148,8 +148,7 @@ The list is always last.
 
 A `for` over the list unrolls. The body is written once and compiled once per
 element, with the loop's name standing for that element. There is no loop at run
-time and no index. What a `for` walks decides which of the two it is: a list
-unrolls, and everything else is the ordinary loop of chapter 7.
+time and no index. Every other `for` is the ordinary loop of chapter 7.
 
 `list[K]` names the Kth element. The index has to be a literal, since which
 element it is has to be known while the body is being expanded. An index past
@@ -225,11 +224,11 @@ written:
 | `print("{} of {}\n", 1)` | Two holes, one value |
 | `print("{}\n", 1, 2)` | One hole, two values |
 | `print("{ x }\n", 1)` | A `{` that opens neither a hole nor a brace |
-| `print(chosen, 1)` | The literal is what is counted, so it has to be one |
+| `print(chosen, 1)` | The count comes from the literal, so it has to be one |
 
-What a hole accepts is decided by the function that has the parameter, not by
-the word: `print` takes a number, a `bool` or a `str`, and refuses anything
-else with the type it was given.
+The function that has the parameter decides what a hole accepts: `print` takes
+a number, a `bool` or a `str`, and refuses anything else with the type it was
+given.
 
 The word is contextual, the same way `value` and `mut` are. A parameter named
 `format` still parses as a parameter named `format`, since the word only takes
@@ -243,12 +242,11 @@ build, and nothing is promised about which number a type gets.
 
 It keys a table by type in a program whose contents are decided while it runs.
 `std/ecs.frost` registers a component under a type and is given an index in
-return, and `type_id` is what lets a query later name the component by writing
-the type.
+return, and `type_id` lets a query later name the component by writing the type.
 
 Expansion has no recursion, no unbounded loop, and nothing that reads the world.
 Every construct here iterates a list whose length is known once the generic is
-instantiated, so what expansion costs is bounded by the program's own text.
+instantiated, so the program's own text bounds the cost of expansion.
 
 A literal is read where a `format` parameter takes one, and a constant or a
 length may be a call the build runs early. Both are bounded: the reader counts
@@ -286,7 +284,7 @@ asked:
 | `offset_of(field)` | where it sits in the type that declares it |
 | `sizeof(field)` | how wide what it holds is |
 | the 11.4a predicates | what kind of type it holds |
-| `field_count(T)` | how many fields a type has, which is what sizes a table |
+| `field_count(T)` | how many fields a type has, which sizes a table |
 
 Every one of those is a number the compiler worked out to lay the type out.
 Naming a field anywhere else is an error.
@@ -450,6 +448,6 @@ can use from it. Everything else is private and mangled so it cannot collide.
 An import is looked for beside the importing file first, then in directories
 given with `-L`, then in `FROST_PATH`, then in those a `frost.json` beside the
 entry file declares, then in the standard library. A module's identity is its
-path relative to whichever of those it was found under, which is what private
-symbol names and the build cache are keyed on. See
+path relative to whichever of those it was found under, and private symbol names
+and the build cache are keyed on it. See
 [modules.md](../impl/modules.md).

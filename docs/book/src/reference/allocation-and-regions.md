@@ -73,7 +73,7 @@ both :: fn() -> i64 uses Arena<256>, Scratch<64> {
 ## 8a.3 What a call supplies
 
 A call to a `uses` function takes one extra argument per capability the callee
-draws, and the compiler supplies each. What it may draw from at the call is:
+draws, and the compiler supplies each. It may draw from:
 
 - the capability parameters the enclosing function itself holds, if it is a
   `uses` function;
@@ -284,5 +284,3 @@ The `uses` list is the whole of what a signature says about allocation. A
 pointer type carries no region, and a lifetime is never written. Supply is
 lexical: a call draws from the capabilities the enclosing function holds and
 from the `with` blocks around it, and a call with neither in reach is an error.
-What a function allocates from is either on its own signature or in the block
-the caller wrote.

@@ -5,8 +5,8 @@ map, a generational slab, the structure-of-arrays version of that slab, and an
 optional. They share one shape. Storage is a heap block from
 [mem.frost](mem.md), a run carved out of an [arena](mem.md), or a fixed array in
 the struct itself. Elements are reached through a bounds-checked slice or a
-generation-checked handle. What a caller does with an element is written where
-the caller is.
+generation-checked handle. A caller writes what it does with an element itself,
+at the call site.
 
 ## `std/vec.frost`, a growable array
 

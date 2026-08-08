@@ -40,8 +40,8 @@ part in `x, y, z` with the scalar part in `w`.
 `Vec2`, `Vec3` and `Vec4` are structs with named components, so a call site
 reads `v.x` and says which component it means. The language separately gives a
 fixed array of numbers the arithmetic operators, once per lane (3.2b of the
-reference), so `[4]f32` is what a program reaches for where the lanes are
-anonymous and the arithmetic runs over all of them at once.
+reference), so a program reaches for `[4]f32` where the lanes are anonymous and
+the arithmetic runs over all of them at once.
 
 ## Vectors
 
@@ -153,8 +153,8 @@ inverse.
 
 ## Which precision
 
-`std/math.frost` is what a renderer wants. Vertices, per-frame transforms and
-anything crossing to a GPU are single-precision, and it is half the bytes.
+A renderer wants `std/math.frost`. Vertices, per-frame transforms and anything
+crossing to a GPU are single-precision, and it is half the bytes.
 
 `std/math64.frost` is for the places where range or accumulated error decides
 the answer: a simulation stepping for hours, world coordinates far from the

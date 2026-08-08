@@ -1,8 +1,8 @@
 # Sorting, and orderings as values
 
 `std/sort.frost` orders a slice in place. `std/ordering.frost` says what "in
-order" means. They are two files because what counts as ordered is a value the
-caller passes in.
+order" means. They are two files because the caller passes in what counts as
+ordered.
 
 ## An ordering is a struct
 
@@ -25,8 +25,7 @@ i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 ```
 
 There is no registry, no lookup and no coherence rule. Two orderings over the
-same type are two constants, and they do not conflict. Descending is a second
-constant with `less` wired to `i64_greater`.
+same type are two constants, and they do not conflict.
 
 `std/ordering.frost` ships four of them:
 
@@ -95,8 +94,8 @@ private to the file.
 `Ordering<T>` is the smallest capability bundle in the library.
 `Hashing<K>` in [containers.md](containers.md) is the same struct over a hash
 and an equality, passed the same way and folded the same way. Higher-order code
-in Frost is this: a struct of functions, taken as a compile-time argument,
-folded at the call.
+in Frost takes this shape throughout: a struct of functions, handed over as a
+compile-time argument and folded at the call.
 
 Section 11.4b of [generics.md](../reference/generics.md) is the language rule,
 and [philosophy.md](../design/philosophy.md) says why there are no traits.
