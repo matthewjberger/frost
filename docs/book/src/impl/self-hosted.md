@@ -110,52 +110,23 @@ bootstrap's `src/tools/query.rs` gives in its own tests.
 ## What the fixpoint cannot see
 
 Three stages agreeing byte for byte is the strongest check here, and it has one
-blind spot worth knowing: **any property every stage shares is invisible to it.**
-The stages are compared against each other, so anything common to all of them
-cancels.
+blind spot: any property every stage shares is invisible to it. The stages are
+compared against each other, so anything common to all of them cancels out.
 
-That is not a hypothetical. `core.autocrlf` is on for most Windows checkouts, so
-a file git writes has CRLF and a file an editor writes may not, and every string
-literal holding a *raw* newline captured whichever it was. The compiler emitted
-4,170 stray carriage returns on one checkout and none on another. All three
-stages read the same source, so all three did it, so the fixpoint held. It was
-found by comparing the output of two compilers built at different times, not by
-any test in the suite.
+`core.autocrlf` is on for most Windows checkouts, so a file git writes has CRLF
+and a file an editor writes may not, and every string literal holding a raw
+newline captured whichever it was. The compiler emitted 4,170 stray carriage
+returns on one checkout and none on another. All three stages read the same
+source, so all three did it, and the fixpoint held. Comparing the output of two
+compilers built at different times is what caught it.
 
-The same reasoning covers everything a build reads that is not the program: the
+The same reasoning covers everything a build reads besides the program: the
 environment, the standard library on disk, and the runtime beside the compiler.
 A build resolves its C runtime by walking up from the binary, and the object it
-compiles is keyed on what that file holds, which cannot tell "the runtime
-changed" apart from "a different runtime is being read". Both present as a cache
-key that does not match, and only one of them is a stale cache. A failing link
-therefore names the runtime path it resolved, because the linker only names the
-symbol it could not find.
-
-So: a check that compares two things is blind to whatever they have in common,
-and to any path only one of them takes. Four of this project's bugs are that one
-shape.
-
-- The fixpoint could not see a property every stage shared, which is the CRLF
-  above.
-- A test that meant to prove a compiler works from anywhere passed because cargo
-  had already put it in the checkout, so the path it named was not the path it
-  took. `installed_layout` now builds a directory that is not the checkout and
-  runs from inside it.
-- Most of the suite compiled with the unsafe audit off, because the programs in
-  it call C without a block, so the pass that decides what a program means by
-  default was absent from nearly every check. Each helper now states which
-  setting it wants, and one test holds the default to being the audited one.
-- `both_compilers_agree_on_these_programs` ran every case through the
-  self-hosted assembly backend alone. Its C backend wrote integer literals with
-  no width suffix, so `1 << 63` answered zero there and correctly everywhere
-  else, and a compiler built through it lost the sign of a negative float
-  literal when it assembled one. Two backends were named and one was asked.
-
-None of the four was fixed by adding a case. Each was fixed by widening what the
-check reaches: compare against a build from another tree, name the resolved
-path, run the configuration a user gets, ask both backends. Reach outside the
-loop for anything that has to hold absolutely, which for the emitted assembly
-means a byte comparison against a build from a different tree.
+compiles is keyed on what that file holds, so "the runtime changed" and "a
+different runtime is being read" both present as a cache key that does not
+match. A failing link names the runtime path it resolved, since the linker only
+names the symbol it could not find.
 
 ## Compile speed
 
@@ -209,21 +180,18 @@ already gone: the pool lives in `std/slab.frost` as ordinary Frost and
 `--freestanding` already links with no libc, so what is left in C is the aborts,
 the assertions and the IO.
 
-Going C-free was not the reason to write the ELF half of the object writer. An
-encoder does not remove the toolchain while a build still links through it, and
-the pieces between here and that are a linker and a libc-free runtime. The
-reason was narrower and better: the encoder wrote COFF, so a Windows build took
-one path and every other platform took another, with different speed and
-different failure modes, and only one of them was under anyone's fingers. The
-ELF half makes the fast path the only path.
+The encoder writes ELF as well as COFF so that every platform takes the same
+path. While it wrote COFF alone, a Windows build encoded its own object and
+every other platform shelled out to `as`, which is two speeds and two sets of
+failure modes.
 
-It is not COFF with a different header. Two differences reach back into the
-encoding rather than staying in the writer. A reference to a name the file both
-defines and offers is left for the linker there, because another object may take
-that name over at load time, where COFF has no such rule and `as` settles it in
-the assembler. And a fixup carries its own addend rather than reading one out of
-the bytes it fills in, so those are left empty. `assemble.frost` is told which
-format it is encoding for and both follow from the answer.
+ELF is more than COFF with a different header. Two differences reach back into
+the encoding. A reference to a name the file both defines and offers is left for
+the linker, since another object may take that name over at load time, where
+COFF has no such rule and `as` settles it in the assembler. And a fixup carries
+its own addend instead of reading one out of the bytes it fills in, so those are
+left empty. `assemble.frost` is told which format it is encoding for, and both
+follow from the answer.
 
 Checked the same way: clang assembles the same text and the two objects are
 compared byte for byte, over the compiler's own 660 KB of code and 8,252 fixups.
@@ -234,13 +202,12 @@ calling convention, which is what lets the ELF half be checked from Windows.
 
 The worry with whole-program monomorphization is that it is a compile-time bomb:
 generics specialize per type, specializations are a cross product, and there is
-no incremental or separate compilation to bound the work. Measured rather than
-argued, with `just bench-scaling`, which spans 917 to 58,107 generated lines and
-640 to 10,240 specializations: four times the input costs roughly four times the
-time on both the front-end and the full-native curves, so the pipeline is close
-to linear with a mild superlinear term that grows with function count. Read
-ratios rather than absolutes there: process startup is a fixed cost inside every
-figure, and it dominates the small end.
+no incremental or separate compilation to bound the work. `just bench-scaling`
+spans 917 to 58,107 generated lines and 640 to 10,240 specializations, and four
+times the input costs roughly four times the time on both the front-end and the
+full-native curves. The pipeline is close to linear, with a mild superlinear
+term that grows with function count. Read ratios there, since process startup is
+a fixed cost inside every figure and it dominates the small end.
 
 So the front end is what the curve is made of. Parse, parameter modes, regions,
 ownership, IR lowering, type checking, monomorphization to fixpoint and C
@@ -271,10 +238,10 @@ produces, which a test checks.
 What keeps the backend off the curve, on the bootstrap:
 
 1. Functions compile in parallel. The type system is local and
-   signature-based, so once signatures are collected functions are independent,
-   which is a large part of why the language was designed the way it is. Code
-   generation runs on every core and is a minority of a full build, with the
-   front end holding the rest, so Cranelift is not what to attack first.
+   signature-based, so once signatures are collected the functions are
+   independent. Code generation runs on every core and is a minority of a full
+   build, with the front end holding the rest, so Cranelift is the wrong place
+   to look for time.
 2. Modules compile separately. Each module is its own object on the link path,
    monomorphization is seeded per module, `--incremental` skips the modules an
    edit cannot reach, and a skipped module contributes signatures rather than
@@ -283,29 +250,21 @@ What keeps the backend off the curve, on the bootstrap:
 3. Specializations carry across builds, since a module's object holds the ones
    that module asked for and reusing the object reuses them.
 
-The shape is measured, and the measurement is a command you can run today. A
-benchmark is easy to get wrong in ways that look like a
-compiler result: generated programs that name a function `f32` time a parse
-error, and programs whose `main` holds thousands of call sites make parallel
-code generation look like it does nothing, because one function is one thread
-however many cores there are. Re-run the benchmark before trusting any of it,
-and look at the shape of what it generates too.
+A benchmark here is easy to get wrong in ways that read as a compiler result.
+Generated programs that name a function `f32` time a parse error, and programs
+whose `main` holds thousands of call sites make parallel code generation look
+like it does nothing, since one function is one thread however many cores there
+are. Look at what the generator produced before trusting a number.
 
-Two smaller things, one taken and one not. Parsing a generic template once per
-instantiation was worth taking: three passes ask for the same instance, once to
-record its concrete return type and once each for its prototype and its body,
-all three producing the same AST from the same template and the same argument.
-`parse_generic_instance` remembers `(template, argument)` and hands back the
-node and the return type it worked out. Both fixpoints stayed byte-identical,
-which is what says the memo is a memo and not a change of meaning. Parsing each
-template *once* and substituting types into the AST per instantiation is a
-further step, and it needs a substitution pass this compiler does not have,
-where binding happens during the parse.
+`parse_generic_instance` memoizes `(template, argument)`, because three passes
+ask for the same instance: once to record its concrete return type, and once
+each for its prototype and its body. Parsing each template once and substituting
+types into the AST per instantiation would go further, and it needs a
+substitution pass this compiler does not have, since binding happens during the
+parse.
 
-Parallel emission is the one not taken. Emitting could run on every core, since
-the type system is local and signature-based, and now that a unit is buffered in
-memory rather than written straight out, the thing that stopped it is gone. What
-has replaced that reason is that emitting is most of what a build now spends,
-so the honest next step is to make it cost less rather than to spread it: it
-formats text that is immediately read back, and handing the encoder records
-instead removes the work rather than dividing it.
+Emission runs on one thread. It could run on every core, since the type system
+is local and signature-based, and a unit is buffered in memory now rather than
+written straight out. Emitting is also most of what a build spends, and it
+formats text that is immediately read back, so handing the encoder records
+removes that work instead of dividing it.

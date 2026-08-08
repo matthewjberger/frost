@@ -91,18 +91,16 @@ the range it was given.
 Only `sort` and `sort_vec` are exported. `insertion`, `quicksort` and `swap` are
 private to the file.
 
-## Why this is the worked example
+## The same shape elsewhere
 
-`Ordering<T>` is the smallest capability bundle in the library and the one to
-read first. `Hashing<K>` in [containers.md](containers.md) is the same struct
-over a hash and an equality, passed the same way and folded the same way. The
-pattern is the answer to higher-order code in a language with no traits, no
-closures and no vtables: a struct of functions, taken as a compile-time
-argument, folded at the call.
+`Ordering<T>` is the smallest capability bundle in the library.
+`Hashing<K>` in [containers.md](containers.md) is the same struct over a hash
+and an equality, passed the same way and folded the same way. Higher-order code
+in Frost is this: a struct of functions, taken as a compile-time argument,
+folded at the call.
 
-Section 11.4b of [generics.md](../reference/generics.md) is the language rule.
-[philosophy.md](../design/philosophy.md) is why there are no traits to do it
-instead.
+Section 11.4b of [generics.md](../reference/generics.md) is the language rule,
+and [philosophy.md](../design/philosophy.md) says why there are no traits.
 
 ## Tests
 

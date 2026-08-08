@@ -159,17 +159,3 @@ actual work predictable.
 - Not a research vehicle for a novel type theory. The type system is a means
   to make data-oriented code safe and fast, not an end in itself.
 
-## Why this project exists
-
-Frost is the language. It is not a prototype for a later one, not a spike, and
-not an exercise whose lessons get carried somewhere else. The goal is a real,
-finished implementation of this design: ownership without lifetimes, linear
-resources replacing `Drop`, generational handles unified with a borrow
-discipline, a typed IR feeding multiple backends, and specialization-only
-generics. The bar for done is that those hold up against real code and a real
-code generator, and then that people can write real programs with them.
-
-That is why the differential oracle matters. The point is that its independent
-backends *agree*, which is strong evidence that the semantics are pinned down
-rather than accidental. Every proposition in the design has been driven to
-running, differential-tested code.

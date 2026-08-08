@@ -1,12 +1,8 @@
 # Patterns, and what to write instead
 
-What the language rewards and what it merely permits. Everything here is legal
-Frost, and the antipatterns compile. What makes them antipatterns is that the
-compiler stops helping you the moment you write them, and the help is the whole
-reason the rules are there.
-
-Each one is written from something that happened in this repository, and the
-"instead" is what the code says now.
+Everything in this chapter is legal Frost, and the antipatterns compile. They
+are antipatterns because the compiler stops helping you the moment you write
+one. Each shows what to write instead.
 
 ## A set of alternatives is an enum, not a run of constants
 
@@ -361,11 +357,9 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 what `for_each2` emitted, and a fourth component is a fourth element and a
 fourth parameter.
 
-What made this possible was three things the language did not have: a list may
-hold types, a list may be handed on by naming it, and `g(T) for T in list` in an
-argument list is one argument per element. The first version of this pattern was
-written as "the arity limit is fine, three is enough". It was not enough, and
-the fix was in the compiler rather than in the library.
+Three language rules carry this: a compile-time list may hold types, a list may
+be handed on by naming it, and `g(T) for T in list` in an argument list expands
+to one argument per element.
 
 ## Generic code: what the compilers disagree about
 
@@ -380,17 +374,6 @@ both accept.
   into` first, which is what you meant anyway.
 - **A `(` or `[` that opens a line starts a statement.** `(table.mask & mask)`
   on its own line is not a call of the line above it.
-- **An imported name inside an array literal** was not rewritten by the import
-  pass until recently. A call in an array literal that reports an unknown
-  variable is the shape to suspect.
+- **Suspect an array literal when an imported name reads as undeclared.** A call
+  inside one that reports an unknown variable is that shape.
 
-## Where these came from
-
-Every antipattern above was written by someone in this repository, mostly by
-the same person, in the same week, while adding the feature the pattern belongs
-to. They are not hypothetical, and none of them was caught by review. What
-caught them was making the compiler able to say so: linearity, the unsafe audit,
-the exhaustive match, and a heap counter a test can read.
-
-The lesson worth keeping is the last one. When a class of mistake is invisible,
-the fix is not to be more careful. It is to make it visible.
