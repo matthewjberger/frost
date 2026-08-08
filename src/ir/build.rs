@@ -16,7 +16,7 @@ use crate::ir::{
 };
 use crate::lexer::Position;
 use crate::parser::Operator;
-use crate::types::Type;
+use crate::types::{Type, spelled};
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
@@ -2062,17 +2062,6 @@ fn through_distinct(ty: &Type) -> &Type {
 // round-trip and takes `&T` and `&mut T`, which are two forms the surface
 // dropped: what a reader writes is `ref T`. So a report spells one and the
 // table keeps the other.
-fn spelled(ty: &Type) -> String {
-    match ty {
-        Type::Ref(inner) | Type::RefMut(inner) => {
-            format!("ref {}", spelled(inner))
-        }
-        Type::Ptr(inner) => format!("^{}", spelled(inner)),
-        Type::Slice(inner) => format!("[]{}", spelled(inner)),
-        other => other.to_string(),
-    }
-}
-
 fn writable_by_format(ty: &Type) -> bool {
     match ty {
         Type::Distinct(_, inner) => writable_by_format(inner),
@@ -7380,10 +7369,12 @@ impl<'a> FunctionLowering<'a> {
             );
             if actual != expected {
                 bail!(
-                    "'{}' given to '{name}' as '{}' has the signature '{actual}', but '{}' is declared as '{expected}'",
+                    "'{}' given to '{name}' as '{}' has the signature '{}', but '{}' is declared as '{}'",
                     target,
                     self.ast.name(parameter.name),
-                    self.ast.name(parameter.name)
+                    spelled(&actual),
+                    self.ast.name(parameter.name),
+                    spelled(&expected)
                 );
             }
         }

@@ -158,6 +158,26 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          cannot be taken as a value: a call through a function value supplies \
          what its type says and nothing else",
     ),
+    // A test body is run by the runner as a function taking nothing, so it has
+    // nowhere to draw a capability from. Neither compiler parsed `uses` there,
+    // so neither said so: one reported that a declaration head was expected,
+    // about the word `test` just written, and the other read the body as an
+    // expression and reported a struct with no field named after the first
+    // thing inside it.
+    (
+        "a_test_that_draws_a_capability",
+        "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         bump :: fn($N: usize, mut a: Arena<N>) -> i64 {
+             a.offset = a.offset + 8
+             a.offset
+         }
+         test \"draws a capability\" uses Arena<256> {
+             assert(bump($256, arena) == 8)
+         }
+",
+        "a `test` body is run by the test runner, which supplies nothing, so a \
+         test draws no capability",
+    ),
     // The one caller settles the answer as well as the arguments. A `main`
     // that can fail answers the tagged union the `?` machinery made, which the
     // bootstrap's backend then named in a message about a type the reader never

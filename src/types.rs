@@ -90,6 +90,49 @@ impl Display for SizeExpr {
     }
 }
 
+/// A type spelled the way a reader writes one.
+///
+/// `Display` is the name the compiler files a type under, and it round-trips
+/// through `type_from_string`, which is what monomorphization reads a
+/// specialization's arguments back out of. Three of those names are forms the
+/// surface does not have: a borrow files as `&T` and `&mut T` where a reader
+/// writes `ref T`, and a function type files as `proc(..)` where a reader
+/// writes `fn(..)`. A report spells what a reader writes; the table keeps its
+/// own names.
+pub fn spelled(ty: &Type) -> String {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) => {
+            format!("ref {}", spelled(inner))
+        }
+        Type::Ptr(inner) => format!("^{}", spelled(inner)),
+        Type::Slice(inner) => format!("[]{}", spelled(inner)),
+        Type::Array(inner, count) => format!("[{count}]{}", spelled(inner)),
+        Type::Proc(params, ret) => {
+            let written: Vec<String> =
+                params.iter().map(spelled_parameter).collect();
+            match ret.as_ref() {
+                Type::Void => format!("fn({})", written.join(", ")),
+                other => {
+                    format!("fn({}) -> {}", written.join(", "), spelled(other))
+                }
+            }
+        }
+        other => other.to_string(),
+    }
+}
+
+/// A parameter of a function type, which is spelled by its mode rather than by
+/// the borrow the mode became. A write borrow is written `mut T` there, and a
+/// read borrow is written as the type itself, which is what an unmarked
+/// aggregate parameter is.
+fn spelled_parameter(ty: &Type) -> String {
+    match ty {
+        Type::RefMut(inner) => format!("mut {}", spelled(inner)),
+        Type::Ref(inner) => spelled(inner),
+        other => spelled(other),
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum Type {
     I8,
@@ -136,6 +179,52 @@ pub enum Type {
 }
 
 impl Type {
+    /// The name a plain named type carries, and nothing for one built out of
+    /// other types.
+    ///
+    /// Matched exhaustively on purpose. A bare name written where a type is
+    /// expected parses as whichever named variant fits what the parse knew at
+    /// the time: `$f` naming a function is a `Struct` until the name is
+    /// resolved, and a `ConstFn` after. A caller asking which name a type
+    /// carries has to be told about a new variant rather than quietly
+    /// answering nothing, which is how a check against `ConstFn` alone came to
+    /// match nothing at all and say so to no one.
+    pub fn bare_name(&self) -> Option<&str> {
+        match self {
+            Type::ConstFn(name)
+            | Type::ConstValue(name)
+            | Type::Struct(name)
+            | Type::Enum(name)
+            | Type::Distinct(name, _)
+            | Type::TypeParam(name) => Some(name),
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::Isize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Usize
+            | Type::F32
+            | Type::F64
+            | Type::Bool
+            | Type::Str
+            | Type::Void
+            | Type::Ptr(_)
+            | Type::Ref(_)
+            | Type::RefMut(_)
+            | Type::Array(..)
+            | Type::ArrayGeneric(..)
+            | Type::ConstUsize(_)
+            | Type::Slice(_)
+            | Type::Proc(..)
+            | Type::Handle(_)
+            | Type::Unknown => None,
+        }
+    }
+
     pub fn size_of(&self) -> usize {
         match self {
             Type::I8 | Type::U8 | Type::Bool => 1,

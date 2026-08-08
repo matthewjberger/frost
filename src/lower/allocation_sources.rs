@@ -307,14 +307,10 @@ impl Threader {
                 // A name in type position is read as a type here and resolved
                 // to a function later, so what a `$f` argument carries at this
                 // point is whichever named type the parse made of it.
-                let target = match &ty {
-                    Type::ConstFn(name)
-                    | Type::ConstValue(name)
-                    | Type::Struct(name)
-                    | Type::Enum(name) => name.clone(),
-                    _ => String::new(),
+                let Some(target) = ty.bare_name() else {
+                    return Ok(());
                 };
-                if self.uses_functions.contains_key(&target) {
+                if self.uses_functions.contains_key(target) {
                     return Err(anyhow::Error::new(
                         crate::diagnostic::LocatedError {
                             position: ast.expr_position(expression),

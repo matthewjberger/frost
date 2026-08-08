@@ -1298,6 +1298,19 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_test_statement()?)
             }
+            // A `test` whose body does not open where one should says what is
+            // in the way. Without this the statement was not read as a test at
+            // all and the reader was told a declaration head was expected,
+            // about the word `test` they had just written.
+            Token::Identifier(name)
+                if name == "test"
+                    && matches!(self.peek_nth(1), Token::StringLiteral(_))
+                    && matches!(self.peek_nth(2), Token::Uses) =>
+            {
+                return Err(self.here(
+                    "a `test` body is run by the test runner, which supplies nothing, so a test draws no capability".to_string(),
+                ));
+            }
             Token::Return => Some(self.parse_return_statement()?),
             Token::Defer | Token::ErrDefer => {
                 Some(self.parse_defer_statement()?)
