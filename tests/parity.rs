@@ -5059,47 +5059,123 @@ Bad :: enum { Nope }
 // is a difference in the language. The C one wrote an integer literal without
 // the suffix that makes it sixty-four bits wide, so every shift past the
 // thirty-second bit answered with zero there and correctly everywhere else.
-// `frost fmt` is part of the language the same way a refusal is: a tree is
-// held to one rendering, and two compilers writing two renderings would make
-// which one formatted it decide what the file says. Nothing compared them until
-// now, and the moment something did it found five files the two laid out
-// differently.
+// `frost fmt` is part of the language the same way a refusal is: a tree is held
+// to one rendering, and two compilers writing two renderings would make which
+// one formatted it decide what the file says. Nothing compared them until now,
+// and the moment something did it found five files the two laid out differently.
 //
-// Every source in the repository, formatted by both. The corpus is already what
-// the bootstrap writes, so it is the file as committed that is compared against,
-// which makes this a check on the self-hosted compiler agreeing with a rendering
-// rather than on the two agreeing about nothing in particular.
+// The corpus is already what the bootstrap writes, so formatting it again asks
+// only whether the self-hosted compiler leaves a settled file alone. That is
+// worth asking and it is not the question: every one of those five differed on
+// input that was *not* settled, and a check at the fixed point would have found
+// none of them. So each file is put out of shape first, by breaking every line
+// at the places a layout owns, and the two are compared on that.
 #[test]
 fn both_compilers_format_the_corpus_the_same_way() {
     let Some(compiler) = build_self_hosted_compiler("formatparity") else {
         return;
     };
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut settled = Vec::new();
     let mut differing = Vec::new();
     for file in corpus() {
         let Ok(source) = std::fs::read_to_string(&file) else {
             continue;
         };
-        let scratch = std::env::temp_dir()
-            .join(support::unique("frost_fmt"))
-            .with_extension("frost");
-        if std::fs::write(&scratch, &source).is_err() {
-            continue;
-        }
-        let ran = Command::new(&compiler).arg("fmt").arg(&scratch).output();
-        let written = std::fs::read_to_string(&scratch).unwrap_or_default();
-        let _ = std::fs::remove_file(&scratch);
-        assert!(ran.is_ok(), "the self-hosted compiler could not format");
-        if written != source {
-            let shown = file.strip_prefix(&root).unwrap_or(&file);
-            differing.push(shown.display().to_string());
+        let shown = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (source, shape) in [
+            (source.clone(), "as committed"),
+            (out_of_shape(&source), "broken at every bracket and comma"),
+        ] {
+            let wanted = frost::format_source(&source);
+            let Some(written) = self_hosted_format(&compiler, &source) else {
+                continue;
+            };
+            if written != wanted {
+                // Where they part, since a parity failure naming only the file
+                // costs whoever reads it the bisect that found this one.
+                let at = wanted
+                    .lines()
+                    .zip(written.lines())
+                    .position(|(left, right)| left != right)
+                    .unwrap_or(
+                        wanted.lines().count().min(written.lines().count()),
+                    );
+                let window = |text: &str| -> String {
+                    text.lines()
+                        .skip(at.saturating_sub(3))
+                        .take(7)
+                        .map(|line| format!("      {line}"))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                };
+                differing.push(format!(
+                    "{shown}  ({shape})  parting at line {}\n    bootstrap:\n{}\n    self-hosted:\n{}",
+                    at + 1,
+                    window(&wanted),
+                    window(&written)
+                ));
+            }
+            // Only the file as committed is a claim about the tree, and it is
+            // the bootstrap that made it. Said the other way round, a file
+            // somebody edited without formatting reads as the two compilers
+            // disagreeing.
+            if shape == "as committed" && wanted != source {
+                settled.push(shown.clone());
+            }
         }
     }
     assert!(
+        settled.is_empty(),
+        "these are not what `frost fmt` writes, so run it over them before \
+         reading anything else here:\n{}",
+        settled.join("\n")
+    );
+    assert!(
         differing.is_empty(),
-        "the self-hosted compiler formats these differently to the bootstrap:\n{}",
+        "the two compilers lay these out differently:\n{}",
         differing.join("\n")
     );
+}
+
+// The same tokens with a line break after every bracket that opens and every
+// comma, which is every place a layout decides for itself. What comes out is
+// the same program said as badly as it can be said, and both compilers have to
+// answer it with the same thing.
+fn out_of_shape(source: &str) -> String {
+    let Some(pieces) = frost::tokens_and_gaps(source) else {
+        return source.to_string();
+    };
+    let mut held = String::with_capacity(source.len() * 2);
+    for (index, piece) in pieces.iter().enumerate() {
+        held.push_str(piece);
+        // The gaps sit at the even positions and the tokens between them.
+        if index % 2 == 1 && matches!(piece.as_str(), "(" | "[" | "{" | ",") {
+            held.push('\n');
+        }
+    }
+    held
+}
+
+// What the self-hosted compiler writes for a source, or nothing when it could
+// not be asked.
+fn self_hosted_format(
+    compiler: &std::path::Path,
+    source: &str,
+) -> Option<String> {
+    let scratch = std::env::temp_dir()
+        .join(support::unique("frost_fmt"))
+        .with_extension("frost");
+    std::fs::write(&scratch, source).ok()?;
+    let ran = Command::new(compiler).arg("fmt").arg(&scratch).output();
+    let written = std::fs::read_to_string(&scratch).ok();
+    let _ = std::fs::remove_file(&scratch);
+    ran.ok()?;
+    written
 }
 
 // Every `.frost` file the repository tracks, which is what both formatters are

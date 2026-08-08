@@ -1063,7 +1063,7 @@ wide_layout :: fn(
     device: Device,
     groups: i64,
     mut layouts: [4]BindGroupLayout
-) -> PipelineLayout {
+    ) -> PipelineLayout {
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = groups
     descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -1074,7 +1074,7 @@ cover_layout :: fn(
     device: Device,
     groups: i64,
     mut layouts: [2]BindGroupLayout
-) -> PipelineLayout {
+    ) -> PipelineLayout {
     var descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = groups
     descriptor.bind_group_layouts = ptr_to(layouts[0])
@@ -1334,8 +1334,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
     match app_open(config) {
-        case.Ok { value }: run(value)
-        case.Err { error }: app_failed(error)
+        case .Ok { value }: run(value)
+        case .Err { error }: app_failed(error)
     }
 }
 

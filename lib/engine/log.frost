@@ -72,11 +72,11 @@ log_file_name :: fn(mut out: Builder, title: str, config: LogConfig) {
         builder_str_value(out, "app")
     }
     match config.rotation {
-        case.PerSession: {
+        case .PerSession: {
             builder_byte(out, 95)
             builder_int(out, frost_rt_wall_seconds())
         }
-        case.Never: {}
+        case .Never: {}
     }
     builder_str_value(out, ".log")
 }

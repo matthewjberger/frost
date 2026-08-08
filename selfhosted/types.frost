@@ -1889,26 +1889,24 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
                 // type was known, which is the struct: `outer` was compiled for
                 // `Bag<i64>`, whose parameter is a `Bag<Bag<i64>>` nothing
                 // wrote, and each round of the fixpoint went one deeper.
+                //
+                // Exactly `Name<$T>`, and nothing else. What the argument's
+                // instance was made with is one type, so a list of two has no
+                // answer to give and a nested one has none either: `>>` is a
+                // shift to the lexer, so a scan looking for `>` walks off the
+                // end of the declaration and takes any later `$T` for this one.
+                // Both say -1, which is the tuple being unknown rather than
+                // guessed.
                 if (compile_time == 0 && found < 0 && through == 0
                     && cur(p) == TokenKind::Ident
-                    && peek_kind(p, 1) == TokenKind::Lt) {
-                    var ahead: i64 = 2
-                    while (peek_kind(p, ahead) != TokenKind::Gt
-                        && peek_kind(p, ahead) != TokenKind::Eof) {
-                        if (peek_kind(p, ahead) == TokenKind::Dollar
-                            && peek_kind(p, ahead + 1) == TokenKind::Ident
-                            && peek_len(p, ahead + 1) == name_len
-                            && bytes_equal(
-                                p.src,
-                                peek_off(p, ahead + 1),
-                                name_off,
-                                name_len
-                            )) {
-                            found = position
-                            p.tparam_through = 2
-                        }
-                        ahead = ahead + 1
-                    }
+                    && peek_kind(p, 1) == TokenKind::Lt
+                    && peek_kind(p, 2) == TokenKind::Dollar
+                    && peek_kind(p, 3) == TokenKind::Ident
+                    && peek_kind(p, 4) == TokenKind::Gt
+                    && peek_len(p, 3) == name_len
+                    && bytes_equal(p.src, peek_off(p, 3), name_off, name_len)) {
+                    found = position
+                    p.tparam_through = 2
                 }
             }
             continue

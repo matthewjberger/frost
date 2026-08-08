@@ -351,7 +351,7 @@ plugin_group_set :: fn(
     mut group: PluginGroup,
     named: fn(mut App),
     build: fn(mut App)
-) {
+    ) {
     at := group_index(group, named)
     if (at < 0) {
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
@@ -644,7 +644,7 @@ app_add_system_in_state :: fn(
     stage: Stage,
     state: i64,
     run: fn(mut World)
-) {
+    ) {
     schedule_add_in_state(app.schedule, stage, state, run)
 }
 
@@ -736,11 +736,11 @@ app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
 app_failed :: fn(held: AppError) -> i64 {
     print("{}\n", held.said)
     match held.why {
-        case.NoWindow: {
+        case .NoWindow: {
             print("no window\n")
             1
         }
-        case.NoDevice: {
+        case .NoDevice: {
             print("no device\n")
             2
         }

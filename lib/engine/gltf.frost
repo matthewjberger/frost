@@ -1027,7 +1027,7 @@ spawn_node :: fn(
     meshes: []i64,
     materials: []i64,
     ids: WorldIds
-) {
+    ) {
     if (node < 0 || node >= gltf_node_count(model)) {
         return
     }

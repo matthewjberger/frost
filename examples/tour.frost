@@ -18,8 +18,8 @@ heal :: fn(mut e: Entity, amount: i64) {
 // payload of the variant it took, and has to cover every one.
 attack :: fn(e: Entity) -> i64 {
     match e.kind {
-        case.Hero: 10
-        case.Monster { damage }: damage
+        case .Hero: 10
+        case .Monster { damage }: damage
     }
 }
 
@@ -100,8 +100,8 @@ round :: fn(e: Entity) -> i64 ! Blocked {
 // The value it answered with, or the health that stopped it.
 damage_of :: fn(e: Entity) -> i64 {
     match round(e) {
-        case.Ok { value }: value
-        case.Err { error }: error.at
+        case .Ok { value }: value
+        case .Err { error }: error.at
     }
 }
 
@@ -115,8 +115,7 @@ main :: fn() -> i64 {
 
     print("{}\n", damage_of(hero)) // 20
 
-    party: [3]Entity = [
-        { hp = 100, kind =.Hero },
+    party: [3]Entity = [ { hp = 100, kind =.Hero },
         { hp = 40, kind =.Monster { damage = 12 } },
         { hp = 25, kind =.Monster { damage = 30 } },
     ]

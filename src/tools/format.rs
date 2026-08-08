@@ -413,6 +413,14 @@ fn spaced(
     if matches!(left, Token::Minus | Token::Bang) && !ends_a_value(before) {
         return false;
     }
+    // A dot binds to what is either side of it, so `a.b` and the `.Variant`
+    // that takes its enum from the context are both written tight. After
+    // `case` it is a pattern rather than a value, and the word and the pattern
+    // are two things: `case .Circle { radius }:` is how the book writes one and
+    // how a reader reads one.
+    if matches!(left, Token::Case) {
+        return true;
+    }
     if matches!(left, Token::Dot) || matches!(right, Token::Dot) {
         return false;
     }
@@ -483,11 +491,16 @@ fn reflowable(tokens: &[Token], open: usize) -> Option<usize> {
 /// separated by their lines, so a block has none, and without asking for one a
 /// `for` body opening with `at = report_run(fmt, at)` read as a field and the
 /// whole body was laid out as a value.
+/// What the name is spelled with is not asked. A field may be called `type`,
+/// which one lexer hands back as a keyword and the other as an identifier, and
+/// a rule reading the difference made the two lay `BufferBindingLayout` out
+/// differently. The second token being `=` is what says this is a field, and
+/// the grammar says the first is its name.
 fn holds_fields(tokens: &[Token], open: usize, close: usize) -> bool {
     let elements = elements_of(tokens, open, close);
     elements.len() > 1
         && elements.iter().all(|element| {
-            matches!(tokens.get(element.start), Some(Token::Identifier(_)))
+            element.end > element.start + 1
                 && matches!(tokens.get(element.start + 1), Some(Token::Assign))
         })
 }
@@ -574,9 +587,22 @@ pub fn format(source: &str) -> String {
     let mut brace_depth = Vec::with_capacity(held.len());
     let mut previous_end = 0usize;
     let mut counted = 0i32;
+    let decided = decided_here(&tokens, &held, source);
+    let joined = joined_tokens(&tokens, &held, source);
     for (index, extent) in held.iter().enumerate() {
         let gap = &source[previous_end..extent.start];
-        opens_line.push(index == 0 || gap.contains(LINE_BREAK));
+        // Which tokens begin a line of the output, which is what says a `::` is
+        // declaring a name rather than reaching into a type for one. Read off
+        // the breaks this file decides to write rather than off the ones it was
+        // handed: the two agree wherever a declaration can be written, and
+        // asking the input would be a rule about the output answered by
+        // something else.
+        opens_line.push(
+            index == 0
+                || (gap.contains(LINE_BREAK)
+                    && !joined[index]
+                    && !decided[index]),
+        );
         if matches!(tokens[index], Token::RightBrace) {
             counted -= 1;
         }
@@ -587,8 +613,6 @@ pub fn format(source: &str) -> String {
         previous_end = extent.end;
     }
     let roles = roles(&tokens, &opens_line, &brace_depth);
-    let decided = decided_here(&tokens, &held, source);
-    let joined = joined_tokens(&tokens, &held, source);
     let layout = Layout {
         source,
         tokens: &tokens,
@@ -709,8 +733,6 @@ pub fn format(source: &str) -> String {
             pending = Some(index..index + 1);
         } else if let Some(range) = pending.as_mut() {
             range.end = index + 1;
-        } else {
-            pending = Some(index..index + 1);
         }
         match token {
             Token::LeftBrace => braces += 1,
@@ -830,55 +852,74 @@ fn flush(
 /// statements, and which statement is on which line is the author's.
 ///
 /// A bracket holding a comment keeps every break it was written with. A comment
-/// says which line it belongs to and a width does not know.
+/// says which line it belongs to and a width does not know. So does one holding
+/// a block: a list may be written inside a block and a block inside a list, and
+/// joining the statements of one onto a line is what a layout may not do.
+///
+/// Either of those puts the breaks back for the run it sits in and for every
+/// run around that one, since a group half of whose tokens keep their breaks is
+/// no longer a group anything can lay out.
 fn decided_here(
     tokens: &[Token],
     extents: &[Extent],
     source: &str,
 ) -> Vec<bool> {
+    /// A bracket still open: where it opened, when what it opened is a run a
+    /// layout owns, and whether something inside it has since said otherwise.
+    struct Open {
+        at: Option<usize>,
+        blocked: bool,
+    }
     let mut held = vec![false; tokens.len()];
-    let mut opens: Vec<Option<usize>> = Vec::new();
+    let mut opens: Vec<Open> = Vec::new();
     for index in 0..tokens.len() {
-        if let Some(inside) = opens.last()
-            && inside.is_some()
-        {
-            held[index] = true;
-        }
+        let inside = opens.last().is_some_and(|open| open.at.is_some());
+        held[index] = inside;
         match tokens[index] {
             Token::LeftParentheses | Token::LeftBrace | Token::LeftBracket => {
-                let inside = if held[index] {
-                    // Already inside one, so the whole run travels together.
-                    Some(index)
-                } else {
-                    reflowable(tokens, index).map(|_| index)
-                };
-                opens.push(inside);
+                let opens_a_run = reflowable(tokens, index).is_some();
+                opens.push(Open {
+                    // Inside a run already, so the whole thing travels
+                    // together, and a block among it is what stops that.
+                    at: if inside || opens_a_run {
+                        Some(index)
+                    } else {
+                        None
+                    },
+                    blocked: inside && !opens_a_run,
+                });
             }
             Token::RightParentheses
             | Token::RightBrace
             | Token::RightBracket => {
-                let closed = opens.pop().flatten();
+                let closed = opens.pop();
                 // The bracket that closes a run belongs to that run rather than
                 // to whatever holds it, so the break in front of it is the same
                 // layout's to make. Read off the enclosing run instead, a
                 // literal written over several lines had its closing brace on a
                 // line of its own, and the run it closed was never a whole
                 // group for anything to lay out.
-                held[index] = closed.is_some()
-                    || opens.last().is_some_and(|inside| inside.is_some());
-                if let Some(open) = closed {
-                    // A comment anywhere inside puts every break back.
-                    let commented = (open + 1..=index).any(|at| {
-                        source[extents[at - 1].end..extents[at].start]
-                            .contains("//")
-                    });
-                    if commented {
-                        for slot in
-                            held.iter_mut().take(index + 1).skip(open + 1)
-                        {
-                            *slot = false;
-                        }
-                    }
+                let inside_now =
+                    opens.last().is_some_and(|open| open.at.is_some());
+                held[index] =
+                    closed.as_ref().is_some_and(|open| open.at.is_some())
+                        || inside_now;
+                let Some(open) = closed.as_ref().and_then(|open| open.at)
+                else {
+                    continue;
+                };
+                let commented = (open + 1..=index).any(|at| {
+                    source[extents[at - 1].end..extents[at].start]
+                        .contains("//")
+                });
+                if !commented && !closed.is_some_and(|open| open.blocked) {
+                    continue;
+                }
+                for slot in held.iter_mut().take(index + 1).skip(open + 1) {
+                    *slot = false;
+                }
+                if let Some(around) = opens.last_mut() {
+                    around.blocked = true;
                 }
             }
             _ => {}
@@ -984,9 +1025,11 @@ impl Layout<'_> {
         for element in elements_of(self.tokens, open, close) {
             self.write(element, indent + 4, out);
         }
-        out.push_str(&" ".repeat(indent));
-        out.push_str(&self.flat(close..range.end));
-        out.push('\n');
+        // What follows the bracket is asked the same question, so a call
+        // written on the answer of another breaks rather than running long:
+        // `f(a, b).g(c, d)` puts `).g(` at the head of a line of its own. The
+        // run shrinks by at least the head each time, so this settles.
+        self.write(close..range.end, indent, out);
     }
 }
 
