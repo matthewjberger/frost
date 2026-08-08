@@ -426,10 +426,7 @@ impl<'a> Lexer<'a> {
                     self.read_char();
                     loop {
                         if self.is_eof() {
-                            self.report(
-                                "Unterminated block comment".to_string(),
-                            );
-                            break;
+                            return Illegal("/*".to_string());
                         }
                         if self.peek_nth(0) == '*' && self.peek_nth(1) == '/' {
                             self.read_char();

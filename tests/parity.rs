@@ -158,6 +158,29 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          cannot be taken as a value: a call through a function value supplies \
          what its type says and nothing else",
     ),
+    // A function value is its signature. The self-hosted compiler let every
+    // signature reach every other, because its compatibility chain ended in an
+    // answer of yes and a function type fell to it, so a name taking two
+    // parameters was handed to a place wanting one: the call passed one and the
+    // callee read whatever sat in the register for the other. It built and
+    // faulted with no `unsafe` written anywhere.
+    //
+    // Both name the signature the way a reader writes one, arguments and all.
+    // The sentences around it differ: the bootstrap answers here from its IR
+    // check and the self-hosted from its walk over the syntax.
+    (
+        "a_function_value_whose_signature_does_not_match",
+        "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         bump :: fn($N: usize, mut a: Arena<N>) -> i64 {
+             a.offset = a.offset + 8
+             a.offset
+         }
+         plain :: fn(n: i64, mut a: Arena<256>) -> i64 { bump($256, a) + n }
+         call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
+         main :: fn() -> i64 { call_it(plain, 3) }
+",
+        "fn(i64, mut Arena<256>) -> i64",
+    ),
     // A test body is run by the runner as a function taking nothing, so it has
     // nowhere to draw a capability from. Neither compiler parsed `uses` there,
     // so neither said so: one reported that a declaration head was expected,
@@ -5194,6 +5217,53 @@ Bad :: enum { Nope }
 }
 ",
         "0
+1
+",
+    ),
+    // A block comment. The bootstrap lexed one and the self-hosted lexer had no
+    // case for it at all, so the same file compiled through one compiler and
+    // was refused by the other with "this is not the start of a declaration".
+    // Neither nests, so the first `*/` closes what the `/*` opened.
+    (
+        "a_block_comment_is_dropped_by_both_lexers",
+        "/* the head of the file */
+         import \"io.frost\"
+         /* several
+            lines, and a // inside one */
+         main :: fn() -> i64 {
+             count := 2   /* trailing */
+             print(\"{}\n\", count) /* and one holding a \"string\" */
+             0
+}
+",
+        "2
+",
+    ),
+    // A length is an `i64`. The bootstrap answered `usize` from `slice_len` and
+    // `str_len` while the self-hosted compiler answered `i64`, and both are
+    // eight bytes that convert silently, so nothing was refused: comparison,
+    // division, remainder and right shift follow the type, so subtracting past
+    // zero aborted under one compiler and answered a negative number under the
+    // other.
+    (
+        "a_length_is_signed_in_both_compilers",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             text := \"abcd\"
+             data : [4]i64 = [1, 2, 3, 4]
+             view : []i64 = data
+             print(\"{}\n\", (str_len(text) - 8) / 2)
+             print(\"{}\n\", (slice_len(view) - 8) / 2)
+             print(\"{}\n\", (slice_len(data) - 8) / 2)
+             print(\"{}\n\", 0 - str_len(text))
+             print(\"{}\n\", str_len(text) / 3)
+             0
+}
+",
+        "-2
+-2
+-2
+-4
 1
 ",
     ),
