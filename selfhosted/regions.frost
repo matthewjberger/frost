@@ -847,6 +847,30 @@ check_length_subject :: fn(mut p: Parser, inner: i64, written: i64, at: i64) {
     frost_rt_recover_escape()
 }
 
+// A function that draws a capability has one more parameter than its signature
+// was written with, and the compiler is what fills it, at each call. A function
+// taken as a value has no call to fill it at: the address goes somewhere that
+// will call it through a type saying nothing about the capability, so the callee
+// reads the register nobody wrote and the first use of the arena writes through
+// it. That built and faulted with no `unsafe` anywhere.
+//
+// A callee is a `Call` node carrying its own function, so a name reaching here
+// is always a name used as a value.
+check_capability_as_value :: fn(mut p: Parser, off: i64, len: i64, at: i64) {
+    if (local_exists(p, off, len)) {
+        return
+    }
+    index := fn_index_of(p, off, len)
+    if (index < 0 || cap_count_of(p, index) == 0) {
+        return
+    }
+    report_where(p.modules, p.src, at)
+    report("'")
+    report_src(p.src, off, len)
+    report("' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else")
+    frost_rt_recover_note()
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
@@ -858,6 +882,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Var) {
         check_name_known(p, node.val, node.c)
+        check_capability_as_value(p, node.val, node.c, node.pos)
         return
     }
     if (kind == NodeKind::Call) {

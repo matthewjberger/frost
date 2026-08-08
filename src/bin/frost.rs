@@ -453,6 +453,21 @@ fn beside<T>(collected: &[frost::Diagnostic], outcome: Result<T>) -> Result<T> {
         Err(fault) => fault,
     };
     let mut held = collected.to_vec();
+    // A rewrite that knows where it is says so, and the report keeps that
+    // position rather than rendering the location into the message and then
+    // reporting it as coming from nowhere. Without this a fault from one of
+    // these passes named no file, so a reader was told what was wrong and left
+    // to find it.
+    if let Some(located) = fault
+        .chain()
+        .find_map(|error| error.downcast_ref::<frost::LocatedError>())
+    {
+        held.push(frost::Diagnostic::new(
+            located.position,
+            located.message.clone(),
+        ));
+        return Err(anyhow!(Refused(frost::grouped_diagnostics(held))));
+    }
     // A rewrite's fault has no report of its own, so it becomes one: the
     // innermost message is the one with something to say, and it says where it
     // is itself when it knows.

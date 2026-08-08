@@ -255,7 +255,13 @@ impl Threader {
     ) -> Result<()> {
         match ast.expr(expression).clone() {
             Expression::Call(callee, arguments) => {
-                self.thread_expression(ast, callee, provider)?;
+                // A bare name in callee position is the call's own, and the
+                // arm below refuses one that draws a capability. What is
+                // refused there is a function taken as a value, which a callee
+                // is not.
+                if !matches!(ast.expr(callee), Expression::Identifier(_)) {
+                    self.thread_expression(ast, callee, provider)?;
+                }
                 for argument in ast.exprs_in(arguments).to_vec() {
                     self.thread_expression(ast, argument, provider)?;
                 }
@@ -271,6 +277,26 @@ impl Threader {
                         ast.expressions[expression.0 as usize] =
                             Expression::Call(callee, widened);
                     }
+                }
+            }
+            // A function that draws a capability has one more parameter than
+            // its signature was written with, and this pass is what fills it,
+            // at each call. A function taken as a value has no call to fill it
+            // at: the address goes somewhere that will call it through a type
+            // saying nothing about the capability, so the callee reads the
+            // register nobody wrote and the first use of the arena writes
+            // through it. That built and faulted with no `unsafe` anywhere.
+            Expression::Identifier(name) => {
+                let name = ast.name(name).to_string();
+                if self.uses_functions.contains_key(&name) {
+                    return Err(anyhow::Error::new(
+                        crate::diagnostic::LocatedError {
+                            position: ast.expr_position(expression),
+                            message: format!(
+                                "'{name}' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else"
+                            ),
+                        },
+                    ));
                 }
             }
             Expression::Try(inner)
