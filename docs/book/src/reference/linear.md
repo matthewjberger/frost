@@ -16,8 +16,9 @@ The count is kept per *place*, so it holds for a resource inside something else.
 It crosses a call as well: a function carries what it consumes through the
 parameters it only borrows, and a call site reads that against the places the
 caller wrote, so `once(h)` consuming its parameter's `.file` gives up `h.file`
-and a second `once(h)` is refused. Fields carry across, elements do not. "What
-is not yet guarded" in [memory-safety.md](../design/memory-safety.md) says why.
+and a second `once(h)` is refused. Fields carry across, elements do not.
+"Where the checks stop" in [memory-safety.md](../design/memory-safety.md) says
+why.
 `close(h.file)` consumes part of `h`, so a second `close(h.file)` is a second
 consumption and so is consuming `h` after it. Two separate fields, and two
 elements whose indexes are known apart, are different storage and may each be
