@@ -6,12 +6,12 @@ Frost has two distinct relationships with C:
    how Frost reaches `printf`, `malloc`, the support runtime, and any C
    library.
 2. Frost lowers *through* C (`--emit-c`), an internal implementation detail
-   of one backend. The emitted C is a compilation target, not an interface
-   for external C code to call into.
+   of one backend. The emitted C is a compilation target the system C
+   compiler reads.
 
-The design is deliberately asymmetric. Frost calling C matters, and C calling
-Frost does not. Keeping that asymmetry is what lets the emitted C stay a simple
-lowering (char buffers, mangled names) without owing anyone a stable ABI.
+The two directions are asymmetric. Frost calls C, and C calling Frost is a
+non-goal, which leaves the emitted C a simple lowering (char buffers, mangled
+names) under no obligation to a stable ABI.
 
 ## 1. Frost calls C with `extern fn`
 
@@ -37,21 +37,20 @@ main :: fn() -> i64 {
   a raw pointer (`^T`) and a borrowed parameter both map to pointers. An `extern`
   signature is therefore a direct description of the C function's ABI.
 - Aggregate parameters are passed by pointer. A `struct`/`enum`/array
-  parameter to an `extern fn` is passed as a pointer to the value, not
-  by-value-in-registers. So `close :: extern fn(f: File)` links against a C
-  `void close(File* f)`. This is a convention rather than the C ABI, and it is
-  how a `linear` resource's terminal consumer works natively: the `extern` takes
-  ownership across the boundary, receiving a pointer to the moved-in aggregate.
-  It suits the older style of C API that takes a context struct by address, and
-  it is not the common case in a modern one. See the note under `value` below.
+  parameter to an `extern fn` is passed as a pointer to the value. So
+  `close :: extern fn(f: File)` links against a C `void close(File* f)`. This is
+  a convention of Frost's, and it is how a `linear` resource's terminal consumer
+  works natively: the `extern` takes ownership across the boundary, receiving a
+  pointer to the moved-in aggregate. It suits the older style of C API that
+  takes a context struct by address. A modern one takes a struct by value, which
+  is the note under `value` below.
 - Aggregate returns from an `extern` follow the real C ABI. An
   `extern fn(...) -> Ctx` returns whatever the target's C compiler returns:
   in registers when the rule says so and through a hidden pointer when it does
-  not. Frost's own uniform out-pointer convention is not imposed on C, because C
-  does not use it. `src/c_abi.rs` has the three rules and what each was checked
-  against.
+  not. Frost's own uniform out-pointer convention stops at the boundary.
+  `src/c_abi.rs` has the three rules and what each was checked against.
 
-  Note the asymmetry with the line above it. A struct parameter to an extern
+  The two lines above answer differently. A struct parameter to an extern
   is a pointer by convention, a struct return is by value with the real ABI.
   A return could not have been a convention, because `-> Ctx` has to mean what C
   means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
@@ -62,21 +61,20 @@ main :: fn() -> i64 {
   on the stack by the same target rule the return uses. `src/c_abi.rs` has both
   classifications side by side.
 
-  How often `value` is wanted is worth stating, because the default reads as a
-  claim about C and is not one. In the largest binding measured against it, 356
-  declarations covering the whole surface of a game engine, 206 take at least
-  one aggregate parameter and none of them wanted the default: handles, vectors,
-  tagged unions and wire structs of 8 to 40 bytes, which is the range a modern C
-  ABI passes in registers. Omitting `value` where C takes a struct by value is
-  silent wrong code, and nothing in the program knows the C signature, so no
-  diagnostic is possible.
+  A modern binding wants `value` on nearly every aggregate. In the largest one
+  measured, 356 declarations covering the whole surface of a game engine, 206
+  take at least one aggregate parameter and every one of them wants `value`:
+  handles, vectors, tagged unions and wire structs of 8 to 40 bytes, which is
+  the range a modern C ABI passes in registers. Omitting `value` where
+  C takes a struct by value is silent wrong code, and nothing in the program
+  knows the C signature, so no diagnostic is possible.
 
-  `value` is a word rather than a keyword, so a parameter may still be called
-  `value`. What tells them apart is that a mode is followed by the name and a
-  name is followed by its type. It says how the bytes cross, not what the caller
-  gives up: C receives a copy, so the caller still holds its own value and the
-  argument is borrowed exactly as an unmarked one is. That copy is real, and a
-  callee that writes to its parameter is writing to its own.
+  `value` is a contextual word, so a parameter may still be called `value`. What
+  tells them apart is that a mode is followed by the name and a name is followed
+  by its type. It says how the bytes cross. C receives a copy, so the caller
+  still holds its own value and the argument is borrowed exactly as an unmarked
+  one is. That copy is real, and a callee that writes to its parameter is
+  writing to its own.
 
   All four paths emit it: both of the bootstrap's backends and both of the
   self-hosted compiler's. The two C backends hand the C compiler a real struct
@@ -85,7 +83,7 @@ main :: fn() -> i64 {
   is written out again in `selfhosted/emit_asm.frost`, where one argument
   becomes the one or several slots the target wants.
 
-  The three shapes an argument takes, which is the whole of the rule:
+  The three shapes an argument takes, which is the whole rule:
 
   | | Windows | System V |
   | --- | --- | --- |
@@ -105,10 +103,9 @@ main :: fn() -> i64 {
   trampoline, which is the same claim [callbacks.md](../design/callbacks.md) makes about
   the simpler shapes.
 
-  This is what wgpu's callbacks need. Without it the struct had to be declared
-  as one pointer, which is what Windows hands a sixteen-byte struct to a callee
-  as, so it worked there and read every argument after it out of the wrong
-  register on System V.
+  wgpu's callbacks need this. Declared as one pointer instead, a sixteen-byte
+  struct matches what Windows hands a callee and reads every argument after it
+  out of the wrong register on System V.
 - Freestanding is a separate axis. Everything on this page is about calling
   C and about the C backend. Whether the *executable* needs libc once it is
   running is a different question, answered by `--freestanding`. See
@@ -117,8 +114,8 @@ main :: fn() -> i64 {
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.
 
-Frost programs get the entire C ecosystem (libc, OS syscalls, third-party
-libraries) through `extern fn`, with no FFI glue code.
+`extern fn` reaches libc, the OS syscalls and any third-party C library, with no
+FFI glue code.
 
 ### An `extern` call is gated, and `safe extern fn` is how a binding lifts it
 
@@ -133,26 +130,26 @@ The audit is about the signature. `sqrtf :: safe extern fn(x: f32) -> f32` in
 `std/math.frost` takes and returns a number and touches no memory of the
 caller's, so there is nothing a call site could get wrong that the type checker
 has not already caught. `malloc :: safe extern fn(size: i64) -> ^u8` in
-`selfhosted/core.frost` is safe for a different reason: it hands memory back
-rather than reading any, so it cannot corrupt what the caller holds. What it
+`selfhosted/core.frost` is safe for a different reason: it hands memory back and
+reads none of the caller's, so it cannot corrupt what the caller holds. What it
 returns is still a raw pointer, and reading through one is gated on its own.
 
 A declaration taking a pointer usually cannot be marked safe, because the
 callee's read is bounded by something the signature does not say.
 `frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)` stays gated for that
 reason, and its one caller hands it a `str` whose length it already knows, so
-the `unsafe` sits at that call rather than at every emit.
+one `unsafe` at that call covers every emit.
 
-What this buys a binding author is a perimeter. When every declaration in a
-binding file is either `safe` or reached through a wrapper that establishes what
-the C side needs, a program using the binding writes no `unsafe` of its own, and
+A binding gets a perimeter out of this. When every declaration in a binding file
+is either `safe` or reached through a wrapper that establishes what the C side
+needs, a program using the binding writes no `unsafe` of its own, and
 that file is the complete list of places to look when memory is corrupted. The
 generated wgpu binding is written that way, with a safe wrapper per call, so a
 program that draws a triangle writes none for the graphics API.
 
 ### The support runtime is two files, and most of it is Frost
 
-Every program links a runtime, and it is two files rather than one.
+Every program links a runtime, and the runtime is two files.
 
 `runtime/runtime.frost` is Frost. It holds the checks a program compiles to: the
 bounds check an index becomes, the length and span checks a slice becomes, the
@@ -165,34 +162,32 @@ end into a cached object and link it beside the C one.
 
 Two rules hold that file. Nothing in it may need what it provides: a bounds
 check that indexes something calls itself, so nothing there indexes an array and
-a number is written a digit at a time rather than through a buffer. And what it
+a number is written a digit at a time, with no buffer to index. And what it
 bottoms out in is the C file beside it, reached through a handful of `extern`
 declarations that are the whole of its contact with C.
 
-`runtime/frost_runtime.c` is what is left, and this is the size it is meant to
-be rather than a port waiting to be finished.
+`runtime/frost_runtime.c` is what is left, and this is the size it stays.
 
 Almost all of it is built around a variable that lives for the whole program and
 that every call sees the same copy of: the emit buffer `-o` writes through, the
 counters `--test` sums, the recovery stack a parse escapes to, the block count a
 leak check reads, the arguments a constructor captures before `main`. Frost has
 constants and locals and nothing at module scope that a function writes to,
-because a value's lifetime is a place in the program rather than a property of a
-declaration. That rule is what the region check and the move checker are built
-on: a `^T` points into an arena in scope, and a place belongs to a frame. Adding
-a variable that outlives every frame would give both of them a second case, paid
-for by every program, to serve these few functions. So they stay here.
+because a value's lifetime is a place in the program. That rule is what the
+region check and the move checker are built on: a `^T` points into an arena in
+scope, and a place belongs to a frame. Adding a variable that outlives every
+frame would give both of them a second case, paid for by every program, to serve
+these few functions. So they stay here.
 
 Beside them sit the `setjmp`/`longjmp` escapes, whose `setjmp` has to own its own
 call frame; the stack-guard handlers, which are platform APIs; and the three
 functions that are an `#if` on the target. Each says why it is there.
 
-Where a runtime function's state does have an explicit form, that is the
-direction to take it, and the reason is that it removes an implicit global from
-*programs* rather than that it shrinks this file. Output is a stream something
-names. A block count belongs to the allocation source that handed the block out.
-The arguments are an input to the program. Each of those is a language
-improvement first and a smaller runtime second.
+Where a runtime function's state has an explicit form, that is the direction to
+take it, because it removes an implicit global from *programs*. Output is a
+stream something names. A block count belongs to the allocation source that
+handed the block out. The arguments are an input to the program. Each of those
+is a language improvement first and a smaller runtime second.
 
 The pool is in neither: it is written in Frost as an ordinary library, so nothing
 in the runtime allocates or owns one. See
@@ -205,12 +200,12 @@ frost_rt_assert       :: extern fn(cond: bool)
 frost_rt_read_file    :: extern fn(path: ^i8) -> ^i8
 ```
 
-Its interface is intentionally scalar-only. Nothing is passed or returned by
-aggregate value, so the runtime's *natural* C ABI matches Frost's internal
-aggregate convention with zero negotiation. That is also why the identical
-compiled runtime links into both backends and they agree bit for bit.
+Its interface is scalar-only. Nothing is passed or returned by aggregate value,
+so the runtime's *natural* C ABI matches Frost's internal aggregate convention
+with no negotiation, and the same compiled runtime links into both backends,
+which agree bit for bit.
 
-The memory model is not in here. A slab is a Frost struct with Frost operations
+The memory model is a library. A slab is a Frost struct with Frost operations
 over it (`std/slab.frost` in the standard library, and
 `examples/native/generic_slab.frost` for one written out in full), which is why
 fixed-capacity storage works under `--freestanding` where there is no libc at
@@ -228,14 +223,14 @@ must agree catch miscompilations that a single backend would hide.
 The emitted C is an internal lowering, and it looks like one:
 
 - Aggregates are byte buffers. A struct/enum/array local is emitted as
-  `_Alignas(16) unsigned char _7[N];` and accessed through pointer casts, not as
-  a named C `struct`. This is why a Frost struct type's *name* is only ever a
-  layout-registry key inside the compiler. It never has to be a valid C
+  `_Alignas(16) unsigned char _7[N];` and accessed through pointer casts, with
+  no named C `struct` for it. This is why a Frost struct type's *name* is only
+  ever a layout-registry key inside the compiler. It never has to be a valid C
   identifier, which is what lets monomorphized names like `Pair<i64>` work with
   no extra escaping.
 - Aggregate returns use a hidden out-pointer. A Frost function returning a
   struct compiles to `void f(..., char* __ret)` and `memcpy`s the result into
-  `__ret`. An `extern` is different, and deliberately so. See below.
+  `__ret`. An `extern` follows the real C ABI instead, as section 1 sets out.
 - Non-extern names are mangled. Every Frost function that isn't `extern` and
   isn't `main` is prefixed (`frost_`) so it can never collide with a C keyword or
   library symbol. `extern` names and `main` are left untouched so FFI and the
@@ -243,12 +238,11 @@ The emitted C is an internal lowering, and it looks like one:
 - Function prototypes are emitted up front, so forward references and mutual
   recursion compile regardless of definition order.
 
-Because of the mangling, the byte-buffer aggregates, and the out-pointer return
-convention, the emitted C is not a clean header you would hand to a C
-programmer. That is intentional. Since C calling Frost is a non-goal, the backend
-is free to pick whatever lowering is simplest and fastest to emit. If stable
-C-callable exports ever become a goal, they would be a separate, opt-in surface
-rather than a property the internal lowering has to preserve.
+The mangling, the byte-buffer aggregates and the out-pointer return convention
+make the emitted C a file for a C compiler to read. With C calling Frost a
+non-goal, the backend picks whatever lowering is simplest and fastest to emit.
+Stable C-callable exports would be a separate, opt-in surface, leaving the
+internal lowering free to change.
 
 ## What "C compatible" means here
 
@@ -259,8 +253,8 @@ rather than a property the internal lowering has to preserve.
 | Frost emits C    | Yes        | `--emit-c`, an internal lowering / differential oracle |
 | C calls Frost    | No (non-goal) | emitted C is mangled internal detail, not an API   |
 
-Frost speaks C fluently going out and uses C as a portable assembler
-going down, but it does not promise C anything coming in.
+Frost calls C going out and uses C as a portable assembler going down. It
+promises C nothing coming in.
 
 ## Building
 
@@ -272,7 +266,7 @@ frost program.frost --link -o program --libs -lm  # link extra libraries
 frost program.frost --link --incremental -o program  # rebuild only what changed
 ```
 
-Both `--link` paths automatically compile and link both halves of the runtime, so
+Both `--link` paths compile and link both halves of the runtime on their own, so
 the bounds and generation checks, the assertions and the IO helpers are there
-without any extra flags. `FROST_RUNTIME` and `FROST_RUNTIME_FROST` say where they
+with no extra flags. `FROST_RUNTIME` and `FROST_RUNTIME_FROST` say where they
 are for a checkout you are not standing in.
