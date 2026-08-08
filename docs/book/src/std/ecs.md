@@ -92,7 +92,9 @@ every column contiguous.
 A query is a cursor over the tables holding a set of components:
 
 ```frost,sketch
-var q := query_begin(world, position | velocity)
+var q := query_begin(world)
+query_with(q, position)
+query_with(q, velocity)
 while (query_next(world, q)) {
     var p := query_column($Position, world, q, position)
     v := query_column($Velocity, world, q, velocity)
@@ -156,7 +158,8 @@ program, once a frame, so everything written during a frame shares one time.
 watermark := ecs_tick(world)
 ... systems run ...
 
-var q := query_begin(world, transform)
+var q := query_begin(world)
+query_with(q, transform)
 while (query_next(world, q)) {
     stamps := query_changed(world, q, transform)
     t := query_column($Transform, world, q, transform)
