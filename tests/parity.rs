@@ -74,6 +74,55 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'main' takes no parameters, and this one takes 1; what a call to it \
          would supply is whatever the platform left in a register",
     ),
+    // A capability is an implicit parameter appended to the list, so a `main`
+    // drawing one is handed a register nobody filled and the first write
+    // through it faults. The self-hosted compiler counted it and the bootstrap
+    // did not, which is how the same program was refused by one and ran by the
+    // other.
+    (
+        "an_entry_point_that_draws_a_capability",
+        "import \"io.frost\"
+         Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         grab :: fn($N: usize, mut a: Arena<N>) -> i64 {
+             a.offset = a.offset + 8
+             a.offset
+         }
+         main :: fn() -> i64 uses Arena<256> {
+             print(\"{}\\n\", grab($256, arena))
+             0
+         }
+",
+        "'main' takes no parameters, and this one takes 1; what a call to it \
+         would supply is whatever the platform left in a register",
+    ),
+    // The one caller settles the answer as well as the arguments. A `main`
+    // that can fail answers the tagged union the `?` machinery made, which the
+    // bootstrap's backend then named in a message about a type the reader never
+    // wrote while the self-hosted compiler emitted it into a C `int`.
+    (
+        "an_entry_point_that_can_fail",
+        "import \"io.frost\"
+         Broken :: struct { at: i64 }
+         step :: fn(n: i64) -> i64 ! Broken {
+             if (n < 0) { return { at = n } }
+             n * 2
+         }
+         main :: fn() -> i64 ! Broken {
+             print(\"{}\\n\", step(3)?)
+             0
+         }
+",
+        "'main' is called by the C runtime and its answer is the process exit \
+         code, so it answers i64",
+    ),
+    (
+        "an_entry_point_that_answers_an_aggregate",
+        "Pair :: struct { a: i64, b: i64 }
+         main :: fn() -> Pair { Pair { a = 1, b = 2 } }
+",
+        "'main' is called by the C runtime and its answer is the process exit \
+         code, so it answers i64",
+    ),
     // A format string is read where the call is written, so the count it names
     // and the count the call gives have to agree there. Both compilers read the
     // literal, so both have to say the same thing about it.

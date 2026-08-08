@@ -434,6 +434,17 @@ check_entry_point :: fn(mut p: Parser, head: i64) {
                     report("; what a call to it would supply is whatever the platform left in a register")
                     frost_rt_recover_note()
                 }
+                // The one caller settles the answer as well as the arguments.
+                // A `main` answering anything else was emitted into a C
+                // signature that returns `int`, so a struct reached the
+                // backend as a return type it has no lowering for and a
+                // failure set reached it as the tagged union the `?` machinery
+                // made, which is a synthesized name the reader never wrote.
+                if (sym.ret_type != TY_I64) {
+                    report_where(p.modules, p.src, sym.off)
+                    report("'main' is called by the C runtime and its answer is the process exit code, so it answers i64")
+                    frost_rt_recover_note()
+                }
             }
         }
         id = next_id
