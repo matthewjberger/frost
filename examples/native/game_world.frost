@@ -23,15 +23,15 @@ main :: fn() -> i64 {
     threat := ecs_register($Threat, world)
 
     hero := ecs_spawn(world)
-    ecs_add($Health, world, hero, health, Health { hp = 100 })
+    ecs_add(world, hero, health, Health { hp = 100 })
 
     ogre := ecs_spawn(world)
-    ecs_add($Health, world, ogre, health, Health { hp = 40 })
-    ecs_add($Threat, world, ogre, threat, Threat { level = 7 })
+    ecs_add(world, ogre, health, Health { hp = 40 })
+    ecs_add(world, ogre, threat, Threat { level = 7 })
 
     imp := ecs_spawn(world)
-    ecs_add($Health, world, imp, health, Health { hp = 60 })
-    ecs_add($Threat, world, imp, threat, Threat { level = 3 })
+    ecs_add(world, imp, health, Health { hp = 60 })
+    ecs_add(world, imp, threat, Threat { level = 3 })
 
     // One pass over the threat column of every table that carries one. The
     // hero has no threat, so no table holding it is visited for him.
@@ -49,7 +49,7 @@ main :: fn() -> i64 {
     print("{}\n", total) // 10
 
     wounded := ecs_get($Health, world, ogre, health)
-    ecs_set($Health, world, ogre, health, Health { hp = wounded.hp - 15 })
+    ecs_set(world, ogre, health, Health { hp = wounded.hp - 15 })
     print("{}\n", ecs_get($Health, world, ogre, health).hp) // 25
 
     // Despawning frees the id and bumps its generation, so the handle held here

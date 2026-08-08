@@ -118,59 +118,58 @@ Accessor :: struct {
 
 gltf_ok :: fn(model: Gltf) -> bool { model.ok }
 
-gltf_mesh_count :: fn(model: Gltf) -> i64 { vec_len($GltfMesh, model.meshes) }
+gltf_mesh_count :: fn(model: Gltf) -> i64 { vec_len(model.meshes) }
 
 gltf_mesh_first :: fn(mut model: Gltf, mesh: i64) -> i64 {
-    if (mesh < 0 || mesh >= vec_len($GltfMesh, model.meshes)) {
+    if (mesh < 0 || mesh >= vec_len(model.meshes)) {
         return 0
     }
-    vec_slice($GltfMesh, model.meshes)[mesh].first
+    vec_slice(model.meshes)[mesh].first
 }
 
 gltf_mesh_span :: fn(mut model: Gltf, mesh: i64) -> i64 {
-    if (mesh < 0 || mesh >= vec_len($GltfMesh, model.meshes)) {
+    if (mesh < 0 || mesh >= vec_len(model.meshes)) {
         return 0
     }
-    vec_slice($GltfMesh, model.meshes)[mesh].count
+    vec_slice(model.meshes)[mesh].count
 }
 
 gltf_primitive_count :: fn(model: Gltf) -> i64 {
-    vec_len($GltfPrimitive, model.primitives)
+    vec_len(model.primitives)
 }
 
 gltf_primitive_at :: fn(mut model: Gltf, index: i64) -> GltfPrimitive {
-    vec_slice($GltfPrimitive, model.primitives)[index]
+    vec_slice(model.primitives)[index]
 }
 
 gltf_material_count :: fn(model: Gltf) -> i64 {
-    vec_len($Material, model.materials)
+    vec_len(model.materials)
 }
 
 gltf_material_at :: fn(mut model: Gltf, index: i64) -> Material {
-    vec_slice($Material, model.materials)[index]
+    vec_slice(model.materials)[index]
 }
 
-gltf_node_count :: fn(model: Gltf) -> i64 { vec_len($GltfNode, model.nodes) }
+gltf_node_count :: fn(model: Gltf) -> i64 { vec_len(model.nodes) }
 
 gltf_node_at :: fn(mut model: Gltf, index: i64) -> GltfNode {
-    vec_slice($GltfNode, model.nodes)[index]
+    vec_slice(model.nodes)[index]
 }
 
 // The children of a node, as the span of the flat run they were read into.
 gltf_node_children :: fn(mut model: Gltf, index: i64) -> []i64 {
-    held := vec_slice($GltfNode, model.nodes)[index]
+    held := vec_slice(model.nodes)[index]
     slice_range(
-        $i64,
-        vec_slice($i64, model.children),
+        vec_slice(model.children),
         held.child_first,
         held.child_count
     )
 }
 
-gltf_root_count :: fn(model: Gltf) -> i64 { vec_len($i64, model.roots) }
+gltf_root_count :: fn(model: Gltf) -> i64 { vec_len(model.roots) }
 
 gltf_root_at :: fn(mut model: Gltf, index: i64) -> i64 {
-    vec_slice($i64, model.roots)[index]
+    vec_slice(model.roots)[index]
 }
 
 // A node's own transform, which is its translation, its rotation and its scale
@@ -183,19 +182,19 @@ gltf_node_matrix :: fn(node: GltfNode) -> Mat4 {
 }
 
 gltf_free :: fn(move model: Gltf) {
-    var held := vec_slice($GltfPrimitive, model.primitives)
+    var held := vec_slice(model.primitives)
     var index: i64 = 0
-    while (index < vec_len($GltfPrimitive, model.primitives)) {
-        heap_release_slice($Vertex, held[index].vertices)
-        heap_release_slice($u32, held[index].indices)
+    while (index < vec_len(model.primitives)) {
+        heap_release_slice(held[index].vertices)
+        heap_release_slice(held[index].indices)
         index = index + 1
     }
-    vec_free($GltfPrimitive, model.primitives)
-    vec_free($GltfMesh, model.meshes)
-    vec_free($GltfNode, model.nodes)
-    vec_free($i64, model.children)
-    vec_free($Material, model.materials)
-    vec_free($i64, model.roots)
+    vec_free(model.primitives)
+    vec_free(model.meshes)
+    vec_free(model.nodes)
+    vec_free(model.children)
+    vec_free(model.materials)
+    vec_free(model.roots)
 }
 
 empty_gltf :: fn(ok: bool) -> Gltf {
@@ -368,7 +367,7 @@ read_materials :: fn(mut document: Json, root: i64, mut model: Gltf) {
             document,
             json_member(document, node, "doubleSided")
         ) == JsonKind::True
-        vec_push($Material, model.materials, held)
+        vec_push(model.materials, held)
         index = index + 1
         node = json_next(document, node)
     }
@@ -391,7 +390,7 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
         scale := json_member(document, node, "scale")
         var held := GltfNode {
             mesh = number_or(document, json_member(document, node, "mesh"), -1),
-            child_first = vec_len($i64, model.children),
+            child_first = vec_len(model.children),
             child_count = 0,
             translation = vec3(
                 element_or(document, translation, 0, 0.0),
@@ -424,11 +423,11 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
             0
         )
         while (child >= 0) {
-            vec_push($i64, model.children, json_number(document, child))
+            vec_push(model.children, json_number(document, child))
             held.child_count = held.child_count + 1
             child = json_next(document, child)
         }
-        vec_push($GltfNode, model.nodes, held)
+        vec_push(model.nodes, held)
         node = json_next(document, node)
     }
 
@@ -440,20 +439,20 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
     listed := json_at(document, json_member(document, scene, "nodes"), 0)
     if (listed >= 0) {
         while (listed >= 0) {
-            vec_push($i64, model.roots, json_number(document, listed))
+            vec_push(model.roots, json_number(document, listed))
             listed = json_next(document, listed)
         }
         return
     }
-    var claimed := heap_slice($bool, vec_len($GltfNode, model.nodes))
+    var claimed := heap_slice($bool, vec_len(model.nodes))
     var index: i64 = 0
     while (index < slice_len(claimed)) {
         claimed[index] = false
         index = index + 1
     }
-    held := vec_slice($i64, model.children)
+    held := vec_slice(model.children)
     index = 0
-    while (index < vec_len($i64, model.children)) {
+    while (index < vec_len(model.children)) {
         one := held[index]
         if (one >= 0 && one < slice_len(claimed)) {
             claimed[one] = true
@@ -463,11 +462,11 @@ read_nodes :: fn(mut document: Json, root: i64, mut model: Gltf) {
     index = 0
     while (index < slice_len(claimed)) {
         if (claimed[index] == false) {
-            vec_push($i64, model.roots, index)
+            vec_push(model.roots, index)
         }
         index = index + 1
     }
-    heap_release_slice($bool, claimed)
+    heap_release_slice(claimed)
 }
 
 // The translation and the scale a whole matrix was built from. The rotation is
@@ -510,7 +509,7 @@ read_meshes :: fn(
     meshes := json_member(document, root, "meshes")
     var mesh := json_at(document, meshes, 0)
     while (mesh >= 0) {
-        first := vec_len($GltfPrimitive, model.primitives)
+        first := vec_len(model.primitives)
         var count: i64 = 0
         var primitive := json_at(
             document,
@@ -523,11 +522,7 @@ read_meshes :: fn(
             }
             primitive = json_next(document, primitive)
         }
-        vec_push(
-            $GltfMesh,
-            model.meshes,
-            GltfMesh { first = first, count = count }
-        )
+        vec_push(model.meshes, GltfMesh { first = first, count = count })
         mesh = json_next(document, mesh)
     }
 }
@@ -614,7 +609,6 @@ read_primitive :: fn(
     }
 
     vec_push(
-        $GltfPrimitive,
         model.primitives,
         GltfPrimitive {
             vertices = vertices,
@@ -1013,8 +1007,8 @@ gltf_spawn :: fn(
         )
         at = at + 1
     }
-    heap_release_slice($i64, meshes)
-    heap_release_slice($i64, materials)
+    heap_release_slice(meshes)
+    heap_release_slice(materials)
     root
 }
 
@@ -1108,7 +1102,7 @@ spawn_node_entity :: fn(
         ids.transform
     )
     entity := ecs_spawn_with(world, wanted)
-    ecs_set($LocalTransform, world, entity, ids.local_transform, place)
+    ecs_set(world, entity, ids.local_transform, place)
     entity
 }
 
@@ -1126,12 +1120,11 @@ spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
     )
     entity := ecs_spawn_with(world, wanted)
     ecs_set(
-        $LocalTransform,
         world,
         entity,
         ids.local_transform,
         local_at(vec3(0.0, 0.0, 0.0))
     )
-    ecs_set($Drawn, world, entity, ids.drawn, shown)
+    ecs_set(world, entity, ids.drawn, shown)
     entity
 }

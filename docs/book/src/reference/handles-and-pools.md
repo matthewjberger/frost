@@ -214,7 +214,7 @@ an ordinary array access: bounds-checked like any other, compared against no
 generation.
 
 ```frost,sketch
-slot := slab_slot($Unit, $1024, pool, handle)
+slot := slab_slot(pool, handle)
 if (slot >= 0) {
     var round : i64 = 0
     while (round < many) {

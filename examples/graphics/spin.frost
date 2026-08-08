@@ -54,13 +54,13 @@ turn_things :: fn(mut world: World) {
             entity := rows[row]
             var turn := ecs_get($Spin, world, entity, spin)
             turn.angle = turn.angle + turn.speed * step
-            ecs_set($Spin, world, entity, spin, turn)
+            ecs_set(world, entity, spin, turn)
             var place := ecs_get($LocalTransform, world, entity, local)
             place.rotation = quat_mul(
                 turn.rest,
                 quat_from_axis_angle(turn.axis, turn.angle)
             )
-            ecs_set($LocalTransform, world, entity, local, place)
+            ecs_set(world, entity, local, place)
             row = row + 1
         }
     }

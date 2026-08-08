@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     Ast, ExprId, Expression, Literal, Range32, ReturnKind, Statement, StmtId,
 };
+use crate::ir::build::{GenericBinding, generic_bindings};
 use crate::lexer::Position;
 use crate::parser::Diagnostic;
 use crate::types::{SizeExpr, Type};
@@ -341,12 +342,12 @@ fn without_borrow(ty: Type) -> Type {
     }
 }
 
-/// Which of a function's parameters are types, and what each is called. A
-/// signature written `vec_slice($T: Type, v: Vec<T>) -> []T` answers with `T`,
-/// and the argument at that position at a call site is what `T` stands for
-/// there. Without it the return type names the parameter rather than the
-/// argument, so a field of the element has no declaration to look up.
-fn type_parameters(ast: &Ast, value: ExprId) -> Vec<(usize, String)> {
+/// Which of a function's compile-time parameters a call binds, and from which
+/// argument. A signature written `vec_slice($T: Type, v: Vec<T>) -> []T`
+/// answers with `T`, read off the type of the argument `v` takes. Without it
+/// the return type names the parameter rather than the argument, so a field of
+/// the element has no declaration to look up.
+fn type_parameters(ast: &Ast, value: ExprId) -> Vec<(String, GenericBinding)> {
     let params = match ast.expr(value) {
         Expression::Function(params, _, _) | Expression::Proc(params, _, _) => {
             *params
@@ -354,14 +355,7 @@ fn type_parameters(ast: &Ast, value: ExprId) -> Vec<(usize, String)> {
         Expression::UnsafeFn(inner) => return type_parameters(ast, *inner),
         _ => return Vec::new(),
     };
-    ast.params_in(params)
-        .iter()
-        .enumerate()
-        .filter_map(|(position, param)| match &param.type_annotation {
-            Some(Type::TypeParam(name)) => Some((position, name.clone())),
-            _ => None,
-        })
-        .collect()
+    generic_bindings(ast, ast.params_in(params))
 }
 
 struct Checker<'walk> {
@@ -375,8 +369,8 @@ struct Checker<'walk> {
     // What each function answering with several values hands back, in order, so
     // a binding taken from one has the type of the value it was given.
     multi_returns: HashMap<String, Vec<Type>>,
-    // The type parameters of each named function, by argument position.
-    generics: HashMap<String, Vec<(usize, String)>>,
+    // Where each named function's compile-time parameters are bound from.
+    generics: HashMap<String, Vec<(String, GenericBinding)>>,
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
     // another is allowed and means nothing extra, the same as in Rust.
     depth: usize,
@@ -550,13 +544,36 @@ impl Checker<'_> {
                     return Some(declared.clone());
                 };
                 let mut bound = HashMap::new();
-                for (position, parameter) in parameters {
-                    if let Some(argument) =
-                        ast.exprs_in(*arguments).get(*position)
-                        && let Expression::TypeValue(argument) =
-                            ast.expr(*argument)
-                    {
-                        bound.insert(parameter.clone(), argument.clone());
+                for (parameter, binding) in parameters {
+                    match binding {
+                        GenericBinding::Written(position) => {
+                            if let Some(argument) =
+                                ast.exprs_in(*arguments).get(*position)
+                                && let Expression::TypeValue(argument) =
+                                    ast.expr(*argument)
+                            {
+                                bound.insert(
+                                    parameter.clone(),
+                                    argument.clone(),
+                                );
+                            }
+                        }
+                        // The call writes nothing for this one, so what it
+                        // stands for is read off the argument the value
+                        // parameter naming it takes.
+                        GenericBinding::Settled(position, pattern) => {
+                            if let Some(argument) =
+                                ast.exprs_in(*arguments).get(*position)
+                                && let Some(held) = self.type_of(*argument)
+                            {
+                                crate::ir::build::infer_subst_into(
+                                    pattern,
+                                    &held,
+                                    std::slice::from_ref(parameter),
+                                    &mut bound,
+                                );
+                            }
+                        }
                     }
                 }
                 Some(crate::ir::build::substitute_type(declared, &bound))

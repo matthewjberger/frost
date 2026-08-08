@@ -134,12 +134,12 @@ import "arena.frost"
 
 main :: fn() -> i64 {
     var h := heap_state()
-    var run := carve($i64, $Heap, $heap_source, h, 4)
-    carve_give($i64, $Heap, $heap_source, h, run)
+    var run := carve($i64, $heap_source, h, 4)
+    carve_give($heap_source, h, run)
 
     var backing: [64]u8 = [0; 64]
     var a := arena_over(backing)
-    var scratch := carve($i64, $Arena, $arena_source, a, 4)
+    var scratch := carve($i64, $arena_source, a, 4)
     scratch[0]
 }
 ```

@@ -223,12 +223,12 @@ fn growing_one_run_leaves_a_view_of_another_alone() {
     let source = "import \"io.frost\"\n\
 import \"vec.frost\"\n\
 Pair :: linear struct { left: Vec<i64>, right: Vec<i64> }\n\
-pair_right :: fn(p: Pair) -> []i64 { vec_slice($i64, p.right) }\n\
-pair_grow :: fn(mut p: Pair, value: i64) { vec_push($i64, p.left, value) }\n\
-pair_free :: fn(move p: Pair) { vec_free($i64, p.left)  vec_free($i64, p.right) }\n\
+pair_right :: fn(p: Pair) -> []i64 { vec_slice(p.right) }\n\
+pair_grow :: fn(mut p: Pair, value: i64) { vec_push(p.left, value) }\n\
+pair_free :: fn(move p: Pair) { vec_free(p.left)  vec_free(p.right) }\n\
 main :: fn() -> i64 {\n\
 \x20   var pair : Pair = { left = vec_new($i64, 1), right = vec_new($i64, 1) }\n\
-\x20   vec_push($i64, pair.right, 7)\n\
+\x20   vec_push(pair.right, 7)\n\
 \x20   view := pair_right(pair)\n\
 \x20   pair_grow(pair, 1)\n\
 \x20   pair_grow(pair, 2)\n\
@@ -250,16 +250,16 @@ fn a_view_taken_again_after_a_growth_reads_the_new_block() {
 import \"vec.frost\"\n\
 main :: fn() -> i64 {\n\
 \x20   var v := vec_new($i64, 1)\n\
-\x20   vec_push($i64, v, 111)\n\
-\x20   var view := vec_slice($i64, v)\n\
+\x20   vec_push(v, 111)\n\
+\x20   var view := vec_slice(v)\n\
 \x20   var count : i64 = 0\n\
 \x20   while (count < 8) {\n\
-\x20       vec_push($i64, v, count)\n\
-\x20       view = vec_slice($i64, v)\n\
+\x20       vec_push(v, count)\n\
+\x20       view = vec_slice(v)\n\
 \x20       count = count + 1\n\
 \x20   }\n\
 \x20   print(\"{}\\n\", view[0])\n\
-\x20   vec_free($i64, v)\n\
+\x20   vec_free(v)\n\
 \x20   0\n\
 }\n";
     let Some(output) = compile_and_run_unaudited("runretake", source) else {
@@ -278,15 +278,15 @@ fn a_number_copied_out_of_a_container_survives_a_growth() {
 import \"vec.frost\"\n\
 main :: fn() -> i64 {\n\
 \x20   var v := vec_new($i64, 1)\n\
-\x20   vec_push($i64, v, 111)\n\
-\x20   held := vec_slice($i64, v)[0]\n\
+\x20   vec_push(v, 111)\n\
+\x20   held := vec_slice(v)[0]\n\
 \x20   var count : i64 = 0\n\
 \x20   while (count < 8) {\n\
-\x20       vec_push($i64, v, count)\n\
+\x20       vec_push(v, count)\n\
 \x20       count = count + 1\n\
 \x20   }\n\
 \x20   print(\"{}\\n\", held)\n\
-\x20   vec_free($i64, v)\n\
+\x20   vec_free(v)\n\
 \x20   0\n\
 }\n";
     let Some(output) = compile_and_run_unaudited("runcopy", source) else {
@@ -305,13 +305,13 @@ import \"vec.frost\"\n\
 passthrough :: fn(s: []i64) -> []i64 { s }\n\
 main :: fn() -> i64 {\n\
 \x20   var v := vec_new($i64, 1)\n\
-\x20   vec_push($i64, v, 111)\n\
-\x20   view := passthrough(vec_slice($i64, v))\n\
+\x20   vec_push(v, 111)\n\
+\x20   view := passthrough(vec_slice(v))\n\
 \x20   print(\"{}\\n\", view[0])\n\
-\x20   vec_push($i64, v, 222)\n\
-\x20   again := passthrough(vec_slice($i64, v))\n\
+\x20   vec_push(v, 222)\n\
+\x20   again := passthrough(vec_slice(v))\n\
 \x20   print(\"{}\\n\", again[1])\n\
-\x20   vec_free($i64, v)\n\
+\x20   vec_free(v)\n\
 \x20   0\n\
 }\n";
     let Some(output) = compile_and_run_unaudited("wrapview", source) else {
@@ -624,7 +624,7 @@ map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
     0 - 1
 }
 map_insert :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
-    slot := map_find($V, m, key)
+    slot := map_find(m, key)
     if (unsafe { m.state[slot] } != 1) { m.count = m.count + 1 }
     unsafe { m.keys[slot] = key  m.values[slot] = value  m.state[slot] = 1 }
 }
@@ -635,26 +635,26 @@ map_grow :: fn($V: Type, mut m: Map<V>) {
     m.cap = fresh.cap  m.count = 0
     var i : i64 = 0
     while (i < oc) {
-        if (unsafe { os[i] } == 1) { map_insert($V, m, unsafe { ok[i] }, unsafe { ov[i] }) }
+        if (unsafe { os[i] } == 1) { map_insert(m, unsafe { ok[i] }, unsafe { ov[i] }) }
         i = i + 1
     }
     unsafe { frost_rt_heap_free(ptr_cast($u8, ok))  frost_rt_heap_free(ptr_cast($u8, ov))  frost_rt_heap_free(os) }
 }
 map_put :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
-    if (m.count * 2 >= m.cap) { map_grow($V, m) }
-    map_insert($V, m, key, value)
+    if (m.count * 2 >= m.cap) { map_grow(m) }
+    map_insert(m, key, value)
 }
 map_get :: fn($V: Type, m: Map<V>, key: i64, move fallback: $V) -> $V {
-    slot := map_find($V, m, key)
+    slot := map_find(m, key)
     if (unsafe { m.state[slot] } == 1) { return unsafe { m.values[slot] } }
     fallback
 }
 map_has :: fn($V: Type, m: Map<V>, key: i64) -> bool {
-    slot := map_find($V, m, key)
+    slot := map_find(m, key)
     unsafe { m.state[slot] } == 1
 }
 map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
-    slot := map_find($V, m, key)
+    slot := map_find(m, key)
     found := unsafe { m.state[slot] } == 1
     if (found) { unsafe { m.state[slot] = 2 }  m.count = m.count - 1 }
     found
@@ -662,12 +662,12 @@ map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
 main :: fn() -> i64 {
     var m := map_new($i64, 4)
     var i : i64 = 0
-    while (i < 50) { map_put($i64, m, i, i * i)  i = i + 1 }
+    while (i < 50) { map_put(m, i, i * i)  i = i + 1 }
     unsafe { printf("%lld\n", map_len_i(m)) }
-    unsafe { printf("%lld\n", map_get($i64, m, 7, -1)) }
-    unsafe { printf("%lld\n", map_get($i64, m, 999, -1)) }
-    if (map_remove($i64, m, 7)) { unsafe { printf("%lld\n", 1) } }
-    if (map_has($i64, m, 7)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
+    unsafe { printf("%lld\n", map_get(m, 7, -1)) }
+    unsafe { printf("%lld\n", map_get(m, 999, -1)) }
+    if (map_remove(m, 7)) { unsafe { printf("%lld\n", 1) } }
+    if (map_has(m, 7)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     unsafe { frost_rt_heap_free(ptr_cast($u8, m.keys)) }
     0
 }
@@ -709,14 +709,14 @@ vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }
 main :: fn() -> i64 {
     var v := vec_new($i64, 2)
     var i : i64 = 0
-    while (i < 10) { vec_push($i64, v, i * i)  i = i + 1 }
-    unsafe { printf("%lld\n", vec_len($i64, v)) }
-    unsafe { printf("%lld\n", vec_get($i64, v, 9)) }
-    vec_set($i64, v, 3, 999)
-    unsafe { printf("%lld\n", vec_get($i64, v, 3)) }
+    while (i < 10) { vec_push(v, i * i)  i = i + 1 }
+    unsafe { printf("%lld\n", vec_len(v)) }
+    unsafe { printf("%lld\n", vec_get(v, 9)) }
+    vec_set(v, 3, 999)
+    unsafe { printf("%lld\n", vec_get(v, 3)) }
     var sum : i64 = 0
     var j : i64 = 0
-    while (j < vec_len($i64, v)) { sum = sum + vec_get($i64, v, j)  j = j + 1 }
+    while (j < vec_len(v)) { sum = sum + vec_get(v, j)  j = j + 1 }
     unsafe { printf("%lld\n", sum) }
     unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
     0
@@ -2906,7 +2906,7 @@ const TYPE_ARGUMENT_STORAGE: &str = "import \"io.frost\"\nimport \"mem.frost\"\n
      \x20   var s := make()\n\
      \x20   s.room[0] = 5\n\
      \x20   print(\"{}\\n\", s.room[0])\n\
-     \x20   heap_release_slice($i64, s.room)\n\
+     \x20   heap_release_slice(s.room)\n\
      \x20   0\n\
      }\n";
 
@@ -3031,7 +3031,7 @@ const COMPONENT_AN_ENTITY_LACKS: &str = "import \"io.frost\"\nimport \"ecs.frost
      \x20   held := ecs_register($Held, world)\n\
      \x20   other := ecs_register($Other, world)\n\
      \x20   entity := ecs_spawn_with(world, mask_with(mask_empty(), held))\n\
-     \x20   ecs_set($Other, world, entity, other, Other { n = 5 })\n\
+     \x20   ecs_set(world, entity, other, Other { n = 5 })\n\
      \x20   print(\"{}\\n\", 0)\n\
      \x20   ecs_free(world)\n\
      \x20   0\n\
@@ -3184,7 +3184,7 @@ fn the_interpreter_faults_where_the_runtime_faults() {
             "a_span_inside_the_run",
             "import \"io.frost\"\nimport \"mem.frost\"\nmain :: fn() -> i64 {\n\
              \x20   var xs : [4]i64 = [1, 2, 3, 4]\n\
-             \x20   view := slice_range($i64, xs, 1, 2)\n\
+             \x20   view := slice_range(xs, 1, 2)\n\
              \x20   print(\"{}\\n\", view[1])\n    0\n}\n",
             false,
         ),
@@ -3193,7 +3193,7 @@ fn the_interpreter_faults_where_the_runtime_faults() {
             "import \"io.frost\"\nimport \"mem.frost\"\nmain :: fn() -> i64 {\n\
              \x20   var xs : [4]i64 = [1, 2, 3, 4]\n\
              \x20   var count : i64 = 9\n\
-             \x20   view := slice_range($i64, xs, 1, count)\n\
+             \x20   view := slice_range(xs, 1, count)\n\
              \x20   print(\"{}\\n\", view[0])\n    0\n}\n",
             true,
         ),
@@ -3915,16 +3915,16 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          \x20   var v := vec_new($i64, 4)\n\
          \x20   seed := [5, 2, 9, 1, 7]\n\
          \x20   var i : i64 = 0\n\
-         \x20   while (i < 5) { vec_push($i64, v, seed[i])  i = i + 1 }\n\
-         \x20   sort_vec($i64, $i64_ascending, v)\n\
+         \x20   while (i < 5) { vec_push(v, seed[i])  i = i + 1 }\n\
+         \x20   sort_vec($i64_ascending, v)\n\
          \x20   var b := builder_new(16)\n\
          \x20   var j : i64 = 0\n\
-         \x20   while (j < vec_len($i64, v)) {\n\
-         \x20       builder_int(b, vec_get($i64, v, j))  builder_byte(b, 32)  j = j + 1\n\
+         \x20   while (j < vec_len(v)) {\n\
+         \x20       builder_int(b, vec_get(v, j))  builder_byte(b, 32)  j = j + 1\n\
          \x20   }\n\
          \x20   print(\"{}\\n\", builder_str(b))\n\
          \x20   if (str_eq(\"frost\", \"frost\")) { print(\"ok\\n\") }\n\
-         \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
+         \x20   builder_free(b)  vec_free(v)  0\n}\n",
     )
     .unwrap();
     let exe = directory.join(format!(
@@ -4117,7 +4117,7 @@ fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
          \x20   var world := ecs_new()\n\
          \x20   position := ecs_register($Position, world)\n\
          \x20   a := ecs_spawn(world)\n\
-         \x20   ecs_add($Position, world, a, position,\n\
+         \x20   ecs_add(world, a, position,\n\
          \x20       Position { x = 1.0, y = 2.0 })\n\
          \x20   for_each_row($nudge, world, no_filters(), $Position)\n\
          \x20   held := ecs_get($Position, world, a, position)\n\
@@ -5382,7 +5382,7 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
          while (i < count) {
              var j := i
              while (j > 0 && less(items[j], items[j - 1])) {
-                 swap($T, items, j, j - 1)
+                 swap(items, j, j - 1)
                  j = j - 1
              }
              i = i + 1
@@ -5399,9 +5399,9 @@ const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
          print(\"{}\\n\", apply($double, 21))
          print(\"{}\\n\", apply($negate, 9))
          var numbers : [5]i64 = [5, 3, 9, 1, 7]
-         order($i64, $ascending, numbers, 5)
+         order($ascending, numbers, 5)
          show(numbers, 5)
-         order($i64, $descending, numbers, 5)
+         order($descending, numbers, 5)
          show(numbers, 5)
          0
      }
@@ -7792,7 +7792,7 @@ fn a_program_built_from_interfaces_is_the_same_program() {
          \x20   unsafe { printf(\"%lld\\n\", area(Shape::Rect { w = 4, h = 5 })) }\n\
          \x20   report := describe(Shape::Circle { r = 2 })\n\
          \x20   unsafe { printf(\"%lld\\n\", report.value) }\n\
-         \x20   unsafe { printf(\"%lld\\n\", biggest($i64, $wider, 7, 3)) }\n\
+         \x20   unsafe { printf(\"%lld\\n\", biggest($wider, 7, 3)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -8522,7 +8522,7 @@ fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
                   wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
                   unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   b := wrap($i64, 41)\n\
+                  \x20   b := wrap(41)\n\
                   \x20   print(\"{}\\n\", unwrap(b) + 1)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("genericonly", source)
     else {
@@ -8933,7 +8933,7 @@ fn self_hosted_backends_agree() {
          \x20   print(\"{}\\n\", sum_kind(Kind::None))\n\
          \x20   print(\"{}\\n\", sum_kind(Kind::One { x = 6 }))\n\
          \x20   print(\"{}\\n\", sum_kind(Kind::Two { x = 6, y = 7 }))\n\
-         \x20   b := wrap($i64, 41)\n    print(\"{}\\n\", unwrap(b) + 1)\n\
+         \x20   b := wrap(41)\n    print(\"{}\\n\", unwrap(b) + 1)\n\
          \x20   buf := unsafe { malloc(8) }\n\
          \x20   unsafe { buf[0] = 65 }\n    unsafe { buf[1] = 66 }\n\
          \x20   unsafe { print(\"{}\\n\", buf[0]) }\n    unsafe { print(\"{}\\n\", buf[1]) }\n\
@@ -9639,7 +9639,7 @@ const SELFHOSTED_VALUE_GENERIC: &str = concat!(
     "    b : Buf<4> = Buf { data = [10, 20, 30, 40], count = 4 }\n",
     "    print(\"{}\\n\", b.data[0])\n",
     "    print(\"{}\\n\", b.data[3])\n",
-    "    print(\"{}\\n\", sum($4, b))\n",
+    "    print(\"{}\\n\", sum(b))\n",
     "    0\n",
     "}\n",
 );
@@ -9685,9 +9685,9 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "}\n",
     "main :: fn() -> i64 {\n",
     "    var world : Slab<Entity, 4> = slab_new()\n",
-    "    slab_reset($Entity, $4, world)\n",
-    "    hero := slab_insert($Entity, $4, world, Entity{hp=100, mana=30})\n",
-    "    foe := slab_insert($Entity, $4, world, Entity{hp=40, mana=10})\n",
+    "    slab_reset(world)\n",
+    "    hero := slab_insert(world, Entity{hp=100, mana=30})\n",
+    "    foe := slab_insert(world, Entity{hp=40, mana=10})\n",
     "    print(\"{}\\n\", world[hero].hp)\n",
     "    world[hero].hp = world[hero].hp - 25\n",
     "    print(\"{}\\n\", world[hero].hp)\n",
@@ -9721,8 +9721,8 @@ const SELFHOSTED_GENERIC_ENUM: &str = concat!(
     "main :: fn() -> i64 {\n",
     "    a : Option<i64> = Option::Some { value = 42 }\n",
     "    b : Option<i64> = Option::None\n",
-    "    print(\"{}\\n\", unwrap_or($i64, a, 0))\n",
-    "    print(\"{}\\n\", unwrap_or($i64, b, 99))\n",
+    "    print(\"{}\\n\", unwrap_or(a, 0))\n",
+    "    print(\"{}\\n\", unwrap_or(b, 99))\n",
     "    0\n",
     "}\n",
 );
@@ -9793,13 +9793,13 @@ const SELFHOSTED_VEC: &str = concat!(
     "vec_free :: fn($T: Type, move v: Vec<T>) { unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) } }\n",
     "main :: fn() -> i64 {\n",
     "    var v : Vec<i64> = vec_new($i64, 2)\n",
-    "    vec_push($i64, v, 10)\n",
-    "    vec_push($i64, v, 20)\n",
-    "    vec_push($i64, v, 30)\n",
-    "    print(\"{}\\n\", vec_len($i64, v))\n",
-    "    print(\"{}\\n\", vec_get($i64, v, 0))\n",
-    "    print(\"{}\\n\", vec_get($i64, v, 2))\n",
-    "    vec_free($i64, v)\n",
+    "    vec_push(v, 10)\n",
+    "    vec_push(v, 20)\n",
+    "    vec_push(v, 30)\n",
+    "    print(\"{}\\n\", vec_len(v))\n",
+    "    print(\"{}\\n\", vec_get(v, 0))\n",
+    "    print(\"{}\\n\", vec_get(v, 2))\n",
+    "    vec_free(v)\n",
     "    0\n",
     "}\n",
 );
@@ -9823,14 +9823,14 @@ const SELFHOSTED_STD_MAP: &str = concat!(
     "import \"map.frost\"\n",
     "main :: fn() -> i64 {\n",
     "    var m : Map<i64, i64> = map_new($i64, $i64, 8)\n",
-    "    map_put($i64, $i64, $i64_keys, m, 100, 42)\n",
-    "    map_put($i64, $i64, $i64_keys, m, 200, 99)\n",
-    "    map_put($i64, $i64, $i64_keys, m, 100, 7)\n",
-    "    print(\"{}\\n\", map_len($i64, $i64, m))\n",
-    "    print(\"{}\\n\", map_get($i64, $i64, $i64_keys, m, 100, 0))\n",
-    "    print(\"{}\\n\", map_get($i64, $i64, $i64_keys, m, 200, 0))\n",
-    "    if (map_has($i64, $i64, $i64_keys, m, 300)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
-    "    map_free($i64, $i64, m)\n",
+    "    map_put($i64_keys, m, 100, 42)\n",
+    "    map_put($i64_keys, m, 200, 99)\n",
+    "    map_put($i64_keys, m, 100, 7)\n",
+    "    print(\"{}\\n\", map_len(m))\n",
+    "    print(\"{}\\n\", map_get($i64_keys, m, 100, 0))\n",
+    "    print(\"{}\\n\", map_get($i64_keys, m, 200, 0))\n",
+    "    if (map_has($i64_keys, m, 300)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
+    "    map_free(m)\n",
     "    0\n",
     "}\n",
 );
@@ -9956,16 +9956,16 @@ const SELFHOSTED_COLUMNS: &str = concat!(
     "}\n",
     "main :: fn() -> i64 {\n",
     "    var c : columns<Particle, 8> = columns_new()\n",
-    "    columns_reset($Particle, $8, c)\n",
-    "    a := columns_insert($Particle, $8, c, Particle { x = 10, y = 1 })\n",
-    "    columns_insert($Particle, $8, c, Particle { x = 20, y = 2 })\n",
+    "    columns_reset(c)\n",
+    "    a := columns_insert(c, Particle { x = 10, y = 1 })\n",
+    "    columns_insert(c, Particle { x = 20, y = 2 })\n",
     "    print(\"{}\\n\", c[a].x + c[a].y)\n",
     "    c[a].x = 100\n",
     "    print(\"{}\\n\", c[a].x)\n",
     "    print(\"{}\\n\", sum_col(c.x))\n",
-    "    if (columns_alive($Particle, $8, c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
-    "    columns_release($Particle, $8, c, a)\n",
-    "    if (columns_alive($Particle, $8, c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
+    "    if (columns_alive(c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
+    "    columns_release(c, a)\n",
+    "    if (columns_alive(c, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n",
     "    0\n",
     "}\n",
 );
@@ -10016,14 +10016,14 @@ sum_col :: fn(xs: []i64) -> i64 {
 }
 main :: fn() -> i64 {
     var c : columns<Particle, 8> = columns_new()
-    col_reset($Particle, $8, c)
-    a := col_insert($Particle, $8, c, Particle { x = 10, y = 1 })
-    col_insert($Particle, $8, c, Particle { x = 20, y = 2 })
+    col_reset(c)
+    a := col_insert(c, Particle { x = 10, y = 1 })
+    col_insert(c, Particle { x = 20, y = 2 })
     unsafe { printf("%lld\n", c[a].x + c[a].y) }
     c[a].x = 100
     unsafe { printf("%lld\n", c[a].x) }
     unsafe { printf("%lld\n", sum_col(c.x)) }
-    if (col_alive($Particle, $8, c, a)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
+    if (col_alive(c, a)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     0
 }
 "#;
@@ -10281,7 +10281,7 @@ fn native_slice_index_is_bounds_checked() {
 // The bounds check compares unsigned, which is what makes one comparison answer
 // for a negative index as well as for one past the end. The same cast read a
 // negative *length* as enormous, so every index through such a slice passed and
-// the slice was unchecked. `slice_prefix($T, xs, -1)` reached this from ordinary
+// the slice was unchecked. `slice_prefix(xs, -1)` reached this from ordinary
 // safe code, with no `unsafe` block anywhere in the program.
 #[test]
 fn a_slice_may_not_be_built_with_a_negative_length() {
@@ -10308,9 +10308,9 @@ fn a_slice_may_not_be_built_with_a_negative_length() {
 #[test]
 fn a_sub_slice_may_not_reach_past_the_run_it_came_from() {
     let cases = [
-        ("prefixwiden", "slice_prefix($i64, xs, 1000000)"),
-        ("rangewiden", "slice_range($i64, xs, 2, 1000000)"),
-        ("rangepast", "slice_range($i64, xs, 9, 1)"),
+        ("prefixwiden", "slice_prefix(xs, 1000000)"),
+        ("rangewiden", "slice_range(xs, 2, 1000000)"),
+        ("rangepast", "slice_range(xs, 9, 1)"),
     ];
     for (name, view) in cases {
         let source = format!(
@@ -11347,7 +11347,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", size_of($Entity)) }
 
     var world : Slab<Entity, 16> = slab_new()
-    h := insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
+    h := insert(world, Entity { hp = 100, mana = 30 })
     unsafe { printf("%lld\n", world[h].hp + world[h].mana) }
     0
 }
@@ -11389,7 +11389,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", inferred.first + inferred.second) }
 
     var pool : Slab<Pair<i64>, 4> = slab_new()
-    h := insert($Pair<i64>, $4, pool, Pair { first = 3, second = 4 })
+    h := insert(pool, Pair { first = 3, second = 4 })
     unsafe { printf("%lld\n", pool[h].first + pool[h].second) }
     0
 }
@@ -11599,10 +11599,10 @@ make :: fn($A: Type, $B: Type, a: $A, b: $B) -> Pair<A, B> {
 count :: fn($A: Type, a: $A) -> i64 { 1 }
 
 main :: fn() -> i64 {
-    q := make($i64, $bool, 9, true)
+    q := make(9, true)
     unsafe { printf("%lld\n", q.first) }
     if (q.second) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
-    unsafe { printf("%lld\n", count($bool, false)) }
+    unsafe { printf("%lld\n", count(false)) }
     0
 }
 "#;
@@ -11626,7 +11626,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", p.first) }
     if (p.second) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
 
-    var b := filled($i64, $4, 3)
+    var b := filled($4, 3)
     b.items[1] = 9
     unsafe { printf("%lld\n", b.items[0] + b.items[1] + b.count) }
     0
@@ -11653,7 +11653,7 @@ const SELF_HOSTED_GENERIC_WRITTEN: &str = "import \"io.frost\"\nPair :: struct($
      \x20   p := Pair<i64, bool> { first = 7, second = true }\n\
      \x20   print(\"{}\\n\", p.first)\n\
      \x20   if (p.second) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
-     \x20   var b := filled($i64, $4, 3)\n\
+     \x20   var b := filled($4, 3)\n\
      \x20   b.items[1] = 9\n\
      \x20   print(\"{}\\n\", b.items[0] + b.items[1] + b.count)\n\
      \x20   0\n\
@@ -11699,10 +11699,10 @@ const SELF_HOSTED_GENERIC_BOOL: &str = "import \"io.frost\"\nPair :: struct($A: 
      }\n\
      count :: fn($A: Type, a: $A) -> i64 { 1 }\n\
      main :: fn() -> i64 {\n\
-     \x20   q := make($i64, $bool, 9, true)\n\
+     \x20   q := make(9, true)\n\
      \x20   print(\"{}\\n\", q.first)\n\
      \x20   if (q.second) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
-     \x20   print(\"{}\\n\", count($bool, false))\n\
+     \x20   print(\"{}\\n\", count(false))\n\
      \x20   0\n\
      }\n";
 
@@ -11806,10 +11806,10 @@ total :: fn(e: Entity) -> i64 {
 
 main :: fn() -> i64 {
     var world : Slab<Entity, 8> = slab_new()
-    reset($Entity, $8, world)
+    reset(world)
 
-    ha := insert($Entity, $8, world, Entity { hp = 50, mana = 10 })
-    hb := insert($Entity, $8, world, Entity { hp = 20, mana = 5 })
+    ha := insert(world, Entity { hp = 50, mana = 10 })
+    hb := insert(world, Entity { hp = 20, mana = 5 })
 
     unsafe { printf("%lld\n", world[ha].hp) }
     world[ha].hp = 60
@@ -12454,10 +12454,10 @@ generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 
 
 main :: fn() -> i64 {
     var p : Slab<Entity, 8> = slab_new()
-    reset($Entity, $8, p)
+    reset(p)
 
-    ha := insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
-    hb := insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
+    ha := insert(p, Entity { hp = 100, mana = 30 })
+    hb := insert(p, Entity { hp = 50, mana = 10 })
 
     unsafe { printf("%lld\n", index_of(ha)) }
     unsafe { printf("%lld\n", index_of(hb)) }
@@ -12467,14 +12467,14 @@ main :: fn() -> i64 {
     p[ha].hp = 999
     unsafe { printf("%lld\n", p[ha].hp) }
 
-    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
-    unsafe { printf("%lld\n", release($Entity, $8, p, ha)) }
-    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
+    unsafe { printf("%lld\n", alive(p, ha)) }
+    unsafe { printf("%lld\n", release(p, ha)) }
+    unsafe { printf("%lld\n", alive(p, ha)) }
 
-    hc := insert($Entity, $8, p, Entity { hp = 7, mana = 7 })
+    hc := insert(p, Entity { hp = 7, mana = 7 })
     unsafe { printf("%lld\n", index_of(hc)) }
     unsafe { printf("%lld\n", generation_of(hc)) }
-    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
+    unsafe { printf("%lld\n", alive(p, ha)) }
     0
 }
 "#;
@@ -13696,10 +13696,10 @@ widest :: fn($T: Type, a: $T, b: $T) -> T where is_integer(T) || is_float(T) {
 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", twice($i64, 21)) }
+    unsafe { printf("%lld\n", twice(21)) }
     var numbers : [3]i64 = [7, 8, 9]
-    unsafe { printf("%lld\n", first($i64, numbers)) }
-    unsafe { printf("%lld\n", widest($i64, 4, 9)) }
+    unsafe { printf("%lld\n", first(numbers)) }
+    unsafe { printf("%lld\n", widest(4, 9)) }
     0
 }
 "#;
@@ -13724,14 +13724,14 @@ fn a_where_bound_is_checked_at_the_call() {
              twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v }\n\
              main :: fn() -> i64 {\n\
              \x20   p := Point { x = 1 }\n\
-             \x20   q := twice($Point, p)\n\
+             \x20   q := twice(p)\n\
              \x20   q.x\n\
              }\n",
             "does not hold",
         ),
         (
             "twice :: fn($T: Type, v: $T) -> T where is_sortable(T) { v }\n\
-             main :: fn() -> i64 { twice($i64, 1) }\n",
+             main :: fn() -> i64 { twice(1) }\n",
             "not one of the bounds",
         ),
     ];
@@ -13772,10 +13772,10 @@ const SELF_HOSTED_WHERE: &str = "import \"io.frost\"\ntwice :: fn($T: Type, v: $
      \x20   xs[0]\n\
      }\n\
      main :: fn() -> i64 {\n\
-     \x20   print(\"{}\\n\", twice($i64, 21))\n\
-     \x20   print(\"{}\\n\", twice($f64, 1.5))\n\
+     \x20   print(\"{}\\n\", twice(21))\n\
+     \x20   print(\"{}\\n\", twice(1.5))\n\
      \x20   var numbers : [3]i64 = [7, 8, 9]\n\
-     \x20   print(\"{}\\n\", first($i64, numbers))\n\
+     \x20   print(\"{}\\n\", first(numbers))\n\
      \x20   0\n\
      }\n";
 
@@ -13942,7 +13942,7 @@ fn a_program_declares_its_own_ordering_for_its_own_type() {
          point_order :: Ordering<Point> { less = point_less, equal = point_equal }\n\
          main :: fn() -> i64 {\n\
          \x20   var points := [Point { x = 3, y = 0 }, Point { x = 1, y = 0 }]\n\
-         \x20   sort($Point, $point_order, points)\n\
+         \x20   sort($point_order, points)\n\
          \x20   print(\"{}\\n\", points[0].x)\n\
          \x20   print(\"{}\\n\", points[1].x)\n    0\n}\n",
     )
@@ -14196,7 +14196,7 @@ pick :: fn($T: Type, $ops: Element<T>, a: $T, b: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print("{}\n", pick($i64, $i64_element, 7, 3))
+    print("{}\n", pick($i64_element, 7, 3))
     print("{}\n", i64_element.hashing.hash(2))
     0
 }
@@ -14844,8 +14844,8 @@ chosen :: fn(ops: Ordering<i64>, a: i64, b: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print("{}\n", smaller($i64, $ascending, 7, 3))
-    print("{}\n", smaller($i64, $descending, 7, 3))
+    print("{}\n", smaller($ascending, 7, 3))
+    print("{}\n", smaller($descending, 7, 3))
     print("{}\n", ascending.less(1, 2))
     print("{}\n", chosen(ascending, 2, 9))
     print("{}\n", chosen(descending, 2, 9))
@@ -14874,7 +14874,7 @@ fn a_compile_time_bundle_folds_to_a_direct_call() {
                   ascending :: Ordering<i64> { less = i64_less }\n\
                   smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {\n\
                   \x20   if (ops.less(a, b)) { return a }\n    b\n}\n\
-                  main :: fn() -> i64 { smaller($i64, $ascending, 7, 3) }\n";
+                  main :: fn() -> i64 { smaller($ascending, 7, 3) }\n";
     let Some(c_source) = emit_c_source("bundledirect", source) else {
         return;
     };
@@ -14897,7 +14897,7 @@ fn a_bundle_argument_of_the_wrong_type_is_refused() {
                   pair :: Pair<i64> { first = 1, second = 2 }\n\
                   smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {\n\
                   \x20   if (ops.less(a, b)) { return a }\n    b\n}\n\
-                  main :: fn() -> i64 { smaller($i64, $pair, 7, 3) }\n";
+                  main :: fn() -> i64 { smaller($pair, 7, 3) }\n";
     let message = compile_error("bundlewrong", source);
     assert!(
         message.contains("Pair<i64>") && message.contains("Ordering<i64>"),
@@ -14948,8 +14948,8 @@ best3 :: fn($T: Type, $before: Type, move x: $T, move y: $T, move z: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", best3($i64, $ascending, 7, 3, 9)) }
-    unsafe { printf("%lld\n", best3($i64, $descending, 7, 3, 9)) }
+    unsafe { printf("%lld\n", best3($ascending, 7, 3, 9)) }
+    unsafe { printf("%lld\n", best3($descending, 7, 3, 9)) }
     0
 }
 "#;
@@ -14965,7 +14965,7 @@ fn a_compile_time_function_argument_specializes_and_calls_directly() {
     let source = "cmp :: fn(a: i64, b: i64) -> bool { a < b }\n\
                   pick :: fn($T: Type, $f: Type, move a: $T, move b: $T) -> $T {\n\
                   \x20   var best := a\n    if (f(b, best)) { best = b }\n    best\n}\n\
-                  main :: fn() -> i64 { pick($i64, $cmp, 2, 1) }\n";
+                  main :: fn() -> i64 { pick($cmp, 2, 1) }\n";
     let Some(c_source) = emit_c_source("constfndirect", source) else {
         return;
     };
@@ -15068,7 +15068,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", best($i64, $ascending, 7, 3)) }
+    unsafe { printf("%lld\n", best($ascending, 7, 3)) }
     0
 }
 "#;
@@ -15083,7 +15083,7 @@ fn a_compile_time_function_argument_is_checked_against_its_signature() {
     let source = "\
 wrong :: fn(a: i64) -> i64 { a }
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T) -> $T { x }
-main :: fn() -> i64 { best($i64, $wrong, 1) }
+main :: fn() -> i64 { best($wrong, 1) }
 ";
     let message = compile_error("constfnbadsig", source);
     // Spelled the way a reader writes a function type. This used to pin
@@ -15104,7 +15104,7 @@ fn a_type_given_where_a_function_is_declared_is_rejected() {
     let source = "\
 Point :: struct { x: i64 }
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T) -> $T { x }
-main :: fn() -> i64 { best($i64, $Point, 1) }
+main :: fn() -> i64 { best($Point, 1) }
 ";
     let message = compile_error("constfnnotafn", source);
     assert!(
@@ -15211,7 +15211,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         library.join("mid.frost"),
         "export combine\n\
          import \"leaf.frost\"\n\
-         combine :: fn(x: i64) -> i64 { bump(twice($i64, x)) }\n",
+         combine :: fn(x: i64) -> i64 { bump(twice(x)) }\n",
     )
     .unwrap();
     let root = directory.join("incremental_app.frost");
@@ -15222,7 +15222,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
          import \"lib/leaf.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   b := boxed(1)\n\
-         \x20   unsafe { printf(\"%lld\n\", combine(5) + b.value + twice($i64, 2)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", combine(5) + b.value + twice(2)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -16276,7 +16276,7 @@ fn an_error_inside_a_specialization_names_the_call() {
          Point :: struct { x: i64 }\n\
          main :: fn() -> i64 {\n\
          \x20   p := Point { x = 1 }\n\
-         \x20   q := add($Point, p)\n\
+         \x20   q := add(p)\n\
          \x20   0\n\
          }\n",
     )
@@ -16396,10 +16396,10 @@ insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> i64 {
 zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 })) }
+    unsafe { printf("%lld\n", sum(Pair<i64> { first = 3, second = 4 })) }
 
     var pool : Slab<Pair<i64>, 4> = slab_new()
-    h := insert($Pair<i64>, $4, pool, Pair { first = 10, second = 20 })
+    h := insert(pool, Pair { first = 10, second = 20 })
     unsafe { printf("%lld\n", pool.storage[h].first + pool.storage[h].second) }
     0
 }
@@ -16435,8 +16435,8 @@ unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {
 main :: fn() -> i64 {
     a : Option<i64> = Option::Some { value = 42 }
     b : Option<i64> = Option::None
-    unsafe { printf("%lld\n", unwrap_or($i64, a, 0)) }
-    unsafe { printf("%lld\n", unwrap_or($i64, b, 7)) }
+    unsafe { printf("%lld\n", unwrap_or(a, 0)) }
+    unsafe { printf("%lld\n", unwrap_or(b, 7)) }
 
     p : Option<Point> = Option::Some { value = Point { x = 3, y = 4 } }
     match p {
@@ -16572,9 +16572,9 @@ twice :: fn(x: i64) -> i64 { x * 2 }
     let uses_std = "printf :: extern fn(fmt: ^i8, value: i64) -> i32
          import \"option.frost\"
          main :: fn() -> i64 {
-             m := option_some($i64, 42)
+             m := option_some(42)
              unsafe { printf(\"%lld
-\", option_unwrap_or($i64, m, 0)) }
+\", option_unwrap_or(m, 0)) }
              0
          }
 ";
@@ -16689,8 +16689,8 @@ fn an_import_resolves_through_every_search_root() {
     let uses_std = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          import \"option.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   m := option_some($i64, 42)\n\
-         \x20   unsafe { printf(\"%lld\n\", option_unwrap_or($i64, m, 0)) }\n\
+         \x20   m := option_some(42)\n\
+         \x20   unsafe { printf(\"%lld\n\", option_unwrap_or(m, 0)) }\n\
          \x20   0\n\
          }\n";
     assert_eq!(build("standard", uses_std, &[], &[]), "42\n");
@@ -16753,12 +16753,12 @@ fn the_standard_json_reader_answers_with_whole_numbers() {
 fn the_standard_option_covers_both_variants() {
     let source = "import \"io.frost\"\nimport \"option.frost\"\n\
                   main :: fn() -> i64 {\n\
-                  \x20   a := option_some($i64, 42)\n\
+                  \x20   a := option_some(42)\n\
                   \x20   b := option_none($i64)\n\
-                  \x20   print(\"{}\\n\", option_unwrap_or($i64, a, 0))\n\
-                  \x20   print(\"{}\\n\", option_unwrap_or($i64, b, 7))\n\
-                  \x20   if (option_is_some($i64, a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
-                  \x20   if (option_is_some($i64, b)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   print(\"{}\\n\", option_unwrap_or(a, 0))\n\
+                  \x20   print(\"{}\\n\", option_unwrap_or(b, 7))\n\
+                  \x20   if (option_is_some(a)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
+                  \x20   if (option_is_some(b)) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("stdoption", source) else {
         return;
@@ -16840,7 +16840,7 @@ fn a_leaked_generic_linear_is_refused() {
                   make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
                   take :: fn($T: Type, move b: Box<T>) -> i64 { 1 }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   held := make($i64, 5)\n\
+                  \x20   held := make(5)\n\
                   \x20   0\n}\n";
     let message = compile_error("genericlinear", source);
     assert!(
@@ -16855,8 +16855,8 @@ fn a_consumed_generic_linear_is_accepted() {
                   make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
                   take :: fn($T: Type, move b: Box<T>) -> i64 { b.value }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   held := make($i64, 5)\n\
-                  \x20   print(\"{}\\n\", take($i64, held))\n\
+                  \x20   held := make(5)\n\
+                  \x20   print(\"{}\\n\", take(held))\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("genericlinearok", source)
     else {
@@ -16885,7 +16885,7 @@ fn the_self_hosted_compiler_refuses_a_leaked_generic_linear() {
     let source = "Box :: linear struct($T: Type) { value: T }\n\
                   make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   held := make($i64, 5)\n\
+                  \x20   held := make(5)\n\
                   \x20   0\n}\n";
     let Some(message) = self_hosted_rejects("shlinear", source) else {
         return;
@@ -18308,10 +18308,10 @@ const AWAY_FROM_THE_CHECKOUT: &str = "import \"io.frost\"\nimport \"vec.frost\"
 
      main :: fn() -> i64 {
          var numbers := vec_new($i64, 4)
-         vec_push($i64, numbers, 20)
-         vec_push($i64, numbers, 22)
-         print(\"{}\\n\", vec_get($i64, numbers, 0) + vec_get($i64, numbers, 1))
-         vec_free($i64, numbers)
+         vec_push(numbers, 20)
+         vec_push(numbers, 22)
+         print(\"{}\\n\", vec_get(numbers, 0) + vec_get(numbers, 1))
+         vec_free(numbers)
          0
      }
 ";
@@ -20036,7 +20036,7 @@ fn a_report_spells_a_function_type_the_way_it_is_written() {
                       a.offset
 }
                   plain :: fn(n: i64, mut a: Arena<256>) -> i64 {
-                      bump($256, a) + n
+                      bump(a) + n
 }
                   call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
                   main :: fn() -> i64 { call_it(plain, 3) }

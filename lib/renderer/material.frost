@@ -120,7 +120,7 @@ materials_new :: fn(capacity: i64) -> Materials {
 }
 
 materials_free :: fn(mut registry: Materials) {
-    heap_release_slice($Material, registry.items)
+    heap_release_slice(registry.items)
     registry.count = 0
 }
 

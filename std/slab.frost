@@ -144,7 +144,7 @@ slab_alive :: fn(
 // length of the walk, and the handle belongs everywhere else. It is spelled out
 // at the site for that reason, the same way leaving the range is.
 slab_slot :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
-    if (slab_alive($T, $N, s, handle) == false) {
+    if (slab_alive(s, handle) == false) {
         return -1
     }
     raw: i64 = handle
@@ -189,14 +189,14 @@ SlabThing :: struct { hp: i64 }
 // is told there is nothing to walk.
 test "a slot stands in for a handle until the handle goes stale" {
     var s: Slab<SlabThing, 2> = slab_new()
-    slab_reset($SlabThing, $2, s)
-    held := slab_insert($SlabThing, $2, s, SlabThing { hp = 41 })
-    slot := slab_slot($SlabThing, $2, s, held)
+    slab_reset(s)
+    held := slab_insert(s, SlabThing { hp = 41 })
+    slot := slab_slot(s, held)
     assert(slot >= 0)
     assert(s.storage[slot].hp == 41)
     assert(s.storage[slot].hp == s[held].hp)
-    assert(slab_release($SlabThing, $2, s, held))
-    assert(slab_slot($SlabThing, $2, s, held) == (-1))
+    assert(slab_release(s, held))
+    assert(slab_slot(s, held) == (-1))
 }
 
 // A slot one release short of its bound still works, and the release that takes
@@ -205,9 +205,9 @@ test "a slot stands in for a handle until the handle goes stale" {
 // this in a test and is why the bound went unnoticed.
 test "a slot whose generation is spent is retired rather than reused" {
     var s: Slab<SlabThing, 2> = slab_new()
-    slab_reset($SlabThing, $2, s)
+    slab_reset(s)
 
-    first := slab_insert($SlabThing, $2, s, SlabThing { hp = 7 })
+    first := slab_insert(s, SlabThing { hp = 7 })
     raw: i64 = first
     index := raw & 4294967295
     stamp := s.generations[index] & (-16777216)
@@ -215,10 +215,10 @@ test "a slot whose generation is spent is retired rather than reused" {
     // then hands out is one its own check accepts. The slab's own number is
     // kept, since a slot that changed it would be a slot in another container.
     s.generations[index] = stamp | (GENERATION_LIMIT - 1)
-    assert(slab_release($SlabThing, $2, s, (s.generations[index] << 32) | index))
+    assert(slab_release(s, (s.generations[index] << 32) | index))
     assert(s.free_count == 2)
-    again := slab_insert($SlabThing, $2, s, SlabThing { hp = 8 })
-    assert(slab_alive($SlabThing, $2, s, again))
+    again := slab_insert(s, SlabThing { hp = 8 })
+    assert(slab_alive(s, again))
 
     // And the release that takes it past: the slot does not come back, so the
     // slab has one fewer place rather than a handle that is stale on arrival.
@@ -226,6 +226,6 @@ test "a slot whose generation is spent is retired rather than reused" {
     spent := raw_again & 4294967295
     s.generations[spent] = stamp | GENERATION_LIMIT
     before := s.free_count
-    assert(slab_release($SlabThing, $2, s, (s.generations[spent] << 32) | spent))
+    assert(slab_release(s, (s.generations[spent] << 32) | spent))
     assert(s.free_count == before)
 }

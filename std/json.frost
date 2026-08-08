@@ -46,14 +46,14 @@ Json :: struct {
 }
 
 json_free :: fn(move document: Json) {
-    vec_free($JsonNode, document.nodes)
+    vec_free(document.nodes)
 }
 
 json_root :: fn(document: Json) -> i64 {
     if (document.failed == 1) {
         return -1
     }
-    if (vec_len($JsonNode, document.nodes) == 0) {
+    if (vec_len(document.nodes) == 0) {
         return -1
     }
     0
@@ -63,14 +63,14 @@ json_kind :: fn(mut document: Json, node: i64) -> JsonKind {
     if (node < 0) {
         return JsonKind::Null
     }
-    vec_slice($JsonNode, document.nodes)[node].kind
+    vec_slice(document.nodes)[node].kind
 }
 
 json_number :: fn(mut document: Json, node: i64) -> i64 {
     if (node < 0) {
         return 0
     }
-    vec_slice($JsonNode, document.nodes)[node].number
+    vec_slice(document.nodes)[node].number
 }
 
 // The whole of a number, fraction and exponent included. What a measurement is
@@ -79,7 +79,7 @@ json_real :: fn(mut document: Json, node: i64) -> f64 {
     if (node < 0) {
         return 0.0
     }
-    held := vec_slice($JsonNode, document.nodes)[node]
+    held := vec_slice(document.nodes)[node]
     if (held.kind != JsonKind::Number) {
         return 0.0
     }
@@ -93,7 +93,7 @@ json_next :: fn(mut document: Json, node: i64) -> i64 {
     if (node < 0) {
         return -1
     }
-    vec_slice($JsonNode, document.nodes)[node].next
+    vec_slice(document.nodes)[node].next
 }
 
 json_is_null :: fn(mut document: Json, node: i64) -> bool {
@@ -104,14 +104,14 @@ json_text_off :: fn(mut document: Json, node: i64) -> i64 {
     if (node < 0) {
         return 0
     }
-    vec_slice($JsonNode, document.nodes)[node].text_off
+    vec_slice(document.nodes)[node].text_off
 }
 
 json_text_len :: fn(mut document: Json, node: i64) -> i64 {
     if (node < 0) {
         return 0
     }
-    vec_slice($JsonNode, document.nodes)[node].text_len
+    vec_slice(document.nodes)[node].text_len
 }
 
 // Whether a string node holds exactly this text. The node's bytes are compared
@@ -120,7 +120,7 @@ json_text_eq :: fn(mut document: Json, node: i64, text: str) -> bool {
     if (node < 0) {
         return false
     }
-    held := vec_slice($JsonNode, document.nodes)[node]
+    held := vec_slice(document.nodes)[node]
     if (held.text_len != str_len(text)) {
         return false
     }
@@ -138,9 +138,9 @@ json_member :: fn(mut document: Json, object: i64, name: str) -> i64 {
     if (object < 0) {
         return -1
     }
-    var child := vec_slice($JsonNode, document.nodes)[object].first
+    var child := vec_slice(document.nodes)[object].first
     while (child >= 0) {
-        held := vec_slice($JsonNode, document.nodes)[child]
+        held := vec_slice(document.nodes)[child]
         if (key_is(document, held, name)) {
             return child
         }
@@ -167,14 +167,14 @@ json_at :: fn(mut document: Json, container: i64, wanted: i64) -> i64 {
     if (container < 0) {
         return -1
     }
-    var child := vec_slice($JsonNode, document.nodes)[container].first
+    var child := vec_slice(document.nodes)[container].first
     var index: i64 = 0
     while (child >= 0) {
         if (index == wanted) {
             return child
         }
         index = index + 1
-        child = vec_slice($JsonNode, document.nodes)[child].next
+        child = vec_slice(document.nodes)[child].next
     }
     -1
 }
@@ -183,11 +183,11 @@ json_count :: fn(mut document: Json, container: i64) -> i64 {
     if (container < 0) {
         return 0
     }
-    var child := vec_slice($JsonNode, document.nodes)[container].first
+    var child := vec_slice(document.nodes)[container].first
     var total: i64 = 0
     while (child >= 0) {
         total = total + 1
-        child = vec_slice($JsonNode, document.nodes)[child].next
+        child = vec_slice(document.nodes)[child].next
     }
     total
 }
@@ -212,9 +212,8 @@ json_parse :: fn(source: str) -> Json {
 }
 
 new_node :: fn(mut document: Json, kind: JsonKind) -> i64 {
-    index := vec_len($JsonNode, document.nodes)
+    index := vec_len(document.nodes)
     vec_push(
-        $JsonNode,
         document.nodes,
         JsonNode {
             kind = kind,
@@ -289,7 +288,7 @@ parse_string :: fn(mut document: Json) -> i64 {
         document.at = document.at + 1
     }
     node := new_node(document, JsonKind::String)
-    slot := vec_slice($JsonNode, document.nodes)
+    slot := vec_slice(document.nodes)
     ref held := slot[node]
     held.text_off = start
     held.text_len = document.at - start
@@ -326,7 +325,7 @@ parse_number :: fn(mut document: Json) -> i64 {
         document.at = document.at + 1
     }
     node := new_node(document, JsonKind::Number)
-    slot := vec_slice($JsonNode, document.nodes)
+    slot := vec_slice(document.nodes)
     ref held := slot[node]
     if (negative == 1) {
         held.number = -value
@@ -379,7 +378,7 @@ parse_object :: fn(mut document: Json) -> i64 {
         if (child < 0) {
             return -1
         }
-        slot := vec_slice($JsonNode, document.nodes)
+        slot := vec_slice(document.nodes)
         ref held := slot[child]
         held.key_off = key_off
         held.key_len = key_len
@@ -397,7 +396,7 @@ parse_object :: fn(mut document: Json) -> i64 {
 // Hang a child off its parent, keeping the tail so appending stays constant
 // time rather than walking the chain for every element.
 attach :: fn(mut document: Json, parent: i64, tail: i64, child: i64) -> i64 {
-    slot := vec_slice($JsonNode, document.nodes)
+    slot := vec_slice(document.nodes)
     if (tail < 0) {
         ref owner := slot[parent]
         owner.first = child

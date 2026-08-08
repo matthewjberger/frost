@@ -68,7 +68,7 @@ drain :: fn(mut line: Line) {
     if (line.used == 0) {
         return
     }
-    line.out(slice_range($u8, line.bytes, 0, line.used))
+    line.out(slice_range(line.bytes, 0, line.used))
     line.used = 0
 }
 
@@ -155,7 +155,7 @@ put_f64 :: fn(mut line: Line, value: f64) {
 }
 
 span :: fn(text: str, from: i64, count: i64) -> str {
-    slice_range($u8, text, from, count)
+    slice_range(text, from, count)
 }
 
 // The literal from `at` up to the next hole, composed, and the index past that

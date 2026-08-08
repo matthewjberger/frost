@@ -67,7 +67,7 @@ bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
     align := alignof(T)
     start := (b.offset + align - 1) / align * align
     width := count * sizeof(T)
-    bytes := slice_range($u8, b.data, start, width)
+    bytes := slice_range(b.data, start, width)
     b.offset = start + width
     unsafe { slice_from($T, ptr_cast($T, ptr_to(bytes[0])), count) }
 }
@@ -84,15 +84,14 @@ gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
     // 4. A container over the run. `Fixed<T>` is a growable array over storage
     // it does not own, so it fills the run and never allocates.
     var kept := fixed_over(
-        $i64,
-        bump_carve($i64, $1024, bump, slice_len(world))
+        bump_carve($i64, bump, slice_len(world))
     )
     for value in world {
         if (value > over) {
-            fixed_push($i64, kept, value)
+            fixed_push(kept, value)
         }
     }
-    fixed_slice($i64, kept)
+    fixed_slice(kept)
 }
 
 total_of :: fn(values: []i64) -> i64 {
@@ -108,7 +107,7 @@ main :: fn() -> i64 {
     var world: [6]i64 = [3, 9, 4, 12, 7, 1]
     var round: i64 = 0
     while (round < 3) {
-        mark := bump_mark($1024, scratch)
+        mark := bump_mark(scratch)
         // `with` says which allocator the calls inside draw from, and the block
         // is also the region: what `gather` carved may not outlive it.
         with scratch {
@@ -118,14 +117,14 @@ main :: fn() -> i64 {
                 round * 3,
                 slice_len(kept),
                 total_of(kept),
-                bump_used($1024, scratch)
+                bump_used(scratch)
             )
         }
         // The whole round's storage, back in one step. Nothing was freed one
         // value at a time, and the next round carves the same bytes again.
-        bump_reset($1024, scratch, mark)
+        bump_reset(scratch, mark)
         round = round + 1
     }
-    print("still out: {}\n", bump_used($1024, scratch))
+    print("still out: {}\n", bump_used(scratch))
     0
 }

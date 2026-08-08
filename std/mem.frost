@@ -108,7 +108,7 @@ slice_prefix :: fn($T: Type, held: []T, count: i64) -> []T {
     room := slice_len(held)
     frost_rt_check_span(0, count, room)
     if (count == 0) {
-        return slice_empty($T, held)
+        return slice_empty(held)
     }
     unsafe { slice_from($T, ptr_to(held[0]), count) }
 }
@@ -126,7 +126,7 @@ slice_range :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
     room := slice_len(held)
     frost_rt_check_span(from, count, room)
     if (count == 0) {
-        return slice_empty($T, held)
+        return slice_empty(held)
     }
     unsafe { slice_from($T, ptr_to(held[from]), count) }
 }
@@ -154,13 +154,13 @@ slice_span :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
         return held
     }
     if (from >= length) {
-        return slice_range($T, held, length - 1, 0)
+        return slice_range(held, length - 1, 0)
     }
     var room := length - from
     if (count < room) {
         room = count
     }
-    slice_range($T, held, from, room)
+    slice_range(held, from, room)
 }
 
 // The `index`th of `count` spans that together cover a slice and never overlap.
@@ -174,7 +174,7 @@ slice_span :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
 slice_chunk :: fn($T: Type, held: []T, count: i64, index: i64) -> []T {
     total := slice_len(held)
     if (count < 1 || index < 0 || index >= count) {
-        return slice_span($T, held, total, 0)
+        return slice_span(held, total, 0)
     }
     per := total / count
     extra := total % count
@@ -186,7 +186,7 @@ slice_chunk :: fn($T: Type, held: []T, count: i64, index: i64) -> []T {
     } else {
         from = from + extra
     }
-    slice_span($T, held, from, room)
+    slice_span(held, from, room)
 }
 
 heap_release :: fn($T: Type, move block: ^T) {
@@ -262,21 +262,21 @@ test "a range views the middle of a slice" {
         held[fill] = fill * 10
         fill = fill + 1
     }
-    middle := slice_range($i64, held, 2, 3)
+    middle := slice_range(held, 2, 3)
     assert(slice_len(middle) == 3)
     assert(middle[0] == 20)
     assert(middle[2] == 40)
-    heap_release_slice($i64, held)
+    heap_release_slice(held)
 }
 
 test "a span stops at the end of what it views" {
     var held := heap_slice($i64, 4)
     held[3] = 7
-    assert(slice_len(slice_span($i64, held, 2, 99)) == 2)
-    assert(slice_span($i64, held, 2, 99)[1] == 7)
-    assert(slice_len(slice_span($i64, held, 4, 2)) == 0)
-    assert(slice_len(slice_span($i64, held, 99, 2)) == 0)
-    heap_release_slice($i64, held)
+    assert(slice_len(slice_span(held, 2, 99)) == 2)
+    assert(slice_span(held, 2, 99)[1] == 7)
+    assert(slice_len(slice_span(held, 4, 2)) == 0)
+    assert(slice_len(slice_span(held, 99, 2)) == 0)
+    heap_release_slice(held)
 }
 
 // Every element in exactly one span, whatever the count divides into. Writing
@@ -297,7 +297,7 @@ test "chunks cover a slice exactly once" {
         var index: i64 = 0
         var seen: i64 = 0
         while (index < count) {
-            var span := slice_chunk($i64, held, count, index)
+            var span := slice_chunk(held, count, index)
             seen = seen + slice_len(span)
             var at: i64 = 0
             while (at < slice_len(span)) {
@@ -312,29 +312,29 @@ test "chunks cover a slice exactly once" {
             assert(held[every] == 1)
             every = every + 1
         }
-        heap_release_slice($i64, held)
+        heap_release_slice(held)
         which = which + 1
     }
 }
 
 test "chunks answer empty where there is no work for them" {
     var held := heap_slice($i64, 2)
-    assert(slice_len(slice_chunk($i64, held, 5, 0)) == 1)
-    assert(slice_len(slice_chunk($i64, held, 5, 1)) == 1)
-    assert(slice_len(slice_chunk($i64, held, 5, 2)) == 0)
-    assert(slice_len(slice_chunk($i64, held, 5, 9)) == 0)
-    assert(slice_len(slice_chunk($i64, held, 0, 0)) == 0)
-    heap_release_slice($i64, held)
+    assert(slice_len(slice_chunk(held, 5, 0)) == 1)
+    assert(slice_len(slice_chunk(held, 5, 1)) == 1)
+    assert(slice_len(slice_chunk(held, 5, 2)) == 0)
+    assert(slice_len(slice_chunk(held, 5, 9)) == 0)
+    assert(slice_len(slice_chunk(held, 0, 0)) == 0)
+    heap_release_slice(held)
 }
 
 test "a prefix is as long as it was asked for" {
     var held := heap_slice($i64, 8)
     held[0] = 1
     held[1] = 2
-    front := slice_prefix($i64, held, 2)
+    front := slice_prefix(held, 2)
     assert(slice_len(front) == 2)
     assert(front[1] == 2)
-    heap_release_slice($i64, held)
+    heap_release_slice(held)
 }
 
 test "a typed block holds what is written into it" {
@@ -344,27 +344,27 @@ test "a typed block holds what is written into it" {
     assert(slice_len(held) == 4)
     assert(held[0] == 10)
     assert(held[3] == 40)
-    heap_release_slice($i64, held)
+    heap_release_slice(held)
 }
 
 test "a block keeps its contents across a grow" {
     var held := heap_slice($i64, 2)
     held[0] = 1
     held[1] = 2
-    var bigger := heap_grow_slice($i64, held, 8)
+    var bigger := heap_grow_slice(held, 8)
     assert(slice_len(bigger) == 8)
     assert(bigger[0] == 1)
     assert(bigger[1] == 2)
     bigger[7] = 7
     assert(bigger[7] == 7)
-    heap_release_slice($i64, bigger)
+    heap_release_slice(bigger)
 }
 
 test "a zero count still gives a block to write into" {
     var held := heap_slice($i64, 0)
     held[0] = 5
     assert(held[0] == 5)
-    heap_release_slice($i64, held)
+    heap_release_slice(held)
 }
 
 MemPoint :: struct { x: i64, y: i64 }
@@ -376,7 +376,7 @@ test "a struct element is one element rather than one byte" {
     assert(held[2].x == 7)
     assert(held[2].y == 8)
     assert(held[0].x == 1)
-    heap_release_slice($MemPoint, held)
+    heap_release_slice(held)
 }
 
 test "bytes with a width are zeroed and copied" {
@@ -392,8 +392,8 @@ test "bytes with a width are zeroed and copied" {
     // And one element in, which is where a column's second row starts.
     second := bytes_as($i64, bytes_at(destination, 8), 1)
     assert(second[0] == 42)
-    heap_release($u8, source)
-    heap_release($u8, destination)
+    heap_release(source)
+    heap_release(destination)
 }
 
 test "a byte run keeps what it held when it grows" {
@@ -403,7 +403,7 @@ test "a byte run keeps what it held when it grows" {
     block = heap_grow_bytes(block, 64)
     view := bytes_as($i64, block, 1)
     assert(view[0] == 9)
-    heap_release($u8, block)
+    heap_release(block)
 }
 
 test "what a block took is what releasing it gives back" {
@@ -411,9 +411,9 @@ test "what a block took is what releasing it gives back" {
     var held := heap_slice($i64, 16)
     assert(heap_live() == before + 1)
     held[0] = 1
-    var bigger := heap_grow_slice($i64, held, 64)
+    var bigger := heap_grow_slice(held, 64)
     assert(heap_live() == before + 1)
-    heap_release_slice($i64, bigger)
+    heap_release_slice(bigger)
     assert(heap_live() == before)
 }
 
@@ -423,6 +423,6 @@ test "bytes with a width are counted the same way" {
     assert(heap_live() == before + 1)
     grown := heap_grow_bytes(block, 128)
     assert(heap_live() == before + 1)
-    heap_release($u8, grown)
+    heap_release(grown)
     assert(heap_live() == before)
 }

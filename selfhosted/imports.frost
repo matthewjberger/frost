@@ -527,6 +527,12 @@ file_of :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
 }
 
 report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
+    // A program the compiler holds itself rather than reads is in no module, so
+    // there is no file and no line to name. The report still says what is
+    // wrong; without this it died on the empty table instead.
+    if (modules.count == 0) {
+        return
+    }
     index := module_at(modules, offset)
     if (index < 0) {
         return

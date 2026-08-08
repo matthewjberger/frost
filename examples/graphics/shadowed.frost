@@ -611,7 +611,6 @@ watch_inset :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
     on := input_key_pressed(held, KEY_B) == false
     ecs_resource_set(
-        $ShowInset,
         world,
         resource_of($ShowInset, world),
         ShowInset { on = on }
@@ -1135,7 +1134,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     )
 
     shadow_pass := graph_node_pass(
-        $Scene,
         g,
         "shadow",
         draw_things,
@@ -1146,7 +1144,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // Declared second and reading what the first writes, which is the edge the
     // order follows. Declaring them the other way round changes nothing.
     lit_pass := graph_node_pass(
-        $Scene,
         g,
         "scene",
         draw_things,
@@ -1166,7 +1163,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // holds neither resource to rebuild from.
     s.lit_scene.shadow_map = shadow_map
     s.lit_scene.glow = glow
-    graph_rebuilds($Built, g, lit_pass, rebuild_bindings, ptr_to(s))
+    graph_rebuilds(g, lit_pass, rebuild_bindings, ptr_to(s))
 
     // What is drawn at all is decided once per view, and each of the three
     // views does it inside its own node: the light's is culled by the box it
@@ -1176,7 +1173,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // Declared after the pass that reads it, and it runs first: the buffer
     // between them is the whole of what says so.
     pulse_pass := graph_compute_pass(
-        $Pulse,
         g,
         "pulse",
         dispatch_pulse,
@@ -1190,7 +1186,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     s.bright_step.source = lit
     s.bright_step.second_source = lit
     bright_pass := graph_pass(
-        $Step,
         g,
         "bright",
         draw_cover,
@@ -1203,11 +1198,11 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
     graph_reads(g, bright_pass, lit)
-    graph_rebuilds($Step, g, bright_pass, rebuild_step, ptr_to(s.bright_step))
+    graph_rebuilds(g, bright_pass, rebuild_step, ptr_to(s.bright_step))
 
     s.blur_step.source = bright
     s.blur_step.second_source = bright
-    blur_pass := graph_pass($Step, g, "blur", draw_cover, ptr_to(s.blur_step))
+    blur_pass := graph_pass(g, "blur", draw_cover, ptr_to(s.blur_step))
     graph_writes_color(
         g,
         blur_pass,
@@ -1215,12 +1210,11 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
     graph_reads(g, blur_pass, bright)
-    graph_rebuilds($Step, g, blur_pass, rebuild_step, ptr_to(s.blur_step))
+    graph_rebuilds(g, blur_pass, rebuild_step, ptr_to(s.blur_step))
 
     s.compose_step.source = lit
     s.compose_step.second_source = blurred
     compose_pass := graph_pass(
-        $Step,
         g,
         "compose",
         draw_cover,
@@ -1234,7 +1228,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     )
     graph_reads(g, compose_pass, lit)
     graph_reads(g, compose_pass, blurred)
-    graph_rebuilds($Step, g, compose_pass, rebuild_step, ptr_to(s.compose_step))
+    graph_rebuilds(g, compose_pass, rebuild_step, ptr_to(s.compose_step))
 
     // The second view: its own target, its own depth, its own pass.
     var inset_graph := graph_new(device)
@@ -1247,7 +1241,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         DEPTH_FORMAT
     )
     inset_scene_pass := graph_node_pass(
-        $Scene,
         inset_graph,
         "inset scene",
         draw_things,
@@ -1283,7 +1276,6 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     s.inset_step.source = inset
     s.inset_step.second_source = inset
     corner_pass := graph_pass(
-        $Step,
         g,
         "corner",
         draw_cover,
@@ -1297,7 +1289,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
     graph_reads(g, corner_pass, inset)
-    graph_rebuilds($Step, g, corner_pass, rebuild_step, ptr_to(s.inset_step))
+    graph_rebuilds(g, corner_pass, rebuild_step, ptr_to(s.inset_step))
 }
 
 // The shadow map and the run of glow values, bound again. One hook rather than
@@ -1477,7 +1469,6 @@ run :: fn(move app: App) -> i64 {
     // grid of shapes above it turning about their own axes.
     floor := ecs_spawn_with(app.world, wanted)
     ecs_set(
-        $LocalTransform,
         app.world,
         floor,
         local,
@@ -1488,14 +1479,12 @@ run :: fn(move app: App) -> i64 {
         }
     )
     ecs_set(
-        $Spin,
         app.world,
         floor,
         spin,
         spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity())
     )
     ecs_set(
-        $Drawn,
         app.world,
         floor,
         drawn,
@@ -1515,7 +1504,6 @@ run :: fn(move app: App) -> i64 {
         up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set(
-            $LocalTransform,
             app.world,
             entity,
             local,
@@ -1535,7 +1523,6 @@ run :: fn(move app: App) -> i64 {
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed: f32 = 0.5 + 0.11 * made
         ecs_set(
-            $Spin,
             app.world,
             entity,
             spin,
@@ -1547,7 +1534,6 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set(
-            $Drawn,
             app.world,
             entity,
             drawn,
@@ -1570,7 +1556,6 @@ run :: fn(move app: App) -> i64 {
     // an orbit and neither of them says anything about the other.
     root := ecs_spawn_with(app.world, root_wanted)
     ecs_set(
-        $LocalTransform,
         app.world,
         root,
         local,
@@ -1581,7 +1566,6 @@ run :: fn(move app: App) -> i64 {
         }
     )
     ecs_set(
-        $Spin,
         app.world,
         root,
         spin,
@@ -1805,11 +1789,11 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.05
     app_camera_set(app, eye)
 
-    app_insert_resource($ShowInset, app, ShowInset { on = true })
+    app_insert_resource(app, ShowInset { on = true })
     app_add_system(app, Stage::FrameUpdate, watch_inset)
-    app_configure_graph($Built, app, declare_passes, ptr_to(built))
-    app_update_graph($Built, app, update_inset, ptr_to(built))
-    app_before_render($Built, app, before_frame, ptr_to(built))
+    app_configure_graph(app, declare_passes, ptr_to(built))
+    app_update_graph(app, update_inset, ptr_to(built))
+    app_before_render(app, before_frame, ptr_to(built))
     app_run(app)
 
     batch_pipelines_free(built.shadow_scene.steps)
@@ -1817,6 +1801,6 @@ run :: fn(move app: App) -> i64 {
     batch_pipelines_free(built.inset_scene.steps)
     render_world_free(shadow_render)
     render_world_free(inset_render)
-    heap_release_slice($Entity, entities)
+    heap_release_slice(entities)
     app_close(app)
 }

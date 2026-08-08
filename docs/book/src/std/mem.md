@@ -68,16 +68,16 @@ pointer.
 | --- | --- |
 | `heap_array($T, count) -> ^T` | Room for `count` elements of `T` |
 | `heap_slice($T, count) -> []T` | The same block as a bounds-checked `[]T` |
-| `heap_grow($T, move block, count) -> ^T` | Resize, answering where it now is |
-| `heap_grow_slice($T, move held, count) -> []T` | The same for a slice |
-| `heap_release($T, move block)` | Give the block back |
-| `heap_release_slice($T, move held)` | Give a slice's block back |
-| `slice_prefix($T, held, count) -> []T` | The first `count` elements |
+| `heap_grow(move block, count) -> ^T` | Resize, answering where it now is |
+| `heap_grow_slice(move held, count) -> []T` | The same for a slice |
+| `heap_release(move block)` | Give the block back |
+| `heap_release_slice(move held)` | Give a slice's block back |
+| `slice_prefix(held, count) -> []T` | The first `count` elements |
 | `heap_bytes(size) -> ^u8` | A run of bytes with a width decided at runtime |
 | `heap_grow_bytes(move block, size) -> ^u8` | Resize such a run |
 | `bytes_at(block, offset) -> ^u8` | One position in a run of bytes |
 | `bytes_as($T, block, count) -> []T` | A run of bytes read as `count` of `T` |
-| `as_bytes($T, held) -> []u8` | A run of `T` read as the bytes it occupies |
+| `as_bytes(held) -> []u8` | A run of `T` read as the bytes it occupies |
 | `heap_zero(destination, size)` | Fill with zero |
 | `heap_copy(destination, source, size)` | Copy `size` bytes |
 | `heap_live() -> i64` | How many blocks are currently out |
@@ -96,10 +96,10 @@ test "a vector gives back every block it took, however far it grew" {
     var v := vec_new($i64, 1)
     var i : i64 = 0
     while (i < 500) {
-        vec_push($i64, v, i)
+        vec_push(v, i)
         i = i + 1
     }
-    vec_free($i64, v)
+    vec_free(v)
     assert(heap_live() == before)
 }
 ```
@@ -117,9 +117,9 @@ test "what a block took is what releasing it gives back" {
     var held := heap_slice($i64, 16)
     assert(heap_live() == before + 1)
     held[0] = 1
-    var bigger := heap_grow_slice($i64, held, 64)
+    var bigger := heap_grow_slice(held, 64)
     assert(heap_live() == before + 1)
-    heap_release_slice($i64, bigger)
+    heap_release_slice(bigger)
     assert(heap_live() == before)
 }
 ```
@@ -178,9 +178,9 @@ that: `take`, `resize` and `give`, all over `[]u8`.
 
 | Call | What it does |
 | --- | --- |
-| `carve($T, $A, $source, mut a, count) -> []T` | Room for `count` elements of `T` |
-| `carve_grow($T, $A, $source, mut a, held, count) -> []T` | A bigger run holding what the old one held |
-| `carve_give($T, $A, $source, mut a, held)` | The run handed back |
+| `carve($T, $source, mut a, count) -> []T` | Room for `count` elements of `T` |
+| `carve_grow($source, mut a, held, count) -> []T` | A bigger run holding what the old one held |
+| `carve_give($source, mut a, held)` | The run handed back |
 
 Two sources ship with it. `heap_source` over `Heap`, which holds no fields
 because the runtime keeps the blocks and `heap_live` counts them, and
@@ -192,10 +192,10 @@ import "allocation.frost"
 
 main :: fn() -> i64 {
     var h := heap_state()
-    var run := carve($i64, $Heap, $heap_source, h, 4)
+    var run := carve($i64, $heap_source, h, 4)
     run[0] = 11
     held := run[0]
-    carve_give($i64, $Heap, $heap_source, h, run)
+    carve_give($heap_source, h, run)
     held
 }
 ```

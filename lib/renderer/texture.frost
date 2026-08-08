@@ -43,7 +43,7 @@ image_new :: fn(width: i64, height: i64) -> Image {
 }
 
 image_free :: fn(mut held: Image) {
-    heap_release_slice($u8, held.pixels)
+    heap_release_slice(held.pixels)
     held.width = 0
     held.height = 0
 }

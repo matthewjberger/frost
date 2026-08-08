@@ -107,7 +107,6 @@ scene_sync :: fn(
                     ids.global_transform
                 ).matrix
                 ecs_set(
-                    $Transform,
                     world,
                     entity,
                     ids.transform,

@@ -310,16 +310,16 @@ Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
     var world : Slab<Entity, 16> = slab_new()
-    slab_reset($Entity, $16, world)
+    slab_reset(world)
 
-    hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
+    hero := slab_insert(world, Entity { hp = 100, mana = 30 })
 
     print("{}\n", world[hero].hp)        // 100
     world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
     print("{}\n", world[hero].hp)        // 75
 
-    slab_release($Entity, $16, world, hero)
-    print("{}\n", slab_alive($Entity, $16, world, hero))   // 0, the generation moved on
+    slab_release(world, hero)
+    print("{}\n", slab_alive(world, hero))   // 0, the generation moved on
     0
 }
 ```
@@ -347,8 +347,8 @@ Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
     var world : columns<Particle, 8> = columns_new()
-    columns_reset($Particle, $8, world)
-    h := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
+    columns_reset(world)
+    h := columns_insert(world, Particle { x = 10, y = 1 })
 
     print("{}\n", world[h].x)     // 10, checked at the handle's slot
     world[h].x = 100               // scatter a field back to the slot
@@ -433,7 +433,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print("{}\n", best($i64, $ascending, 7, 3))   // 3
+    print("{}\n", best($ascending, 7, 3))   // 3
     0
 }
 ```
@@ -455,7 +455,7 @@ sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
     if (ops.less(items[j], items[j - 1])) { ... }
 }
 
-sort($i64, $i64_ascending, view)
+sort($i64_ascending, view)
 ```
 
 The bundle is a type, an implementation is a constant of it, and the call names
@@ -661,18 +661,18 @@ delta :: fn(e: Entity) -> i64 {
 
 main :: fn() -> i64 {
     var world : Slab<Entity, 16> = slab_new()
-    slab_reset($Entity, $16, world)
+    slab_reset(world)
 
-    player := slab_insert($Entity, $16, world,
+    player := slab_insert(world,
         Entity { hp = 100, kind = .Player })
-    goblin := slab_insert($Entity, $16, world,
+    goblin := slab_insert(world,
         Entity { hp = 30, kind = .Enemy { damage = 15 } })
 
     world[player].hp = world[player].hp + delta(world[goblin])
     print("hp {}\n", world[player].hp)                 // 85
 
-    slab_release($Entity, $16, world, goblin)
-    print("{}\n", slab_alive($Entity, $16, world, goblin))   // 0
+    slab_release(world, goblin)
+    print("{}\n", slab_alive(world, goblin))   // 0
     0
 }
 ```

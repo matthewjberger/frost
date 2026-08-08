@@ -546,7 +546,7 @@ main :: fn() -> i64 {
             print_int_line(classify(7))
             unsafe { print_int_line(strlen(\"hello\")) }
             print_int_line(ANSWER)
-            h := Holder { item = box_make($i64, 77) }
+            h := Holder { item = box_make(77) }
             print_int_line(box_get(h.item))
         }
     "
@@ -672,6 +672,15 @@ main :: fn() -> i64 {
         block_depth = 0,
         defer_depth = -1,
         tparam_through = 0,
+        gparam_settled = 0,
+        gparam_settler_off = 0,
+        gparam_settler_len = 0,
+        gparam_name_off = 0,
+        gparam_name_len = 0,
+        pending_tuples = arena_make($PendingTuple, 4096),
+        pending_types = arena_make($GArg, 16384),
+        mono_depth = 0,
+        mono_on_demand = 1,
         moved = arena_make($LocalVar, 4096),
         move_views = arena_make($LocalVar, 1024),
         label_id = 0,
@@ -801,6 +810,10 @@ main :: fn() -> i64 {
     // argument tuple nothing had asked for: a sort taking a comparison calls a
     // swap that takes only the element type. Keep going until a round finds no
     // new tuple.
+    // The tuples of calls written before what they name was declared. Their
+    // arguments were taken down where they stand, so this needs no names in
+    // scope and runs before the instances settle.
+    settle_pending_tuples(parser)
     var known: i64 = -1
     while (known != parser.type_args.count) {
         known = parser.type_args.count
@@ -818,6 +831,10 @@ main :: fn() -> i64 {
     // each list holds. It waits for that: an element whose type is what a call
     // to a generic answers with reads as the default until every instance has
     // been walked.
+    // Every instance the program asks for has been parsed, so nothing below is
+    // entitled to add one: a walk over the program reading a template into it
+    // would be reading a body nobody wrote where it stands.
+    parser.mono_on_demand = 0
     check_format_types(parser)
     check_calls(parser)
     check_entry_point(parser, program)

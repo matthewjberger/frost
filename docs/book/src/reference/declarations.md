@@ -379,8 +379,8 @@ comes out the same as one computed while it does.
 
 A compile-time number is read in three places and a call may stand in all of
 them: a constant's value, an array's length, and the value argument a generic
-takes, whether written in a type (`Slab<Entity, next_power_of_two(300)>`) or at
-a call (`slab_insert($Entity, $next_power_of_two(300), ...)`).
+takes, written in a type as `Slab<Entity, next_power_of_two(300)>` or at a call
+as `heap_array($Cell, next_power_of_two(300))`.
 
 Every argument has to be known where the call is written. So a call over a
 generic's own size parameter, `Grid :: struct($N: usize) { cells: [pow2(N)]i64 }`,

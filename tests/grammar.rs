@@ -52,7 +52,7 @@ fn grammar_accepts_specified_constructs() {
         "ptrs :: fn(a: ^i8, b: i64, mut c: i64, d: []i64, e: [4]i64, h: Handle<i64>) -> i64 { 0 }",
         "nested :: fn(p: Pair<Pair<i64>>) -> i64 { 0 }",
         "make :: fn($T: Type, n: i64) -> i64 { sizeof(T) }",
-        "callit :: fn() -> i64 { make($i64, 8) }",
+        "callit :: fn() -> i64 { make(8) }",
         "deref :: fn(p: ^i8) -> i8 { p^ }",
         "field :: fn() -> i64 {\n pt := Point { x = 1, y = 2 }\n pt.x\n }",
         "variant :: fn() -> i64 { unwrap(Shape::Circle { radius = 5 }) }",

@@ -61,15 +61,15 @@ snapshot_new :: fn() -> Snapshot {
 }
 
 snapshot_free :: fn(move s: Snapshot) {
-    vec_free($u8, s.bytes)
+    vec_free(s.bytes)
 }
 
 snapshot_len :: fn(s: Snapshot) -> i64 {
-    vec_len($u8, s.bytes)
+    vec_len(s.bytes)
 }
 
 snapshot_bytes :: fn(s: Snapshot) -> []u8 {
-    vec_slice($u8, s.bytes)
+    vec_slice(s.bytes)
 }
 
 // Eight bytes, least significant first, which is the order the machines this
@@ -80,7 +80,7 @@ snapshot_put :: fn(mut s: Snapshot, value: i64) {
     var shift: i64 = 0
     while (shift < 64) {
         held: u8 = cast($u8, (value >> shift) & 255)
-        vec_push($u8, s.bytes, held)
+        vec_push(s.bytes, held)
         shift = shift + 8
     }
 }
@@ -92,7 +92,7 @@ snapshot_put_text :: fn(mut s: Snapshot, value: str) {
     snapshot_put(s, str_len(value))
     var index: i64 = 0
     while (index < str_len(value)) {
-        vec_push($u8, s.bytes, value[index])
+        vec_push(s.bytes, value[index])
         index = index + 1
     }
 }
@@ -102,7 +102,7 @@ snapshot_put_text :: fn(mut s: Snapshot, value: str) {
 // what lets the caller answer false and stop rather than unpick where it was.
 snapshot_text_is :: fn(mut s: Snapshot, wanted: str) -> bool {
     length := snapshot_take(s)
-    held := vec_slice($u8, s.bytes)
+    held := vec_slice(s.bytes)
     var same := length == str_len(wanted)
     var index: i64 = 0
     while (index < length) {
@@ -116,7 +116,7 @@ snapshot_text_is :: fn(mut s: Snapshot, wanted: str) -> bool {
 }
 
 snapshot_take :: fn(mut s: Snapshot) -> i64 {
-    held := vec_slice($u8, s.bytes)
+    held := vec_slice(s.bytes)
     var value: i64 = 0
     var shift: i64 = 0
     while (shift < 64) {
@@ -132,13 +132,13 @@ snapshot_put_bytes :: fn(mut s: Snapshot, block: ^u8, count: i64) {
     held := bytes_as($u8, block, count)
     var index: i64 = 0
     while (index < count) {
-        vec_push($u8, s.bytes, held[index])
+        vec_push(s.bytes, held[index])
         index = index + 1
     }
 }
 
 snapshot_take_bytes :: fn(mut s: Snapshot, block: ^u8, count: i64) {
-    source := vec_slice($u8, s.bytes)
+    source := vec_slice(s.bytes)
     var target := bytes_as($u8, block, count)
     var index: i64 = 0
     while (index < count) {
@@ -152,8 +152,8 @@ snapshot_take_bytes :: fn(mut s: Snapshot, block: ^u8, count: i64) {
 ecs_save :: fn(world: World, mut s: Snapshot) {
     snapshot_put(s, SNAPSHOT_MAGIC)
     snapshot_put(s, world.registry.count)
-    sizes := vec_slice($i64, world.registry.sizes)
-    names := vec_slice($str, world.registry.names)
+    sizes := vec_slice(world.registry.sizes)
+    names := vec_slice(world.registry.names)
     var component: i64 = 0
     while (component < world.registry.count) {
         snapshot_put(s, sizes[component])
@@ -164,10 +164,10 @@ ecs_save :: fn(world: World, mut s: Snapshot) {
     snapshot_put(s, world.next_id)
     snapshot_put(s, world.live)
 
-    slots := vec_slice($EntitySlot, world.slots)
-    snapshot_put(s, vec_len($EntitySlot, world.slots))
+    slots := vec_slice(world.slots)
+    snapshot_put(s, vec_len(world.slots))
     var slot: i64 = 0
-    while (slot < vec_len($EntitySlot, world.slots)) {
+    while (slot < vec_len(world.slots)) {
         snapshot_put(s, slots[slot].generation)
         var alive: i64 = 0
         if (slots[slot].alive) { alive = 1 }
@@ -177,38 +177,38 @@ ecs_save :: fn(world: World, mut s: Snapshot) {
         slot = slot + 1
     }
 
-    free := vec_slice($i64, world.free_ids)
-    snapshot_put(s, vec_len($i64, world.free_ids))
+    free := vec_slice(world.free_ids)
+    snapshot_put(s, vec_len(world.free_ids))
     var freed: i64 = 0
-    while (freed < vec_len($i64, world.free_ids)) {
+    while (freed < vec_len(world.free_ids)) {
         snapshot_put(s, free[freed])
         freed = freed + 1
     }
 
-    snapshot_put(s, vec_len($Table, world.tables))
+    snapshot_put(s, vec_len(world.tables))
     var index: i64 = 0
-    while (index < vec_len($Table, world.tables)) {
-        ref table := vec_slice($Table, world.tables)[index]
+    while (index < vec_len(world.tables)) {
+        ref table := vec_slice(world.tables)[index]
         var word: i64 = 0
         while (word < MASK_WORDS) {
             held: i64 = table.mask.words[word]
             snapshot_put(s, held)
             word = word + 1
         }
-        rows := vec_len($Entity, table.entities)
+        rows := vec_len(table.entities)
         snapshot_put(s, rows)
-        entities := vec_slice($Entity, table.entities)
+        entities := vec_slice(table.entities)
         var row: i64 = 0
         while (row < rows) {
             snapshot_put(s, entities[row].id)
             snapshot_put(s, entities[row].generation)
             row = row + 1
         }
-        columns := vec_len($Column, table.columns)
+        columns := vec_len(table.columns)
         snapshot_put(s, columns)
         var held: i64 = 0
         while (held < columns) {
-            ref column := vec_slice($Column, table.columns)[held]
+            ref column := vec_slice(table.columns)[held]
             snapshot_put(s, column.item_size)
             snapshot_put(s, column.count)
             if (column.count > 0) {
@@ -238,8 +238,8 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
     if (count != world.registry.count) {
         return false
     }
-    sizes := vec_slice($i64, world.registry.sizes)
-    names := vec_slice($str, world.registry.names)
+    sizes := vec_slice(world.registry.sizes)
+    names := vec_slice(world.registry.names)
     var component: i64 = 0
     while (component < count) {
         if (snapshot_take(s) != sizes[component]) {
@@ -264,7 +264,6 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         table := snapshot_take(s)
         row := snapshot_take(s)
         vec_push(
-            $EntitySlot,
             world.slots,
             EntitySlot {
                 generation = generation,
@@ -279,7 +278,7 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
     free_count := snapshot_take(s)
     var freed: i64 = 0
     while (freed < free_count) {
-        vec_push($i64, world.free_ids, snapshot_take(s))
+        vec_push(world.free_ids, snapshot_take(s))
         freed = freed + 1
     }
 
@@ -290,7 +289,6 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         // mask being built beside it and handed over. One less copy of the
         // thing, and the lookup is told about the table's own.
         vec_push(
-            $Table,
             world.tables,
             Table {
                 mask = mask_empty(),
@@ -298,21 +296,20 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
                 columns = vec_new($Column, 4)
             }
         )
-        ref table := vec_slice($Table, world.tables)[index]
+        ref table := vec_slice(world.tables)[index]
         var word: i64 = 0
         while (word < MASK_WORDS) {
             held := snapshot_take(s)
             table.mask.words[word] = held
             word = word + 1
         }
-        map_put($Mask, $i64, $mask_keys, world.lookup, table.mask, index)
+        map_put($mask_keys, world.lookup, table.mask, index)
         rows := snapshot_take(s)
         var row: i64 = 0
         while (row < rows) {
             id := snapshot_take(s)
             generation := snapshot_take(s)
             vec_push(
-                $Entity,
                 table.entities,
                 Entity { id = id, generation = generation }
             )
@@ -323,8 +320,8 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         while (held < columns) {
             item_size := snapshot_take(s)
             filled := snapshot_take(s)
-            vec_push($Column, table.columns, column_new(item_size))
-            ref column := vec_slice($Column, table.columns)[held]
+            vec_push(table.columns, column_new(item_size))
+            ref column := vec_slice(table.columns)[held]
             var made: i64 = 0
             while (made < filled) {
                 column_push_zero(column, 0)
@@ -359,7 +356,6 @@ test "a world survives being written down and read back" {
         entity := ecs_spawn(world)
         held: f32 = index
         ecs_add(
-            $SavedPosition,
             world,
             entity,
             position,
@@ -367,7 +363,6 @@ test "a world survives being written down and read back" {
         )
         if (index == 1) {
             ecs_add(
-                $SavedHealth,
                 world,
                 entity,
                 health,
@@ -418,13 +413,7 @@ test "a snapshot refuses a world whose components are in another order" {
     ecs_register($SavedPosition, world)
     ecs_register($SavedHealth, world)
     entity := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        entity,
-        0,
-        SavedPosition { x = 1.0, y = 2.0 }
-    )
+    ecs_add(world, entity, 0, SavedPosition { x = 1.0, y = 2.0 })
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -454,13 +443,7 @@ test "a snapshot refuses a registry naming a different component" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     entity := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        entity,
-        position,
-        SavedPosition { x = 1.0, y = 2.0 }
-    )
+    ecs_add(world, entity, position, SavedPosition { x = 1.0, y = 2.0 })
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -488,13 +471,7 @@ test "a snapshot is a run of bytes that reads back" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     entity := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        entity,
-        position,
-        SavedPosition { x = 3.0, y = 4.0 }
-    )
+    ecs_add(world, entity, position, SavedPosition { x = 3.0, y = 4.0 })
 
     var written := snapshot_new()
     ecs_save(world, written)
@@ -525,13 +502,7 @@ test "a read replaces whatever the world held" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     first := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        first,
-        position,
-        SavedPosition { x = 1.0, y = 0.0 }
-    )
+    ecs_add(world, first, position, SavedPosition { x = 1.0, y = 0.0 })
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -541,13 +512,7 @@ test "a read replaces whatever the world held" {
     var extra: i64 = 0
     while (extra < 5) {
         other := ecs_spawn(read)
-        ecs_add(
-            $SavedPosition,
-            read,
-            other,
-            position,
-            SavedPosition { x = 99.0, y = 0.0 }
-        )
+        ecs_add(read, other, position, SavedPosition { x = 99.0, y = 0.0 })
         extra = extra + 1
     }
     assert(ecs_count(read) == 5)
@@ -565,23 +530,11 @@ test "a snapshot carries the write times" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     quiet := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        quiet,
-        position,
-        SavedPosition { x = 0.0, y = 0.0 }
-    )
+    ecs_add(world, quiet, position, SavedPosition { x = 0.0, y = 0.0 })
     mark := ecs_now(world)
     ecs_tick(world)
     loud := ecs_spawn(world)
-    ecs_add(
-        $SavedPosition,
-        world,
-        loud,
-        position,
-        SavedPosition { x = 1.0, y = 0.0 }
-    )
+    ecs_add(world, loud, position, SavedPosition { x = 1.0, y = 0.0 })
 
     var s := snapshot_new()
     ecs_save(world, s)

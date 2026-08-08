@@ -78,7 +78,7 @@ arena_take :: fn(mut a: Arena, size: i64, align: i64) -> []u8 {
         room = 1
     }
     start := (a.offset + align - 1) / align * align
-    run := slice_range($u8, a.data, start, room)
+    run := slice_range(a.data, start, room)
     a.offset = start + room
     run
 }

@@ -26,13 +26,13 @@ of its own. The allocation it stands on lives in `mem.frost`.
 | Call | What it does |
 | --- | --- |
 | `vec_new($T, capacity) -> Vec<T>` | An empty vector with room reserved |
-| `vec_free($T, move v)` | Releases the block. Consumes the vector |
-| `vec_len($T, v) -> i64` | How many elements are live |
-| `vec_slice($T, v) -> []T` | The live elements, bounds-checked |
-| `vec_push($T, mut v, move value)` | Appends, doubling the storage when full |
-| `vec_get($T, v, index) -> T` | The element, by copy |
-| `vec_set($T, mut v, index, move value)` | Overwrites the element |
-| `vec_clear($T, mut v)` | Forgets the elements, keeps the storage |
+| `vec_free(move v)` | Releases the block. Consumes the vector |
+| `vec_len(v) -> i64` | How many elements are live |
+| `vec_slice(v) -> []T` | The live elements, bounds-checked |
+| `vec_push(mut v, move value)` | Appends, doubling the storage when full |
+| `vec_get(v, index) -> T` | The element, by copy |
+| `vec_set(mut v, index, move value)` | Overwrites the element |
+| `vec_clear(mut v)` | Forgets the elements, keeps the storage |
 
 `vec_slice` is how everything above the container reaches elements. It hands out
 the live prefix, so a vector with room for sixty-four holding two elements gives
@@ -40,12 +40,12 @@ a slice of length two. Writing through it writes into the vector:
 
 ```frost,sketch
 var v := vec_new($VecPoint, 2)
-vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
-vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
-var held := vec_slice($VecPoint, v)
+vec_push(v, VecPoint { x = 1, y = 2 })
+vec_push(v, VecPoint { x = 3, y = 4 })
+var held := vec_slice(v)
 held[1].x = 30
-assert(vec_get($VecPoint, v, 1).x == 30)
-vec_free($VecPoint, v)
+assert(vec_get(v, 1).x == 30)
+vec_free(v)
 ```
 
 The slice views the storage, so a slice taken before a push stops being valid
@@ -71,15 +71,15 @@ with and no per-value free to give a block back.
 
 | Call | What it does |
 | --- | --- |
-| `fixed_over($T, storage) -> Fixed<T>` | An empty container over a run |
-| `fixed_len($T, f) -> i64` | How many elements are live |
-| `fixed_room($T, f) -> i64` | How many more will fit |
-| `fixed_slice($T, f) -> []T` | The live elements, bounds-checked |
-| `fixed_push($T, mut f, move value)` | Appends. Past the run's end this aborts |
-| `fixed_get($T, f, index) -> T` | The element, by copy |
-| `fixed_set($T, mut f, index, move value)` | Overwrites the element |
-| `fixed_clear($T, mut f)` | Forgets the elements, keeps the run |
-| `fixed_truncate($T, mut f, count)` | Keeps the first `count` |
+| `fixed_over(storage) -> Fixed<T>` | An empty container over a run |
+| `fixed_len(f) -> i64` | How many elements are live |
+| `fixed_room(f) -> i64` | How many more will fit |
+| `fixed_slice(f) -> []T` | The live elements, bounds-checked |
+| `fixed_push(mut f, move value)` | Appends. Past the run's end this aborts |
+| `fixed_get(f, index) -> T` | The element, by copy |
+| `fixed_set(mut f, index, move value)` | Overwrites the element |
+| `fixed_clear(mut f)` | Forgets the elements, keeps the run |
+| `fixed_truncate(mut f, count)` | Keeps the first `count` |
 
 Three differences from `Vec<T>` follow from owning nothing. The type is
 ordinary, since there is no block to give back and so nothing to make `linear`.
@@ -112,13 +112,13 @@ capacity, made positive where the hash was negative.
 | Call | What it does |
 | --- | --- |
 | `map_new($K, $V, capacity) -> Map<K, V>` | An empty table, at least eight slots, doubled up to the capacity asked for |
-| `map_free($K, $V, move m)` | Releases all three runs. Consumes the map |
-| `map_len($K, $V, m) -> i64` | How many keys are in it |
-| `map_put($K, $V, $ops, mut m, key, move value)` | Inserts or overwrites, growing if half full |
-| `map_get($K, $V, $ops, m, key, move fallback) -> V` | The value, or the fallback when the key is absent |
-| `map_has($K, $V, $ops, m, key) -> bool` | Whether the key is there |
-| `map_remove($K, $V, $ops, mut m, key) -> bool` | Removes it, leaving a tombstone. Answers whether it was there |
-| `map_clear($K, $V, mut m)` | Empties every slot, keeps the storage |
+| `map_free(move m)` | Releases all three runs. Consumes the map |
+| `map_len(m) -> i64` | How many keys are in it |
+| `map_put($ops, mut m, key, move value)` | Inserts or overwrites, growing if half full |
+| `map_get($ops, m, key, move fallback) -> V` | The value, or the fallback when the key is absent |
+| `map_has($ops, m, key) -> bool` | Whether the key is there |
+| `map_remove($ops, mut m, key) -> bool` | Removes it, leaving a tombstone. Answers whether it was there |
+| `map_clear(mut m)` | Empties every slot, keeps the storage |
 
 `map_get` takes a fallback, so the common read is one call with no match around
 it. Call `map_has` where absence and a zero value are different answers.
@@ -152,7 +152,7 @@ cell_hash :: fn(c: Cell) -> i64 {
 cell_same :: fn(a: Cell, b: Cell) -> bool { a.x == b.x && a.y == b.y }
 cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
 
-map_put($Cell, $i64, $cell_keys, grid, Cell { x = 1, y = 2 }, 12)
+map_put($cell_keys, grid, Cell { x = 1, y = 2 }, 12)
 ```
 
 `i64_hash` scrambles the number so keys differing only in their low bits land in
@@ -171,8 +171,8 @@ struct:
 Text :: struct { bytes: str }
 
 var ages := map_new($Text, $i64, 8)
-map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
-held := map_get($Text, $i64, $text_keys, ages, text("ada"), 0)
+map_put($text_keys, ages, text("ada"), 36)
+held := map_get($text_keys, ages, text("ada"), 0)
 ```
 
 `text_hash` and `text_same` are `str_hash` and `str_same` reaching through the
@@ -202,12 +202,12 @@ Slab :: struct($T: Type, $N: usize) {
 
 | Call | What it does |
 | --- | --- |
-| `slab_reset($T, $N, mut s)` | Every slot free, every generation back to zero |
-| `slab_full($T, $N, s) -> bool` | Whether there is any room left |
-| `slab_insert($T, $N, mut s, move value) -> Handle<T>` | Takes a free slot. The caller checks `slab_full` first |
-| `slab_alive($T, $N, s, handle) -> bool` | Whether the handle names a live slot |
-| `slab_slot($T, $N, s, handle) -> i64` | The slot a handle names, or -1 where it is stale |
-| `slab_release($T, $N, mut s, handle) -> bool` | Frees the slot, bumping its generation |
+| `slab_reset(mut s)` | Every slot free, every generation back to zero |
+| `slab_full(s) -> bool` | Whether there is any room left |
+| `slab_insert(mut s, move value) -> Handle<T>` | Takes a free slot. The caller checks `slab_full` first |
+| `slab_alive(s, handle) -> bool` | Whether the handle names a live slot |
+| `slab_slot(s, handle) -> i64` | The slot a handle names, or -1 where it is stale |
+| `slab_release(mut s, handle) -> bool` | Frees the slot, bumping its generation |
 
 A handle is `Handle<T>` to callers and an `i64` inside, with the slot index in
 the low thirty-two bits and, above them, the slab's own number in seven bits
@@ -234,13 +234,13 @@ section 10.2 of
 
 ```frost,sketch
 var world : Slab<Entity, 8> = slab_new()
-slab_reset($Entity, $8, world)
+slab_reset(world)
 
-h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
+h := slab_insert(world, Entity { hp = 100, mana = 30 })
 print("{}\n", world[h].hp)     // 100
 world[h].hp = 75
 print("{}\n", world[h].hp)     // 75
-slab_release($Entity, $8, world, h)
+slab_release(world, h)
 print("{}\n", world[h].hp)     // aborts: the handle is stale
 ```
 
@@ -257,11 +257,11 @@ handle scheme is the slab's, unchanged.
 
 | Call | What it does |
 | --- | --- |
-| `columns_reset($T, $N, mut c)` | Every slot free, every generation back to zero |
-| `columns_full($T, $N, c) -> bool` | Whether there is any room left |
-| `columns_insert($T, $N, mut c, move value) -> Handle<T>` | Scatters the element into the columns |
-| `columns_alive($T, $N, c, handle) -> bool` | Whether the handle names a live slot |
-| `columns_release($T, $N, mut c, handle) -> bool` | Frees the slot, bumping its generation |
+| `columns_reset(mut c)` | Every slot free, every generation back to zero |
+| `columns_full(c) -> bool` | Whether there is any room left |
+| `columns_insert(mut c, move value) -> Handle<T>` | Scatters the element into the columns |
+| `columns_alive(c, handle) -> bool` | Whether the handle names a live slot |
+| `columns_release(mut c, handle) -> bool` | Frees the slot, bumping its generation |
 
 The type itself is synthesized: `columns<T, N>` is one `[N]field` array per
 field of `T`, plus the same `generations`, `free_list`, `free_count`,
@@ -279,10 +279,10 @@ else.
 Particle :: struct { x: i64, y: i64 }
 
 var world : columns<Particle, 8> = columns_new()
-columns_reset($Particle, $8, world)
+columns_reset(world)
 
-a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
-columns_insert($Particle, $8, world, Particle { x = 20, y = 2 })
+a := columns_insert(world, Particle { x = 10, y = 1 })
+columns_insert(world, Particle { x = 20, y = 2 })
 
 print("{}\n", world[a].x + world[a].y)   // one element, generation-checked
 print("{}\n", sum_x(world.x))            // the whole x column, as a []i64
@@ -307,10 +307,10 @@ above plus four functions over it.
 
 | Call | What it does |
 | --- | --- |
-| `option_some($T, move value) -> Option<T>` | The present case |
+| `option_some(move value) -> Option<T>` | The present case |
 | `option_none($T) -> Option<T>` | The absent case |
-| `option_is_some($T, o) -> bool` | Whether there is a value |
-| `option_unwrap_or($T, o, move fallback) -> T` | The value, or the fallback |
+| `option_is_some(o) -> bool` | Whether there is a value |
+| `option_unwrap_or(o, move fallback) -> T` | The value, or the fallback |
 
 A `match` has to cover every variant, so leaving the absent case out is a
 compile error:

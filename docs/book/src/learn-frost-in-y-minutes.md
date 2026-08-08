@@ -560,7 +560,7 @@ import "io.frost"
 twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
 
 main :: fn() -> i64 {
-    print("{}\n", twice($i64, 21))
+    print("{}\n", twice(21))
     0
 }
 ```
@@ -583,7 +583,7 @@ smaller :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
 }
 
 main :: fn() -> i64 {
-    print("{}\n", smaller($i64, $ascending, 7, 3))
+    print("{}\n", smaller($ascending, 7, 3))
     0
 }
 ```
@@ -604,7 +604,7 @@ i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
 
 sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) { ... }
 
-sort($i64, $i64_ascending, view)
+sort($i64_ascending, view)
 ```
 
 Dropping the `$` gives the runtime version of the same declaration: a
@@ -672,17 +672,17 @@ Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
     var world : Slab<Entity, 16> = slab_new()
-    slab_reset($Entity, $16, world)
+    slab_reset(world)
 
-    hero := slab_insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
+    hero := slab_insert(world, Entity { hp = 100, mana = 30 })
 
     // The subscript is a checked place: it reads and it is written to.
     print("{}\n", world[hero].hp)
     world[hero].hp = world[hero].hp - 25
     print("{}\n", world[hero].hp)
 
-    slab_release($Entity, $16, world, hero)
-    print("{}\n", slab_alive($Entity, $16, world, hero))   // 0
+    slab_release(world, hero)
+    print("{}\n", slab_alive(world, hero))   // 0
     0
 }
 ```
@@ -699,8 +699,8 @@ Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
     var world : columns<Particle, 8> = columns_new()
-    columns_reset($Particle, $8, world)
-    h := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
+    columns_reset(world)
+    h := columns_insert(world, Particle { x = 10, y = 1 })
 
     print("{}\n", world[h].x)
     world[h].x = 100
@@ -728,9 +728,9 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 make_two :: fn() -> i64 uses Arena<256> {
-    p := alloc_int($256, arena)
+    p := alloc_int(arena)
     unsafe { p^ = 10 }
-    q := alloc_int($256, arena)
+    q := alloc_int(arena)
     unsafe { q^ = 32 }
     unsafe { p^ + q^ }
 }
@@ -897,17 +897,17 @@ import "vec.frost"
 
 main :: fn() -> i64 {
     var scores := vec_new($i64, 4)
-    vec_push($i64, scores, 10)
-    vec_push($i64, scores, 30)
-    vec_push($i64, scores, 20)
+    vec_push(scores, 10)
+    vec_push(scores, 30)
+    vec_push(scores, 20)
 
     var total : i64 = 0
-    for value in vec_slice($i64, scores) {
+    for value in vec_slice(scores) {
         total = total + value
     }
-    print("{} in {}\n", total, vec_len($i64, scores))   // 60 in 3
+    print("{} in {}\n", total, vec_len(scores))   // 60 in 3
 
-    vec_free($i64, scores)
+    vec_free(scores)
     0
 }
 ```
@@ -926,13 +926,13 @@ import "map.frost"
 
 main :: fn() -> i64 {
     var ages := map_new($Text, $i64, 8)
-    map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
-    map_put($Text, $i64, $text_keys, ages, text("alan"), 41)
+    map_put($text_keys, ages, text("ada"), 36)
+    map_put($text_keys, ages, text("alan"), 41)
 
-    print("{}\n", map_get($Text, $i64, $text_keys, ages, text("ada"), 0))
-    print("{}\n", map_has($Text, $i64, $text_keys, ages, text("grace")))
-    print("{}\n", map_len($Text, $i64, ages))
-    map_free($Text, $i64, ages)
+    print("{}\n", map_get($text_keys, ages, text("ada"), 0))
+    print("{}\n", map_has($text_keys, ages, text("grace")))
+    print("{}\n", map_len(ages))
+    map_free(ages)
     0
 }
 ```
@@ -949,15 +949,15 @@ import "io.frost"
 import "option.frost"
 
 lookup :: fn(key: i64) -> Option<i64> {
-    if (key == 1) { return option_some($i64, 100) }
+    if (key == 1) { return option_some(100) }
     option_none($i64)
 }
 
 main :: fn() -> i64 {
     hit := lookup(1)
     miss := lookup(2)
-    print("{}\n", option_unwrap_or($i64, hit, 0))     // 100
-    print("{}\n", option_unwrap_or($i64, miss, 0))    // 0
+    print("{}\n", option_unwrap_or(hit, 0))     // 100
+    print("{}\n", option_unwrap_or(miss, 0))    // 0
     0
 }
 ```
@@ -975,7 +975,7 @@ import "sort.frost"
 main :: fn() -> i64 {
     var numbers : [5]i64 = [4, 1, 5, 3, 2]
     view : []i64 = numbers
-    sort($i64, $i64_ascending, view)
+    sort($i64_ascending, view)
     for value in view {
         print("{} ", value)      // 1 2 3 4 5
     }
@@ -1068,8 +1068,8 @@ main :: fn() -> i64 {
     health := ecs_register($Health, world)
 
     hero := ecs_spawn(world)
-    ecs_add($Health, world, hero, health, Health { points = 100 })
-    ecs_set($Health, world, hero, health, Health { points = 75 })
+    ecs_add(world, hero, health, Health { points = 100 })
+    ecs_set(world, hero, health, Health { points = 75 })
 
     held := ecs_get($Health, world, hero, health)
     print("{}\n", held.points)   // 75

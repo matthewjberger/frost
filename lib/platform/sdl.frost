@@ -242,7 +242,7 @@ window_create :: fn(
     made := unsafe {
         SDL_CreateWindow(ptr_cast($i8, held), width, height, flags)
     }
-    heap_release($u8, held)
+    heap_release(held)
     made
 }
 
@@ -267,7 +267,7 @@ window_pointer_property :: fn(properties: u32, name: str) -> ^u8 {
             ptr_cast($u8, zero)
         )
     }
-    heap_release($u8, held)
+    heap_release(held)
     found
 }
 

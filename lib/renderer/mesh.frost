@@ -88,12 +88,12 @@ mesh_cache_free :: fn(mut cache: MeshCache) {
         }
         index = index + 1
     }
-    heap_release_slice($str, cache.names)
-    heap_release_slice($Mesh, cache.meshes)
-    heap_release_slice($MeshSpan, cache.spans)
-    heap_release_slice($u32, cache.generations)
-    heap_release_slice($bool, cache.live)
-    heap_release_slice($i64, cache.free)
+    heap_release_slice(cache.names)
+    heap_release_slice(cache.meshes)
+    heap_release_slice(cache.spans)
+    heap_release_slice(cache.generations)
+    heap_release_slice(cache.live)
+    heap_release_slice(cache.free)
     cache.count = 0
     cache.free_count = 0
 }
@@ -107,8 +107,8 @@ mesh_new :: fn(vertex_count: i64, index_count: i64) -> Mesh {
 }
 
 mesh_free :: fn(mut held: Mesh) {
-    heap_release_slice($Vertex, held.vertices)
-    heap_release_slice($u32, held.indices)
+    heap_release_slice(held.vertices)
+    heap_release_slice(held.indices)
 }
 
 // A mesh under a name, uploaded, answering with the slot it went in.
@@ -657,7 +657,7 @@ test "a buffer that runs out grows, and what is in it comes with it" {
         assert(seen[at].position.x == 9.0 && seen[at].position.y == step)
         at = at + 1
     }
-    heap_release_slice($Vertex, seen)
+    heap_release_slice(seen)
     mesh_cache_free(cache)
     geometry_free(store)
     gpu_close(g)
@@ -717,7 +717,7 @@ test "a cache that loses most of what it held puts the rest back at the start" {
         assert(seen[at].position.x == 1.0 && seen[at].position.y == step)
         at = at + 1
     }
-    heap_release_slice($Vertex, seen)
+    heap_release_slice(seen)
     mesh_cache_free(cache)
     geometry_free(store)
     gpu_close(g)

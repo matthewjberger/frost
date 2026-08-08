@@ -511,8 +511,8 @@ render_world_free :: fn(mut held: RenderWorld) {
     release_buffer(held.indirect_buffer)
     release_buffer(held.visible_buffer)
     release_buffer(held.params_buffer)
-    heap_release_slice($ObjectData, held.objects)
-    heap_release_slice($Mat4, held.transforms)
+    heap_release_slice(held.objects)
+    heap_release_slice(held.transforms)
     held.count = 0
 }
 
@@ -670,7 +670,7 @@ upload_meshes :: fn(mut held: RenderWorld, queue: Queue, cache: MeshCache) {
         ptr_to(table[0]),
         written * MESH_GEO_BYTES
     )
-    heap_release_slice($u32, table)
+    heap_release_slice(table)
 }
 
 upload_materials :: fn(
@@ -706,7 +706,7 @@ upload_materials :: fn(
         ptr_to(table[0]),
         written * MATERIAL_BYTES
     )
-    heap_release_slice($u32, table)
+    heap_release_slice(table)
 }
 
 // The same run of bytes, seen as floats. Both are the same width, so the two

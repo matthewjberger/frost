@@ -82,7 +82,7 @@ whose storage they cannot trace.
 Those checks ask against the type the context expects. A view is *formed*
 wherever an array lands somewhere a view is wanted, and nothing in the
 expression says so: `data` reads the same in `Holder { view = data }`,
-`sink.view = data`, `keep(h, data)`, `vec_push($[]i64, sink, data)` and
+`sink.view = data`, `keep(h, data)`, `vec_push(sink, data)` and
 `-> []i64 { data }`. Asking what the array *holds* answers "a run of numbers",
 which names no storage, so the question has to be the one the context asks. It
 is asked in every position, walking into a struct literal field by field,
@@ -139,8 +139,8 @@ container has a second way to go wrong, which no scope can express: the frame
 lives, the container lives, and the block moves.
 
 ```frost,sketch
-view := vec_slice($i64, v)
-vec_push($i64, v, 1)         // fills, so the block is replaced
+view := vec_slice(v)
+vec_push(v, 1)         // fills, so the block is replaced
 print("{}\n", view[0])      // refused: it names the old one
 ```
 
@@ -149,8 +149,8 @@ block into `v.storage` and gives the old one back. Neither half is visible from
 the call, so both are worked out once for the whole program and read at the call
 site: for every function, which run under a parameter its answer views, and
 which run under a parameter it replaces. Both are runs of *field* names, and a
-call reads them against the argument it was written with, so `vec_slice($T, v)`
-names `v.storage` here and `vec_push($T, v, x)` replaces it. A view whose run
+call reads them against the argument it was written with, so `vec_slice(v)`
+names `v.storage` here and `vec_push(v, x)` replaces it. A view whose run
 has been replaced is refused at the next use, whether that use reads it or
 writes through a `ref` into it.
 
@@ -276,7 +276,7 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
 
   Assigning a place makes it hold a value again, and the direction matters.
   Writing a place revives it and everything it *covers*, since the write settles
-  the whole of it: `world.tables = kept` after `vec_free($Table, world.tables)`
+  the whole of it: `world.tables = kept` after `vec_free(world.tables)`
   is a container replacing what it released, and assigning the whole of a struct
   gives its fields back. Writing a *part* of something already given away is
   refused, because the storage belongs to whoever it was handed to and may
@@ -314,7 +314,7 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   The instantiations asked about are the ones a program *forms*. A call that
   answers with one makes it while the source spells out no name for it, so a
   call is typed as the callee's return type with that call's own type arguments
-  put in. So `held := option_some($File, ...)` is an `Option<File>`, and the
+  put in. So `held := option_some(...)` is an `Option<File>`, and the
   obligation on the `File` inside it holds even though the source never writes
   the type.
 
@@ -363,10 +363,10 @@ data a program can freely store and return where a borrow cannot go.
   false, and reading `world[h]` aborts rather than returning the new occupant.
 
 ```frost,sketch
-h := slab_insert($Entity, $8, world, entity)    // slot 0, generation 0
-slab_release($Entity, $8, world, h)             // slot 0 now generation 1
-slab_insert($Entity, $8, world, other)          // reuses slot 0 at generation 1
-slab_alive($Entity, $8, world, h)               // false, the old handle can never
+h := slab_insert(world, entity)    // slot 0, generation 0
+slab_release(world, h)             // slot 0 now generation 1
+slab_insert(world, other)          // reuses slot 0 at generation 1
+slab_alive(world, h)               // false, the old handle can never
                                                 // read the new occupant
 ```
 
@@ -501,10 +501,10 @@ nobody has to find out by reading the passes.
 
   ```frost
   Holder :: struct { view: []i64 }
-  hold :: fn(mut v: Vec<i64>) -> Holder { Holder { view = vec_slice($i64, v) } }
+  hold :: fn(mut v: Vec<i64>) -> Holder { Holder { view = vec_slice(v) } }
 
   h := hold(v)
-  vec_push($i64, v, 1)           // may grow, which frees the old block
+  vec_push(v, 1)           // may grow, which frees the old block
   print("{}\n", h.view[0])      // reads it anyway, not refused
   ```
 

@@ -64,7 +64,7 @@ bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
     align := alignof(T)
     start := (b.offset + align - 1) / align * align
     width := count * sizeof(T)
-    bytes := slice_range($u8, b.data, start, width)
+    bytes := slice_range(b.data, start, width)
     b.offset = start + width
     unsafe { slice_from($T, ptr_cast($T, ptr_to(bytes[0])), count) }
 }
@@ -94,11 +94,11 @@ allocator down leave it out of the parameter list:
 
 ```frost,sketch
 gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
-    var kept := fixed_over($i64, bump_carve($i64, $1024, bump, slice_len(world)))
+    var kept := fixed_over(bump_carve($i64, bump, slice_len(world)))
     for value in world {
-        if (value > over) { fixed_push($i64, kept, value) }
+        if (value > over) { fixed_push(kept, value) }
     }
-    fixed_slice($i64, kept)
+    fixed_slice(kept)
 }
 ```
 
@@ -124,12 +124,12 @@ main :: fn() -> i64 {
     var scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
     var round: i64 = 0
     while (round < 3) {
-        mark := bump_mark($1024, scratch)
+        mark := bump_mark(scratch)
         with scratch {
             kept := gather(world, round * 3)
             print("{}\n", total_of(kept))
         }
-        bump_reset($1024, scratch, mark)
+        bump_reset(scratch, mark)
         round = round + 1
     }
     0
@@ -190,8 +190,8 @@ saying which allocator it came from.
 
 ```frost,sketch
 with scratch {
-    var visible := fixed_over($Sprite, arena_carve($Sprite, scratch, 64))
-    fixed_push($Sprite, visible, sprite)
+    var visible := fixed_over(arena_carve($Sprite, scratch, 64))
+    fixed_push(visible, sprite)
 }
 ```
 
@@ -203,7 +203,7 @@ heap elsewhere at no cost either way.
 
 ```frost,sketch
 with scratch {
-    var visible := carve($Sprite, $Arena, $arena_source, scratch, 64)
+    var visible := carve($Sprite, $arena_source, scratch, 64)
 }
 ```
 

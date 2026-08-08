@@ -55,11 +55,11 @@ heap_take :: fn(mut h: Heap, size: i64, align: i64) -> []u8 {
 }
 
 heap_resize :: fn(mut h: Heap, block: []u8, size: i64, align: i64) -> []u8 {
-    heap_grow_slice($u8, block, size)
+    heap_grow_slice(block, size)
 }
 
 heap_give :: fn(mut h: Heap, block: []u8) {
-    heap_release_slice($u8, block)
+    heap_release_slice(block)
 }
 
 heap_source :: Allocation<Heap> {
@@ -102,7 +102,7 @@ carve_grow :: fn(
     }
     run := source.resize(
         a,
-        as_bytes($T, held),
+        as_bytes(held),
         room * sizeof(T),
         alignof(T)
     )
@@ -119,7 +119,7 @@ carve_give :: fn(
     mut a: A,
     held: []T
 ) {
-    source.give(a, as_bytes($T, held))
+    source.give(a, as_bytes(held))
 }
 
 AllocPoint :: struct { x: i64, y: i64 }
@@ -127,35 +127,35 @@ AllocPoint :: struct { x: i64, y: i64 }
 test "a carve from the heap hands back a run that is written and given back" {
     before := heap_live()
     var h := heap_state()
-    var run := carve($i64, $Heap, $heap_source, h, 4)
+    var run := carve($i64, $heap_source, h, 4)
     assert(slice_len(run) == 4)
     run[0] = 11
     run[3] = 44
     assert(run[0] + run[3] == 55)
     assert(heap_live() == before + 1)
-    carve_give($i64, $Heap, $heap_source, h, run)
+    carve_give($heap_source, h, run)
     assert(heap_live() == before)
 }
 
 test "a grown run keeps what the old one held" {
     before := heap_live()
     var h := heap_state()
-    var run := carve($i64, $Heap, $heap_source, h, 2)
+    var run := carve($i64, $heap_source, h, 2)
     run[0] = 7
     run[1] = 8
-    var grown := carve_grow($i64, $Heap, $heap_source, h, run, 8)
+    var grown := carve_grow($heap_source, h, run, 8)
     assert(slice_len(grown) == 8)
     assert(grown[0] == 7)
     assert(grown[1] == 8)
-    carve_give($i64, $Heap, $heap_source, h, grown)
+    carve_give($heap_source, h, grown)
     assert(heap_live() == before)
 }
 
 test "a carve of a struct is sized by the struct" {
     var h := heap_state()
-    var points := carve($AllocPoint, $Heap, $heap_source, h, 3)
+    var points := carve($AllocPoint, $heap_source, h, 3)
     points[0] = AllocPoint { x = 1, y = 2 }
     points[2] = AllocPoint { x = 3, y = 4 }
     assert(points[0].y + points[2].x == 5)
-    carve_give($AllocPoint, $Heap, $heap_source, h, points)
+    carve_give($heap_source, h, points)
 }

@@ -59,11 +59,7 @@ TemplateState :: struct { frames: i64, elapsed: f32 }
 // runs once a frame from then on.
 template_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
-    app_insert_resource(
-        $TemplateState,
-        app,
-        TemplateState { frames = 0, elapsed = 0.0 }
-    )
+    app_insert_resource(app, TemplateState { frames = 0, elapsed = 0.0 })
     app_add_system(app, Stage::FrameUpdate, tick)
 }
 
@@ -80,12 +76,7 @@ tick :: fn(mut world: World) {
     )
     state.frames = state.frames + 1
     state.elapsed = state.elapsed + step
-    ecs_resource_set(
-        $TemplateState,
-        world,
-        resource_of($TemplateState, world),
-        state
-    )
+    ecs_resource_set(world, resource_of($TemplateState, world), state)
 
     spin := component_of($Spin, world)
     local := component_of($LocalTransform, world)
@@ -99,10 +90,10 @@ tick :: fn(mut world: World) {
             entity := rows[row]
             var turn := ecs_get($Spin, world, entity, spin)
             turn.angle = turn.angle + turn.speed * step
-            ecs_set($Spin, world, entity, spin, turn)
+            ecs_set(world, entity, spin, turn)
             var place := ecs_get($LocalTransform, world, entity, local)
             place.rotation = quat_from_axis_angle(turn.axis, turn.angle)
-            ecs_set($LocalTransform, world, entity, local, place)
+            ecs_set(world, entity, local, place)
             row = row + 1
         }
     }
@@ -172,7 +163,6 @@ run :: fn(move app: App) -> i64 {
 
     floor := ecs_spawn_with(app.world, drawn)
     ecs_set(
-        $LocalTransform,
         app.world,
         floor,
         ids.local_transform,
@@ -183,7 +173,6 @@ run :: fn(move app: App) -> i64 {
         }
     )
     ecs_set(
-        $Drawn,
         app.world,
         floor,
         ids.drawn,
@@ -192,7 +181,6 @@ run :: fn(move app: App) -> i64 {
 
     turning := ecs_spawn_with(app.world, spinning)
     ecs_set(
-        $LocalTransform,
         app.world,
         turning,
         ids.local_transform,
@@ -203,14 +191,12 @@ run :: fn(move app: App) -> i64 {
         }
     )
     ecs_set(
-        $Drawn,
         app.world,
         turning,
         ids.drawn,
         Drawn { mesh = cube, material = orange, layer = ONE_LAYER }
     )
     ecs_set(
-        $Spin,
         app.world,
         turning,
         spin,
@@ -221,7 +207,6 @@ run :: fn(move app: App) -> i64 {
     // entity's rotation, so the transform is the whole of where it comes from.
     sunlight := ecs_spawn_with(app.world, lighting)
     ecs_set(
-        $LocalTransform,
         app.world,
         sunlight,
         ids.local_transform,
@@ -234,11 +219,10 @@ run :: fn(move app: App) -> i64 {
             scale = vec3(1.0, 1.0, 1.0)
         }
     )
-    ecs_set($Light, app.world, sunlight, lights.light, sun())
+    ecs_set(app.world, sunlight, lights.light, sun())
 
     lamp_holder := ecs_spawn_with(app.world, lighting)
     ecs_set(
-        $LocalTransform,
         app.world,
         lamp_holder,
         ids.local_transform,
@@ -249,7 +233,6 @@ run :: fn(move app: App) -> i64 {
         }
     )
     ecs_set(
-        $Light,
         app.world,
         lamp_holder,
         lights.light,

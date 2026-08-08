@@ -22,10 +22,10 @@ show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) 
 
 main :: fn() -> i64 {
     var p: Slab<Entity, 8> = slab_new()
-    slab_reset($Entity, $8, p)
+    slab_reset(p)
 
-    hero := slab_insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
-    goblin := slab_insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
+    hero := slab_insert(p, Entity { hp = 100, mana = 30 })
+    goblin := slab_insert(p, Entity { hp = 50, mana = 10 })
 
     print("{}\n", index_of(hero)) // 0
     print("{}\n", index_of(goblin)) // 1
@@ -34,15 +34,15 @@ main :: fn() -> i64 {
     p[hero].hp = p[hero].hp - 25
     print("{}\n", p[hero].hp) // 75, written in place
 
-    show(slab_alive($Entity, $8, p, goblin)) // 1
-    show(slab_release($Entity, $8, p, goblin)) // 1
-    show(slab_alive($Entity, $8, p, goblin)) // 0
+    show(slab_alive(p, goblin)) // 1
+    show(slab_release(p, goblin)) // 1
+    show(slab_alive(p, goblin)) // 0
 
     // The released slot is reused, and the old handle stays stale because the
     // slot's generation moved past it.
-    orc := slab_insert($Entity, $8, p, Entity { hp = 80, mana = 0 })
+    orc := slab_insert(p, Entity { hp = 80, mana = 0 })
     print("{}\n", index_of(orc)) // 1, the goblin's slot
     print("{}\n", generation_of(orc)) // 1, a generation later
-    show(slab_alive($Entity, $8, p, goblin)) // 0
+    show(slab_alive(p, goblin)) // 0
     0
 }

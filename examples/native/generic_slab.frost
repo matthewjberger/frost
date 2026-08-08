@@ -78,20 +78,20 @@ Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
     var world: Slab<Entity, 4> = slab_new()
-    slab_reset($Entity, $4, world)
+    slab_reset(world)
 
-    hero := slab_insert($Entity, $4, world, Entity { hp = 100, mana = 30 })
-    foe := slab_insert($Entity, $4, world, Entity { hp = 40, mana = 10 })
+    hero := slab_insert(world, Entity { hp = 100, mana = 30 })
+    foe := slab_insert(world, Entity { hp = 40, mana = 10 })
 
     print("{}\n", world[hero].hp) // 100, read in place
     world[hero].hp = world[hero].hp - 25
     print("{}\n", world[hero].hp) // 75, written in place
     print("{}\n", world[foe].hp) // 40
 
-    if (slab_alive($Entity, $4, world, foe)) { print("{}\n", 1) } else { print("{}\n", 0) }
-    slab_release($Entity, $4, world, foe)
-    reused := slab_insert($Entity, $4, world, Entity { hp = 7, mana = 7 })
-    if (slab_alive($Entity, $4, world, reused)) { print("{}\n", 1) } else { print("{}\n", 0) }
-    if (slab_alive($Entity, $4, world, foe)) { print("{}\n", 9) } else { print("{}\n", 0) }
+    if (slab_alive(world, foe)) { print("{}\n", 1) } else { print("{}\n", 0) }
+    slab_release(world, foe)
+    reused := slab_insert(world, Entity { hp = 7, mana = 7 })
+    if (slab_alive(world, reused)) { print("{}\n", 1) } else { print("{}\n", 0) }
+    if (slab_alive(world, foe)) { print("{}\n", 9) } else { print("{}\n", 0) }
     0
 }

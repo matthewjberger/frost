@@ -697,6 +697,7 @@ pub fn check_frame_escapes_recovering(
     let kept =
         collect_kept_parameters(ast, roots, &externs, &fields, &answer_sources);
     let param_modes = collect_param_modes(ast, roots);
+    let call_bindings = collect_generic_bindings(ast, roots);
     let return_types = collect_return_types(ast, roots);
     // Which functions answer with a place rather than a value. A `ref T` is the
     // only return that does.
@@ -773,6 +774,7 @@ pub fn check_frame_escapes_recovering(
                 externs: &externs,
                 answer_sources: &answer_sources,
                 params: &param_modes,
+                bindings: &call_bindings,
                 answers_place_by_name: &ref_returns,
                 types: HashMap::new(),
                 fields: &fields,
@@ -885,6 +887,31 @@ fn collect_field_types(ast: &Ast, roots: &[StmtId]) -> FieldTypes {
 /// argument against a `$T: Type` parameter.
 type ParamModes = HashMap<String, Vec<(ParamMode, Option<Type>)>>;
 
+type CallBindings =
+    HashMap<String, Vec<(String, crate::ir::build::GenericBinding)>>;
+
+/// Where every named function's compile-time parameters are bound from.
+fn collect_generic_bindings(ast: &Ast, roots: &[StmtId]) -> CallBindings {
+    let mut bindings = HashMap::new();
+    for statement in roots {
+        let (name, params) = match ast.stmt(*statement) {
+            Statement::Constant(name, value) => match ast.expr(*value) {
+                Expression::Function(params, _, _)
+                | Expression::Proc(params, _, _) => (name, params),
+                _ => continue,
+            },
+            Statement::Extern { name, params, .. }
+            | Statement::Declared { name, params, .. } => (name, params),
+            _ => continue,
+        };
+        bindings.insert(
+            ast.name(*name).to_string(),
+            crate::ir::build::generic_bindings(ast, ast.params_in(*params)),
+        );
+    }
+    bindings
+}
+
 fn collect_param_modes(ast: &Ast, roots: &[StmtId]) -> ParamModes {
     let mut modes = HashMap::new();
     for statement in roots {
@@ -898,11 +925,19 @@ fn collect_param_modes(ast: &Ast, roots: &[StmtId]) -> ParamModes {
             | Statement::Declared { name, params, .. } => (name, params),
             _ => continue,
         };
+        // One entry per argument a call writes, so an index into this is an
+        // index into that call's arguments. A compile-time parameter a value
+        // parameter settles takes no argument, and leaving it here would line
+        // every argument after it up against the parameter beside the one it
+        // was written for.
+        let settled = crate::ir::build::settled_by(ast, ast.params_in(*params));
         modes.insert(
             ast.name(*name).to_string(),
             ast.params_in(*params)
                 .iter()
-                .map(|parameter| {
+                .zip(&settled)
+                .filter(|(_, settled)| settled.is_none())
+                .map(|(parameter, _)| {
                     (parameter.mode, parameter.type_annotation.clone())
                 })
                 .collect(),
@@ -1061,11 +1096,10 @@ fn collect_answer_sources(
                             _
                         )
                 ),
-                parameters: ast
-                    .params_in(*parameters)
-                    .iter()
-                    .map(|one| ast.name(one.name).to_string())
-                    .collect(),
+                parameters: crate::ir::build::argument_names(
+                    ast,
+                    ast.params_in(*parameters),
+                ),
                 types: ast
                     .params_in(*parameters)
                     .iter()
@@ -1208,11 +1242,10 @@ fn collect_kept_parameters(
                             _
                         )
                 ),
-                parameters: ast
-                    .params_in(*parameters)
-                    .iter()
-                    .map(|one| ast.name(one.name).to_string())
-                    .collect(),
+                parameters: crate::ir::build::argument_names(
+                    ast,
+                    ast.params_in(*parameters),
+                ),
                 types: ast
                     .params_in(*parameters)
                     .iter()
@@ -1887,6 +1920,10 @@ struct Frame<'a> {
     // How each function takes its arguments, which says whether a callee was
     // handed the address of what it was passed or a copy of it.
     params: &'a ParamModes,
+    // Where each call binds each of a function's compile-time parameters from,
+    // so a parameter the signature settles is weighed as the type the argument
+    // gives it rather than as its own name.
+    bindings: &'a CallBindings,
     // The functions answering with a `ref T`, so a binding taken from one is
     // known to be a borrow of somewhere else.
     answers_place_by_name: &'a HashSet<String>,
@@ -2742,17 +2779,41 @@ impl Frame<'_> {
     ) -> HashMap<String, Type> {
         let ast = self.ast;
         let mut bound = HashMap::new();
-        let Some(params) = self.params.get(callee) else {
+        let Some(bindings) = self.bindings.get(callee) else {
             return bound;
         };
-        for (index, (_, declared)) in params.iter().enumerate() {
-            let Some(Type::TypeParam(name)) = declared else {
+        for (name, binding) in bindings {
+            let Some(argument) = arguments.get(match binding {
+                crate::ir::build::GenericBinding::Written(at) => *at,
+                crate::ir::build::GenericBinding::Settled(at, _) => *at,
+            }) else {
                 continue;
             };
-            if let Some(argument) = arguments.get(index)
-                && let Expression::TypeValue(ty) = ast.expr(*argument)
-            {
-                bound.insert(name.clone(), ty.clone());
+            match binding {
+                crate::ir::build::GenericBinding::Written(_) => {
+                    if let Expression::TypeValue(ty) = ast.expr(*argument) {
+                        bound.insert(name.clone(), ty.clone());
+                    }
+                }
+                // The call writes nothing for this one, so what it stands for
+                // is the type of the argument the value parameter naming it
+                // takes.
+                crate::ir::build::GenericBinding::Settled(_, pattern) => {
+                    if let Some(held) = value_type(
+                        ast,
+                        &self.types,
+                        self.fields,
+                        self.returns,
+                        *argument,
+                    ) {
+                        crate::ir::build::infer_subst_into(
+                            pattern,
+                            &held,
+                            std::slice::from_ref(name),
+                            &mut bound,
+                        );
+                    }
+                }
             }
         }
         bound

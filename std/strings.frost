@@ -23,13 +23,13 @@ str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
 // word. This is what a program reaches for instead of carrying an offset and a
 // length beside every string it means to look at part of.
 str_slice :: fn(s: str, from: i64, count: i64) -> str {
-    slice_range($u8, s, from, count)
+    slice_range(s, from, count)
 }
 
 // The same, stopping at the end of `s` rather than past it, so a walk that asks
 // for more than is left gets what is left.
 str_span :: fn(s: str, from: i64, count: i64) -> str {
-    slice_span($u8, s, from, count)
+    slice_span(s, from, count)
 }
 
 str_eq :: fn(a: str, b: str) -> bool {

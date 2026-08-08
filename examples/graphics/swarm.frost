@@ -118,7 +118,7 @@ run :: fn(move app: App) -> i64 {
     app_install(app, exit_on_escape_plugin)
     app_install(app, swarm_plugin)
     // What the R key asks for, acted on where there is a device.
-    app_before_render($App, app, settle_the_mesh, ptr_to(app))
+    app_before_render(app, settle_the_mesh, ptr_to(app))
 
     device := app_device(app)
     queue := app_queue(app)
@@ -167,7 +167,6 @@ run :: fn(move app: App) -> i64 {
     )
 
     app_insert_resource(
-        $Swarm,
         app,
         Swarm {
             mesh = cube,
@@ -183,7 +182,6 @@ run :: fn(move app: App) -> i64 {
     floor := ecs_spawn_with(app.world, still)
     place(app, floor, ids, vec3(0.0, FLOOR_Y, 0.0), vec3(26.0, 0.4, 26.0))
     ecs_set(
-        $Drawn,
         app.world,
         floor,
         ids.drawn,
@@ -205,7 +203,6 @@ run :: fn(move app: App) -> i64 {
             vec3(1.2, 1.2, 1.2)
         )
         ecs_set(
-            $Drawn,
             app.world,
             held,
             ids.drawn,
@@ -232,7 +229,7 @@ run :: fn(move app: App) -> i64 {
         )
         var one := lamp(lamp_colour(lamp_index), 30.0)
         one.range = LAMP_REACH
-        ecs_set($Light, app.world, held, lights.light, one)
+        ecs_set(app.world, held, lights.light, one)
         lamp_index = lamp_index + 1
     }
 
@@ -242,7 +239,7 @@ run :: fn(move app: App) -> i64 {
     aim(app, sunlight, ids, vec3(0.0, 12.0, 0.0))
     var overhead := sun()
     overhead.intensity = 0.5
-    ecs_set($Light, app.world, sunlight, lights.light, overhead)
+    ecs_set(app.world, sunlight, lights.light, overhead)
 
     var eye := camera_default()
     eye.position = vec3(0.0, 6.0, 26.0)
@@ -288,7 +285,6 @@ turn_the_swarm :: fn(mut world: World) {
             one := ecs_get($Orbit, world, entity, orbit)
             angle := one.phase + elapsed * one.speed
             ecs_set(
-                $LocalTransform,
                 world,
                 entity,
                 local,
@@ -326,7 +322,7 @@ watch_the_keys :: fn(mut world: World) {
     if (input_key_pressed(held, KEY_R)) {
         var kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
         kit.sphere_wanted = kit.sphere_wanted == false
-        ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
+        ecs_resource_set(world, resource_of($Swarm, world), kit)
     }
 }
 
@@ -362,7 +358,7 @@ settle_the_mesh :: fn(mut app: App, mut held: App) {
         mesh_cache_remove(app.meshes, app.store, device, queue, "sphere")
     }
     kit.sphere_loaded = kit.sphere_wanted
-    ecs_resource_set($Swarm, app.world, resource_of($Swarm, app.world), kit)
+    ecs_resource_set(app.world, resource_of($Swarm, app.world), kit)
 }
 
 // Half of them despawned. What draws is built from the world every frame, so
@@ -378,15 +374,15 @@ thin_the_swarm :: fn(mut world: World) {
         return
     }
     var circling := ecs_gather(world, no_filters(), $Orbit)
-    going := vec_len($Entity, circling) / 2
+    going := vec_len(circling) / 2
     var index: i64 = 0
     while (index < going) {
-        ecs_despawn(world, vec_get($Entity, circling, index))
+        ecs_despawn(world, vec_get(circling, index))
         index = index + 1
     }
     kit.wanted = kit.wanted - going
-    ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
-    vec_free($Entity, circling)
+    ecs_resource_set(world, resource_of($Swarm, world), kit)
+    vec_free(circling)
 }
 
 // Back to the full count, spawned where the walk will find them next frame.
@@ -398,7 +394,7 @@ grow_the_swarm :: fn(mut world: World) {
     ids := world_ids(world)
     spawn_swarm(world, ids, SWARM - kit.wanted)
     kit.wanted = SWARM
-    ecs_resource_set($Swarm, world, resource_of($Swarm, world), kit)
+    ecs_resource_set(world, resource_of($Swarm, world), kit)
 }
 
 // A number of them, on circles of varying size and speed. Every one names the
@@ -412,7 +408,6 @@ spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
         ring := made - (made / 16) * 16
         band: f32 = ring
         ecs_set(
-            $Orbit,
             world,
             held,
             kit.orbit,
@@ -424,14 +419,12 @@ spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
             }
         )
         ecs_set(
-            $LocalTransform,
             world,
             held,
             ids.local_transform,
             local_at(vec3(0.0, 0.0, 0.0))
         )
         ecs_set(
-            $Drawn,
             world,
             held,
             ids.drawn,
@@ -447,7 +440,6 @@ spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
 
 place :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3, size: Vec3) {
     ecs_set(
-        $LocalTransform,
         app.world,
         held,
         ids.local_transform,
@@ -461,7 +453,6 @@ place :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3, size: Vec3) {
 
 aim :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3) {
     ecs_set(
-        $LocalTransform,
         app.world,
         held,
         ids.local_transform,

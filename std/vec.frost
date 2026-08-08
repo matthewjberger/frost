@@ -49,7 +49,7 @@ vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
 // consumes one, and a bound here would leave a container of resources with no
 // way to be discharged at all.
 vec_free :: fn($T: Type, move v: Vec<T>) {
-    heap_release_slice($T, v.storage)
+    heap_release_slice(v.storage)
 }
 
 vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
@@ -59,7 +59,7 @@ vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
 // The live elements as a bounds-checked slice. This is how everything above the
 // container reaches an element: read it, assign it, or bind `ref` to it.
 vec_slice :: fn($T: Type, v: Vec<T>) -> []T {
-    slice_prefix($T, v.storage, v.len)
+    slice_prefix(v.storage, v.len)
 }
 
 vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
@@ -70,7 +70,7 @@ vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     if (v.len >= v.cap) {
         var room := v.cap * 2
         if (room < 1) { room = 1 }
-        v.storage = heap_grow_slice($T, v.storage, room)
+        v.storage = heap_grow_slice(v.storage, room)
         v.cap = room
     }
     var held := v.storage
@@ -119,55 +119,55 @@ VecPoint :: struct { x: i64, y: i64 }
 
 test "a vector holds what is pushed into it, in order" {
     var v := vec_new($i64, 2)
-    assert(vec_len($i64, v) == 0)
+    assert(vec_len(v) == 0)
     var i: i64 = 0
     while (i < 100) {
-        vec_push($i64, v, i * 3)
+        vec_push(v, i * 3)
         i = i + 1
     }
-    assert(vec_len($i64, v) == 100)
-    assert(vec_get($i64, v, 0) == 0)
-    assert(vec_get($i64, v, 99) == 297)
-    assert(slice_len(vec_slice($i64, v)) == 100)
-    vec_set($i64, v, 50, 7)
-    assert(vec_get($i64, v, 50) == 7)
-    assert(vec_slice($i64, v)[50] == 7)
-    vec_free($i64, v)
+    assert(vec_len(v) == 100)
+    assert(vec_get(v, 0) == 0)
+    assert(vec_get(v, 99) == 297)
+    assert(slice_len(vec_slice(v)) == 100)
+    vec_set(v, 50, 7)
+    assert(vec_get(v, 50) == 7)
+    assert(vec_slice(v)[50] == 7)
+    vec_free(v)
 }
 
 test "the slice a vector hands out is as long as the vector, not the block" {
     var v := vec_new($i64, 64)
-    vec_push($i64, v, 1)
-    vec_push($i64, v, 2)
+    vec_push(v, 1)
+    vec_push(v, 2)
     // The room is 64 and the elements are two, and a caller sees the two.
-    assert(slice_len(vec_slice($i64, v)) == 2)
-    vec_free($i64, v)
+    assert(slice_len(vec_slice(v)) == 2)
+    vec_free(v)
 }
 
 test "clearing keeps the storage and forgets the elements" {
     var v := vec_new($i64, 4)
-    vec_push($i64, v, 1)
-    vec_push($i64, v, 2)
+    vec_push(v, 1)
+    vec_push(v, 2)
     settled := heap_live()
-    vec_clear($i64, v)
-    assert(vec_len($i64, v) == 0)
-    assert(slice_len(vec_slice($i64, v)) == 0)
-    vec_push($i64, v, 9)
-    assert(vec_get($i64, v, 0) == 9)
+    vec_clear(v)
+    assert(vec_len(v) == 0)
+    assert(slice_len(vec_slice(v)) == 0)
+    vec_push(v, 9)
+    assert(vec_get(v, 0) == 9)
     // Reusing rather than reallocating is the whole point of clearing.
     assert(heap_live() == settled)
-    vec_free($i64, v)
+    vec_free(v)
 }
 
 test "a vector of structs is written through its slice" {
     var v := vec_new($VecPoint, 2)
-    vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
-    vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
-    var held := vec_slice($VecPoint, v)
+    vec_push(v, VecPoint { x = 1, y = 2 })
+    vec_push(v, VecPoint { x = 3, y = 4 })
+    var held := vec_slice(v)
     held[1].x = 30
-    assert(vec_get($VecPoint, v, 1).x == 30)
-    assert(vec_get($VecPoint, v, 0).y == 2)
-    vec_free($VecPoint, v)
+    assert(vec_get(v, 1).x == 30)
+    assert(vec_get(v, 0).y == 2)
+    vec_free(v)
 }
 
 test "a vector gives back every block it took, however far it grew" {
@@ -175,9 +175,9 @@ test "a vector gives back every block it took, however far it grew" {
     var v := vec_new($i64, 1)
     var i: i64 = 0
     while (i < 500) {
-        vec_push($i64, v, i)
+        vec_push(v, i)
         i = i + 1
     }
-    vec_free($i64, v)
+    vec_free(v)
     assert(heap_live() == before)
 }

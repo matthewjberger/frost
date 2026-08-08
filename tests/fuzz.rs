@@ -434,9 +434,9 @@ fn view_kind(kind: usize) -> ViewKind {
             import: "mem.frost",
             held_type: "[]i64",
             storage: "data : [4]i64 = [11, 22, 33, 44]",
-            view: "slice_range($i64, data, 0, 2)",
+            view: "slice_range(data, 0, 2)",
             parameter: "mut source: [4]i64",
-            honest: "slice_range($i64, source, 0, 2)",
+            honest: "slice_range(source, 0, 2)",
         },
         // A `str` is a `[]u8`, so it names storage the way a slice does and
         // leaves a frame the same way. The bootstrap would not build the honest
@@ -660,33 +660,33 @@ fn growth_case(
     let head = format!(
         "import \"vec.frost\"\n\
          import \"io.frost\"\n\
-         wrap :: fn(w: Vec<{element}>) -> []{element} {{ vec_slice(${element}, w) }}\n\
-         grow :: fn(mut w: Vec<{element}>, value: {element}) {{ vec_push(${element}, w, value) }}\n"
+         wrap :: fn(w: Vec<{element}>) -> []{element} {{ vec_slice(w) }}\n\
+         grow :: fn(mut w: Vec<{element}>, value: {element}) {{ vec_push(w, value) }}\n"
     );
     let grown = if honest { "other" } else { "v" };
     // How the view is taken, and what reads it afterwards. The `ref` writes
     // through the borrow, which lands in the freed block rather than reading it.
     let (take, read) = match kind {
         0 => (
-            "view := vec_slice($i64, v)".to_string(),
+            "view := vec_slice(v)".to_string(),
             "print(\"{}\\n\", view[0])",
         ),
-        1 => ("ref held := vec_slice($i64, v)[0]".to_string(), "held = 99"),
+        1 => ("ref held := vec_slice(v)[0]".to_string(), "held = 99"),
         2 => ("view := wrap(v)".to_string(), "print(\"{}\\n\", view[0])"),
         _ => (
-            "held : str = vec_slice($u8, v)".to_string(),
+            "held : str = vec_slice(v)".to_string(),
             "print(\"{}\\n\", str_len(held))",
         ),
     };
     let push = match position {
-        0 => format!("    vec_push(${element}, {grown}, 7)\n"),
+        0 => format!("    vec_push({grown}, 7)\n"),
         1 => format!(
             "    var step : {element} = 0\n\
-             \x20   while (step < {}) {{ vec_push(${element}, {grown}, step)  step = step + 1 }}\n",
+             \x20   while (step < {}) {{ vec_push({grown}, step)  step = step + 1 }}\n",
             rng.below(3) + 1
         ),
         2 => format!(
-            "    if ({} > 0) {{ vec_push(${element}, {grown}, 7) }}\n",
+            "    if ({} > 0) {{ vec_push({grown}, 7) }}\n",
             rng.below(2)
         ),
         _ => format!("    grow({grown}, 7)\n"),
@@ -695,13 +695,13 @@ fn growth_case(
         "{head}main :: fn() -> i64 {{\n\
          \x20   var v := vec_new(${element}, 1)\n\
          \x20   var other := vec_new(${element}, 1)\n\
-         \x20   vec_push(${element}, v, 11)\n\
-         \x20   vec_push(${element}, other, 22)\n\
+         \x20   vec_push(v, 11)\n\
+         \x20   vec_push(other, 22)\n\
          \x20   {take}\n\
          {push}\
          \x20   {read}\n\
-         \x20   vec_free(${element}, v)\n\
-         \x20   vec_free(${element}, other)\n\
+         \x20   vec_free(v)\n\
+         \x20   vec_free(other)\n\
          \x20   0\n\
          }}\n"
     )

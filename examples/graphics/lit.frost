@@ -133,7 +133,6 @@ run :: fn(move app: App) -> i64 {
         0.0
     )
     ecs_set(
-        $Drawn,
         app.world,
         floor,
         ids.drawn,
@@ -166,7 +165,6 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set(
-            $Drawn,
             app.world,
             held,
             ids.drawn,
@@ -184,27 +182,20 @@ run :: fn(move app: App) -> i64 {
     // down and across.
     sunlight := ecs_spawn_with(app.world, lighting)
     app_aim(app, sunlight, ids, vec3(0.0, 6.0, 0.0), -0.9, 0.6)
-    ecs_set($Light, app.world, sunlight, lights.light, sun())
+    ecs_set(app.world, sunlight, lights.light, sun())
 
     // The lamp, in among the shapes. Bright close by and gone across the floor,
     // which is what an inverse square does and what a directional light does
     // not.
     held := ecs_spawn_with(app.world, lighting)
     app_aim(app, held, ids, vec3(-2.4, FLOOR_Y + 1.0, 2.4), 0.0, 0.0)
-    ecs_set(
-        $Light,
-        app.world,
-        held,
-        lights.light,
-        lamp(vec3(1.0, 0.55, 0.25), 14.0)
-    )
+    ecs_set(app.world, held, lights.light, lamp(vec3(1.0, 0.55, 0.25), 14.0))
 
     // The spot, above and pointing straight down, so the floor gets a disc with
     // an edge to it.
     pointed := ecs_spawn_with(app.world, lighting)
     app_aim(app, pointed, ids, vec3(2.6, 4.2, -1.0), -1.35, 0.0)
     ecs_set(
-        $Light,
         app.world,
         pointed,
         lights.light,
@@ -233,7 +224,6 @@ app_place :: fn(
     rate: f32
 ) {
     ecs_set(
-        $LocalTransform,
         app.world,
         held,
         ids.local_transform,
@@ -244,7 +234,6 @@ app_place :: fn(
         }
     )
     ecs_set(
-        $Spin,
         app.world,
         held,
         spin,
@@ -263,7 +252,6 @@ app_aim :: fn(
     yaw: f32
 ) {
     ecs_set(
-        $LocalTransform,
         app.world,
         held,
         ids.local_transform,

@@ -14,37 +14,37 @@ show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) 
 
 main :: fn() -> i64 {
     var p: Slab<Unit, 4> = slab_new()
-    slab_reset($Unit, $4, p)
+    slab_reset(p)
 
     var handles: [4]Handle<Unit> = [0; 4]
     for i in 0 .. 4 {
         u := Unit { id = i, stats = Stats { hp = i * 10, xp = i, slot = i } }
-        handles[i] = slab_insert($Unit, $4, p, u)
+        handles[i] = slab_insert(p, u)
     }
 
     var alive: i64 = 0
     for i in 0 .. 4 {
-        if (slab_alive($Unit, $4, p, handles[i])) { alive = alive + 1 }
+        if (slab_alive(p, handles[i])) { alive = alive + 1 }
     }
     print("{}\n", alive) // 4
 
-    show(slab_full($Unit, $4, p)) // 1, exhausted
+    show(slab_full(p)) // 1, exhausted
 
-    show(slab_release($Unit, $4, p, handles[1])) // 1
-    show(slab_release($Unit, $4, p, handles[3])) // 1
+    show(slab_release(p, handles[1])) // 1
+    show(slab_release(p, handles[3])) // 1
 
     var sum_hp: i64 = 0
     for i in 0 .. 4 {
-        if (slab_alive($Unit, $4, p, handles[i])) {
+        if (slab_alive(p, handles[i])) {
             sum_hp = sum_hp + p[handles[i]].stats.hp
         }
     }
     print("{}\n", sum_hp) // 0 + 20 = 20
 
     reborn := Unit { id = 99, stats = Stats { hp = 500, xp = 0, slot = 0 } }
-    fresh := slab_insert($Unit, $4, p, reborn)
-    show(slab_alive($Unit, $4, p, fresh)) // 1
-    show(slab_alive($Unit, $4, p, handles[3])) // 0, the slot was reused
+    fresh := slab_insert(p, reborn)
+    show(slab_alive(p, fresh)) // 1
+    show(slab_alive(p, handles[3])) // 0, the slot was reused
     print("{}\n", p[fresh].id) // 99
     print("{}\n", p[fresh].stats.hp) // 500
     0

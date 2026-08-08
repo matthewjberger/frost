@@ -65,7 +65,7 @@ fixed_room :: fn($T: Type, f: Fixed<T>) -> i64 {
 // The live elements as a bounds-checked slice, which is how everything above
 // the container reads, writes and borrows one.
 fixed_slice :: fn($T: Type, f: Fixed<T>) -> []T {
-    slice_prefix($T, f.storage, f.len)
+    slice_prefix(f.storage, f.len)
 }
 
 // One more element. Past the end of the run this aborts, at the index that
@@ -78,11 +78,11 @@ fixed_push :: fn($T: Type, mut f: Fixed<T>, move value: $T) {
 }
 
 fixed_get :: fn($T: Type, f: Fixed<T>, index: i64) -> $T {
-    fixed_slice($T, f)[index]
+    fixed_slice(f)[index]
 }
 
 fixed_set :: fn($T: Type, mut f: Fixed<T>, index: i64, move value: $T) {
-    fixed_slice($T, f)[index] = value
+    fixed_slice(f)[index] = value
 }
 
 // Empty again over the same run. The bytes stay as they were and the next push
@@ -101,52 +101,52 @@ fixed_truncate :: fn($T: Type, mut f: Fixed<T>, count: i64) {
 
 test "a container over an array fills and reads back" {
     var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over($i64, backing)
-    assert(fixed_len($i64, held) == 0)
-    assert(fixed_room($i64, held) == 4)
-    fixed_push($i64, held, 10)
-    fixed_push($i64, held, 20)
-    assert(fixed_len($i64, held) == 2)
-    assert(fixed_room($i64, held) == 2)
-    assert(fixed_get($i64, held, 0) + fixed_get($i64, held, 1) == 30)
+    var held := fixed_over(backing)
+    assert(fixed_len(held) == 0)
+    assert(fixed_room(held) == 4)
+    fixed_push(held, 10)
+    fixed_push(held, 20)
+    assert(fixed_len(held) == 2)
+    assert(fixed_room(held) == 2)
+    assert(fixed_get(held, 0) + fixed_get(held, 1) == 30)
 }
 
 test "the live prefix is what the slice hands out" {
     var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over($i64, backing)
-    fixed_push($i64, held, 1)
-    fixed_push($i64, held, 2)
-    fixed_push($i64, held, 3)
+    var held := fixed_over(backing)
+    fixed_push(held, 1)
+    fixed_push(held, 2)
+    fixed_push(held, 3)
     var total: i64 = 0
-    for value in fixed_slice($i64, held) {
+    for value in fixed_slice(held) {
         total = total + value
     }
-    assert(slice_len(fixed_slice($i64, held)) == 3)
+    assert(slice_len(fixed_slice(held)) == 3)
     assert(total == 6)
 }
 
 test "a set writes through the live prefix" {
     var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over($i64, backing)
-    fixed_push($i64, held, 1)
-    fixed_push($i64, held, 2)
-    fixed_set($i64, held, 1, 9)
-    assert(fixed_get($i64, held, 1) == 9)
+    var held := fixed_over(backing)
+    fixed_push(held, 1)
+    fixed_push(held, 2)
+    fixed_set(held, 1, 9)
+    assert(fixed_get(held, 1) == 9)
 }
 
 test "clearing and truncating move the mark and nothing else" {
     var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over($i64, backing)
-    fixed_push($i64, held, 1)
-    fixed_push($i64, held, 2)
-    fixed_push($i64, held, 3)
-    fixed_truncate($i64, held, 2)
-    assert(fixed_len($i64, held) == 2)
-    fixed_truncate($i64, held, 7)
-    assert(fixed_len($i64, held) == 2)
-    fixed_clear($i64, held)
-    assert(fixed_len($i64, held) == 0)
-    assert(fixed_room($i64, held) == 4)
-    fixed_push($i64, held, 5)
-    assert(fixed_get($i64, held, 0) == 5)
+    var held := fixed_over(backing)
+    fixed_push(held, 1)
+    fixed_push(held, 2)
+    fixed_push(held, 3)
+    fixed_truncate(held, 2)
+    assert(fixed_len(held) == 2)
+    fixed_truncate(held, 7)
+    assert(fixed_len(held) == 2)
+    fixed_clear(held)
+    assert(fixed_len(held) == 0)
+    assert(fixed_room(held) == 4)
+    fixed_push(held, 5)
+    assert(fixed_get(held, 0) == 5)
 }

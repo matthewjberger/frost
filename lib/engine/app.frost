@@ -263,7 +263,7 @@ app_install :: fn(mut app: App, build: fn(mut App)) {
         unsafe { frost_rt_error("frost: a plugin is installed twice\n") }
         frost_rt_die()
     }
-    vec_push($Installed, app.installed, Installed { build = build })
+    vec_push(app.installed, Installed { build = build })
     build(app)
 }
 
@@ -274,14 +274,14 @@ app_install_if_absent :: fn(mut app: App, build: fn(mut App)) {
     if (already_installed(app, build)) {
         return
     }
-    vec_push($Installed, app.installed, Installed { build = build })
+    vec_push(app.installed, Installed { build = build })
     build(app)
 }
 
 already_installed :: fn(app: App, build: fn(mut App)) -> bool {
-    held := vec_slice($Installed, app.installed)
+    held := vec_slice(app.installed)
     var i: i64 = 0
-    while (i < vec_len($Installed, app.installed)) {
+    while (i < vec_len(app.installed)) {
         if (held[i].build == build) {
             return true
         }
@@ -320,12 +320,11 @@ plugin_group_new :: fn() -> PluginGroup {
 }
 
 plugin_group_free :: fn(move group: PluginGroup) {
-    vec_free($GroupMember, group.members)
+    vec_free(group.members)
 }
 
 plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
     vec_push(
-        $GroupMember,
         group.members,
         GroupMember { named = build, build = build, enabled = true }
     )
@@ -333,9 +332,9 @@ plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
 
 // Which member of the group this name is, or -1 where the group has none.
 group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
-    held := vec_slice($GroupMember, group.members)
+    held := vec_slice(group.members)
     var i: i64 = 0
-    while (i < vec_len($GroupMember, group.members)) {
+    while (i < vec_len(group.members)) {
         if (held[i].named == named) {
             return i
         }
@@ -357,7 +356,7 @@ plugin_group_set :: fn(
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
         frost_rt_die()
     }
-    var held := vec_slice($GroupMember, group.members)
+    var held := vec_slice(group.members)
     held[at].build = build
 }
 
@@ -370,7 +369,7 @@ plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
         frost_rt_die()
     }
-    var held := vec_slice($GroupMember, group.members)
+    var held := vec_slice(group.members)
     held[at].enabled = false
 }
 
@@ -379,8 +378,8 @@ plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
 // what a program already installed stops rather than installing it twice.
 app_install_group :: fn(mut app: App, move group: PluginGroup) {
     var i: i64 = 0
-    while (i < vec_len($GroupMember, group.members)) {
-        held := vec_get($GroupMember, group.members, i)
+    while (i < vec_len(group.members)) {
+        held := vec_get(group.members, i)
         if (held.enabled) {
             app_install(app, held.build)
         }
@@ -441,7 +440,6 @@ app_configure_graph :: fn(
     state: ^Ctx
 ) {
     vec_push(
-        $GraphConfig,
         app.graph_configs,
         GraphConfig {
             hook = unsafe { ptr_cast($fn(^u8, mut Graph, Device, u32), hook) },
@@ -457,8 +455,8 @@ configure_graph :: fn(mut app: App) -> bool {
     device := renderer_device(app.renderer)
     format := renderer_format(app.renderer)
     var i: i64 = 0
-    while (i < vec_len($GraphConfig, app.graph_configs)) {
-        held := vec_get($GraphConfig, app.graph_configs, i)
+    while (i < vec_len(app.graph_configs)) {
+        held := vec_get(app.graph_configs, i)
         held.hook(held.state, app.renderer.graph, device, format)
         i = i + 1
     }
@@ -486,7 +484,6 @@ app_update_graph :: fn(
     state: ^Ctx
 ) {
     vec_push(
-        $UpdateGraph,
         app.update_graph,
         UpdateGraph {
             hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
@@ -499,8 +496,8 @@ app_update_graph :: fn(
 // runs this frame is settled first and what goes in it second.
 update_graph :: fn(mut app: App) {
     var i: i64 = 0
-    while (i < vec_len($UpdateGraph, app.update_graph)) {
-        held := vec_get($UpdateGraph, app.update_graph, i)
+    while (i < vec_len(app.update_graph)) {
+        held := vec_get(app.update_graph, i)
         held.hook(held.state, app.renderer.graph, app.world)
         i = i + 1
     }
@@ -522,7 +519,6 @@ app_before_render :: fn(
     state: ^Ctx
 ) {
     vec_push(
-        $BeforeRender,
         app.before_render,
         BeforeRender {
             hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
@@ -551,8 +547,8 @@ render_plugin :: fn(mut app: App) {
         render_world_layout(app.render),
         render_world_batch_layout(app.render)
     )
-    app_configure_graph($App, app, declare_lit, ptr_to(app))
-    app_before_render($App, app, fill_lit, ptr_to(app))
+    app_configure_graph(app, declare_lit, ptr_to(app))
+    app_before_render(app, fill_lit, ptr_to(app))
 }
 
 // The world into the run, and the world's lights into the buffer beside it.
@@ -602,7 +598,6 @@ declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
     lit_declare(
-        $App,
         g,
         record_view,
         ptr_to(app),
@@ -653,7 +648,6 @@ app_add_system_in_state :: fn(
 // with `world_state_request`.
 app_insert_state :: fn(mut app: App, initial: i64) {
     ecs_resource_set(
-        $States,
         app.world,
         resource_of($States, app.world),
         states_new(initial)
@@ -665,11 +659,11 @@ app_insert_state :: fn(mut app: App, initial: i64) {
 // leaves one. Both run between the transition and the frame that follows it, so
 // what an enter hook spawns is there for the first frame of its own screen.
 app_on_enter :: fn(mut app: App, state: i64, run: fn(mut World)) {
-    vec_push($StateHook, app.on_enter, StateHook { state = state, run = run })
+    vec_push(app.on_enter, StateHook { state = state, run = run })
 }
 
 app_on_exit :: fn(mut app: App, state: i64, run: fn(mut World)) {
-    vec_push($StateHook, app.on_exit, StateHook { state = state, run = run })
+    vec_push(app.on_exit, StateHook { state = state, run = run })
 }
 
 // What runs when the program arrives at a screen or leaves one.
@@ -694,8 +688,8 @@ settle_state :: fn(mut app: App) {
 
 run_hooks :: fn(held: Vec<StateHook>, mut world: World, state: i64) {
     var index: i64 = 0
-    while (index < vec_len($StateHook, held)) {
-        one := vec_get($StateHook, held, index)
+    while (index < vec_len(held)) {
+        one := vec_get(held, index)
         if (one.state == state) {
             run := one.run
             run(world)
@@ -725,7 +719,7 @@ app_remove_system :: fn(mut app: App, run: fn(mut World)) -> bool {
 // reads it names the type the same way.
 app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
     slot := ecs_resource_register($T, app.world)
-    ecs_resource_set($T, app.world, slot, value)
+    ecs_resource_set(app.world, slot, value)
 }
 
 // What a program says and answers when it could not open. Written here because
@@ -751,14 +745,14 @@ app_failed :: fn(held: AppError) -> i64 {
 // before what made them: the tables are the device's, the world holds the tree,
 // and the window outlives the device it was drawn into.
 app_close :: fn(move app: App) -> i64 {
-    vec_free($Installed, app.installed)
-    vec_free($GraphConfig, app.graph_configs)
-    vec_free($UpdateGraph, app.update_graph)
-    vec_free($BeforeRender, app.before_render)
-    vec_free($StateHook, app.on_enter)
-    vec_free($StateHook, app.on_exit)
+    vec_free(app.installed)
+    vec_free(app.graph_configs)
+    vec_free(app.update_graph)
+    vec_free(app.before_render)
+    vec_free(app.on_enter)
+    vec_free(app.on_exit)
     lit_free(app.lit)
-    heap_release_slice($GpuLight, app.lights)
+    heap_release_slice(app.lights)
     log_close(app.log)
     render_world_free(app.render)
     geometry_free(app.store)
@@ -866,8 +860,8 @@ runs_nothing :: fn(mut app: App) {}
 // it was registered with.
 before_render :: fn(mut app: App) {
     var i: i64 = 0
-    while (i < vec_len($BeforeRender, app.before_render)) {
-        held := vec_get($BeforeRender, app.before_render, i)
+    while (i < vec_len(app.before_render)) {
+        held := vec_get(app.before_render, i)
         held.hook(held.state, app)
         i = i + 1
     }
@@ -943,7 +937,7 @@ test "a group keeps its members in the order they were added" {
     var group := plugin_group_new()
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
-    held := vec_slice($GroupMember, group.members)
+    held := vec_slice(group.members)
     assert(held[0].build == adds_nothing)
     assert(held[1].build == adds_nothing_either)
     plugin_group_free(group)
@@ -954,7 +948,7 @@ test "a member set another way keeps its place and its name" {
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
     plugin_group_set(group, adds_nothing, stands_in)
-    held := vec_slice($GroupMember, group.members)
+    held := vec_slice(group.members)
     // First still, and still found under the name the group knows it by.
     assert(held[0].build == stands_in)
     assert(held[0].named == adds_nothing)
@@ -968,9 +962,9 @@ test "a disabled member stays in the group and is not installed" {
     plugin_group_add(group, adds_nothing)
     plugin_group_add(group, adds_nothing_either)
     plugin_group_disable(group, adds_nothing)
-    held := vec_slice($GroupMember, group.members)
+    held := vec_slice(group.members)
     // Its place is kept, so disabling one does not renumber the rest.
-    assert(vec_len($GroupMember, group.members) == 2)
+    assert(vec_len(group.members) == 2)
     assert(held[0].enabled == false)
     assert(held[1].enabled)
     plugin_group_free(group)

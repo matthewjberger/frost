@@ -51,7 +51,7 @@ fs_read :: fn(path: str) -> ReadResult {
     held := path_bytes(path)
     raw := unsafe { frost_rt_file_read(ptr_cast($i8, held)) }
     length := unsafe { frost_rt_file_size() }
-    heap_release($u8, held)
+    heap_release(held)
     if (length < 0) {
         return ReadResult {
             text = unsafe { slice_from($u8, raw, 0) },
@@ -83,14 +83,14 @@ fs_write :: fn(path: str, text: str) -> bool {
             frost_rt_file_write(ptr_cast($i8, held), ptr_to(text[0]), length)
         }
     }
-    heap_release($u8, held)
+    heap_release(held)
     wrote == 1
 }
 
 fs_exists :: fn(path: str) -> bool {
     held := path_bytes(path)
     found := unsafe { frost_rt_file_exists(ptr_cast($i8, held)) }
-    heap_release($u8, held)
+    heap_release(held)
     found == 1
 }
 
@@ -99,7 +99,7 @@ fs_exists :: fn(path: str) -> bool {
 fs_remove :: fn(path: str) -> bool {
     held := path_bytes(path)
     gone := unsafe { frost_rt_remove_file(ptr_cast($i8, held)) }
-    heap_release($u8, held)
+    heap_release(held)
     gone == 1
 }
 

@@ -21,7 +21,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_indirect, pointer_to, borrow_of,
     is_integer,
-    is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
+    is_columns_ty, columns_lookup, columns_made_for, record_columns,
+    is_columns_new_call, field_type_by_range,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
@@ -370,6 +371,11 @@ record_generic_fn :: fn(
     format_off: i64,
     format_len: i64
 ) {
+    // Read here rather than handed in. The symbol's return type is the
+    // template's until an instance is parsed and rewrites it, and nothing has
+    // been parsed for this one yet, so this is the last moment the declared
+    // shape can be read off it.
+    template_ret := arena_at(p.fns, fn_index).ret_type
     arena_push(
         p.generic_fns,
         GenericFn {
@@ -388,7 +394,8 @@ record_generic_fn :: fn(
             pack_fixed = pack_fixed,
             pack_format = pack_format,
             format_off = format_off,
-            format_len = format_len
+            format_len = format_len,
+            template_ret = template_ret
         },
     )
 }
@@ -1784,18 +1791,56 @@ is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 // places is one type, which is what lets a value pass between functions.
 columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     var i: i64 = 0
-    while (i < p.structs.count) {
-        candidate := STRUCT_BASE + i
-        if (is_columns_ty(p, candidate)) {
+    while (i < p.instances.count) {
+        entry := arena_at(p.instances, i)
+        if (entry.generic_index == COLUMNS_OF && entry.arg == element) {
+            candidate := STRUCT_BASE + entry.struct_index
             gens := slab_field_type(p, candidate, "generations")
-            if (array_length(p, gens) == count
-                && columns_fields_match(p, candidate, element)) {
+            if (is_array_ty(gens) && array_length(p, gens) == count) {
                 return candidate
             }
         }
         i = i + 1
     }
     -1
+}
+
+// The element type a columns container stores, and how many slots it has, read
+// off the record made where it was synthesized. A container carries one array
+// per field of its element and nothing naming the element itself, and two
+// structs with the same field names and types would answer alike to a walk over
+// the shape, so what it was made for is written down instead.
+columns_made_for :: fn(mut p: Parser, container: i64) -> i64 {
+    if (is_struct_ty(container) == false) {
+        return -1
+    }
+    index := struct_index_of(container)
+    var i: i64 = 0
+    while (i < p.instances.count) {
+        entry := arena_at(p.instances, i)
+        if (entry.generic_index == COLUMNS_OF
+            && entry.struct_index == index) {
+            return entry.arg
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Note that this container was made for this element at this capacity, so the
+// next one written the same way is this one and a call over it can read what it
+// holds.
+record_columns :: fn(mut p: Parser, element: i64, container: i64) {
+    arena_push(
+        p.instances,
+        Instance {
+            generic_index = COLUMNS_OF,
+            arg = element,
+            xarg_start = 0,
+            xarg_count = 0,
+            struct_index = struct_index_of(container)
+        }
+    )
 }
 
 // Resolve a type name (byte range) to a type code: the current generic type

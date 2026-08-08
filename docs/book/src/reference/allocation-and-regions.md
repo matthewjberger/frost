@@ -25,9 +25,9 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 make_two :: fn() -> i64 uses Arena<256> {
-    p := alloc_int($256, arena)
+    p := alloc_int(arena)
     unsafe { p^ = 10 }
-    q := alloc_int($256, arena)
+    q := alloc_int(arena)
     unsafe { q^ = 32 }
     unsafe { p^ + q^ }
 }
@@ -183,7 +183,7 @@ main :: fn() -> i64 {
     var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
     var escaped : ^i64 = ptr_to(arena.offset)
     with arena {
-        escaped = alloc_int($256, arena)     // error: escapes its region
+        escaped = alloc_int(arena)     // error: escapes its region
     }
     unsafe { escaped^ }
 }
@@ -209,7 +209,7 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
-    r.ptr = alloc_int($256, arena)      // error: escapes its region
+    r.ptr = alloc_int(arena)      // error: escapes its region
     0
 }
 ```
@@ -243,9 +243,9 @@ draw_frame :: fn(mut scratch: Arena, world: []Sprite) -> i64 {
     var total : i64 = 0
     with scratch {
         run := arena_carve($Sprite, scratch, 16)
-        var visible := fixed_over($Sprite, run)
-        for sprite in world { fixed_push($Sprite, visible, sprite) }
-        total = tally(fixed_slice($Sprite, visible))
+        var visible := fixed_over(run)
+        for sprite in world { fixed_push(visible, sprite) }
+        total = tally(fixed_slice(visible))
     }
     total
 }

@@ -60,8 +60,8 @@ pointer.
 
 ```frost,sketch
 var items := [5, 2, 9, 1, 7]
-sort($i64, $i64_ascending, items)     // 1 2 5 7 9
-sort($i64, $i64_descending, items)    // 9 7 5 2 1
+sort($i64_ascending, items)     // 1 2 5 7 9
+sort($i64_descending, items)    // 9 7 5 2 1
 ```
 
 `sort_vec` is the same walk over a vector's live elements, which it reaches
@@ -70,12 +70,12 @@ it sorts three.
 
 ```frost,sketch
 var v := vec_new($i64, 4)
-vec_push($i64, v, 3)
-vec_push($i64, v, 1)
-vec_push($i64, v, 2)
-sort_vec($i64, $i64_ascending, v)
-assert(vec_get($i64, v, 0) == 1)
-vec_free($i64, v)
+vec_push(v, 3)
+vec_push(v, 1)
+vec_push(v, 2)
+sort_vec($i64_ascending, v)
+assert(vec_get(v, 0) == 1)
+vec_free(v)
 ```
 
 ## The algorithm

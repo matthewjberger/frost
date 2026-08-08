@@ -737,20 +737,53 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             // Kept for the pass that reads what the list turned out to hold,
             // which is after every instance has been walked.
             note_format_call(p, args, fn_index)
+        } else if (p.args_unbound_map == 0
+            && generic_fn_of(p, fn_index) < 0
+            && arena_at(p.fns, fn_index).defined == 0) {
+            // The callee has not been declared yet, so nothing here says
+            // whether it reads a compile-time parameter off an argument. What
+            // the arguments hold is taken down while their names are in scope.
+            hold_pending_tuple(p, made, fn_index, args)
         } else if (p.args_unbound_map == 0 && generic_fn_of(p, fn_index) >= 0) {
-            // A generic called over a plain type names it in the local table
-            // and nowhere else, so the tuple is read here or not at all.
-            held := parse_call_type_args(p, args, generic_fn_of(p, fn_index))
-            if (held >= 0) {
+            owner := generic_fn_of(p, fn_index)
+            // A generic one of whose compile-time parameters a value parameter
+            // settles names its tuple through the types of its arguments, and
+            // those are names the local table holds only here. The pass that
+            // gathers tuples over the whole program runs with no local in
+            // scope, so for these it is read here or not at all.
+            if (first_settled_gparam(p, owner)) {
+                // The tuple is read off the types of the arguments, and an
+                // argument that is itself a call to a generic has that type
+                // only once its instance has been parsed.
+                var arg := args
+                while (arg != (-1)) {
+                    entry := arena_at(p.arena, arg)
+                    settle_call_answer(p, entry.a)
+                    arg = entry.next
+                }
+                held := settled_type_args(p, args, owner)
                 note_type_args(
                     p,
                     held,
-                    p.gargs.count,
+                    p.call_xarg_start,
+                    p.call_xarg_count,
                     0,
-                    0,
-                    generic_fn_of(p, fn_index)
+                    owner
                 )
+            } else {
+                // A generic called over a plain type names it in the local
+                // table and nowhere else, so the tuple is read here or not at
+                // all.
+                held := parse_call_type_args(p, args, owner)
+                if (held >= 0) {
+                    note_type_args(p, held, p.gargs.count, 0, 0, owner)
+                }
             }
+            // The instance this call names, parsed now rather than left for the
+            // pass that gathers them. A call inside its body may read a tuple
+            // off a name only this parse can say the type of, so the body has
+            // to be read while that is still true.
+            settle_call_answer(p, made)
         }
         // Where the name was written, which is where a reader looks when the
         // call is what is wrong. The node position is past the arguments by
@@ -1483,6 +1516,7 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     )
     // The name binds the call, so an argument written as the call reads the
     // same as one written as a name given the call.
+    settle_call_answer(p, value)
     record_parse_local(p, name_off, name_len, binding_type(p, value), value)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
 }
@@ -3004,7 +3038,9 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
             is_packed = 0
         },
     )
-    STRUCT_BASE + struct_index
+    container := STRUCT_BASE + struct_index
+    record_columns(p, element, container)
+    container
 }
 
 // A match `match expr { case N: stmt  case _: stmt }`. The scrutinee is parsed
@@ -4713,6 +4749,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (ann >= 0) {
             record_parse_local(p, offset, length, ann, -1)
         } else {
+            settle_call_answer(p, value)
             record_parse_local(p, offset, length, binding_type(p, value), value)
         }
         return new_let_node(p, value, offset, length, ann)
@@ -5044,6 +5081,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // read the way the emitters read the same binding: the two tables name
         // one specialization between them, so an answer either gives alone
         // names a body the other never defines.
+        settle_call_answer(p, value)
         record_parse_local(p, offset, length, binding_type(p, value), value)
         return new_let_node(p, value, offset, length, -1)
     }
@@ -8159,6 +8197,48 @@ parse_program :: fn(mut p: Parser) -> i64 {
 // this call asks for and answers with its parameters. -1 when the callee is not
 // generic, or when the call is inside a template and its arguments are the
 // enclosing parameters rather than types.
+// Parse the instance a call names, so that what it answers with is known
+// before a name is bound to it. A name bound from a call to a generic is read
+// for the tuple of the next call, and that call is what asks for the instance,
+// so without this the second call names a tuple nothing was instantiated for.
+//
+// The whole parser runs over another declaration here, and everything the
+// enclosing one has worked out lives in the parser rather than on a stack, so
+// it is put aside and put back. The depth guard is for a generic that calls
+// itself: an instance is remembered only once its body is read, so a body
+// reading its own answer would ask for the instance it is inside.
+settle_call_answer :: fn(mut p: Parser, value: i64) {
+    if (p.mono_on_demand == 0 || p.mono_depth >= MONO_DEPTH_MAX) {
+        return
+    }
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Call || node.b == 1) {
+        return
+    }
+    gi := generic_fn_of(p, node.val)
+    if (gi < 0 || takes_pack(p, node.val)) {
+        return
+    }
+    arg := call_args_for(p, node.a, node.val)
+    xstart := p.call_xarg_start
+    xcount := p.call_xarg_count
+    if (arg < 0 || arg == TY_PARAM
+        || instance_fits_kind(p, gi, arg, xstart, xcount, 0, gi) == false) {
+        return
+    }
+    // The tuple goes in the table beside the instance. What is emitted is read
+    // off that table, so an instance parsed here and left out of it is a body
+    // every call to it names and nothing defines.
+    note_type_args(p, arg, xstart, xcount, 0, gi)
+    held := hold_declaration(p)
+    p.mono_depth = p.mono_depth + 1
+    made := parse_generic_instance(p, gi, arg, xstart, xcount)
+    p.mono_depth = p.mono_depth - 1
+    answer := p.last_return_type
+    restore_declaration(p, held)
+    record_mono_ret(p, arena_at(p.arena, made).val, arg, xstart, xcount, answer)
+}
+
 instance_params :: fn(mut p: Parser, fn_index: i64, args: i64) -> i64 {
     gi := generic_fn_of(p, fn_index)
     if (gi < 0) {

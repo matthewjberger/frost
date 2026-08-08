@@ -16,7 +16,7 @@ import "slab.frost"
 Node :: struct { value: i64, next: i64 }
 
 push_front :: fn(mut p: Slab<Node, 16>, head: i64, value: i64) -> i64 {
-    handle := slab_insert($Node, $16, p, Node { value = value, next = head })
+    handle := slab_insert(p, Node { value = value, next = head })
     raw: i64 = handle
     raw
 }
@@ -34,7 +34,7 @@ sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
 
 main :: fn() -> i64 {
     var p: Slab<Node, 16> = slab_new()
-    slab_reset($Node, $16, p)
+    slab_reset(p)
 
     var head: i64 = -1
     head = push_front(p, head, 10)

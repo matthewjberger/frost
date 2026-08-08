@@ -278,7 +278,7 @@ make_pipeline :: fn(
 declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    scene_pass := graph_node_pass($Scene, g, "scene", draw_scene, ptr_to(s))
+    scene_pass := graph_node_pass(g, "scene", draw_scene, ptr_to(s))
     graph_writes_color(
         g,
         scene_pass,
@@ -381,7 +381,6 @@ run :: fn(move app: App) -> i64 {
         // rather than set, because turning is this program's idea and the loader
         // spawned a node with no room for one.
         ecs_add(
-            $Spin,
             app.world,
             root,
             spin,
@@ -405,8 +404,8 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.2
     app_camera_set(app, eye)
 
-    app_configure_graph($Scene, app, declare_passes, ptr_to(scene))
-    app_before_render($Scene, app, before_frame, ptr_to(scene))
+    app_configure_graph(app, declare_passes, ptr_to(scene))
+    app_before_render(app, before_frame, ptr_to(scene))
     app_run(app)
     app_close(app)
 }

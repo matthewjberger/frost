@@ -21,32 +21,32 @@ builder_new :: fn(capacity: i64) -> Builder {
 }
 
 builder_free :: fn(move b: Builder) {
-    vec_free($u8, b.bytes)
+    vec_free(b.bytes)
 }
 
 builder_len :: fn(b: Builder) -> i64 {
-    vec_len($u8, b.bytes)
+    vec_len(b.bytes)
 }
 
 builder_clear :: fn(mut b: Builder) {
-    vec_clear($u8, b.bytes)
+    vec_clear(b.bytes)
 }
 
 // The bytes written so far, as a `str`. It views the builder's storage, so it
 // is valid only until the next append, which is the usual rule for a view into
 // a growable thing.
 builder_str :: fn(b: Builder) -> str {
-    vec_slice($u8, b.bytes)
+    vec_slice(b.bytes)
 }
 
 builder_byte :: fn(mut b: Builder, byte: i64) {
-    vec_push($u8, b.bytes, cast($u8, byte))
+    vec_push(b.bytes, cast($u8, byte))
 }
 
 // Append a `str`, byte for byte.
 builder_str_value :: fn(mut b: Builder, text: str) {
     for byte in text {
-        vec_push($u8, b.bytes, byte)
+        vec_push(b.bytes, byte)
     }
 }
 
@@ -55,7 +55,7 @@ builder_str_value :: fn(mut b: Builder, text: str) {
 // appended in order, which avoids needing to know the length up front.
 builder_int :: fn(mut b: Builder, value: i64) {
     if (value < 0) {
-        vec_push($u8, b.bytes, 45)
+        vec_push(b.bytes, 45)
         builder_uint(b, -value)
         return
     }
@@ -64,7 +64,7 @@ builder_int :: fn(mut b: Builder, value: i64) {
 
 builder_uint :: fn(mut b: Builder, value: i64) {
     if (value == 0) {
-        vec_push($u8, b.bytes, 48)
+        vec_push(b.bytes, 48)
         return
     }
     var digits: [20]u8 = [
@@ -98,7 +98,7 @@ builder_uint :: fn(mut b: Builder, value: i64) {
     }
     var i := count - 1
     while (i >= 0) {
-        vec_push($u8, b.bytes, digits[i])
+        vec_push(b.bytes, digits[i])
         i = i - 1
     }
 }

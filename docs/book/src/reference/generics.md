@@ -28,7 +28,7 @@ passed to.
 
 ```
 m : Option<i64> = Option::Some { value = 42 }     // the annotation names it
-unwrap_or($i64, Option::None, 7)              // the parameter names it
+unwrap_or(Option::None, 7)                   // the parameter names it
 ```
 
 Where there is no context to read it from, the literal says which instance it
@@ -81,7 +81,7 @@ slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     while (i < N) { s.generations[i] = 0  i = i + 1 }
 }
 
-slab_reset($Entity, $4, world)
+slab_reset(world)
 ```
 
 Inside the body the name stands for the integer wherever it appears, in a type
@@ -298,6 +298,52 @@ The bound is the same one 11.1c holds: the list a `for` walks is the struct's
 own field list, so its length is fixed by a declaration. No recursion, no
 unbounded loop, and nothing that reads the world.
 
+## 11.1e What a call writes
+
+A compile-time parameter that a later *value* parameter names is bound by the
+type of the argument that parameter takes, and the call leaves it out:
+
+```frost,sketch
+vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T)
+vec_get  :: fn($T: Type, v: Vec<T>, index: i64) -> $T
+
+vec_push(v, 3)
+held := vec_get(v, 0)
+```
+
+`T` is read off `v`, so writing it at the call would say twice what the
+argument says once. The same holds for a value parameter, since `Slab<T, N>`
+names both:
+
+```frost,sketch
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, value: $T) -> Handle<T>
+
+slab_insert(world, Entity { id = 3 })
+```
+
+One that appears nowhere but the return type is written, because nothing else
+says what it is:
+
+```frost,sketch
+vec_new    :: fn($T: Type, capacity: i64) -> Vec<T>
+heap_slice :: fn($T: Type, count: i64) -> []T
+
+var v := vec_new($i64, 8)
+run := heap_slice($f32, 16)
+```
+
+Which case a parameter is in is decided by the signature and by nothing else,
+so a call has one spelling rather than two. Writing one the signature settles
+is refused:
+
+```
+'T' of 'vec_push' is settled by the type of 'v', so it is not written at the call
+```
+
+A `$f: fn(T, T) -> bool` (11.1b) and a `$ops: Ordering<T>` (11.4b) are written
+whatever else the signature says. What arrives for them is a name the call
+picks rather than a type to read off an argument, so nothing settles them.
+
 ## 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its
@@ -313,6 +359,10 @@ before it, which forms a type value:
 stride :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
 bytes := stride($Entity, 16)
 ```
+
+Which of a signature's compile-time parameters a call writes is fixed by that
+signature (11.1e). `stride` writes its one because nothing but the return type
+names `T`.
 
 ## 11.4 Nested generic arguments
 
@@ -394,7 +444,7 @@ sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
     if (ops.less(items[j], items[j - 1])) { ... }
 }
 
-sort($i64, $i64_ascending, view)
+sort($i64_ascending, view)
 ```
 
 Because `$ops` is a compile-time argument, `ops.less(a, b)` folds to a direct

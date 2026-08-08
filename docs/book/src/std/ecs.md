@@ -24,8 +24,8 @@ main :: fn() -> i64 {
     velocity := ecs_register($Velocity, world)
 
     ship := ecs_spawn(world)
-    ecs_add($Position, world, ship, position, Position { x = 0.0, y = 0.0 })
-    ecs_add($Velocity, world, ship, velocity, Velocity { x = 1.0, y = 0.5 })
+    ecs_add(world, ship, position, Position { x = 0.0, y = 0.0 })
+    ecs_add(world, ship, velocity, Velocity { x = 1.0, y = 0.5 })
 
     var q := query_begin(world)
     query_with(q, position)
@@ -75,11 +75,11 @@ index, and `for_each` takes a list of types on the same footing.
 | Call | What it does |
 | --- | --- |
 | `ecs_register($T, world) -> i64` | Registers `T` and answers its index |
-| `ecs_add($T, world, entity, component, value)` | Gives it the component, migrating the entity if it is new |
+| `ecs_add(world, entity, component, value)` | Gives it the component, migrating the entity if it is new |
 | `ecs_remove(world, entity, component)` | Takes it away, migrating the entity |
 | `ecs_has(world, entity, component) -> bool` | Whether it holds it |
 | `ecs_get($T, world, entity, component) -> T` | The value, by copy |
-| `ecs_set($T, world, entity, component, value)` | Overwrites it, stamping the row |
+| `ecs_set(world, entity, component, value)` | Overwrites it, stamping the row |
 | `ecs_slice($T, world, table, component) -> []T` | One table's column, to write through |
 
 Adding or removing a component moves the entity to the table for its new set,
@@ -185,7 +185,7 @@ a column of one and reached through the same typed slice.
 
 ```frost,sketch
 time := ecs_resource_register($Time, world)
-ecs_resource_set($Time, world, time, time_new())
+ecs_resource_set(world, time, time_new())
 held := ecs_resource($Time, world, time)
 var place := ecs_resource_slice($Time, world, time)
 place[0].frame = place[0].frame + 1
@@ -202,7 +202,7 @@ lives and owning nothing.
 
 ```frost,sketch
 tree := ecs_resource_register($Hierarchy, world)
-ecs_resource_set($Hierarchy, world, tree, hierarchy_new())
+ecs_resource_set(world, tree, hierarchy_new())
 
 held := ecs_resource_ref($Hierarchy, world, tree)   // look at it
 print("{}\n", hierarchy_child_count(held, parent))
@@ -225,7 +225,7 @@ exactly the events it has yet to see:
 ```frost,sketch
 var damage := events_new($Damage)
 var renderer := reader_new()
-events_send($Damage, damage, Damage { amount = 3 })
+events_send(damage, Damage { amount = 3 })
 
 held := events_read($Damage, damage, renderer)   // what this reader has not seen
 events_clear(damage)                             // drop the frame's events

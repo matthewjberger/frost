@@ -134,14 +134,14 @@ main :: fn() -> i64 {
     // `live_slots` walks the slots that hold an element, in slot order, and
     // never reaches one that was released.
     var swarm: columns<Particle, 8> = columns_new()
-    columns_reset($Particle, $8, swarm)
+    columns_reset(swarm)
     var made: [8]Handle<Particle> = [0; 8]
     var i: i64 = 0
     while (i < 8) {
-        made[i] = columns_insert($Particle, $8, swarm, Particle { x = i })
+        made[i] = columns_insert(swarm, Particle { x = i })
         i = i + 1
     }
-    assert(columns_release($Particle, $8, swarm, made[2]))
+    assert(columns_release(swarm, made[2]))
     var walked: i64 = 0
     for slot in live_slots(swarm) {
         walked = walked + swarm.x[slot]
@@ -151,8 +151,8 @@ main :: fn() -> i64 {
     // A handle carries which container it came from, so one from another pool
     // of the same shape is refused rather than read.
     var spare: columns<Particle, 8> = columns_new()
-    columns_reset($Particle, $8, spare)
-    print("{}\n", cast($i64, columns_alive($Particle, $8, spare, made[0]))) // 0
+    columns_reset(spare)
+    print("{}\n", cast($i64, columns_alive(spare, made[0]))) // 0
 
     // Nine bytes rather than twelve, and the widest field's request decides
     // the whole type.

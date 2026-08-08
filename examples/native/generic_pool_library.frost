@@ -17,9 +17,9 @@ show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) 
 
 main :: fn() -> i64 {
     var world: Slab<Entity, 8> = slab_new()
-    slab_reset($Entity, $8, world)
+    slab_reset(world)
 
-    h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
+    h := slab_insert(world, Entity { hp = 100, mana = 30 })
     print("{}\n", world[h].hp) // 100
     print("{}\n", world[h].mana) // 30
     world[h].hp = 75
@@ -27,12 +27,12 @@ main :: fn() -> i64 {
 
     // The same code at a different element type and a different capacity.
     var ground: Slab<Tile, 4> = slab_new()
-    slab_reset($Tile, $4, ground)
-    t := slab_insert($Tile, $4, ground, Tile { height = 12 })
+    slab_reset(ground)
+    t := slab_insert(ground, Tile { height = 12 })
     print("{}\n", ground[t].height) // 12
 
-    show(slab_alive($Entity, $8, world, h)) // 1
-    show(slab_release($Entity, $8, world, h)) // 1
-    show(slab_alive($Entity, $8, world, h)) // 0
+    show(slab_alive(world, h)) // 1
+    show(slab_release(world, h)) // 1
+    show(slab_alive(world, h)) // 0
     0
 }

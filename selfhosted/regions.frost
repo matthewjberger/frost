@@ -7388,17 +7388,36 @@ check_calls :: fn(mut p: Parser) {
             if (gi >= 0 && is_supplied == false) {
                 gfn := arena_at(p.generic_fns, gi)
                 if (gfn.pack_len == 0) {
-                    // Only the parameters written as parameters. A `$T` that
-                    // appears inside another parameter's type, as `Stack<$T>`
-                    // does, is read off the argument rather than written at the
-                    // call, so counting it refuses every call to one.
-                    var declared: i64 = gfn.xparam_count
-                    if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1) {
-                        declared = declared + 1
+                    // Only the parameters a call writes. A `$T` that appears
+                    // inside another parameter's type, as `Stack<$T>` and
+                    // `Vec<T>` do, is read off the argument, so counting it
+                    // refuses every call to one.
+                    declared := written_gparam_count(p, gi)
+                    written := count_type_args(p, args)
+                    // A call writing one the signature settles says twice what
+                    // the argument says once. Named here rather than left to
+                    // the count, since what is wrong is which arguments were
+                    // written rather than how many.
+                    if (written > declared && first_settled_gparam(p, gi)) {
+                        report_where(p.modules, p.src, node.pos)
+                        report("'")
+                        report_src(p.src, p.gparam_name_off, p.gparam_name_len)
+                        report("' of '")
+                        report_src(p.src, name_off, name_len)
+                        report("' is settled by the type of '")
+                        report_src(
+                            p.src,
+                            p.gparam_settler_off,
+                            p.gparam_settler_len
+                        )
+                        report("', so it is not written at the call")
+                        frost_rt_recover_note()
+                        i = i + 1
+                        continue
                     }
                     generic = true
                     expected = expected + declared
-                    got = got + count_type_args(p, args)
+                    got = got + written
                 }
             }
             if (generic && expected != got && is_supplied == false) {

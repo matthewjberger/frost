@@ -92,7 +92,6 @@ gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
 
     var adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
     var adapter_info := request_adapter_callback_info_of(
-        $AdapterSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         take_adapter,
         ptr_to(adapter_slot)
@@ -108,7 +107,6 @@ gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
 
     var device_slot := DeviceSlot { handle = no_device(), ready = 0 }
     var device_info := request_device_callback_info_of(
-        $DeviceSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         take_device,
         ptr_to(device_slot)
@@ -200,7 +198,6 @@ gpu_read_buffer :: fn(
 
     var slot := MapSlot { status = 0, ready = 0 }
     var info := buffer_map_callback_info_of(
-        $MapSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         took_map,
         ptr_to(slot)

@@ -168,7 +168,6 @@ main :: fn() -> i64 {
     var adapter_slot: AdapterSlot =
     AdapterSlot { handle = no_adapter(), ready = 0 }
     var adapter_info := request_adapter_callback_info_of(
-        $AdapterSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         fill_adapter,
         ptr_to(adapter_slot)
@@ -197,7 +196,6 @@ main :: fn() -> i64 {
     var device_slot: DeviceSlot =
     DeviceSlot { handle = no_device(), ready = 0 }
     var device_info := request_device_callback_info_of(
-        $DeviceSlot,
         CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         fill_device,
         ptr_to(device_slot)

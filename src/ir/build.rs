@@ -1617,6 +1617,167 @@ fn is_type_parameter(ast: &Ast, parameter: &Parameter) -> bool {
     )
 }
 
+/// Which value parameter settles each compile-time parameter, where one does.
+///
+/// A compile-time parameter named in the declared type of a value parameter
+/// after it is bound by unifying against that argument, so the call does not
+/// write it: `vec_push(v, 3)` reads `T` off `v: Vec<T>`. One named nowhere else
+/// is written, because nothing else says what it is: `vec_new($i64, 8)` answers
+/// with a `Vec<T>` and takes a count.
+///
+/// Decided from the signature and nothing else, so a call has one spelling
+/// rather than two. Both compilers run this same walk, over the same parameter
+/// list, in the same order.
+///
+/// Only a value parameter settles one. A `$f: fn(T, T) -> bool` or a
+/// `$ops: Ordering<T>` names `T` in its own declared type, and neither is an
+/// argument whose type can be unified against: what arrives for them is a name,
+/// picked at the call.
+pub fn settled_by(ast: &Ast, parameters: &[Parameter]) -> Vec<Option<Symbol>> {
+    parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| {
+            if !is_type_parameter(ast, parameter)
+                || parameter.compile_time_signature.is_some()
+            {
+                return None;
+            }
+            let name = ast.name(parameter.name);
+            parameters[index + 1..]
+                .iter()
+                .filter(|later| !is_type_parameter(ast, later) && !later.pack)
+                .find(|later| {
+                    later.type_annotation.as_ref().is_some_and(|declared| {
+                        mentions_parameter(declared, name)
+                    })
+                })
+                .map(|later| later.name)
+        })
+        .collect()
+}
+
+/// Which argument each parameter takes at a call, and `None` for a
+/// compile-time parameter a value parameter settles, which takes none. Every
+/// pass reading a call against a declaration lines the two up through this, so
+/// an argument is weighed against the parameter it was written for rather than
+/// the one beside it.
+pub(crate) fn argument_slots(
+    ast: &Ast,
+    parameters: &[Parameter],
+) -> Vec<Option<usize>> {
+    let mut slots = Vec::with_capacity(parameters.len());
+    let mut consumed = 0usize;
+    for held in settled_by(ast, parameters) {
+        if held.is_some() {
+            slots.push(None);
+            continue;
+        }
+        slots.push(Some(consumed));
+        consumed += 1;
+    }
+    slots
+}
+
+/// The name of the parameter each argument of a call is written for, in order.
+pub(crate) fn argument_names(
+    ast: &Ast,
+    parameters: &[Parameter],
+) -> Vec<String> {
+    parameters
+        .iter()
+        .zip(argument_slots(ast, parameters))
+        .filter(|(_, slot)| slot.is_some())
+        .map(|(parameter, _)| ast.name(parameter.name).to_string())
+        .collect()
+}
+
+/// Where a call binds one compile-time parameter from.
+pub(crate) enum GenericBinding {
+    /// The argument at this position, written `$T` at the call.
+    Written(usize),
+    /// The type of the argument at this position, read through the declared
+    /// type of the value parameter that takes it.
+    Settled(usize, Type),
+}
+
+/// Every compile-time parameter of a signature, in declaration order, with
+/// where a call binds it from. The positions count arguments rather than
+/// parameters: a settled parameter takes no argument, so everything written
+/// after it moves up one.
+///
+/// The passes that resolve types read a call through this, so each of them
+/// lines a call's arguments up against the parameters that take them the same
+/// way the lowering does.
+pub(crate) fn generic_bindings(
+    ast: &Ast,
+    parameters: &[Parameter],
+) -> Vec<(String, GenericBinding)> {
+    let settled = settled_by(ast, parameters);
+    let positions = argument_slots(ast, parameters);
+    let mut bindings = Vec::new();
+    for (index, parameter) in parameters.iter().enumerate() {
+        if !is_type_parameter(ast, parameter) {
+            continue;
+        }
+        let name = ast.name(parameter.name).to_string();
+        let Some(by) = settled[index] else {
+            if let Some(at) = positions[index] {
+                bindings.push((name, GenericBinding::Written(at)));
+            }
+            continue;
+        };
+        let Some(settler) = parameters.iter().position(|held| held.name == by)
+        else {
+            continue;
+        };
+        if let Some(at) = positions[settler]
+            && let Some(pattern) = parameters[settler].type_annotation.clone()
+        {
+            bindings.push((name, GenericBinding::Settled(at, pattern)));
+        }
+    }
+    bindings
+}
+
+/// Whether a declared type names this compile-time parameter, anywhere inside
+/// it. A parameter written straight through is a `TypeParam`; one written
+/// inside a generic instance's argument list is a plain name there, since
+/// `Vec<T>` is one type name until something binds `T`, and that is the shape
+/// most of the library declares.
+fn mentions_parameter(ty: &Type, name: &str) -> bool {
+    match ty {
+        Type::TypeParam(held) => held == name,
+        Type::Struct(held) | Type::Enum(held) => {
+            if held == name {
+                return true;
+            }
+            let Some((_, arguments)) = split_instance(held) else {
+                return false;
+            };
+            arguments.iter().any(|argument| {
+                crate::parser::type_from_string(argument)
+                    .is_ok_and(|held| mentions_parameter(&held, name))
+            })
+        }
+        Type::Ptr(inner)
+        | Type::Ref(inner)
+        | Type::RefMut(inner)
+        | Type::Slice(inner)
+        | Type::Array(inner, _)
+        | Type::ArrayGeneric(inner, _)
+        | Type::Handle(inner)
+        | Type::Distinct(_, inner) => mentions_parameter(inner, name),
+        Type::Proc(parameters, answer) => {
+            parameters
+                .iter()
+                .any(|parameter| mentions_parameter(parameter, name))
+                || mentions_parameter(answer, name)
+        }
+        _ => false,
+    }
+}
+
 fn collect_type_params(ty: &Type, out: &mut Vec<String>) {
     match ty {
         Type::TypeParam(name) => {
@@ -1736,23 +1897,27 @@ pub(crate) fn substitute_type(
     }
 }
 
-fn infer_subst_into(
+pub(crate) fn infer_subst_into(
     pattern: &Type,
     concrete: &Type,
     type_params: &[String],
     subst: &mut HashMap<String, Type>,
 ) {
+    // A read of an aggregate travels as a borrow, so a parameter forwarded from
+    // one generic to another arrives here as `ref T` where the caller wrote
+    // `T`. The surface has no borrow type, so a type parameter never stands for
+    // one: what it binds to is the type the borrow names.
+    let named = match concrete {
+        Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
     match pattern {
         Type::TypeParam(name) => {
-            subst
-                .entry(name.clone())
-                .or_insert_with(|| concrete.clone());
+            subst.entry(name.clone()).or_insert_with(|| named.clone());
             return;
         }
         Type::Struct(name) if type_params.contains(name) => {
-            subst
-                .entry(name.clone())
-                .or_insert_with(|| concrete.clone());
+            subst.entry(name.clone()).or_insert_with(|| named.clone());
             return;
         }
         _ => {}
@@ -1765,6 +1930,15 @@ fn infer_subst_into(
         && !matches!(concrete, Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_))
     {
         infer_subst_into(pattern_inner, concrete, type_params, subst);
+        return;
+    }
+    // A `str` is a run of bytes, so a `[]$T` parameter given one binds its
+    // element to `u8`. Without this the element of a `str` is nothing any
+    // signature can name, and a body over bytes has to be written twice.
+    if let Type::Slice(pattern_inner) = pattern
+        && matches!(concrete, Type::Str)
+    {
+        infer_subst_into(pattern_inner, &Type::U8, type_params, subst);
         return;
     }
     if let (Some(pattern_inner), Some(concrete_inner)) =
@@ -3400,9 +3574,16 @@ fn infer_call_subst(
     discovery: &Discovery,
 ) -> HashMap<String, Type> {
     let mut subst = HashMap::new();
-    for (parameter, argument) in
-        ast.params_in(generic.parameters).iter().zip(arguments)
+    let parameters = ast.params_in(generic.parameters);
+    for (parameter, slot) in
+        parameters.iter().zip(argument_slots(ast, parameters))
     {
+        // A compile-time parameter a value parameter settles takes no argument
+        // of its own. It is bound when that value parameter is walked, out of
+        // the type of what was handed to it.
+        let Some(argument) = slot.and_then(|slot| arguments.get(slot)) else {
+            continue;
+        };
         if is_type_parameter(ast, parameter)
             && let Expression::TypeValue(ty) = ast.expr(*argument)
         {
@@ -7160,12 +7341,73 @@ impl<'a> FunctionLowering<'a> {
         // parameters, and one fewer when the list is empty.
         let packed = generic_parameters.iter().any(|parameter| parameter.pack);
         let fixed = generic_parameters.len() - usize::from(packed);
-        if (packed && arguments.len() < fixed)
-            || (!packed && arguments.len() != generic_parameters.len())
+
+        // Which argument each parameter written before the list takes. A
+        // compile-time parameter that a value parameter settles takes none: it
+        // is bound by unifying that parameter's declared type against the
+        // argument's, further down. `None` is that case, and it is why
+        // `vec_push(v, 3)` is the whole call.
+        let settled = settled_by(self.ast, &generic_parameters);
+        let wanted = generic_parameters.len()
+            - settled.iter().filter(|held| held.is_some()).count();
+
+        // A call writing a compile-time argument the signature settles says
+        // twice what the argument says once. Counted rather than matched
+        // against a position: a written argument lands on whichever
+        // compile-time parameter is still open, and the count is what says one
+        // too many arrived.
+        if !packed
+            && let Some((held, by)) = generic_parameters
+                .iter()
+                .zip(&settled)
+                .find_map(|(held, by)| by.map(|by| (held, by)))
+        {
+            let open = generic_parameters
+                .iter()
+                .zip(&settled)
+                .filter(|(parameter, by)| {
+                    is_type_parameter(self.ast, parameter) && by.is_none()
+                })
+                .count();
+            let written = arguments
+                .iter()
+                .filter(|argument| {
+                    matches!(
+                        self.ast.expr(**argument),
+                        Expression::TypeValue(_)
+                    )
+                })
+                .count();
+            if written > open {
+                bail!(
+                    "'{}' of '{name}' is settled by the type of '{}', so it is not written at the call",
+                    self.ast.name(held.name),
+                    self.ast.name(by)
+                );
+            }
+        }
+
+        let mut aligned: Vec<Option<usize>> = Vec::with_capacity(fixed);
+        let mut consumed = 0usize;
+        for held in settled.iter().take(fixed) {
+            if held.is_some() {
+                aligned.push(None);
+                continue;
+            }
+            if consumed >= arguments.len() {
+                bail!(
+                    "generic function '{name}' expects {wanted} argument(s) but {} were given",
+                    arguments.len()
+                );
+            }
+            aligned.push(Some(consumed));
+            consumed += 1;
+        }
+        if (packed && consumed > arguments.len())
+            || (!packed && consumed != arguments.len())
         {
             bail!(
-                "generic function '{name}' expects {} argument(s) but {} were given",
-                generic_parameters.len(),
+                "generic function '{name}' expects {wanted} argument(s) but {} were given",
                 arguments.len()
             );
         }
@@ -7185,14 +7427,18 @@ impl<'a> FunctionLowering<'a> {
         // The same, for a parameter declared with a bundle type: the constant
         // the argument names has to be of that type.
         let mut bundle_checks: Vec<(&Parameter, String)> = Vec::new();
-        for (index, (parameter, argument)) in
-            generic_parameters.iter().zip(arguments).enumerate()
-        {
+        for (parameter, slot) in generic_parameters.iter().zip(&aligned) {
             // The list is last, and what it took is lowered below. Nothing
             // after it is a parameter of its own.
             if parameter.pack {
                 break;
             }
+            // A compile-time parameter a value parameter settles is bound by
+            // the walk of that parameter, so there is nothing to read here.
+            let Some(index) = *slot else {
+                continue;
+            };
+            let argument = &arguments[index];
             if is_type_parameter(self.ast, parameter) {
                 let Expression::TypeValue(ty) = self.ast.expr(*argument) else {
                     bail!(
@@ -7309,7 +7555,11 @@ impl<'a> FunctionLowering<'a> {
                     );
                     plans.push(ArgPlan::Value(operand, value_type));
                 } else {
-                    if let Some(place_type) = self.probe_type(*argument) {
+                    // A call is not a place, so what it answers with is read
+                    // off its signature. Without it a `mut` parameter bound
+                    // nothing from an argument that was itself a call, and the
+                    // type parameter that argument settles stayed a name.
+                    if let Some(place_type) = self.answer_type(*argument) {
                         infer_subst_into(
                             inner,
                             &place_type,
@@ -7411,7 +7661,7 @@ impl<'a> FunctionLowering<'a> {
             .map(|parameter| self.ast.name(parameter.name).to_string());
         let mut pack_elements: Vec<PackElement> = Vec::new();
         if let Some(pack_name) = &pack_name {
-            for (index, argument) in arguments[fixed..].iter().enumerate() {
+            for (index, argument) in arguments[consumed..].iter().enumerate() {
                 // `$Position` in the list is a type rather than a value. It
                 // takes no parameter and is evaluated nowhere: what it leaves
                 // behind is a name the body writes where a type belongs.
@@ -7451,7 +7701,10 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
-        for (index, parameter) in generic_parameters.iter().enumerate() {
+        for (parameter, slot) in generic_parameters.iter().zip(&aligned) {
+            let Some(index) = *slot else {
+                continue;
+            };
             if parameter.format
                 && index < arguments.len()
                 && !self.forwards_its_own_format(arguments[index], arguments)
@@ -8448,6 +8701,110 @@ impl<'a> FunctionLowering<'a> {
             }
             _ => None,
         }
+    }
+
+    /// What an expression answers with, before anything is lowered, including
+    /// through a call. A generic's answer is its declared one with what the
+    /// call binds substituted in, which is what says that
+    /// `sort(ops, vec_slice(v))` sorts a run of `i64`: the element comes off
+    /// the argument and nothing at the call writes it.
+    ///
+    /// Beside `probe_type` rather than inside it. That one answers about a
+    /// place, and a call is a value: the two are read together where a value's
+    /// type is what is wanted, and `probe_type` alone where an address is.
+    fn answer_type(&self, expression: ExprId) -> Option<Type> {
+        if let Some(held) = self.probe_type(expression) {
+            return Some(held);
+        }
+        match self.ast.expr(expression) {
+            Expression::Call(..) => self.call_answer_type(expression),
+            Expression::StructInit(name, _) => {
+                Some(Type::Struct(self.ast.name(*name).to_string()))
+            }
+            Expression::EnumVariantInit(name, _, _) => {
+                Some(Type::Enum(self.ast.name(*name).to_string()))
+            }
+            Expression::Borrow(inner) => {
+                Some(Type::Ref(Box::new(self.answer_type(*inner)?)))
+            }
+            Expression::BorrowMut(inner) => {
+                Some(Type::RefMut(Box::new(self.answer_type(*inner)?)))
+            }
+            Expression::Dereference(inner) => {
+                deref_target(&self.answer_type(*inner)?).ok()
+            }
+            Expression::Index(base, _) => {
+                match through_borrow(&self.answer_type(*base)?).clone() {
+                    Type::Array(element, _)
+                    | Type::Slice(element)
+                    | Type::Ptr(element) => Some(*element),
+                    Type::Str => Some(Type::U8),
+                    _ => None,
+                }
+            }
+            Expression::FieldAccess(base, field) => {
+                let Type::Struct(name) =
+                    through_borrow(&self.answer_type(*base)?).clone()
+                else {
+                    return None;
+                };
+                self.builder
+                    .struct_layout(&name)?
+                    .field(self.ast.name(*field))
+                    .map(|held| held.ty.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn call_answer_type(&self, expression: ExprId) -> Option<Type> {
+        let Expression::Call(callee, arguments) = self.ast.expr(expression)
+        else {
+            return None;
+        };
+        let Expression::Identifier(name) = self.ast.expr(*callee) else {
+            return None;
+        };
+        let name = self.ast.name(*name);
+        let arguments = self.ast.exprs_in(*arguments);
+        let Some(generic) = self.builder.generic_functions.get(name) else {
+            return self
+                .builder
+                .signature(name)
+                .map(|held| held.return_type.clone());
+        };
+        let declared = self
+            .ast
+            .signature_to_type(self.ast.signature(generic.return_sig))?;
+        let mut bound = HashMap::new();
+        for (parameter, binding) in
+            generic_bindings(self.ast, self.ast.params_in(generic.parameters))
+        {
+            match binding {
+                GenericBinding::Written(at) => {
+                    if let Some(Expression::TypeValue(ty)) = arguments
+                        .get(at)
+                        .map(|argument| self.ast.expr(*argument))
+                    {
+                        bound.insert(parameter, ty.clone());
+                    }
+                }
+                GenericBinding::Settled(at, pattern) => {
+                    if let Some(held) = arguments
+                        .get(at)
+                        .and_then(|argument| self.answer_type(*argument))
+                    {
+                        infer_subst_into(
+                            &pattern,
+                            &held,
+                            &generic.type_params,
+                            &mut bound,
+                        );
+                    }
+                }
+            }
+        }
+        Some(substitute_type(&declared, &bound))
     }
 
     fn raw_pointer_element_address(

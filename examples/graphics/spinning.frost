@@ -293,7 +293,7 @@ make_pipeline :: fn(
 declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    scene_pass := graph_node_pass($Scene, g, "scene", draw_scene, ptr_to(s))
+    scene_pass := graph_node_pass(g, "scene", draw_scene, ptr_to(s))
     graph_writes_color(
         g,
         scene_pass,
@@ -427,7 +427,6 @@ run :: fn(move app: App) -> i64 {
         up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
         ecs_set(
-            $LocalTransform,
             app.world,
             entity,
             ids.local_transform,
@@ -447,7 +446,6 @@ run :: fn(move app: App) -> i64 {
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed: f32 = 0.4 + 0.09 * made
         ecs_set(
-            $Spin,
             app.world,
             entity,
             spin,
@@ -459,7 +457,6 @@ run :: fn(move app: App) -> i64 {
             shape = sphere
         }
         ecs_set(
-            $Drawn,
             app.world,
             entity,
             ids.drawn,
@@ -489,8 +486,8 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = 0.0
     app_camera_set(app, eye)
 
-    app_configure_graph($Scene, app, declare_passes, ptr_to(scene))
-    app_before_render($Scene, app, before_frame, ptr_to(scene))
+    app_configure_graph(app, declare_passes, ptr_to(scene))
+    app_before_render(app, before_frame, ptr_to(scene))
     app_run(app)
     app_close(app)
 }

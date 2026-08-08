@@ -31,13 +31,18 @@ struct Signature {
 }
 
 /// The parameter positions that take a type rather than a value.
+/// One entry per argument a call writes: the compile-time parameter it stands
+/// for, or nothing where it is an ordinary value. A compile-time parameter a
+/// value parameter settles is written nowhere and so has no entry.
 fn type_parameter_slots(
     ast: &Ast,
     parameters: &[Parameter],
 ) -> Vec<Option<String>> {
     parameters
         .iter()
-        .map(|parameter| match &parameter.type_annotation {
+        .zip(crate::ir::build::argument_slots(ast, parameters))
+        .filter(|(_, slot)| slot.is_some())
+        .map(|(parameter, _)| match &parameter.type_annotation {
             Some(Type::TypeParam(name))
                 if name.as_str() == ast.name(parameter.name) =>
             {
@@ -324,11 +329,17 @@ fn collect_param_types(ast: &Ast, roots: &[StmtId]) -> ParamTypes {
             | Statement::Declared { name, params, .. } => (*name, *params),
             _ => continue,
         };
+        // One entry per argument a call writes. A compile-time parameter a
+        // value parameter settles takes none, so it has none here either.
+        let slots =
+            crate::ir::build::argument_slots(ast, ast.params_in(params));
         param_types.insert(
             ast.name(name).to_string(),
             ast.params_in(params)
                 .iter()
-                .map(|parameter| {
+                .zip(slots)
+                .filter(|(_, slot)| slot.is_some())
+                .map(|(parameter, _)| {
                     let ty = parameter.type_annotation.clone()?;
                     // An extern's parameters are not rewritten by the mode
                     // lowering, so the mode is read here. `value` hands C a
@@ -634,7 +645,13 @@ fn handed_out_unnameable(
 /// say the same thing twice.
 fn summarize(ast: &Ast, params: Range32, checker: &MoveChecker) -> Summary {
     let mut found = Summary::new();
-    for (index, parameter) in ast.params_in(params).iter().enumerate() {
+    // Which argument each parameter takes, since a caller reads this back
+    // against the arguments it wrote.
+    let slots = crate::ir::build::argument_slots(ast, ast.params_in(params));
+    for (parameter, index) in ast.params_in(params).iter().zip(slots) {
+        let Some(index) = index else {
+            continue;
+        };
         if !matches!(
             parameter.type_annotation,
             Some(Type::Ref(_) | Type::RefMut(_))
@@ -733,11 +750,10 @@ fn settle_runs(ast: &Ast, roots: &[StmtId], fields: &FieldTypes) -> Runs {
                 .is_some_and(|result| is_view_type(&result));
             let mut walk = RunWalk {
                 ast,
-                parameters: ast
-                    .params_in(*parameters)
-                    .iter()
-                    .map(|one| ast.name(one.name).to_string())
-                    .collect(),
+                parameters: crate::ir::build::argument_names(
+                    ast,
+                    ast.params_in(*parameters),
+                ),
                 declared: ast
                     .params_in(*parameters)
                     .iter()

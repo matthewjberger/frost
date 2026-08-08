@@ -57,6 +57,22 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A call writing a compile-time argument the signature settles says twice
+    // what the argument says once. Which of them a call writes is a property of
+    // the signature, so taking this as well would be two spellings for every
+    // call to a generic over a container.
+    (
+        "a_settled_compile_time_argument_may_not_be_written_at_the_call",
+        "import \"io.frost\"\n\
+         Box :: struct($T: Type) { held: $T }\n\
+         unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var b := Box<i64> { held = 41 }\n\
+         \x20   print(\"{}\n\", unwrap($i64, b))\n\
+         \x20   0\n\
+         }\n",
+        "is settled by the type of",
+    ),
     // A function supplied at the call site is one whose body neither compiler
     // can see, so what it answers with is worth the shortest-lived argument
     // that could have reached it. An allocator built in this frame is one of
@@ -69,7 +85,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Bump :: struct { data: []u8, offset: i64 }
          Allocation :: struct($A: Type) { take: fn(mut A, i64) -> []u8 }
          bump_take :: fn(mut b: Bump, size: i64) -> []u8 {
-             run := slice_range($u8, b.data, b.offset, size)
+             run := slice_range(b.data, b.offset, size)
              b.offset = b.offset + size
              run
          }
@@ -96,7 +112,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          import \"mem.frost\"
          Bump :: struct { data: []u8, offset: i64 }
          bump_take :: fn(mut b: Bump, size: i64) -> []u8 {
-             run := slice_range($u8, b.data, b.offset, size)
+             run := slice_range(b.data, b.offset, size)
              b.offset = b.offset + size
              run
          }
@@ -145,7 +161,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              a.offset
          }
          main :: fn() -> i64 uses Arena<256> {
-             print(\"{}\\n\", grab($256, arena))
+             print(\"{}\\n\", grab(arena))
              0
          }
 ",
@@ -167,7 +183,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              a.offset
          }
          worker :: fn(n: i64) -> i64 uses Arena<256> {
-             bump($256, arena) + n
+             bump(arena) + n
          }
          call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
          main :: fn() -> i64 {
@@ -198,7 +214,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              a.offset
          }
          worker :: fn(n: i64) -> i64 uses Arena<256> {
-             bump($256, arena) + n
+             bump(arena) + n
          }
          apply :: fn($f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
          main :: fn() -> i64 {
@@ -232,7 +248,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              a.offset = a.offset + 8
              a.offset
          }
-         plain :: fn(n: i64, mut a: Arena<256>) -> i64 { bump($256, a) + n }
+         plain :: fn(n: i64, mut a: Arena<256>) -> i64 { bump(a) + n }
          call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
          main :: fn() -> i64 { call_it(plain, 3) }
 ",
@@ -252,7 +268,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              a.offset
          }
          test \"draws a capability\" uses Arena<256> {
-             assert(bump($256, arena) == 8)
+             assert(bump(arena) == 8)
          }
 ",
         "a `test` body is run by the test runner, which supplies nothing, so a \
@@ -316,7 +332,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nimport \"mem.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   var xs: [3]i64 = [1, 2, 3]\n\
-         \x20   print(\"{}\n\", slice_range($i64, xs, 0, 3))\n\
+         \x20   print(\"{}\n\", slice_range(xs, 0, 3))\n\
          \x20   0\n\
          }\n",
         "a format string writes a number, a yes or no, or a str, and this is a []i64",
@@ -326,7 +342,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nimport \"mem.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   var xs: [3]i64 = [1, 2, 3]\n\
-         \x20   view := slice_range($i64, xs, 0, 3)\n\
+         \x20   view := slice_range(xs, 0, 3)\n\
          \x20   print(\"{}\n\", view)\n\
          \x20   0\n\
          }\n",
@@ -457,7 +473,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
              var c : columns<Cell, 8> = columns_new()
-             columns_reset($Cell, $8, c)
+             columns_reset(c)
              held := live_slots(c)
              print(\"{}\\n\", held)
              0
@@ -665,8 +681,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20       into = heap_slice($Resource, 2) }\n\
          \x20   put(b, 0)\n\
          \x20   print(\"{}\\n\", 1)\n\
-         \x20   heap_release_slice($Resource, b.into)\n\
-         \x20   heap_release_slice($Slot, b.pool)\n\
+         \x20   heap_release_slice(b.into)\n\
+         \x20   heap_release_slice(b.pool)\n\
          \x20   0\n}\n",
         "frame",
     ),
@@ -808,7 +824,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          fresh :: fn($T: Type, $N: usize, seed: $T) -> Slab<T, N> {\n\
          \x20   slab_new()\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   pool := fresh($Node, $2, Node { file = File { fd = 1 }, hp = 0 })\n\
+         \x20   pool := fresh($2, Node { file = File { fd = 1 }, hp = 0 })\n\
          \x20   0\n}\n",
         "is a pool of",
     ),
@@ -947,8 +963,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          drop_box :: fn(move b: Box<File>) -> i64 { 0 }\n\
          main :: fn() -> i64 {\n\
          \x20   b : Box<File> = Box { storage = [File { fd = 1 }; 2], len = 2 }\n\
-         \x20   print(\"{}\\n\", close(peek($File, b, 0)))\n\
-         \x20   print(\"{}\\n\", close(peek($File, b, 0)))\n\
+         \x20   print(\"{}\\n\", close(peek(b, 0)))\n\
+         \x20   print(\"{}\\n\", close(peek(b, 0)))\n\
          \x20   drop_box(b)\n}\n",
         "by an element",
     ),
@@ -981,7 +997,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
          main :: fn() -> i64 {\n\
          \x20   f := File { fd = 1 }\n\
-         \x20   print(\"{}\\n\", only_plain($File, f))\n\
+         \x20   print(\"{}\\n\", only_plain(f))\n\
          \x20   print(\"{}\\n\", close(f))\n\
          \x20   0\n}\n",
         "is_linear",
@@ -999,7 +1015,7 @@ File :: linear struct { fd: i64 }
              where (is_float(T) || is_struct(T)) && !is_linear(T) { 2 }
          main :: fn() -> i64 {
              f := File { fd = 1 }
-             print(\"{}\n\", either($File, f))
+             print(\"{}\n\", either(f))
              print(\"{}\n\", close(f))
              0
 }
@@ -1115,7 +1131,7 @@ Holder :: struct { a: i64, b: i64 }
     ),
     // A generic instantiated with a resource where the program never writes the
     // instantiation's name. What a type holds was read off the names the source
-    // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
+    // spells out, so `held := wrap(...)` left `Opt<File>` ordinary data
     // and the obligation on the resource inside it went in and did not come
     // out. The types a call forms answer for it now, and a variant's payload is
     // held by its enum the way a field is held by its struct.
@@ -1126,7 +1142,7 @@ Holder :: struct { a: i64, b: i64 }
          wrap :: fn($T: Type, move value: $T) -> Opt<T> {\n\
          \x20   Opt::Some { value = value }\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   held := wrap($File, File { fd = 1 })\n\
+         \x20   held := wrap(File { fd = 1 })\n\
          \x20   0\n}\n",
         "consumed",
     ),
@@ -1266,7 +1282,7 @@ Holder :: struct { a: i64, b: i64 }
         "import \"mem.frost\"\n\
          escape :: fn() -> []i64 {\n\
          \x20   data : [4]i64 = [11, 22, 33, 44]\n\
-         \x20   slice_range($i64, data, 0, 2)\n}\n\
+         \x20   slice_range(data, 0, 2)\n}\n\
          main :: fn() -> i64 {\n\
          \x20   view := escape()\n\
          \x20   view[0]\n}\n",
@@ -1307,7 +1323,7 @@ Holder :: struct { a: i64, b: i64 }
         "import \"vec.frost\"\n\
          fill :: fn(mut sink: Vec<[]i64>) {\n\
          \x20   data : [4]i64 = [11, 22, 33, 44]\n\
-         \x20   vec_push($[]i64, sink, data)\n}\n\
+         \x20   vec_push(sink, data)\n}\n\
          main :: fn() -> i64 {\n\
          \x20   0\n}\n",
         "the storage it names dies when the call returns",
@@ -1408,7 +1424,7 @@ Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {\n\
          \x20   room : [4]i64 = [11, 22, 33, 44]\n\
          \x20   s : Sink<i64> = { room = room, len = 4 }\n\
-         \x20   held := sink_free($i64, s)\n\
+         \x20   held := sink_free(s)\n\
          \x20   s.len + held\n}\n",
         "moved",
     ),
@@ -1421,11 +1437,11 @@ Holder :: struct { a: i64, b: i64 }
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   var v := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 111)\n\
-         \x20   view := vec_slice($i64, v)\n\
-         \x20   vec_push($i64, v, 222)\n\
+         \x20   vec_push(v, 111)\n\
+         \x20   view := vec_slice(v)\n\
+         \x20   vec_push(v, 222)\n\
          \x20   print(\"{}\\n\", view[0])\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_free(v)\n\
          \x20   0\n}\n",
         "has since replaced",
     ),
@@ -1437,15 +1453,15 @@ Holder :: struct { a: i64, b: i64 }
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   var v := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 111)\n\
-         \x20   view := vec_slice($i64, v)\n\
+         \x20   vec_push(v, 111)\n\
+         \x20   view := vec_slice(v)\n\
          \x20   var count : i64 = 0\n\
          \x20   while (count < 8) {\n\
          \x20       print(\"{}\\n\", view[0])\n\
-         \x20       vec_push($i64, v, count)\n\
+         \x20       vec_push(v, count)\n\
          \x20       count = count + 1\n\
          \x20   }\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_free(v)\n\
          \x20   0\n}\n",
         "has since replaced",
     ),
@@ -1456,11 +1472,11 @@ Holder :: struct { a: i64, b: i64 }
         "import \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   var v := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 111)\n\
-         \x20   ref held := vec_slice($i64, v)[0]\n\
-         \x20   vec_push($i64, v, 222)\n\
+         \x20   vec_push(v, 111)\n\
+         \x20   ref held := vec_slice(v)[0]\n\
+         \x20   vec_push(v, 222)\n\
          \x20   held = 999\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_free(v)\n\
          \x20   0\n}\n",
         "has since replaced",
     ),
@@ -1476,11 +1492,11 @@ Holder :: struct { a: i64, b: i64 }
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
          \x20   var v := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 111)\n\
-         \x20   view := passthrough(vec_slice($i64, v))\n\
-         \x20   vec_push($i64, v, 222)\n\
+         \x20   vec_push(v, 111)\n\
+         \x20   view := passthrough(vec_slice(v))\n\
+         \x20   vec_push(v, 222)\n\
          \x20   print(\"{}\\n\", view[0])\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_free(v)\n\
          \x20   0\n}\n",
         "has since replaced",
     ),
@@ -1490,9 +1506,9 @@ Holder :: struct { a: i64, b: i64 }
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
          \x20   var v := vec_new($i64, 1)\n\
-         \x20   vec_push($i64, v, 111)\n\
-         \x20   view := passthrough(vec_slice($i64, v))\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_push(v, 111)\n\
+         \x20   view := passthrough(vec_slice(v))\n\
+         \x20   vec_free(v)\n\
          \x20   print(\"{}\\n\", view[0])\n\
          \x20   0\n}\n",
         "which has been given away",
@@ -2104,12 +2120,12 @@ Holder :: struct { a: i64, b: i64 }
              var bytes : [256]u8 = [0; 256]
              var scratch := arena_over(bytes)
              var backing : [1]Sprite = [Sprite { x = 0 }]
-             var escaped := fixed_over($Sprite, backing)
+             var escaped := fixed_over(backing)
              with scratch {
                  run := arena_carve($Sprite, scratch, 4)
-                 escaped = fixed_over($Sprite, run)
+                 escaped = fixed_over(run)
              }
-             fixed_len($Sprite, escaped)
+             fixed_len(escaped)
          }
 ",
         "region: a pointer into arena 'scratch' escapes its region by being \
@@ -2129,8 +2145,8 @@ Holder :: struct { a: i64, b: i64 }
              unsafe { slice_from($i64, ptr_to(h.len), 1) }
          }
          gather :: fn(run: []i64) -> []i64 {
-             var kept := hold($i64, run)
-             bad($i64, kept)
+             var kept := hold(run)
+             bad(kept)
          }
          main :: fn() -> i64 {
              var backing : [4]i64 = [1, 2, 3, 4]
@@ -2141,24 +2157,22 @@ Holder :: struct { a: i64, b: i64 }
          the storage it names dies when the call returns",
     ),
     // A compile-time parameter is written at the call, one `$` argument each.
-    // Leaving one out lines every value argument up against the parameter
-    // beside the one it was written for, which is a mistake worth naming as
-    // the count it is: the bootstrap read the first value argument as handed
-    // over by value and said 'a' was moved, and the self-hosted inferred the
-    // missing argument and built the program.
+    // A compile-time parameter nothing else names is written at the call, and
+    // leaving it out lines every value argument up against the parameter beside
+    // the one it was written for. That is a mistake worth naming as the count
+    // it is rather than leaving to whatever the shift runs into.
     (
         "a_call_leaving_out_a_compile_time_argument",
         "Box :: struct($N: usize) { room: [N]i64, offset: i64 }
-         bump :: fn($N: usize, mut b: Box<N>, by: i64) -> i64 {
-             b.offset = b.offset + by
-             b.offset
+         fresh :: fn($N: usize, offset: i64) -> Box<N> {
+             Box { room = [0; N], offset = offset }
          }
          main :: fn() -> i64 {
-             var b : Box<4> = Box { room = [0; 4], offset = 0 }
-             bump(b, 8)
+             var b := fresh(8)
+             b.offset
          }
 ",
-        "generic function 'bump' expects 3 argument(s) but 2 were given",
+        "generic function 'fresh' expects 2 argument(s) but 1 were given",
     ),
     // The frame half of the same file, for the same reason: what a call answers
     // with may not name storage the call owns.
@@ -2787,7 +2801,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n\
          bump_take :: fn(mut b: Bump, size: i64, align: i64) -> []u8 {\n\
          \x20   start := (b.offset + align - 1) / align * align\n\
-         \x20   run := slice_range($u8, b.data, start, size)\n\
+         \x20   run := slice_range(b.data, start, size)\n\
          \x20   b.offset = start + size\n\
          \x20   run\n\
          }\n\
@@ -2805,7 +2819,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   var backing: [256]u8 = [0; 256]\n\
          \x20   var b := Bump { data = backing, offset = 0 }\n\
-         \x20   got := carve($i64, $Bump, $bump_source, b, 3)\n\
+         \x20   got := carve($i64, $bump_source, b, 3)\n\
          \x20   got[0] = 7\n\
          \x20   got[2] = 9\n\
          \x20   print(\"{} {} {}\n\", slice_len(got), got[0], got[2])\n\
@@ -2813,6 +2827,30 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "3 7 9\n24\n",
+    ),
+    // A compile-time parameter a value parameter settles is read off that
+    // argument, and one nothing else names is written. Both spellings in one
+    // program, since what decides which is the signature and a reader has to be
+    // able to see the two beside each other.
+    (
+        "a_settled_compile_time_parameter_is_read_off_the_argument",
+        "import \"io.frost\"\n\
+         Box :: struct($T: Type) { held: $T }\n\
+         unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }\n\
+         twice :: fn($T: Type, value: $T) -> $T { value }\n\
+         first :: fn($T: Type, run: []$T) -> $T { run[0] }\n\
+         widths :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var b := Box<i64> { held = 41 }\n\
+         \x20   var run: [3]i64 = [4, 5, 6]\n\
+         \x20   var view: []i64 = run\n\
+         \x20   print(\"{}\n\", unwrap(b))\n\
+         \x20   print(\"{}\n\", twice(7))\n\
+         \x20   print(\"{}\n\", first(view))\n\
+         \x20   print(\"{}\n\", widths($i64, 3))\n\
+         \x20   0\n\
+         }\n",
+        "41\n7\n4\n24\n",
     ),
     // `alignof` reads the layout each compiler worked out rather than asking
     // the backend, so a stated alignment reaches it and the two agree. The C
@@ -3146,7 +3184,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              var board : [SIDE * 2]i64 = [0; 12]
              print(\"{}\\n\", slice_len(board))
              var g : Grid<4> = Grid<4> { cells = [0; 16], rows = [0; 2] }
-             print(\"{}\\n\", filled($4, g))
+             print(\"{}\\n\", filled(g))
              print(\"{}\\n\", slice_len(g.rows))
              0
          }
@@ -3167,22 +3205,22 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
              var world : Slab<Entity, 130> = slab_new()
-             slab_reset($Entity, $130, world)
+             slab_reset(world)
              var made : [130]Handle<Entity> = [0; 130]
              var i : i64 = 0
              while (i < 130) {
-                 made[i] = slab_insert($Entity, $130, world,
+                 made[i] = slab_insert(world,
                      Entity { hp = i })
                  i = i + 1
              }
              var d : i64 = 0
              while (d < 130) {
                  if (d % 3 == 0) {
-                     assert(slab_release($Entity, $130, world, made[d]))
+                     assert(slab_release(world, made[d]))
                  }
                  d = d + 1
              }
-             assert(slab_release($Entity, $130, world, made[64]))
+             assert(slab_release(world, made[64]))
              var total : i64 = 0
              var seen : i64 = 0
              var last : i64 = -1
@@ -3218,27 +3256,27 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {
              var active : Slab<Entity, 4> = slab_new()
              var pending : Slab<Entity, 4> = slab_new()
-             slab_reset($Entity, $4, active)
-             slab_reset($Entity, $4, pending)
-             a := slab_insert($Entity, $4, active, Entity { hp = 11 })
-             b := slab_insert($Entity, $4, pending, Entity { hp = 22 })
-             assert(slab_alive($Entity, $4, active, a))
-             assert(slab_alive($Entity, $4, pending, b))
-             assert(slab_alive($Entity, $4, active, b) == false)
-             assert(slab_alive($Entity, $4, pending, a) == false)
-             assert(slab_slot($Entity, $4, active, b) == (-1))
-             assert(slab_release($Entity, $4, active, a))
-             assert(slab_alive($Entity, $4, active, a) == false)
+             slab_reset(active)
+             slab_reset(pending)
+             a := slab_insert(active, Entity { hp = 11 })
+             b := slab_insert(pending, Entity { hp = 22 })
+             assert(slab_alive(active, a))
+             assert(slab_alive(pending, b))
+             assert(slab_alive(active, b) == false)
+             assert(slab_alive(pending, a) == false)
+             assert(slab_slot(active, b) == (-1))
+             assert(slab_release(active, a))
+             assert(slab_alive(active, a) == false)
              var one : columns<Entity, 4> = columns_new()
              var two : columns<Entity, 4> = columns_new()
-             columns_reset($Entity, $4, one)
-             columns_reset($Entity, $4, two)
-             p := columns_insert($Entity, $4, one, Entity { hp = 33 })
-             q := columns_insert($Entity, $4, two, Entity { hp = 44 })
-             assert(columns_alive($Entity, $4, one, p))
-             assert(columns_alive($Entity, $4, two, q))
-             assert(columns_alive($Entity, $4, one, q) == false)
-             assert(columns_alive($Entity, $4, two, p) == false)
+             columns_reset(one)
+             columns_reset(two)
+             p := columns_insert(one, Entity { hp = 33 })
+             q := columns_insert(two, Entity { hp = 44 })
+             assert(columns_alive(one, p))
+             assert(columns_alive(two, q))
+             assert(columns_alive(one, q) == false)
+             assert(columns_alive(two, p) == false)
              print(\"{}\\n\", one[p].hp + two[q].hp)
              0
          }
@@ -3258,22 +3296,22 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Particle :: struct { x: i64, y: i64 }
          main :: fn() -> i64 {
              var c : columns<Particle, 130> = columns_new()
-             columns_reset($Particle, $130, c)
+             columns_reset(c)
              var made : [130]Handle<Particle> = [0; 130]
              var i : i64 = 0
              while (i < 130) {
-                 made[i] = columns_insert($Particle, $130, c,
+                 made[i] = columns_insert(c,
                      Particle { x = i, y = 0 })
                  i = i + 1
              }
              var d : i64 = 0
              while (d < 130) {
                  if (d % 3 == 0) {
-                     assert(columns_release($Particle, $130, c, made[d]))
+                     assert(columns_release(c, made[d]))
                  }
                  d = d + 1
              }
-             assert(columns_release($Particle, $130, c, made[64]))
+             assert(columns_release(c, made[64]))
              var total : i64 = 0
              var seen : i64 = 0
              var last : i64 = -1
@@ -3306,17 +3344,17 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
              var c : columns<Cell, 96> = columns_new()
-             columns_reset($Cell, $96, c)
+             columns_reset(c)
              var made : [96]Handle<Cell> = [0; 96]
              var i : i64 = 0
              while (i < 96) {
-                 made[i] = columns_insert($Cell, $96, c, Cell { v = i })
+                 made[i] = columns_insert(c, Cell { v = i })
                  i = i + 1
              }
              var d : i64 = 0
              while (d < 96) {
                  if (d % 5 == 0) {
-                     assert(columns_release($Cell, $96, c, made[d]))
+                     assert(columns_release(c, made[d]))
                  }
                  d = d + 1
              }
@@ -3328,7 +3366,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              }
              print(\"{}\\n\", counted)
              var empty : columns<Cell, 8> = columns_new()
-             columns_reset($Cell, $8, empty)
+             columns_reset(empty)
              var none : i64 = 0
              for slot in live_slots(empty) { none = none + 1 }
              print(\"{}\\n\", none)
@@ -4351,8 +4389,8 @@ main :: fn() -> i64 {
         "import \"io.frost\"\nP :: struct { x: i64 }\n\
          only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
          main :: fn() -> i64 {\n\
-         \x20   print(\"{}\\n\", only_plain($i64, 7))\n\
-         \x20   print(\"{}\\n\", only_plain($P, P { x = 2 }))\n\
+         \x20   print(\"{}\\n\", only_plain(7))\n\
+         \x20   print(\"{}\\n\", only_plain(P { x = 2 }))\n\
          \x20   0\n}\n",
         "1\n1\n",
     ),
@@ -4596,9 +4634,9 @@ main :: fn() -> i64 {
          \x20   held : Holder = { rows = pair }\n\
          \x20   print(\"{}\\n\", held.rows[0][1])\n\
          \x20   var v := vec_new($i64, 2)\n\
-         \x20   vec_push($i64, v, 55)\n\
-         \x20   print(\"{}\\n\", vec_slice($i64, v)[0])\n\
-         \x20   vec_free($i64, v)\n\
+         \x20   vec_push(v, 55)\n\
+         \x20   print(\"{}\\n\", vec_slice(v)[0])\n\
+         \x20   vec_free(v)\n\
          \x20   var grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
          \x20   print(\"{}\\n\", grid[1][1])\n\
          \x20   0\n}\n",
@@ -4848,8 +4886,8 @@ main :: fn() -> i64 {
          Buffer :: struct { bytes: [pow2(5)]u8 }
          main :: fn() -> i64 {
              var c : columns<Particle, pow2(5)> = columns_new()
-             columns_reset($Particle, $pow2(5), c)
-             h := columns_insert($Particle, $pow2(5), c, Particle { x = 7 })
+             columns_reset(c)
+             h := columns_insert(c, Particle { x = 7 })
              print(\"{}\\n\", c[h].x)
              print(\"{}\\n\", sizeof(Buffer))
              0

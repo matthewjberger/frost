@@ -190,7 +190,7 @@ lit_declare :: fn(
     depth: ResourceId,
     clear: Color
 ) -> PassId {
-    made := graph_node_pass($Ctx, g, "lit", record, state)
+    made := graph_node_pass(g, "lit", record, state)
     graph_writes_color(g, made, screen, clear)
     graph_writes_depth(g, made, depth)
     made

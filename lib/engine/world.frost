@@ -86,7 +86,6 @@ world_prepare :: fn(mut world: World) -> WorldIds {
     ecs_resource_register($Exit, world)
     ecs_resource_register($States, world)
     ecs_resource_set(
-        $Hierarchy,
         world,
         resource_of($Hierarchy, world),
         hierarchy_new()
@@ -95,7 +94,6 @@ world_prepare :: fn(mut world: World) -> WorldIds {
     // nothing was held and no time passed, so the first schedule before the
     // first poll moves nothing.
     ecs_resource_set(
-        $Camera,
         world,
         resource_of($Camera, world),
         camera_default()
@@ -107,7 +105,7 @@ world_prepare :: fn(mut world: World) -> WorldIds {
 // before the schedule runs, since everything in the schedule that reacts to a
 // key or advances by the clock reads it from here.
 world_input :: fn(mut world: World, held: Input) {
-    ecs_resource_set($Input, world, resource_of($Input, world), held)
+    ecs_resource_set(world, resource_of($Input, world), held)
 }
 
 // Which component is which, worked out from the types rather than remembered.
@@ -130,7 +128,7 @@ world_camera :: fn(world: World) -> Camera {
 // Where the camera starts, for a program that wants it somewhere other than
 // `camera_default` puts it.
 world_camera_set :: fn(mut world: World, move eye: Camera) {
-    ecs_resource_set($Camera, world, resource_of($Camera, world), eye)
+    ecs_resource_set(world, resource_of($Camera, world), eye)
 }
 
 // The tree the world holds, for a program hanging one thing off another.
@@ -177,7 +175,7 @@ world_state :: fn(world: World) -> i64 {
 world_state_request :: fn(mut world: World, value: i64) {
     var held := ecs_resource($States, world, resource_of($States, world))
     states_request(held, value)
-    ecs_resource_set($States, world, resource_of($States, world), held)
+    ecs_resource_set(world, resource_of($States, world), held)
 }
 
 // The requested state taken, answering whether it was a change. Called by
@@ -185,14 +183,13 @@ world_state_request :: fn(mut world: World, value: i64) {
 world_state_apply :: fn(mut world: World) -> bool {
     var held := ecs_resource($States, world, resource_of($States, world))
     changed := states_apply(held)
-    ecs_resource_set($States, world, resource_of($States, world), held)
+    ecs_resource_set(world, resource_of($States, world), held)
     changed
 }
 
 // Asked to stop, which is what a loop over the world runs until.
 world_exit :: fn(mut world: World) {
     ecs_resource_set(
-        $Exit,
         world,
         resource_of($Exit, world),
         Exit { wanted = true }
@@ -220,7 +217,7 @@ move_camera :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
     var eye := ecs_resource($Camera, world, resource_of($Camera, world))
     camera_advance(eye, held, input_delta_seconds(held))
-    ecs_resource_set($Camera, world, resource_of($Camera, world), eye)
+    ecs_resource_set(world, resource_of($Camera, world), eye)
 }
 
 // Where everything ended up, walked down the tree from every root, so a thing
@@ -260,7 +257,6 @@ place_subtree :: fn(
     above: Mat4
 ) {
     ecs_set(
-        $GlobalTransform,
         world,
         entity,
         global,
@@ -307,7 +303,7 @@ Score :: struct { points: i64 }
 count_a_point :: fn(mut world: World) {
     var held := ecs_resource($Score, world, resource_of($Score, world))
     held.points = held.points + 1
-    ecs_resource_set($Score, world, resource_of($Score, world), held)
+    ecs_resource_set(world, resource_of($Score, world), held)
 }
 
 test "a system bound to a screen runs on that screen and no other" {
@@ -470,7 +466,6 @@ test "a thing is placed against whatever it hangs off, however deep" {
     var made: i64 = 0
     while (made < 3) {
         ecs_set(
-            $LocalTransform,
             world,
             chain[made],
             ids.local_transform,

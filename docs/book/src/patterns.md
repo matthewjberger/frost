@@ -227,7 +227,7 @@ took is one function's arithmetic, and linearity does not see it:
 // Antipattern: freeing a column allocated three replacement blocks so that a
 // freed column could be reused. Every caller threw the column away.
 column_free :: fn(mut c: Column) {
-    heap_release($u8, c.data)
+    heap_release(c.data)
     c.data = heap_bytes(1)
     ...
 }
@@ -258,7 +258,7 @@ leaves the one-time setup outside the count.
 **Antipattern.**
 
 ```frost,sketch
-table := vec_slice($Table, world.tables)[slot.table]
+table := vec_slice(world.tables)[slot.table]
 ```
 
 If `Table` owns anything, this is a copy of the owner, and two values now
@@ -267,7 +267,7 @@ believe they hold the same storage.
 **Instead.**
 
 ```frost,sketch
-ref table := vec_slice($Table, world.tables)[slot.table]
+ref table := vec_slice(world.tables)[slot.table]
 ```
 
 `ref` binds a borrow of the place, so there is still one owner. With linear
