@@ -18,8 +18,8 @@ FUNCTION :: 4
 colour_of :: fn(class: i64) -> str { ... }
 ```
 
-This is legal and it is what a C header looks like, which is why it keeps
-appearing. What it costs is three things.
+This is legal, and it is what a C header looks like, which is why it keeps
+appearing. It costs you three things.
 
 The parameter says nothing. `class: i64` accepts a row count, a file descriptor,
 or `-1`. Nothing is checked, because there is nothing to check against.
@@ -29,9 +29,8 @@ stops every match that does not handle it from compiling. A run of constants has
 no such set, so the `if` chain that reads them silently keeps its old answer for
 a value it has never seen.
 
-The prefix is doing the type's job. `PLAIN` and `COMMENT` belong together
-because they start with nothing in common at all. What holds them together is a
-comment above them and everyone remembering.
+The prefix is doing the type's job. Only a comment above them and everyone's
+memory holds `PLAIN` and `COMMENT` together.
 
 **Instead.**
 
@@ -47,7 +46,7 @@ colour_of :: fn(class: Class) -> str {
 Now the parameter takes one of eight things, a caller cannot pass a row count,
 and the set has a name.
 
-**Where an ordering matters, match rather than fall through.**
+**Where an ordering matters, match on the enum.**
 
 ```frost,sketch
 // Antipattern: a stage the chain does not name silently sorts as the last one.
@@ -84,8 +83,8 @@ sdl_init(INIT_VIDEO | INIT_AUDIO)
 ```
 
 `INIT_VIDEO` and `WINDOW_RESIZABLE` are both 32, so handing one where the other
-belongs is a program that compiles and does the wrong thing. An enum is no help:
-an enum holds exactly one alternative, and this holds several.
+belongs is a program that compiles and does the wrong thing. An enum is no help
+here. An enum holds exactly one alternative, and this holds several.
 
 **Instead.**
 
@@ -100,28 +99,28 @@ sdl_init(InitFlags::Video | InitFlags::Audio)
 if (flags_has(chosen, InitFlags::Video)) { ... }
 ```
 
-The numbers are still C's, written down, because they have to be. What changed
-is that the bits are named under a type. Two flags types are not
-interchangeable, a bare number is refused, and `|` over two of one still answers
-with one, so a combination goes straight into a call with no annotation.
+The numbers are still C's, written down, because they have to be. The bits are
+named under a type. Two flags types are not interchangeable, a bare number is
+refused, and `|` over two of one still answers with one, so a combination goes
+straight into a call with no annotation.
 
-The operators a set does not answer are refused: `+`, `<`, `<<` on a bit set are
-questions about the number underneath, and the declaration exists to say that
-the number is not what this is.
+`+`, `<` and `<<` on a bit set are refused. They are questions about the number
+underneath, and a `flags` declaration says the value is a set of named bits.
 
-This replaced two `distinct` types and nine loose constants in
-`lib/platform/sdl.frost`, and five families of them in the generated wgpu
-binding.
+`lib/platform/sdl.frost` declares its initialisation and window bits this way,
+and the generated wgpu binding declares five families of them.
 
 ## When constants are right
 
-Two cases, both in this repository:
+Two cases, both in this repository.
 
-- **Numbers a foreign header owns that are not a set.** The generated wgpu
-  binding has several hundred enum discriminants, because they must be exactly
-  what C says they are and Frost's enum picks its own.
-- **Arithmetic.** The compiler's `STRUCT_BASE`, `POINTER_BASE` and the rest are
-  added to indices to make type codes. They are numbers being used as numbers.
+A foreign header owns numbers that do not form a set. The generated wgpu binding
+has several hundred enum discriminants, because they must be exactly what C says
+they are and Frost's enum picks its own.
+
+The numbers are arithmetic. The compiler's `STRUCT_BASE`, `POINTER_BASE` and the
+rest are added to indices to make type codes. They are numbers being used as
+numbers.
 
 ## Three forms, one sentence each
 
@@ -130,7 +129,7 @@ Two cases, both in this repository:
 - `flags` is a named set of bits over an integer, several of them held at once,
   combined with `|` and asked with `flags_has`.
 - `distinct` is one integer with a meaning: a `Meters`, an `EntityId`. It
-  answers to arithmetic, which the other two do not.
+  answers to arithmetic, and `enum` and `flags` do not.
 
 ## A handle is a type, not a pointer
 
@@ -152,13 +151,12 @@ Buffer :: distinct ^u8
 device_create_buffer :: fn(handle: Device, descriptor: ^BufferDescriptor) -> Buffer
 ```
 
-A distinct type is not its representation, so passing a `Buffer` where a
-`Device` belongs is a compile error, and so is passing a raw pointer to either.
+A distinct type is a type of its own, so passing a `Buffer` where a `Device`
+belongs is a compile error, and so is passing a raw pointer to either.
 
-**What this does not give you.** A distinct type can still be built from its
-representation in a function's trailing expression, so a one-line function can
-mint one from any pointer. Treat the guarantee as "these do not get mixed up"
-rather than as "these cannot be forged".
+A distinct type can still be built from its representation in a function's
+trailing expression, so a one-line function can mint one from any pointer. The
+guarantee covers accidental mixing. Forging one takes a line written on purpose.
 
 ## A wrapper that changes nothing vouches for nothing
 
@@ -170,13 +168,12 @@ device_create_buffer :: fn(handle: ^u8, descriptor: ^u8) -> ^u8 {
 }
 ```
 
-The signature is the extern's signature. The call is as dangerous as it was. All
-that moved is the word `unsafe`, out of the caller's sight, and the gate exists
-so that word is *the complete list of places to look when something has
-corrupted memory*. A wrapper like this shortens the list without shortening
-the danger.
+The signature is the extern's signature, and the call is as dangerous as it was.
+All that moved is the word `unsafe`, out of the caller's sight. That word is the
+complete list of places to look when something has corrupted memory, and a
+wrapper like this shortens the list without shortening the danger.
 
-**Instead**, a wrapper earns the name by narrowing the signature:
+**Instead**, narrow the signature:
 
 ```frost,sketch
 // The count decides the size, and what comes back carries its length.
@@ -215,20 +212,15 @@ program leaks, silently, until it runs long enough to matter.
 Vec :: linear struct($T: Type) { storage: []T, len: i64, cap: i64 }
 ```
 
-A linear value must be consumed exactly once, and `vec_free` taking `move v` is
-what consumes it. Forgetting is a compile error. A struct holding a linear value
+A linear value must be consumed exactly once, and `vec_free` consumes one by
+taking `move v`. Forgetting is a compile error. A struct holding a linear value
 is linear too, so a `World` holding `Vec`s inherits the obligation without being
 told.
 
-This caught two real bugs the day it started working: two constructors that
-built a container only to steal its fields and abandon the shell, and both tools
-leaking a file buffer on every early-return path.
-
 ## Count the blocks in the test
 
-Linearity catches a value nobody consumed. It does not catch a free that gives
-back less than it took, because that is one function's arithmetic rather than a
-program's shape:
+Linearity catches a value nobody consumed. A free that gives back less than it
+took is one function's arithmetic, and linearity does not see it:
 
 ```frost,sketch
 // Antipattern: freeing a column allocated three replacement blocks so that a
@@ -240,7 +232,7 @@ column_free :: fn(mut c: Column) {
 }
 ```
 
-Nothing failed. The tests passed. It leaked three blocks per column.
+Nothing fails, the tests pass, and the program leaks three blocks per column.
 
 **Instead**, make the count observable and assert on it:
 
@@ -254,11 +246,10 @@ test "a world gives back every block it took" {
 ```
 
 `heap_live` is the number of blocks the runtime has out. Every container in
-`std/` has a test of this shape, and a leak is now a failing test rather than
-something a profiler finds later.
+`std/` has a test of this shape, so a leak shows up as a failing test.
 
-Take the baseline after the first round of whatever you are measuring, so
-what the test measures is the loop rather than the one-time setup.
+Take the baseline after the first round of whatever you are measuring, which
+leaves the one-time setup outside the count.
 
 ## Reading a container's element by value makes a second owner
 
@@ -268,8 +259,8 @@ what the test measures is the loop rather than the one-time setup.
 table := vec_slice($Table, world.tables)[slot.table]
 ```
 
-If `Table` owns anything, this is a copy of the owner: two values now believe
-they hold the same storage.
+If `Table` owns anything, this is a copy of the owner, and two values now
+believe they hold the same storage.
 
 **Instead.**
 
@@ -277,11 +268,10 @@ they hold the same storage.
 ref table := vec_slice($Table, world.tables)[slot.table]
 ```
 
-`ref` binds a borrow of the place rather than a copy of the value. Once the
-containers were linear the compiler started refusing the first form, which is
-how the sixteen of them in the ECS were found.
+`ref` binds a borrow of the place, so there is still one owner. With linear
+containers the compiler refuses the first form outright.
 
-Related: binding a *local* struct to a second name moves it.
+Binding a *local* struct to a second name moves it.
 
 ```frost,sketch
 root := ecs_spawn(world)
@@ -289,9 +279,9 @@ var parent := root          // root is gone from here on
 var parent := Entity { id = root.id, generation = root.generation }   // instead
 ```
 
-Binding a *parameter* to a name is the other way round: it copies, so writing
-through the binding does not reach the caller. That is what makes a function
-like `mask_with` read the way it should.
+Binding a *parameter* to a name is the other way round. It copies, so writing
+through the binding does not reach the caller, which is how a function like
+`mask_with` gets a mask of its own to edit.
 
 ```frost,sketch
 mask_with :: fn(m: Mask, index: i64) -> Mask {
@@ -320,10 +310,9 @@ log_line :: fn(text: str)
 fs_read :: fn(path: str) -> ReadResult
 ```
 
-Where C needs a terminator, add it once inside the wrapper rather than asking
-every caller for it. The remaining raw pointers in `std/` are in `mem.frost`,
-where a raw pointer is the point, and in `thread.frost`, where the OS needs an
-untyped context.
+Where C needs a terminator, add it once inside the wrapper. The raw pointers
+left in `std/` are in `mem.frost`, where a raw pointer is the subject, and in
+`thread.frost`, where the OS needs an untyped context.
 
 ## An arity in a name is a missing language feature
 
@@ -335,9 +324,9 @@ for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64), ...)
 for_each3 :: fn($A: Type, $B: Type, $C: Type, ...)
 ```
 
-The number in the name is there because each arity needed its own declaration,
-so a system reading four components had no call to make. Three functions, one
-idea, and a ceiling nobody chose.
+The number in the name is there because each arity needs its own declaration, so
+a system reading four components has no call to make. Three functions carry one
+idea, and the ceiling sits wherever the last declaration stopped.
 
 **Instead**, a compile-time list decides the arity:
 
@@ -354,26 +343,24 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 ```
 
 `for_each($integrate, world, no_filters(), $Position, $Velocity)` emits exactly
-what `for_each2` emitted, and a fourth component is a fourth element and a
-fourth parameter.
+what `for_each2` emits, and a fourth component is a fourth element and a fourth
+parameter.
 
 Three language rules carry this: a compile-time list may hold types, a list may
 be handed on by naming it, and `g(T) for T in list` in an argument list expands
 to one argument per element.
 
-## Generic code: what the compilers disagree about
+## Shapes the two compilers disagree about
 
-These are shapes where the two compilers have differed, so prefer the form that
-both accept.
+The two compilers differ on these four shapes. Write the form both accept.
 
-- **Write a match as `match value { case .Variant: ... }`.** Parentheses around
-  the scrutinee are not the syntax, and the error you get from the wrong form
-  names a later line.
-- **Do not write through a read parameter.** `into[at] = x` where `into: str` is
-  a read borrow lowered differently by each backend. Bind `var destination :=
-  into` first, which is what you meant anyway.
-- **A `(` or `[` that opens a line starts a statement.** `(table.mask & mask)`
-  on its own line is not a call of the line above it.
-- **Suspect an array literal when an imported name reads as undeclared.** A call
+- Write a match as `match value { case .Variant: ... }`. The scrutinee takes no
+  parentheses, and the error you get from the other form names a later line.
+- Do not write through a read parameter. `into[at] = x` where `into: str` is a
+  read borrow lowered differently by each backend. Bind `var destination :=
+  into` first.
+- A `(` or `[` that opens a line starts a statement. `(table.mask & mask)` on
+  its own line is a statement of its own, not a call of the line above it.
+- Suspect an array literal when an imported name reads as undeclared. A call
   inside one that reports an unknown variable is that shape.
 

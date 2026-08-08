@@ -1,11 +1,10 @@
 # Why the syntax reads this way
 
 Frost's syntax is chosen so that code is cheap to parse, cheap to grep, and hard
-to write almost-right. Every rule below is the payoff of the same three
-decisions: fewer symbols that mean more than one thing, fewer special-case
-grammar rules, and nothing invisible. Rust is the comparison throughout, because
-it is where most readers are coming from and because it made the opposite choice
-often enough to be instructive.
+to write almost-right. Every rule below follows from three decisions: fewer
+symbols that mean more than one thing, fewer special-case grammar rules, and
+nothing invisible. Rust is the comparison throughout, because it is where most
+readers are coming from and because it often chose the other way.
 
 A few points below are properties of the grammar that the implementation has not
 fully caught up to. Those are marked inline; everything else describes the
@@ -26,8 +25,8 @@ defined" is searching for `Point ::`, no matter what kind of thing Point is. In
 Rust you need to know what kind of item you are looking for before you can grep
 for it.
 
-One grammar rule instead of five. A smaller parser, a smaller spec, and one
-pattern to write rather than five keyword orderings to keep straight.
+One grammar rule instead of five: a smaller parser, a smaller spec, and one
+pattern to write instead of five keyword orderings to keep straight.
 
 Functions become ordinary values by construction. See the next section.
 
@@ -43,7 +42,7 @@ let f = |a: i64, b: i64| -> i64 { a + b }; // closure syntax, pipes
 
 The `fn` form is not an expression. You cannot lift it out of item position and
 drop it into an expression to get a value, so Rust needed a second, separate
-syntax (the pipe form) for "function as a value," with its own type story
+syntax (the pipe form) for a function as a value, with its own type story
 (closures are anonymous, unnameable types, distinct from `fn` pointers) and
 coercion rules between the two.
 
@@ -55,7 +54,7 @@ add :: fn(a: i64, b: i64) -> i64 { a + b }
 
 This is the same shape as `MAX :: 10`. The right-hand side,
 `fn(a: i64, b: i64) -> i64 { a + b }`, is a complete function-valued expression.
-The binding just names it. So the anonymous form falls out of the grammar. Delete
+The binding names it. So the anonymous form falls out of the grammar. Delete
 the name and what remains is already a legal expression.
 
 ```frost,sketch
@@ -67,27 +66,25 @@ callbacks := [
 ]
 ```
 
-There is one function-literal syntax, and "named function" is that literal given
-a name. Nobody had to design anonymous functions as a feature. They are what the
-grammar produces when you omit the name.
+There is one function-literal syntax, and a named function is that literal given
+a name. Anonymous functions are what the grammar produces when you omit the
+name.
 
 *Implementation status.* The forms above compile and run on both native
 backends. An anonymous function literal is lifted to a synthetic top-level
 function and referenced by its address, so passing one inline or binding it to a
-name both work. There is no capture, which is what keeps this pure lambda
-lifting rather than a closure.
+name both work. There is no capture, which makes this lambda lifting.
 
-Caveat. Functions, not closures. This gives anonymous functions for free,
-but not closures in the capturing sense. Whether `fn(x) { x + y }` may capture
-`y` from the enclosing scope, and how (by value, by borrow, with what lifetime),
-is a semantic decision the uniform syntax does not answer. Jai and Odin, which
-use this syntax, mostly punt on capture. Nested function literals cannot close
-over locals, precisely because capture drags in the ownership questions that
-forced Rust's closure machinery (`Fn`/`FnMut`/`FnOnce`, `move`) into existence. A
-borrow-checked language has to pick, either no capture (functions are plain
-pointers, maximally simple), or explicit capture lists, which reintroduce some
-syntax but keep the "everything is written down" property. Frost currently takes
-the first path.
+The caveat is capture. Anonymous functions come free; closures in the capturing
+sense do not. Whether `fn(x) { x + y }` may capture `y` from the enclosing
+scope, and how (by value, by borrow, with what lifetime), is a semantic decision
+the uniform syntax does not answer. Jai and Odin, which use this syntax, mostly
+punt on capture. Nested function literals cannot close over locals, precisely
+because capture drags in the ownership questions that forced Rust's closure
+machinery (`Fn`/`FnMut`/`FnOnce`, `move`) into existence. A borrow-checked
+language has to pick, either no capture (functions are plain pointers) or
+explicit capture lists, which add syntax but keep everything written down. Frost
+takes the first path.
 
 ## 3. `:=` for declaration, `=` for assignment
 
@@ -96,10 +93,9 @@ identical, differing only by a keyword. Writing `let` twice is legal and
 silently creates a second variable that shadows the first.
 
 Frost spells introduction (`:=`) and mutation (`=`) with different operators, so
-the two intents are distinct in the grammar rather than distinguished by a
-keyword. This is the mechanism by which redeclaring a variable, or assigning to
-one that was never introduced, can be turned into a diagnostic instead of a
-silent success.
+the two intents are distinct in the grammar instead of distinguished by a
+keyword. Redeclaring a variable, or assigning to one that was never introduced,
+can then be a diagnostic instead of a silent success.
 
 *Implementation status.* Assigning with `=` to a name that was never introduced
 is already a located compile error. Redeclaring a name with `:=` still shadows,
@@ -111,9 +107,8 @@ distinct operators make easy to enforce either way.
 `Point { x = 1, y = 2 }` uses `=` for field initialization, so `:` only ever
 means type ascription. Rust overloads `:` for both type annotation and struct
 field init, which is part of why Rust never shipped general type ascription. The
-grammar collides. One symbol, one meaning is the kind of local unambiguity that
-helps a parser and a reader alike. When you see `:` in Frost it always means the
-same thing.
+grammar collides. One symbol, one meaning helps a parser and a reader alike.
+When you see `:` in Frost it always means the same thing.
 
 ## 5. Mandatory parentheses on conditions
 
@@ -121,10 +116,9 @@ same thing.
 paren-free `if` created a real ambiguity. In `if x == Foo { }`, is `Foo {` the
 start of a struct literal or the start of the if-body? Rust resolves it with a
 special rule banning struct literals in condition position. `if (cond) { }` is
-context-free with no such carve-out. Slightly more typing, a meaningfully simpler
+context-free with no such carve-out. Slightly more typing, one fewer special
 rule. (Frost still uses one small local look-ahead elsewhere, to tell a struct
-literal from a `match` body, so this trade buys simplicity, not its total
-absence.)
+literal from a `match` body.)
 
 ## 6. Postfix deref `p^`
 
@@ -136,10 +130,10 @@ p^.field
 ```
 
 Rust's prefix `*` produces `(*p).field` in raw form, which is why Rust added
-invisible auto-deref through `.` to make it livable. Postfix deref is explicit
-and ergonomic at once, so the language needs no auto-deref machinery, and a
-reader (or a generator) never has to reason about where the compiler inserted a
-deref.
+invisible auto-deref through `.` to make it livable. Postfix deref stays
+explicit and stays readable, so the language needs no auto-deref machinery, and
+a reader (or a generator) never has to reason about where the compiler inserted
+a deref.
 
 ## 7. One pointer type `^T`
 
@@ -152,8 +146,7 @@ to keep in sync, and less to write.
 The turbofish `foo::<T>()` exists because `foo<T>()` collides with `a < b > (c)`.
 With angle brackets, Rust cannot tell `<` for generics apart from `<` for
 less-than in expression position. Frost passes a type as an ordinary argument
-marked with `$` (`foo($u32)`), sidestepping the `<` disambiguation entirely, one
-of the ugliest corners of Rust's grammar.
+marked with `$` (`foo($u32)`), so the `<` disambiguation never arises.
 
 ## 9. A multi-return names its values
 
@@ -190,7 +183,7 @@ multi-return at all: you return a struct, and its fields are named. Where the
 question has been revisited the direction is toward names, and C# 7 added named
 tuple elements because `Item1` and `Item2` failed readers. Frost has no
 positional struct literal and no positional variant payload, so an unnamed
-return list would have been the one aggregate whose fields nobody named.
+return list would be the one aggregate whose fields nobody names.
 
 Use `_` for a value you have no use for:
 
@@ -206,26 +199,26 @@ The struct the list becomes has no name a program can write, and there is no
 tuple type. Exposing that struct would make `(A, B)` a type, and a pair could
 then travel through a program with nobody naming the aggregate.
 
-## 10. A stated layout is a word, not a sigil or an attribute
+## 10. A stated layout is a word
 
 `packed struct` and `field: T align(16)` say what the memory looks like. Three
-spellings were available and the surface already answers which one to take.
+spellings are possible: an attribute, a sigil, or a word.
 
 An attribute, `#[repr(packed)]`, needs a second grammar with its own bracket, and
 that grammar then invites everything else that could be attached to a
-declaration. Frost has no attributes and adding one for a single feature buys a
-whole namespace nobody asked for.
+declaration. Frost has no attributes, and adding one for a single feature opens
+a whole namespace.
 
-A sigil is shorter and unreadable. `~struct` is a symbol a reader has to look up,
-and it collides with the rule that a symbol in Frost is an operator.
+A sigil is shorter. `~struct` is a symbol a reader has to look up, and it
+collides with the rule that a symbol in Frost is an operator.
 
-A word costs nothing. `packed` sits where `linear` sits, which is the position
-every marker on a type declaration already takes, so a reader who knows one
-knows the other. Neither word is reserved: `packed` marks the declaration only
-where `struct` follows it, and `align` only where `(` follows it. Reserving them
-would cost every program that has a local called `packed`, and `std/slab.frost`
-is one. The shape after a word decides what the word means, the same way
-`flags`, `value`, `test` and `export` read.
+A word needs no new grammar. `packed` sits where `linear` sits, which is the
+position every marker on a type declaration already takes, so a reader who knows
+one knows the other. Neither word is reserved: `packed` marks the declaration
+only where `struct` follows it, and `align` only where `(` follows it. Reserving
+them would cost every program that has a local called `packed`, and
+`std/slab.frost` is one. The shape after a word decides what the word means, the
+same way `flags`, `value`, `test` and `export` read.
 
 There is one form for alignment, on a field, and none for the declaration. A
 struct's alignment is the widest its fields ask for, so a second form saying the
@@ -253,7 +246,7 @@ The cost is that a call the compiler cannot work out is refused, with no
 fallback to running it later. Falling back would make `LANES` a number in one
 place and a call in another, which is two meanings for one declaration.
 
-## 12. A vector is an array, not a type of its own
+## 12. A vector is an array
 
 Zig writes `@Vector(4, f32)`, Odin writes `#simd[4]f32`, Rust writes
 `Simd<f32, 4>`. Frost writes `[4]f32`, which is the array it already had.
@@ -262,27 +255,26 @@ A separate vector type would need its own layout rule, its own ABI answer, its
 own coercion to and from the array it is shaped like, and a spelling. Every one
 of those is a place for the two to disagree. The array already answers all four,
 and a fixed array of numbers is exactly what a vector register holds, so the
-type carries no information the array did not.
+type carries no information the array does not.
 
 What the separate type buys elsewhere is a place to hang the operators without
-giving arrays elementwise arithmetic. Frost gives arrays the arithmetic instead,
-which costs nothing: `+` over two arrays was an error, so no program changes
-meaning.
+giving arrays elementwise arithmetic. Frost gives arrays the arithmetic instead.
+`+` over two arrays is otherwise an error, so nothing else changes meaning.
 
 Two rules keep it from becoming a hidden loop. The length is a power of two and
 the whole vector is at most sixty-four bytes, which is a register's worth. Past
 that an operator would be a loop the reader never wrote, and hidden control flow
-is what this document rules out everywhere else.
+is ruled out everywhere else here.
 
-The trade is that a program wanting elementwise arithmetic over a thousand
-numbers writes the loop. That is the same trade the length rule makes, and the
-loop is the thing that was going to happen either way.
+A program wanting elementwise arithmetic over a thousand numbers writes the
+loop. That is the same cost the length rule imposes, and the loop was going to
+happen either way.
 
 ## 13. A `case` says what it covers, and nothing else
 
 An arm may name several patterns joined by `|`, and an arm over whole numbers
-may name a span. Both were added on one axis: a match's coverage should be
-readable at its arms.
+may name a span. Both follow one rule: a match's coverage is readable at its
+arms.
 
 The span is where that shows. Without it the way to write `case 1..10:` is a
 wildcard arm holding an `if`, which is an arm that misstates its own coverage:
@@ -292,15 +284,14 @@ whole shape of the match. Both stay decidable: the covered set of an
 alternative list is the union of its parts, and a span covers what it names, so
 the rule about covering every variant goes on counting.
 
-The same axis settled three older questions the same way. A name in a pattern
-is the value it stands for, never a binding: `case CH_0:` next to
-`case CH_0..=CH_9:` cannot mean compare in one and bind in the other, and `_`
-is the arm that covers the rest. A decimal and a piece of text are refused,
-because covering one of the reals is a claim nobody can act on and text is
-compared rather than counted. And an arm is read against the union of every arm
-above it, which is what a reader does looking down the arms, so an arm nothing
-reaches is named where it is written whether one earlier arm took its values or
-three did between them.
+The same rule decides three more questions. A name in a pattern is the value it
+stands for, never a binding: `case CH_0:` next to `case CH_0..=CH_9:` cannot
+mean compare in one and bind in the other, and `_` is the arm that covers the
+rest. A decimal and a piece of text are refused, because covering one of the
+reals is a claim nobody can act on and text is compared rather than counted. And
+an arm is read against the union of every arm above it, which is what a reader
+does looking down the arms, so an arm nothing reaches is named where it is
+written whether one earlier arm took its values or three did between them.
 
 There are no guards. `case n if n > 5:` puts an expression in pattern position,
 and a guarded arm covers nothing the compiler can count, so exhaustiveness would
@@ -335,7 +326,7 @@ Capture is unanswered. The uniform function syntax gives anonymous functions and
 leaves the closure-capture question open, and answering it later means either no
 capture or capture lists.
 
-## Summary
+## Rust and Frost side by side
 
 | Property | Rust | Frost |
 |---|---|---|
@@ -348,7 +339,3 @@ capture or capture lists.
 | Deref chains | Auto-deref magic | Explicit postfix `^` |
 | Raw pointer types | Two | One |
 | Generic call syntax | Turbofish workaround | `$` sigil, no ambiguity |
-
-Almost every difference reduces context-sensitivity, overloaded symbols, or
-invisible compiler behavior. That is the design thesis: code that is cheap to
-parse, cheap to grep, and hard to write almost-right.

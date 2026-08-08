@@ -5,10 +5,9 @@ time, has no garbage collector, no runtime, no exceptions, and no hidden
 allocation. It is memory-safe without lifetimes: a borrow is a parameter mode
 and cannot escape the call it was made for.
 
-This page is the whole language, in order, as code. Every block below is
-compiled by the test suite, so what is written here is what the compiler
-accepts. Blocks marked `sketch` are shapes rather than programs and are the only
-ones that are not.
+This page covers the whole language, in order, as code. The test suite compiles
+every block below, so what is written here is what the compiler accepts. Blocks
+marked `sketch` show a shape and skip compilation.
 
 Run a file with `frost program.frost`. Keep the executable with
 `frost program.frost --link -o program`.
@@ -42,8 +41,8 @@ main :: fn() -> i64 {
 }
 ```
 
-There are no methods and no `self`. Behaviour lives in free functions, and the
-data is just data.
+There are no methods and no `self`. Write behaviour as free functions over
+plain structs.
 
 ## Primitive types
 
@@ -82,9 +81,8 @@ main :: fn() -> i64 {
 }
 ```
 
-Arithmetic traps on overflow on every backend. `wrap_add`, `wrap_sub` and
-`wrap_mul` are the spellings for arithmetic that is meant to wrap, which is what
-a hash function wants.
+Arithmetic traps on overflow on every backend. Use `wrap_add`, `wrap_sub` and
+`wrap_mul` where the arithmetic is meant to wrap, as in a hash function.
 
 ```frost
 import "io.frost"
@@ -97,8 +95,8 @@ main :: fn() -> i64 {
 }
 ```
 
-A `distinct` type has the representation of what it is written over and none of
-its interchangeability, so a length and a count stop being the same type.
+A `distinct` type has the representation of the type it is written over and an
+identity of its own, so a length and a count are two types.
 
 ```frost
 import "io.frost"
@@ -116,8 +114,8 @@ main :: fn() -> i64 {
 ## Operators
 
 Prefix `-` negates a number and `!` negates a truth value. There is no
-truthiness: `!` takes a `bool` and nothing else, and `count == 0` is how you ask
-whether a number is zero.
+truthiness. `!` takes a `bool`, and `count == 0` is how you ask whether a number
+is zero.
 
 ```frost
 import "io.frost"
@@ -151,8 +149,8 @@ main :: fn() -> i64 {
 }
 ```
 
-`!` is held to its spacing, because `!` also marks a failure set. `!ready` is a
-negation and `-> T ! E` is a signature.
+Spacing tells the two uses of `!` apart. `!ready` is a negation, and
+`-> T ! E` marks a failure set.
 
 ## Control flow
 
@@ -253,8 +251,8 @@ main :: fn() -> i64 {
 }
 ```
 
-A name in a pattern is the value it stands for rather than a binding, so a
-constant reads as itself:
+A name in a pattern is the value it stands for, so a constant matches the value
+it was declared with:
 
 ```frost
 import "io.frost"
@@ -300,9 +298,8 @@ main :: fn() -> i64 {
 
 The contexts that supply the type are the ones that state it: an annotation, a
 parameter's declared type, a field's declared type, a declared return type, the
-place being assigned to, and an array's element type. Where there is nothing to
-read it from, it is an error naming what could not be resolved rather than a
-guess.
+place being assigned to, and an array's element type. Where none of those is
+present, the compiler reports an error naming the type it could not resolve.
 
 Layout can be stated where it has to match something outside the program.
 
@@ -325,8 +322,8 @@ main :: fn() -> i64 {
 
 ## Functions
 
-How a parameter travels is written on the parameter, and the call site says
-nothing. There is no `&` in the language.
+How a parameter travels is written on the parameter, and the call site writes
+the argument alone. There is no `&` in the language.
 
 | mode | written | means |
 | --- | --- | --- |
@@ -379,8 +376,8 @@ main :: fn() -> i64 {
 ```
 
 There is no tuple type behind that. A return type list cannot be stored in a
-field, passed as an argument, or bound to one name; a program that wants to pass
-a pair around declares a struct.
+field, passed as an argument, or bound to one name. To pass a pair around,
+declare a struct.
 
 A function is a value, and a parameter may hold one. There are no capturing
 closures.
@@ -400,8 +397,8 @@ main :: fn() -> i64 {
 ## Ownership, moves, and linear types
 
 A struct or enum passed by value *moves*. Using it again is refused where it is
-written. A `linear` type must be consumed exactly once, which is what Frost has
-instead of destructors.
+written. A `linear` type must be consumed exactly once, and takes the place of a
+destructor.
 
 ```frost
 import "io.frost"
@@ -467,22 +464,22 @@ main :: fn() -> i64 {
 }
 ```
 
-A call that can fail answers with a question, and an expression statement reads
-neither side, so writing one for effect alone is refused. `_ := call()` says the
-answer was meant to go unread.
+A call that can fail answers with the two-variant enum, and an expression
+statement reads neither arm, so writing one for effect alone is refused.
+`_ := call()` says the answer was meant to go unread.
 
-`errdefer` runs only where the function leaves through its failure set, which is
-what the resource a `?` steps over needs.
+`errdefer` runs only where the function leaves through its failure set, which
+releases a resource that a `?` would otherwise step over.
 
 ## Borrows that are written down
 
 The borrow a parameter mode gives is implicit, and an implicit borrow cannot
-escape: it may not be stored in a field, put in an array, or returned. That is
-the rule that removes lifetimes.
+escape: it may not be stored in a field, put in an array, or returned. That rule
+takes the place of lifetimes.
 
 `ref T` is the explicit, checked exception. It binds a second name for a place,
-and a function may answer with one, which is what lets a container hand back an
-element rather than a copy of it.
+and a function may answer with one, so a container can hand back the element
+itself.
 
 ```frost
 import "io.frost"
@@ -504,10 +501,10 @@ main :: fn() -> i64 {
 }
 ```
 
-A `ref T` is a checked address: reading and writing through it needs no
+A `ref T` is a checked address. Reading and writing through it needs no
 `unsafe`, and it may still not be stored in a field or an array. A slice `[]T`
-*is* storable, and the frame and region checks are what keep a stored one
-honest.
+*is* storable, and the frame and region checks keep a stored one from outliving
+what it views.
 
 ## Generics specialize at compile time
 
@@ -551,9 +548,9 @@ main :: fn() -> i64 {
 }
 ```
 
-A generic may state what it needs of a type, over a fixed vocabulary of
-questions the compiler already answers. Nothing registers into it and nothing
-implements it.
+A generic may state what it needs of a type, drawing on a fixed vocabulary of
+questions the compiler already answers. There is nothing to register and nothing
+to implement.
 
 ```frost
 import "io.frost"
@@ -569,7 +566,7 @@ main :: fn() -> i64 {
 ## Higher-order code without traits or closures
 
 An algorithm takes the operation it needs as a compile-time function parameter.
-The call inside the specialization is direct rather than through a pointer.
+The call inside the specialization is a direct call.
 
 ```frost
 import "io.frost"
@@ -589,10 +586,10 @@ main :: fn() -> i64 {
 ```
 
 When several operations travel together they go in a struct whose fields are
-functions. That is a capability bundle, and it is what stands in for a trait: a
-bundle is a type, an implementation is a constant of it, and the call names
-which one it means. Nothing is registered, nothing is searched for, and there is
-no coherence rule.
+functions. That is a capability bundle, and it takes the place of a trait. A
+bundle is a type, an implementation is a constant of that type, and the call
+names which one it means. Nothing is registered, nothing is searched for, and
+there is no coherence rule.
 
 ```frost,sketch
 Ordering :: struct($T: Type) {
@@ -608,8 +605,8 @@ sort($i64, $i64_ascending, view)
 ```
 
 Dropping the `$` gives the runtime version of the same declaration: a
-`fn(...) -> T` parameter holds a pointer, and a bundle without it is a struct
-holding several.
+`fn(...) -> T` parameter holds a pointer, and a bundle written that way is a
+struct holding several.
 
 ## A compile-time list of arguments
 
@@ -632,14 +629,14 @@ main :: fn() -> i64 {
 }
 ```
 
-There is no compile-time string parsing, no recursion, and no unbounded loop:
-everything walks a list whose length the call fixed.
+There is no compile-time string parsing, no recursion, and no unbounded loop.
+Every compile-time `for` walks a list whose length the call fixed.
 
 ## Asking a type about itself
 
 `sizeof`, `typename` and `type_id` are compile-time constants, and `fields(T)`
-walks a struct's layout, which is how a vertex format or a descriptor table is
-written over the struct rather than beside it.
+walks a struct's layout. Use it to derive a vertex format or a descriptor table
+from the struct that the data already lives in.
 
 ```frost
 import "io.frost"
@@ -660,8 +657,8 @@ main :: fn() -> i64 {
 ## Handles, slabs, and columns
 
 Long-lived data lives in a container and is named by a `Handle`, a small
-copyable value rather than a pointer. A freed slot bumps its generation, so a
-stale handle can never read the new occupant.
+copyable value. A freed slot bumps its generation, so a stale handle fails the
+check instead of reading the new occupant.
 
 ```frost
 import "slab.frost"
@@ -687,8 +684,8 @@ main :: fn() -> i64 {
 ```
 
 `columns<T, N>` is the same container with each field in its own array, so a
-pass reading one field across many elements walks a tight column. Moving a
-system to structure-of-arrays is changing the type and the prefix.
+pass reading one field across many elements walks a tight column. To move a
+system to structure-of-arrays, change the type and the call prefix.
 
 ```frost
 import "columns.frost"
@@ -711,9 +708,9 @@ main :: fn() -> i64 {
 ## Allocation is a capability
 
 An allocator is an ordinary struct a program declares, and an allocation is an
-ordinary call. `uses A` on a function says it draws a capability of type `A`, and
-`with a { ... }` says which one for every call inside the block. The block is
-also the region: a pointer into `a` may not leave it.
+ordinary call. `uses A` on a function says it draws a capability of type `A`,
+and `with a { ... }` says which one for every call inside the block. The block
+is also the region: a pointer into `a` may not leave it.
 
 ```frost
 import "io.frost"
@@ -744,8 +741,8 @@ main :: fn() -> i64 {
 ```
 
 The body reaches the capability by the type's own name with the first letter
-lowercased, which is why `make_two` writes `arena` with no parameter of that
-name in its signature.
+lowercased. That is why `make_two` writes `arena` while its signature declares
+no parameter by that name.
 
 ## Unchecked operations
 
@@ -771,8 +768,8 @@ main :: fn() -> i64 {
 }
 ```
 
-`cast($T, value)` converts between scalars where the conversion loses something,
-and needs no block because nothing about it is unchecked.
+`cast($T, value)` converts between scalars where the conversion loses something.
+It needs no block, since the result is defined for every input.
 
 ```frost
 import "io.frost"
@@ -802,8 +799,8 @@ draw :: extern fn(value rect: Rect)
 
 A file is a module. `import` names another file whose declarations join this
 one's, and `export` says which of this file's names leave it. The namespace is
-flat: a name is the same name everywhere, which is what makes it greppable, and
-two modules exporting one name is a refusal rather than a shadowing rule.
+flat, so a name is the same name everywhere and one grep finds every use of it.
+Two modules exporting one name is a refusal.
 
 ```frost,sketch
 import "io.frost"
@@ -828,9 +825,8 @@ main :: fn() -> i64 { 0 }
 
 ## Vectors
 
-A small array of floats takes the arithmetic operators lane by lane. There is no
-vector type: `[4]f32` is the array it looks like, and the operators are what is
-added.
+A small array of floats takes the arithmetic operators lane by lane. `[4]f32` is
+the array it looks like, and Frost defines the operators over it.
 
 ```frost
 import "io.frost"
@@ -861,8 +857,9 @@ the signature instead of an exception.
 ## Where to go next
 
 - [A tour of Frost](tour.md), the same ground at a slower pace.
-- [Coming from Rust](coming-from-rust.md), if that is where you are arriving from.
+- [Coming from Rust](coming-from-rust.md), if Rust is where you are arriving
+  from.
 - [The language reference](reference/conformance.md), which states every rule in
   full.
-- [Design philosophy](design/philosophy.md), for why each of the absences above
-  is deliberate.
+- [Design philosophy](design/philosophy.md), for the reasoning behind the
+  absences above.

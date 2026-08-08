@@ -22,8 +22,6 @@ held(world)
 
 The parameters of an indirect call travel exactly as the signature writes them:
 `fn(mut World)` borrows, so the world is not consumed by being handed to one.
-This is what a schedule of systems is built from, where which functions run is
-decided while the program runs rather than where each call is written.
 
 ## 6.2 Operators
 
@@ -33,11 +31,8 @@ precedence in 14.1, are `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
 operators are left-associative.
 
 `!` applies to `bool` and answers the opposite of it. Given anything else it is
-refused, naming the type it was given: `!count` over a number is
-`count == 0` written a second way, and reading it as one would be a conversion
-the reader never wrote. `x == false` says the same as `!x` and both are
-available, since the first is `==` comparing two values of a type the way it
-compares any others.
+refused, naming the type it was given. `x == false` says the same as `!x`, and
+both are available.
 
 ## 6.3 References and dereference
 
@@ -51,10 +46,9 @@ compares any others.
   anything local. Naming a `mut` parameter always means the caller's value.
 - Binding a parameter to a name (`x := p`) binds a *copy* of what it holds, so
   writing through `x` does not reach back to the caller. A second name for the
-  same place is `ref x := p`, which is the one form that asks for one, and a
-  call answering with a `ref T` (3.3) hands one out on purpose and keeps it. A
-  parameter of a `linear` type cannot be bound this way at all, since a copy
-  would be a second owner of something consumed exactly once.
+  same place is `ref x := p`, and a call answering with a `ref T` (3.3) hands
+  one out. A parameter of a `linear` type cannot be bound this way at all, since
+  a copy would be a second owner of something consumed exactly once.
 
 ## 6.4 Calls, indexing, and field access
 
@@ -76,11 +70,9 @@ Shape::Player                         // unit variant
 Struct and enum-variant construction are recognized only when the operand to the
 left of `{` or `::` is a bare identifier.
 
-**The leading dot.** `.Variant` names a variant without naming its enum, and
-takes the enum from the type the surrounding code expects. It is the
-construction counterpart of the `case .Variant` a pattern writes (6.7): the code
-does not repeat a type the compiler already knows, and it does not have to be
-rewritten when the enum is renamed.
+`.Variant` names a variant without naming its enum, and takes the enum from the
+type the surrounding code expects. It is the construction counterpart of the
+`case .Variant` a pattern writes (6.7).
 
 The contexts that supply a type are the ones that state it:
 
@@ -98,41 +90,30 @@ variant of the failure set when it has one and a variant of the value type
 otherwise. That is how `return .Denied` fails and `return .Some { value = 3 }`
 succeeds in the same function.
 
-A dot with nothing to take its enum from is an error naming the variant, not a
-guess. `c := .Red` has no annotation and no context, so it is rejected and the
-fix is `c : Color = .Red` or `c := Color::Red`.
+A dot with nothing to take its enum from is an error naming the variant.
+`c := .Red` has no annotation and no context, so it is rejected and the fix is
+`c : Color = .Red` or `c := Color::Red`.
 
-**The inferred literal.** `{ x = 1, y = 2 }` is a struct literal that leaves out
-a type name the context already carries. It reads from the same contexts the
-leading dot does, and the two nest: a literal's field supplies the type of a
-literal written inside it, so
+`{ x = 1, y = 2 }` is a struct literal that leaves out a type name the context
+already carries. It reads from the same contexts the leading dot does, and the
+two nest: a literal's field supplies the type of a literal written inside it, so
 `{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` and
 `{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
 
 Every field is still named. There is no positional literal, here or anywhere
-else in the language, and there is not going to be one. A field's name is what
-says where the value lands, and a positional form would make the meaning of a
-literal depend on the declaration order of a struct the reader is not looking
-at. Leaving out a type the compiler already knows costs nothing. Leaving out the
-field names costs the reader the layout, which goal 1 of
-[philosophy.md](../design/philosophy.md) says is the design itself.
+else in the language. A field's name is what says where the value lands, and
+the layout that shows the reader is goal 1 of
+[philosophy.md](../design/philosophy.md).
 
 A literal with nothing to take its type from is an error, the same as a bare
 dot. `p := { x = 1, y = 2 }` is rejected and the fix is `p : Point = { .. }` or
 `p := Point { .. }`.
 
-The two compilers reach the same answer by different routes. The bootstrap
-resolves both forms while lowering, where every expression already carries the
-type its context expects. The self-hosted compiler resolves a variant's tag and
-a literal's layout at parse time, so either form written as an argument to a
-function defined later in the program is recorded and patched once every
-signature is parsed, fields and all.
+Either form written as an argument to a function declared later in the program
+resolves once every signature is parsed, fields and all.
 
 A literal must write every field. There is no partial construction, no
-`..rest`, and no implicit zero. A field left out would name storage nothing
-wrote, and reading it afterwards would read whatever was there, which is exactly
-the shape chapter 8 exists to make unrepresentable. A missing field is an error
-that names it.
+`..rest`, and no implicit zero. A missing field is an error that names it.
 
 ## 6.6 `if` expression
 
@@ -146,15 +127,14 @@ their trailing expressions are the value.
 
 An `if` answers with a value when both of its arms do. An arm whose block ends
 in a statement answers with nothing, and then the whole `if` answers with
-nothing however the other arm ended, which is what makes
+nothing however the other arm ended, so
 
 ```frost,sketch
 if (queued) { spawn(world) } else { report(world) }
 ```
 
-an ordinary statement rather than an expression whose two arms disagree. An `if`
-with no `else` never answers with a value, since the path where the condition
-was false has none to give.
+is an ordinary statement. An `if` with no `else` never answers with a value,
+since the path where the condition was false has none to give.
 
 ## 6.7 `match` expression
 
@@ -181,14 +161,11 @@ or the closing `}` begins. Patterns:
 - Wildcard, `_`.
 
 A name in a pattern is the value it stands for, and a name that stands for no
-constant is refused. `_` is the arm that covers the rest, and the only one:
-`case CH_0:` and `case CH_0..=CH_9:` read the one name the one way, which they
-did not when a name bound whatever was matched instead.
+constant is refused. `_` is the arm that covers the rest, and the only one.
 
 What a `case` covers is a set a reader can count, so a decimal and a piece of
-text are both refused. A decimal covers one of the reals, which is a claim
-nobody can act on, and text is compared rather than counted; `if (x == 1.5)`
-and `if (x == "hi")` are the spellings.
+text are both refused. A decimal covers one of the reals, and text is compared
+rather than counted. `if (x == 1.5)` and `if (x == "hi")` are the spellings.
 
 An arm may name several patterns separated by `|`, and its body runs for any of
 them:
@@ -209,9 +186,8 @@ What such an arm covers is the union of its alternatives, so the rule that
 every variant is covered goes on counting. Three shapes may not be an
 alternative. A variant pattern binding payload fields may not, because two
 variants hold two shapes and a name reading a field out of them would mean two
-things; give it an arm of its own. `_` and a bare identifier may not, because
-each already covers everything and the alternatives beside it would say
-nothing.
+things. Such a pattern takes an arm of its own. `_` and a bare identifier may
+not, because each already covers everything.
 
 A range arm covers a span of whole numbers, with the two spellings meaning what
 they do after `in` (6.9). Both ends are whole numbers, written out or named by
@@ -236,18 +212,16 @@ kind_of :: fn(c: i64) -> i64 {
 }
 ```
 
-A range never removes the need for a `case _`. What a match over an enum covers
-is countable, and what a match over whole numbers covers is not: proving that a
-run of spans leaves nothing out is analysis this language does not carry, so
-the arm naming the rest is what says the match is finished.
+A range never removes the need for a `case _`. Proving that a run of spans
+leaves no whole number out is analysis this language does not carry, so the arm
+naming the rest is what says the match is finished.
 
 An arm every value of which the arms above it already take is refused where it
-is written. What an arm covers is the union of what its alternatives name, and
-it is read against the union of every arm above it, which is the question a
-reader asks looking down the arms: `case 1..5:`, `case 5..10:`, `case 3..7:`
-refuses the third, because between them the first two take every value it has.
-Since `_` covers everything, an arm below one is refused by that same rule
-rather than by a rule of its own.
+is written. What an arm covers is the union of what its alternatives name, read
+against the union of every arm above it: `case 1..5:`, `case 5..10:`,
+`case 3..7:` refuses the third, because between them the first two take every
+value it has. Since `_` covers everything, an arm below one is refused by that
+same rule.
 
 An alternative and a range are both refused inside a tuple pattern, which
 compares one value per part.
@@ -263,9 +237,8 @@ called with a type argument the same way `ptr_to` and `cast` are recognized at
 a call, and each stays usable as an ordinary identifier elsewhere.
 
 - `sizeof(T)` is a compile-time constant.
-- `cast($T, value)` converts a scalar to `T` when the conversion loses
-  something, which is the only time it is needed and the only time it is
-  accepted quietly (3.1a). It is safe and needs no block.
+- `cast($T, value)` converts a scalar to `T` where the conversion loses
+  something (3.1a). It is safe and needs no block.
 - `type_id(T)` is a number standing for the type, and `typename(T)` is its name
   as the source spells it, as a `str`. Both are compile-time constants, fixed
   where the type is known, so a generic asked inside its own body answers with
@@ -276,9 +249,8 @@ a call, and each stays usable as an ordinary identifier elsewhere.
   and calling an `extern fn` that is not marked `safe`. Outside one each is a
   compile error. Chapter 6a is the rule, the list, and `--audit-unsafe`.
 
-The block's value is its trailing expression, the same as any other block, so
-`p := unsafe { ptr_cast($T, slot) }` is how a gated operation's result leaves
-one.
+The block's value is its trailing expression, the same as any other block, so a
+gated operation's result leaves one as `p := unsafe { ptr_cast($T, slot) }`.
 
 ## 6.9 Ranges
 

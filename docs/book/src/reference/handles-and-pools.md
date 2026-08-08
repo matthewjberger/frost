@@ -10,8 +10,7 @@ ordinary code. `examples/native/generic_slab.frost` is a pool generic over both
 element type and capacity, built on value generics (`[N]T` storage, 11.1a) and
 slices (`slice_len` to recover the capacity). The compiler provides the pieces,
 arrays, handles, value generics, `ptr_to`/`ptr_cast`, and the byte buffer, not
-the pool itself. This is the data-oriented memory model expressed in the
-language, and the direction is written up in
+the pool itself. The design is written up in
 [pools-and-columns.md](../design/pools-and-columns.md) and
 [allocators.md](../design/allocators.md).
 
@@ -19,13 +18,11 @@ The runtime has no pool in it. It holds aborts, assertions, IO, and the checks a
 handle deref calls (`frost_rt_bounds_check`, `frost_rt_generation_check`, and
 `frost_rt_slot`, which runs both and answers with the validated index). Those
 three are Frost, in `runtime/runtime.frost`. Nothing in the runtime allocates or
-hands out a slot. The pool
-the standard library offers is
-`std/slab.frost`, ordinary Frost: a `Slab<T, N>` carrying `storage`,
-`generations`, `free_list` and `free_count`, with `slab_reset`, `slab_full`,
-`slab_insert`, `slab_alive` and `slab_release` written out as ordinary
-functions over them. Reaching one through a handle is the one part the compiler
-supplies (10.2).
+hands out a slot. The pool the standard library offers is `std/slab.frost`,
+ordinary Frost: a `Slab<T, N>` carrying `storage`, `generations`, `free_list`
+and `free_count`, with `slab_reset`, `slab_full`, `slab_insert`, `slab_alive`
+and `slab_release` written out as ordinary functions over them. Reaching one
+through a handle is the one part the compiler supplies (10.2).
 
 ## 10.1a Structure-of-arrays columns
 
@@ -38,7 +35,7 @@ a compiler-synthesized type, not a library struct: for a `T` with fields
 named after that field, plus the same `generations` / `free_list` / `free_count`
 bookkeeping a pool carries.
 
-Naming each column after its field gives two accesses from existing machinery.
+Each column is named after its field, which gives two accesses.
 `c.field` is ordinary field access yielding the whole `[N]t` array, which coerces
 to a `[]t` slice for a hot loop at no cost. `c[handle].field` selects the column
 and then indexes it at the handle's slot, the mirror of a pool (which indexes
@@ -52,20 +49,17 @@ second-class borrow cannot express. Everything else is a library,
 `live_count`. See [pools-and-columns.md](../design/pools-and-columns.md).
 
 `slab_new()` is a zeroed `Slab<T, N>` of the type the context wants, the twin of
-`columns_new()`. A slab's arrays have lengths worked out from `N`, so writing
-them out at every construction was the worst part of using one, and the
-`live_words` array's length is `(N + 63) / 64`, which is a number a reader
-should not have to work out. Construct with `slab_new()` and then `slab_reset`,
-which is the contract a columns container already had.
+`columns_new()`. A slab's array lengths follow from `N`, and the `live_words`
+array's length is `(N + 63) / 64`. Construct with `slab_new()` and then
+`slab_reset`, the same contract a columns container has.
 
 ## 10.1b `for slot in live_slots(c)`
 
 `c.field` is every slot, released ones included, and nothing about it says which
-of them hold an element. `c[handle].field` is one slot and is checked. So the
-shortest loop over a column is the one that reads storage nobody put anything in,
-which is wasted work for an integration step and a wrong answer for a sum.
+of them hold an element. `c[handle].field` is one slot and is checked. A loop
+over a raw column therefore reads storage nobody put anything in.
 
-`live_slots(c)` is what that loop should have said:
+`live_slots(c)` walks the slots that hold an element:
 
 ```frost,sketch
 for slot in live_slots(c) {
@@ -73,14 +67,12 @@ for slot in live_slots(c) {
 }
 ```
 
-Two characters longer than `for slot in 0..N`, and it does not need `N` in
-scope. The body is unchanged: `slot` is a number, columns are indexed with it,
-and no generation is read, because the walk answered that question by finding
-the slot.
+`N` need not be in scope. `slot` is a number, columns are indexed with it, and
+no generation is read, since the walk answered that question by finding the
+slot.
 
 `for rank, slot in live_slots(c)` counts the elements as it goes, in the same order
-`for index, name in` reads in, which is what compacting into a packed buffer
-wants:
+`for index, name in` reads in:
 
 ```frost,sketch
 for rank, slot in live_slots(c) {
@@ -101,7 +93,7 @@ test, and one with bits set gives up its lowest, clears it, and goes round. No
 slot is asked whether it holds an element and no empty slot is reached. `break`
 and `continue` mean what they mean in any other loop.
 
-What the form cannot say, which is why the raw column walk stays:
+What the form cannot say, which is where the raw column walk is written instead:
 
 - A column as a contiguous slice. `c.position` is a `[]Vec3` over all `N` slots,
   which is what a bulk copy, a GPU upload or a C call takes. A live walk hands
@@ -113,7 +105,7 @@ What the form cannot say, which is why the raw column walk stays:
   container the program knows is packed.
 - Two containers in lockstep. There is no zip, and two walks have unrelated
   bits. A parallel array outside the container indexed by the same `slot` is
-  fine, which is most of what zip is wanted for.
+  fine.
 - Inserting or releasing into the container being walked. That edits the words
   the walk is reading.
 - A container that is never fragmented, where every word is full and the
@@ -163,32 +155,29 @@ the slot is in, and two containers of the same element type and capacity are the
 ordinary shape: `active` and `pending`, `current` and `next`. A handle from one
 used against the other has an index in range on both, and its generation matches
 whenever the two slots have been released the same number of times. Right after
-both are reset that is every slot, because every generation is zero. The state
-with no protection at all is the one a program starts in.
+both are reset that is every slot, because every generation is zero.
 
 `slab_reset` and `columns_reset` take a number for the container from
 `frost_rt_container_id` and stamp it into every generation, so a handle carries
 which container minted it. A deref against another container aborts, saying so.
 
-It costs nothing where a handle is read. The number sits in the same word as the
-generation, the deref already compares that word, and a handle is still an `i64`
-that converts freely. A container stores no handles, only `generations`, so no
-layout changes: `columns<T, N>` is what it was.
+The number sits in the same word as the generation, and the deref already
+compares that word. A handle is still an `i64` that converts freely. A container
+stores no handles, only `generations`, so its layout carries nothing extra:
+`columns<T, N>` is the shape 10.1a describes.
 
-The number is drawn atomically, since a program spawns threads and two of them
-each resetting a container is the case the number exists for.
+The number is drawn atomically, which covers two threads each resetting a
+container.
 
 Two containers share a number once in a hundred and twenty-seven, and a program
 that resets a container in a loop comes back round to the same one after that
-many. Where it is wrong it is wrong the way it was before, and everywhere else a
-handle that was silently read is an abort that names the reason.
+many.
 
-The direction of that failure is the point. The check compares the slot's
-ever-increasing count against a sign-extended 32-bit value, so a count past the
-bound can never equal an older handle's generation: what a spent slot produces
-is a handle nothing accepts, never a stale handle something does. `std/slab.frost`
-and `std/columns.frost` retire the slot; the pool examples under `examples/` are
-written for the shape and say so.
+The check compares the slot's ever-increasing count against a sign-extended
+32-bit value, so a count past the bound can never equal an older handle's
+generation: what a spent slot produces is a handle nothing accepts, never a
+stale handle something does. `std/slab.frost` and `std/columns.frost` retire the
+slot. The pool examples under `examples/` are written for the shape and say so.
 
 ### A pool holds data, not resources
 
@@ -203,31 +192,27 @@ differ.
 What is asked about is the slot table, which is the elements a handle addresses.
 For a slab that is `storage`, and another run the struct happens to carry is not
 one: a field holding resources makes the struct a resource by the ordinary linear
-rule, and that is where it is answered for. A `columns` container has no
-`storage`, since one array per field of the element is what it is, so every column
-is asked and `generations`, `free_list` and `free_count` are not.
+rule. A `columns` container has no `storage`, since one array per field of the
+element is what it is, so every column is asked and `generations`, `free_list`
+and `free_count` are not.
 
-It is refused where the container is declared, in both compilers, for a `Slab`, a
-`columns`, and a container of that shape written out by hand alike.
+It is refused where the container is declared, for a `Slab`, a `columns`, and a
+container of that shape written out by hand alike.
 What to write instead is either a handle in the slot and the resource outside the
 pool, or the elements beside the pool: one array of offsets giving each element
 its range into a single run that owns the whole of it, which is one allocation for
 the lot and a linear scan to walk.
 
-### What the check costs, and how to pay it once
+### Paying the generation check once
 
-`pool[handle]` reads the slot's generation and compares it on every access. For a
-handful of lookups that is nothing. For a pass that walks the same elements over
-and over it is paid once a hop for an answer that cannot change while the pass
-runs, and it is measurable: over tens of millions of hops summing one field, the
-handle form costs about twice what the same loop over a plain array does. That is
-roughly a nanosecond a hop, which is most of a loop that does nothing else and a
-rounding error in one that does anything.
+`pool[handle]` reads the slot's generation and compares it on every access. Over
+tens of millions of hops summing one field, the handle form costs about twice
+what the same loop over a plain array does, which is roughly a nanosecond a hop.
 
-`slab_slot` is how that is paid once. It checks the generation, answers with the
-slot the handle names, or `-1` where the handle is stale. Indexing `storage` with
-that number is an ordinary array access: bounds-checked like any other, compared
-against no generation.
+`slab_slot` checks the generation once. It answers with the slot the handle
+names, or `-1` where the handle is stale. Indexing `storage` with that number is
+an ordinary array access: bounds-checked like any other, compared against no
+generation.
 
 ```frost,sketch
 slot := slab_slot($Unit, $1024, pool, handle)
@@ -241,16 +226,15 @@ if (slot >= 0) {
 ```
 
 The same walk through a slot gives back most of the check's cost. What is left
-over the plain array is the second index rather than the check: a slot table is
-one more load than walking storage directly.
+over the plain array is the second index: a slot table is one more load than
+walking storage directly.
 
-What it costs in the other direction is the guarantee. A slot is a number, and
-nothing says it still names the element it named. Release that slot while a loop
-holds its number and the loop reads whatever moved in, which is the reading a
-handle exists to refuse. So this belongs where a walk owns its data for the
-length of the walk, and the handle belongs everywhere else. It is a word at the
-site for that reason, the same way leaving the range is `wrap_add` rather than a
-compiler flag.
+A slot is a number, and nothing says it still names the element it named.
+Release that slot while a loop holds its number and the loop reads whatever
+moved in, which is the reading a handle refuses. So a slot belongs where a walk
+owns its data for the length of the walk, and a handle belongs everywhere else.
+It is a word at the site for that reason, the same way leaving the range is
+`wrap_add` rather than a compiler flag.
 
 ## 10.4 Bounds checking
 
@@ -269,4 +253,4 @@ form.
 | No use-after-free of pooled data | generational handles (10.3) |
 | No out-of-bounds array access | bounds checking (10.4) |
 
-Raw pointers (`^T`) are outside these guarantees by design.
+Raw pointers (`^T`) are outside these guarantees.

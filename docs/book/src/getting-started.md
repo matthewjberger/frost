@@ -24,10 +24,9 @@ An import is looked for beside the importing file, then on `-L` and
 `FROST_PATH`, then in the project's `frost.json`, then in the bundled `std/`.
 See [finding a module](impl/modules.md).
 
-`just install-self` puts the self-hosted compiler on PATH as `frostc`. The two
-names are deliberate: this project compares the two compilers constantly, and
-one name would mean the second install hides the first with no way to tell which
-one ran.
+`just install-self` puts the self-hosted compiler on PATH as `frostc`. Two
+names keep both compilers on PATH at once, so you can run a program through
+each and compare what you get.
 
 ## Editor support
 
@@ -41,11 +40,11 @@ file is highlighted the same way. `Ctrl+Shift+B` runs every compiler check over
 the open file and puts what it finds in the Problems panel, on the line that
 caused it.
 
-The extension is in `.vscode/frost` rather than on the marketplace, so it is
-linked rather than installed. `just editor-dir` prints where this VS Code reads
-its extensions, which is not `~/.vscode/extensions` when VS Code is a portable
-install. The grammar's keywords and builtins are held to the compiler's own
-lists by a test, so the two cannot drift apart.
+The extension lives in `.vscode/frost` instead of the marketplace, and
+`just install-editor` links it into place. `just editor-dir` prints the
+directory this VS Code reads extensions from, which for a portable install is
+somewhere other than `~/.vscode/extensions`. A test holds the grammar's
+keywords and builtins to the compiler's own lists.
 
 ## Tests
 

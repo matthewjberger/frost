@@ -14,13 +14,13 @@ value is its trailing expression, when it has one.
   is a range, a slice `[]T`, a fixed array `[N]T`, or a `str` (yielding its
   bytes). `for index, name in Expr Block` names the position as well.
 
-  Over a sequence this is the index-and-bound loop written out, not an iterator
-  protocol: nothing is called per element, there is no trait to implement, and
-  `break` and `continue` mean what they do in any other loop. The element binds
-  the way a parameter of its type would, so an aggregate is borrowed and a
-  scalar is copied. The sequence is evaluated once and its length read once
-  before the first step, so a call in that position happens once and a body that
-  appends to the same container does not walk what it just added.
+  Over a sequence this is the index-and-bound loop written out: nothing is
+  called per element, and `break` and `continue` mean what they do in any other
+  loop. The element binds the way a parameter of its type would, so an aggregate
+  is borrowed and a scalar is copied. The sequence is evaluated once and its
+  length is read once before the first step, so a call in that position happens
+  once and a body that appends to the same container walks only what was there
+  at the start.
 
   A name followed by `{` is a struct literal everywhere else, so the literal is
   not available in the `Expr` of a `for`, whose brace opens the body.
@@ -43,24 +43,22 @@ value is its trailing expression, when it has one.
   has no exit for one to name, so an `errdefer` in one is refused.
 
   What it is for is the resource a `?` steps over. `f := open()?` followed by
-  `errdefer close(f)` says the failure path closes `f`; the straight-line path
-  still owes a consumption, so the body's own `close(f)` is the first one rather
-  than a second. An `errdefer` on its own does not answer for a resource, and a
-  body that leaves with an answer without consuming it is the ordinary leak
-  (chapter 9).
+  `errdefer close(f)` says the failure path closes `f`. The straight-line path
+  still owes a consumption, so the body's own `close(f)` is the first one. An
+  `errdefer` answers for the failure path alone, and a body that leaves with an
+  answer while the resource is still open is the ordinary leak (chapter 9).
 
 A call that can fail answers with which of the two happened, and an expression
 statement reads neither, so one written that way is refused. `?` hands the
 failure up, `match` answers it there, and `_ := call()` says the answer was
-meant to go unread. The rule reaches every fallible call rather than only one
-holding a resource, where linearity used to be what caught it: a failure nobody
-reads is the same fault whether or not there is anything to leak. A call that
-cannot fail is not covered, since its answer is a value rather than a question.
+meant to go unread. The rule reaches every fallible call, whether or not it
+holds a resource. A call that cannot fail is outside the rule, since its answer
+is a value.
 
 `_ := Expr` evaluates the expression and binds nothing anyone can name. A list
 of one is a list, so it reads the way the `_` in a longer binding list does
 (5.1a), and what it binds is storage under a name no source can spell: a
 resource taken this way is still owed a consumer.
 
-There is no print statement. Writing output is `import "io.frost"` and a call,
-one writer per type ([text-and-io.md](../std/text-and-io.md)).
+Writing output is `import "io.frost"` and a call, one writer per type
+([text-and-io.md](../std/text-and-io.md)).

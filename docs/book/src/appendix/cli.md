@@ -5,7 +5,7 @@ written in Rust, and `frostc` is the self-hosted one, written in Frost. They
 accept the same language and overlapping but different flags, so every entry
 below says which one reads it. The names come from `just install` and
 `just install-self`, which put the two on PATH under separate names so that
-installing one does not hide the other.
+installing one leaves the other reachable.
 
 ## The bootstrap compiler
 
@@ -33,8 +33,8 @@ There is no `--version`.
 The modes are tried in one order and the first that matches wins: `--test`,
 then `--run-ir`, then `--emit-c`, then `--native` or `--link`, then the bare
 run. So `--test` goes through Cranelift whatever backend flag came with it, and
-`--run-ir` ignores `-o` and exits 3 when the interpreter declines the program
-rather than falling back to a backend. Which backend means what is
+`--run-ir` ignores `-o` and exits 3 when the interpreter declines the program.
+Which backend means what is
 [native, freestanding, self-hosted](../impl/build-modes.md).
 
 `frost program.frost` with no flags at all compiles through Cranelift into a
@@ -71,8 +71,8 @@ stem:
 
 A `--link` build writes one object per module as `<output>.<index>.o` and
 removes them after the link, so those intermediates are named for the
-executable rather than for the source and two builds of one program to two
-outputs do not delete each other's.
+executable and two builds of one program to two outputs leave each other's
+alone.
 
 ### Tests
 
@@ -89,10 +89,9 @@ frost --test std/
 
 Every `.frost` file under the directory, recursively and in sorted order, is
 compiled and run as its own process, and the run ends with a count of how many
-files failed. Separate processes rather than one program, because a test that
-crashes outright then takes down only its own file, and because two files are
-two programs that may define the same names. Only `-L` and `--libs` are carried
-through to the per-file runs.
+files failed. Each file gets its own process, so a test that crashes outright
+takes down only its own file, and two files are two programs that may define
+the same names. Only `-L` and `--libs` are carried through to the per-file runs.
 
 ## The self-hosted compiler
 
@@ -113,17 +112,15 @@ the same list. This is that list with what each flag implies.
 | `--audit-unsafe` | Also report every `unsafe` block that vouches for nothing |
 | `-h`, `--help` | The flag list |
 
-The differences from the bootstrap that catch people out: the default backend
-is C rather than native, output goes to standard output when nothing asked for
-a file, a `--link` build with no `-o` writes `a.exe` on Windows and `a.out`
-elsewhere, `--test` takes a file and not a directory, and there is no
-`--libs`, `--freestanding` or `--run-ir`. An argument starting with `-` that
-none of the above claims is an error rather than a file name.
+The differences from the bootstrap: the default backend is C, output goes to
+standard output when nothing asked for a file, a `--link` build with no `-o`
+writes `a.exe` on Windows and `a.out` elsewhere, `--test` takes a file, and the
+`--libs`, `--freestanding` and `--run-ir` flags are absent. An argument
+starting with `-` that none of the above claims ends the run with an error.
 
 `--audit-unsafe` exists on both compilers and means the same thing on each: a
-build fails if any `unsafe` block covers no operation that needed one. Off by
-default, because a build should pay for the checks that keep a program correct
-rather than the ones that keep it tidy.
+build fails if any `unsafe` block covers no operation that needed one. It is
+off by default, since a build pays for the checks that keep a program correct.
 
 ## Environment variables
 
@@ -147,7 +144,7 @@ The rest of the search order is [finding a module](../impl/modules.md).
 | `FROST_BUILD_FROM_INTERFACES` | Anything but `0`: an imported module contributes what its interface says it contributes and nothing else |
 
 The last two are the oracles behind `--incremental`, described in
-[separate compilation](../impl/separate-compilation.md). Neither is on in an
+[separate compilation](../impl/separate-compilation.md). Both are off in an
 ordinary build.
 
 ### Read by the self-hosted compiler only
@@ -156,15 +153,15 @@ ordinary build.
 | --- | --- |
 | `FROST_INPUT` | The file to compile, when the command line named none |
 | `FROST_BACKEND` | `asm` picks the assembly emitter, when no backend flag was given |
-| `FROST_RUNTIME` | Where the runtime's C stub is. Looked for beside the compiler and then up the directories a checkout puts it under, which is what a checkout you are not standing in needs changed |
+| `FROST_RUNTIME` | Where the runtime's C stub is. Looked for beside the compiler and then up the directories a checkout puts it under. Set it to compile from a checkout you are standing outside of |
 | `FROST_RUNTIME_FROST` | Where the runtime's Frost half is, found the same way. The runtime is two files: `runtime.frost` holds the checks an index and a slice compile to, and `frost_runtime.c` holds what cannot be written in Frost |
 | `FROST_ABI` | `sysv` or `win` overrides the host's calling convention, so either target's output can be read from either host |
 | `FROST_QUERY` | Answer an editor's question about the checked program instead of building it: `symbols`, `definition NAME`, `fields NAME`, or `local FN NAME`. Answers go to stderr, one line each, and nothing is emitted |
 | `CC` | The C compiler the emitted C and the link go to. Defaults to `gcc` on Windows and `cc` elsewhere |
 
-`FROST_INPUT` and `FROST_BACKEND` are what the fixpoint checks and the older
-`just selfhost-*` recipes drive the compiler with, which is why they answer for
-an argument that is absent rather than overriding one that is present.
+The fixpoint checks and the `just selfhost-*` recipes drive the compiler with
+`FROST_INPUT` and `FROST_BACKEND`, so each one answers for an argument the
+command line left out and a flag on the command line wins.
 
 ### Read by the tests and the justfile
 
@@ -214,7 +211,7 @@ left out here.
 ## Subcommands
 
 Read from the first argument, before any flag. `frost <file.frost>` and every
-flag above are unchanged by them.
+flag above keep their meaning alongside them.
 
 ### `frost fmt <paths...>`
 
@@ -225,8 +222,8 @@ exits nonzero.
 
 The rendering settles the space inside a line, the indentation in front of it,
 how many blank lines sit between two of them, the brace that opens a block, and
-the newline a file ends with. It never moves a token to another line, because
-which line a token is on is meaning here. See
+the newline a file ends with. It keeps every token on the line it was written
+on, because which line a token is on is meaning here. See
 [Where a statement ends](../design/line-boundaries.md).
 
 Both compilers write the same bytes, which a test over the whole corpus holds.
@@ -234,8 +231,8 @@ Both compilers write the same bytes, which a test over the whole corpus holds.
 ### `frost lint <paths...>`
 
 Reports what is worth a look and refuses nothing. A build is unchanged by a
-finding; `frost lint` exits nonzero when it finds any, which is what lets a
-project hold a tree to none of them.
+finding. `frost lint` exits nonzero when it finds any, so a project can hold a
+tree to none of them.
 
 - an `unsafe` block that holds nothing unchecked
 - a function nothing reaches
@@ -255,7 +252,7 @@ was written. `--json` writes one object per name. With no paths it walks the
 directory it is run in.
 
 A flat namespace has no `.` to narrow a guess with, and a prefix is what a
-family is named by here, so this is that narrowing asked for directly.
+family is named by here, so this asks for that narrowing directly.
 
 ## Diagnostics as JSON
 

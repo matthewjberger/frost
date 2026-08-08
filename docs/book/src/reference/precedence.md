@@ -21,8 +21,8 @@ is normative and matches the reference parser's precedence mapping.
 | Call / Index / Access | `f(...)` `a[i]` `.` `^` `::` | tightest |
 
 An operator over a fixed array of numbers is done once per lane (3.2b). The
-precedence is the same either way: what changes is how many times the operation
-happens, not how the expression groups.
+precedence is unchanged: the expression groups the same way, and the operation
+happens once per lane.
 
 ## 14.2 Keywords
 

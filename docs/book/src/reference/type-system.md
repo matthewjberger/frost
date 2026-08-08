@@ -1,7 +1,7 @@
 # 4. The type system
 
-Frost is statically typed with light local inference. Every binding, parameter,
-and expression has a compile-time type.
+Frost is statically typed with local inference. Every binding, parameter, and
+expression has a compile-time type.
 
 - `:=` infers a local's type from its initializer. `:` gives it explicitly.
 - Function parameter and return types are always explicit.

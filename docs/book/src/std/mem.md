@@ -1,77 +1,66 @@
 # Typed allocation
 
 `std/mem.frost` is the floor every other container stands on. It gets a block of
-bytes from the C allocator and hands it back as a typed pointer or, better, as a
-slice. Nothing else in `std/` calls the allocator directly.
+bytes from the C allocator and hands it back as a typed pointer or as a slice.
+Nothing else in `std/` calls the allocator directly.
 
-Two operations have to happen together to allocate anything: calling C for the
-bytes, and reinterpreting those bytes as a typed pointer. Written at each site
-that is three `unsafe` blocks per container plus the count-times-size arithmetic
-repeated wherever it is easiest to get wrong. Written once here it is one block
-per function, and a caller reads `keys := heap_array($i64, cap)` with no
-`unsafe` of its own, because an unsafe block is a perimeter: calling a function
-that contains one does not require one.
+Allocating takes two operations together: calling C for the bytes, and
+reinterpreting those bytes as a typed pointer. Each function here does both
+inside one `unsafe` block and does the count-times-size arithmetic once, so a
+caller writes `keys := heap_array($i64, cap)` with no `unsafe` of its own. An
+unsafe block is a perimeter: calling a function that contains one does not
+require one.
 
-`heap_slice` is the stronger of the two forms and the one to reach for. A slice
-carries its length, so every later access through it is bounds-checked and the
-container above it is ordinary safe code. `std/vec.frost` and `std/map.frost`
-both hold slices rather than raw pointers, and neither file contains an `unsafe`
-block.
+`heap_slice` is the form to reach for. A slice carries its length, so every
+later access through it is bounds-checked and the container above it is ordinary
+safe code. `std/vec.frost` and `std/map.frost` both hold slices, and neither
+file contains an `unsafe` block.
 
-## What it vouches for
+## What each call gives you
 
-Each function here is a claim the module is making on the caller's behalf, and
-the claims are small enough to check by reading the file.
-
-`heap_array` and `heap_slice` promise that the block is at least `count *
-sizeof(T)` bytes and correctly aligned for `T`, which follows from `malloc`.
-A count of zero still allocates room for one element, so a container never holds
-a pointer to nothing and a zero-capacity vector still has somewhere to put its
-first push.
+`heap_array` and `heap_slice` give a block of at least `count * sizeof(T)`
+bytes, aligned for `T`, which follows from `malloc`. A count of zero allocates
+room for one element, so a container always holds a pointer to storage and a
+zero-capacity vector has somewhere to put its first push.
 
 `heap_grow` and `heap_grow_slice` take the old block by `move`, because
-`realloc` may return a different address and the old pointer is not valid
-afterwards. The move rule turns "do not use the old pointer" from a comment into
-a compile error.
+`realloc` may return a different address and the old pointer is dead afterwards.
+Reading the old block after the call is a compile error.
 
-`bytes_as` is the end of an erasure. A run of bytes does not know how many
-elements it holds, so the caller says, and what comes back is a bounds-checked
-`[]T` from there on. This is how the ECS's columns, whose element width is
-decided while the program runs, get back into the typed world.
+`bytes_as` takes a run of bytes and the element count the caller knows, and
+answers a bounds-checked `[]T`. The ECS's columns, whose element width is
+decided while the program runs, come back into the typed world through it.
 
-`slice_prefix` is what makes a container's live length visible: the storage
-slice is as long as the capacity, and the prefix is as long as the count, so
-`vec_slice` hands out two elements out of sixty-four rather than sixty-four.
+`slice_prefix` cuts a container's live length out of its storage. The storage
+slice is as long as the capacity and the prefix is as long as the count, so
+`vec_slice` over a vector holding two elements in a block of sixty-four hands
+out two.
 
-## What is checked here, and what is taken on trust
+## What the module refuses
 
-A count is the caller's word for how many elements are there, and that is what
-makes these unchecked. Three parts of the claim are not a matter of trust, and
-each is refused rather than believed.
+A count is the caller's word for how many elements are there. Three parts of
+that word are refused outright.
 
 A negative length. Every access through a slice is bounds-checked, and the check
 compares unsigned so one comparison answers for a negative index as well as for
-one past the end. That same cast reads a negative length as enormous, so a slice
-built with one was not bounds-checked at all and `slice_prefix($T, xs, -1)`
-reached it from ordinary safe code. A length is settled once where the slice is
-built while an access happens in a loop, so it is answered for there.
+one past the end. That same cast reads a negative length as enormous, which
+would leave a slice built with one unchecked at every access, so the length is
+answered for at the one place a slice is built.
 
 A view longer than the run it came from. `slice_prefix` and `slice_range` cut
-from a slice, so the run is known and a longer view is a false claim rather than
-an unverifiable one. Both ends are answered for against it. `slice_span` and
-`slice_chunk` clamp before they cut and so never reach this.
+from a slice, so the length of the run is known and both ends are checked
+against it. `slice_span` and `slice_chunk` clamp before they cut.
 
 A size that wraps. `count * sizeof(T)` at a large count wraps to a small number,
-so the allocator hands back a small block while the slice over it carries the
-count that was asked for. Every read past the block's real end is then checked
-against the wrong number and passes.
+so the allocator would hand back a small block while the slice over it carried
+the count that was asked for, and every read past the block's real end would be
+checked against the wrong number and pass.
 
-An allocation that fails. It aborts rather than answering with a null, because
-these have no way to say they ran out of memory and every caller wraps what
-comes back in a slice without looking.
+An allocation that fails aborts. These calls have no way to say they ran out of
+memory, and every caller wraps what comes back in a slice without looking.
 
-What stays on trust is the part that cannot be settled without knowing what the
-program meant: that `count` elements really do live at the pointer.
+One part stays the caller's word: that `count` elements really do live at the
+pointer.
 
 ## The calls
 
@@ -96,11 +85,9 @@ program meant: that `count` elements really do live at the pointer.
 
 `heap_live` answers how many blocks the runtime has handed out and not taken
 back. A container that frees what it took leaves the count where it found it, so
-a test can say a leak happened at the moment it happens rather than waiting for
-a long-running program to notice.
+a test sees a leak at the moment it happens.
 
-Every allocating module in `std/` has a test of this shape, and it is the
-cheapest test in the library to write:
+Every allocating module in `std/` has a test of this shape:
 
 ```frost
 test "a vector gives back every block it took, however far it grew" {
@@ -121,8 +108,7 @@ assertion holds only if each `heap_grow_slice` released what it replaced. The
 same test over `std/map.frost` covers the three parallel runs a map grows, where
 freeing two of the three would pass every functional test in the file.
 
-A grow does not change the count, which is what the `mem.frost` tests check
-directly:
+A grow leaves the count where it was. The `mem.frost` tests check that directly:
 
 ```frost
 test "what a block took is what releasing it gives back" {
@@ -137,8 +123,8 @@ test "what a block took is what releasing it gives back" {
 }
 ```
 
-`before` is read rather than assumed to be zero, so the test says what it means
-whatever else the program has already allocated.
+`before` is read at the start, so the test says what it means whatever else the
+program has already allocated.
 
 ## `std/arena.frost`, the other allocator
 
@@ -163,17 +149,16 @@ that draw from it.
 | `arena_reset($N, mut a, mark)` | Everything carved since the mark, reclaimed |
 | `arena_used($N, a) -> i64` | How many bytes are out |
 
-`arena_carve` hands back a `[]T` rather than a pointer, so everything built on
-it is bounds-checked, and the one `unsafe` block in the file is the reinterpret
-from bytes to `T`. A run starts at the next multiple of 8, which is the
-alignment of every type laid out without `align(N)` written on it; there is no
-`alignof` to ask, so a type wanting more than that is a gap this does not fill.
+`arena_carve` hands back a `[]T`, so everything built on it is bounds-checked,
+and the one `unsafe` block in the file is the reinterpret from bytes to `T`. A
+run starts at the next multiple of 8, the alignment of every type laid out
+without `align(N)` written on it. There is no `alignof` to ask, so a type
+wanting more than that is a gap this does not fill.
 
-Freeing is by the block rather than by the value: `arena_reset` puts the offset
-back and the next carve takes the same bytes. That is the whole lifetime story,
-and it is why the container over a carved run
-([fixed.frost](containers.md)) owns nothing and frees nothing. What stops a run
-outliving the arena is the region check, in
+Freeing is by the block: `arena_reset` puts the offset back and the next carve
+takes the same bytes. That is the whole lifetime story. The container over a
+carved run ([fixed.frost](containers.md)) owns nothing and frees nothing. What
+stops a run outliving the arena is the region check, in
 [allocation-and-regions.md](../reference/allocation-and-regions.md).
 
 ## Tests

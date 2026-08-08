@@ -11,9 +11,8 @@ Option :: enum($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
-A parameter may name the type parameter inside a generic type's argument list
-rather than as the whole of its own type, and then it binds to whatever that
-instance was made with:
+A parameter may name the type parameter inside a generic type's argument list,
+where it binds to whatever that instance was made with:
 
 ```frost,sketch
 first :: fn(a: Pair<$T>) -> T { a.first }
@@ -49,9 +48,8 @@ compile-time function parameter (11.1b).
 
 ## 11.1a Value parameters
 
-A parameter written `$N: usize` is a value parameter rather than a type
-parameter. It is a compile-time integer, and its main use is sizing a fixed
-array:
+A parameter written `$N: usize` is a value parameter. It is a compile-time
+integer, and its main use is sizing a fixed array:
 
 ```frost,sketch
 Slab :: struct($T: Type, $N: usize) { storage: [N]T, used: i64 }
@@ -72,8 +70,8 @@ filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
 }
 ```
 
-A function takes them too, which is what lets an operation over a sized
-aggregate be written once rather than once per size:
+A function takes them too, so an operation over a sized aggregate is written
+once and serves every size:
 
 ```frost,sketch
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
@@ -121,15 +119,14 @@ signature differs, or a type where a function is required, is an error reported
 against the parameter list.
 
 This is the only form of bound in the language, and it bounds one parameter kind
-against one signature. It is not a trait, has no coherence or orphan rules, and
-involves no solving.
+against one signature. There is no coherence rule, no orphan rule, and no
+solving.
 
 ## 11.1c Compile-time argument lists
 
 A parameter written `args: $...` takes every argument past the parameters
-written before it. It is not a runtime parameter: each call has its own count
-and its own types, and the specialization takes one ordinary parameter per
-element.
+written before it. Each call has its own count and its own types, and the
+specialization takes one ordinary parameter per element.
 
 ```frost,sketch
 widths :: fn(args: $...) {
@@ -147,19 +144,18 @@ widths :: fn(args: $...) {
 widths(1, 2.5, "three")
 ```
 
-The list is always last, since what followed it would have nothing to say which
-side of the list it belonged to.
+The list is always last.
 
-**A `for` over the list unrolls.** The body is written once and compiled once
-per element, with the loop's name standing for that element. There is no loop at
-run time and no index. What a `for` walks decides which of the two it is: a list
+A `for` over the list unrolls. The body is written once and compiled once per
+element, with the loop's name standing for that element. There is no loop at run
+time and no index. What a `for` walks decides which of the two it is: a list
 unrolls, and everything else is the ordinary loop of chapter 7.
 
-**`list[K]` names the Kth element.** The index has to be a literal, since which
+`list[K]` names the Kth element. The index has to be a literal, since which
 element it is has to be known while the body is being expanded. An index past
 what the call gave is an error against the call.
 
-**An `if` over a type predicate is decided at expansion time.** Inside a
+An `if` over a type predicate is decided at expansion time. Inside a
 specialization, a condition from the 11.4a vocabulary asked of a parameter is
 answered while the body is expanded, and the branch that cannot run is dropped
 before anything checks it:
@@ -178,21 +174,19 @@ show :: fn(args: $...) {
 }
 ```
 
-This is what lets one body serve elements of different types: the branch that
-would not compile for this element is gone rather than skipped.
+One body serves elements of different types.
 
 Each element is evaluated once, however many times the unrolled body names it,
 because the specialization takes it as an ordinary parameter and the call passes
 it once.
 
-**An element may be a type.** `f($Position, $Velocity)` gives the list two
-types. A type element takes no parameter and is evaluated nowhere. What it
-leaves behind is a name the body writes where a type belongs, so a `for` over
-the list makes `sizeof(T)`, `[]T` and `T` as a generic argument mean what they
-say. A list may hold both kinds.
+An element may be a type. `f($Position, $Velocity)` gives the list two types. A
+type element takes no parameter and is evaluated nowhere. It leaves behind a
+name the body writes where a type belongs, so a `for` over the list may write
+`sizeof(T)`, `[]T` and `T` as a generic argument. A list may hold both kinds.
 
-**Naming the list in an argument list hands over its elements.** This is how one
-generic passes its list on to another:
+Naming the list in an argument list hands over its elements. One generic passes
+its list on to another this way:
 
 ```frost
 passed_on :: fn(values: $...) -> i64 {
@@ -201,9 +195,8 @@ passed_on :: fn(values: $...) -> i64 {
 ```
 
 `g(T) for T in list` in an argument list is one argument per element, with the
-element's name standing for it. This is what gives a call an arity the list
-decides, and it is the only place a list may be written this way, since it is
-the argument count that is being produced:
+element's name standing for it. The call's arity is the list's length, and an
+argument list is the only place a list may be written this way:
 
 ```frost,sketch
 for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
@@ -225,7 +218,7 @@ print :: fn(format fmt: str, args: $...)
 
 A `{}` in the literal opens a hole, `{{` and `}}` stand for one brace each, and
 a `{` that does neither is a fault. Four things are refused where the call is
-written rather than anywhere later:
+written:
 
 | Written | Refused because |
 | --- | --- |
@@ -248,21 +241,19 @@ effect when a name follows it.
 is written and different for every other type. It has no meaning outside the
 build, and nothing is promised about which number a type gets.
 
-What it is for is a table keyed by type in a program whose contents are decided
-while it runs. `std/ecs.frost` registers a component under a type and is given
-an index in return. `type_id` is what lets a query later name the component by
-writing the type, since the index is not something a type can say.
+It keys a table by type in a program whose contents are decided while it runs.
+`std/ecs.frost` registers a component under a type and is given an index in
+return, and `type_id` is what lets a query later name the component by writing
+the type.
 
-**What this deliberately is not.** Expansion has no recursion, no unbounded
-loop, and nothing that reads the world. Every construct here iterates a list
-whose length is known once the generic is instantiated, so what expansion costs
-is bounded by the program's own text.
+Expansion has no recursion, no unbounded loop, and nothing that reads the world.
+Every construct here iterates a list whose length is known once the generic is
+instantiated, so what expansion costs is bounded by the program's own text.
 
 A literal is read where a `format` parameter takes one, and a constant or a
 length may be a call the build runs early. Both are bounded: the reader counts
 the holes in one literal, and the evaluator runs a fixed number of steps to a
-depth it will not exceed. Neither hands the program a string it computed, which
-is the line between this and a compile-time interpreter.
+depth it will not exceed. Neither hands the program a string it computed.
 
 ## 11.1d Walking a type's fields
 
@@ -298,19 +289,10 @@ asked:
 | `field_count(T)` | how many fields a type has, which is what sizes a table |
 
 Every one of those is a number the compiler worked out to lay the type out.
-Naming a field anywhere else is an error, since there is nothing else it could
-mean.
+Naming a field anywhere else is an error.
 
-A vertex format, a uniform layout and a descriptor table are the same shape: a
-table of offsets and sizes over a struct the program already declared. Written
-this way the table cannot drift from the struct, because it is not written
-twice.
-
-**There is no reflection by name.** `has_field(T, "position")` is the
-string-keyed predicate 11.4a rules out, and a table built by walking every field
-needs no name written as a literal anywhere. A field's name is not readable at
-all, which is what keeps this a layout question rather than a small language for
-querying types.
+There is no reflection by name. `has_field(T, "position")` is the string-keyed
+predicate 11.4a rules out, and a field's name is not readable at all.
 
 The bound is the same one 11.1c holds: the list a `for` walks is the struct's
 own field list, so its length is fixed by a declaration. No recursion, no
@@ -319,8 +301,8 @@ unbounded loop, and nothing that reads the world.
 ## 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its
-own code, with no runtime dispatch and no boxing. Type parameters are erased from
-the specialized ABI once monomorphization chooses concrete types.
+own code, with no runtime dispatch and no boxing. Type parameters are erased
+from the specialized ABI once monomorphization chooses concrete types.
 
 ## 11.3 Explicit type arguments
 
@@ -352,8 +334,7 @@ first :: fn($T: Type, xs: []T) -> T where is_numeric(T) && !is_pointer(T) {
 ```
 
 The bound is read at each call, with that call's arguments in hand, so a type
-that cannot work is refused against the line the caller wrote rather than
-against a line inside a specialized body they never saw.
+that cannot work is refused against the line the caller wrote.
 
 The vocabulary is fixed and closed:
 
@@ -368,27 +349,19 @@ The vocabulary is fixed and closed:
 | `is_pointer(T)` | a raw pointer or a borrow |
 | `is_linear(T)` | a resource: a type that must be consumed exactly once |
 
-`is_linear` is how a container holds itself to elements it can account for.
 `vec_set` writes into a slot while whatever was there goes unconsumed, so it is
 declared `where !is_linear(T)`, and a `Vec<File>` is refused at the call the
 reader wrote. A resource element is reached through `vec_slice`, where
 `ref e := vec_slice(v)[i]` stays a borrow.
 
 Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
-represented by, since that is what its arithmetic and its layout follow.
-
-Every one of these is a question the compiler already answers for itself, to
-decide whether to emit an integer or a floating point instruction, whether a
-value travels by address, and how wide it is. That is why the vocabulary is
-closed rather than open: a bound asks what the compiler knows about a type by
-itself, and nothing else.
+represented by.
 
 There is no bound keyed by a name, such as asking whether a type has a field
-called `position`. A string literal does not grep back to the declaration it
-names, which is the one thing the flat namespace (11.6) is for.
+called `position`.
 
-A bound answers what a type *is*. What can be *done* with it is a different
-question, and 11.4b is its answer.
+A bound answers what a type is. Capability bundles (11.4b) say what can be done
+with it.
 
 ## 11.4b Capability bundles
 
@@ -434,9 +407,9 @@ Dropping the `$` gives the runtime form from the same declaration:
 sort_at_runtime :: fn(ops: Ordering<i64>, mut items: []i64) { ... }
 ```
 
-Now `ops` is an ordinary value: it can be chosen while the program runs, stored
-in an array, or swapped, and the calls go through the pointers it holds. There
-is no separate feature and no second spelling of the bundle type.
+In that form `ops` is an ordinary value: it can be chosen while the program
+runs, stored in an array, or swapped, and the calls go through the pointers it
+holds. There is no separate feature and no second spelling of the bundle type.
 
 Two orderings over one type are two constants:
 
@@ -444,8 +417,7 @@ Two orderings over one type are two constants:
 i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 ```
 
-Nothing conflicts, because nothing was ever implicit. Composition is a struct
-with struct fields rather than `T: A + B`, and the body reads
+Composition is a struct with struct fields, and the body reads
 `ops.ordering.less(a, b)`.
 
 `std/ordering.frost` and `std/sort.frost` are this written out.
@@ -462,21 +434,12 @@ rule, no orphan rule, and no method lookup. There are no associated types, no
 trait objects, and no dynamic dispatch. A generic body type-checks once
 specialized.
 
-A capability bundle (11.4b) is what stands in its place, and the difference is
-where the answer comes from. A trait's implementation is attached to a type,
-found by a search, and unnamed at the call. A bundle's implementation is a
-constant, named at the call, and found by reading the line in front of you. That
-is the whole of it: `i64_ascending` greps to one definition, and a program that
-wants a second ordering writes a second constant rather than a wrapper type.
-
-The cost is visible. `sort($i64, $i64_ascending, view)` says more than
-`sort(&mut items)` does. That verbosity is the feature, and it is the same
-trade the rest of the language makes: the call site says what it did.
+A capability bundle (11.4b) stands in its place. A bundle's implementation is a
+constant, named at the call: `i64_ascending` greps to one definition, and a
+program that wants a second ordering writes a second constant.
 
 For a single operation there is no need for a bundle at all. A compile-time
 function parameter (11.1b) passes one function and keeps the call direct.
-
----
 
 ## 11.6 Modules and imports
 

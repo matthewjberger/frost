@@ -1,8 +1,7 @@
 # Pools, slabs, and columns
 
-Frost's thesis is that pools and generational handles *are* the memory model, so
-where the pool itself lives is a question about whether the language can carry
-its own thesis. It lives in Frost.
+Pools and generational handles are Frost's memory model, and the pool itself is
+written in Frost.
 
 ## The shape
 
@@ -12,8 +11,8 @@ type and capacity: `std/slab.frost`, with the same thing written out longhand in
 The runtime defines no `pool_new`, `pool_alloc`, `pool_get`, `pool_contains`,
 `pool_free`, `pool_destroy`, `handle_index` or `handle_generation`, and the
 compiler emits no implicit `pool_get` when a `Handle` indexes something that is
-not slab-shaped. What is left of the runtime is the bounds and generation
-aborts, the assertions and the IO helpers, and the aborts are Frost too
+not slab-shaped. The runtime holds the bounds and generation aborts, the
+assertions and the IO helpers, and the aborts are Frost too
 (`runtime/runtime.frost`).
 
 A struct is recognized as slab-shaped by having a `storage` array beside a
@@ -21,44 +20,35 @@ parallel `generations` array, and `p[handle]` against one compiles to inline
 index and generation arithmetic over those two fields. No call, and the same
 class of code generation arrays already get.
 
-The argument below is what decided that shape, and the distinction underlying
-it is the part that applies again elsewhere.
+## The alternative
 
-## The question it answers
+The other design is a `Pool<T>` built into the compiler, lowering to an opaque
+`^u8` and calling a C runtime. That runtime is tiny and portable, and libc is
+the most portable ABI there is, so at run time it costs nothing. It costs
+elsewhere. The pool becomes C a Frost program cannot read or write, the language
+cannot reach freestanding targets without libc, and the pool's behavior is
+defined outside the language's own safety story.
 
-The alternative was a `Pool<T>` built into the compiler, lowering to an opaque
-`^u8` and calling a C runtime. That runtime is tiny and portable, and libc is the
-most portable ABI there is, so functionally it costs nothing. The concern is
-strategic. It makes the flagship data-oriented primitive uninspectable,
-unwritable C, which means the language cannot demonstrate its own core idea in
-itself, cannot reach freestanding targets without libc, and defines the pool's
-behavior outside its
-own safety story.
-
-The distinction is that the dependency worth shedding was the *allocator*,
-not the *C*. Look at what the pool runtime used from C: `malloc`,
-`free`, `memcpy`, and pointer arithmetic. The generational free list is pure
-integer and pointer manipulation the language can already do.
-Only the allocation was irreducible, and pools are fixed-capacity by design (so
-their element pointers stay stable), which means a pool does not even need a heap
-allocation. It can live in a caller-provided buffer, or, as it turned out,
-inside the struct.
+The dependency to shed is the allocator. A pool runtime in C needs `malloc`,
+`free`, `memcpy`, and pointer arithmetic. The generational free list is integer
+and pointer manipulation the language already does. Only the allocation is
+irreducible, and pools are fixed-capacity by design, so that their element
+pointers stay stable, which means a pool needs no heap allocation at all. It can
+live in a caller-provided buffer, or inside the struct.
 
 The layer under this one, the arena as the primary allocator with the pool as
 its fixed-size specialization, is in [allocators.md](allocators.md).
 
-## The honest caveat
+## What the compiler still supplies
 
-The pool is never a pure library. The place-deref stays compiler-supported,
-which for the columns container below it has to be, since selecting a column
-before indexing it is not something a function returning a borrow can say. So
-the pool is Frost storage plus Frost
-logic plus a thin compiler-generated accessor. But that accessor is inline
-address math, not a runtime, and the unsafe floor (raw writes into the backing
-array) moves from an opaque C file into auditable, type-integrated language code.
-That relocation, not elimination, of unsafety is the point.
+The place-deref is compiler-supported. The columns container below requires
+that, since selecting a column before indexing it is something a function
+returning a borrow cannot say. So a pool is Frost storage, Frost logic, and a
+thin compiler-generated accessor. That accessor is inline address math. Raw
+writes into the backing array are still unsafe; they sit in auditable,
+type-integrated language code in place of an opaque C file.
 
-## The columns container, the same model transposed
+## Columns, the slab transposed
 
 The slab stores whole elements back to back, an array of structs. A system that
 reads one field across many elements, a physics step touching every position, a
@@ -88,8 +78,8 @@ Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
 The layout cannot be written in library Frost, because "one array per field of
 `T`" is not a thing the type system can say about an arbitrary `T`. So the
 compiler reflects over `T`'s fields and synthesizes it, the way it synthesizes a
-generic struct instance. Naming each column after its field is what makes both
-access patterns fall out of machinery that already exists:
+generic struct instance. Each column is named after its field, so both access
+patterns use machinery that already exists:
 
 - `c.field` is the whole column. It is ordinary field access that yields the
   `[N]t` array, and an array coerces to a slice for free, so `c.position` passed
@@ -114,12 +104,12 @@ prefix to `columns_`, and nothing else in the calling code.
 ### Walking the ones that hold something
 
 `c.field` is every slot and says nothing about which of them are filled;
-`c[handle].field` is one slot and is checked. So the shortest loop over a column
-is the one that reads storage nobody put anything in, which wastes work for an
-integration step and answers wrongly for a sum. Worse, the correct loop could not
-be written at all: an insert does not touch `generations`, so a slot at
-generation zero is one that was never filled as much as one that is live, and
-liveness lived only in the free list, in release order.
+`c[handle].field` is one slot and is checked. A loop from `0` to `N` therefore
+reads storage nobody put anything in, which wastes work for an integration step
+and answers wrongly for a sum. `generations` cannot tell you which slots are
+filled either: an insert does not touch it, so a slot at generation zero may be
+live or may never have held anything, and the free list carries liveness in
+release order.
 
 `live_words` is that knowledge in the order a column is stored in, one bit per
 slot, set by `columns_insert` and cleared by `columns_release`. `for slot in
@@ -134,16 +124,16 @@ for slot in live_slots(c) {
 ```
 
 Two characters longer than `for slot in 0..N`, needing no `N` in scope, and the
-body is the body either way. The raw walk stays for the container a program knows
-is packed, for a column handed to C or a GPU as one contiguous run, and for any
-order but ascending. 10.1b lists what the walk cannot say.
+body reads the same either way. The raw walk stays for the container a program
+knows is packed, for a column handed to C or a GPU as one contiguous run, and
+for any order but ascending. 10.1b lists what the walk cannot say.
 
 The reserved element-field names are `storage`, `generations`, `free_list`,
 `free_count`, `live_words`, and `live_count`, which would confuse the structural
-recognizer that tells a columns container from a slab. The one operation not provided is the whole-element gather
-`value := c[handle]`, because recovering a `T` from the separate columns needs
-the element type the layout does not store. Read the fields you want through
-`c[handle].field` instead.
+recognizer that tells a columns container from a slab. The one operation not
+provided is the whole-element gather `value := c[handle]`, because recovering a
+`T` from the separate columns needs the element type the layout does not store.
+Read the fields you want through `c[handle].field` instead.
 
 It is built in both compilers (the Rust bootstrap in `src/ir/build.rs`, the
 self-hosted compiler in `selfhosted/`), on both backends each, to a

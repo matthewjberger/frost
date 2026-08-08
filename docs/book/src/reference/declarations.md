@@ -22,9 +22,9 @@ Bindings are immutable unless `var`. A `var` local is reassigned with `=`.
 `ref name := place` binds a borrow rather than a copy, so writing through the
 name writes the place: `ref entry := table[index]` then `entry.count = 0` is a
 write to the element. The right-hand side has to be a place (a name, a field, an
-index, a dereference, or a call answering with a `ref T`), since there is nothing
-to borrow otherwise. A `ref` binding is a borrow like any other: it may not be
-stored, and it may not outlive what it names (chapter 8).
+index, a dereference, or a call answering with a `ref T`). A `ref` binding is a
+borrow like any other: it may not be stored, and it may not outlive what it
+names (chapter 8).
 
 The parser distinguishes `name : Type = ...` (a typed binding) from
 `name :: ...` (a constant) by one token of lookahead after the first `:`. A
@@ -43,10 +43,18 @@ Shape :: enum { A, B { n: i64 } }     // enum
 Meters :: distinct i64                // distinct type
 ```
 
-`main` is the entry, and it takes no parameters. The C runtime calls it with the
-argument count and the argument vector, which a Frost `main` declares neither of,
-so a `main` that declares a parameter would be handed whatever the platform left
-in that register. That is refused where the declaration is written:
+`main` is the entry, and it has one shape:
+
+```frost
+main :: fn() -> i64 {
+    0
+}
+```
+
+Its caller is the C runtime. It calls `main` with the argument count and the
+argument vector, which a Frost `main` declares neither of, so a `main` that
+declared a parameter would be handed whatever the platform left in that
+register:
 
 ```frost,refused
 main :: fn(count: i64) -> i64 {
@@ -56,6 +64,24 @@ main :: fn(count: i64) -> i64 {
 
 > 'main' takes no parameters, and this one takes 1; what a call to it would
 > supply is whatever the platform left in a register
+
+A `uses` clause is counted with the written parameters, since that is what a
+capability becomes (8a.2), and `main` drawing one has nowhere to draw from.
+
+What `main` answers is the process exit code, so it answers `i64`. A `main`
+that can fail, or that answers an aggregate, or that answers nothing, is
+refused:
+
+```frost,refused
+Pair :: struct { a: i64, b: i64 }
+
+main :: fn() -> Pair {
+    Pair { a = 1, b = 2 }
+}
+```
+
+> 'main' is called by the C runtime and its answer is the process exit code, so
+> it answers i64
 
 A value constant's `<expr>` is an integer constant expression: an integer
 literal, an earlier constant by name, a call the compiler works out (5.2c), or
@@ -91,8 +117,7 @@ quotient, remainder := divide(17, 5)      // 3 and 2
 The list holds two or more values. `-> T` is how one value is returned and
 `-> (T)` is an error that says so.
 
-**Naming the values.** Every value is written `name: Type`, and a list that
-leaves one out is an error:
+Every value is written `name: Type`, and a list that leaves one out is an error:
 
 ```
 divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64)   // the form
@@ -108,20 +133,18 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 }
 ```
 
-That is the inferred literal of 6.5 over the struct the list becomes, so the
-`return` reads the way the signature does and cannot silently swap two values of
-the same type. Two names the same in one list is an error.
+That is the inferred literal of 6.5 over the struct the list becomes. Two names
+the same in one list is an error.
 
-Both forms of `return` stay. Returning by name is what a function whose values
-share a type wants; returning by order is what a function that is a table of
-answers wants, and `mnemonic_of` in `selfhosted/assemble.frost` is forty-five
-lines of `return M_ADDQ, 0`.
+Both forms of `return` are legal. A function whose values share a type returns
+by name, and a function that is a table of answers returns by order:
+`mnemonic_of` in `selfhosted/assemble.frost` is forty-five lines of
+`return M_ADDQ, 0`.
 
 A name in the list is a label for one of the values. It is out of scope in the
 body, there is nothing to assign to it, and there is no bare `return` that hands
-back whatever the names hold. That is Go's naked return and Odin's implicit result, and it is the hidden
-control flow [philosophy.md](../design/philosophy.md) rules out: what a function answers
-with is written at the `return` that answers.
+back whatever the names hold. What a function answers with is written at the
+`return` that answers.
 
 `return` lists the values in order, or names them, and it is required either
 way: a trailing expression is one value, so a function with a return type list
@@ -136,10 +159,8 @@ magnitude, var negative := classify(value)
 negative = false
 ```
 
-A `_` takes a value the caller has no use for. The list binds one name per value
-the call answers with, so without it a caller wanting only the first has to
-invent a name for the rest, and that name is a live binding somebody can read by
-mistake. Any number of them may sit in one list, in any position:
+A `_` takes a value the caller has no use for. Any number of them may sit in one
+list, in any position:
 
 ```
 high, _ := split(4096)
@@ -157,8 +178,7 @@ consume it
 
 `_` is the wildcard token of 2.3 and never a binding name, so `_ := 5` has
 nowhere to parse and `_` is not an expression. A single value is discarded by
-calling and binding nothing, which is what a call written as a statement already
-says, so there is one spelling for it rather than two.
+calling and binding nothing.
 
 The struct a list becomes holds a resource when one of its values does, and it
 is the one aggregate that carries no obligation of its own: the lowering builds
@@ -166,24 +186,18 @@ it at the `return`, takes it apart at the binding, and reads every field exactly
 once, so what it owes is what its fields owe and each of those lands on a name
 the binding introduced.
 
-**There is no tuple type.** The list is not a value, cannot be named, stored in
-a field, passed as an argument, or returned from anything but the function that
+There is no tuple type. The list is not a value, cannot be named, stored in a
+field, passed as an argument, or returned from anything but the function that
 declares it, and `(A, B)` is not a type anywhere else in the grammar. A call
 that returns several values is bound by a list of names and used nowhere else.
-Binding it to a single name is a compile error that says so. That restriction is
-what keeps the layout of every value in a program something the reader named
-(goal 1 of [philosophy.md](../design/philosophy.md)): a program that wants to pass a pair
-around declares a struct and gets a name for it.
+Binding it to a single name is a compile error that says so. A program that
+wants to pass a pair around declares a struct and gets a name for it.
 
 What the compiler does with the list is give it one struct, whose fields are the
 names the signature gave. The signature becomes a plain return of
 that struct, the `return` becomes a literal of it, and the binding becomes the
 call bound to a temporary and one field read per name. Nothing after the front
-end sees a return type list, which is why every backend and the C ABI handle one
-with no code of their own. In the bootstrap compiler two functions returning
-the same list under the same names share the struct, since its name is derived
-from both. The self-hosted compiler makes one per function. Neither is
-observable.
+end sees a return type list.
 
 A return type list does not combine with a failure set: `-> (A, B) ! E` is
 rejected, because a fallible function answers with one value or one error. A
@@ -213,8 +227,7 @@ is no error interface to implement, no backtrace, no allocation, and no boxing.
 A failure is a value of a type you wrote, so what a failure carries is what you
 put in it.
 
-**What the compiler makes of it.** The signature becomes one enum with two
-variants:
+The signature becomes one enum with two variants:
 
 ```frost,sketch
 Result :: enum { Ok { value: T }, Err { error: E } }
@@ -223,12 +236,10 @@ Result :: enum { Ok { value: T }, Err { error: E } }
 That enum is what the function returns, and it is where the names at a `match`
 come from: `value` is the field the `Ok` variant carries and `error` is the
 field `Err` carries. A field like `error.at` is a field of `Parse`, the type
-this program declared. Nothing downstream knows failure sets exist, which is
-why every backend and the C ABI handle a fallible function with no code of
-their own.
+this program declared. Nothing downstream knows failure sets exist.
 
-**Returning one or the other.** A `return` whose expression builds the failure
-type is the failure, and anything else is the value:
+A `return` whose expression builds the failure type is the failure, and anything
+else is the value:
 
 - `return Parse { at = 3, code = 0 }` names the failure type, and is the
   failure.
@@ -240,9 +251,8 @@ type is the failure, and anything else is the value:
 - The body's trailing expression is the value, the same as in any other
   function.
 
-**`?` hands a failure up.** A call followed by `?` is the value it answered
-with, or an immediate return of its failure from the function the `?` is
-written in:
+A call followed by `?` is the value it answered with, or an immediate return of
+its failure from the function the `?` is written in:
 
 ```frost,sketch
 number :: fn(text: str) -> i64 ! Parse {
@@ -263,8 +273,7 @@ the same one. There is no conversion, and no `From` to write: a function that
 calls something failing differently `match`es it and returns the failure it
 declares.
 
-**Reading the answer.** The caller matches, and a match on an enum covers every
-variant (6.7):
+The caller matches, and a match on an enum covers every variant (6.7):
 
 ```frost,sketch
 match number(text) {
@@ -273,10 +282,9 @@ match number(text) {
 }
 ```
 
-**A resource survives a failure.** A result carrying a `linear` value is itself
-linear, so it must be consumed, and matching it is what consumes it (chapter 9).
-Ignoring a call that answers with one is refused, since the resource would be
-dropped where nothing named it.
+A result carrying a `linear` value is itself linear, so it must be consumed, and
+matching it is what consumes it (chapter 9). Ignoring a call that answers with
+one is refused, since the resource would be dropped where nothing named it.
 
 ```frost,sketch
 open :: fn(n: i64) -> File ! Denied { ... }
@@ -289,12 +297,11 @@ use_it :: fn(n: i64) -> i64 {
 }
 ```
 
-**There is no other error channel.** No exceptions, no panics to catch, no
-error return codes to check by convention, and no ignoring a failure by
-accident: what a function can fail with is in its signature, and the caller
-either matches it or hands it up with `?`. A failure that is not one, a bug in
-the program rather than a condition in the world, is an assertion, and an
-assertion aborts.
+There is no other error channel. No exceptions, no panics to catch, no error
+return codes to check by convention, and no ignoring a failure by accident:
+what a function can fail with is in its signature, and the caller either matches
+it or hands it up with `?`. A failure that is not one, a bug in the program
+rather than a condition in the world, is an assertion, and an assertion aborts.
 
 `-> (A, B) ! E` is rejected: a fallible function answers with one value or one
 failure. A function that wants both returns a struct it names.
@@ -348,29 +355,23 @@ Sized :: struct { bytes: [TABLE[3]]u8 }
 An array literal, a struct literal, a string literal, `[value; n]`, an index, a
 field, and `str_len` and `slice_len` over one are all worked out. An index is
 checked where it is written, so reading past the end is a compile error naming
-the index and the length rather than an abort the program was going to reach.
+the index and the length.
 
-A run is *held* by the compiler once it is worked out, rather than read back
-out of the tokens each time it is named. An element may itself be a call, so
-re-reading would run it once per index; and a value has to outlive the names
-that built it, which a position in the token stream does not.
+A run is held by the compiler once it is worked out. An element that is itself a
+call runs once, however many times the run is named, and the held value outlives
+the names that built it.
 
 Everything else is refused, naming what stopped it:
 
-- A function that reaches itself, directly or through others. Working the call
-  out means running it, and that never ends.
+- A function that reaches itself, directly or through others.
 - A call into the world. A function this program does not declare has no body to
-  read, so an `extern`, and anything that reaches one, stops the call. That is
-  what rules out reading a file, printing, or allocating.
+  read, so an `extern`, and anything that reaches one, stops the call. Reading a
+  file, printing, and allocating are all out.
 - A pointer, an `unsafe` block, a `match`, a `for`, a `defer`, a `?`. Each is
   named where it is written.
 - A number with a fraction. A compile-time value is a whole number or a yes or
-  no, since what one is for is a length, a capacity, a count or a branch, and
-  folding a fraction would mean two decimal-to-double readings having to agree
-  bit for bit.
-- More than a million steps, or calls nested deeper than thirty-two. A body may
-  loop, so how long one takes is not read off the text, and the bound is what
-  says a compile finishes.
+  no.
+- More than a million steps, or calls nested deeper than thirty-two.
 
 A call names a function the file can name: what it declares, and what the files
 it imports export.
@@ -387,15 +388,9 @@ a call (`slab_insert($Entity, $next_power_of_two(300), ...)`).
 Every argument has to be known where the call is written. So a call over a
 generic's own size parameter, `Grid :: struct($N: usize) { cells: [pow2(N)]i64 }`,
 is refused and the parameter is named: `N` is bound at the instantiation, which
-is later than the declaration the call is written in. Two things make that the
-right answer rather than a gap to close. The caller-side form already works,
-and it is the one that comes up: `Grid<pow2(300)>` hands the rounded number in.
-And carrying an unevaluated call inside a length would put it in the mangled
-name an instance goes by and in the interface a separately compiled module
-publishes, so the spelling would have to stay stable across every future version
-of the compiler, for a form whose caller-side twin is already there. Arithmetic
-over a size parameter keeps working, and `[(N + 63) / 64]i64` is how a length
-over one is written (3.2).
+is later than the declaration the call is written in. The caller-side form hands
+the rounded number in: `Grid<pow2(300)>`. Arithmetic over a size parameter keeps
+working, and `[(N + 63) / 64]i64` is how a length over one is written (3.2).
 
 ## 5.3 Externs and imports
 
@@ -443,35 +438,21 @@ name that helper, and two files may share a private name without colliding.
 There is no `pub` and no per-item visibility marker. The `export` line is the
 only control, and struct fields are always public (3.2).
 
-**An import says what a file may name.** A file sees the names it declares and
-the exported names of the modules it imports *directly*, and nothing else.
+An import says what a file may name. A file sees the names it declares and the
+exported names of the modules it imports *directly*, and nothing else.
 Importing is not transitive: if `a.frost` imports `b.frost` and `b.frost`
 imports `c.frost`, then `a.frost` cannot name what `c.frost` exports until it
 imports `c.frost` itself.
 
-That makes the list at the top of a file the list of what it depends on, which
-is the only reason to have one. Without it a file could call a function from a
-module it never named, and an import line could be deleted with the build still
-passing.
-
-The two compilers reach it differently. The bootstrap splices every module into
-one program, so it compares what each file used against what that file imported.
-The self-hosted compiler resolves a name by scanning declarations with a
-visibility rule, so the import becomes an edge that rule has to cross, and an
-unimported name is never found.
-
 The exported namespace is flat, and a name carries its own prefix by convention
-(`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
-for.
+(`vec3_add`, not a qualified `math.add`).
 
-Two modules exporting the same name is not itself a problem, since a file that
-imports one of them sees one name. It is a problem when one file imports both
-*and writes the name*, which is a compile error naming both modules rather than
-a silent choice between them. The fix is usually to prefix one of them, since a
-name carrying its own prefix is what the flat namespace runs on.
+Two modules may export the same name, and a file that imports one of them sees
+one name. A file that imports both *and writes the name* is a compile error
+naming both modules. The fix is usually to prefix one of them.
 
-**Reading a name under another.** When neither module is yours to edit, an
-import may say what to call what it brings in:
+When neither module is yours to edit, an import may say what to call what it
+brings in:
 
 ```
 import "list.frost" (insert as list_insert)
@@ -483,6 +464,4 @@ renamed. A rename belongs to the file that wrote it, so another importer of
 `list.frost` still says `insert`. Renaming a name the module does not export is
 an error saying so.
 
-This is the last resort, not a style. A renamed call no longer greps back to its
-definition, which is the one thing the flat namespace is for, so it is worth it
-only when the alternative is not being able to use two libraries at once.
+A renamed call no longer greps back to its definition.

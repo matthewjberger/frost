@@ -6,7 +6,7 @@ callback API on both backends, in the test
 `a_callback_registered_with_a_c_library_runs`, which links a small C library
 that stores a `(callback, userdata)` pair and calls it back later.
 
-## The contradiction it exists to remove
+## What the C idiom costs
 
 Goal 2 in [philosophy.md](philosophy.md) says safety comes from making dangerous
 shapes unrepresentable. Without a callback form of its own, the only way to write
@@ -26,16 +26,14 @@ closures, so a `^T` can only point into an arena a function was handed directly.
 A `^u8` handed to a C library and called back through later is precisely the case
 that argument does not cover. `src/check/ownership.rs` cannot see through it either.
 
-The result was that every callback-shaped API in Frost was an unsafe API, not
-because callbacks are unsafe but because the only expression of one was a raw
-escape hatch. That is the inversion the surface `&` removal was meant to prevent,
-reappearing at the C boundary.
+Under that idiom every callback-shaped API is an unsafe API, because the only
+expression of a callback is a raw escape hatch. The surface `&` removal pushed
+that shape out of the language, and the C boundary is where it comes back.
 
 ## The shape
 
-Closures stay a non-goal. Capture is not the answer. A context written down is.
-A callback is a compile-time function argument plus a typed context the caller
-owns:
+Closures stay a non-goal. A callback is a compile-time function argument plus a
+typed context the caller owns:
 
 ```frost
 Ctx :: struct { hits: i64 }
@@ -63,11 +61,11 @@ parameter is supplied at the call, which `src/lower/allocation_sources.rs` inser
 and a callback needs no such parameter. A `uses CallbackAbi` would be a keyword
 pretending to be a capability and a second thing to keep in step with the first.
 
-Which form of compile-time parameter it is follows from that. Not `$handler:
-Type`, which says only "some type", but the bound form `$handler: fn(mut Ctx,
-i64)` ([generics.md](../reference/generics.md) 11.1b), so the handler's
-signature is checked against what the library expects at the call, by the code
-in `src/ir/build.rs` that already checks compile-time signatures.
+The form is the bound one, `$handler: fn(mut Ctx, i64)`
+([generics.md](../reference/generics.md) 11.1b), so the handler's signature is
+checked against what the library expects at the call, by the code in
+`src/ir/build.rs` that already checks compile-time signatures. Plain `$handler:
+Type` would say only that the argument is a type.
 
 ### The extern's C signature
 
@@ -82,15 +80,15 @@ register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 
 becomes `int64_t register(void (*)(void*, int64_t), void*)`.
 
-Which parameter is the context is not positional and must not be, because
-libraries put the userdata on either side of the function pointer. It is the
-parameter whose type is the type of the handler's context.
+The context is the parameter whose type is the type of the handler's context.
+Position does not identify it, and must not, because libraries put the userdata
+on either side of the function pointer.
 
 The handler's context is its one `mut` parameter, wherever it is written, and
-every other parameter is a callback argument that C passes through. Position is
-not what identifies it. Being the one parameter the handler can write is. So
-both of these are registrations, and the second is the order wgpu-native and
-most modern C APIs take:
+every other parameter is a callback argument that C passes through. What
+identifies it is being the one parameter the handler can write. So both of these
+are registrations, and the second is the order wgpu-native and most modern C
+APIs take:
 
 ```frost,sketch
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
@@ -106,8 +104,8 @@ them the library is being asked to keep.
 
 ### Ownership of the context
 
-Registration moves it in, unregistration moves it back out, and the registration
-is a `linear` value. Not a borrow.
+Registration moves the context in, unregistration moves it back out, and the
+registration is a `linear` value.
 
 ```frost,sketch
 Ctx          :: struct { hits: i64 }
@@ -119,7 +117,7 @@ unregister_handler :: extern fn(token: i64) -> Ctx
 unregister         :: fn(move r: Registration) -> Ctx { unregister_handler(r.token) }
 ```
 
-Three things fall out, and each is a reason to prefer moving over borrowing.
+Three things follow from moving rather than borrowing.
 
 - No new machinery. A borrow held by C after the call returns is nothing the
   language has. `ref T` is returnable, but it is handed to a caller whose frame
@@ -128,9 +126,9 @@ Three things fall out, and each is a reason to prefer moving over borrowing.
   whole design is built on not having. Moving needs nothing new.
   `check_ownership` already stops the caller touching a moved value, and
   `check_linearity` already forces a `linear` value to be consumed exactly once.
-- The aliasing guarantee is the one you want. While registered, the callback
-  may fire at any moment, so the caller must not be reading or writing the
-  context. Having moved it in, the caller cannot.
+- Aliasing. While registered, the callback may fire at any moment, so the caller
+  must not be reading or writing the context. Having moved it in, the caller
+  cannot.
 - Forgetting to unregister becomes a compile error, which is a real bug class
   in every C callback API, and a dangling callback into a freed context is the
   exact failure this is meant to prevent.
@@ -138,35 +136,32 @@ Three things fall out, and each is a reason to prefer moving over borrowing.
 The fire-and-forget case, where the library never hands the callback back, does
 not get an exception. The registration is still linear, and a program that means
 to abandon it says so with a terminal consumer that takes it and returns nothing.
-"I am deliberately leaking this" is worth having to write.
 
 ## Where the context lives
 
-The rules above are the easy part. One question decides whether the feature is
-safe or merely tidier, and it is where the context lives while the callback can
-fire.
+One question decides whether the crossing is safe: where the context lives while
+the callback can fire.
 
 `move ctx: Ctx` hands the value to the extern, and the extern keeps a pointer to
 it. So the storage the pointer names has to outlive the call, and a moved
 argument is a value in the caller's frame. `src/check/regions.rs` and
 `check_frame_escapes` between them already reject a pointer into the current
 frame being returned, stored into a parameter, or carried out inside a struct.
-What they did not reject was one being *handed to an extern that keeps it*,
-because until callbacks nothing in the language could keep one.
+Handing one to an extern that keeps it is the case a callback adds, and it is
+the one those checks were not written for.
 
-So the feature adds exactly one obligation, and it is the whole safety argument:
+So a registration carries one obligation, and it is the whole safety argument:
 
 > The context argument of a callback registration must name storage that outlives
 > the registration.
 
-The obvious answer, that the context therefore has to live in an arena or a
-pool and a place in the current frame is rejected, is wrong, and it is wrong in
-a way worth understanding, because it does not survive contact with the language
-it is a rule for. A context is a value of a struct type, and a value lives where
-it is bound. Putting one in an arena means holding a `^Ctx`, and then the
-registration's context parameter is a pointer rather than a moved value and the
-ownership argument above evaporates. That rule would reject every program anyone
-could write.
+One way to meet it is to require the context to live in an arena or a pool and
+reject a place in the current frame. That rule does not survive contact with the
+language it is a rule for. A context is a value of a struct type, and a value
+lives where it is bound. Putting one in an arena means holding a `^Ctx`, and
+then the registration's context parameter is a pointer instead of a moved value
+and the ownership argument above evaporates. The rule would reject every program
+anyone could write.
 
 The obligation is satisfied from the other end. A `Registration` is `linear`,
 so `check_linearity` already forces it to be consumed exactly once in the
@@ -176,12 +171,12 @@ What is left to stop is the registration *leaving* that function by some other
 road, which is the same shape `src/check/regions.rs` already enforces for pointers:
 returned, stored where the call cannot see, or handed back as the call's answer.
 
-So the rule is not a new kind of check. A registration whose context is rooted in
-this frame counts as a value that points into this frame, and the three roads out
-are closed by the code that was already closing them. Linearity closes the
+So the rule needs no new kind of check. A registration whose context is rooted
+in this frame counts as a value that points into this frame, and the three roads
+out are closed by the code that was already closing them. Linearity closes the
 fourth, which is not consuming it at all.
 
-Without it the crossing is type-safe and the program still has a dangling
+Without that rule the crossing is type-safe and the program still has a dangling
 pointer.
 
 ## The limits
