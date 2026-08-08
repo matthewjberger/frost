@@ -75,12 +75,12 @@ index, and `for_each` takes a list of types on the same footing.
 | Call | What it does |
 | --- | --- |
 | `ecs_register($T, world) -> i64` | Registers `T` and answers its index |
-| `ecs_add($T, world, entity, mask, value)` | Gives it the component, migrating the entity if it is new |
-| `ecs_remove(world, entity, mask)` | Takes it away, migrating the entity |
-| `ecs_has(world, entity, mask) -> bool` | Whether it holds it |
-| `ecs_get($T, world, entity, mask) -> T` | The value, by copy |
-| `ecs_set($T, world, entity, mask, value)` | Overwrites it, stamping the row |
-| `ecs_slice($T, world, table, mask) -> []T` | One table's column, to write through |
+| `ecs_add($T, world, entity, component, value)` | Gives it the component, migrating the entity if it is new |
+| `ecs_remove(world, entity, component)` | Takes it away, migrating the entity |
+| `ecs_has(world, entity, component) -> bool` | Whether it holds it |
+| `ecs_get($T, world, entity, component) -> T` | The value, by copy |
+| `ecs_set($T, world, entity, component, value)` | Overwrites it, stamping the row |
+| `ecs_slice($T, world, table, component) -> []T` | One table's column, to write through |
 
 Adding or removing a component moves the entity to the table for its new set,
 carrying every column the two tables share. A despawn moves the last row into

@@ -11,10 +11,10 @@ Where the library reaches outside the language it does it the way a program
 would, with an `extern` declaration. `mem.frost` declares the C allocator,
 `io.frost` the runtime's write helpers, `fs.frost` its file calls,
 `thread.frost` its threading ones, and `math.frost` and `math64.frost` the C
-transcendentals. `ecs.frost` and `slab.frost` add one runtime call each, for
-reporting and for the identifier a container stamps into its handles. Those
-eight files hold every `extern` in the library. The other twelve are ordinary
-safe code.
+transcendentals. `ecs.frost` adds two runtime calls, for reporting a fault and
+for stopping on one, and `slab.frost` one, for the identifier a container stamps
+into its handles. Those eight files hold every `extern` in the library. The
+other twelve declare none.
 
 Nothing is imported implicitly. A program that wants to print says
 `import "io.frost"`, and the file is found on the standard library search path

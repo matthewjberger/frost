@@ -198,7 +198,8 @@ and says where, on every backend. Rust panics in debug and wraps in release.
 Frost aborts in both, so a build that ran is a build whose arithmetic held.
 `wrap_add`, `wrap_sub` and `wrap_mul` keep the low bits, for a hash or a counter
 that is meant to leave the range, and they are the analogue of Rust's
-`wrapping_*` family. (There are no `_` digit separators.)
+`wrapping_*` family. An `_` may sit between digits, as in Rust, so `1_000_000`
+reads in groups.
 
 A fixed array of numbers takes the arithmetic operators, once per lane:
 `a + b` over two `[4]f32` is four adds, and `a * 2.0` is that number in every
@@ -377,8 +378,8 @@ Deref rules to keep straight, since they differ from Rust's `*`:
 
 `^T` is a raw pointer, the analogue of `*const T` / `*mut T`. It is unchecked
 and exists for FFI and for building low-level libraries. `ptr_to(place)` takes
-one, you dereference it with postfix `^`, and both the taking and the reading
-belong in an `unsafe` block:
+one, and taking an address is safe. Reading through one with the postfix `^`
+is what belongs in an `unsafe` block:
 
 ```frost,sketch
 var hero := Entity { hp = 100, mana = 30 }
@@ -436,10 +437,11 @@ Where Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule:
 the result carrying a resource is itself linear, so dropping the call drops the
 resource, and that is a compile error.
 
-### `defer` for scope-exit actions
+### `defer` for actions on the way out
 
 Because there is no `Drop`, the RAII-guard pattern is replaced by `defer`,
-which runs a statement when the scope exits, in last-in-first-out order:
+which runs a statement where the function leaves, last written first. It goes
+at the top level of a body, and `break` and `continue` do not run one:
 
 ```frost
 import "io.frost"
@@ -450,7 +452,7 @@ work :: fn() {
 ```
 
 It is Go's `defer`. For resources with real ownership, prefer a `linear` type.
-Use `defer` for local, best-effort scope-exit actions.
+Use `defer` for local, best-effort actions on the way out.
 
 ## Errors, without `Result<T, E>` being a library type
 
@@ -797,11 +799,12 @@ memory has been corrupted. A foreign function that takes and returns numbers
 with no pointer anywhere is declared `safe extern fn` and needs no block, which
 is how `std/math.frost` reaches `sqrtf`.
 
-One asymmetry to note, coming from Rust's `extern "C"` and `#[no_mangle]`, is
-that Frost calls C, and C does not call Frost. There is no stable exported ABI
-and no attribute to expose a Frost function to a C caller. The C that the
-compiler emits internally is a lowering detail, and its names are mangled. If
-you need a library other languages link against, that is out of scope. See
+Coming from Rust's `extern "C"` and `#[no_mangle]`, the counterpart is the same
+`extern fn` declaration written with a body. An ordinary Frost function is
+emitted under a name the compiler chose, so C cannot call it; one written this
+way keeps the name it was written under and C links against it. The names
+beginning `frost_rt_` and `frost_u_` are the runtime's and the compiler's, and
+a definition taking either is refused. See
 [c-compatibility.md](impl/c-compatibility.md) for the full type mapping.
 
 ## Modules

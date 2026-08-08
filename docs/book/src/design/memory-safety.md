@@ -155,10 +155,11 @@ has been replaced is refused at the next use, whether that use reads it or
 writes through a `ref` into it.
 
 The summary records field names because a container with more than one run grows
-one of them while a caller holds a view of another, and that is ordinary.
-`std/ecs.frost` does it on every frame: `group_spawn` grows `g.slots` while a
-`ref` into `g.members` is live. A summary that recorded only "parameter 0 was
-written" cannot tell those apart and refuses the honest program.
+one of them while a caller holds a view of another, and that is ordinary. A
+`World` in `std/ecs.frost` carries a run of entity slots beside a run of tables
+beside a run of resource columns, and a frame pushes into each of them. A
+summary that recorded only "parameter 0 was written" cannot tell those apart and
+refuses the honest program.
 
 Rebinding clears it, and taking the view again after a push is the fix the
 diagnostic asks for. A loop body is walked twice where a run under a live view
@@ -380,12 +381,13 @@ After a free and reuse, the *bit pattern* of the old handle no longer matches,
 so it cannot be used to read or corrupt whatever now occupies the slot. A raw
 pointer to the same slot would read the new occupant.
 
-A handle carries its generation in 32 bits, so a slot's generation is bounded.
-A slot released 2^31 times is retired instead of reused, and the container
-loses one place instead of handing out a handle its own check would reject. The
-bound cannot fail the other way: the check compares an ever-increasing count
-against a sign-extended 32-bit value, and a count past the bound equals no
-older handle's generation.
+A handle's top 32 bits carry the container's own number in seven and the slot's
+generation in twenty-four, so a slot's generation is bounded. A slot released
+`GENERATION_LIMIT` times, which is 16,777,214, is retired instead of reused, and
+the container loses one place instead of handing out a handle its own check
+would reject. The bound cannot fail the other way: the slot is retired one
+release before the count would carry into the container's number, so no
+generation ever answers for a container it is not in.
 
 ### Handle-dereference-as-borrow
 
@@ -449,9 +451,8 @@ check: a call into C for the bytes, and a reinterpretation of those bytes as a
 typed pointer. Written at each site that is three `unsafe` blocks per container
 and the count-times-size arithmetic repeated wherever it is easy to get wrong.
 
-`std/mem.frost` is that floor, and it is the only file in the standard library's
-containers that contains an `unsafe` block. It hands back a slice rather than a
-pointer:
+`std/mem.frost` is that floor, and it is where the standard library's containers
+concentrate their `unsafe`. It hands back a slice rather than a pointer:
 
 ```frost,sketch
 keys := heap_slice($i64, capacity)     // []i64, not ^i64
@@ -463,8 +464,10 @@ The whole body of a hash map is ordinary safe code, and the only unchecked
 operations are the allocation and the release. For a container whose element
 width is decided while the program runs, `heap_bytes`, `bytes_at` and `bytes_as`
 do the same job: the byte arithmetic is written once, and what comes back is a
-bounds-checked `[]T`. `std/ecs.frost` is written entirely on those, so it too
-has no `unsafe` block.
+bounds-checked `[]T`. `std/ecs.frost` reaches every column through those, and
+the seven `unsafe` blocks left in it are five calls to the runtime's fault
+report, an empty run of marks built with no element to point at, and the byte
+move that trims an event channel.
 
 This is the same shape `arena_at` has: push the unchecked operation down into
 one audited function and hand back something the language can check.

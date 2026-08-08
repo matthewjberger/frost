@@ -13,7 +13,7 @@ import list.
 `import "list.frost" (insert as list_insert)` reads one of those names under
 another, which is the answer when two modules you cannot edit export the same
 name. The rename belongs to the file that wrote it. See section 5.5 of
-[spec.md](../reference/conformance.md).
+[declarations.md](../reference/declarations.md).
 
 ## The order
 
@@ -21,8 +21,8 @@ name. The rename belongs to the file that wrote it. See section 5.5 of
    file's neighbours are the most specific thing it could mean.
 2. `-L DIR` on the command line, repeatable, in the order given.
 3. `FROST_PATH`, split the way the platform splits a path list.
-4. The project manifest, `frost.json` beside the file named on the command
-   line, which may declare `paths`.
+4. The project manifest, the nearest `frost.json` at or above the file named on
+   the command line, which may declare `paths`.
 5. The standard library.
 
 Command line beats environment beats project file, which is the order of how
@@ -31,18 +31,22 @@ shadow it by putting a file of the same name somewhere earlier.
 
 ## The manifest
 
-`frost.json`, optional, beside the entry file:
+`frost.json`, optional, in the entry file's directory or any directory above it:
 
 ```json
 { "name": "demo", "paths": ["lib", "vendor/things"] }
 ```
 
-Both fields are optional. `paths` are relative to the manifest.
+Every field is optional. `paths` are relative to the manifest. Two more say
+something about the project rather than about where a file is found: `layers`
+lists its directories lowest first, and a file may import from its own layer or
+one declared before it and from no later one; `prefixes` maps a directory to the
+prefix its exported names share, which `frost lint` holds them to.
 
-It answers one question, where a library lives. It carries no versions and
-fetches no dependencies from anywhere, since compiling a program takes neither
-and each is a decision that would be hard to take back. The format is JSON, the
-same serde and JSON that interfaces and build records already use.
+It answers one question about an import, where a library lives. It carries no
+versions and fetches no dependencies from anywhere, since compiling a program
+takes neither and each is a decision that would be hard to take back. The format
+is JSON, the same serde and JSON that interfaces and build records already use.
 
 ## The standard library
 

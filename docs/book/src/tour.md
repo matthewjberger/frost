@@ -1,9 +1,10 @@
 # A tour of Frost
 
-This chapter walks through the language by example. Every snippet below
-compiles and runs on both native backends, and `examples/tour.frost` is a
-runnable program over most of the same ground. For the reasoning behind these
-choices, see [philosophy.md](design/philosophy.md). For the safety rules, see
+This chapter walks through the language by example. The test suite compiles
+every block below, so the compiler accepts what is written here. Blocks marked
+`sketch` show a shape and skip compilation. `examples/tour.frost` is a runnable
+program over most of the same ground. For the reasoning behind these choices,
+see [philosophy.md](design/philosophy.md). For the safety rules, see
 [memory-safety.md](design/memory-safety.md). Each section links the reference
 chapter that states its rules in full.
 

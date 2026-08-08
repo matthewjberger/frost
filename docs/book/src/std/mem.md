@@ -167,6 +167,6 @@ stops a run outliving the arena is the region check, in
 frost --test std/mem.frost
 ```
 
-Nine blocks, covering the typed path, the byte-width path, the zero count, a
-struct element (where an element index and a byte offset are different numbers),
-and the two block-counting tests above.
+Thirteen blocks, covering the slice views, the typed path, the byte-width path,
+the zero count, a struct element (where an element index and a byte offset are
+different numbers), and the two block-counting tests.

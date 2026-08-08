@@ -190,9 +190,10 @@ Each of these takes something a caller cannot get wrong and hands back something
 the language can check. If you cannot narrow the signature, leave the `unsafe`
 at the call site where a reader will find it.
 
-`--audit-unsafe` reports the two ways a block can vouch for nothing: holding no
-unchecked operation, and sitting inside another that already covers it. It is
-off by default.
+Every build reports the two ways a block can vouch for nothing: holding no
+unchecked operation, and sitting inside another that already covers it.
+`--audit-unsafe` turns that report into a failure, which is what holds a tree
+to zero of them.
 
 ## Own a resource with `linear`
 
@@ -246,7 +247,8 @@ test "a world gives back every block it took" {
 ```
 
 `heap_live` is the number of blocks the runtime has out. Every container in
-`std/` has a test of this shape, so a leak shows up as a failing test.
+`std/` that takes from the heap has a test of this shape, so a leak shows up as
+a failing test.
 
 Take the baseline after the first round of whatever you are measuring, which
 leaves the one-time setup outside the count.
@@ -311,8 +313,9 @@ fs_read :: fn(path: str) -> ReadResult
 ```
 
 Where C needs a terminator, add it once inside the wrapper. The raw pointers
-left in `std/` are in `mem.frost`, where a raw pointer is the subject, and in
-`thread.frost`, where the OS needs an untyped context.
+left in `std/` are where a run of bytes is the subject: `mem.frost`, the byte
+stores in `ecs.frost`, `fs.frost` and `snapshot.frost`, and `thread.frost`,
+where the OS needs an untyped context.
 
 ## An arity in a name is a missing language feature
 

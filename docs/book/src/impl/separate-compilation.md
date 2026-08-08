@@ -16,9 +16,9 @@ with the program, and `just bench-incremental` measures that.
 
 `src/modules/imports.rs` flattens every import into one AST. `resolve_imports`
 reads each imported file, parses it, renames its private names, and splices the
-statements into a single `Vec<Spanned<Statement>>`. Every pass after that runs
-over the whole program, so a program's cost is whole-program by construction,
-and two costs grow with it:
+statements into one `Module`'s arenas, named by a single `Vec<StmtId>`. Every
+pass after that runs over the whole program, so a program's cost is
+whole-program by construction, and two costs grow with it:
 
 - Monomorphization runs to fixpoint over everything. A specialization is
   emitted once per program. Change one line in `main` and every specialization
@@ -152,9 +152,9 @@ builds a program across many files, changes one, and times a full build against
 an incremental one. Read the two against each other, since process start and the
 linker sit inside both and no amount of skipping removes them. Against the
 compiler's own work the incremental build is a small fraction of the full one,
-and the declaration form is most of that difference. The recipe's third column
-splices bodies in place of declarations, which leaves the front end walking code
-it will never emit and costs most of the win.
+and the declaration form is most of that difference. Splicing bodies in place of
+declarations leaves the front end walking code it will never emit and costs most
+of the win.
 
 ## Edges of the design
 
@@ -164,8 +164,8 @@ it will never emit and costs most of the win.
   per module and assembles each to its own object, and it decides what is stale
   from the emitted unit itself, since the compiler has just written what a
   module compiles to. See [the self-hosted compiler](self-hosted.md).
-- A project root is the directory of the file named on the command line, or of
-  the `frost.json` beside it. A module found through `-L`, `FROST_PATH` or the
+- A project root is the directory of the file named on the command line, and
+  nothing else moves it. A module found through `-L`, `FROST_PATH` or the
   manifest is named relative to the root it was found under, and that label
   keeps its identity the same on another machine. See
   [modules.md](modules.md).

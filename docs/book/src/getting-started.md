@@ -62,9 +62,12 @@ frost/
 ├── selfhosted/   # the Frost compiler, written in Frost
 ├── src/          # the bootstrap compiler, in Rust: builds stage 0, and is the oracle
 ├── std/          # the standard library, in Frost
-├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
+├── runtime/      # the support runtime: aborts and assertions in Frost, IO in C
+├── lib/          # the engine, in Frost: platform, renderer, engine
+├── tools/        # the wgpu binding generator
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
+├── tests/        # the harness
 ├── .vscode/      # editor settings, and the VS Code grammar for .frost
 └── docs/book/    # this book
 ```
