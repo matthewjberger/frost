@@ -338,64 +338,38 @@ above it, which is what a reader does looking down the arms, so an arm nothing
 reaches is named where it is written whether one earlier arm took its values or
 three did between them.
 
-### Guards, weighed against the same bar and declined
+There are no guards. `case n if n > 5:` puts an expression in pattern position,
+and a guarded arm covers nothing the compiler can count, so exhaustiveness would
+need a second rule for arms it has to ignore. Write the `if` inside the arm.
 
-A guard, `case n if n > 5:`, fails that bar in three ways at once.
+Patterns do not nest either. `case .Line { start: .Point { x } }` binds through
+two levels; a second `match`, or a `.` on the bound field, says the same thing
+and leaves every field access where a grep for the field name finds it.
 
-It puts an arbitrary expression in pattern position, so every walk in both
-compilers that enumerates what a program contains would have to learn to walk
-one. That is the hole shape the old `print` statement was, and closing it took a
-release.
+## What the syntax costs
 
-It breaks countable coverage. A guarded arm covers nothing provably, so the rule
-that every variant is covered would have to ignore guarded arms, which turns
-one rule into two: what a match covers, and what a match covers when you squint.
+Bounds come from a closed list. `$T` can carry a `where` clause after the
+signature, drawn from `is_numeric`, `is_integer`, `is_float`, `is_struct`,
+`is_array`, `is_slice`, `is_pointer` and `is_linear`, combined with `&&`, `||`
+and `!`. Each one is a question the compiler already answers for itself, to pick
+an integer or a floating point instruction, to decide how wide a value is and
+whether it travels by address, and to know what has to be consumed. A program
+cannot extend the list, so a requirement outside it has nowhere to be written
+down and shows up at instantiation instead, pointing into the generic's body
+instead of at the caller's line. Opening the vocabulary would mean bound
+solving, coherence, and the front-end cost of both.
 
-And it opens a question with no good answer: what may a guard read of a linear
-scrutinee before an arm has committed to consuming it.
+A compile-time function parameter narrows that: `$before: fn(T, T) -> bool`
+declares the signature it needs, and a mismatch is reported against the
+parameter list. A capability bundle covers what can be *done* with a type. The
+full rules are in [generics.md](../reference/generics.md).
 
-The spelling that exists is an `if` inside the arm. It is one line, and it keeps
-the condition where the rest of the language keeps conditions, which is inside
-control flow rather than beside a pattern.
+Mandatory parentheses and explicit consumers cost typing, and buy a grammar with
+no carve-outs in it.
 
-### Deep destructuring, likewise
-
-`case .Line { start: .Point { x } }` trades one flat binding list for nesting.
-The second `match`, or a `.` on the bound field, spells the same thing, and it
-keeps every access something a grep for the field name finds. Nesting hides
-those accesses inside a pattern, which is the one place in the language nobody
-greps for a field.
-
-## Honest tradeoffs
-
-A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`
-clause after the signature, but only from a fixed list: `is_numeric`,
-`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice`, `is_pointer` and
-`is_linear`, combined with `&&`, `||` and `!`. Every one of those is a question
-the compiler answers for itself anyway, to pick an integer or a floating point
-instruction, to decide how wide a value is and whether it travels by address,
-and to know what has to be consumed. Nothing a
-program can extend, so a requirement outside the list has no way to be written
-down and surfaces at instantiation instead, pointing into the generic's body
-rather than at the caller's line. That is the C++ template experience Rust's
-trait bounds were designed to fix, and the trade taken here is that opening the
-vocabulary means bound solving, coherence, and the front-end cost that comes
-with them.
-
-Two things narrow it. A compile-time function parameter declares the signature
-it needs (`$before: fn(T, T) -> bool`), and a mismatch is reported against the
-parameter list. A capability bundle says what can be *done* with a type, which
-is the other half of what a trait bound is usually asked for. The full rules are
-in [generics.md](../reference/generics.md).
-
-Keystrokes traded for predictability. Mandatory parentheses and explicit
-consumers cost some typing in exchange for a grammar with no carve-outs in it.
-That is a coherent trade, but it is a trade, not a free win.
-
-Capture semantics still owed. The uniform function syntax defers rather than
-solves the closure-capture question. A borrow-checked language eventually has to
-answer it, and the answer will reintroduce either a restriction (no capture) or
-some syntax (capture lists).
+Capture is unanswered. The uniform function syntax gives anonymous functions and
+leaves the closure-capture question open, and answering it later means either no
+capture or capture lists.
 
 ## Summary
 

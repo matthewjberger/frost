@@ -465,13 +465,13 @@ deterministic abort.
 Pool access does not need this check. `pool[handle]` is guarded by the
 generational check instead (section 5).
 
-## Why this is enough, and why it is small
+## What the six rules cost
 
-Traditional borrow checking spends most of its complexity on lifetimes,
-inferring how long each reference is valid, relating those regions to each other,
-and threading them through generics. Frost pays a different price up front, that
-a borrow cannot be stored and a returned one is judged by where its storage came
-from, and in exchange deletes that entire machinery.
+Traditional borrow checking spends most of its complexity on lifetimes:
+inferring how long each reference is valid, relating those regions to each
+other, and threading them through generics. Frost pays up front instead. A
+borrow cannot be stored, and a returned one is judged by where its storage came
+from. That deletes the whole lifetime machinery.
 
 | Hazard                       | How Frost removes it                                   |
 | ---------------------------- | ------------------------------------------------------ |

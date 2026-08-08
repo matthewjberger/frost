@@ -181,25 +181,15 @@ this frame counts as a value that points into this frame, and the three roads ou
 are closed by the code that was already closing them. Linearity closes the
 fourth, which is not consuming it at all.
 
-That is what makes this different from the C idiom rather than a prettier
-spelling of it. Without it the crossing is type-safe and the program still has a
-dangling pointer.
+Without it the crossing is type-safe and the program still has a dangling
+pointer.
 
-## What is not settled
+## The limits
 
-Two questions are open.
+A registration lives in the frame that holds its context, so a callback whose
+context has to outlive that frame has no spelling here.
 
-- What `token` holds for a library whose unregister takes something other
-  than an integer. `Registration` is an ordinary `linear struct` a binding
-  author writes, and the compiler knows nothing about it. That works for a
-  library that hands back an integer. A library that hands back a pointer or a
-  struct has not been tried.
-- Whether a context that outlives its frame is worth supporting. Everything
-  here confines the registration to the frame that holds the context, which
-  covers a registration whose life is a scope and not one whose life is not. A
-  pool's `Handle<T>` is the obvious way to lift that, and it is not obvious yet
-  that any binding wants it.
-- Reentrancy. Nothing here stops a callback from calling back into code that
-  reaches the same context. Moving the context in means no *Frost* code holds it,
-  which is the guarantee being claimed, and it is worth being precise that it is
-  not a guarantee about the C library's own threading.
+Reentrancy is the caller's problem. Nothing stops a callback from calling back
+into code that reaches the same context. Moving the context into the
+registration means no Frost code holds it, which says nothing about the C
+library's own threading.
