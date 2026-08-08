@@ -14,57 +14,10 @@ small number of local rules.
 ## The six guarantees
 
 1. Nothing that borrows storage outlives it. A borrow taken by a parameter
-   mode is implicit, lasts exactly one call, and has nowhere to be written down,
-   so it cannot escape at all. `ref T` is the explicit exception, the one borrow
-   a program writes, and it may be returned, so it is held instead to storage
-   that already outlives the call. A function answering with a borrowed view
-   (`ref T`, a raw pointer, or a slice) hands one back only where the check can
-   trace its storage to a parameter or an allocation capability. Storage it
-   cannot trace is refused, whether the view leaves by being returned, by being
-   stored where the call cannot see, or by being what the block ends with
-   (`src/check/regions.rs`, and `check_frame_escapes` in `selfhosted/regions.frost`;
-   both compilers refuse the same programs). A view the function was handed names
-   storage the caller owns and passes back out freely. Neither borrow may be
-   stored: not in a struct field, not in an array element, not in a container.
-
-   A slice is a third thing. `[]T` carries a length beside the address, it is an
-   ordinary storable type, and a struct field may hold one, which is what a
-   parser reading views into a buffer it does not own is built from. So the two
-   are guaranteed differently. A borrow is held by being *unspellable* in a
-   field (`Type::contains_reference` answers true for `Ref` and `RefMut`, and
-   for a slice it asks about the element instead). A slice is held by the frame
-   and region checks, which refuse one whose storage they cannot trace.
-
-   A view of a container is held one more way, because the frame and the region
-   both stay alive while the storage moves: a container that fills replaces its
-   block and gives the old one back. Which run a call's answer views and which
-   run a call replaces are worked out for every function, so a view read after
-   the container behind it grew is refused where it is read.
-
-   That check asks against the type the context expects. A view is *formed*
-   rather than copied wherever an array lands somewhere a view is wanted, and
-   nothing about the expression says so: `data` reads the same in
-   `Holder { view = data }`, `sink.view = data`, `keep(h, data)`,
-   `vec_push($[]i64, sink, data)` and `-> []i64 { data }`. Asking what the array
-   *holds* answers "a run of numbers", which names no storage, so the question
-   has to be the one the context asks. It is asked in every position, walking
-   into a struct literal field by field, through a call to what the call binds a
-   `$T` to, and through the arguments a callee's answer can name.
-
-   Any expression form the check cannot follow is refused. Every road a view
-   can travel has to be one the check answers for: an ordinary call, a call
-   through a function pointer, an assignment into a local, a `return` inside a
-   match arm, the address of a `move` parameter. A check that answers "this does
-   not name my frame" for a shape it has never been taught compiles a function
-   handing back a view of a dead frame, so an unfamiliar shape is refused
-   instead.
-
-   The region check asks the same question about an arena. A view into one may
-   not outlive the `with` block that owns it, and a `uses` function may hand one
-   back to its caller, where that caller's own region check catches it, but may
-   not store one into a parameter. Every view counts, not only a raw pointer: a
-   `[]T` carved out of an arena names the arena's storage exactly as a `^T`
-   does.
+   mode lasts exactly one call and has nowhere to be written down. `ref T` is
+   the one borrow a program writes, and it may be returned, so the compiler
+   holds it to storage that already outlives the call. Storage the check cannot
+   trace is refused.
 2. No use-after-move. A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
 3. No mutable aliasing. Within a call, a value cannot be passed to two
@@ -79,34 +32,18 @@ small number of local rules.
    gives away part of what it is lent cannot be called twice.
 5. No use-after-free through a stale handle. A generational handle whose slot
    has been freed and reused reports "not contained". It can never silently read
-   a live value. A slot's generation is bounded, because a handle carries it in
-   32 bits: a slot released 2^31 times is retired rather than reused, so the
-   container loses one place instead of handing out a handle its own check would
-   reject. The bound cannot produce the opposite failure, since the check
-   compares an ever-increasing count against a sign-extended 32-bit value and a
-   count past the bound equals no older handle's generation.
+   a live value.
 6. No out-of-bounds array access. Every array index is bounds-checked against
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
 
-Two cases are not covered. A raw pointer is unchecked once it is out of the frame
-and region checks, which is what `^T` is for. It carries no guarantee, and a
-program that casts one with `ptr_cast` and reads through it is on its own.
-
-The other is the elements of a heap container when the container is freed.
-`vec_free` and `map_free` give the block back while the elements go unconsumed,
-so where the element is a resource, consuming each one first is the caller's
-obligation. A slot is reached by a number worked out while the program runs, so
-the check has no place to name when it asks whether the obligation was met. A
-bound covers the rest: `vec_get`, `vec_set`, `vec_clear`, `map_put`, `map_get`,
-`map_clear`, `option_is_some` and `option_unwrap_or` are declared
-`where !is_linear(T)`, so an operation that would silently drop an element
-refuses the type at the call. A bound on the free itself would make a container
-of resources impossible to discharge, since `Vec<T>` and `Map<K, V>` are
-resources themselves and the free is the only thing that consumes one.
-`std/ecs.frost` shows the discipline that discharges it: a `Vec<Table>` where
-`Table` is a resource, released one element at a time through a `ref` borrow
-before the storage goes.
+A section below takes each guarantee in turn. Two things sit outside them. A
+raw pointer carries no guarantee once it leaves the frame and region checks,
+which is what `^T` is for, and a program that casts one with `ptr_cast` and
+reads through it is on its own. Freeing a heap container gives the block back
+while its elements go unconsumed, so consuming a resource element first is the
+caller's obligation. Both are in
+[what is not yet guarded](#what-is-not-yet-guarded).
 
 The first four hold statically. The fifth uses a runtime generation check that
 stays cheap (one integer compare) because the static rules keep handles honest.
@@ -134,6 +71,40 @@ reference-typed struct field is rejected, an enum variant's field the same, and
 so is an `extern` that returns one, all by `check_ownership` reading
 `Type::contains_reference()` over the declared types. No container can hold one
 either, since a container's element type is a field type.
+
+A slice is a third thing. `[]T` carries a length beside the address and is an
+ordinary storable type, so a struct field may hold one, which is how a parser
+holds views into a buffer it does not own. The two are guaranteed differently.
+A borrow is held by being *unspellable* in a field (`Type::contains_reference`
+answers true for `Ref` and `RefMut`, and for a slice it asks about the element
+instead). A slice is held by the frame and region checks, which refuse one
+whose storage they cannot trace.
+
+Those checks ask against the type the context expects. A view is *formed*
+wherever an array lands somewhere a view is wanted, and nothing in the
+expression says so: `data` reads the same in `Holder { view = data }`,
+`sink.view = data`, `keep(h, data)`, `vec_push($[]i64, sink, data)` and
+`-> []i64 { data }`. Asking what the array *holds* answers "a run of numbers",
+which names no storage, so the question has to be the one the context asks. It
+is asked in every position, walking into a struct literal field by field,
+through a call to what the call binds a `$T` to, and through the arguments a
+callee's answer can name.
+
+Any expression form the check cannot follow is refused. Every road a view can
+travel has to be one the check answers for: an ordinary call, a call through a
+function pointer, an assignment into a local, a `return` inside a match arm,
+the address of a `move` parameter. A check that answers "this does not name my
+frame" for a shape it has never been taught compiles a function handing back a
+view of a dead frame, so an unfamiliar shape is refused instead.
+
+The region check asks the same question about an arena. A view into one may not
+outlive the `with` block that owns it. A `uses` function may hand one back to
+its caller, where that caller's own region check catches it, and may not store
+one into a parameter. Every view counts, not only a raw pointer: a `[]T` carved
+out of an arena names the arena's storage exactly as a `^T` does.
+
+Both compilers refuse the same programs here, in `src/check/regions.rs` and in
+`check_frame_escapes` in `selfhosted/regions.frost`.
 
 The exception a program can write is `ref T`, a returnable borrow of a place.
 An accessor over a container needs it. `arena_at` hands back the element rather
@@ -413,6 +384,13 @@ This is the memory-safety property a raw pointer cannot give you. After a free
 and reuse, the *bit pattern* of the old handle no longer matches, so it cannot be
 used to read or corrupt whatever now occupies the slot. That is safe
 use-after-free detection without a GC and without reference counting.
+
+A handle carries its generation in 32 bits, so a slot's generation is bounded.
+A slot released 2^31 times is retired instead of reused, and the container
+loses one place instead of handing out a handle its own check would reject. The
+bound cannot fail the other way: the check compares an ever-increasing count
+against a sign-extended 32-bit value, and a count past the bound equals no
+older handle's generation.
 
 ### Handle-dereference-as-borrow
 
