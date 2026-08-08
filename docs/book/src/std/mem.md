@@ -182,9 +182,10 @@ that: `take`, `resize` and `give`, all over `[]u8`.
 | `carve_grow($T, $A, $source, mut a, held, count) -> []T` | A bigger run holding what the old one held |
 | `carve_give($T, $A, $source, mut a, held)` | The run handed back |
 
-Two sources ship with it. `heap_source` over `Heap`, whose state counts the
-blocks that are out, and `arena_source` over `Arena`, which is the three arena
-calls above under the bundle's names.
+Two sources ship with it. `heap_source` over `Heap`, which holds no fields
+because the runtime keeps the blocks and `heap_live` counts them, and
+`arena_source` over `Arena`, which is the three arena calls above under the
+bundle's names.
 
 ```frost
 import "allocation.frost"
@@ -193,8 +194,9 @@ main :: fn() -> i64 {
     var h := heap_state()
     var run := carve($i64, $Heap, $heap_source, h, 4)
     run[0] = 11
+    held := run[0]
     carve_give($i64, $Heap, $heap_source, h, run)
-    h.taken
+    held
 }
 ```
 

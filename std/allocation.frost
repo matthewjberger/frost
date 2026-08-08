@@ -13,8 +13,8 @@
 // are the typed face over them, and they hold the one reinterpret each way.
 //
 // A source is a pair: the bundle, which is the three functions, and a value the
-// three are given, which is whatever state the source keeps. The heap keeps a
-// count of what is out; an arena keeps its backing and its offset.
+// three are given, which is whatever state the source keeps. An arena keeps its
+// backing and its offset; the heap keeps nothing, and its state holds no fields.
 //
 // What a run carved out of a source may outlive is the region check's question
 // and not this file's. A call site handing an arena in gets the same answer it
@@ -36,22 +36,21 @@ Allocation :: struct($A: Type) {
     give: fn(mut A, []u8),
 }
 
-// The heap as a source. It keeps no storage of its own, so what the state holds
-// is how many blocks it has handed out and not taken back, which is what a
-// caller reads to say a container gave everything back.
+// The heap as a source. It keeps nothing: the runtime holds the blocks and
+// `heap_live` counts them, so there is no state for a caller to carry and this
+// holds no fields. A source that keeps nothing is what a default can be made of,
+// since every call that needs one can make its own and none of them differ.
 Heap :: struct {
-    taken: i64,
 }
 
 heap_state :: fn() -> Heap {
-    Heap { taken = 0 }
+    Heap {}
 }
 
 // The alignment is unread: every block C hands back starts on the widest
 // alignment any type on the target asks for, so a run from here is already
 // aligned for whatever is written into it.
 heap_take :: fn(mut h: Heap, size: i64, align: i64) -> []u8 {
-    h.taken = h.taken + 1
     heap_slice($u8, size)
 }
 
@@ -60,7 +59,6 @@ heap_resize :: fn(mut h: Heap, block: []u8, size: i64, align: i64) -> []u8 {
 }
 
 heap_give :: fn(mut h: Heap, block: []u8) {
-    h.taken = h.taken - 1
     heap_release_slice($u8, block)
 }
 
@@ -134,9 +132,8 @@ test "a carve from the heap hands back a run that is written and given back" {
     run[0] = 11
     run[3] = 44
     assert(run[0] + run[3] == 55)
-    assert(h.taken == 1)
+    assert(heap_live() == before + 1)
     carve_give($i64, $Heap, $heap_source, h, run)
-    assert(h.taken == 0)
     assert(heap_live() == before)
 }
 
