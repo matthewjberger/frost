@@ -95,6 +95,38 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'main' takes no parameters, and this one takes 1; what a call to it \
          would supply is whatever the platform left in a register",
     ),
+    // A capability is filled in at each call, so a function that draws one and
+    // is taken as a value has no call to fill it at. The address goes somewhere
+    // that calls it through a type saying nothing about the capability, and the
+    // callee reads the register nobody wrote. The bootstrap caught it as a
+    // signature that did not match and the self-hosted compiler built it, and
+    // what it built faulted with no `unsafe` written anywhere.
+    (
+        "a_capability_drawing_function_taken_as_a_value",
+        "import \"io.frost\"
+         Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         bump :: fn($N: usize, mut a: Arena<N>) -> i64 {
+             a.offset = a.offset + 8
+             a.offset
+         }
+         worker :: fn(n: i64) -> i64 uses Arena<256> {
+             bump($256, arena) + n
+         }
+         call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
+         main :: fn() -> i64 {
+             var scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var out: i64 = 0
+             with scratch {
+                 out = call_it(worker, 3)
+             }
+             print(\"{}\\n\", out)
+             0
+         }
+",
+        "'worker' draws a capability, which is one more parameter, so it \
+         cannot be taken as a value: a call through a function value supplies \
+         what its type says and nothing else",
+    ),
     // The one caller settles the answer as well as the arguments. A `main`
     // that can fail answers the tagged union the `?` machinery made, which the
     // bootstrap's backend then named in a message about a type the reader never
