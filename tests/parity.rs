@@ -2828,6 +2828,34 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n",
         "3 7 9\n24\n",
     ),
+    // A generic type's parameters take defaults too, so an instance names the
+    // arguments the writer cares about and the declaration says the rest. Both
+    // spellings are one type, which the assignment between them is what proves.
+    (
+        "a_generic_type_fills_the_arguments_an_instance_leaves_out",
+        "import \"io.frost\"\n\
+         Heap :: struct { }\n\
+         Bump :: struct { room: i64 }\n\
+         Holder :: struct($T: Type, $A: Type = Heap) {\n\
+         \x20   value: T,\n\
+         \x20   where_from: A\n\
+         }\n\
+         widen :: fn($T: Type, $A: Type, h: Holder<T, A>) -> i64 {\n\
+         \x20   sizeof(A) * 100 + h.value\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var plain := Holder<i64> { value = 7, where_from = Heap { } }\n\
+         \x20   var full: Holder<i64, Heap> = plain\n\
+         \x20   var wide := Holder<i64, Bump> {\n\
+         \x20       value = 9,\n\
+         \x20       where_from = Bump { room = 1 }\n\
+         \x20   }\n\
+         \x20   print(\"{}\n\", widen(full))\n\
+         \x20   print(\"{}\n\", widen(wide))\n\
+         \x20   0\n\
+         }\n",
+        "7\n809\n",
+    ),
     // A compile-time parameter with a default is written or left out, and the
     // call is aligned by the `$` rather than by counting: an argument carrying
     // one binds a compile-time parameter and every other binds a value

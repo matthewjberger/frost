@@ -721,6 +721,10 @@ StructDef :: struct {
     xparam_count: i64,
     // A generic template that is an enum rather than a struct, so an
     // instantiation re-parses its body as variants rather than as fields.
+    // What the first type parameter stands for where an instance leaves it
+    // out, as the code a `$` argument would carry, and -1 for one every
+    // instance writes. The rest carry theirs in `gparams`.
+    tparam_fallback: i64,
     is_enum: i64,
     // Whether this entry holds the declaration or only the name. Every type a
     // file declares is put in the table by name before any body is read, so a

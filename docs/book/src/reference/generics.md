@@ -373,6 +373,29 @@ which are the three kinds of compile-time argument (11.3). It is written after
 the kind: `$A: Type = Heap`, `$source: Allocation<A> = heap_source`,
 `$slack: usize = 2`.
 
+A generic type takes them the same way, and an instance names the arguments the
+writer cares about while the declaration says the rest:
+
+```frost
+import "io.frost"
+
+Heap :: struct { }
+Bump :: struct { room: i64 }
+
+Holder :: struct($T: Type, $A: Type = Heap) { value: T, where_from: A }
+
+main :: fn() -> i64 {
+    var plain := Holder<i64> { value = 7, where_from = Heap { } }
+    var named: Holder<i64, Heap> = plain
+    print("{}
+", named.value)
+    0
+}
+```
+
+`Holder<i64>` and `Holder<i64, Heap>` are one type, not two names for the same
+fields, so a value of either passes where the other is wanted.
+
 A call is lined up against the parameters by the `$` rather than by counting: an
 argument carrying one binds a compile-time parameter and every other binds a
 value parameter. So a defaulted parameter is passed over wherever it sits in the

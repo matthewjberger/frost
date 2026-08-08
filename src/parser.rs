@@ -343,7 +343,7 @@ pub struct Parser<'a> {
     // may say which instance it is, `Pair<i64, bool> { .. }`, and telling that
     // from the comparison `a < b` is a question of whether the name is one of
     // these.
-    generic_types: std::collections::HashSet<String>,
+    generic_types: GenericDefaults,
     // How many blocks deep the parse is. `name :: Type { .. }` is a declaration
     // at the top level and `Enum::Variant { .. }` inside a body, and the two
     // read the same token for token, so where it is written is what tells them
@@ -403,10 +403,14 @@ fn declaration_value_end(tokens: &[Token], start: usize) -> usize {
 // where `Pair<i64, bool> {` would otherwise read as two comparisons, so which
 // names can start one is settled before the parse rather than guessed at during
 // it.
-pub fn scan_generic_types(
-    tokens: &[Token],
-) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::new();
+/// What each of a generic type's parameters stands for where an instance
+/// leaves it out, in declaration order. `None` is a parameter every instance
+/// writes.
+pub type GenericDefaults =
+    std::collections::HashMap<String, Vec<Option<crate::types::Type>>>;
+
+pub fn scan_generic_types(tokens: &[Token]) -> GenericDefaults {
+    let mut names = GenericDefaults::new();
     for index in 0..tokens.len() {
         let Token::Identifier(name) = &tokens[index] else {
             continue;
@@ -420,9 +424,80 @@ pub fn scan_generic_types(
         if !matches!(tokens.get(index + 3), Some(Token::LeftParentheses)) {
             continue;
         }
-        names.insert(name.clone());
+        names.insert(name.clone(), scan_parameter_defaults(tokens, index + 4));
     }
     names
+}
+
+/// The defaults of one type-parameter list, read from the token after its `(`.
+/// The list is `$name : kind` repeated, with `= default` after the kind where
+/// there is one, so what is read is the run of tokens between that `=` and the
+/// comma or paren closing the parameter.
+fn scan_parameter_defaults(
+    tokens: &[Token],
+    from: usize,
+) -> Vec<Option<crate::types::Type>> {
+    let mut found = Vec::new();
+    let mut index = from;
+    let mut depth = 0i32;
+    while index < tokens.len() {
+        match &tokens[index] {
+            Token::LeftParentheses | Token::LessThan => depth += 1,
+            Token::RightParentheses if depth == 0 => break,
+            Token::RightParentheses | Token::GreaterThan => depth -= 1,
+            Token::Dollar if depth == 0 => {
+                let mut at = index + 1;
+                while at < tokens.len()
+                    && !matches!(
+                        tokens[at],
+                        Token::Comma | Token::Assign | Token::RightParentheses
+                    )
+                {
+                    at += 1;
+                }
+                if matches!(tokens.get(at), Some(Token::Assign)) {
+                    let start = at + 1;
+                    let mut end = start;
+                    let mut inner = 0i32;
+                    while end < tokens.len() {
+                        match &tokens[end] {
+                            Token::LessThan | Token::LeftBracket => inner += 1,
+                            Token::GreaterThan | Token::RightBracket => {
+                                inner -= 1
+                            }
+                            Token::Comma | Token::RightParentheses
+                                if inner <= 0 =>
+                            {
+                                break;
+                            }
+                            _ => {}
+                        }
+                        end += 1;
+                    }
+                    found.push(type_from_tokens(&tokens[start..end]));
+                    index = end;
+                    continue;
+                }
+                found.push(None);
+                index = at;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    found
+}
+
+/// One type read out of the tokens it was written as. A default is written
+/// where the declaration is and read where an instance leaves the parameter
+/// out, which are two different files.
+fn type_from_tokens(tokens: &[Token]) -> Option<crate::types::Type> {
+    if let [Token::Integer(value)] = tokens {
+        return Some(crate::types::Type::ConstUsize(*value as usize));
+    }
+    let mut parser = bare_parser(tokens);
+    parser.parse_type().ok()
 }
 
 // A parser over a run of tokens and nothing else, for reading one value back
@@ -452,7 +527,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         ),
         imported_bodies: HashMap::new(),
         settled: true,
-        generic_types: std::collections::HashSet::new(),
+        generic_types: GenericDefaults::new(),
         block_depth: 0,
         bracket_depth: 0,
         runtime_names: false,
@@ -813,10 +888,7 @@ impl<'a> Parser<'a> {
     // declared by a file it imports. Which names can start a literal is settled
     // before the parse, and a file that imports `Ordering` writes
     // `Ordering<Point> { .. }` exactly as the file declaring it does.
-    pub fn also_generic(
-        &mut self,
-        names: std::collections::HashSet<String>,
-    ) -> &mut Self {
+    pub fn also_generic(&mut self, names: GenericDefaults) -> &mut Self {
         self.generic_types.extend(names);
         self
     }
@@ -2422,7 +2494,7 @@ impl<'a> Parser<'a> {
                 // is. What comes out is the instance's name, so the literal
                 // itself is read the way every other one is.
                 if matches!(self.peek_nth(1), Token::LessThan)
-                    && self.generic_types.contains(&identifier)
+                    && self.generic_types.contains_key(&identifier)
                 {
                     self.read_token();
                     let instance =
@@ -2895,6 +2967,23 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// The arguments an instance was written with, followed by what the
+    /// declaration says the ones left out stand for. Both spellings name one
+    /// type, so this runs wherever an instance name is formed rather than
+    /// leaving two names for the same thing.
+    fn with_defaults(&self, base: &str, mut arguments: Vec<Type>) -> Vec<Type> {
+        let Some(declared) = self.generic_types.get(base) else {
+            return arguments;
+        };
+        for default in declared.iter().skip(arguments.len()) {
+            let Some(default) = default else {
+                break;
+            };
+            arguments.push(default.clone());
+        }
+        arguments
+    }
+
     // The name of a generic instance written in expression position, read from
     // the `<` this is called on. It is the same spelling the type parser
     // produces, since the two have to name one type.
@@ -2914,7 +3003,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.consume_type_arg_close()?;
-        let rendered: Vec<String> = arguments
+        let rendered: Vec<String> = self
+            .with_defaults(base, arguments)
             .iter()
             .map(|argument| argument.to_string())
             .collect();
@@ -3911,6 +4001,18 @@ impl<'a> Parser<'a> {
                     self.parse_type()?;
                 }
             }
+            // `= Heap` says what an instance leaving this parameter out means.
+            // The value is read off the tokens by `scan_generic_types`, before
+            // the parse, because an instance is written in a file that may not
+            // be the one declaring it.
+            if matches!(self.peek_nth(0), Token::Assign) {
+                self.read_token();
+                if matches!(self.peek_nth(0), Token::Integer(_)) {
+                    self.read_token();
+                } else {
+                    self.parse_type()?;
+                }
+            }
             type_params.push(param_name);
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
@@ -4311,7 +4413,8 @@ impl<'a> Parser<'a> {
                             }
                         }
                         self.consume_type_arg_close()?;
-                        let rendered: Vec<String> = arguments
+                        let rendered: Vec<String> = self
+                            .with_defaults(&name, arguments)
                             .iter()
                             .map(|argument| argument.to_string())
                             .collect();

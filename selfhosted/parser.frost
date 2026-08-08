@@ -2566,6 +2566,40 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 xarg_count = count - 1
             }
             p.argbuf.count = buf_start
+            // What the declaration says the arguments left out stand for, so
+            // `Vec<i64>` and `Vec<i64, Heap>` are one type rather than two
+            // names for the same fields.
+            if (gi >= 0 && count > 0) {
+                template := arena_at(p.structs, gi)
+                var at := xarg_count
+                while (at < template.xparam_count) {
+                    fallback := arena_at(
+                        p.gparams,
+                        template.xparam_start + at
+                    ).fallback
+                    if (fallback < 0) {
+                        at = template.xparam_count
+                    } else {
+                        arena_push(
+                            p.gargs,
+                            GArg {
+                                value = fallback,
+                                is_type = 0,
+                                pending = -1,
+                                node = -1
+                            }
+                        )
+                        xarg_count = xarg_count + 1
+                        at = at + 1
+                    }
+                }
+            }
+            if (gi >= 0 && count == 0) {
+                template := arena_at(p.structs, gi)
+                if (template.tparam_fallback >= 0) {
+                    first_arg = template.tparam_fallback
+                }
+            }
             // Only instantiate once every argument is concrete. While parsing a
             // generic template an argument is the TY_PARAM placeholder, and that
             // instance is created later with the parameters bound to real ones.
@@ -2890,6 +2924,7 @@ instantiate :: fn(
             emitted = 0,
             xparam_start = 0,
             xparam_count = 0,
+            tparam_fallback = -1,
             is_enum = 0,
             declared = 1,
             is_multi = 0,
@@ -3074,6 +3109,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
             emitted = 0,
             xparam_start = 0,
             xparam_count = 0,
+            tparam_fallback = -1,
             is_enum = 0,
             declared = 1,
             is_multi = 0,
@@ -6355,6 +6391,7 @@ parse_struct :: fn(mut p: Parser) {
         advance(p)
         tparam_off := p.type_param_off
         tparam_len := p.type_param_len
+        tparam_fallback := p.tparam_fallback
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
         field_token := p.ti
@@ -6386,6 +6423,7 @@ parse_struct :: fn(mut p: Parser) {
                 emitted = 0,
                 xparam_start = xparam_start,
                 xparam_count = xparam_count,
+                tparam_fallback = tparam_fallback,
                 is_enum = 0,
                 declared = 1,
                 is_multi = 0,
@@ -6411,6 +6449,7 @@ parse_struct :: fn(mut p: Parser) {
                 emitted = 0,
                 xparam_start = 0,
                 xparam_count = 0,
+                tparam_fallback = -1,
                 is_enum = 0,
                 declared = 1,
                 is_multi = 0,
@@ -6592,6 +6631,7 @@ parse_enum :: fn(mut p: Parser) {
         advance(p)
         tparam_off := p.type_param_off
         tparam_len := p.type_param_len
+        tparam_fallback := p.tparam_fallback
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
         field_token := p.ti
@@ -6623,6 +6663,7 @@ parse_enum :: fn(mut p: Parser) {
                 emitted = 0,
                 xparam_start = xparam_start,
                 xparam_count = xparam_count,
+                tparam_fallback = tparam_fallback,
                 is_enum = 1,
                 declared = 1,
                 is_multi = 0,
@@ -6656,6 +6697,7 @@ parse_enum :: fn(mut p: Parser) {
             emitted = 0,
             xparam_start = 0,
             xparam_count = 0,
+            tparam_fallback = -1,
             is_enum = 1,
             declared = 1,
             is_multi = 0,
@@ -7067,6 +7109,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             emitted = 0,
             xparam_start = 0,
             xparam_count = 0,
+            tparam_fallback = -1,
             is_enum = 1,
             declared = 1,
             is_multi = 0,
@@ -7197,6 +7240,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             emitted = 0,
             xparam_start = 0,
             xparam_count = 0,
+            tparam_fallback = -1,
             is_enum = 0,
             declared = 1,
             is_multi = 1,
@@ -7771,6 +7815,7 @@ predeclare_types :: fn(mut p: Parser) {
                         emitted = 0,
                         xparam_start = 0,
                         xparam_count = 0,
+                        tparam_fallback = -1,
                         is_enum = holds_variants,
                         declared = 0,
                         is_multi = 0,

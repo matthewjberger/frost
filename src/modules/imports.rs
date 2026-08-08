@@ -1176,7 +1176,7 @@ pub fn imported_generic_types(
 /// Both are read off the imported files' tokens, in the one walk over them.
 #[derive(Default)]
 pub struct Imported {
-    pub generic_types: HashSet<String>,
+    pub generic_types: crate::parser::GenericDefaults,
     pub const_functions: HashMap<String, std::rc::Rc<Vec<Token>>>,
 }
 
