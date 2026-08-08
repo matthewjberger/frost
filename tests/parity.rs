@@ -5289,6 +5289,61 @@ Bad :: enum { Nope }
 // input that was *not* settled, and a check at the fixed point would have found
 // none of them. So each file is put out of shape first, by breaking every line
 // at the places a layout owns, and the two are compared on that.
+// A formatter that drops what it does not recognize deletes source. Both read
+// only `//` and left a block comment's bytes to the step that keeps nothing, so
+// a file holding one came back without it and nothing said so. The corpus holds
+// none, which is why the corpus test above never saw it.
+#[test]
+fn both_compilers_keep_a_block_comment() {
+    let Some(compiler) = build_self_hosted_compiler("blockcomment") else {
+        return;
+    };
+    let source = concat!(
+        "/* At the top.
+",
+        "   A second line, indented on purpose. */
+",
+        "
+",
+        "import \"io.frost\"
+",
+        "
+",
+        "/* Between declarations. */
+",
+        "double :: fn(n: i64) -> i64 { n * 2 } /* trailing */
+",
+        "
+",
+        "main :: fn() -> i64 {
+",
+        "    /* inside a body */
+",
+        "    x := double(3) /* beside a statement */
+",
+        "    print(\"{}\n\", x)
+",
+        "    // a line comment still works
+",
+        "    0
+",
+        "}
+"
+    );
+    assert_eq!(
+        frost::format_source(source),
+        source,
+        "the bootstrap did not write a block comment back"
+    );
+    let Some(written) = self_hosted_format(&compiler, source) else {
+        return;
+    };
+    assert_eq!(
+        written, source,
+        "the self-hosted compiler did not write a block comment back"
+    );
+}
+
 #[test]
 fn both_compilers_format_the_corpus_the_same_way() {
     let Some(compiler) = build_self_hosted_compiler("formatparity") else {

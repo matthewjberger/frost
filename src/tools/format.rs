@@ -129,6 +129,22 @@ fn trivia_in(gap: &str) -> Vec<Trivia> {
             rest = &rest[end..];
             continue;
         }
+        // A block comment runs to its close, over as many lines as it was
+        // written across, and is kept whole. The lexer stops at the first `*/`
+        // and these do not nest, so the same scan finds the same end.
+        //
+        // Its inside is left as it was written. Everything the formatter
+        // decides is where a line starts, and the lines inside one of these are
+        // the writer's: an ASCII drawing re-indented is a different drawing.
+        // Without this arm the bytes fell through to the step below, which
+        // walks a character at a time and keeps nothing, so formatting a file
+        // that held one wrote the file back without it.
+        if rest.starts_with("/*") {
+            let end = rest.find("*/").map(|at| at + 2).unwrap_or(rest.len());
+            held.push(Trivia::Comment(rest[..end].to_string()));
+            rest = &rest[end..];
+            continue;
+        }
         let mut chars = rest.char_indices();
         let step = chars.next().map(|(at, held)| at + held.len_utf8());
         rest = &rest[step.unwrap_or(rest.len())..];
@@ -1048,6 +1064,24 @@ mod tests {
             "// a note\nmain :: fn() -> i64 {\n    x := 1  // why\n    x\n}\n";
         let pieces = tokens_and_gaps(source).expect("a lexable source");
         assert_eq!(pieces.concat(), source);
+    }
+
+    // A formatter that drops what it does not recognize is a formatter that
+    // deletes source. Reading only `//` left a block comment's bytes to the
+    // step that walks a character at a time and keeps nothing, so a file
+    // holding one came back without it, and nothing said so.
+    #[test]
+    fn a_block_comment_survives_being_formatted() {
+        let source = "/* At the top.
+   A second line, indented on purpose. */
+
+main :: fn() -> i64 {
+    /* inside */
+    x := 1 /* beside a statement */
+    x
+}
+";
+        assert_eq!(format(source), source);
     }
 
     #[test]
