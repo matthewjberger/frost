@@ -77,12 +77,16 @@ import "../platform/sdl.frost"   // a layer below, and it says so
 
 ```bash
 just app window
+just app input
 just app triangle
 just app scene
 just app spinning
 just app textured
 just app shadowed
 just app gltf_model
+just app lit
+just app swarm
+just app spin
 ```
 
 ## The SDL binding
@@ -370,14 +374,14 @@ two components and no more:
 
 ```frost
 import "math.frost"
-Model :: struct { matrix: Mat4 }
+Transform :: struct { matrix: Mat4 }
 Drawn :: struct { mesh: i64, material: i64, layer: i64 }
 ```
 
 Where a thing ended up is somebody else's answer by the time it arrives, so the
 renderer knows nothing of placements, trees, clocks and windows. Beside those
-two sit the uniform buffer and binding each entity is given, and the flat run a
-pass records from.
+two sits the `RenderWorld`: the object and transform runs a frame fills, and
+the GPU buffers they are uploaded to.
 
 `lib/engine/world.frost` is the other side. A thing there has a placement, a
 turn and somewhere it hangs from, and a frame works out where it ended up.
@@ -388,14 +392,14 @@ two components above, and nothing on the renderer's side reaches back.
 
 ```frost
 import "math.frost"
-Placement :: struct { position: Vec3, scale: Vec3 }
-Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+LocalTransform :: struct { translation: Vec3, rotation: Quat, scale: Vec3 }
+GlobalTransform :: struct { matrix: Mat4 }
 ```
 
 `world_schedule` is the frame. `move_camera` and `turn_things` run in `First`,
 and `place_things` walks down from every root in `Update`, leaving each thing's
-`Model` with whatever it hangs off applied over its own placement, however deep
-it hangs. A system is a `fn(mut World)` and captures nothing, so which component
+`GlobalTransform` with whatever it hangs off applied over its own
+`LocalTransform`, however deep it hangs. A system is a `fn(mut World)` and captures nothing, so which component
 is which travels in a `WorldIds` resource.
 
 ### What a system knows about the machine
@@ -428,29 +432,30 @@ back to write the frame uniform.
 Then `scene_sync` walks the world once and leaves a `DrawList` behind:
 
 ```frost,sketch
-scene_sync(world, list, slot_table, device, queue, registry, cache,
-    all_drawn(model, drawn))
+scene_sync(world, render, registry, cache, ids)
 ```
 
-Nothing per entity is made or kept. The walk fills one flat array, one entry per
-thing, built from nothing every frame: a thing spawned while the program runs is
-drawn on the next frame because the walk finds it, and a thing despawned stops
-being drawn because the walk does not. There is no table to resize and nothing
-to renumber, and the renderer never has to know how many things there are.
+Nothing per entity is made or kept. The walk fills one flat run, one entry per
+thing, built from nothing every frame: a thing spawned while the program runs
+is drawn on the next frame because the walk finds it, and a thing despawned
+stops being drawn because the walk does not. There is no table to resize and
+nothing to renumber.
 
-A pass walks a flat run:
+A pass binds the run once and draws a class at a time:
 
 ```frost,sketch
-list := unsafe { s^.list^ }
-var index : i64 = 0
-while (index < draw_list_count(list)) {
-    one := draw_list_at(list, index)
-    render_pass_encoder_set_bind_group(pass, 1, one.binding, 0, no_pointer())
-    mesh_bind(pass, one.geometry)
-    render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0, 0, 0)
-    index = index + 1
-}
+render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+render_pass_encoder_set_bind_group(pass, 1, render_world_group(held), 0,
+    no_pointer())
+render_pass_encoder_set_bind_group(pass, 2, s.light_group, 0, no_pointer())
+
+render_pass_encoder_set_pipeline(pass, s.opaque_pipeline)
+render_world_draw_class(pass, held, CLASS_OPAQUE)
 ```
+
+The run lives in a buffer the shader indexes, so a thing's transform and its
+material reach the GPU without a bind group of its own. A class is a pipeline's
+worth of the run, and the six of them are the order a frame draws in.
 
 ### Layers, and one run per pass
 

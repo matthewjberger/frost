@@ -195,6 +195,8 @@ Slab :: struct($T: Type, $N: usize) {
     generations: [N]i64,
     free_list: [N]i64,
     free_count: i64,
+    live_words: [(N + 63) / 64]i64,
+    live_count: i64,
 }
 ```
 
