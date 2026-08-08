@@ -2407,7 +2407,7 @@ schedule_add_in_state :: fn(
     stage: Stage,
     state: i64,
     run: fn(mut World)
-    ) {
+) {
     vec_push(
         $System,
         s.systems,
@@ -4703,7 +4703,7 @@ test_three :: fn(
     v: []TestVelocity,
     h: []TestHealth,
     count: i64
-    ) {
+) {
     var i: i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x + h[i].points

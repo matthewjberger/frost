@@ -730,9 +730,20 @@ pub fn format(source: &str) -> String {
                 // Inside a block a statement opens with a name as often as not,
                 // so there it is the operators that say a line runs on.
                 if open_braces == 0 {
-                    // A brace is a block, not a line running on.
-                    let closes =
-                        matches!(token, Token::RightBrace | Token::LeftBrace);
+                    // A brace is a block, not a line running on. Neither is a
+                    // bracket closing a list the declaration opened: it closes
+                    // back at the indentation the opener sat at, which at the
+                    // top level is none. Without the two on the right here, a
+                    // signature broken over several lines closed its parameter
+                    // list one level in, and formatting that again indented it
+                    // further.
+                    let closes = matches!(
+                        token,
+                        Token::RightBrace
+                            | Token::LeftBrace
+                            | Token::RightParentheses
+                            | Token::RightBracket
+                    );
                     i32::from(
                         !closes
                             && !opens_a_declaration(
@@ -1089,6 +1100,18 @@ main :: fn() -> i64 {
         let source = "main::fn()->i64{\n  x:=1\n      y  :=  2\n  x+y\n}\n";
         let once = format(source);
         assert_eq!(format(&once), once, "formatted twice differs:\n{once}");
+    }
+
+    // A signature broken over several lines closes its parameter list at the
+    // indentation the declaration opened at. Reading that close as a line
+    // running on indented it one level, and formatting the result indented it
+    // again, so the tree could never be what the formatter writes.
+    #[test]
+    fn a_broken_parameter_list_closes_where_it_opened() {
+        let source = "one :: fn(\n    a: i64,\n    held: []i64,\n    count: i64\n) -> []i64 {\n    held\n}\n";
+        assert_eq!(format(source), source);
+        let indented = "one :: fn(\n    a: i64,\n    held: []i64,\n    count: i64\n    ) -> []i64 {\n    held\n}\n";
+        assert_eq!(format(indented), source);
     }
 
     #[test]

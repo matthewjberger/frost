@@ -493,8 +493,16 @@ format_source :: fn(src: str, length: i64) {
             if (open_brackets > 0) {
                 running_on = open_brackets
             } else if (open_braces == 0) {
+                // A brace is a block, not a line running on. Neither is a
+                // bracket closing a list the declaration opened: it closes back
+                // at the indentation the opener sat at, which at the top level
+                // is none. Without the two on the right here, a signature broken
+                // over several lines closed its parameter list one level in, and
+                // formatting that again indented it further.
                 closes := (token.kind == TokenKind::Rbrace
-                    || token.kind == TokenKind::Lbrace)
+                    || token.kind == TokenKind::Lbrace
+                    || token.kind == TokenKind::Rparen
+                    || token.kind == TokenKind::Rbracket)
                 if (closes == false
                     && opens_a_declaration(
                         token.kind,

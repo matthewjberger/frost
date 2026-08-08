@@ -147,7 +147,7 @@ geometry_add :: fn(
     queue: Queue,
     vertices: []Vertex,
     indices: []u32
-    ) -> MeshSpan {
+) -> MeshSpan {
     added := slice_len(vertices)
     ordered := slice_len(indices)
     if (added == 0 || ordered == 0) {
