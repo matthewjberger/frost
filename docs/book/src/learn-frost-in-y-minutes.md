@@ -824,10 +824,12 @@ test "adding two numbers" {
 main :: fn() -> i64 { 0 }
 ```
 
-## Vectors
+## Arithmetic over lanes
 
-A small array of floats takes the arithmetic operators lane by lane. `[4]f32` is
-the array it looks like, and Frost defines the operators over it.
+A small array of numbers takes the arithmetic operators lane by lane. Frost
+defines the operators over `[4]f32` itself, so there is no SIMD type to reach
+for. (The growable `Vec<T>` in the standard library is a heap container, and
+unrelated to this.)
 
 ```frost
 import "io.frost"

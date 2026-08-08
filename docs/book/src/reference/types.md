@@ -137,8 +137,10 @@ scaled := a * 2.0       // [2.0, 4.0, 6.0, 8.0]
 flipped := -a           // [-1.0, -2.0, -3.0, -4.0]
 ```
 
-There is no vector type and no marker. `[4]f32` is the fixed array of 3.2, and
-`a + b` is elementwise because both sides are arrays of numbers.
+There is no separate SIMD type and no marker. `[4]f32` is the fixed array of
+3.2, and `a + b` is elementwise because both sides are arrays of numbers. The
+growable `Vec<T>` of the standard library is a different thing entirely, a heap
+container.
 
 `+`, `-`, `*` and `/` are defined for any numeric element. `%`, `&`, `|`, `<<`
 and `>>` are defined where the element is a whole number. Unary `-` negates
