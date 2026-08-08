@@ -7,7 +7,7 @@ nothing invisible. Rust is the comparison throughout, because it is where most
 readers are coming from and because it often chose the other way.
 
 A few points below are properties of the grammar that the implementation has not
-fully caught up to. Those are marked inline; everything else describes the
+fully caught up to. Those are marked inline, and everything else describes the
 language as it compiles today. For the normative rules see
 [the reference](../reference/conformance.md), and for the form-by-form Rust
 mapping, including the table of everything below in one place, see
@@ -26,9 +26,7 @@ Rust you need to know what kind of item you are looking for before you can grep
 for it.
 
 One grammar rule instead of five: a smaller parser, a smaller spec, and one
-pattern to write instead of five keyword orderings to keep straight.
-
-Functions become ordinary values by construction. See the next section.
+pattern to write.
 
 ## 2. Functions as values, anonymous functions for free
 
@@ -67,24 +65,23 @@ callbacks := [
 ```
 
 There is one function-literal syntax, and a named function is that literal given
-a name. Anonymous functions are what the grammar produces when you omit the
-name.
+a name.
 
 *Implementation status.* The forms above compile and run on both native
 backends. An anonymous function literal is lifted to a synthetic top-level
 function and referenced by its address, so passing one inline or binding it to a
 name both work. There is no capture, which makes this lambda lifting.
 
-The caveat is capture. Anonymous functions come free; closures in the capturing
-sense do not. Whether `fn(x) { x + y }` may capture `y` from the enclosing
-scope, and how (by value, by borrow, with what lifetime), is a semantic decision
-the uniform syntax does not answer. Jai and Odin, which use this syntax, mostly
-punt on capture. Nested function literals cannot close over locals, precisely
-because capture drags in the ownership questions that forced Rust's closure
-machinery (`Fn`/`FnMut`/`FnOnce`, `move`) into existence. A borrow-checked
-language has to pick, either no capture (functions are plain pointers) or
-explicit capture lists, which add syntax but keep everything written down. Frost
-takes the first path.
+The caveat is capture. Anonymous functions come free, and closures in the
+capturing sense do not. Whether `fn(x) { x + y }` may capture `y` from the
+enclosing scope, and how (by value, by borrow, with what lifetime), is a
+semantic decision the uniform syntax does not answer. Jai and Odin, which use
+this syntax, mostly punt on capture. Nested function literals cannot close over
+locals, precisely because capture drags in the ownership questions that forced
+Rust's closure machinery (`Fn`/`FnMut`/`FnOnce`, `move`) into existence. A
+borrow-checked language has to pick, either no capture (functions are plain
+pointers) or explicit capture lists, which add syntax but keep everything
+written down. Frost takes the first path.
 
 ## 3. `:=` for declaration, `=` for assignment
 
@@ -108,7 +105,6 @@ distinct operators make easy to enforce either way.
 means type ascription. Rust overloads `:` for both type annotation and struct
 field init, which is part of why Rust never shipped general type ascription. The
 grammar collides. One symbol, one meaning helps a parser and a reader alike.
-When you see `:` in Frost it always means the same thing.
 
 ## 5. Mandatory parentheses on conditions
 
@@ -257,8 +253,8 @@ of those is a place for the two to disagree. The array already answers all four,
 and a fixed array of numbers is exactly what a vector register holds, so the
 type carries no information the array does not.
 
-What the separate type buys elsewhere is a place to hang the operators without
-giving arrays elementwise arithmetic. Frost gives arrays the arithmetic instead.
+Elsewhere the separate type buys a place to hang the operators without giving
+arrays elementwise arithmetic. Frost gives arrays the arithmetic instead.
 `+` over two arrays is otherwise an error, so nothing else changes meaning.
 
 Two rules keep it from becoming a hidden loop. The length is a power of two and
@@ -276,11 +272,11 @@ An arm may name several patterns joined by `|`, and an arm over whole numbers
 may name a span. Both follow one rule: a match's coverage is readable at its
 arms.
 
-The span is where that shows. Without it the way to write `case 1..10:` is a
-wildcard arm holding an `if`, which is an arm that misstates its own coverage:
-the wildcard claims everything else while the body splits it invisibly. `case
-1..10:` puts the span where coverage lives, so a grep over `case` shows the
-whole shape of the match. Both stay decidable: the covered set of an
+Without a span, the way to write `case 1..10:` is a wildcard arm holding an
+`if`, which is an arm that misstates its own coverage: the wildcard claims
+everything else while the body splits it invisibly. `case 1..10:` puts the span
+where coverage lives, so a grep over `case` shows the whole shape of the match.
+Both stay decidable: the covered set of an
 alternative list is the union of its parts, and a span covers what it names, so
 the rule about covering every variant goes on counting.
 
@@ -289,16 +285,16 @@ stands for, never a binding: `case CH_0:` next to `case CH_0..=CH_9:` cannot
 mean compare in one and bind in the other, and `_` is the arm that covers the
 rest. A decimal and a piece of text are refused, because covering one of the
 reals is a claim nobody can act on and text is compared rather than counted. And
-an arm is read against the union of every arm above it, which is what a reader
-does looking down the arms, so an arm nothing reaches is named where it is
-written whether one earlier arm took its values or three did between them.
+an arm is read against the union of every arm above it, as a reader does looking
+down the arms, so an arm nothing reaches is named where it is written whether
+one earlier arm took its values or three did between them.
 
 There are no guards. `case n if n > 5:` puts an expression in pattern position,
 and a guarded arm covers nothing the compiler can count, so exhaustiveness would
 need a second rule for arms it has to ignore. Write the `if` inside the arm.
 
 Patterns do not nest either. `case .Line { start: .Point { x } }` binds through
-two levels; a second `match`, or a `.` on the bound field, says the same thing
+two levels. A second `match`, or a `.` on the bound field, says the same thing
 and leaves every field access where a grep for the field name finds it.
 
 ## What the syntax costs

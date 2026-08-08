@@ -34,8 +34,8 @@ The modes are tried in one order and the first that matches wins: `--test`,
 then `--run-ir`, then `--emit-c`, then `--native` or `--link`, then the bare
 run. So `--test` goes through Cranelift whatever backend flag came with it, and
 `--run-ir` ignores `-o` and exits 3 when the interpreter declines the program.
-Which backend means what is
-[native, freestanding, self-hosted](../impl/build-modes.md).
+[Native, freestanding, self-hosted](../impl/build-modes.md) says which backend
+means what.
 
 `frost program.frost` with no flags at all compiles through Cranelift into a
 temporary object, links a temporary executable, runs it, deletes both, and
@@ -43,8 +43,9 @@ exits with what the program returned.
 
 `--incremental` is rejected without `--link`, since a module is a compilation
 unit only when the objects are linked, and rejected alongside `--test`,
-`--emit-c` or `--run-ir`. What it compares and what it stores is
-[separate compilation](../impl/separate-compilation.md).
+`--emit-c` or `--run-ir`. See
+[separate compilation](../impl/separate-compilation.md) for what it compares and
+what it stores.
 
 `--freestanding` reaches only the native link. The `--emit-c --link` path, the
 `--test` link and the bare run all link the ordinary runtime, and the flag is
@@ -57,8 +58,7 @@ which is how an example links SDL3.
 
 Given `-o`, the path is used exactly as written, on every platform. No
 extension is appended and none is replaced. A Unix `--link -o frost.exe` build
-produces an ELF binary named `frost.exe`, which is what `just install-self`
-relies on.
+produces an ELF binary named `frost.exe`, which `just install-self` relies on.
 
 Without `-o`, and only then, the compiler derives a name from the source file's
 stem:
@@ -174,8 +174,8 @@ command line left out and a flag on the command line wins.
 
 ## The just recipes
 
-The justfile is what the repository is built, tested and measured with. The
-ones worth reaching for:
+The repository is built, tested and measured with the justfile. The recipes
+worth reaching for:
 
 | Recipe | What it does |
 | --- | --- |
@@ -230,9 +230,8 @@ Both compilers write the same bytes, which a test over the whole corpus holds.
 
 ### `frost lint <paths...>`
 
-Reports what is worth a look and refuses nothing. A build is unchanged by a
-finding. `frost lint` exits nonzero when it finds any, so a project can hold a
-tree to none of them.
+Reports what is worth a look and refuses nothing. `frost lint` exits nonzero
+when it finds any, so a project can hold a tree to none of them.
 
 - an `unsafe` block that holds nothing unchecked
 - a function nothing reaches
@@ -251,8 +250,8 @@ Prints the exported names beginning with a prefix, each with its signature as it
 was written. `--json` writes one object per name. With no paths it walks the
 directory it is run in.
 
-A flat namespace has no `.` to narrow a guess with, and a prefix is what a
-family is named by here, so this asks for that narrowing directly.
+A flat namespace has no `.` to narrow a guess with, and a family is named by its
+prefix here, so this asks for that narrowing directly.
 
 ## Diagnostics as JSON
 

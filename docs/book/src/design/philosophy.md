@@ -15,7 +15,7 @@ scattered allocations, hidden lifetimes, and cache-hostile memory layouts.
 
 Data-oriented design starts from the shape of the data and the way it flows. The
 layout of memory is the primary design artifact, and the code is written to
-transform that layout efficiently. The consequences run through all of Frost.
+transform that layout efficiently.
 
 | Concern            | Object-oriented default            | Frost (data-oriented)                                  |
 | ------------------ | ---------------------------------- | ------------------------------------------------------ |
@@ -27,10 +27,8 @@ transform that layout efficiently. The consequences run through all of Frost.
 | Memory             | Per-object heap allocation         | **Pools / explicit allocation**; contiguous, predictable layout |
 
 Behavior lives apart from data. A struct is its fields. To do something with it
-you call a free function and pass it in. There are no methods, no `self`, no
-inheritance, and no vtables. Separating data from the code that walks it keeps
-the layout visible, the control flow explicit, and the machine's actual work
-predictable.
+you call a free function and pass it in. Separating data from the code that
+walks it keeps the layout visible and the machine's actual work predictable.
 
 ### Object-oriented features Frost omits
 
@@ -64,7 +62,7 @@ predictable.
    what a hand-written one does. You pay for abstraction while you compile.
    Function pointers remain for the cases that are genuinely dynamic, and they
    are honest about costing an indirect call. Neither backend devirtualizes
-   one, because goal 7 asks that the lowering be what you read.
+   one, because goal 7 asks that the lowering match what you read.
 4. Cleanup as a tracked obligation. `linear` resources must be consumed
    exactly once. This replaces `Drop` and finalizers with something the
    compiler checks and the reader can see, and it makes error values
@@ -134,10 +132,9 @@ predictable.
   `$compare` or `$hash` when it varies. The self-hosted compiler is 5,000 lines
   and wanted a generic function three times.
 
-  Coherence checking, bound solving and method resolution are among the passes
-  that dominate other compilers' front ends, and their absence is what keeps
-  this front end near-linear. The measurement is in
-  [self-hosting.md](../impl/self-hosted.md).
+  Coherence checking, bound solving and method resolution dominate other
+  compilers' front ends. Leaving them out keeps this front end near-linear.
+  The measurement is in [self-hosting.md](../impl/self-hosted.md).
 - Not access-controlled per declaration. There is no `pub`, no private
   marker on any item, and no `pub(crate)` refinement of one. Every struct field
   is public, so encapsulation by field privacy is out of scope. A module does

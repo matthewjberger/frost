@@ -1,7 +1,7 @@
 # Finding a module
 
 `import "x.frost"` names a file. The first place looked is beside the importing
-file, which is what a program's own files want, and four more places follow, so
+file, which covers a program's own files, and four more places follow, so
 a library can be named as "the slab, wherever it is installed" instead of as
 `../../std/slab.frost`.
 
@@ -47,9 +47,9 @@ same serde and JSON that interfaces and build records already use.
 ## The standard library
 
 `std/` in this repository. It is found, in order, at `FROST_STD` if that is set,
-then `std` beside the compiler, which is what an installed layout looks like,
-then two directories up from the compiler, which is what `cargo build` produces.
-The binary lands in `target/debug` and the library is at the repository root.
+then `std` beside the compiler, the layout an install has, then two directories
+up from the compiler, the layout `cargo build` produces. The binary lands in
+`target/debug` and the library is at the repository root.
 
 So `import "option.frost"` works from anywhere with nothing declared.
 

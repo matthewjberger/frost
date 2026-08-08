@@ -69,16 +69,14 @@ bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
 }
 ```
 
-Four parts of that body need a closer look.
-
 `slice_range` answers for the run against the buffer, so asking for more than is
 left aborts here instead of handing back a view that reaches past the end.
 Arithmetic traps on overflow, so a `count * sizeof(T)` that would wrap aborts
 too.
 
 The `unsafe` block is the reinterpret from bytes to `T`, and it is the only one
-in the file. An `unsafe` block is a perimeter. A caller of `bump_carve` writes
-none of its own, because the unchecked step is inside.
+in the file. A caller of `bump_carve` writes none of its own, because the
+unchecked step is inside.
 
 The run starts at the next multiple of 8. There is no `alignof` to ask, so an
 allocator handing out types that want more alignment than that needs the number
@@ -110,7 +108,7 @@ call.
 
 The `[]i64` this answers with views the allocator, and handing one back out of a
 `uses` function is allowed. The allocator belongs to whoever supplied it, so the
-`with` block at the caller is where that view is held to the allocator's life.
+`with` block at the caller holds that view to the allocator's life.
 
 One limitation to know before reaching for `uses` in a library. The type after
 it is concrete. `uses Bump<1024>` names one allocator type at one size, and

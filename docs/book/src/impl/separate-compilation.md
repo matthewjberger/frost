@@ -31,7 +31,7 @@ dominate.
 
 ## What a module is
 
-A module is a file, which is what `import` and the `export` line already name.
+A module is a file. `import` and the `export` line already name one.
 
 A module's interface is its `export` line. `private_renames` in
 `src/modules/imports.rs` mangles every top-level name a file leaves off that
@@ -41,7 +41,7 @@ in place of the source.
 
 A specialization is emitted in the module that instantiates it. The module
 declaring the generic has no way to know what its callers will ask for, and the
-caller is what chooses the type arguments. Two modules that both instantiate
+caller chooses the type arguments. Two modules that both instantiate
 `Stack<i64>` each emit their own copy, with module-local linkage, and the
 duplicate code is the price of a module's work depending only on the module.
 
@@ -63,11 +63,9 @@ the compiler takes the first:
 
 ## What the artifact contains
 
-Compiling a module produces two things: an object file, and an interface the
-compiler reads instead of the source when something imports it.
-
-The interface carries everything a caller's passes consult about an imported
-name. Working through the pipeline, that is:
+Compiling a module produces an object file and an interface, which the compiler
+reads in place of the source when something imports the module. Working through
+the pipeline, the interface carries:
 
 | what | why it must be in the interface | consulted by |
 | --- | --- | --- |
@@ -81,17 +79,16 @@ name. Working through the pipeline, that is:
 | **generic bodies** | a specialization is stamped out at the caller, so the caller needs the AST | `ir::build` |
 | compile-time parameter signatures | the bound checked at the call | `ir::build` |
 
-The last row shapes the whole design. A generic's body is part of its
-interface. Monomorphization is the only implementation of generics, and the
-caller is what chooses the type arguments, so the caller is what instantiates
-the template and needs the AST to do it. This is the same bargain C++ headers
-and Rust `#[inline]`/generic MIR make, and it puts the bodies of exported
-generics in the interface alongside the signatures.
+The last row shapes the whole design. Monomorphization is the only
+implementation of generics, and the caller chooses the type arguments, so the
+caller instantiates the template and needs the AST to do it. A generic's body is
+part of its interface, the same bargain C++ headers and Rust `#[inline]`/generic
+MIR make.
 
 Changing a generic's body changes the module's interface, and every module that
 instantiates it is rebuilt. Changing an ordinary body leaves the interface
 alone. So the interface hash covers the bodies of exported generics and skips
-every other body, and that hash is what downstream rebuilds key on.
+every other body, and downstream rebuilds key on that hash.
 
 ## Symbols and specializations belong to the module
 
@@ -139,8 +136,8 @@ own source together with the interface hash of every module reachable through
 its imports, transitively, since a generic this module instantiates can
 instantiate one from further down. A module's interface hash is taken over the
 interface with the bodies of ordinary functions blanked and the bodies of
-generics kept. An ordinary body is what a module can change while every other
-module stays cached, and it is most of what anyone edits.
+generics kept. A module can change an ordinary body while every other module
+stays cached, and an ordinary body is most of what anyone edits.
 
 A skipped module contributes signatures. `Statement::Declared` is a Frost
 function's signature with no body, produced by `as_declaration` for the

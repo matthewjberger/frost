@@ -11,8 +11,6 @@ need the exact rule.
 
 ## Borrows are parameter modes
 
-A parameter mode is the whole of what a borrow is.
-
 ```frost,sketch
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
@@ -21,12 +19,12 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 unmarked parameter borrows it to read. `move` takes ownership. A borrow lasts
 for the call, and you cannot store one, so there is nothing to annotate.
 
-Anything that has to outlive a call needs another way to be named, and that is
-what pools and generational handles are for. One borrow does have a spelling:
-`ref T` can be returned, and the compiler checks it against the frame and the
-region it came from, so an accessor can hand back a place instead of a copy.
+Anything that has to outlive a call is named by a pool and a generational
+handle instead. One borrow does have a spelling: `ref T` can be returned, and
+the compiler checks it against the frame and the region it came from, so an
+accessor can hand back a place instead of a copy.
 
-Here is what Frost uses in place of the machinery you may be expecting:
+Frost uses these in place of the machinery you may be expecting:
 
 | in place of | Frost has |
 | --- | --- |
@@ -86,10 +84,10 @@ it and checks what it prints.
 
 ## How to read this book
 
-[A tour of Frost](tour.md) is the language by example, one feature at a time,
-and is the place to start. [Coming from Rust](coming-from-rust.md) covers the
-same ground for someone who already thinks in ownership and borrows.
-[Patterns](patterns.md) shows what to write once the syntax is familiar.
+[A tour of Frost](tour.md) is the language by example, one feature at a time.
+[Coming from Rust](coming-from-rust.md) covers the same ground for someone who
+already thinks in ownership and borrows. [Patterns](patterns.md) shows what to
+write once the syntax is familiar.
 
 The [language reference](reference/conformance.md) is normative. The chapters
 under [why it is the way it is](design/philosophy.md) give the reasoning behind

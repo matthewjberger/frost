@@ -9,9 +9,9 @@ that stores a `(callback, userdata)` pair and calls it back later.
 ## What the C idiom costs
 
 Goal 2 in [philosophy.md](philosophy.md) says safety comes from making dangerous
-shapes unrepresentable. Without a callback form of its own, the only way to write
-one is the C idiom: a function pointer beside an untyped `^u8` the callee casts
-back. Every piece of that idiom is already in the language:
+shapes unrepresentable. Without a callback form of its own, the only way to
+write one is the C idiom: a function pointer beside an untyped `^u8` the callee
+casts back. Every piece of that idiom is already in the language:
 
 - `fn(T1, ...) -> R` is a function pointer type
   ([types.md](../reference/types.md) 3.5), and a named function used as a value
@@ -22,13 +22,14 @@ back. Every piece of that idiom is already in the language:
 So a callback is writable and it is entirely outside every check the language
 has. `src/check/regions.rs` reasons about arena pointers by provenance, and its
 argument is stated in its own header comment: "Frost has no global arenas and no
-closures, so a `^T` can only point into an arena a function was handed directly."
-A `^u8` handed to a C library and called back through later is precisely the case
-that argument does not cover. `src/check/ownership.rs` cannot see through it either.
+closures, so a `^T` can only point into an arena a function was handed
+directly." A `^u8` handed to a C library and called back through later is
+precisely the case that argument does not cover. `src/check/ownership.rs` cannot
+see through it either.
 
 Under that idiom every callback-shaped API is an unsafe API, because the only
 expression of a callback is a raw escape hatch. The surface `&` removal pushed
-that shape out of the language, and the C boundary is where it comes back.
+that shape out of the language, and it comes back at the C boundary.
 
 ## The shape
 
@@ -45,10 +46,10 @@ register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 
 Nothing is generated for the crossing. A `mut` parameter is already a pointer in
 the signature, and Frost and C share a calling convention, so `on_event`
-compiled for Frost *is* the `void (*)(void*, int64_t)` the library wants. What
-the compiler does at a registration is pass the handler's address and the
-context's address, and there is no cast anywhere in the program. There is no
-trampoline because there is no cast for one to hold.
+compiled for Frost *is* the `void (*)(void*, int64_t)` the library wants. At a
+registration the compiler passes the handler's address and the context's
+address, and there is no cast anywhere in the program. There is no trampoline
+because there is no cast for one to hold.
 
 ## What the declaration says
 
@@ -57,9 +58,10 @@ trampoline because there is no cast for one to hold.
 A `$handler` parameter carrying a function bound on an `extern fn` is the
 complete statement of "this extern takes a callback". Nothing is written beside
 it, and in particular no capability: `uses Arena` means a real implicit
-parameter is supplied at the call, which `src/lower/allocation_sources.rs` inserts,
-and a callback needs no such parameter. A `uses CallbackAbi` would be a keyword
-pretending to be a capability and a second thing to keep in step with the first.
+parameter is supplied at the call, which `src/lower/allocation_sources.rs`
+inserts, and a callback needs no such parameter. A `uses CallbackAbi` would be a
+keyword pretending to be a capability and a second thing to keep in step with
+the first.
 
 The form is the bound one, `$handler: fn(mut Ctx, i64)`
 ([generics.md](../reference/generics.md) 11.1b), so the handler's signature is
@@ -134,8 +136,9 @@ Three things follow from moving rather than borrowing.
   exact failure this is meant to prevent.
 
 The fire-and-forget case, where the library never hands the callback back, does
-not get an exception. The registration is still linear, and a program that means
-to abandon it says so with a terminal consumer that takes it and returns nothing.
+not get an exception. The registration is still linear, and a program that
+means to abandon it says so with a terminal consumer that takes it and returns
+nothing.
 
 ## Where the context lives
 
@@ -152,8 +155,8 @@ the one those checks were not written for.
 
 So a registration carries one obligation, and it is the whole safety argument:
 
-> The context argument of a callback registration must name storage that outlives
-> the registration.
+> The context argument of a callback registration must name storage that
+> outlives the registration.
 
 One way to meet it is to require the context to live in an arena or a pool and
 reject a place in the current frame. That rule does not survive contact with the
@@ -167,9 +170,9 @@ The obligation is satisfied from the other end. A `Registration` is `linear`,
 so `check_linearity` already forces it to be consumed exactly once in the
 function that made it. A context in that same frame therefore outlives the
 registration by construction, and the frame is exactly the right place for it.
-What is left to stop is the registration *leaving* that function by some other
-road, which is the same shape `src/check/regions.rs` already enforces for pointers:
-returned, stored where the call cannot see, or handed back as the call's answer.
+That leaves the registration *leaving* that function by some other road. It is
+the same shape `src/check/regions.rs` already enforces for pointers: returned,
+stored where the call cannot see, or handed back as the call's answer.
 
 So the rule needs no new kind of check. A registration whose context is rooted
 in this frame counts as a value that points into this frame, and the three roads

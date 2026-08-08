@@ -47,8 +47,8 @@ print("hp {} of {}\n", entity.hp, entity.max)
 An integer, a float, a `bool` and a `str` all go in a hole. Nothing is appended,
 so a line ends with the `\n` written into the literal. The compiler checks the
 count where the call is written and picks the writer for each value while it
-compiles the call, so what runs is one direct write per value. Printing lives
-entirely in the library ([text-and-io.md](std/text-and-io.md)).
+compiles the call, so the program does one direct write per value. Printing
+lives entirely in the library ([text-and-io.md](std/text-and-io.md)).
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
@@ -208,9 +208,9 @@ other container. Chapter 3.3 of [types.md](reference/types.md) has the rule and
 chapter 8 of [ownership.md](reference/ownership.md) has the checks.
 
 A slice is storable. `[]T` is an address with a length beside it and an ordinary
-type, so a struct field may hold one. A parser holds views into a buffer it
-does not own this way. The frame and region checks refuse a function that
-answers with a view whose storage they cannot trace. See
+type, so a struct field may hold one, and a parser holds views into a buffer it
+does not own. The frame and region checks refuse a function that answers with a
+view whose storage they cannot trace. See
 [memory-safety.md](design/memory-safety.md).
 
 Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
@@ -414,7 +414,7 @@ Nothing registers into that vocabulary and nothing implements it. The bound is
 a precondition, checked against the line the caller wrote. The vocabulary is
 11.4a of [generics.md](reference/generics.md).
 
-## Higher-order code without traits or closures
+## Passing an operation as an argument
 
 A generic algorithm takes the operation it needs as a compile-time function
 parameter, which covers what you would write a trait bound for elsewhere. The
@@ -459,16 +459,15 @@ sort($i64, $i64_ascending, view)
 
 The bundle is a type, an implementation is a constant of it, and the call names
 which one it means. Nothing registers, nothing is searched for, and there is no
-coherence rule to learn, because the call says which implementation it wants.
-Since `$ops` is a compile-time argument, `ops.less(a, b)` folds to a direct call
-to `i64_less`, and the specialization holds no function pointer at all.
-`std/ordering.frost` and `std/sort.frost` are this written out, and 11.4b of
-[generics.md](reference/generics.md) has the rest, including what dropping the
-`$` gives you.
+coherence rule to learn. Since `$ops` is a compile-time argument,
+`ops.less(a, b)` folds to a direct call to `i64_less`, and the specialization
+holds no function pointer at all. `std/ordering.frost` and `std/sort.frost` are
+this written out, and 11.4b of [generics.md](reference/generics.md) has the
+rest.
 
-When the operation varies at runtime, drop the `$` and the same
-declaration gives an ordinary value. A `fn(...) -> T` parameter holds a pointer,
-and a bundle without the `$` is a struct holding several. There are no capturing
+When the operation varies at runtime, drop the `$` and the same declaration
+gives an ordinary value. A `fn(...) -> T` parameter holds a pointer, and a
+bundle without the `$` is a struct holding several. There are no capturing
 closures.
 
 ```frost
@@ -510,10 +509,10 @@ main :: fn() -> i64 {
 ```
 
 The `for` is unrolled where it is written. The body is compiled once per element
-with `value` standing for that element, so what runs is three writes of three
-different types. The `if` over what a type is gets its answer at expansion time,
-and the branch that cannot run is dropped before anything checks it, so one body
-serves elements of different types.
+with `value` standing for that element, so the program does three writes of
+three different types. The `if` over what a type is gets its answer at expansion
+time, and the branch that cannot run is dropped before anything checks it, so
+one body serves elements of different types.
 
 There is no compile-time string parsing, no recursion and no unbounded loop.
 Everything here walks a list whose length the call fixed, so expansion costs
@@ -677,9 +676,9 @@ main :: fn() -> i64 {
 }
 ```
 
-Handles are what you pass around and store. The borrow of `world[goblin]` lasts
-only for the call to `delta`, and releasing a slot invalidates the handles to it
-by generation.
+You pass and store handles. The borrow of `world[goblin]` lasts only for the
+call to `delta`, and releasing a slot invalidates the handles to it by
+generation.
 
 ## Where to next
 

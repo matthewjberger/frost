@@ -1,6 +1,6 @@
 # C compatibility
 
-Frost has two distinct relationships with C:
+Frost has two relationships with C:
 
 1. Frost calls C (`extern fn`), a supported feature. This is
    how Frost reaches `printf`, `malloc`, the support runtime, and any C
@@ -9,9 +9,9 @@ Frost has two distinct relationships with C:
    of one backend. The emitted C is a compilation target the system C
    compiler reads.
 
-The two directions are asymmetric. Frost calls C, and C calling Frost is a
-non-goal, which leaves the emitted C a simple lowering (char buffers, mangled
-names) under no obligation to a stable ABI.
+Frost calls C, and C calling Frost is a non-goal, which leaves the emitted C a
+simple lowering (char buffers, mangled names) under no obligation to a stable
+ABI.
 
 ## 1. Frost calls C with `extern fn`
 
@@ -54,7 +54,7 @@ main :: fn() -> i64 {
   is a pointer by convention, a struct return is by value with the real ABI.
   A return could not have been a convention, because `-> Ctx` has to mean what C
   means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
-  a choice, and the pointer form is what a `linear` resource needs.
+  a choice, and a `linear` resource needs the pointer form.
 - A parameter written `value` is passed to C the way C passes a struct.
   `set_label :: extern fn(handle: ^u8, value label: View)` links against
   `void set_label(void*, View)`, with the bytes split across registers or pushed
@@ -69,12 +69,11 @@ main :: fn() -> i64 {
   C takes a struct by value is silent wrong code, and nothing in the program
   knows the C signature, so no diagnostic is possible.
 
-  `value` is a contextual word, so a parameter may still be called `value`. What
-  tells them apart is that a mode is followed by the name and a name is followed
-  by its type. It says how the bytes cross. C receives a copy, so the caller
-  still holds its own value and the argument is borrowed exactly as an unmarked
-  one is. That copy is real, and a callee that writes to its parameter is
-  writing to its own.
+  `value` is a contextual word, so a parameter may still be called `value`. A
+  mode is followed by the name and a name is followed by its type, which tells
+  the two apart. The mode says how the bytes cross. C receives a copy, so the
+  caller still holds its own value and the argument is borrowed exactly as an
+  unmarked one is.
 
   All four paths emit it: both of the bootstrap's backends and both of the
   self-hosted compiler's. The two C backends hand the C compiler a real struct
@@ -83,7 +82,7 @@ main :: fn() -> i64 {
   is written out again in `selfhosted/emit_asm.frost`, where one argument
   becomes the one or several slots the target wants.
 
-  The three shapes an argument takes, which is the whole rule:
+  The three shapes an argument takes, and the whole rule:
 
   | | Windows | System V |
   | --- | --- | --- |
@@ -91,10 +90,10 @@ main :: fn() -> i64 {
   | up to 16 bytes | address of a copy the caller makes | one or two registers, each integer or SSE by what reaches it |
   | over 16 bytes | address of a copy the caller makes | pushed onto the stack |
 
-  The copy matters. C gives the callee its own parameter, so a callee that
-  writes to it must not write through to the caller's value, and the test that
-  says so passes a struct to a function that assigns to its parameter and then
-  reads the caller's copy back.
+  C gives the callee its own parameter, so a callee that writes to it must not
+  write through to the caller's value, and the test that says so passes a struct
+  to a function that assigns to its parameter and then reads the caller's copy
+  back.
 - A function type says the same thing about its own parameters, so
   `fn(i32, value View, i64)` is a callback C hands a struct to, and a Frost
   function written `handler :: fn(status: i32, value message: View, tail: i64)`
@@ -131,8 +130,8 @@ The audit is about the signature. `sqrtf :: safe extern fn(x: f32) -> f32` in
 caller's, so there is nothing a call site could get wrong that the type checker
 has not already caught. `malloc :: safe extern fn(size: i64) -> ^u8` in
 `selfhosted/core.frost` is safe for a different reason: it hands memory back and
-reads none of the caller's, so it cannot corrupt what the caller holds. What it
-returns is still a raw pointer, and reading through one is gated on its own.
+reads none of the caller's, so it cannot corrupt what the caller holds. It still
+returns a raw pointer, and reading through one is gated on its own.
 
 A declaration taking a pointer usually cannot be marked safe, because the
 callee's read is bounded by something the signature does not say.
@@ -140,16 +139,16 @@ callee's read is bounded by something the signature does not say.
 reason, and its one caller hands it a `str` whose length it already knows, so
 one `unsafe` at that call covers every emit.
 
-A binding gets a perimeter out of this. When every declaration in a binding file
-is either `safe` or reached through a wrapper that establishes what the C side
-needs, a program using the binding writes no `unsafe` of its own, and
-that file is the complete list of places to look when memory is corrupted. The
-generated wgpu binding is written that way, with a safe wrapper per call, so a
-program that draws a triangle writes none for the graphics API.
+When every declaration in a binding file is either `safe` or reached through a
+wrapper that establishes what the C side needs, that file is a perimeter: a
+program using the binding writes no `unsafe` of its own, and the file is the
+complete list of places to look when memory is corrupted. The generated wgpu
+binding is written that way, with a safe wrapper per call, so a program that
+draws a triangle writes none for the graphics API.
 
 ### The support runtime is two files, and most of it is Frost
 
-Every program links a runtime, and the runtime is two files.
+Every program links a runtime.
 
 `runtime/runtime.frost` is Frost. It holds the checks a program compiles to: the
 bounds check an index becomes, the length and span checks a slice becomes, the
@@ -162,19 +161,19 @@ end into a cached object and link it beside the C one.
 
 Two rules hold that file. Nothing in it may need what it provides: a bounds
 check that indexes something calls itself, so nothing there indexes an array and
-a number is written a digit at a time, with no buffer to index. And what it
-bottoms out in is the C file beside it, reached through a handful of `extern`
-declarations that are the whole of its contact with C.
+a number is written a digit at a time, with no buffer to index. And it bottoms
+out in the C file beside it, reached through a handful of `extern` declarations
+that are the whole of its contact with C.
 
-`runtime/frost_runtime.c` is what is left, and this is the size it stays.
+`runtime/frost_runtime.c` holds the rest, and this is the size it stays.
 
 Almost all of it is built around a variable that lives for the whole program and
 that every call sees the same copy of: the emit buffer `-o` writes through, the
 counters `--test` sums, the recovery stack a parse escapes to, the block count a
 leak check reads, the arguments a constructor captures before `main`. Frost has
 constants and locals and nothing at module scope that a function writes to,
-because a value's lifetime is a place in the program. That rule is what the
-region check and the move checker are built on: a `^T` points into an arena in
+because a value's lifetime is a place in the program. The region check and the
+move checker are built on that rule: a `^T` points into an arena in
 scope, and a place belongs to a frame. Adding a variable that outlives every
 frame would give both of them a second case, paid for by every program, to serve
 these few functions. So they stay here.
@@ -209,7 +208,7 @@ The memory model is a library. A slab is a Frost struct with Frost operations
 over it (`std/slab.frost` in the standard library, and
 `examples/native/generic_slab.frost` for one written out in full), which is why
 fixed-capacity storage works under `--freestanding` where there is no libc at
-all. What C holds is the aborts, the assertions and the IO.
+all. C holds the aborts, the assertions and the IO.
 
 ## 2. Frost lowers through C with `--emit-c`
 
@@ -217,8 +216,7 @@ all. What C holds is the aborts, the assertions and the IO.
 single `.c` file and compiles it with the system C compiler. This exists for
 portability (anywhere with a C compiler) and as the second half of the
 differential oracle. Every test program is compiled through *both* Cranelift
-and C, run, and the outputs are asserted equal. Two independent backends that
-must agree catch miscompilations that a single backend would hide.
+and C, run, and the outputs are asserted equal.
 
 The emitted C is an internal lowering, and it looks like one:
 
@@ -226,8 +224,8 @@ The emitted C is an internal lowering, and it looks like one:
   `_Alignas(16) unsigned char _7[N];` and accessed through pointer casts, with
   no named C `struct` for it. This is why a Frost struct type's *name* is only
   ever a layout-registry key inside the compiler. It never has to be a valid C
-  identifier, which is what lets monomorphized names like `Pair<i64>` work with
-  no extra escaping.
+  identifier, so monomorphized names like `Pair<i64>` work with no extra
+  escaping.
 - Aggregate returns use a hidden out-pointer. A Frost function returning a
   struct compiles to `void f(..., char* __ret)` and `memcpy`s the result into
   `__ret`. An `extern` follows the real C ABI instead, as section 1 sets out.
@@ -238,11 +236,9 @@ The emitted C is an internal lowering, and it looks like one:
 - Function prototypes are emitted up front, so forward references and mutual
   recursion compile regardless of definition order.
 
-The mangling, the byte-buffer aggregates and the out-pointer return convention
-make the emitted C a file for a C compiler to read. With C calling Frost a
-non-goal, the backend picks whatever lowering is simplest and fastest to emit.
-Stable C-callable exports would be a separate, opt-in surface, leaving the
-internal lowering free to change.
+With C calling Frost a non-goal, the backend picks whatever lowering is simplest
+and fastest to emit. Stable C-callable exports would be a separate, opt-in
+surface, leaving the internal lowering free to change.
 
 ## What "C compatible" means here
 
