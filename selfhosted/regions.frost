@@ -871,6 +871,22 @@ check_capability_as_value :: fn(mut p: Parser, off: i64, len: i64, at: i64) {
     frost_rt_recover_note()
 }
 
+// `$f` names a function as a compile-time argument, which is carried as
+// FN_BASE plus its index rather than as a name. The rule is the one above: what
+// the specialization holds is the function, called with what the declared
+// signature says and nothing more.
+check_capability_as_argument :: fn(mut p: Parser, index: i64, at: i64) {
+    if (index < 0 || index >= p.fns.count || cap_count_of(p, index) == 0) {
+        return
+    }
+    sym := arena_at(p.fns, index)
+    report_where(p.modules, p.src, at)
+    report("'")
+    report_src(p.src, sym.off, sym.len)
+    report("' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else")
+    frost_rt_recover_note()
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
@@ -883,6 +899,10 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Var) {
         check_name_known(p, node.val, node.c)
         check_capability_as_value(p, node.val, node.c, node.pos)
+        return
+    }
+    if (kind == NodeKind::TypeVal && node.val >= FN_BASE) {
+        check_capability_as_argument(p, node.val - FN_BASE, node.pos)
         return
     }
     if (kind == NodeKind::Call) {
@@ -1102,6 +1122,9 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
+        if (vnode.kind == NodeKind::TypeVal && vnode.val >= FN_BASE) {
+            check_capability_as_argument(p, vnode.val - FN_BASE, vnode.pos)
+        }
         if (vnode.kind != NodeKind::TypeVal) {
             check_types_expr(p, value)
             declared := nth_param_type(p, sym.params, index)

@@ -127,6 +127,37 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          cannot be taken as a value: a call through a function value supplies \
          what its type says and nothing else",
     ),
+    // `$f` names a function as a compile-time argument, which reaches both
+    // compilers as a type rather than as a name and so slipped past the rule
+    // above. One reported a signature the reader never wrote, in spellings the
+    // surface does not have, and the other said the call needed a capability
+    // while standing inside the `with` block that supplies one.
+    (
+        "a_capability_drawing_function_as_a_compile_time_argument",
+        "import \"io.frost\"
+         Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+         bump :: fn($N: usize, mut a: Arena<N>) -> i64 {
+             a.offset = a.offset + 8
+             a.offset
+         }
+         worker :: fn(n: i64) -> i64 uses Arena<256> {
+             bump($256, arena) + n
+         }
+         apply :: fn($f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
+         main :: fn() -> i64 {
+             var scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
+             var out: i64 = 0
+             with scratch {
+                 out = apply($worker, 3)
+             }
+             print(\"{}\\n\", out)
+             0
+         }
+",
+        "'worker' draws a capability, which is one more parameter, so it \
+         cannot be taken as a value: a call through a function value supplies \
+         what its type says and nothing else",
+    ),
     // The one caller settles the answer as well as the arguments. A `main`
     // that can fail answers the tagged union the `?` machinery made, which the
     // bootstrap's backend then named in a message about a type the reader never
