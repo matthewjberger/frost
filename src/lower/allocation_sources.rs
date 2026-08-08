@@ -299,6 +299,32 @@ impl Threader {
                     ));
                 }
             }
+            // `$f` names a function as a compile-time argument, and reaches
+            // here as a type rather than as a name. The rule is the same: what
+            // the specialization holds is the function, called with what the
+            // declared signature says and nothing more.
+            Expression::TypeValue(ty) => {
+                // A name in type position is read as a type here and resolved
+                // to a function later, so what a `$f` argument carries at this
+                // point is whichever named type the parse made of it.
+                let target = match &ty {
+                    Type::ConstFn(name)
+                    | Type::ConstValue(name)
+                    | Type::Struct(name)
+                    | Type::Enum(name) => name.clone(),
+                    _ => String::new(),
+                };
+                if self.uses_functions.contains_key(&target) {
+                    return Err(anyhow::Error::new(
+                        crate::diagnostic::LocatedError {
+                            position: ast.expr_position(expression),
+                            message: format!(
+                                "'{target}' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else"
+                            ),
+                        },
+                    ));
+                }
+            }
             Expression::Try(inner)
             | Expression::Prefix(_, inner)
             | Expression::AddressOf(inner)
