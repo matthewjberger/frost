@@ -530,7 +530,7 @@ fn pointee(ty: &Type) -> Option<&Type> {
 /// is, which is where the holes this was written for actually are: an i64 was
 /// accepted for a `bool` parameter and answered 111, and a `str` reached a
 /// backend that had nothing to say about it beyond its own name.
-fn fits(given: &Type, wanted: &Type) -> bool {
+pub(crate) fn fits(given: &Type, wanted: &Type) -> bool {
     let given = strip(given);
     let wanted = strip(wanted);
     if given == wanted {

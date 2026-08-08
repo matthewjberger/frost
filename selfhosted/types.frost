@@ -431,6 +431,20 @@ is_str_literal :: fn(mut p: Parser, value: i64) -> bool {
     arena_at(p.arena, constant_node(p, value)).kind == NodeKind::StrLit
 }
 
+// One part of a function type against the matching part of another, with a
+// borrow read through on either side.
+parts_fit :: fn(mut p: Parser, from: i64, to: i64) -> bool {
+    var left := from
+    var right := to
+    if (is_borrow(left)) {
+        left = pointee(p, left)
+    }
+    if (is_borrow(right)) {
+        right = pointee(p, right)
+    }
+    types_compatible(p, left, right)
+}
+
 types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     if (from == to) {
         return true
@@ -483,6 +497,33 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     }
     if (is_struct_ty(from) || is_struct_ty(to)) {
         return false
+    }
+    // A function type is its parameters and its answer, and two fit when their
+    // parts do. Without this a function value fell to the answer at the end of
+    // this chain and every signature reached every other: a name taking two
+    // parameters was handed to a place wanting one, the call passed one, and
+    // the callee read whatever sat in the register for the other.
+    //
+    // A borrow is read through on both sides. An aggregate travels by address
+    // whichever mode declared it, so a parameter written `mut Ctx` and one
+    // written `Ctx` are one parameter in a signature, which is what lets a
+    // handler that writes to its context fill a slot declared without the mode.
+    if (is_proc(from) || is_proc(to)) {
+        if (is_proc(from) == false || is_proc(to) == false) {
+            return false
+        }
+        count := proc_param_count(p, from)
+        if (proc_param_count(p, to) != count) {
+            return false
+        }
+        var k: i64 = 0
+        while (k < count) {
+            if (parts_fit(p, proc_param_at(p, from, k), proc_param_at(p, to, k)) == false) {
+                return false
+            }
+            k = k + 1
+        }
+        return parts_fit(p, proc_ret(p, from), proc_ret(p, to))
     }
     // What is left is scalars and pointers. A pointer is an address and an
     // address is a whole number, which is what a call into C hands over and
