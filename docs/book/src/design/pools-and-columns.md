@@ -44,9 +44,9 @@ its fixed-size specialization, is in [allocators.md](allocators.md).
 The place-deref is compiler-supported. The columns container below requires
 that, since selecting a column before indexing it is something a function
 returning a borrow cannot say. So a pool is Frost storage, Frost logic, and a
-thin compiler-generated accessor. That accessor is inline address math. Raw
-writes into the backing array are still unsafe; they sit in auditable,
-type-integrated language code in place of an opaque C file.
+thin compiler-generated accessor. Raw writes into the backing array are still
+unsafe, and they sit in Frost the type checker reads rather than in an opaque C
+file.
 
 ## Columns, the slab transposed
 
@@ -103,7 +103,7 @@ prefix to `columns_`, and nothing else in the calling code.
 
 ### Walking the ones that hold something
 
-`c.field` is every slot and says nothing about which of them are filled;
+`c.field` is every slot and says nothing about which of them are filled, and
 `c[handle].field` is one slot and is checked. A loop from `0` to `N` therefore
 reads storage nobody put anything in, which wastes work for an integration step
 and answers wrongly for a sum. `generations` cannot tell you which slots are
@@ -113,9 +113,9 @@ release order.
 
 `live_words` is that knowledge in the order a column is stored in, one bit per
 slot, set by `columns_insert` and cleared by `columns_release`. `for slot in
-live_slots(c)` walks it: a word of zeroes passes over sixty-four slots on one test, a
-word with bits set gives up its lowest, clears it, and goes round. No slot is
-asked whether it holds an element and no empty slot is reached.
+live_slots(c)` walks it: a word of zeroes passes over sixty-four slots on one
+test, a word with bits set gives up its lowest, clears it, and goes round. No
+empty slot is reached.
 
 ```frost,sketch
 for slot in live_slots(c) {

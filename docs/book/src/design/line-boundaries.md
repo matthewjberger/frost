@@ -1,8 +1,7 @@
 # Where a statement ends
 
 A line break ends a statement, and an expression runs past one only inside
-brackets. This chapter gives the rule, what it costs, and the three other rules
-it was chosen over.
+brackets.
 
 ## The hazard it removes
 
@@ -56,7 +55,7 @@ both directions, and it is a token whose only job is to be dropped.
 
 The rule Frost takes: a line break ends a statement, and brackets are where an
 expression runs on. Outside brackets a line cannot open with an operator that
-joins it to the line above; inside brackets a line break says nothing. An
+joins it to the line above. Inside brackets a line break says nothing. An
 expression too long for a line is wrapped in the brackets a reader would have
 put round it anyway.
 

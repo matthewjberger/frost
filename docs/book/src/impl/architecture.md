@@ -49,8 +49,7 @@ directly. With no flag, `frost file.frost` compiles, links, and runs the program
 natively. Because all three backends emit from one IR, a differential test runs
 each program through them and asserts their output matches.
 
-There is one execution surface. The native path covers the whole language, and
-the data-oriented native language is the only language.
+The native path covers the whole language, so there is one execution surface.
 
 Which backend runs, what the executable depends on at run time, and what the
 compiler itself is written in are three separate questions.
@@ -112,10 +111,10 @@ keeps a record and an object per module, and a module whose own source and whose
 imported interfaces are unchanged is neither parsed nor code generated: it
 contributes what the record already holds and its object is linked.
 
-What it contributes is signatures. `Statement::Declared` is a Frost function's
+It contributes signatures. `Statement::Declared` is a Frost function's
 signature with no body, which is all a caller needs for a function it will not
 emit. `extern` stays reserved for C linkage and a C ABI. Generic bodies still
-come, because the caller is what stamps out the template. See
+come, because the caller stamps out the template. See
 [separate-compilation.md](separate-compilation.md) for the fingerprint rule.
 
 ## Code generation is parallel
@@ -147,9 +146,8 @@ shape of a compiler middle end (MIR):
   store.
 
 Lowering (`src/ir/build.rs`) folds light bidirectional type inference into the
-translation so each value carries a real type. Anything outside the supported
-subset fails with a `native backend: ...` error, so a form the backend cannot
-lower stops the build.
+translation so each value carries a real type. A form outside the supported
+subset stops the build with a `native backend: ...` error.
 
 ## The C ABI is classified per target
 
@@ -171,9 +169,8 @@ side.
 
 `src/ir/codegen.rs` emits a relocatable object from the IR via Cranelift and
 links it with the system C toolchain. `src/ir/c.rs` emits portable C from the
-same IR (`--emit-c`), which the system C compiler builds. Both use the
-correct type and operation for each value because the IR is fully typed, and
-`tests/native.rs` checks that the two backends agree on every program.
+same IR (`--emit-c`), which the system C compiler builds. `tests/native.rs`
+checks that the two backends agree on every program.
 
 What the two backends carry, verified by running native binaries
 (`tests/native.rs`):
@@ -318,18 +315,17 @@ Frost is a data-oriented language with:
   needs (`$before: fn(T, T) -> bool`), checked at the call with that call's type
   arguments substituted in. That is the only bound in the language.
 - Free functions only, with signatures that declare their effects.
-- The typed IR as the single point where ownership, borrow, and linearity
-  checking are discharged, cross-checked by three independent execution paths:
-  the Cranelift native backend, the portable C backend, and a direct IR
-  interpreter that all must agree.
+- The typed IR as the single point every backend emits from, cross-checked by
+  three independent execution paths: the Cranelift native backend, the portable
+  C backend, and a direct IR interpreter that all must agree.
 
 ## Ownership checking
 
 `src/check/ownership.rs` runs after parsing, over one top-level item at a time.
-It enforces the language's rules, which are written down elsewhere:
+The rules themselves are written down elsewhere:
 [ownership.md](../reference/ownership.md) has second-class borrows, mutable
 exclusivity and the move rule, and [linear.md](../reference/linear.md) has
-consume-exactly-once. What this pass does with them:
+consume-exactly-once. This pass enforces them:
 
 - It refuses a reference in a struct field or an enum variant's field, and a
   reference returned from an `extern`. A reference returned from a Frost
@@ -372,5 +368,4 @@ lattice, joining at merge points, so it handles `if`, `match`, and loop back
 edges as ordinary control flow. It reports a value consumed more than once,
 consumed before it holds a resource, or a linear local still owned on a path to
 a return (a leak), each located at the source line the value was created on. A
-leak is caught here. A use-after-move is caught on the AST. Both point at a
-line.
+use-after-move is caught on the AST and a leak here, and both point at a line.

@@ -1,10 +1,9 @@
 # Allocation strategy
 
 Frost's allocators come in a small stack of layers, and the pool is the
-fixed-size-recycling member of that stack. This chapter is the layer model and
-the reasoning behind it. How to write an
-allocation source, what `uses` and `with` mean, and what the region check
-refuses are in the reference chapter on
+fixed-size-recycling member of that stack. How to write an allocation source,
+what `uses` and `with` mean, and what the region check refuses are in the
+reference chapter on
 [allocation and regions](../reference/allocation-and-regions.md).
 
 The design follows Ginger Bill's *Memory Allocation Strategies*, the Odin
@@ -65,9 +64,7 @@ in how they hand that memory out and take it back.
    the arena avoids.
 
 The arrangement inverts a malloc-centric one. The arena is the primary
-allocator and bulk free is the primary lifetime tool. The pool and the general
-allocator are specializations reached for by need, and both are backed by an
-arena or a static buffer instead of the OS directly.
+allocator and bulk free is the primary lifetime tool.
 
 ## The allocator a function draws from is declared
 

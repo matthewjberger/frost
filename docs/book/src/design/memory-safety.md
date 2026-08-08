@@ -37,13 +37,12 @@ small number of local rules.
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
 
-A section below takes each guarantee in turn. Two things sit outside them. A
-raw pointer carries no guarantee once it leaves the frame and region checks,
-which is what `^T` is for, and a program that casts one with `ptr_cast` and
-reads through it is on its own. Freeing a heap container gives the block back
-while its elements go unconsumed, so consuming a resource element first is the
-caller's obligation. Both are in
-[what is not yet guarded](#what-is-not-yet-guarded).
+Two things sit outside these guarantees. A raw pointer, `^T`, carries no
+guarantee once it leaves the frame and region checks, and a program that casts
+one with `ptr_cast` and reads through it is on its own. Freeing a heap container
+gives the block back while its elements go unconsumed, so consuming a resource
+element first is the caller's obligation. Both are in
+[where the checks stop](#where-the-checks-stop).
 
 The first four hold statically. The fifth uses a runtime generation check that
 stays cheap (one integer compare) because the static rules keep handles honest.
@@ -51,12 +50,12 @@ A handle is plain copyable data, so the compiler never has to track its
 lifetime. The sixth is a single compile-time-known length compare on each array
 access.
 
-## 1. Second-class borrows, so no dangling pointers
+## 1. Second-class borrows
 
 A borrow is second-class: it may be passed and it may be returned, and it may
-never be stored. Usually it is not even a type a program writes. It is what a
-*parameter mode* means. `x: T` borrows to read, `mut x: T` borrows to mutate,
-`move x: T` takes ownership, and the call site writes no sigil at all.
+never be stored. Usually it is not even a type a program writes, because a
+*parameter mode* carries it. `x: T` borrows to read, `mut x: T` borrows to
+mutate, `move x: T` takes ownership, and the call site writes no sigil at all.
 
 ```frost,sketch
 read  :: fn(x: i64) -> i64 { x }        // borrowed to read
@@ -111,9 +110,8 @@ An accessor over a container needs it. `arena_at` hands back the element rather
 than a copy of it, so a caller writes `entry.kind = ...` through the borrow, and
 without it every such accessor would be a read-and-write-back pair or an
 `unsafe` block over a raw pointer. A return position is therefore allowed, and
-the frame check is what keeps it sound: a function that answers with a borrowed
-view may not answer with one built from its own frame. `ref T` is storable
-nowhere.
+the frame check keeps it sound: a function that answers with a borrowed view may
+not answer with one built from its own frame. `ref T` is storable nowhere.
 
 That is why there are no lifetimes to infer and no lifetime annotations. The
 question a lifetime variable answers, how long the storage behind this borrow
@@ -162,7 +160,7 @@ one of them while a caller holds a view of another, and that is ordinary.
 `ref` into `g.members` is live. A summary that recorded only "parameter 0 was
 written" cannot tell those apart and refuses the honest program.
 
-Rebinding is what clears it. Taking the view again after a push is the fix the
+Rebinding clears it, and taking the view again after a push is the fix the
 diagnostic asks for. A loop body is walked twice where a run under a live view
 was replaced, since a view read at the top of a loop is read after the turn
 before has already replaced it.
@@ -174,16 +172,16 @@ and the `[]World` still holds the pointer and the length it held. A binding that
 views a run stands for that run wherever it is handed on, so a view forwarded
 through an accessor is followed on through it.
 
-A write is read the same way, which is what covers a body that grows a run of its
-own parameter and then reads a view of it. That shape has no call to carry it:
+A write is read the same way, which covers a body that grows a run of its own
+parameter and then reads a view of it. That shape has no call to carry it:
 `vec_push` writes `v.storage` directly, because handing the borrow to a helper
-would copy the header and lose the new block. Which write replaces a run is asked
-of the places rather than of the types, so `b.room = fresh` replaces the run,
-`b.len = count` is apart from it at the first step, and `b.room[0] = value` sits
-below it and leaves it alone. No type table is needed.
+would copy the header and lose the new block. Which write replaces a run is
+asked of the places rather than of the types, so `b.room = fresh` replaces the
+run, `b.len = count` is apart from it at the first step, and `b.room[0] = value`
+sits below it and leaves it alone. No type table is needed.
 
 All of this covers a view held by a *binding*. A view put into a struct field is
-not one, and that case is open: see "what is not yet guarded".
+not one, and that case is open: see "where the checks stop".
 
 None of it answers for a place reached through a raw dereference. Nothing here
 knows where such a place lands, so weighing it against a view reads it as
@@ -200,7 +198,7 @@ lets nothing extra through.
 Enforced in `check_ownership` (`settle_runs` and the view bookkeeping beside the
 move states), and in `settle_runs` in `selfhosted/regions.frost`.
 
-## 2. Move checking, so no use-after-move
+## 2. Move checking
 
 Every type is either copy or move, and the line is drawn by
 `Type::is_copy()`. Copy is the scalars (integers, floats, bools), raw pointers,
@@ -225,10 +223,10 @@ do not consume, so the common read patterns are unaffected. Only a `move`
 parameter takes the value. Copy types are never moved, so
 `add(x, x)` with integer `x` is fine.
 
-Enforced per function body by `MoveChecker` in `src/check/ownership.rs`, which tracks a
-set of moved bindings and their types.
+Enforced per function body by `MoveChecker` in `src/check/ownership.rs`, which
+tracks a set of moved bindings and their types.
 
-## 3. Borrow exclusivity, so no mutable aliasing
+## 3. Borrow exclusivity
 
 A `mut` borrow is exclusive. Within a single call the checker rejects:
 
@@ -248,12 +246,11 @@ parameter modes, so the check reads the signature rather than the call's syntax.
 
 This per-call check settles the question on its own, because borrows are
 second-class. A borrow cannot be saved to be aliased later, so there is no
-cross-call aliasing to reason about. The question "who else holds a reference to
-this?" collapses to "what does this one call borrow?".
+cross-call aliasing to reason about.
 
 Enforced by `check_borrow_exclusivity` per call-site argument list.
 
-## 4. Linear resources, so no leaks, no double-free, and non-ignorable errors
+## 4. Linear resources
 
 A struct or enum declared `linear` is a resource that must be consumed
 exactly once:
@@ -273,8 +270,8 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   second `close(h.file)` is a second consumption and so is consuming `h`
   afterwards, since the whole contains the part. Two separate fields, and two
   elements whose indexes are known apart, are different storage and may each be
-  consumed once: that is what a container releasing each of its own rests on,
-  and `world_release` frees several `Vec` fields in a row.
+  consumed once. A container releasing each of its own rests on that, and
+  `world_release` frees several `Vec` fields in a row.
 
   Assigning a place makes it hold a value again, and the direction matters.
   Writing a place revives it and everything it *covers*, since the write settles
@@ -288,10 +285,10 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   Places are compared the way the exclusivity check compares a call's borrows.
   Overlap answers whether two places share storage. Which of them is the wider
   is a second question, and an assignment asks it in both directions with
-  opposite safe answers, so there are two relations. What a write gives back is
-  what it *definitely* covers, because reviving on a guess would let a resource
-  be consumed twice: an element at an index nobody knows, or a place reached
-  through a raw pointer, is not revived. What refuses a write is anything it
+  opposite safe answers, so there are two relations. A write gives back what it
+  *definitely* covers, because reviving on a guess would let a resource be
+  consumed twice: an element at an index nobody knows, or a place reached
+  through a raw pointer, is not revived. A write is refused by anything it
   *might* be inside, because storage that may already have gone is the case
   worth refusing. Between the two sits everything the checks cannot tell, and
   each takes the side that is safe for what it does.
@@ -299,9 +296,9 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   The rule is about the elements a handle addresses. A slab keeps those in
   `storage`, so that field is the question and another run the struct happens to
   carry is not one: a field holding resources makes the struct a resource by the
-  ordinary rule, and that is where it is answered for. A `columns` container has
-  no `storage`, since one array per field of the element is what it is, so every
-  column is asked and the bookkeeping arrays are not.
+  ordinary rule, and that rule answers for it. A `columns` container has no
+  `storage`, being one array per field of the element, so every column is asked
+  and the bookkeeping arrays are not.
 - At least once is the other half. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
 
@@ -316,9 +313,9 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   The instantiations asked about are the ones a program *forms*. A call that
   answers with one makes it while the source spells out no name for it, so a
   call is typed as the callee's return type with that call's own type arguments
-  put in. That is what makes `held := option_some($File, ...)` an
-  `Option<File>`, and the obligation on the `File` inside it holds even though
-  the source never writes the type.
+  put in. So `held := option_some($File, ...)` is an `Option<File>`, and the
+  obligation on the `File` inside it holds even though the source never writes
+  the type.
 
   A fixed array of resources counts as one too, since freeing the run is not
   freeing what is in it. A slice does not, since it looks at storage it does not
@@ -348,15 +345,14 @@ A `linear enum` returned from a fallible function is a non-ignorable error. You
 cannot drop it on the floor, so a failure must be matched (or otherwise
 consumed), and silently swallowing an error becomes a compile error.
 
-Enforced by the same `MoveChecker`, tracking which linear bindings remain live at
-scope exit.
+Enforced by the same `MoveChecker`, tracking which linear bindings remain live
+at scope exit.
 
-## 5. Generational handles, so no use-after-free through the heap
+## 5. Generational handles
 
-Long-lived data lives in a pool and is referred to by a generational
-handle (`Handle<T>`), not a raw pointer. A handle is a packed `(index,
-generation)` pair, which is plain copyable data you *can* freely store and return
-(unlike a reference).
+Long-lived data lives in a pool and is referred to by a generational handle
+(`Handle<T>`). A handle is a packed `(index, generation)` pair, plain copyable
+data a program can freely store and return where a borrow cannot go.
 
 - `slab_insert` puts a value in a free slot and returns a handle carrying that
   slot's current generation.
@@ -373,17 +369,16 @@ slab_alive($Entity, $8, world, h)               // false, the old handle can nev
                                                 // read the new occupant
 ```
 
-Those operations are ordinary Frost, not compiler builtins. `std/slab.frost` is
-the whole implementation, generic over element type and capacity, and
+Those operations are ordinary Frost. `std/slab.frost` is the whole
+implementation, generic over element type and capacity, and
 `examples/native/generic_slab.frost` is the same thing written out as a worked
 example. The only part the compiler supplies is the validated place-deref
 `world[h]`, which is inline index and generation arithmetic against the struct's
 own fields rather than a call.
 
-This is the memory-safety property a raw pointer cannot give you. After a free
-and reuse, the *bit pattern* of the old handle no longer matches, so it cannot be
-used to read or corrupt whatever now occupies the slot. That is safe
-use-after-free detection without a GC and without reference counting.
+After a free and reuse, the *bit pattern* of the old handle no longer matches,
+so it cannot be used to read or corrupt whatever now occupies the slot. A raw
+pointer to the same slot would read the new occupant.
 
 A handle carries its generation in 32 bits, so a slot's generation is bounded.
 A slot released 2^31 times is retired instead of reused, and the container
@@ -402,10 +397,9 @@ pointer.
 
 The borrow you get is second-class (section 1), so there is nowhere to put it
 that would let it escape the region where the pool operation is valid. The
-*handle* is data you keep. The *borrow* through it is a scoped thing the language
-gives you no way to save.
+*handle* is data you keep. The *borrow* through it lasts the call.
 
-## 6. Bounds-checked indexing, so no out-of-bounds access
+## 6. Bounds-checked indexing
 
 A fixed-size array `[N]T` carries its length `N` in its type, so every index
 expression `a[i]` is compiled with a check against that known length before the
@@ -417,9 +411,9 @@ arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
 ```
 
 The check is a single call to a small runtime routine
-(`frost_rt_bounds_check(index, length)`) that aborts if the index is out of range.
-The comparison is unsigned, so a negative index (which would wrap to a huge
-unsigned value) is caught too. Valid accesses are unaffected. The classic C
+(`frost_rt_bounds_check(index, length)`) that aborts if the index is out of
+range. The comparison is unsigned, so a negative index (which would wrap to a
+huge unsigned value) is caught too. Valid accesses are unaffected. The classic C
 memory-safety hole, a silent out-of-bounds read or write, becomes a
 deterministic abort.
 
@@ -445,8 +439,8 @@ from. That deletes the whole lifetime machinery.
 | Ignored error                | Linear error enums are non-ignorable                   |
 
 None of these requires lifetime variables, region inference, or a runtime GC.
-The analysis is a single AST pass. The only per-value runtime cost is one integer
-compare per handle access and one per array index.
+The analysis is a single AST pass. The only per-value runtime cost is one
+integer compare per handle access and one per array index.
 
 ## Where the unchecked work lives
 
@@ -475,22 +469,22 @@ has no `unsafe` block.
 This is the same shape `arena_at` has: push the unchecked operation down into
 one audited function and hand back something the language can check.
 
-## What is not yet guarded
+## Where the checks stop
 
-The checks prove the guarantees above. Here is what they leave open, stated so
+The checks prove the guarantees above. The holes they leave are below, stated so
 nobody has to find out by reading the passes.
 
-- What a callee consumes is counted per field. The summary that carries a
+- A callee's consumption is counted per field. The summary that carries a
   consumption across a call records a run of *field* names under a borrowed
   parameter, so `once(h)` consuming its parameter's `.file` gives up `h.file` at
   every call to it. An element is not recorded, because which element is a
   number worked out while the program runs, and the place a caller would have to
   be told about is one neither side can name.
 
-  The rule declines to answer there, which is what lets a container release its
-  elements one at a time: `world_release` in `std/ecs.frost` walks
-  `world.tables` binding each element by `ref` and releasing it in place,
-  because a resource inside a container cannot be moved out to be consumed.
+  The rule declines to answer there, which lets a container release its elements
+  one at a time: `world_release` in `std/ecs.frost` walks `world.tables` binding
+  each element by `ref` and releasing it in place, because a resource inside a
+  container cannot be moved out to be consumed.
   Reaching a resource through an element and giving it away twice is therefore
   not caught, and a `Vec` of resources is the shape where that shows: `vec_get`
   answers with the element by value, and the summary records nothing because the
@@ -498,8 +492,8 @@ nobody has to find out by reading the passes.
   provenance of a returned view, which is the question the frame check answers
   for borrows and does not yet answer for resources.
 
-- A view of a growable container, once it is stored. The growth rule tracks
-  what each *binding* views, which is a per-frame table. A view put into a struct
+- A view of a growable container, once it is stored. The growth rule tracks what
+  each *binding* views, which is a per-frame table. A view put into a struct
   field is not a binding, and a struct holding one can leave the frame entirely:
 
   ```frost
@@ -511,25 +505,25 @@ nobody has to find out by reading the passes.
   print("{}\n", h.view[0])      // reads it anyway, not refused
   ```
 
-  Both shapes are open: the view stored in a local struct and read after a growth
-  in the same frame, and the view carried out of a call inside a returned struct.
-  The first needs the view table keyed by place rather than by name. The second
-  cannot be answered per frame at all. It needs to know that `.storage` of a
-  `Vec` is a field some function replaces, while `.storage` of a `Slab` is not,
-  and that is a question about a type rather than about a place.
+  Both shapes are open: the view stored in a local struct and read after a
+  growth in the same frame, and the view carried out of a call inside a returned
+  struct. The first needs the view table keyed by place rather than by name. The
+  second cannot be answered per frame at all. It needs to know that `.storage`
+  of a `Vec` is a field some function replaces, while `.storage` of a `Slab` is
+  not, and that is a question about a type rather than about a place.
 
-  Nothing else in the language reallocates, which is what keeps the rest of it
-  safe here. An arena is a single fixed allocation that aborts rather than
-  growing, a `Slab` and a `columns` are `[N]T`, and a `ref` into any of them can
-  never go stale. `Vec` is the one container that moves its block, and it is the
-  only place this question arises.
+  Nothing else in the language reallocates, which keeps the rest of it safe
+  here. An arena is a single fixed allocation that aborts rather than growing, a
+  `Slab` and a `columns` are `[N]T`, and a `ref` into any of them can never go
+  stale. `Vec` is the one container that moves its block, and it is the only
+  place this question arises.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
-  and code that uses them takes on the corresponding responsibility. The safe
-  surface of borrows, handles, and linear resources is what the guarantees above
-  cover. `check_frame_escapes` narrows the hatch: a raw pointer whose storage
-  cannot be traced past the call cannot leave it.
+  and code that uses them takes on the corresponding responsibility. The
+  guarantees above cover the safe surface of borrows, handles, and linear
+  resources. `check_frame_escapes` narrows the hatch: a raw pointer whose
+  storage cannot be traced past the call cannot leave it.
 - `slice_from($T, p, n)` is a trusted primitive. It asserts that `n` elements of
   `T` live at `p`, and nothing checks that assertion. Every bounds-check
   guarantee downstream of a slice is conditional on it, which is why the call is
@@ -558,13 +552,13 @@ nobody has to find out by reading the passes.
   has to be true of every argument the type system permits, which rules out
   anything taking a pointer and a length separately, since those can disagree
   and that is exactly what `slice_from` is gated for.
-- What is left of the exclusivity question is a place reached through a raw
+- The exclusivity question is left open for a place reached through a raw
   pointer that nothing in the call is weighed against, since the check only
   compares the borrows one call takes. A place reaching through a raw pointer
   overlaps whatever it *is* weighed against, whether that is another such place
-  or an ordinary one, because every step in front of a dereference says where the
-  pointer was read from and none of them says where it points. Reaching through a
-  `^T` is gated on an `unsafe` block.
+  or an ordinary one, because every step in front of a dereference says where
+  the pointer was read from and none of them says where it points. Reaching
+  through a `^T` is gated on an `unsafe` block.
 - Integer arithmetic whose result does not fit the type it is computed at stops
   there rather than wrapping. Add, subtract, multiply, divide by zero, the one
   signed division that has no answer, negating the lowest value, and a shift by
@@ -572,17 +566,17 @@ nobody has to find out by reading the passes.
   keeps going, and the checks downstream then run against it.
 
   Leaving the range is spelled out where it is intended. `wrap_add`, `wrap_sub`
-  and `wrap_mul` keep the low bits and drop the rest, which is what a hash
-  wants. A scramble multiplies precisely to leave the range, and a hash that
-  stopped there would be a hash nobody could write.
+  and `wrap_mul` keep the low bits and drop the rest, as a hash wants. A
+  scramble multiplies precisely to leave the range, and a hash that stopped
+  there would be a hash nobody could write.
 
   Each backend detects the condition inline and calls the runtime only on the
   branch that has already failed, so arithmetic that fits costs a comparison the
   hardware was doing anyway.
-- There is no bound on recursion depth. What there is instead is a guarantee
-  about how running the stack out fails. Every frame wider than a page touches
-  each page on the way down, on every target, so the stack pointer cannot move
-  past the guard in one step and write into whatever is mapped below it. That is
+- There is no bound on recursion depth. The guarantee is about how running the
+  stack out fails instead. Every frame wider than a page touches each page on
+  the way down, on every target, so the stack pointer cannot move past the guard
+  in one step and write into whatever is mapped below it. That is
   the stack-clash shape, and it is the memory-safety part of the question.
   Unbounded recursion faults on the guard, and the runtime names the fault
   instead of leaving a bare address. How deep a program may go is the host's
@@ -599,7 +593,6 @@ nobody has to find out by reading the passes.
   the spawner owns the context and must keep it alive until the join, and shared
   state goes through `atomic_add` or the program races.
 
-Two hazards the language rules out by construction, which is why they are not on
-the list above. A binding cannot be declared without a value, so there is no
-uninitialized read to catch. An implicit borrow has no type to write down, so no
-expression stores one.
+Two hazards the language rules out by construction. A binding cannot be declared
+without a value, so there is no uninitialized read to catch. An implicit borrow
+has no type to write down, so no expression stores one.

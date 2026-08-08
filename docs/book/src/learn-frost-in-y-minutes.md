@@ -6,7 +6,7 @@ allocation. It is memory-safe without lifetimes: a borrow is a parameter mode
 and cannot escape the call it was made for.
 
 This page covers the whole language, in order, as code. The test suite compiles
-every block below, so what is written here is what the compiler accepts. Blocks
+every block below, so the compiler accepts everything written here. Blocks
 marked `sketch` show a shape and skip compilation.
 
 Run a file with `frost program.frost`. Keep the executable with
@@ -563,10 +563,11 @@ main :: fn() -> i64 {
 }
 ```
 
-## Higher-order code without traits or closures
+## Passing an operation as an argument
 
 An algorithm takes the operation it needs as a compile-time function parameter.
-The call inside the specialization is a direct call.
+The call inside the specialization goes straight to the function the caller
+named, with no pointer to go through.
 
 ```frost
 import "io.frost"
@@ -840,7 +841,7 @@ main :: fn() -> i64 {
 }
 ```
 
-## What Frost does not have
+## Absences, and what stands in for each
 
 No garbage collector, no runtime, no exceptions, no panics to catch, no
 destructors, no traits, no interfaces, no inheritance, no methods, no operator
@@ -848,11 +849,11 @@ overloading, no capturing closures, no iterators, no macros, no lifetimes, no
 tuples, no null, no implicit conversion, no truthiness, no positional struct
 literals, and no hidden allocation.
 
-What replaces each of those is written above: a `linear` type instead of a
-destructor, a capability bundle instead of a trait, a compile-time function
-parameter instead of a closure, an index loop instead of an iterator, a
-generational handle instead of a pointer into a container, and a failure set in
-the signature instead of an exception.
+Each has a replacement above: a `linear` type instead of a destructor, a
+capability bundle instead of a trait, a compile-time function parameter instead
+of a closure, an index loop instead of an iterator, a generational handle
+instead of a pointer into a container, and a failure set in the signature
+instead of an exception.
 
 ## Where to go next
 

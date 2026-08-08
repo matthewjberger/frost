@@ -26,9 +26,8 @@ Native means the Cranelift path, with no C compiler in the middle for the
 program's own code. The differential test runs programs through all three and
 asserts they agree, which catches a miscompilation a single backend would hide.
 
-This is orthogonal to freestanding. A `--native` build still links the C
-runtime and libc by default. Choosing Cranelift says nothing about what the
-executable needs once it is running.
+A `--native` build still links the C runtime and libc by default. Choosing
+Cranelift says nothing about what the executable needs once it is running.
 
 ## Freestanding, what the executable needs at run time
 
@@ -51,8 +50,8 @@ storage works with no libc at all. See
 ## Self-hosted, what the compiler is written in
 
 `selfhosted/frost.frost` is the Frost compiler, written in Frost, and it is the
-one people will use. Frost is meant to be written in Frost, and the compiler
-someone downloads is meant to be the Frost one.
+one people will use. The compiler someone downloads is meant to be the Frost
+one.
 
 `src/*.rs` is the bootstrap. It compiles stage 0, so every feature
 `frost.frost` uses exists in Rust before a line of it can be written in Frost,
@@ -71,7 +70,7 @@ checked on every build by `self_hosting_is_a_fixpoint` and
 Both compilers are held to the same two promises. They accept the same
 language, goal 8 in [philosophy.md](../design/philosophy.md), and they are under
 the same compilation-speed promise, goal 9, which matters more for the Frost one
-because it is what a user's edit-compile loop runs. The self-hosted compiler
+because a user's edit-compile loop runs it. The self-hosted compiler
 carries the speed work: it emits one unit per module, keys a build cache on the
 bytes it just emitted, and rebuilds only what an edit reaches under
 `--incremental`. Code generation on every core is the bootstrap's alone so far.
@@ -82,6 +81,4 @@ bytes it just emitted, and rebuilds only what an edit reaches under
 
 The axes compose freely. The self-hosted compiler emits assembly, so it is
 native while linking the ordinary runtime. A `--emit-c --link` build sits off
-both axes. `--native --freestanding` is both. Being self-hosted leaves a
-program's runtime dependencies alone, and freestanding is a property of the
-executable a build produces.
+both axes. `--native --freestanding` is both.

@@ -58,13 +58,13 @@ refused with the position it was written at.
 ## The modules
 
 Each file states what it is about at the top and lists what it offers on one
-`export` line, so the shape of the compiler is readable from the imports.
+`export` line.
 
 `core` holds the externs, the constant tables, the records and the arena.
 `lexer` and `cursor` turn source into tokens and read them. `imports` lays every
 file's text into one buffer. `names` interns and resolves. `types` does the
 typing and the checks that ride on it. `parser` is recursive descent. `layout`
-works out sizes and offsets, `emit` is what both backends write through, and
+works out sizes and offsets, both backends write through `emit`, and
 `emit_c` and `emit_asm` are the backends. `regions` is the region check,
 `query` answers what an editor asks of a checked program, and `frost` is the
 driver.
@@ -74,10 +74,10 @@ the C backend writes through the same interface.
 
 ## How the two compilers differ
 
-Both compilers accept the same language, which is what lets Frost be built from
-a Rust toolchain: the bootstrap compiles this compiler, this compiler compiles
+Both compilers accept the same language, so Frost can be built from a Rust
+toolchain: the bootstrap compiles this compiler, this compiler compiles
 itself, and no seed binary enters the build. A divergence is a hole in that,
-whichever side it is on. What differs is how a program is compiled.
+whichever side it is on.
 
 Parallelism. The bootstrap generates code on every core from a shared work
 queue. The self-hosted compiler emits and assembles one unit at a time.
@@ -104,11 +104,10 @@ faults, on the same lines, in the same words, and
 definition's line, a struct's fields, a local's type) to the answers the
 bootstrap's `src/tools/query.rs` gives in its own tests.
 
-## What the fixpoint cannot see
+## A property every stage shares cancels out
 
-Three stages agreeing byte for byte has one blind spot: any property every stage
-shares is invisible to it. The stages are compared against each other, so
-anything common to all of them cancels out.
+Three stages agreeing byte for byte has one blind spot. The stages are compared
+against each other, so any property all of them share cancels out.
 
 `core.autocrlf` is on for most Windows checkouts, so a file git writes has CRLF
 and a file an editor writes may not, and every string literal holding a raw
@@ -130,8 +129,8 @@ names the symbol it could not find.
 Both compilers clear the 100,000 lines per second target. Measure it with
 `just bench-selfhost`, which runs this compiler over its own source through both
 backends. The assembly backend is the faster of the two, since it writes machine
-code where the C backend hands text to a C compiler. The recipes are the record.
-A rate written into a page is a rate about one machine on one day.
+code where the C backend hands text to a C compiler. The recipes are the record,
+since a rate written into a page is a rate about one machine on one day.
 
 The language compiles fast by what the spec leaves out. There are no traits or
 typeclasses, so no constraint solving. No lifetimes, so the region check is a
@@ -139,11 +138,9 @@ cheap flow pass. No global type inference, only local. No macros and no
 declaration-generating comptime, only specialization. No textual includes, only
 modules parsed once.
 
-Which leaves the tools a build shells out to. On the C path an external C
+That leaves the tools a build shells out to. On the C path an external C
 compiler costs several times the whole Frost front end and scales worse, and the
-assembly backend keeps it out of the loop. Behind that backend nothing
-downstream catches a mistake, which is why the compiler type-checks its own
-programs.
+assembly backend keeps it out of the loop.
 
 On the native path the C compiler is out of the per-build loop. The runtime is
 compiled once into an object cached in the temp directory, keyed by a hash of
@@ -154,15 +151,14 @@ without running `as` and without the text ever becoming a file. That roughly
 halves `--native` on the programs measured, since spawning a process per module
 is most of what the other path costs.
 
-The emitted text is what the direct path has left to remove. Most of a build
-goes to the front end and to formatting the assembly, with encoding it and
-writing the object a minority. Handing the backend's instructions to the encoder
-as records reaches the rest. That split is a measurement of the current
-compiler, so it moves as the front end and the encoder move.
+The emitted text is the last cost on the direct path. Most of a build goes to
+the front end and to formatting the assembly, with encoding it and writing the
+object a minority. Handing the backend's instructions to the encoder as records
+reaches the rest.
 
-What remains outside the compiler is the linker invocation, which on the
-bootstrap is about two thirds of a small build and is mostly fixed process and
-driver overhead, so it barely grows with program size.
+The linker invocation stays outside the compiler. On the bootstrap it is about
+two thirds of a small build and is mostly fixed process and driver overhead, so
+it barely grows with program size.
 
 Passing `-fuse-ld=lld` to the driver on the bootstrap makes no difference:
 0.113 s against 0.106 s with lld present on this machine, inside noise. The cost
@@ -188,7 +184,7 @@ format it is encoding for, and both follow from the answer.
 Checked the same way: clang assembles the same text and the two objects are
 compared byte for byte, over the compiler's own 660 KB of code and 8,252 fixups.
 `FROST_OBJECT` names the format from either host, the way `FROST_ABI` names the
-calling convention, which is what lets the ELF half be checked from Windows.
+calling convention, so the ELF half can be checked from Windows.
 
 ## Scaling past one file
 
@@ -201,7 +197,7 @@ to linear, with a mild superlinear term that grows with function count. Read
 ratios there, since process startup is a fixed cost inside every figure and it
 dominates the small end.
 
-The front end is what the curve is made of. Parse, parameter modes, regions,
+The front end is where the time goes. Parse, parameter modes, regions,
 ownership, IR lowering, type checking, monomorphization to fixpoint and C
 emission together stay near-linear because every one of them is a local pass: no
 traits to solve, no lifetimes to infer, no global inference, and the
@@ -243,8 +239,7 @@ What keeps the backend off the curve, on the bootstrap:
 Two generator mistakes here read as compiler results. A generated program that
 names a function `f32` times a parse error, and a program whose `main` holds
 thousands of call sites makes parallel code generation look idle, since one
-function is one thread however many cores there are. A number from this
-benchmark is a claim about what the generator produced.
+function is one thread however many cores there are.
 
 `parse_generic_instance` memoizes `(template, argument)`, because three passes
 ask for the same instance: once to record its concrete return type, and once

@@ -2,9 +2,9 @@
 
 Everything in this chapter is legal Frost, and the antipatterns compile. They
 are antipatterns because the compiler stops helping you the moment you write
-one. Each shows what to write instead.
+one.
 
-## A set of alternatives is an enum, not a run of constants
+## Use an enum for a set of alternatives
 
 **Antipattern.**
 
@@ -18,7 +18,7 @@ FUNCTION :: 4
 colour_of :: fn(class: i64) -> str { ... }
 ```
 
-This is legal, and it is what a C header looks like, which is why it keeps
+This is legal, and a C header looks exactly like it, which is why it keeps
 appearing. It costs you three things.
 
 The parameter says nothing. `class: i64` accepts a row count, a file descriptor,
@@ -70,7 +70,7 @@ stage_order :: fn(s: Stage) -> i64 {
 And do not keep a `STAGE_COUNT :: 3` beside the enum. It is a third thing to
 remember, and the loop that used it can read the bound off the systems it has.
 
-## A set of bits is a `flags` declaration, not a run of constants either
+## Use `flags` for a set of bits
 
 **Antipattern.** The same run of constants, with `|` between them:
 
@@ -131,7 +131,7 @@ numbers.
 - `distinct` is one integer with a meaning: a `Meters`, an `EntityId`. It
   answers to arithmetic, and `enum` and `flags` do not.
 
-## A handle is a type, not a pointer
+## Give each handle a distinct type
 
 **Antipattern.**
 
@@ -194,7 +194,7 @@ at the call site where a reader will find it.
 unchecked operation, and sitting inside another that already covers it. It is
 off by default.
 
-## Own a resource with `linear`, not with a comment
+## Own a resource with `linear`
 
 **Antipattern.**
 
