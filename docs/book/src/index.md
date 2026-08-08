@@ -1,11 +1,13 @@
 # The Frost programming language
 
-A data-oriented systems language that is memory-safe with no garbage collector
-and no lifetimes, and compiles itself.
+Frost is a systems language for programs that care where their data lives. It is
+memory-safe without a garbage collector and without lifetime annotations, it
+compiles to native code, and its compiler is written in Frost.
 
-A Frost program is plain data and free functions that transform it. Every
-allocation is one the program asked for. It compiles to native code through
-Cranelift or to portable C, and the compiler is written in Frost.
+A program is structs and free functions that transform them. Every allocation is
+one you asked for. This book teaches the language, then documents it: start with
+[the tour](tour.md), and use [the reference](reference/conformance.md) when you
+need the exact rule.
 
 ## Borrows are parameter modes
 
@@ -15,97 +17,81 @@ A parameter mode is the whole of what a borrow is.
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
 
-`mut` borrows for the call and mutates in place. An unmarked parameter borrows
-to read. `move` takes ownership. A borrow lasts for the call and has no spelling
-of its own, so there is nothing to store one in and nothing to annotate.
+`mut` borrows the caller's value for the call and mutates it in place. An
+unmarked parameter borrows it to read. `move` takes ownership. A borrow lasts
+for the call, and you cannot store one, so there is nothing to annotate.
 
-That rule costs one thing: anything that outlives a call needs some other way to
-be named, which is what pools and generational handles are for. The one borrow a
-program does write down is `ref T`, returnable and checked at the frame and the
-region, so an accessor can hand back a place rather than a copy.
+Anything that has to outlive a call needs another way to be named, and that is
+what pools and generational handles are for. One borrow does have a spelling:
+`ref T` can be returned, and the compiler checks it against the frame and the
+region it came from, so an accessor can hand back a place instead of a copy.
+
+Here is what Frost uses in place of the machinery you may be expecting:
 
 | in place of | Frost has |
 | --- | --- |
 | lifetimes on references | borrows that are parameter modes and cannot escape |
 | a garbage collector | arenas and pools you can see |
-| a long-lived pointer into a collection | a generational handle, a copy value that goes stale rather than dangling |
+| a long-lived pointer into a collection | a generational handle, a copy value that goes stale instead of dangling |
 | destructors | linear resources, consumed exactly once, checked at compile time |
 | exceptions and `Result` plumbing | failure sets, `-> T ! E` and `?` |
 | dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
 | classes and methods | plain structs and free functions |
 
-## A short tour
+## The language in one paragraph
 
-What Frost has instead of the usual machinery: borrows that are parameter modes,
-a resource the compiler counts, a failure that travels in the signature, a `for`
-with no iterator to implement, a function that answers with two values and no
-tuple type behind them, and literals that leave out a type the context already
-carries while every field keeps its name. [A tour of Frost](tour.md) walks all
-of it, and the program behind it runs:
+Frost has structs and tagged enums, `match` with payload and tuple patterns that
+must cover every variant or say what the rest do, and generics that monomorphize
+over types, values, and functions. A `for` walks a range or a sequence, and it
+compiles to the index-and-bound loop it stands for. A function can answer with
+several values through a return type list, and every value in that list has a
+name. A literal can leave out a type the context already carries, while every
+field keeps its name, because the name says where the value lands. Mark a
+resource `linear` and the compiler counts it: consumed once on every path out,
+or the program does not build. Long-lived data lives in pools addressed by
+generational handles. A region check keeps a pointer from outliving the block or
+the stack frame it points into. There are no visibility modifiers and no
+methods.
+
+Frost calls C directly. An `extern fn` links against a C library with the
+natural ABI, including functions that return a struct by value and functions
+that take a Frost function as a callback with a typed context.
+
+## What is in the box
+
+One typed intermediate representation feeds three backends: a Cranelift native
+path, a portable C path, and a small interpreter. A differential test runs every
+program through all three and checks that the answers match.
+
+The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself
+byte for byte through its own C backend and its own x86-64 assembly backend, so
+a build can go from source to a running compiler with no C compiler in the loop.
+A full native build clears 100,000 lines per second, code generation is spread
+across cores, and `--incremental` rebuilds only the modules an edit can reach.
+Run `just bench-scaling` to see the numbers on your own machine.
+
+The standard library is ordinary Frost: length-carrying strings, a growable
+`Vec` and a hash map, file and formatted output, a sort, the slab and
+structure-of-arrays `columns` containers, an archetype entity-component system,
+and vector, matrix, and quaternion math at single and double precision.
+
+## Trying it
 
 ```bash
 frost examples/tour.frost          # compile, link, and run
 ```
 
-That is `examples/tour.frost`. A test compiles it and checks what it prints.
-
-## What it does
-
-The language has structs and tagged enums, `match` with payload and tuple
-patterns that has to cover every variant or say what the rest do, and generics
-that monomorphize over types, values, and functions, so a call in an inner loop
-stays direct rather than going through a pointer. A `for` walks a range or a
-sequence as the index-and-bound loop it stands for, a function answers with
-several values through a return type list rather than a tuple type, and a
-literal leaves out a type the context already carries, while every field keeps
-its name because the name is what says where the value lands. A resource that
-must be released is marked `linear` and the compiler counts it, consumed once on
-every path out or the program does not build. Long-lived data lives in pools
-addressed by generational handles, a region check keeps a pointer from
-outliving the block or the stack frame it points into, and a value constant can
-be a folded integer expression. There are no visibility modifiers and no
-methods.
-
-It calls C without a binding layer. An `extern fn` links against a C library
-with the natural ABI, including one that returns a struct by value and one that
-takes a Frost function as a callback with a typed context.
-
-One typed intermediate representation feeds three backends, a Cranelift native
-path, a portable C path, and a small interpreter. A differential test runs every
-program through all three and checks the answers match, so a lowering bug shows
-up as a disagreement rather than as a wrong binary.
-
-The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself
-byte for byte through its own C backend and its own x86-64 assembly backend, so
-a build can go from source to a running compiler with no C compiler in the loop.
-A full native build clears the 100,000 lines per second the speed promise asks
-for, with code generation spread across cores, and `--incremental` rebuilds only
-the modules an edit can reach. `just bench-scaling` is what says so on the
-machine in front of you.
-
-The standard library is ordinary Frost. It has length-carrying strings, a
-growable `Vec` and a hash map, file and formatted output, a sort, the slab and
-structure-of-arrays `columns` containers, an archetype entity-component system,
-and vector, matrix, and quaternion math at both single and double precision.
-
-## Status
-
-Everything above works today and is checked by the test suite on every commit,
-including both self-hosting fixpoints and the three-backend differential run.
-The compiler has compiled itself.
-
-The two compilers accept the same language. They are held to it by running the
-same programs through both and comparing what each accepts, and every form the
-language has is a test that both of them compile.
+`examples/tour.frost` is the program behind [the tour](tour.md). A test compiles
+it and checks what it prints.
 
 ## How to read this book
 
 [A tour of Frost](tour.md) is the language by example, one feature at a time,
-and is the place to start. [Coming from Rust](coming-from-rust.md) is the same
-ground for someone who already thinks in ownership and borrows.
-[Patterns](patterns.md) is what to write instead, once the syntax is familiar.
+and is the place to start. [Coming from Rust](coming-from-rust.md) covers the
+same ground for someone who already thinks in ownership and borrows.
+[Patterns](patterns.md) shows what to write once the syntax is familiar.
 
-The [language reference](reference/conformance.md) is normative. Everything
-under [why it is the way it is](design/philosophy.md) is the reasoning behind
-it, and everything under [the implementation](impl/build-modes.md) is how the
-compiler does it.
+The [language reference](reference/conformance.md) is normative. The chapters
+under [why it is the way it is](design/philosophy.md) give the reasoning behind
+the rules, and the chapters under [the implementation](impl/build-modes.md)
+describe how the compiler works.

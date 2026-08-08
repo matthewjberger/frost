@@ -4,6 +4,7 @@ mod c_abi;
 mod const_eval;
 mod diagnostic;
 pub use check::declared_types::check_declared_types;
+pub use check::entry::check_entry_point;
 pub use check::linear_instances::pooled_instance_names;
 pub use diagnostic::{
     Diagnostic, Place, Replacement, Report, as_json as diagnostics_as_json,

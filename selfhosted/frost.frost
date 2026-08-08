@@ -819,6 +819,7 @@ main :: fn() -> i64 {
     // been walked.
     check_format_types(parser)
     check_calls(parser)
+    check_entry_point(parser, program)
     check_pooled_resources(parser)
     check_regions(parser)
     check_frame_escapes(parser)

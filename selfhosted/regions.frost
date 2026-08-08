@@ -11,7 +11,8 @@ import "emit_asm.frost"
 import "cursor.frost"
 import "parser.frost"
 
-export check_borrow_exclusivity, check_calls, check_export_collisions,
+export check_borrow_exclusivity, check_calls, check_entry_point,
+    check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources,
     check_reference_fields, check_regions, check_types, check_types_in,
     check_unsafety
@@ -398,6 +399,44 @@ check_types_one :: fn(
     }
     unsafe {
         frost_rt_recover_run(check_types_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+}
+
+// The program's entry takes nothing.
+//
+// `main` is called by the C runtime, which hands it the argument count and the
+// argument vector. A Frost `main` declares no parameters and both backends emit
+// it that way, so a `main` that does declare one is handed whatever the platform
+// left in that register: `main :: fn(n: i64)` reads the argument count nothing
+// asked for, and `main :: fn(s: str)` reads it as an address and faults on the
+// first byte. Neither needs an `unsafe` block anywhere, so this is safe code
+// reaching memory nobody gave it, and the only thing that can catch it is the
+// declaration.
+check_entry_point :: fn(mut p: Parser, head: i64) {
+    var id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (node.kind == NodeKind::Func && node.val >= 0) {
+            sym := arena_at(p.fns, node.val)
+            if (str_range_eq(p.src, sym.off, sym.len, "main")) {
+                var declared: i64 = 0
+                var param := node.b
+                while (param != (-1)) {
+                    held := arena_at(p.arena, param)
+                    declared = declared + 1
+                    param = held.next
+                }
+                if (declared > 0) {
+                    report_where(p.modules, p.src, sym.off)
+                    report("'main' takes no parameters, and this one takes ")
+                    report_int(declared)
+                    report("; what a call to it would supply is whatever the platform left in a register")
+                    frost_rt_recover_note()
+                }
+            }
+        }
+        id = next_id
     }
 }
 

@@ -43,6 +43,20 @@ Shape :: enum { A, B { n: i64 } }     // enum
 Meters :: distinct i64                // distinct type
 ```
 
+`main` is the entry, and it takes no parameters. The C runtime calls it with the
+argument count and the argument vector, which a Frost `main` declares neither of,
+so a `main` that declares a parameter would be handed whatever the platform left
+in that register. That is refused where the declaration is written:
+
+```frost,refused
+main :: fn(count: i64) -> i64 {
+    count
+}
+```
+
+> 'main' takes no parameters, and this one takes 1; what a call to it would
+> supply is whatever the platform left in a register
+
 A value constant's `<expr>` is an integer constant expression: an integer
 literal, an earlier constant by name, a call the compiler works out (5.2c), or
 those combined with the integer operators `+ - * / % << >> & |` and

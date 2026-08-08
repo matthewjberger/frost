@@ -57,6 +57,23 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // `main` is called by the C runtime, which hands it the argument count and
+    // the argument vector, and a Frost `main` declares neither. One that
+    // declares a parameter is handed whatever the platform left in that
+    // register: an `i64` reads the argument count nothing asked for, and a
+    // `str` reads it as an address and faults on the first byte. Both of those
+    // built and ran with no `unsafe` written anywhere.
+    (
+        "an_entry_point_that_declares_a_parameter",
+        "import \"io.frost\"
+         main :: fn(s: str) -> i64 {
+             print(\"{}\\n\", str_len(s))
+             0
+         }
+",
+        "'main' takes no parameters, and this one takes 1; what a call to it \
+         would supply is whatever the platform left in a register",
+    ),
     // A format string is read where the call is written, so the count it names
     // and the count the call gives have to agree there. Both compilers read the
     // literal, so both have to say the same thing about it.
