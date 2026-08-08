@@ -172,12 +172,12 @@ and writes the caller's value, an unmarked parameter borrows to read, and
 `move` takes ownership. A borrow lasts for the call and has no spelling of its
 own, so there is nothing to store one in and nothing to annotate.
 
-That rule costs one thing, and paying it is most of what makes a Frost program
-look the way it does. Anything that outlives a call needs some other way to be
-named, so a program that keeps its monsters past the turn loop puts them in a
-pool and passes a `Handle<Monster>` around instead. The one borrow a program
-does write down is `ref T`, returnable and checked at the frame and the region,
-so an accessor can hand back a place rather than a copy.
+Paying for that rule is most of what shapes a Frost program. Anything that
+outlives a call needs another way to be named, so a program keeping its monsters
+past the turn loop puts them in a pool and passes a `Handle<Monster>` around.
+The one borrow you write down is `ref T`. It can be returned, the frame and
+region checks hold it to storage that outlives the call, and an accessor uses it
+to hand back a place instead of a copy.
 
 | in place of | Frost has |
 | --- | --- |
@@ -196,8 +196,8 @@ so an accessor can hand back a place rather than a copy.
 Generics monomorphize over types, values, and functions, so a call in an inner
 loop is direct rather than going through a pointer. A `for` walks a range or a
 sequence as the index-and-bound loop it stands for. A literal leaves out a type
-the context already carries, and every field keeps its name, because the name
-is what says where the value lands. A region check keeps a pointer from
+the context already carries, and every field keeps its name, since the name says
+where the value lands. A region check keeps a pointer from
 outliving the block or the stack frame it points into, and a constant can be a
 folded expression or a call worked out before the program runs. There are no
 visibility modifiers and no methods.
@@ -272,11 +272,11 @@ just selfhost-native-check   # the same through its own x86-64 assembly backend,
 just selfhost-test           # run the compiler's own test blocks
 ```
 
-The second one is the one worth understanding. `--emit-asm` makes the
-self-hosted compiler write x86-64 assembly, which its own in-process assembler
-encodes to an object file. So a build can go from Frost source to a running
-compiler with no C compiler anywhere in the loop, and the binary that comes out
-reproduces itself exactly.
+The second one covers the C-free path. `--emit-asm` makes the self-hosted
+compiler write x86-64 assembly, which its own in-process assembler encodes to an
+object file, so a build goes from Frost source to a running compiler with no C
+compiler anywhere in the loop. The binary that comes out reproduces itself
+exactly.
 
 Both fixpoints run in `cargo test`, so a change that makes the compiler stop
 reproducing itself fails the suite rather than being noticed later.
@@ -298,8 +298,8 @@ An import is looked for beside the importing file, then on `-L` and `FROST_PATH`
 
 ### The graphics demos
 
-Ten programs, in the order they were built, each one the smallest step past the
-last. All but the first and the last draw through wgpu:
+Ten programs, ordered so each one is the smallest step past the last. All but
+the first and the last draw through wgpu:
 
 ```bash
 just app window      # a window that opens, resizes, and closes
@@ -341,11 +341,10 @@ things sharing one mesh and one material, so they are one batch; four lamps with
 a range, so the light grid has boxes to reject them from; and three keys that
 spawn, despawn, and take a mesh out of the cache while it runs.
 
-`lit` is the one to read first if the question is what the engine does for a
-program rather than what a pass can be. It composes `render_plugin`, spawns
-meshes and lights, and runs: no shader, no pipeline, no bind group, no pass.
-The others that draw each write their own, because each of them is about what a
-pass can be.
+Read `lit` first to see what the engine does for a program. It composes
+`render_plugin`, spawns meshes and lights, and runs: no shader, no pipeline, no
+bind group, no pass. The others that draw each write their own, since each is
+about what a pass can be.
 
 From `scene` on, what runs and in what order is a render graph
 ([`lib/renderer/graph.frost`](lib/renderer/graph.frost)). A pass
@@ -376,7 +375,7 @@ just install-editor    # link the VS Code extension, then reload the window
 
 A `.frost` file gets syntax highlighting, snippets for the declaration forms, and validation for `frost.json`. A fenced block tagged `frost` in a markdown file is highlighted the same way. `Ctrl+Shift+B` runs every compiler check over the open file and puts what it finds in the Problems panel, on the line that caused it.
 
-The extension is in [`.vscode/frost`](.vscode) rather than on the marketplace, so it is linked rather than installed. `just editor-dir` prints where this VS Code reads its extensions, which is not `~/.vscode/extensions` when VS Code is a portable install. The grammar's keywords and builtins are held to the compiler's own lists by a test, so the two cannot drift apart.
+The extension lives in [`.vscode/frost`](.vscode) and is linked into your VS Code, since it is not on the marketplace. `just editor-dir` prints where this VS Code reads its extensions, which for a portable install is somewhere other than `~/.vscode/extensions`. A test holds the grammar's keywords and builtins to the compiler's own lists, so the two cannot drift apart.
 
 ## Status
 
@@ -404,7 +403,7 @@ frost/
 input, `renderer` is wgpu and the render graph, `engine` is the ECS seam and the
 `App`, and `examples/graphics` sits on top. Which directory may import which is
 declared in [`frost.json`](frost.json) and enforced by both compilers, so a
-layer reaching upward is a compile error rather than a review comment.
+layer reaching upward fails to compile.
 
 ## Tests
 
