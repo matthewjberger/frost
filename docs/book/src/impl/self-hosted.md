@@ -157,11 +157,11 @@ running `as` and without the text ever becoming a file. That roughly halved
 `--native` on the programs it was measured against, spawning a process per
 module having been most of what a build cost.
 
-What remains of the emitted text is what the direct path has still to remove.
-Most of what is left is the front end and formatting the assembly, with encoding
-it and writing the object a minority; handing the backend's instructions to the
-encoder as records rather than as text is what reaches the rest. Re-measure that
-split before spending on it, since it is what says the work is worth doing.
+The emitted text is what the direct path has left to remove. Most of a build now
+goes to the front end and to formatting the assembly, with encoding it and
+writing the object a minority. Handing the backend's instructions to the encoder
+as records instead of as text reaches the rest. Re-measure that split before
+spending on it.
 
 What remains outside the compiler is the linker invocation, which on the
 bootstrap is about two thirds of a small build and is mostly fixed process and
