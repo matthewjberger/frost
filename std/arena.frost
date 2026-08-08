@@ -19,9 +19,10 @@
 // arena needs and what any other source would have to answer with.
 
 import "mem.frost"
+import "allocation.frost"
 
 export Arena, arena_over, arena_mark, arena_reset, arena_used, arena_left,
-    arena_carve, arena_take, arena_resize, arena_give
+    arena_carve, arena_take, arena_resize, arena_give, arena_source
 
 Arena :: struct {
     data: []u8,
@@ -101,6 +102,15 @@ arena_resize :: fn(mut a: Arena, block: []u8, size: i64, align: i64) -> []u8 {
 // container that gives its storage back is saying it is done with it rather
 // than asking for bytes to be reused.
 arena_give :: fn(mut a: Arena, block: []u8) {
+}
+
+// The arena as an allocation source, so a container written over `Allocation`
+// draws from one. The three functions above are what the bundle wants, in the
+// order it wants them.
+arena_source :: Allocation<Arena> {
+    take = arena_take,
+    resize = arena_resize,
+    give = arena_give
 }
 
 // Room for `count` elements of `T`, taken from the front of what is left and

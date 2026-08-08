@@ -57,6 +57,63 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A function supplied at the call site is one whose body neither compiler
+    // can see, so what it answers with is worth the shortest-lived argument
+    // that could have reached it. An allocator built in this frame is one of
+    // those, and a run carved out of it dies with the call however the carve
+    // was written.
+    (
+        "a_bundle_hands_back_a_view_of_the_callers_frame",
+        "import \"io.frost\"
+         import \"mem.frost\"
+         Bump :: struct { data: []u8, offset: i64 }
+         Allocation :: struct($A: Type) { take: fn(mut A, i64) -> []u8 }
+         bump_take :: fn(mut b: Bump, size: i64) -> []u8 {
+             run := slice_range($u8, b.data, b.offset, size)
+             b.offset = b.offset + size
+             run
+         }
+         bump_source :: Allocation<Bump> { take = bump_take }
+         leak :: fn($source: Allocation<Bump>, n: i64) -> []u8 {
+             var backing: [64]u8 = [0; 64]
+             var here := Bump { data = backing, offset = 0 }
+             source.take(here, n)
+         }
+         main :: fn() -> i64 {
+             got := leak($bump_source, 8)
+             print(\"{}\\n\", slice_len(got))
+             0
+         }
+",
+        "region: a pointer into the frame of 'leak' is the call's answer; the \
+         storage it names dies when the call returns",
+    ),
+    // The same, through a plain compile-time function argument rather than a
+    // bundle, since the bundle is not what the rule is about.
+    (
+        "a_compile_time_function_hands_back_a_view_of_the_callers_frame",
+        "import \"io.frost\"
+         import \"mem.frost\"
+         Bump :: struct { data: []u8, offset: i64 }
+         bump_take :: fn(mut b: Bump, size: i64) -> []u8 {
+             run := slice_range($u8, b.data, b.offset, size)
+             b.offset = b.offset + size
+             run
+         }
+         leak :: fn($take: fn(mut Bump, i64) -> []u8, n: i64) -> []u8 {
+             var backing: [64]u8 = [0; 64]
+             var here := Bump { data = backing, offset = 0 }
+             take(here, n)
+         }
+         main :: fn() -> i64 {
+             got := leak($bump_take, 8)
+             print(\"{}\\n\", slice_len(got))
+             0
+         }
+",
+        "region: a pointer into the frame of 'leak' is the call's answer; the \
+         storage it names dies when the call returns",
+    ),
     // `main` is called by the C runtime, which hands it the argument count and
     // the argument vector, and a Frost `main` declares neither. One that
     // declares a parameter is handed whatever the platform left in that
@@ -2690,6 +2747,46 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A carve through a capability bundle: the function that does the taking is
+    // named at the call, so neither check can walk it, and what it answers with
+    // is worth the arguments it was handed. The allocator here is the caller's,
+    // so the run outlives the call and the program is one both compilers run.
+    (
+        "a_carve_through_a_bundle_answers_with_the_callers_storage",
+        "import \"io.frost\"\nimport \"mem.frost\"\n\
+         Bump :: struct { data: []u8, offset: i64 }\n\
+         Allocation :: struct($A: Type) {\n\
+         \x20   take: fn(mut A, i64, i64) -> []u8\n\
+         }\n\
+         bump_take :: fn(mut b: Bump, size: i64, align: i64) -> []u8 {\n\
+         \x20   start := (b.offset + align - 1) / align * align\n\
+         \x20   run := slice_range($u8, b.data, start, size)\n\
+         \x20   b.offset = start + size\n\
+         \x20   run\n\
+         }\n\
+         bump_source :: Allocation<Bump> { take = bump_take }\n\
+         carve :: fn(\n\
+         \x20   $T: Type,\n\
+         \x20   $A: Type,\n\
+         \x20   $source: Allocation<A>,\n\
+         \x20   mut a: A,\n\
+         \x20   count: i64\n\
+         ) -> []T {\n\
+         \x20   run := source.take(a, count * sizeof(T), alignof(T))\n\
+         \x20   bytes_as($T, ptr_to(run[0]), count)\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var backing: [256]u8 = [0; 256]\n\
+         \x20   var b := Bump { data = backing, offset = 0 }\n\
+         \x20   got := carve($i64, $Bump, $bump_source, b, 3)\n\
+         \x20   got[0] = 7\n\
+         \x20   got[2] = 9\n\
+         \x20   print(\"{} {} {}\n\", slice_len(got), got[0], got[2])\n\
+         \x20   print(\"{}\n\", b.offset)\n\
+         \x20   0\n\
+         }\n",
+        "3 7 9\n24\n",
+    ),
     // `alignof` reads the layout each compiler worked out rather than asking
     // the backend, so a stated alignment reaches it and the two agree. The C
     // backend writes the number out for exactly this reason: the emitted struct

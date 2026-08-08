@@ -1,0 +1,164 @@
+// Where storage comes from, as a value a call site names.
+//
+// A container needs three things of an allocation source: a run of bytes, a
+// bigger run holding what the old one held, and a run handed back. `Allocation`
+// is those three as a capability bundle, so a container written over it is
+// generic over where its storage comes from and pays nothing for the choice: the
+// bundle arrives as a compile-time argument, and a call through one of its
+// fields is a direct call to the function that field names.
+//
+// The three deal in `[]u8` rather than `^u8`, so the only place a length is
+// worked out is the source's own body, and everything above the bundle reads and
+// writes through a bounds-checked slice. `carve`, `carve_grow` and `carve_give`
+// are the typed face over them, and they hold the one reinterpret each way.
+//
+// A source is a pair: the bundle, which is the three functions, and a value the
+// three are given, which is whatever state the source keeps. The heap keeps a
+// count of what is out; an arena keeps its backing and its offset.
+//
+// What a run carved out of a source may outlive is the region check's question
+// and not this file's. A call site handing an arena in gets the same answer it
+// would get calling the arena directly, because the checks weigh a call through
+// a bundle field by the arguments it was handed.
+
+import "mem.frost"
+
+export Allocation, Heap, heap_state, heap_source, heap_take, heap_resize,
+    heap_give, carve, carve_grow, carve_give
+
+Allocation :: struct($A: Type) {
+    // A run of `size` bytes starting on a multiple of `align`.
+    take: fn(mut A, i64, i64) -> []u8,
+    // A run of `size` bytes holding what the old one held, which may or may not
+    // be where the old one was. The old run is done after this.
+    resize: fn(mut A, []u8, i64, i64) -> []u8,
+    // A run the caller is done with.
+    give: fn(mut A, []u8),
+}
+
+// The heap as a source. It keeps no storage of its own, so what the state holds
+// is how many blocks it has handed out and not taken back, which is what a
+// caller reads to say a container gave everything back.
+Heap :: struct {
+    taken: i64,
+}
+
+heap_state :: fn() -> Heap {
+    Heap { taken = 0 }
+}
+
+// The alignment is unread: every block C hands back starts on the widest
+// alignment any type on the target asks for, so a run from here is already
+// aligned for whatever is written into it.
+heap_take :: fn(mut h: Heap, size: i64, align: i64) -> []u8 {
+    h.taken = h.taken + 1
+    heap_slice($u8, size)
+}
+
+heap_resize :: fn(mut h: Heap, block: []u8, size: i64, align: i64) -> []u8 {
+    heap_grow_slice($u8, block, size)
+}
+
+heap_give :: fn(mut h: Heap, block: []u8) {
+    h.taken = h.taken - 1
+    heap_release_slice($u8, block)
+}
+
+heap_source :: Allocation<Heap> {
+    take = heap_take,
+    resize = heap_resize,
+    give = heap_give
+}
+
+// Room for `count` elements of `T`, taken from the source and started on what
+// `T` is aligned to. A count of zero still takes one element's worth, so a
+// container never holds a view of nothing.
+carve :: fn(
+    $T: Type,
+    $A: Type,
+    $source: Allocation<A>,
+    mut a: A,
+    count: i64
+) -> []T {
+    var room := count
+    if (room < 1) {
+        room = 1
+    }
+    run := source.take(a, room * sizeof(T), alignof(T))
+    bytes_as($T, ptr_to(run[0]), room)
+}
+
+// Room for `count` elements holding what the old run held. The old run is done
+// after this, whether the source moved it or grew it where it was.
+carve_grow :: fn(
+    $T: Type,
+    $A: Type,
+    $source: Allocation<A>,
+    mut a: A,
+    held: []T,
+    count: i64
+) -> []T {
+    var room := count
+    if (room < 1) {
+        room = 1
+    }
+    run := source.resize(
+        a,
+        as_bytes($T, held),
+        room * sizeof(T),
+        alignof(T)
+    )
+    bytes_as($T, ptr_to(run[0]), room)
+}
+
+// The run handed back. This gives the storage back, not the elements: where `T`
+// is a resource, every element has to have been consumed first, the same way
+// `vec_free` says.
+carve_give :: fn(
+    $T: Type,
+    $A: Type,
+    $source: Allocation<A>,
+    mut a: A,
+    held: []T
+) {
+    source.give(a, as_bytes($T, held))
+}
+
+AllocPoint :: struct { x: i64, y: i64 }
+
+test "a carve from the heap hands back a run that is written and given back" {
+    before := heap_live()
+    var h := heap_state()
+    var run := carve($i64, $Heap, $heap_source, h, 4)
+    assert(slice_len(run) == 4)
+    run[0] = 11
+    run[3] = 44
+    assert(run[0] + run[3] == 55)
+    assert(h.taken == 1)
+    carve_give($i64, $Heap, $heap_source, h, run)
+    assert(h.taken == 0)
+    assert(heap_live() == before)
+}
+
+test "a grown run keeps what the old one held" {
+    before := heap_live()
+    var h := heap_state()
+    var run := carve($i64, $Heap, $heap_source, h, 2)
+    run[0] = 7
+    run[1] = 8
+    var grown := carve_grow($i64, $Heap, $heap_source, h, run, 8)
+    assert(slice_len(grown) == 8)
+    assert(grown[0] == 7)
+    assert(grown[1] == 8)
+    carve_give($i64, $Heap, $heap_source, h, grown)
+    assert(heap_live() == before)
+}
+
+test "a carve of a struct is sized by the struct" {
+    var h := heap_state()
+    var points := carve($AllocPoint, $Heap, $heap_source, h, 3)
+    points[0] = AllocPoint { x = 1, y = 2 }
+    points[2] = AllocPoint { x = 3, y = 4 }
+    assert(points[0].y + points[2].x == 5)
+    carve_give($AllocPoint, $Heap, $heap_source, h, points)
+}

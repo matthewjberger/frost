@@ -274,24 +274,39 @@ library function leaves `uses` to the program that built the allocator.
 block the region check keys off the block, so a call there is checked either
 way.
 
-What would lift this is a capability bundle after `uses`, since a bundle is what
-the language already uses to say what can be done with a type. It does not work
-yet, and the thing in the way is not the `uses` clause. A call to a function
-supplied at compile time, whether a bundle's field or a `$f` argument, is one
-the checks cannot see the body of, so a view it answers with has no traceable
-storage and both the unsafety check and the frame check refuse it:
+What stands in for it is a capability bundle taken as an ordinary compile-time
+argument. `std/allocation.frost` declares `Allocation<A>` over `take`, `resize`
+and `give`, and a function generic over its source writes them out:
+
+```frost,sketch
+carve :: fn(
+    $T: Type,
+    $A: Type,
+    $source: Allocation<A>,
+    mut a: A,
+    count: i64
+) -> []T
+```
+
+A call to a function supplied at compile time, whether a bundle's field or a
+`$f` argument, is one whose body neither check can see. What it answers with is
+worth the shortest-lived argument that could have reached it, which is the rule
+already used for a named function the walk cannot follow: a callee can only
+build a view out of what it was handed or out of storage that outlives the call,
+and a callee handing back a view of its own frame is caught where that callee is
+itself checked. So `carve` over the caller's arena is accepted, and `carve` over
+an allocator built in this frame is refused with the sentence a bare pointer out
+of a frame gets:
 
 ```
-indexing a value whose type is not known here is unchecked, so it belongs in an
-`unsafe` block
-region: a pointer into the frame of 'carve' is the call's answer; the storage it
+region: a pointer into the frame of 'leak' is the call's answer; the storage it
 names dies when the call returns
 ```
 
-That refusal is why no container in the standard library is generic over its
-allocator today. Until a compile-time call can answer with a view, a container
-that draws from an arena is a separate type (`Fixed<T>`) rather than `Vec<T>`
-told where to draw from.
+What the concrete `uses` type still costs is notation. A container generic over
+its source takes `$A`, `$source` and `mut a` as parameters rather than drawing
+them, so `Vec<T>` is the heap container and `Fixed<T>` beside it is the one over
+storage somebody else owns.
 
 [Writing an allocator](../writing-an-allocator.md) is the worked version of this
 chapter: one program that declares an allocator, carves from it, draws it

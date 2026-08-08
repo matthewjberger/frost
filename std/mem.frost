@@ -17,8 +17,8 @@
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
     heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
-    bytes_at, bytes_as, slice_prefix, slice_range, slice_span, slice_chunk,
-    heap_live
+    bytes_at, bytes_as, as_bytes, slice_prefix, slice_range, slice_span,
+    slice_chunk, heap_live
 
 // How many blocks are out. A container that frees what it took leaves this
 // where it found it, so a test can say a leak happened rather than waiting for
@@ -227,6 +227,20 @@ bytes_at :: fn(block: ^u8, offset: i64) -> ^u8 {
 // to say because the bytes do not know.
 bytes_as :: fn($T: Type, block: ^u8, count: i64) -> []T {
     unsafe { slice_from($T, ptr_cast($T, block), count) }
+}
+
+// The other direction: a run of `T` read as the bytes it occupies. An
+// allocation source deals in bytes, so a container handing its storage back for
+// resizing or release goes through here. The length is worked out rather than
+// asked for, since a run of `T` does know how many there are.
+as_bytes :: fn($T: Type, held: []T) -> []u8 {
+    unsafe {
+        slice_from(
+            $u8,
+            ptr_cast($u8, ptr_to(held[0])),
+            frost_rt_check_size(slice_len(held), sizeof(T))
+        )
+    }
 }
 
 heap_live :: fn() -> i64 {

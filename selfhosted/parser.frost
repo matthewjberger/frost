@@ -2691,7 +2691,8 @@ record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
                 name_off = off,
                 name_len = len,
                 is_value = is_value,
-                is_fn = 0
+                is_fn = 0,
+                ty = -1
             }
         )
         p.xparam_count = p.xparam_count + 1
@@ -5938,7 +5939,15 @@ parse_params :: fn(mut p: Parser) -> i64 {
             if (kind_is_bundle(p) == 1) {
                 note_called_name(p, poff, plen)
             }
-            parse_type_annotation(p)
+            var declared := parse_type_annotation(p)
+            // An instance re-parses the declaration with its arguments bound,
+            // so the same parameter is written down again under the types this
+            // one was given. Only the declaration's own reading is kept, since
+            // the walks that ask are the ones that walk the declaration, and
+            // holding both would leave the name standing for two types.
+            if (p.binding_active == 1) {
+                declared = -1
+            }
             // A compile-time parameter given a function is called by name in
             // the body, and nothing declares that name. Every one of them is
             // remembered rather than only those written `fn(..)`, since the
@@ -5951,7 +5960,8 @@ parse_params :: fn(mut p: Parser) -> i64 {
                     name_off = poff,
                     name_len = plen,
                     is_value = 0,
-                    is_fn = 1
+                    is_fn = 1,
+                    ty = declared
                 }
             )
             if (cur(p) == TokenKind::Comma) {

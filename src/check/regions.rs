@@ -780,7 +780,16 @@ pub fn check_frame_escapes_recovering(
                 diagnostics: Vec::new(),
             };
             for parameter in ast.params_in(*params) {
-                if let Some(declared) = &parameter.type_annotation {
+                // A compile-time parameter is annotated with its own name,
+                // which says nothing about what it holds. Where it was declared
+                // under a signature or a bundle type, that is what the body
+                // has, and it is what says where a call through it can have got
+                // its answer from.
+                let declared = parameter
+                    .compile_time_signature
+                    .as_ref()
+                    .or(parameter.type_annotation.as_ref());
+                if let Some(declared) = declared {
                     frame.types.insert(
                         ast.name(parameter.name).to_string(),
                         declared.clone(),
@@ -2391,7 +2400,14 @@ fn value_type(
         Expression::Call(callee, arguments) => {
             let arguments = ast.exprs_in(*arguments);
             let Expression::Identifier(name) = ast.expr(*callee) else {
-                return None;
+                // A call through a value answers with what the signature it
+                // holds says, which is a bundle's field being called.
+                let Some(Type::Proc(_, answer)) =
+                    place_type(ast, locals, fields, *callee)
+                else {
+                    return None;
+                };
+                return Some(*answer);
             };
             match ast.name(*name) {
                 // The three that build a view are not declared anywhere, so
@@ -2424,7 +2440,13 @@ fn value_type(
                         _ => None,
                     }
                 }
-                name => returns.get(name).cloned(),
+                // A name bound to a function the call site chose has no
+                // declaration under that name to read a return type off, and
+                // the signature it was declared under is the same promise.
+                name => match locals.get(name) {
+                    Some(Type::Proc(_, answer)) => Some((**answer).clone()),
+                    _ => returns.get(name).cloned(),
+                },
             }
         }
         Expression::Unsafe(body) => block_value(ast, *body)
@@ -2944,30 +2966,13 @@ impl Frame<'_> {
         let ast = self.ast;
         let Expression::Identifier(name) = ast.expr(callee) else {
             // A call through a value: a function pointer read out of a field or
-            // a table. The signature it holds says what it answers with and how
-            // it takes each argument, so a call through one is weighed the same
-            // way a named call is. Where that signature cannot be read, nothing
-            // says where the answer came from, and answering `Outlives` is what
-            // let a frame pointer out through `ops.pass(ptr_to(local))`.
-            let Some(Type::Proc(params, answer)) = self.place_type(callee)
-            else {
-                return Provenance::Unknown;
-            };
-            if !holds_view(&answer, self.fields, &mut HashSet::new()) {
-                return Provenance::Outlives;
-            }
-            return arguments.iter().enumerate().fold(
-                Provenance::Outlives,
-                |held, (index, argument)| {
-                    let declared = params.get(index);
-                    held.max(self.held_argument(
-                        &answer,
-                        declared,
-                        ParamMode::Read,
-                        *argument,
-                    ))
-                },
-            );
+            // a table. Where the signature cannot be read, nothing says where
+            // the answer came from, and answering `Outlives` is what let a
+            // frame pointer out through `ops.pass(ptr_to(local))`.
+            return self
+                .place_type(callee)
+                .and_then(|held| self.signature_provenance(&held, arguments))
+                .unwrap_or(Provenance::Unknown);
         };
         let name = ast.name(*name);
         match name {
@@ -3041,12 +3046,50 @@ impl Frame<'_> {
                             },
                         )
                     }
-                    // A name with no signature in this program: a compile-time
-                    // parameter standing for a function, or one the walk never
-                    // saw.
-                    None => Provenance::Unknown,
+                    // A name with no body in this program. A compile-time
+                    // parameter standing for a function is one: the call site
+                    // decides which function it is, so there is no body here to
+                    // walk, and the signature it was declared under is what
+                    // says where its answer can have come from. A name the walk
+                    // never saw at all has neither.
+                    None => self
+                        .types
+                        .get(name)
+                        .and_then(|held| {
+                            self.signature_provenance(held, arguments)
+                        })
+                        .unwrap_or(Provenance::Unknown),
                 }
             }
         }
+    }
+
+    /// What a call weighed by its signature alone answers with. A callee can
+    /// only build a view out of what it was handed or out of storage that
+    /// outlives the call, so the answer is worth the shortest-lived argument
+    /// that could have reached it. A callee handing back a view of its own
+    /// frame is caught where that callee is itself walked.
+    fn signature_provenance(
+        &self,
+        signature: &Type,
+        arguments: &[ExprId],
+    ) -> Option<Provenance> {
+        let Type::Proc(params, answer) = signature else {
+            return None;
+        };
+        if !holds_view(answer, self.fields, &mut HashSet::new()) {
+            return Some(Provenance::Outlives);
+        }
+        Some(arguments.iter().enumerate().fold(
+            Provenance::Outlives,
+            |held, (index, argument)| {
+                held.max(self.held_argument(
+                    answer,
+                    params.get(index),
+                    ParamMode::Read,
+                    *argument,
+                ))
+            },
+        ))
     }
 }

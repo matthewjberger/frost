@@ -4850,6 +4850,30 @@ view_reaches :: fn(mut p: Parser, answer: i64, param: i64, depth: i64) -> bool {
     false
 }
 
+// What a compile-time parameter of this name was declared under. The table
+// holds every one in the program, since the call site rather than the
+// declaration is what binds them, so two functions writing `$f` under different
+// signatures answer with nothing rather than with either: a rule reading the
+// wrong signature is worse than one reading none.
+cfn_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    var held: i64 = -1
+    var seen: bool = false
+    var i: i64 = 0
+    while (i < p.cfn_params.count) {
+        entry := arena_at(p.cfn_params, i)
+        if (entry.ty >= 0 && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            if (seen && entry.ty != held) {
+                return -1
+            }
+            held = entry.ty
+            seen = true
+        }
+        i = i + 1
+    }
+    held
+}
+
 // The declared type of a place, as far as the annotations and the struct
 // declarations give it. -1 says the walk cannot tell, and the rules that ask
 // treat that as the answer that keeps storage in.
@@ -4867,7 +4891,26 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
     off := node.val
     len := node.c
     if (kind == NodeKind::Var) {
-        return type_listed(p.walk_types, p.src, off, len)
+        held := type_listed(p.walk_types, p.src, off, len)
+        if (held >= 0) {
+            return held
+        }
+        // A compile-time parameter is written down nowhere a walk of the body
+        // can see, since the call site is what binds it. What it was declared
+        // under is the only thing that says what the body has in its hand.
+        declared := cfn_param_type(p, off, len)
+        if (declared >= 0) {
+            return declared
+        }
+        // An instance names the constant it was given wherever the declaration
+        // named the parameter, so a field read off a bundle reaches the
+        // constant's name rather than the parameter's. What the constant was
+        // written as is what it holds.
+        value := value_const_node(p, off, len)
+        if (value >= 0) {
+            return frame_value_type(p, value)
+        }
+        return -1
     }
     if (kind == NodeKind::Field) {
         base := frame_place_type(p, child)
@@ -4924,6 +4967,13 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Call) {
         sym := arena_at(p.fns, val)
         if (sym.defined == 0) {
+            // A name the call site binds to a function has no declaration under
+            // that name to read a return type off, and the signature it was
+            // declared under is the same promise.
+            declared := cfn_param_type(p, sym.off, sym.len)
+            if (declared >= 0 && is_proc(declared)) {
+                return proc_ret(p, declared)
+            }
             return -1
         }
         return sym.ret_type
@@ -5149,9 +5199,16 @@ frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     args := node.a
     sym := arena_at(p.fns, node.val)
-    // A name with no signature in this program: a compile-time parameter
-    // standing for a function, or one the walk never saw.
+    // A name with no body in this program. A compile-time parameter standing
+    // for a function is one: the call site decides which function it is, so
+    // there is no body here to walk, and the signature it was declared under is
+    // what says where its answer can have come from. A name the walk never saw
+    // at all has neither.
     if (sym.defined == 0) {
+        declared := cfn_param_type(p, sym.off, sym.len)
+        if (declared >= 0 && is_proc(declared)) {
+            return frame_proc_prov(p, declared, args)
+        }
         return PROV_UNKNOWN
     }
     answer := sym.ret_type
@@ -5237,6 +5294,14 @@ frame_call_ptr_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (proc_ty < 0 || is_proc(proc_ty) == false) {
         return PROV_UNKNOWN
     }
+    frame_proc_prov(p, proc_ty, args)
+}
+
+// A call weighed by its signature alone. A callee can only build a view out of
+// what it was handed or out of storage that outlives the call, so the answer is
+// worth the shortest-lived argument that could have reached it. A callee handing
+// back a view of its own frame is caught where that callee is itself walked.
+frame_proc_prov :: fn(mut p: Parser, proc_ty: i64, args: i64) -> i64 {
     answer := proc_ret(p, proc_ty)
     if (type_holds_view(p, answer, FRAME_TYPE_DEPTH) == false) {
         return PROV_OUTLIVES
@@ -5508,7 +5573,30 @@ frame_borrowed_place :: fn(mut p: Parser, id: i64) -> i64 {
     -1
 }
 
+// Whether the frame check has already refused at this place, and a note that it
+// has where it has not. A generic's instance is the declaration parsed again, so
+// the walk reaches the same written line once per instance and would report one
+// fault as many.
+frame_first_report :: fn(mut p: Parser, pos: i64) -> bool {
+    var i: i64 = 0
+    while (i < p.frame_reported.count) {
+        held := arena_at(p.frame_reported, i)
+        if (held.name_off == pos) {
+            return false
+        }
+        i = i + 1
+    }
+    arena_push(
+        p.frame_reported,
+        LocalVar { name_off = pos, name_len = 0, ty = 0, slot = 0 }
+    )
+    true
+}
+
 frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
+    if (frame_first_report(p, pos) == false) {
+        return
+    }
     report_where(p.modules, p.src, pos)
     report("region: a pointer into the frame of '")
     report_src(p.src, p.current_fn_off, p.current_fn_len)
@@ -5522,6 +5610,9 @@ frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
 // is what tells a reader which of the two arguments written side by side is the
 // one that outlives the other.
 frame_escape_kept :: fn(mut p: Parser, pos: i64, callee: i64) {
+    if (frame_first_report(p, pos) == false) {
+        return
+    }
     sym := arena_at(p.fns, callee)
     report_where(p.modules, p.src, pos)
     report("region: a pointer into the frame of '")
@@ -5534,6 +5625,9 @@ frame_escape_kept :: fn(mut p: Parser, pos: i64, callee: i64) {
 }
 
 frame_unproven :: fn(mut p: Parser, pos: i64) {
+    if (frame_first_report(p, pos) == false) {
+        return
+    }
     report_where(p.modules, p.src, pos)
     report("region: '")
     report_src(p.src, p.current_fn_off, p.current_fn_len)
@@ -5544,6 +5638,9 @@ frame_unproven :: fn(mut p: Parser, pos: i64) {
 }
 
 frame_unhandled :: fn(mut p: Parser, what: ^i8, pos: i64) {
+    if (frame_first_report(p, pos) == false) {
+        return
+    }
     report_where(p.modules, p.src, pos)
     report("the frame check has no rule for this ")
     report_cstr(what)

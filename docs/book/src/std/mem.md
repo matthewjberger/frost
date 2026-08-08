@@ -77,6 +77,7 @@ pointer.
 | `heap_grow_bytes(move block, size) -> ^u8` | Resize such a run |
 | `bytes_at(block, offset) -> ^u8` | One position in a run of bytes |
 | `bytes_as($T, block, count) -> []T` | A run of bytes read as `count` of `T` |
+| `as_bytes($T, held) -> []u8` | A run of `T` read as the bytes it occupies |
 | `heap_zero(destination, size)` | Fill with zero |
 | `heap_copy(destination, source, size)` | Copy `size` bytes |
 | `heap_live() -> i64` | How many blocks are currently out |
@@ -168,6 +169,41 @@ takes the same bytes. That is the whole lifetime story. The container over a
 carved run ([fixed.frost](containers.md)) owns nothing and frees nothing. What
 stops a run outliving the arena is the region check, in
 [allocation-and-regions.md](../reference/allocation-and-regions.md).
+
+## `std/allocation.frost`, either one
+
+A function that should work against whichever source it is given takes the
+source as a compile-time argument. `Allocation<A>` is the capability bundle for
+that: `take`, `resize` and `give`, all over `[]u8`.
+
+| Call | What it does |
+| --- | --- |
+| `carve($T, $A, $source, mut a, count) -> []T` | Room for `count` elements of `T` |
+| `carve_grow($T, $A, $source, mut a, held, count) -> []T` | A bigger run holding what the old one held |
+| `carve_give($T, $A, $source, mut a, held)` | The run handed back |
+
+Two sources ship with it. `heap_source` over `Heap`, whose state counts the
+blocks that are out, and `arena_source` over `Arena`, which is the three arena
+calls above under the bundle's names.
+
+```frost
+import "allocation.frost"
+
+main :: fn() -> i64 {
+    var h := heap_state()
+    var run := carve($i64, $Heap, $heap_source, h, 4)
+    run[0] = 11
+    carve_give($i64, $Heap, $heap_source, h, run)
+    h.taken
+}
+```
+
+The bundle is a compile-time argument, so a call through one of its fields is a
+direct call to the function that field names: nothing is loaded and nothing is
+dispatched. What a run carved this way may outlive is the same question the
+region and frame checks ask of a call to `arena_carve` directly, and they answer
+it the same way, because a call whose body they cannot see is worth the
+shortest-lived argument that could have reached its answer.
 
 ## Tests
 
