@@ -227,7 +227,7 @@ The rendering settles the space inside a line, the indentation in front of it,
 how many blank lines sit between two of them, the brace that opens a block, and
 the newline a file ends with. It never moves a token to another line, because
 which line a token is on is meaning here. See
-[Where a statement ends](../impl/line-boundaries.md).
+[Where a statement ends](../design/line-boundaries.md).
 
 Both compilers write the same bytes, which a test over the whole corpus holds.
 

@@ -44,8 +44,8 @@
 - [Pools, slabs, and columns](design/pools-and-columns.md)
 - [Allocation strategy](design/allocators.md)
 - [Callbacks with a typed context](design/callbacks.md)
+- [Where a statement ends](design/line-boundaries.md)
 
-- [Writing Frost with a model](design/cost-of-error.md)
 ---
 
 # The standard library
@@ -71,17 +71,8 @@
 - [The self-hosted compiler](impl/self-hosted.md)
 - [C compatibility](impl/c-compatibility.md)
 
-- [What the probes found](impl/findings.md)
-- [Where a statement ends](impl/line-boundaries.md)
----
-
-# What is left
-
-- [Roadmap](roadmap.md)
-
 ---
 
 # Appendices
 
 - [The command line and the environment](appendix/cli.md)
-- [How it got here](appendix/history.md)

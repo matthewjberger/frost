@@ -49,9 +49,8 @@ Nothing is generated for the crossing. A `mut` parameter is already a pointer in
 the signature, and Frost and C share a calling convention, so `on_event`
 compiled for Frost *is* the `void (*)(void*, int64_t)` the library wants. What
 the compiler does at a registration is pass the handler's address and the
-context's address, and there is no cast anywhere in the program. The design
-expected a trampoline to hold that cast. Why there is none is in
-[history.md](../appendix/history.md).
+context's address, and there is no cast anywhere in the program. There is no
+trampoline because there is no cast for one to hold.
 
 ## What the declaration says
 
@@ -188,16 +187,13 @@ dangling pointer.
 
 ## What is not settled
 
-The order this was built in, and the two answers that changed along the way, are
-in [history.md](../appendix/history.md). These are the questions the design has
-not answered at all.
+Two questions are open.
 
 - What `token` holds for a library whose unregister takes something other
-  than an integer. The `Registration` in the end-to-end test is an ordinary
-  `linear struct` a binding author writes and the compiler knows nothing about
-  it, which is the answer this document prefers and which held up for a library
-  returning an integer. A library that hands back a pointer or a struct has not
-  been tried.
+  than an integer. `Registration` is an ordinary `linear struct` a binding
+  author writes, and the compiler knows nothing about it. That works for a
+  library that hands back an integer. A library that hands back a pointer or a
+  struct has not been tried.
 - Whether a context that outlives its frame is worth supporting. Everything
   here confines the registration to the frame that holds the context, which
   covers a registration whose life is a scope and not one whose life is not. A

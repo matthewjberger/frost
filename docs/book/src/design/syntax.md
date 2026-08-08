@@ -1,19 +1,18 @@
-# Frost vs Rust syntax design advantages
+# Why the syntax reads this way
 
-This is an analysis of the syntax differences between Rust and Frost, read
-through one lens. Frost is a minimal, borrow-checked, procedurally oriented
-language designed so that code is cheap to parse, cheap to grep, and hard to
-generate subtly wrong. That last property matters when a large language model is
-a primary author, but none of it is model-specific. It is the ordinary payoff of
-fewer symbols that mean multiple things, fewer special-case grammar rules, and
-nothing invisible.
+Frost's syntax is chosen so that code is cheap to parse, cheap to grep, and hard
+to write almost-right. Every rule below is the payoff of the same three
+decisions: fewer symbols that mean more than one thing, fewer special-case
+grammar rules, and nothing invisible. Rust is the comparison throughout, because
+it is where most readers are coming from and because it made the opposite choice
+often enough to be instructive.
 
-A note on honesty. A few points below are properties of the grammar and the
-design that the implementation has not fully caught up to yet. Those are marked
-inline. Everything else describes the language as it compiles today. For the
-normative rules see [the reference](../reference/conformance.md), and for the
-form-by-form Rust mapping, including the table of everything below in one place,
-see [coming-from-rust.md](../coming-from-rust.md).
+A few points below are properties of the grammar that the implementation has not
+fully caught up to. Those are marked inline; everything else describes the
+language as it compiles today. For the normative rules see
+[the reference](../reference/conformance.md), and for the form-by-form Rust
+mapping, including the table of everything below in one place, see
+[coming-from-rust.md](../coming-from-rust.md).
 
 ## 1. Uniform declaration syntax
 
@@ -27,9 +26,8 @@ defined" is searching for `Point ::`, no matter what kind of thing Point is. In
 Rust you need to know what kind of item you are looking for before you can grep
 for it.
 
-One grammar rule instead of five. A smaller parser, a smaller spec, and for
-a model author, one pattern to emit rather than five keyword orderings to keep
-straight.
+One grammar rule instead of five. A smaller parser, a smaller spec, and one
+pattern to write rather than five keyword orderings to keep straight.
 
 Functions become ordinary values by construction. See the next section.
 
@@ -113,9 +111,9 @@ distinct operators make easy to enforce either way.
 `Point { x = 1, y = 2 }` uses `=` for field initialization, so `:` only ever
 means type ascription. Rust overloads `:` for both type annotation and struct
 field init, which is part of why Rust never shipped general type ascription. The
-grammar collides. One symbol, one meaning is exactly the kind of local
-unambiguity that helps both parsers and model authors. When you see `:` in Frost
-it always means the same thing.
+grammar collides. One symbol, one meaning is the kind of local unambiguity that
+helps a parser and a reader alike. When you see `:` in Frost it always means the
+same thing.
 
 ## 5. Mandatory parentheses on conditions
 
@@ -201,12 +199,11 @@ values could silently swap and the names are the guard. `mnemonic_of` in
 a lookup table three times as wide for nothing. Forcing either form out makes
 real code in the tree worse, so both earn their place.
 
-What did not earn its place is the unnamed list, `-> (i64, i64)`. No signature
-in the corpus wrote one. Its only effect was to call the fields `value0` and
-`value1`, names the compiler picked and no program was allowed to write, which
-took a refusal in each compiler to enforce. **A return type list now names every
-value.** That deletes a rule rather than adding one: the `valueN` synthesis is
-gone from both parsers, and so is the refusal that guarded it.
+What does not earn its place is the unnamed list, `-> (i64, i64)`. Its only
+effect would be to call the fields `value0` and `value1`, names the compiler
+picked and no program is allowed to write. **A return type list names every
+value**, which deletes a rule rather than adding one: there is no `valueN`
+synthesis in either parser, and no refusal guarding it.
 
 ```
 a return type list names every value; write `-> (name: T, name: T)`
@@ -259,10 +256,10 @@ and it collides with the rule that a symbol in Frost is an operator.
 A word costs nothing. `packed` sits where `linear` sits, which is the position
 every marker on a type declaration already takes, so a reader who knows one
 knows the other. Neither word is reserved: `packed` marks the declaration only
-where `struct` follows it, and `align` only where `(` follows it. Making them
-keywords was tried for one commit and `std/slab.frost`, which has a local called
-`packed`, stopped compiling. The shape after a word is what says what it means,
-which is how `flags`, `value`, `test` and `export` already read.
+where `struct` follows it, and `align` only where `(` follows it. Reserving them
+would cost every program that has a local called `packed`, and `std/slab.frost`
+is one. The shape after a word is what says what it means, which is how `flags`,
+`value`, `test` and `export` already read.
 
 There is one form for alignment, on a field, and none for the declaration. A
 struct's alignment is the widest its fields ask for, so a second form saying the
@@ -391,9 +388,9 @@ parameter list. A capability bundle says what can be *done* with a type, which
 is the other half of what a trait bound is usually asked for. The full rules are
 in [generics.md](../reference/generics.md).
 
-Ergonomics traded for predictability. Mandatory parentheses and explicit
-consumers cost some human ergonomics in exchange for machine predictability. That
-is a coherent trade given the audience, but it is a trade, not a free win.
+Keystrokes traded for predictability. Mandatory parentheses and explicit
+consumers cost some typing in exchange for a grammar with no carve-outs in it.
+That is a coherent trade, but it is a trade, not a free win.
 
 Capture semantics still owed. The uniform function syntax defers rather than
 solves the closure-capture question. A borrow-checked language eventually has to
@@ -415,5 +412,5 @@ some syntax (capture lists).
 | Generic call syntax | Turbofish workaround | `$` sigil, no ambiguity |
 
 Almost every difference reduces context-sensitivity, overloaded symbols, or
-invisible compiler behavior. That is the design thesis. Code that is cheap to
-parse, cheap to grep, and hard to generate almost-right-but-subtly-wrong.
+invisible compiler behavior. That is the design thesis: code that is cheap to
+parse, cheap to grep, and hard to write almost-right.

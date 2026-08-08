@@ -180,8 +180,8 @@ The wrapper is not about semantics. A `str` would work as a key on its own, and
 `str_hash` and `str_same` are written over `str` directly. The wrapper is there
 because the key run is a `[]K`, and a run of slices is a shape the self-hosted
 compiler does not yet hold. Wrapping the slice in a struct puts a single
-concrete layout in the array. When that gap closes,
-[roadmap.md](../roadmap.md) is where it is tracked.
+concrete layout in the array. When the self-hosted compiler holds a run of
+slices, the wrapper goes and `str` becomes a key on its own.
 
 The hash is over the contents, so two strings that read the same are one key
 however each was built, and a string key survives the table growing. Both are
