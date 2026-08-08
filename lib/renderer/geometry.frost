@@ -93,8 +93,11 @@ geometry_at :: fn(held: ^Geometry) -> ref Geometry {
     result
 }
 
-geometry_new :: fn(device: Device, vertex_room: i64,
-    index_room: i64) -> Geometry {
+geometry_new :: fn(
+    device: Device,
+    vertex_room: i64,
+    index_room: i64
+) -> Geometry {
     var vertex_descriptor := buffer_descriptor_init()
     // Copied from as well as into: growing one is a copy on the device from the
     // old buffer to the new, and a buffer that cannot be read from would have to
@@ -111,8 +114,10 @@ geometry_new :: fn(device: Device, vertex_room: i64,
     Geometry {
         vertices = device_create_buffer(device, ptr_to(vertex_descriptor)),
         indices = device_create_buffer(device, ptr_to(index_descriptor)),
-        vertex_room = vertex_room, index_room = index_room,
-        vertex_count = 0, index_count = 0,
+        vertex_room = vertex_room,
+        index_room = index_room,
+        vertex_count = 0,
+        index_count = 0,
     }
 }
 
@@ -136,13 +141,22 @@ geometry_free :: fn(mut store: Geometry) {
 // A span is where a mesh sits in the buffers as they are now, and a rebuild
 // moves things, so nothing holds one across a call that could move it. The mesh
 // cache is what remembers where a mesh is, and it is what rewrites the spans.
-geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
-    vertices: []Vertex, indices: []u32) -> MeshSpan {
+geometry_add :: fn(
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    vertices: []Vertex,
+    indices: []u32
+) -> MeshSpan {
     added := slice_len(vertices)
     ordered := slice_len(indices)
     if (added == 0 || ordered == 0) {
-        return MeshSpan { first_index = 0, index_count = 0, base_vertex = 0,
-            radius = 0.0 }
+        return MeshSpan {
+            first_index = 0,
+            index_count = 0,
+            base_vertex = 0,
+            radius = 0.0
+        }
     }
     if (store.vertex_count + added > store.vertex_room) {
         grow_vertices(store, device, queue, store.vertex_count + added)
@@ -161,12 +175,20 @@ geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
         }
         at = at + 1
     }
-    queue_write_buffer(queue, store.vertices,
-        store.vertex_count * VERTEX_STRIDE, ptr_to(vertices[0]),
-        added * VERTEX_STRIDE)
-    queue_write_buffer(queue, store.indices,
-        store.index_count * INDEX_BYTES, ptr_to(indices[0]),
-        ordered * INDEX_BYTES)
+    queue_write_buffer(
+        queue,
+        store.vertices,
+        store.vertex_count * VERTEX_STRIDE,
+        ptr_to(vertices[0]),
+        added * VERTEX_STRIDE
+    )
+    queue_write_buffer(
+        queue,
+        store.indices,
+        store.index_count * INDEX_BYTES,
+        ptr_to(indices[0]),
+        ordered * INDEX_BYTES
+    )
     span := MeshSpan {
         first_index = cast($u32, store.index_count),
         index_count = cast($u32, ordered),
@@ -181,10 +203,20 @@ geometry_add :: fn(mut store: Geometry, device: Device, queue: Queue,
 // Both buffers onto the pass, once for the whole scene. What a draw says after
 // this is which part of them it wants.
 geometry_bind :: fn(pass: RenderPassEncoder, store: Geometry) {
-    render_pass_encoder_set_vertex_buffer(pass, 0, store.vertices, 0,
-        store.vertex_count * VERTEX_STRIDE)
-    render_pass_encoder_set_index_buffer(pass, store.indices,
-        INDEX_FORMAT_UINT32, 0, store.index_count * INDEX_BYTES)
+    render_pass_encoder_set_vertex_buffer(
+        pass,
+        0,
+        store.vertices,
+        0,
+        store.vertex_count * VERTEX_STRIDE
+    )
+    render_pass_encoder_set_index_buffer(
+        pass,
+        store.indices,
+        INDEX_FORMAT_UINT32,
+        0,
+        store.index_count * INDEX_BYTES
+    )
 }
 
 geometry_vertices :: fn(store: Geometry) -> i64 { store.vertex_count }
@@ -232,42 +264,68 @@ grown :: fn(needed: i64) -> i64 {
     scaled
 }
 
-grow_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
-    needed: i64) {
+grow_vertices :: fn(
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    needed: i64
+) {
     replace_vertices(store, device, queue, grown(needed))
 }
 
-grow_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
-    needed: i64) {
+grow_indices :: fn(
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    needed: i64
+) {
     replace_indices(store, device, queue, grown(needed))
 }
 
 // A buffer of the given size holding what the old one held, and the old one
 // given back. The copy is on the device: what is in the buffer came from the
 // CPU once and there is no reason for it to make the trip again.
-replace_vertices :: fn(mut store: Geometry, device: Device, queue: Queue,
-    room: i64) {
+replace_vertices :: fn(
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    room: i64
+) {
     var descriptor := buffer_descriptor_init()
     descriptor.usage = (BufferUsage::Vertex | BufferUsage::CopyDst
         | BufferUsage::CopySrc)
     descriptor.size = room * VERTEX_STRIDE
     made := device_create_buffer(device, ptr_to(descriptor))
-    carry_over(store.vertices, made, device, queue,
-        store.vertex_count * VERTEX_STRIDE)
+    carry_over(
+        store.vertices,
+        made,
+        device,
+        queue,
+        store.vertex_count * VERTEX_STRIDE
+    )
     retire(store.vertices)
     store.vertices = made
     store.vertex_room = room
 }
 
-replace_indices :: fn(mut store: Geometry, device: Device, queue: Queue,
-    room: i64) {
+replace_indices :: fn(
+    mut store: Geometry,
+    device: Device,
+    queue: Queue,
+    room: i64
+) {
     var descriptor := buffer_descriptor_init()
     descriptor.usage = (BufferUsage::Index | BufferUsage::CopyDst
         | BufferUsage::CopySrc)
     descriptor.size = room * INDEX_BYTES
     made := device_create_buffer(device, ptr_to(descriptor))
-    carry_over(store.indices, made, device, queue,
-        store.index_count * INDEX_BYTES)
+    carry_over(
+        store.indices,
+        made,
+        device,
+        queue,
+        store.index_count * INDEX_BYTES
+    )
     retire(store.indices)
     store.indices = made
     store.index_room = room
@@ -287,14 +345,25 @@ retire :: fn(held: Buffer) {
 // What the old buffer held, into the new one, as one recorded copy submitted on
 // its own. Nothing else is in flight against these: a mesh is added between
 // frames, so nothing is drawing from either while this runs.
-carry_over :: fn(from: Buffer, into: Buffer, device: Device, queue: Queue,
-    bytes: i64) {
+carry_over :: fn(
+    from: Buffer,
+    into: Buffer,
+    device: Device,
+    queue: Queue,
+    bytes: i64
+) {
     if (bytes <= 0) {
         return
     }
     encoder := device_create_command_encoder(device, no_pointer())
-    command_encoder_copy_buffer_to_buffer(encoder, from, 0, into, 0,
-        cast($u64, bytes))
+    command_encoder_copy_buffer_to_buffer(
+        encoder,
+        from,
+        0,
+        into,
+        0,
+        cast($u64, bytes)
+    )
     var command := command_encoder_finish(encoder, no_pointer())
     queue_submit(queue, 1, ptr_to(command))
     command_buffer_release(command)

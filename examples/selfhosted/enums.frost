@@ -18,8 +18,12 @@ area :: fn(s: Shape) -> i64 {
 }
 
 main :: fn() -> i64 {
-    print("{}\n{}\n{}\n{}\n",
-        area(Shape::Circle { radius = 5 }), area(Shape::Rectangle { width = 4, height = 6 }),
-        area(Shape::Point), sizeof(Shape))
+    print(
+        "{}\n{}\n{}\n{}\n",
+        area(Shape::Circle { radius = 5 }),
+        area(Shape::Rectangle { width = 4, height = 6 }),
+        area(Shape::Point),
+        sizeof(Shape)
+    )
     0
 }

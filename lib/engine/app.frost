@@ -99,9 +99,16 @@ AppConfig :: struct {
 // A window of the given size, with room for a scene of a few hundred things. A
 // program that needs more than that says so by writing the fields.
 app_config :: fn(title: str, width: i64, height: i64) -> AppConfig {
-    AppConfig { title = title, width = width, height = height,
-        drawn = 256, meshes = 64, materials = 64,
-        vertices = 65536, indices = 131072 }
+    AppConfig {
+        title = title,
+        width = width,
+        height = height,
+        drawn = 256,
+        meshes = 64,
+        materials = 64,
+        vertices = 65536,
+        indices = 131072
+    }
 }
 
 // Why opening did not work, and what the platform said about it. There is no
@@ -177,8 +184,10 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
     if (renderer_ok(r) == false) {
         renderer_close(r)
         platform_close(p)
-        return AppError { why = AppFault::NoDevice,
-            said = "no adapter or no device that answers to this surface" }
+        return AppError {
+            why = AppFault::NoDevice,
+            said = "no adapter or no device that answers to this surface"
+        }
     }
     device := renderer_device(r)
     var app := App {
@@ -189,8 +198,12 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         store = geometry_new(device, config.vertices, config.indices),
         meshes = mesh_cache_new(config.meshes),
         materials = materials_new(config.materials),
-        render = render_world_new(device, config.drawn, config.meshes,
-            config.materials),
+        render = render_world_new(
+            device,
+            config.drawn,
+            config.meshes,
+            config.materials
+        ),
         installed = vec_new($Installed, 8),
         graph_configs = vec_new($GraphConfig, 4),
         update_graph = vec_new($UpdateGraph, 4),
@@ -311,8 +324,11 @@ plugin_group_free :: fn(move group: PluginGroup) {
 }
 
 plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
-    vec_push($GroupMember, group.members,
-        GroupMember { named = build, build = build, enabled = true })
+    vec_push(
+        $GroupMember,
+        group.members,
+        GroupMember { named = build, build = build, enabled = true }
+    )
 }
 
 // Which member of the group this name is, or -1 where the group has none.
@@ -331,8 +347,11 @@ group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
 // The group's own `named` built another way, keeping its place. A group that
 // does not hold it is a program naming a member that is not there, which is
 // worth stopping rather than silently composing something else.
-plugin_group_set :: fn(mut group: PluginGroup, named: fn(mut App),
-    build: fn(mut App)) {
+plugin_group_set :: fn(
+    mut group: PluginGroup,
+    named: fn(mut App),
+    build: fn(mut App)
+) {
     at := group_index(group, named)
     if (at < 0) {
         unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
@@ -415,11 +434,20 @@ GraphConfig :: struct {
 // made until the graph has a size, and the size comes after every hook has run.
 // A pass that binds what the graph holds says so with `graph_rebuilds`, which is
 // called with the first size as well as with every one after it.
-app_configure_graph :: fn($Ctx: Type, mut app: App,
-    hook: fn(mut Ctx, mut Graph, Device, u32), state: ^Ctx) {
-    vec_push($GraphConfig, app.graph_configs, GraphConfig {
+app_configure_graph :: fn(
+    $Ctx: Type,
+    mut app: App,
+    hook: fn(mut Ctx, mut Graph, Device, u32),
+    state: ^Ctx
+) {
+    vec_push(
+        $GraphConfig,
+        app.graph_configs,
+        GraphConfig {
             hook = unsafe { ptr_cast($fn(^u8, mut Graph, Device, u32), hook) },
-            state = unsafe { ptr_cast($u8, state) } })
+            state = unsafe { ptr_cast($u8, state) }
+        }
+    )
 }
 
 // The hooks, then the order they imply, then the first size. False when the
@@ -438,8 +466,7 @@ configure_graph :: fn(mut app: App) -> bool {
         print("the render graph cannot run\n")
         return false
     }
-    graph_resize(app.renderer.graph, width(app.platform),
-        height(app.platform))
+    graph_resize(app.renderer.graph, width(app.platform), height(app.platform))
     true
 }
 
@@ -452,11 +479,20 @@ UpdateGraph :: struct {
     state: ^u8,
 }
 
-app_update_graph :: fn($Ctx: Type, mut app: App,
-    hook: fn(mut Ctx, mut Graph, World), state: ^Ctx) {
-    vec_push($UpdateGraph, app.update_graph, UpdateGraph {
+app_update_graph :: fn(
+    $Ctx: Type,
+    mut app: App,
+    hook: fn(mut Ctx, mut Graph, World),
+    state: ^Ctx
+) {
+    vec_push(
+        $UpdateGraph,
+        app.update_graph,
+        UpdateGraph {
             hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
-            state = unsafe { ptr_cast($u8, state) } })
+            state = unsafe { ptr_cast($u8, state) }
+        }
+    )
 }
 
 // The hooks, in the order they were added, before the frame is filled. What
@@ -479,11 +515,20 @@ BeforeRender :: struct {
     state: ^u8,
 }
 
-app_before_render :: fn($Ctx: Type, mut app: App,
-    hook: fn(mut Ctx, mut App), state: ^Ctx) {
-    vec_push($BeforeRender, app.before_render, BeforeRender {
+app_before_render :: fn(
+    $Ctx: Type,
+    mut app: App,
+    hook: fn(mut Ctx, mut App),
+    state: ^Ctx
+) {
+    vec_push(
+        $BeforeRender,
+        app.before_render,
+        BeforeRender {
             hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
-            state = unsafe { ptr_cast($u8, state) } })
+            state = unsafe { ptr_cast($u8, state) }
+        }
+    )
 }
 
 // The renderer, composed: a pass that draws what the world says is drawn, lit by
@@ -500,9 +545,12 @@ render_plugin :: fn(mut app: App) {
     // with beyond that is its own: the grid over the lights and the steps that
     // decide what is drawn are made inside it, so an App holds one pass rather
     // than a pass and the three things it happens to record.
-    app.lit = lit_new(app_device(app), app_format(app),
+    app.lit = lit_new(
+        app_device(app),
+        app_format(app),
         render_world_layout(app.render),
-        render_world_batch_layout(app.render))
+        render_world_batch_layout(app.render)
+    )
     app_configure_graph($App, app, declare_lit, ptr_to(app))
     app_before_render($App, app, fill_lit, ptr_to(app))
 }
@@ -511,18 +559,38 @@ render_plugin :: fn(mut app: App) {
 fill_lit :: fn(mut app: App, mut held: App) {
     queue := app_queue(app)
     ids := app_ids(app)
-    app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
-        app_view(app))
+    app_extract(
+        app,
+        all_drawn(ids.global_transform, ids.transform, ids.drawn),
+        app_view(app)
+    )
     counts := lights_of(app.world, light_ids(app.world), app.lights)
     eye := app_camera(app)
     width := app_width(app)
     height := app_height(app)
-    lit_write_lights(app.lit, queue, app.lights, counts.total,
-        counts.directional, camera_projection(eye, width, height),
-        camera_view(eye), width, height, eye.z_near, eye.z_far)
-    lit_write_frame(app.lit, queue, app_view(app), camera_view(eye),
-        camera_position(eye), vec3(0.05, 0.05, 0.07),
-        counts.total, counts.directional)
+    lit_write_lights(
+        app.lit,
+        queue,
+        app.lights,
+        counts.total,
+        counts.directional,
+        camera_projection(eye, width, height),
+        camera_view(eye),
+        width,
+        height,
+        eye.z_near,
+        eye.z_far
+    )
+    lit_write_frame(
+        app.lit,
+        queue,
+        app_view(app),
+        camera_view(eye),
+        camera_position(eye),
+        vec3(0.05, 0.05, 0.07),
+        counts.total,
+        counts.directional
+    )
 }
 
 // What the standard pass draws into: the window, cleared to the ambient colour,
@@ -533,8 +601,15 @@ fill_lit :: fn(mut app: App, mut held: App) {
 declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    lit_declare($App, g, record_view, ptr_to(app), screen, depth,
-        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 })
+    lit_declare(
+        $App,
+        g,
+        record_view,
+        ptr_to(app),
+        screen,
+        depth,
+        Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }
+    )
 }
 
 // Everything a frame does to draw the world, in the order it has to happen:
@@ -564,8 +639,12 @@ app_add_system :: fn(mut app: App, stage: Stage, run: fn(mut World)) {
 // system belongs to travels with it in the schedule, so this is what a language
 // with closures would write as a wrapper around the system: there is nothing to
 // capture and nothing to wrap.
-app_add_system_in_state :: fn(mut app: App, stage: Stage, state: i64,
-    run: fn(mut World)) {
+app_add_system_in_state :: fn(
+    mut app: App,
+    stage: Stage,
+    state: i64,
+    run: fn(mut World)
+) {
     schedule_add_in_state(app.schedule, stage, state, run)
 }
 
@@ -573,8 +652,12 @@ app_add_system_in_state :: fn(mut app: App, stage: Stage, state: i64,
 // constants for, and every screen after this one is asked for from a system
 // with `world_state_request`.
 app_insert_state :: fn(mut app: App, initial: i64) {
-    ecs_resource_set($States, app.world, resource_of($States, app.world),
-        states_new(initial))
+    ecs_resource_set(
+        $States,
+        app.world,
+        resource_of($States, app.world),
+        states_new(initial)
+    )
     app.state_started = false
 }
 
@@ -722,8 +805,7 @@ app_next :: fn(mut app: App) -> bool {
     // One call: the surface and every target measured against it are the same
     // size or nothing draws, so the renderer resizes its own graph.
     if (resized(app.platform)) {
-        renderer_resize(app.renderer, width(app.platform),
-            height(app.platform))
+        renderer_resize(app.renderer, width(app.platform), height(app.platform))
     }
     world_input(app.world, platform_input(app.platform))
     // The screen settles before anything runs, so no frame has some of its
@@ -799,8 +881,13 @@ before_render :: fn(mut app: App) {
 app_extract :: fn(mut app: App, ids: ObjectIds, view_projection: Mat4) {
     render_world_begin(app.render)
     scene_sync(app.world, app.render, app.materials, app.meshes, ids)
-    render_world_upload(app.render, renderer_queue(app.renderer),
-        view_projection, app.materials, app.meshes)
+    render_world_upload(
+        app.render,
+        renderer_queue(app.renderer),
+        view_projection,
+        app.materials,
+        app.meshes
+    )
 }
 
 // The near half of a frame: the graph, recorded into whatever the surface
@@ -839,8 +926,11 @@ app_camera_set :: fn(mut app: App, move eye: Camera) {
 // both the frame uniform and the culling pass are given, and they have to be
 // the same matrix or a thing is culled against a view it was not drawn in.
 app_view :: fn(app: App) -> Mat4 {
-    camera_view_projection(world_camera(app.world), width(app.platform),
-        height(app.platform))
+    camera_view_projection(
+        world_camera(app.world),
+        width(app.platform),
+        height(app.platform)
+    )
 }
 
 // Three plugins that register nothing, for the tests below. What a group holds

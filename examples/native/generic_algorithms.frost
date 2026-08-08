@@ -2,7 +2,11 @@ import "io.frost"
 
 min_of :: fn(move a: $T, move b: $T) -> T { if (a < b) { a } else { b } }
 max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
-clamp :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
+clamp :: fn(
+    move x: $T,
+    move lo: $T,
+    move hi: $T
+) -> T { max_of(lo, min_of(x, hi)) }
 
 swap :: fn(mut a: $T, mut b: $T) {
     t := a
@@ -15,7 +19,13 @@ bytes :: fn($T: Type) -> i64 { sizeof(T) }
 Vec3 :: struct { x: i64, y: i64, z: i64 }
 
 main :: fn() -> i64 {
-    print("{}\n{}\n{}\n{}\n", max_of(3, 9), min_of(3, 9), clamp(15, 0, 10), clamp(-5, 0, 10))
+    print(
+        "{}\n{}\n{}\n{}\n",
+        max_of(3, 9),
+        min_of(3, 9),
+        clamp(15, 0, 10),
+        clamp(-5, 0, 10)
+    )
 
     var a: i64 = 100
     var b: i64 = 200

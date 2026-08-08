@@ -51,8 +51,11 @@ GlobalTransform :: struct { matrix: Mat4 }
 // A local transform that only says where, for a thing that faces the way it was
 // modelled and is the size it was modelled at.
 local_at :: fn(translation: Vec3) -> LocalTransform {
-    LocalTransform { translation = translation, rotation = quat_identity(),
-        scale = vec3(1.0, 1.0, 1.0) }
+    LocalTransform {
+        translation = translation,
+        rotation = quat_identity(),
+        scale = vec3(1.0, 1.0, 1.0)
+    }
 }
 
 // Which component is which, gathered so a walk that reads several of them asks
@@ -82,13 +85,21 @@ world_prepare :: fn(mut world: World) -> WorldIds {
     ecs_resource_register($Camera, world)
     ecs_resource_register($Exit, world)
     ecs_resource_register($States, world)
-    ecs_resource_set($Hierarchy, world, resource_of($Hierarchy, world),
-        hierarchy_new())
+    ecs_resource_set(
+        $Hierarchy,
+        world,
+        resource_of($Hierarchy, world),
+        hierarchy_new()
+    )
     // A resource starts zeroed, and a zeroed `Input` is a frame in which
     // nothing was held and no time passed, so the first schedule before the
     // first poll moves nothing.
-    ecs_resource_set($Camera, world, resource_of($Camera, world),
-        camera_default())
+    ecs_resource_set(
+        $Camera,
+        world,
+        resource_of($Camera, world),
+        camera_default()
+    )
     world_ids(world)
 }
 
@@ -180,8 +191,12 @@ world_state_apply :: fn(mut world: World) -> bool {
 
 // Asked to stop, which is what a loop over the world runs until.
 world_exit :: fn(mut world: World) {
-    ecs_resource_set($Exit, world, resource_of($Exit, world),
-        Exit { wanted = true })
+    ecs_resource_set(
+        $Exit,
+        world,
+        resource_of($Exit, world),
+        Exit { wanted = true }
+    )
 }
 
 world_exit_wanted :: fn(world: World) -> bool {
@@ -223,8 +238,13 @@ place_things :: fn(mut world: World) {
             entity := rows[row]
             tree := world_tree(world)
             if (is_no_entity(hierarchy_parent(tree, entity))) {
-                place_subtree(world, ids.local_transform,
-                    ids.global_transform, entity, mat4_identity())
+                place_subtree(
+                    world,
+                    ids.local_transform,
+                    ids.global_transform,
+                    entity,
+                    mat4_identity()
+                )
             }
             row = row + 1
         }
@@ -232,10 +252,20 @@ place_things :: fn(mut world: World) {
 }
 
 // One thing and everything under it, each placed against what it hangs off.
-place_subtree :: fn(mut world: World, local: i64, global: i64,
-    entity: Entity, above: Mat4) {
-    ecs_set($GlobalTransform, world, entity, global, GlobalTransform {
-            matrix = mat4_mul(above, local_of(world, local, entity)) })
+place_subtree :: fn(
+    mut world: World,
+    local: i64,
+    global: i64,
+    entity: Entity,
+    above: Mat4
+) {
+    ecs_set(
+        $GlobalTransform,
+        world,
+        entity,
+        global,
+        GlobalTransform { matrix = mat4_mul(above, local_of(world, local, entity)) }
+    )
     tree := world_tree(world)
     var child := hierarchy_first_child(tree, entity)
     while (is_no_entity(child) == false) {
@@ -254,8 +284,10 @@ place_subtree :: fn(mut world: World, local: i64, global: i64,
 // A thing's own transform, before anything above it is applied.
 local_of :: fn(mut world: World, local: i64, entity: Entity) -> Mat4 {
     place := ecs_get($LocalTransform, world, entity, local)
-    mat4_mul(mat4_translation(place.translation),
-        mat4_mul(quat_to_mat4(place.rotation), mat4_scale(place.scale)))
+    mat4_mul(
+        mat4_translation(place.translation),
+        mat4_mul(quat_to_mat4(place.rotation), mat4_scale(place.scale))
+    )
 }
 
 // What a frame does to a world is arithmetic over components and resources, so
@@ -347,8 +379,7 @@ test "the engine finds its resources wherever they landed" {
     assert(after.position.z < before.position.z)
 
     // And the thing that was there first is untouched by any of it.
-    assert(ecs_resource($Bystander, world,
-            resource_of($Bystander, world)).count == 0)
+    assert(ecs_resource($Bystander, world, resource_of($Bystander, world)).count == 0)
 
     schedule_free(frame)
     giving := world_tree_take(world)
@@ -425,17 +456,30 @@ test "a frame in which nothing was held moves nothing" {
 test "a thing is placed against whatever it hangs off, however deep" {
     var world := ecs_new()
     ids := world_prepare(world)
-    wanted := mask_with(mask_with(mask_empty(),
-            ids.local_transform), ids.global_transform)
+    wanted := mask_with(
+        mask_with(mask_empty(), ids.local_transform),
+        ids.global_transform
+    )
     // Held in one place, since spawning three and naming each would hand every
     // one of them over to the array anyway.
-    var chain: [3]Entity = [ecs_spawn_with(world, wanted),
-        ecs_spawn_with(world, wanted), ecs_spawn_with(world, wanted)]
+    var chain: [3]Entity = [
+        ecs_spawn_with(world, wanted),
+        ecs_spawn_with(world, wanted),
+        ecs_spawn_with(world, wanted)
+    ]
     var made: i64 = 0
     while (made < 3) {
-        ecs_set($LocalTransform, world, chain[made], ids.local_transform,
-            LocalTransform { translation = vec3(1.0, 0.0, 0.0),
-                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+        ecs_set(
+            $LocalTransform,
+            world,
+            chain[made],
+            ids.local_transform,
+            LocalTransform {
+                translation = vec3(1.0, 0.0, 0.0),
+                rotation = quat_identity(),
+                scale = vec3(1.0, 1.0, 1.0)
+            }
+        )
         made = made + 1
     }
     tree := world_tree(world)
@@ -449,8 +493,7 @@ test "a thing is placed against whatever it hangs off, however deep" {
     // three. Two passes over roots and their children would leave it at two.
     placed := ecs_get($GlobalTransform, world, chain[2], ids.global_transform)
     assert(placed.matrix.m[12] > 2.999 && placed.matrix.m[12] < 3.001)
-    between := ecs_get($GlobalTransform, world, chain[1],
-        ids.global_transform)
+    between := ecs_get($GlobalTransform, world, chain[1], ids.global_transform)
     assert(between.matrix.m[12] > 1.999 && between.matrix.m[12] < 2.001)
 
     schedule_free(frame)

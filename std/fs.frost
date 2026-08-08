@@ -53,11 +53,17 @@ fs_read :: fn(path: str) -> ReadResult {
     length := unsafe { frost_rt_file_size() }
     heap_release($u8, held)
     if (length < 0) {
-        return ReadResult { text = unsafe { slice_from($u8, raw, 0) },
-            buffer = raw, ok = false }
+        return ReadResult {
+            text = unsafe { slice_from($u8, raw, 0) },
+            buffer = raw,
+            ok = false
+        }
     }
-    ReadResult { text = unsafe { slice_from($u8, raw, length) },
-        buffer = raw, ok = true }
+    ReadResult {
+        text = unsafe { slice_from($u8, raw, length) },
+        buffer = raw,
+        ok = true
+    }
 }
 
 // Free the buffer a read returned. The `str` borrows it, so nothing may use the

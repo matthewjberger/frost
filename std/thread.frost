@@ -61,8 +61,10 @@ test "concurrent adds to one cell lose nothing" {
     var handles: [4]i64 = [0, 0, 0, 0]
     var spawned: i64 = 0
     while (spawned < 4) {
-        handles[spawned] = spawn(bump_many,
-            unsafe { ptr_cast($u8, ptr_to(cell)) })
+        handles[spawned] = spawn(
+            bump_many,
+            unsafe { ptr_cast($u8, ptr_to(cell)) }
+        )
         spawned = spawned + 1
     }
     var joined: i64 = 0

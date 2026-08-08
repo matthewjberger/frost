@@ -57,8 +57,12 @@ carried :: fn(mut unit: Assembly, index: i64) -> bool {
 // The symbol a fixup names once the local ones have been folded away. A local
 // name is reached through the symbol standing for its whole section, with the
 // distance into that section already written into the four bytes.
-reloc_symbol_index :: fn(mut unit: Assembly, sym: i64, text_symbol: i64,
-    data_symbol: i64) -> i64 {
+reloc_symbol_index :: fn(
+    mut unit: Assembly,
+    sym: i64,
+    text_symbol: i64,
+    data_symbol: i64
+) -> i64 {
     held := asm_symbol_at(unit, sym)
     if (held.global == 1 || held.section == SEC_UNDEF) {
         return held.index
@@ -72,8 +76,13 @@ reloc_symbol_index :: fn(mut unit: Assembly, sym: i64, text_symbol: i64,
 // Everything the object holds, added up: the headers, the sections, a fixup of
 // ten bytes each, a symbol entry of eighteen with a record of eighteen after
 // each that stands for a section, and every name too long to sit in an entry.
-object_room :: fn(mut unit: Assembly, section_count: i64, header_bytes: i64,
-    debug_bytes: i64, reloc_bytes: i64) -> i64 {
+object_room :: fn(
+    mut unit: Assembly,
+    section_count: i64,
+    header_bytes: i64,
+    debug_bytes: i64,
+    reloc_bytes: i64
+) -> i64 {
     var names: i64 = 4
     var i: i64 = 0
     while (i < asm_symbol_count(unit)) {
@@ -140,8 +149,16 @@ coff_reloc :: fn(mut object: Blob, offset: i64, sym: i64, kind: i64) {
 // One section header. A name of eight bytes or fewer sits in the field; a
 // longer one is named by where it is in the string table, which is what
 // `name_at` above zero says.
-coff_section_header :: fn(mut object: Blob, name: str, name_at: i64, size: i64,
-    data_at: i64, relocs_at: i64, relocs: i64, flags: i64) {
+coff_section_header :: fn(
+    mut object: Blob,
+    name: str,
+    name_at: i64,
+    size: i64,
+    data_at: i64,
+    relocs_at: i64,
+    relocs: i64,
+    flags: i64
+) {
     if (name_at > 0) {
         coff_long_name(object, name_at)
     } else {
@@ -185,8 +202,16 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
 
     total_relocs := reloc_count + line_relocs + info_relocs
-    blob_room(object, object_room(unit, section_count, text_count + data_count,
-            line_size + abbrev_size + info_size, total_relocs * 10))
+    blob_room(
+        object,
+        object_room(
+            unit,
+            section_count,
+            text_count + data_count,
+            line_size + abbrev_size + info_size,
+            total_relocs * 10
+        )
+    )
 
     // The section symbols come first, each followed by the record describing
     // the section it stands for, so a local fixup has something to name.
@@ -240,17 +265,57 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     blob_word16(object, 0)
     blob_word16(object, 0)
 
-    coff_section_header(object, ".text", 0, text_count, text_data_at,
-        text_relocs_at, reloc_count, COFF_TEXT_FLAGS)
-    coff_section_header(object, ".data", 0, data_count, data_data_at, 0, 0,
-        COFF_DATA_FLAGS)
+    coff_section_header(
+        object,
+        ".text",
+        0,
+        text_count,
+        text_data_at,
+        text_relocs_at,
+        reloc_count,
+        COFF_TEXT_FLAGS
+    )
+    coff_section_header(
+        object,
+        ".data",
+        0,
+        data_count,
+        data_data_at,
+        0,
+        0,
+        COFF_DATA_FLAGS
+    )
     if (debug) {
-        coff_section_header(object, COFF_LINE_NAME, line_name_at, line_size,
-            line_data_at, line_relocs_at, line_relocs, COFF_DEBUG_FLAGS)
-        coff_section_header(object, COFF_ABBREV_NAME, abbrev_name_at,
-            abbrev_size, abbrev_data_at, 0, 0, COFF_DEBUG_FLAGS)
-        coff_section_header(object, COFF_INFO_NAME, info_name_at, info_size,
-            info_data_at, info_relocs_at, info_relocs, COFF_DEBUG_FLAGS)
+        coff_section_header(
+            object,
+            COFF_LINE_NAME,
+            line_name_at,
+            line_size,
+            line_data_at,
+            line_relocs_at,
+            line_relocs,
+            COFF_DEBUG_FLAGS
+        )
+        coff_section_header(
+            object,
+            COFF_ABBREV_NAME,
+            abbrev_name_at,
+            abbrev_size,
+            abbrev_data_at,
+            0,
+            0,
+            COFF_DEBUG_FLAGS
+        )
+        coff_section_header(
+            object,
+            COFF_INFO_NAME,
+            info_name_at,
+            info_size,
+            info_data_at,
+            info_relocs_at,
+            info_relocs,
+            COFF_DEBUG_FLAGS
+        )
     }
 
     blob_copy(object, asm_section_bytes(unit, SEC_TEXT), text_count)
@@ -264,33 +329,76 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     var r: i64 = 0
     while (r < reloc_count) {
         fixup := asm_reloc_at(unit, r)
-        coff_reloc(object, fixup.offset,
+        coff_reloc(
+            object,
+            fixup.offset,
             reloc_symbol_index(unit, fixup.sym, text_symbol, data_symbol),
-            COFF_REL32)
+            COFF_REL32
+        )
         r = r + 1
     }
 
     if (debug) {
-        coff_reloc(object, marks.line_address - marks.line_at, text_symbol,
-            COFF_ADDR64)
-        coff_reloc(object, marks.info_abbrev - marks.info_at, abbrev_symbol,
-            COFF_SECREL)
-        coff_reloc(object, marks.info_address - marks.info_at, text_symbol,
-            COFF_ADDR64)
-        coff_reloc(object, marks.info_stmt - marks.info_at, line_symbol,
-            COFF_SECREL)
+        coff_reloc(
+            object,
+            marks.line_address - marks.line_at,
+            text_symbol,
+            COFF_ADDR64
+        )
+        coff_reloc(
+            object,
+            marks.info_abbrev - marks.info_at,
+            abbrev_symbol,
+            COFF_SECREL
+        )
+        coff_reloc(
+            object,
+            marks.info_address - marks.info_at,
+            text_symbol,
+            COFF_ADDR64
+        )
+        coff_reloc(
+            object,
+            marks.info_stmt - marks.info_at,
+            line_symbol,
+            COFF_SECREL
+        )
     }
 
-    write_section_symbol(object, ".text", 0, text_count, reloc_count,
-        COFF_TEXT_NUMBER)
+    write_section_symbol(
+        object,
+        ".text",
+        0,
+        text_count,
+        reloc_count,
+        COFF_TEXT_NUMBER
+    )
     write_section_symbol(object, ".data", 0, data_count, 0, COFF_DATA_NUMBER)
     if (debug) {
-        write_section_symbol(object, COFF_LINE_NAME, line_name_at, line_size,
-            line_relocs, COFF_LINE_NUMBER)
-        write_section_symbol(object, COFF_ABBREV_NAME, abbrev_name_at,
-            abbrev_size, 0, COFF_ABBREV_NUMBER)
-        write_section_symbol(object, COFF_INFO_NAME, info_name_at, info_size,
-            info_relocs, COFF_INFO_NUMBER)
+        write_section_symbol(
+            object,
+            COFF_LINE_NAME,
+            line_name_at,
+            line_size,
+            line_relocs,
+            COFF_LINE_NUMBER
+        )
+        write_section_symbol(
+            object,
+            COFF_ABBREV_NAME,
+            abbrev_name_at,
+            abbrev_size,
+            0,
+            COFF_ABBREV_NUMBER
+        )
+        write_section_symbol(
+            object,
+            COFF_INFO_NAME,
+            info_name_at,
+            info_size,
+            info_relocs,
+            COFF_INFO_NUMBER
+        )
     }
 
     // After the three debug names, which went into the string table first so the
@@ -364,8 +472,14 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
 
 // A symbol standing for a whole section, and the record after it that gives
 // the section's size and how many fixups it carries.
-write_section_symbol :: fn(mut object: Blob, name: str, name_at: i64,
-    size: i64, relocs: i64, number: i64) {
+write_section_symbol :: fn(
+    mut object: Blob,
+    name: str,
+    name_at: i64,
+    size: i64,
+    relocs: i64,
+    number: i64
+) {
     if (name_at > 0) {
         coff_long_name(object, name_at)
     } else {

@@ -14,10 +14,8 @@ null_handle :: fn() -> ^u8 {
     unsafe { ptr_cast($u8, zero) }
 }
 
-surface_format_at :: fn(held: SurfaceCapabilities,
-    index: i64) -> u32 {
-    span: []u32 = unsafe { slice_from($u32, ptr_cast($u32, held.formats),
-            cast($i64, held.formats_count)) }
+surface_format_at :: fn(held: SurfaceCapabilities, index: i64) -> u32 {
+    span: []u32 = unsafe { slice_from($u32, ptr_cast($u32, held.formats), cast($i64, held.formats_count)) }
     span[index]
 }
 
@@ -771,18 +769,9 @@ ColorWriteMask :: flags u64 {
     All = 15,
 }
 
-MapMode :: flags u64 {
-    None = 0,
-    Read = 1,
-    Write = 2,
-}
+MapMode :: flags u64 { None = 0, Read = 1, Write = 2, }
 
-ShaderStage :: flags u64 {
-    None = 0,
-    Vertex = 1,
-    Fragment = 2,
-    Compute = 4,
-}
+ShaderStage :: flags u64 { None = 0, Vertex = 1, Fragment = 2, Compute = 4, }
 
 TextureUsage :: flags u64 {
     None = 0,
@@ -1419,8 +1408,12 @@ BufferMapCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-buffer_map_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> BufferMapCallbackInfo {
+buffer_map_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> BufferMapCallbackInfo {
     BufferMapCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1438,8 +1431,12 @@ CompilationInfoCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-compilation_info_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, ^CompilationInfo, mut Ctx, ^u8), state: ^Ctx) -> CompilationInfoCallbackInfo {
+compilation_info_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, ^CompilationInfo, mut Ctx, ^u8),
+    state: ^Ctx
+) -> CompilationInfoCallbackInfo {
     CompilationInfoCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1457,8 +1454,12 @@ CreateComputePipelineAsyncCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-create_compute_pipeline_async_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, ComputePipeline, value StringView, mut Ctx, ^u8), state: ^Ctx) -> CreateComputePipelineAsyncCallbackInfo {
+create_compute_pipeline_async_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, ComputePipeline, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> CreateComputePipelineAsyncCallbackInfo {
     CreateComputePipelineAsyncCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1476,8 +1477,12 @@ CreateRenderPipelineAsyncCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-create_render_pipeline_async_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, RenderPipeline, value StringView, mut Ctx, ^u8), state: ^Ctx) -> CreateRenderPipelineAsyncCallbackInfo {
+create_render_pipeline_async_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, RenderPipeline, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> CreateRenderPipelineAsyncCallbackInfo {
     CreateRenderPipelineAsyncCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1495,8 +1500,12 @@ DeviceLostCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-device_lost_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(Device, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> DeviceLostCallbackInfo {
+device_lost_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(Device, u32, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> DeviceLostCallbackInfo {
     DeviceLostCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1514,8 +1523,12 @@ PopErrorScopeCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-pop_error_scope_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> PopErrorScopeCallbackInfo {
+pop_error_scope_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, u32, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> PopErrorScopeCallbackInfo {
     PopErrorScopeCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1533,8 +1546,12 @@ QueueWorkDoneCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-queue_work_done_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> QueueWorkDoneCallbackInfo {
+queue_work_done_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> QueueWorkDoneCallbackInfo {
     QueueWorkDoneCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1552,8 +1569,12 @@ RequestAdapterCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-request_adapter_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, Adapter, value StringView, mut Ctx, ^u8), state: ^Ctx) -> RequestAdapterCallbackInfo {
+request_adapter_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, Adapter, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> RequestAdapterCallbackInfo {
     RequestAdapterCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1571,8 +1592,12 @@ RequestDeviceCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-request_device_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(u32, Device, value StringView, mut Ctx, ^u8), state: ^Ctx) -> RequestDeviceCallbackInfo {
+request_device_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(u32, Device, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> RequestDeviceCallbackInfo {
     RequestDeviceCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1590,8 +1615,12 @@ UncapturedErrorCallbackInfo :: struct {
     userdata2: ^u8,
 }
 
-uncaptured_error_callback_info_of :: fn($Ctx: Type, mode: u32,
-    callback: fn(Device, u32, value StringView, mut Ctx, ^u8), state: ^Ctx) -> UncapturedErrorCallbackInfo {
+uncaptured_error_callback_info_of :: fn(
+    $Ctx: Type,
+    mode: u32,
+    callback: fn(Device, u32, value StringView, mut Ctx, ^u8),
+    state: ^Ctx
+) -> UncapturedErrorCallbackInfo {
     UncapturedErrorCallbackInfo {
         next_in_chain = null_handle(),
         mode = mode,
@@ -1609,7 +1638,10 @@ wgpuAdapterHasFeature :: extern fn(handle: Adapter, feature: u32) -> u32
 adapter_has_feature :: fn(handle: Adapter, feature: u32) -> u32 {
     unsafe { wgpuAdapterHasFeature(handle, feature) }
 }
-wgpuAdapterGetFeatures :: extern fn(handle: Adapter, features: ^SupportedFeatures)
+wgpuAdapterGetFeatures :: extern fn(
+    handle: Adapter,
+    features: ^SupportedFeatures
+)
 adapter_get_features :: fn(handle: Adapter, features: ^SupportedFeatures) {
     unsafe { wgpuAdapterGetFeatures(handle, features) }
 }
@@ -1617,36 +1649,94 @@ wgpuAdapterGetInfo :: extern fn(handle: Adapter, info: ^AdapterInfo) -> u32
 adapter_get_info :: fn(handle: Adapter, info: ^AdapterInfo) -> u32 {
     unsafe { wgpuAdapterGetInfo(handle, info) }
 }
-wgpuAdapterRequestDevice :: extern fn(handle: Adapter, descriptor: ^DeviceDescriptor, callback_info: ^u8)
-adapter_request_device :: fn(handle: Adapter, descriptor: ^DeviceDescriptor, callback_info: ^u8) {
+wgpuAdapterRequestDevice :: extern fn(
+    handle: Adapter,
+    descriptor: ^DeviceDescriptor,
+    callback_info: ^u8
+)
+adapter_request_device :: fn(
+    handle: Adapter,
+    descriptor: ^DeviceDescriptor,
+    callback_info: ^u8
+) {
     unsafe { wgpuAdapterRequestDevice(handle, descriptor, callback_info) }
 }
 wgpuBindGroupSetLabel :: extern fn(handle: BindGroup, value label: StringView)
 bind_group_set_label :: fn(handle: BindGroup, value label: StringView) {
     unsafe { wgpuBindGroupSetLabel(handle, label) }
 }
-wgpuBindGroupLayoutSetLabel :: extern fn(handle: BindGroupLayout, value label: StringView)
-bind_group_layout_set_label :: fn(handle: BindGroupLayout, value label: StringView) {
+wgpuBindGroupLayoutSetLabel :: extern fn(
+    handle: BindGroupLayout,
+    value label: StringView
+)
+bind_group_layout_set_label :: fn(
+    handle: BindGroupLayout,
+    value label: StringView
+) {
     unsafe { wgpuBindGroupLayoutSetLabel(handle, label) }
 }
-wgpuBufferMapAsync :: extern fn(handle: Buffer, mode: MapMode, offset: u64, size: u64, callback_info: ^u8)
-buffer_map_async :: fn(handle: Buffer, mode: MapMode, offset: u64, size: u64, callback_info: ^u8) {
+wgpuBufferMapAsync :: extern fn(
+    handle: Buffer,
+    mode: MapMode,
+    offset: u64,
+    size: u64,
+    callback_info: ^u8
+)
+buffer_map_async :: fn(
+    handle: Buffer,
+    mode: MapMode,
+    offset: u64,
+    size: u64,
+    callback_info: ^u8
+) {
     unsafe { wgpuBufferMapAsync(handle, mode, offset, size, callback_info) }
 }
-wgpuBufferGetMappedRange :: extern fn(handle: Buffer, offset: u64, size: u64) -> ^u8
+wgpuBufferGetMappedRange :: extern fn(
+    handle: Buffer,
+    offset: u64,
+    size: u64
+) -> ^u8
 buffer_get_mapped_range :: fn(handle: Buffer, offset: u64, size: u64) -> ^u8 {
     unsafe { wgpuBufferGetMappedRange(handle, offset, size) }
 }
-wgpuBufferGetConstMappedRange :: extern fn(handle: Buffer, offset: u64, size: u64) -> ^u8
-buffer_get_const_mapped_range :: fn(handle: Buffer, offset: u64, size: u64) -> ^u8 {
+wgpuBufferGetConstMappedRange :: extern fn(
+    handle: Buffer,
+    offset: u64,
+    size: u64
+) -> ^u8
+buffer_get_const_mapped_range :: fn(
+    handle: Buffer,
+    offset: u64,
+    size: u64
+) -> ^u8 {
     unsafe { wgpuBufferGetConstMappedRange(handle, offset, size) }
 }
-wgpuBufferReadMappedRange :: extern fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32
-buffer_read_mapped_range :: fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32 {
+wgpuBufferReadMappedRange :: extern fn(
+    handle: Buffer,
+    offset: u64,
+    data: ^u8,
+    size: u64
+) -> u32
+buffer_read_mapped_range :: fn(
+    handle: Buffer,
+    offset: u64,
+    data: ^u8,
+    size: u64
+) -> u32 {
     unsafe { wgpuBufferReadMappedRange(handle, offset, data, size) }
 }
-wgpuBufferWriteMappedRange :: extern fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32
-buffer_write_mapped_range :: fn(handle: Buffer, offset: u64, data: ^u8, size: u64) -> u32 {
+wgpuBufferWriteMappedRange :: extern fn(
+    handle: Buffer,
+    offset: u64,
+    data: ^u8,
+    size: u64
+) -> u32
+buffer_write_mapped_range :: fn(
+    handle: Buffer,
+    offset: u64,
+    data: ^u8,
+    size: u64
+) -> u32 {
     unsafe { wgpuBufferWriteMappedRange(handle, offset, data, size) }
 }
 wgpuBufferSetLabel :: extern fn(handle: Buffer, value label: StringView)
@@ -1673,12 +1763,21 @@ wgpuBufferDestroy :: extern fn(handle: Buffer)
 buffer_destroy :: fn(handle: Buffer) {
     unsafe { wgpuBufferDestroy(handle) }
 }
-wgpuCommandBufferSetLabel :: extern fn(handle: CommandBuffer, value label: StringView)
+wgpuCommandBufferSetLabel :: extern fn(
+    handle: CommandBuffer,
+    value label: StringView
+)
 command_buffer_set_label :: fn(handle: CommandBuffer, value label: StringView) {
     unsafe { wgpuCommandBufferSetLabel(handle, label) }
 }
-wgpuCommandEncoderFinish :: extern fn(handle: CommandEncoder, descriptor: ^CommandBufferDescriptor) -> CommandBuffer
-command_encoder_finish :: fn(handle: CommandEncoder, descriptor: ^CommandBufferDescriptor) -> CommandBuffer {
+wgpuCommandEncoderFinish :: extern fn(
+    handle: CommandEncoder,
+    descriptor: ^CommandBufferDescriptor
+) -> CommandBuffer
+command_encoder_finish :: fn(
+    handle: CommandEncoder,
+    descriptor: ^CommandBufferDescriptor
+) -> CommandBuffer {
     held := unsafe { wgpuCommandEncoderFinish(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: command_encoder_finish answered with nothing\n") }
@@ -1686,8 +1785,14 @@ command_encoder_finish :: fn(handle: CommandEncoder, descriptor: ^CommandBufferD
     }
     held
 }
-wgpuCommandEncoderBeginComputePass :: extern fn(handle: CommandEncoder, descriptor: ^ComputePassDescriptor) -> ComputePassEncoder
-command_encoder_begin_compute_pass :: fn(handle: CommandEncoder, descriptor: ^ComputePassDescriptor) -> ComputePassEncoder {
+wgpuCommandEncoderBeginComputePass :: extern fn(
+    handle: CommandEncoder,
+    descriptor: ^ComputePassDescriptor
+) -> ComputePassEncoder
+command_encoder_begin_compute_pass :: fn(
+    handle: CommandEncoder,
+    descriptor: ^ComputePassDescriptor
+) -> ComputePassEncoder {
     held := unsafe { wgpuCommandEncoderBeginComputePass(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: command_encoder_begin_compute_pass answered with nothing\n") }
@@ -1695,8 +1800,14 @@ command_encoder_begin_compute_pass :: fn(handle: CommandEncoder, descriptor: ^Co
     }
     held
 }
-wgpuCommandEncoderBeginRenderPass :: extern fn(handle: CommandEncoder, descriptor: ^RenderPassDescriptor) -> RenderPassEncoder
-command_encoder_begin_render_pass :: fn(handle: CommandEncoder, descriptor: ^RenderPassDescriptor) -> RenderPassEncoder {
+wgpuCommandEncoderBeginRenderPass :: extern fn(
+    handle: CommandEncoder,
+    descriptor: ^RenderPassDescriptor
+) -> RenderPassEncoder
+command_encoder_begin_render_pass :: fn(
+    handle: CommandEncoder,
+    descriptor: ^RenderPassDescriptor
+) -> RenderPassEncoder {
     held := unsafe { wgpuCommandEncoderBeginRenderPass(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: command_encoder_begin_render_pass answered with nothing\n") }
@@ -1704,92 +1815,256 @@ command_encoder_begin_render_pass :: fn(handle: CommandEncoder, descriptor: ^Ren
     }
     held
 }
-wgpuCommandEncoderCopyBufferToBuffer :: extern fn(handle: CommandEncoder, source: Buffer, source_offset: u64, destination: Buffer, destination_offset: u64, size: u64)
-command_encoder_copy_buffer_to_buffer :: fn(handle: CommandEncoder, source: Buffer, source_offset: u64, destination: Buffer, destination_offset: u64, size: u64) {
+wgpuCommandEncoderCopyBufferToBuffer :: extern fn(
+    handle: CommandEncoder,
+    source: Buffer,
+    source_offset: u64,
+    destination: Buffer,
+    destination_offset: u64,
+    size: u64
+)
+command_encoder_copy_buffer_to_buffer :: fn(
+    handle: CommandEncoder,
+    source: Buffer,
+    source_offset: u64,
+    destination: Buffer,
+    destination_offset: u64,
+    size: u64
+) {
     unsafe { wgpuCommandEncoderCopyBufferToBuffer(handle, source, source_offset, destination, destination_offset, size) }
 }
-wgpuCommandEncoderCopyBufferToTexture :: extern fn(handle: CommandEncoder, source: ^TexelCopyBufferInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D)
-command_encoder_copy_buffer_to_texture :: fn(handle: CommandEncoder, source: ^TexelCopyBufferInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D) {
+wgpuCommandEncoderCopyBufferToTexture :: extern fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyBufferInfo,
+    destination: ^TexelCopyTextureInfo,
+    copy_size: ^Extent3D
+)
+command_encoder_copy_buffer_to_texture :: fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyBufferInfo,
+    destination: ^TexelCopyTextureInfo,
+    copy_size: ^Extent3D
+) {
     unsafe { wgpuCommandEncoderCopyBufferToTexture(handle, source, destination, copy_size) }
 }
-wgpuCommandEncoderCopyTextureToBuffer :: extern fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyBufferInfo, copy_size: ^Extent3D)
-command_encoder_copy_texture_to_buffer :: fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyBufferInfo, copy_size: ^Extent3D) {
+wgpuCommandEncoderCopyTextureToBuffer :: extern fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyTextureInfo,
+    destination: ^TexelCopyBufferInfo,
+    copy_size: ^Extent3D
+)
+command_encoder_copy_texture_to_buffer :: fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyTextureInfo,
+    destination: ^TexelCopyBufferInfo,
+    copy_size: ^Extent3D
+) {
     unsafe { wgpuCommandEncoderCopyTextureToBuffer(handle, source, destination, copy_size) }
 }
-wgpuCommandEncoderCopyTextureToTexture :: extern fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D)
-command_encoder_copy_texture_to_texture :: fn(handle: CommandEncoder, source: ^TexelCopyTextureInfo, destination: ^TexelCopyTextureInfo, copy_size: ^Extent3D) {
+wgpuCommandEncoderCopyTextureToTexture :: extern fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyTextureInfo,
+    destination: ^TexelCopyTextureInfo,
+    copy_size: ^Extent3D
+)
+command_encoder_copy_texture_to_texture :: fn(
+    handle: CommandEncoder,
+    source: ^TexelCopyTextureInfo,
+    destination: ^TexelCopyTextureInfo,
+    copy_size: ^Extent3D
+) {
     unsafe { wgpuCommandEncoderCopyTextureToTexture(handle, source, destination, copy_size) }
 }
-wgpuCommandEncoderClearBuffer :: extern fn(handle: CommandEncoder, buffer: Buffer, offset: u64, size: u64)
-command_encoder_clear_buffer :: fn(handle: CommandEncoder, buffer: Buffer, offset: u64, size: u64) {
+wgpuCommandEncoderClearBuffer :: extern fn(
+    handle: CommandEncoder,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+)
+command_encoder_clear_buffer :: fn(
+    handle: CommandEncoder,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+) {
     unsafe { wgpuCommandEncoderClearBuffer(handle, buffer, offset, size) }
 }
-wgpuCommandEncoderInsertDebugMarker :: extern fn(handle: CommandEncoder, value marker_label: StringView)
-command_encoder_insert_debug_marker :: fn(handle: CommandEncoder, value marker_label: StringView) {
+wgpuCommandEncoderInsertDebugMarker :: extern fn(
+    handle: CommandEncoder,
+    value marker_label: StringView
+)
+command_encoder_insert_debug_marker :: fn(
+    handle: CommandEncoder,
+    value marker_label: StringView
+) {
     unsafe { wgpuCommandEncoderInsertDebugMarker(handle, marker_label) }
 }
 wgpuCommandEncoderPopDebugGroup :: extern fn(handle: CommandEncoder)
 command_encoder_pop_debug_group :: fn(handle: CommandEncoder) {
     unsafe { wgpuCommandEncoderPopDebugGroup(handle) }
 }
-wgpuCommandEncoderPushDebugGroup :: extern fn(handle: CommandEncoder, value group_label: StringView)
-command_encoder_push_debug_group :: fn(handle: CommandEncoder, value group_label: StringView) {
+wgpuCommandEncoderPushDebugGroup :: extern fn(
+    handle: CommandEncoder,
+    value group_label: StringView
+)
+command_encoder_push_debug_group :: fn(
+    handle: CommandEncoder,
+    value group_label: StringView
+) {
     unsafe { wgpuCommandEncoderPushDebugGroup(handle, group_label) }
 }
-wgpuCommandEncoderResolveQuerySet :: extern fn(handle: CommandEncoder, query_set: QuerySet, first_query: u32, query_count: u32, destination: Buffer, destination_offset: u64)
-command_encoder_resolve_query_set :: fn(handle: CommandEncoder, query_set: QuerySet, first_query: u32, query_count: u32, destination: Buffer, destination_offset: u64) {
+wgpuCommandEncoderResolveQuerySet :: extern fn(
+    handle: CommandEncoder,
+    query_set: QuerySet,
+    first_query: u32,
+    query_count: u32,
+    destination: Buffer,
+    destination_offset: u64
+)
+command_encoder_resolve_query_set :: fn(
+    handle: CommandEncoder,
+    query_set: QuerySet,
+    first_query: u32,
+    query_count: u32,
+    destination: Buffer,
+    destination_offset: u64
+) {
     unsafe { wgpuCommandEncoderResolveQuerySet(handle, query_set, first_query, query_count, destination, destination_offset) }
 }
-wgpuCommandEncoderWriteTimestamp :: extern fn(handle: CommandEncoder, query_set: QuerySet, query_index: u32)
-command_encoder_write_timestamp :: fn(handle: CommandEncoder, query_set: QuerySet, query_index: u32) {
+wgpuCommandEncoderWriteTimestamp :: extern fn(
+    handle: CommandEncoder,
+    query_set: QuerySet,
+    query_index: u32
+)
+command_encoder_write_timestamp :: fn(
+    handle: CommandEncoder,
+    query_set: QuerySet,
+    query_index: u32
+) {
     unsafe { wgpuCommandEncoderWriteTimestamp(handle, query_set, query_index) }
 }
-wgpuCommandEncoderSetLabel :: extern fn(handle: CommandEncoder, value label: StringView)
-command_encoder_set_label :: fn(handle: CommandEncoder, value label: StringView) {
+wgpuCommandEncoderSetLabel :: extern fn(
+    handle: CommandEncoder,
+    value label: StringView
+)
+command_encoder_set_label :: fn(
+    handle: CommandEncoder,
+    value label: StringView
+) {
     unsafe { wgpuCommandEncoderSetLabel(handle, label) }
 }
-wgpuComputePassEncoderInsertDebugMarker :: extern fn(handle: ComputePassEncoder, value marker_label: StringView)
-compute_pass_encoder_insert_debug_marker :: fn(handle: ComputePassEncoder, value marker_label: StringView) {
+wgpuComputePassEncoderInsertDebugMarker :: extern fn(
+    handle: ComputePassEncoder,
+    value marker_label: StringView
+)
+compute_pass_encoder_insert_debug_marker :: fn(
+    handle: ComputePassEncoder,
+    value marker_label: StringView
+) {
     unsafe { wgpuComputePassEncoderInsertDebugMarker(handle, marker_label) }
 }
 wgpuComputePassEncoderPopDebugGroup :: extern fn(handle: ComputePassEncoder)
 compute_pass_encoder_pop_debug_group :: fn(handle: ComputePassEncoder) {
     unsafe { wgpuComputePassEncoderPopDebugGroup(handle) }
 }
-wgpuComputePassEncoderPushDebugGroup :: extern fn(handle: ComputePassEncoder, value group_label: StringView)
-compute_pass_encoder_push_debug_group :: fn(handle: ComputePassEncoder, value group_label: StringView) {
+wgpuComputePassEncoderPushDebugGroup :: extern fn(
+    handle: ComputePassEncoder,
+    value group_label: StringView
+)
+compute_pass_encoder_push_debug_group :: fn(
+    handle: ComputePassEncoder,
+    value group_label: StringView
+) {
     unsafe { wgpuComputePassEncoderPushDebugGroup(handle, group_label) }
 }
-wgpuComputePassEncoderSetPipeline :: extern fn(handle: ComputePassEncoder, pipeline: ComputePipeline)
-compute_pass_encoder_set_pipeline :: fn(handle: ComputePassEncoder, pipeline: ComputePipeline) {
+wgpuComputePassEncoderSetPipeline :: extern fn(
+    handle: ComputePassEncoder,
+    pipeline: ComputePipeline
+)
+compute_pass_encoder_set_pipeline :: fn(
+    handle: ComputePassEncoder,
+    pipeline: ComputePipeline
+) {
     unsafe { wgpuComputePassEncoderSetPipeline(handle, pipeline) }
 }
-wgpuComputePassEncoderSetBindGroup :: extern fn(handle: ComputePassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
-compute_pass_encoder_set_bind_group :: fn(handle: ComputePassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+wgpuComputePassEncoderSetBindGroup :: extern fn(
+    handle: ComputePassEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+)
+compute_pass_encoder_set_bind_group :: fn(
+    handle: ComputePassEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+) {
     unsafe { wgpuComputePassEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
 }
-wgpuComputePassEncoderSetImmediates :: extern fn(handle: ComputePassEncoder, offset: u32, data: ^u8, size: u64)
-compute_pass_encoder_set_immediates :: fn(handle: ComputePassEncoder, offset: u32, data: ^u8, size: u64) {
+wgpuComputePassEncoderSetImmediates :: extern fn(
+    handle: ComputePassEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+)
+compute_pass_encoder_set_immediates :: fn(
+    handle: ComputePassEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+) {
     unsafe { wgpuComputePassEncoderSetImmediates(handle, offset, data, size) }
 }
-wgpuComputePassEncoderDispatchWorkgroups :: extern fn(handle: ComputePassEncoder, workgroupCountX: u32, workgroupCountY: u32, workgroupCountZ: u32)
-compute_pass_encoder_dispatch_workgroups :: fn(handle: ComputePassEncoder, workgroupCountX: u32, workgroupCountY: u32, workgroupCountZ: u32) {
+wgpuComputePassEncoderDispatchWorkgroups :: extern fn(
+    handle: ComputePassEncoder,
+    workgroupCountX: u32,
+    workgroupCountY: u32,
+    workgroupCountZ: u32
+)
+compute_pass_encoder_dispatch_workgroups :: fn(
+    handle: ComputePassEncoder,
+    workgroupCountX: u32,
+    workgroupCountY: u32,
+    workgroupCountZ: u32
+) {
     unsafe { wgpuComputePassEncoderDispatchWorkgroups(handle, workgroupCountX, workgroupCountY, workgroupCountZ) }
 }
-wgpuComputePassEncoderDispatchWorkgroupsIndirect :: extern fn(handle: ComputePassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
-compute_pass_encoder_dispatch_workgroups_indirect :: fn(handle: ComputePassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+wgpuComputePassEncoderDispatchWorkgroupsIndirect :: extern fn(
+    handle: ComputePassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+)
+compute_pass_encoder_dispatch_workgroups_indirect :: fn(
+    handle: ComputePassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+) {
     unsafe { wgpuComputePassEncoderDispatchWorkgroupsIndirect(handle, indirect_buffer, indirect_offset) }
 }
 wgpuComputePassEncoderEnd :: extern fn(handle: ComputePassEncoder)
 compute_pass_encoder_end :: fn(handle: ComputePassEncoder) {
     unsafe { wgpuComputePassEncoderEnd(handle) }
 }
-wgpuComputePassEncoderSetLabel :: extern fn(handle: ComputePassEncoder, value label: StringView)
-compute_pass_encoder_set_label :: fn(handle: ComputePassEncoder, value label: StringView) {
+wgpuComputePassEncoderSetLabel :: extern fn(
+    handle: ComputePassEncoder,
+    value label: StringView
+)
+compute_pass_encoder_set_label :: fn(
+    handle: ComputePassEncoder,
+    value label: StringView
+) {
     unsafe { wgpuComputePassEncoderSetLabel(handle, label) }
 }
-wgpuComputePipelineGetBindGroupLayout :: extern fn(handle: ComputePipeline, group_index: u32) -> BindGroupLayout
-compute_pipeline_get_bind_group_layout :: fn(handle: ComputePipeline, group_index: u32) -> BindGroupLayout {
+wgpuComputePipelineGetBindGroupLayout :: extern fn(
+    handle: ComputePipeline,
+    group_index: u32
+) -> BindGroupLayout
+compute_pipeline_get_bind_group_layout :: fn(
+    handle: ComputePipeline,
+    group_index: u32
+) -> BindGroupLayout {
     held := unsafe { wgpuComputePipelineGetBindGroupLayout(handle, group_index) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: compute_pipeline_get_bind_group_layout answered with nothing\n") }
@@ -1797,12 +2072,24 @@ compute_pipeline_get_bind_group_layout :: fn(handle: ComputePipeline, group_inde
     }
     held
 }
-wgpuComputePipelineSetLabel :: extern fn(handle: ComputePipeline, value label: StringView)
-compute_pipeline_set_label :: fn(handle: ComputePipeline, value label: StringView) {
+wgpuComputePipelineSetLabel :: extern fn(
+    handle: ComputePipeline,
+    value label: StringView
+)
+compute_pipeline_set_label :: fn(
+    handle: ComputePipeline,
+    value label: StringView
+) {
     unsafe { wgpuComputePipelineSetLabel(handle, label) }
 }
-wgpuDeviceCreateBindGroup :: extern fn(handle: Device, descriptor: ^BindGroupDescriptor) -> BindGroup
-device_create_bind_group :: fn(handle: Device, descriptor: ^BindGroupDescriptor) -> BindGroup {
+wgpuDeviceCreateBindGroup :: extern fn(
+    handle: Device,
+    descriptor: ^BindGroupDescriptor
+) -> BindGroup
+device_create_bind_group :: fn(
+    handle: Device,
+    descriptor: ^BindGroupDescriptor
+) -> BindGroup {
     held := unsafe { wgpuDeviceCreateBindGroup(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_bind_group answered with nothing\n") }
@@ -1810,8 +2097,14 @@ device_create_bind_group :: fn(handle: Device, descriptor: ^BindGroupDescriptor)
     }
     held
 }
-wgpuDeviceCreateBindGroupLayout :: extern fn(handle: Device, descriptor: ^BindGroupLayoutDescriptor) -> BindGroupLayout
-device_create_bind_group_layout :: fn(handle: Device, descriptor: ^BindGroupLayoutDescriptor) -> BindGroupLayout {
+wgpuDeviceCreateBindGroupLayout :: extern fn(
+    handle: Device,
+    descriptor: ^BindGroupLayoutDescriptor
+) -> BindGroupLayout
+device_create_bind_group_layout :: fn(
+    handle: Device,
+    descriptor: ^BindGroupLayoutDescriptor
+) -> BindGroupLayout {
     held := unsafe { wgpuDeviceCreateBindGroupLayout(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_bind_group_layout answered with nothing\n") }
@@ -1819,8 +2112,14 @@ device_create_bind_group_layout :: fn(handle: Device, descriptor: ^BindGroupLayo
     }
     held
 }
-wgpuDeviceCreateBuffer :: extern fn(handle: Device, descriptor: ^BufferDescriptor) -> Buffer
-device_create_buffer :: fn(handle: Device, descriptor: ^BufferDescriptor) -> Buffer {
+wgpuDeviceCreateBuffer :: extern fn(
+    handle: Device,
+    descriptor: ^BufferDescriptor
+) -> Buffer
+device_create_buffer :: fn(
+    handle: Device,
+    descriptor: ^BufferDescriptor
+) -> Buffer {
     held := unsafe { wgpuDeviceCreateBuffer(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_buffer answered with nothing\n") }
@@ -1828,8 +2127,14 @@ device_create_buffer :: fn(handle: Device, descriptor: ^BufferDescriptor) -> Buf
     }
     held
 }
-wgpuDeviceCreateCommandEncoder :: extern fn(handle: Device, descriptor: ^CommandEncoderDescriptor) -> CommandEncoder
-device_create_command_encoder :: fn(handle: Device, descriptor: ^CommandEncoderDescriptor) -> CommandEncoder {
+wgpuDeviceCreateCommandEncoder :: extern fn(
+    handle: Device,
+    descriptor: ^CommandEncoderDescriptor
+) -> CommandEncoder
+device_create_command_encoder :: fn(
+    handle: Device,
+    descriptor: ^CommandEncoderDescriptor
+) -> CommandEncoder {
     held := unsafe { wgpuDeviceCreateCommandEncoder(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_command_encoder answered with nothing\n") }
@@ -1837,8 +2142,14 @@ device_create_command_encoder :: fn(handle: Device, descriptor: ^CommandEncoderD
     }
     held
 }
-wgpuDeviceCreateComputePipeline :: extern fn(handle: Device, descriptor: ^ComputePipelineDescriptor) -> ComputePipeline
-device_create_compute_pipeline :: fn(handle: Device, descriptor: ^ComputePipelineDescriptor) -> ComputePipeline {
+wgpuDeviceCreateComputePipeline :: extern fn(
+    handle: Device,
+    descriptor: ^ComputePipelineDescriptor
+) -> ComputePipeline
+device_create_compute_pipeline :: fn(
+    handle: Device,
+    descriptor: ^ComputePipelineDescriptor
+) -> ComputePipeline {
     held := unsafe { wgpuDeviceCreateComputePipeline(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_compute_pipeline answered with nothing\n") }
@@ -1846,12 +2157,26 @@ device_create_compute_pipeline :: fn(handle: Device, descriptor: ^ComputePipelin
     }
     held
 }
-wgpuDeviceCreateComputePipelineAsync :: extern fn(handle: Device, descriptor: ^ComputePipelineDescriptor, callback_info: ^u8)
-device_create_compute_pipeline_async :: fn(handle: Device, descriptor: ^ComputePipelineDescriptor, callback_info: ^u8) {
+wgpuDeviceCreateComputePipelineAsync :: extern fn(
+    handle: Device,
+    descriptor: ^ComputePipelineDescriptor,
+    callback_info: ^u8
+)
+device_create_compute_pipeline_async :: fn(
+    handle: Device,
+    descriptor: ^ComputePipelineDescriptor,
+    callback_info: ^u8
+) {
     unsafe { wgpuDeviceCreateComputePipelineAsync(handle, descriptor, callback_info) }
 }
-wgpuDeviceCreatePipelineLayout :: extern fn(handle: Device, descriptor: ^PipelineLayoutDescriptor) -> PipelineLayout
-device_create_pipeline_layout :: fn(handle: Device, descriptor: ^PipelineLayoutDescriptor) -> PipelineLayout {
+wgpuDeviceCreatePipelineLayout :: extern fn(
+    handle: Device,
+    descriptor: ^PipelineLayoutDescriptor
+) -> PipelineLayout
+device_create_pipeline_layout :: fn(
+    handle: Device,
+    descriptor: ^PipelineLayoutDescriptor
+) -> PipelineLayout {
     held := unsafe { wgpuDeviceCreatePipelineLayout(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_pipeline_layout answered with nothing\n") }
@@ -1859,8 +2184,14 @@ device_create_pipeline_layout :: fn(handle: Device, descriptor: ^PipelineLayoutD
     }
     held
 }
-wgpuDeviceCreateQuerySet :: extern fn(handle: Device, descriptor: ^QuerySetDescriptor) -> QuerySet
-device_create_query_set :: fn(handle: Device, descriptor: ^QuerySetDescriptor) -> QuerySet {
+wgpuDeviceCreateQuerySet :: extern fn(
+    handle: Device,
+    descriptor: ^QuerySetDescriptor
+) -> QuerySet
+device_create_query_set :: fn(
+    handle: Device,
+    descriptor: ^QuerySetDescriptor
+) -> QuerySet {
     held := unsafe { wgpuDeviceCreateQuerySet(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_query_set answered with nothing\n") }
@@ -1868,12 +2199,26 @@ device_create_query_set :: fn(handle: Device, descriptor: ^QuerySetDescriptor) -
     }
     held
 }
-wgpuDeviceCreateRenderPipelineAsync :: extern fn(handle: Device, descriptor: ^RenderPipelineDescriptor, callback_info: ^u8)
-device_create_render_pipeline_async :: fn(handle: Device, descriptor: ^RenderPipelineDescriptor, callback_info: ^u8) {
+wgpuDeviceCreateRenderPipelineAsync :: extern fn(
+    handle: Device,
+    descriptor: ^RenderPipelineDescriptor,
+    callback_info: ^u8
+)
+device_create_render_pipeline_async :: fn(
+    handle: Device,
+    descriptor: ^RenderPipelineDescriptor,
+    callback_info: ^u8
+) {
     unsafe { wgpuDeviceCreateRenderPipelineAsync(handle, descriptor, callback_info) }
 }
-wgpuDeviceCreateRenderBundleEncoder :: extern fn(handle: Device, descriptor: ^RenderBundleEncoderDescriptor) -> RenderBundleEncoder
-device_create_render_bundle_encoder :: fn(handle: Device, descriptor: ^RenderBundleEncoderDescriptor) -> RenderBundleEncoder {
+wgpuDeviceCreateRenderBundleEncoder :: extern fn(
+    handle: Device,
+    descriptor: ^RenderBundleEncoderDescriptor
+) -> RenderBundleEncoder
+device_create_render_bundle_encoder :: fn(
+    handle: Device,
+    descriptor: ^RenderBundleEncoderDescriptor
+) -> RenderBundleEncoder {
     held := unsafe { wgpuDeviceCreateRenderBundleEncoder(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_render_bundle_encoder answered with nothing\n") }
@@ -1881,8 +2226,14 @@ device_create_render_bundle_encoder :: fn(handle: Device, descriptor: ^RenderBun
     }
     held
 }
-wgpuDeviceCreateRenderPipeline :: extern fn(handle: Device, descriptor: ^RenderPipelineDescriptor) -> RenderPipeline
-device_create_render_pipeline :: fn(handle: Device, descriptor: ^RenderPipelineDescriptor) -> RenderPipeline {
+wgpuDeviceCreateRenderPipeline :: extern fn(
+    handle: Device,
+    descriptor: ^RenderPipelineDescriptor
+) -> RenderPipeline
+device_create_render_pipeline :: fn(
+    handle: Device,
+    descriptor: ^RenderPipelineDescriptor
+) -> RenderPipeline {
     held := unsafe { wgpuDeviceCreateRenderPipeline(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_render_pipeline answered with nothing\n") }
@@ -1890,8 +2241,14 @@ device_create_render_pipeline :: fn(handle: Device, descriptor: ^RenderPipelineD
     }
     held
 }
-wgpuDeviceCreateSampler :: extern fn(handle: Device, descriptor: ^SamplerDescriptor) -> Sampler
-device_create_sampler :: fn(handle: Device, descriptor: ^SamplerDescriptor) -> Sampler {
+wgpuDeviceCreateSampler :: extern fn(
+    handle: Device,
+    descriptor: ^SamplerDescriptor
+) -> Sampler
+device_create_sampler :: fn(
+    handle: Device,
+    descriptor: ^SamplerDescriptor
+) -> Sampler {
     held := unsafe { wgpuDeviceCreateSampler(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_sampler answered with nothing\n") }
@@ -1899,8 +2256,14 @@ device_create_sampler :: fn(handle: Device, descriptor: ^SamplerDescriptor) -> S
     }
     held
 }
-wgpuDeviceCreateShaderModule :: extern fn(handle: Device, descriptor: ^ShaderModuleDescriptor) -> ShaderModule
-device_create_shader_module :: fn(handle: Device, descriptor: ^ShaderModuleDescriptor) -> ShaderModule {
+wgpuDeviceCreateShaderModule :: extern fn(
+    handle: Device,
+    descriptor: ^ShaderModuleDescriptor
+) -> ShaderModule
+device_create_shader_module :: fn(
+    handle: Device,
+    descriptor: ^ShaderModuleDescriptor
+) -> ShaderModule {
     held := unsafe { wgpuDeviceCreateShaderModule(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_shader_module answered with nothing\n") }
@@ -1908,8 +2271,14 @@ device_create_shader_module :: fn(handle: Device, descriptor: ^ShaderModuleDescr
     }
     held
 }
-wgpuDeviceCreateTexture :: extern fn(handle: Device, descriptor: ^TextureDescriptor) -> Texture
-device_create_texture :: fn(handle: Device, descriptor: ^TextureDescriptor) -> Texture {
+wgpuDeviceCreateTexture :: extern fn(
+    handle: Device,
+    descriptor: ^TextureDescriptor
+) -> Texture
+device_create_texture :: fn(
+    handle: Device,
+    descriptor: ^TextureDescriptor
+) -> Texture {
     held := unsafe { wgpuDeviceCreateTexture(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: device_create_texture answered with nothing\n") }
@@ -1937,8 +2306,14 @@ wgpuDeviceGetFeatures :: extern fn(handle: Device, features: ^SupportedFeatures)
 device_get_features :: fn(handle: Device, features: ^SupportedFeatures) {
     unsafe { wgpuDeviceGetFeatures(handle, features) }
 }
-wgpuDeviceGetAdapterInfo :: extern fn(handle: Device, adapter_info: ^AdapterInfo) -> u32
-device_get_adapter_info :: fn(handle: Device, adapter_info: ^AdapterInfo) -> u32 {
+wgpuDeviceGetAdapterInfo :: extern fn(
+    handle: Device,
+    adapter_info: ^AdapterInfo
+) -> u32
+device_get_adapter_info :: fn(
+    handle: Device,
+    adapter_info: ^AdapterInfo
+) -> u32 {
     unsafe { wgpuDeviceGetAdapterInfo(handle, adapter_info) }
 }
 wgpuDeviceGetQueue :: extern fn(handle: Device) -> Queue
@@ -1962,12 +2337,24 @@ wgpuDeviceSetLabel :: extern fn(handle: Device, value label: StringView)
 device_set_label :: fn(handle: Device, value label: StringView) {
     unsafe { wgpuDeviceSetLabel(handle, label) }
 }
-wgpuExternalTextureSetLabel :: extern fn(handle: ExternalTexture, value label: StringView)
-external_texture_set_label :: fn(handle: ExternalTexture, value label: StringView) {
+wgpuExternalTextureSetLabel :: extern fn(
+    handle: ExternalTexture,
+    value label: StringView
+)
+external_texture_set_label :: fn(
+    handle: ExternalTexture,
+    value label: StringView
+) {
     unsafe { wgpuExternalTextureSetLabel(handle, label) }
 }
-wgpuInstanceCreateSurface :: extern fn(handle: Instance, descriptor: ^SurfaceDescriptor) -> Surface
-instance_create_surface :: fn(handle: Instance, descriptor: ^SurfaceDescriptor) -> Surface {
+wgpuInstanceCreateSurface :: extern fn(
+    handle: Instance,
+    descriptor: ^SurfaceDescriptor
+) -> Surface
+instance_create_surface :: fn(
+    handle: Instance,
+    descriptor: ^SurfaceDescriptor
+) -> Surface {
     held := unsafe { wgpuInstanceCreateSurface(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: instance_create_surface answered with nothing\n") }
@@ -1975,28 +2362,64 @@ instance_create_surface :: fn(handle: Instance, descriptor: ^SurfaceDescriptor) 
     }
     held
 }
-wgpuInstanceGetWGSLLanguageFeatures :: extern fn(handle: Instance, features: ^SupportedWGSLLanguageFeatures)
-instance_get_WGSL_language_features :: fn(handle: Instance, features: ^SupportedWGSLLanguageFeatures) {
+wgpuInstanceGetWGSLLanguageFeatures :: extern fn(
+    handle: Instance,
+    features: ^SupportedWGSLLanguageFeatures
+)
+instance_get_WGSL_language_features :: fn(
+    handle: Instance,
+    features: ^SupportedWGSLLanguageFeatures
+) {
     unsafe { wgpuInstanceGetWGSLLanguageFeatures(handle, features) }
 }
-wgpuInstanceHasWGSLLanguageFeature :: extern fn(handle: Instance, feature: u32) -> u32
-instance_has_WGSL_language_feature :: fn(handle: Instance, feature: u32) -> u32 {
+wgpuInstanceHasWGSLLanguageFeature :: extern fn(
+    handle: Instance,
+    feature: u32
+) -> u32
+instance_has_WGSL_language_feature :: fn(
+    handle: Instance,
+    feature: u32
+) -> u32 {
     unsafe { wgpuInstanceHasWGSLLanguageFeature(handle, feature) }
 }
 wgpuInstanceProcessEvents :: extern fn(handle: Instance)
 instance_process_events :: fn(handle: Instance) {
     unsafe { wgpuInstanceProcessEvents(handle) }
 }
-wgpuInstanceRequestAdapter :: extern fn(handle: Instance, options: ^RequestAdapterOptions, callback_info: ^u8)
-instance_request_adapter :: fn(handle: Instance, options: ^RequestAdapterOptions, callback_info: ^u8) {
+wgpuInstanceRequestAdapter :: extern fn(
+    handle: Instance,
+    options: ^RequestAdapterOptions,
+    callback_info: ^u8
+)
+instance_request_adapter :: fn(
+    handle: Instance,
+    options: ^RequestAdapterOptions,
+    callback_info: ^u8
+) {
     unsafe { wgpuInstanceRequestAdapter(handle, options, callback_info) }
 }
-wgpuInstanceWaitAny :: extern fn(handle: Instance, future_count: u64, futures: ^FutureWaitInfo, timeout_NS: u64) -> u32
-instance_wait_any :: fn(handle: Instance, future_count: u64, futures: ^FutureWaitInfo, timeout_NS: u64) -> u32 {
+wgpuInstanceWaitAny :: extern fn(
+    handle: Instance,
+    future_count: u64,
+    futures: ^FutureWaitInfo,
+    timeout_NS: u64
+) -> u32
+instance_wait_any :: fn(
+    handle: Instance,
+    future_count: u64,
+    futures: ^FutureWaitInfo,
+    timeout_NS: u64
+) -> u32 {
     unsafe { wgpuInstanceWaitAny(handle, future_count, futures, timeout_NS) }
 }
-wgpuPipelineLayoutSetLabel :: extern fn(handle: PipelineLayout, value label: StringView)
-pipeline_layout_set_label :: fn(handle: PipelineLayout, value label: StringView) {
+wgpuPipelineLayoutSetLabel :: extern fn(
+    handle: PipelineLayout,
+    value label: StringView
+)
+pipeline_layout_set_label :: fn(
+    handle: PipelineLayout,
+    value label: StringView
+) {
     unsafe { wgpuPipelineLayoutSetLabel(handle, label) }
 }
 wgpuQuerySetSetLabel :: extern fn(handle: QuerySet, value label: StringView)
@@ -2015,80 +2438,229 @@ wgpuQuerySetDestroy :: extern fn(handle: QuerySet)
 query_set_destroy :: fn(handle: QuerySet) {
     unsafe { wgpuQuerySetDestroy(handle) }
 }
-wgpuQueueSubmit :: extern fn(handle: Queue, commands_count: u64, commands: ^CommandBuffer)
-queue_submit :: fn(handle: Queue, commands_count: u64, commands: ^CommandBuffer) {
+wgpuQueueSubmit :: extern fn(
+    handle: Queue,
+    commands_count: u64,
+    commands: ^CommandBuffer
+)
+queue_submit :: fn(
+    handle: Queue,
+    commands_count: u64,
+    commands: ^CommandBuffer
+) {
     unsafe { wgpuQueueSubmit(handle, commands_count, commands) }
 }
 wgpuQueueOnSubmittedWorkDone :: extern fn(handle: Queue, callback_info: ^u8)
 queue_on_submitted_work_done :: fn(handle: Queue, callback_info: ^u8) {
     unsafe { wgpuQueueOnSubmittedWorkDone(handle, callback_info) }
 }
-wgpuQueueWriteBuffer :: extern fn(handle: Queue, buffer: Buffer, buffer_offset: u64, data: ^u8, size: u64)
-queue_write_buffer :: fn(handle: Queue, buffer: Buffer, buffer_offset: u64, data: ^u8, size: u64) {
+wgpuQueueWriteBuffer :: extern fn(
+    handle: Queue,
+    buffer: Buffer,
+    buffer_offset: u64,
+    data: ^u8,
+    size: u64
+)
+queue_write_buffer :: fn(
+    handle: Queue,
+    buffer: Buffer,
+    buffer_offset: u64,
+    data: ^u8,
+    size: u64
+) {
     unsafe { wgpuQueueWriteBuffer(handle, buffer, buffer_offset, data, size) }
 }
-wgpuQueueWriteTexture :: extern fn(handle: Queue, destination: ^TexelCopyTextureInfo, data: ^u8, data_size: u64, data_layout: ^TexelCopyBufferLayout, write_size: ^Extent3D)
-queue_write_texture :: fn(handle: Queue, destination: ^TexelCopyTextureInfo, data: ^u8, data_size: u64, data_layout: ^TexelCopyBufferLayout, write_size: ^Extent3D) {
+wgpuQueueWriteTexture :: extern fn(
+    handle: Queue,
+    destination: ^TexelCopyTextureInfo,
+    data: ^u8,
+    data_size: u64,
+    data_layout: ^TexelCopyBufferLayout,
+    write_size: ^Extent3D
+)
+queue_write_texture :: fn(
+    handle: Queue,
+    destination: ^TexelCopyTextureInfo,
+    data: ^u8,
+    data_size: u64,
+    data_layout: ^TexelCopyBufferLayout,
+    write_size: ^Extent3D
+) {
     unsafe { wgpuQueueWriteTexture(handle, destination, data, data_size, data_layout, write_size) }
 }
 wgpuQueueSetLabel :: extern fn(handle: Queue, value label: StringView)
 queue_set_label :: fn(handle: Queue, value label: StringView) {
     unsafe { wgpuQueueSetLabel(handle, label) }
 }
-wgpuRenderBundleSetLabel :: extern fn(handle: RenderBundle, value label: StringView)
+wgpuRenderBundleSetLabel :: extern fn(
+    handle: RenderBundle,
+    value label: StringView
+)
 render_bundle_set_label :: fn(handle: RenderBundle, value label: StringView) {
     unsafe { wgpuRenderBundleSetLabel(handle, label) }
 }
-wgpuRenderBundleEncoderSetPipeline :: extern fn(handle: RenderBundleEncoder, pipeline: RenderPipeline)
-render_bundle_encoder_set_pipeline :: fn(handle: RenderBundleEncoder, pipeline: RenderPipeline) {
+wgpuRenderBundleEncoderSetPipeline :: extern fn(
+    handle: RenderBundleEncoder,
+    pipeline: RenderPipeline
+)
+render_bundle_encoder_set_pipeline :: fn(
+    handle: RenderBundleEncoder,
+    pipeline: RenderPipeline
+) {
     unsafe { wgpuRenderBundleEncoderSetPipeline(handle, pipeline) }
 }
-wgpuRenderBundleEncoderSetBindGroup :: extern fn(handle: RenderBundleEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
-render_bundle_encoder_set_bind_group :: fn(handle: RenderBundleEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+wgpuRenderBundleEncoderSetBindGroup :: extern fn(
+    handle: RenderBundleEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+)
+render_bundle_encoder_set_bind_group :: fn(
+    handle: RenderBundleEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+) {
     unsafe { wgpuRenderBundleEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
 }
-wgpuRenderBundleEncoderSetImmediates :: extern fn(handle: RenderBundleEncoder, offset: u32, data: ^u8, size: u64)
-render_bundle_encoder_set_immediates :: fn(handle: RenderBundleEncoder, offset: u32, data: ^u8, size: u64) {
+wgpuRenderBundleEncoderSetImmediates :: extern fn(
+    handle: RenderBundleEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+)
+render_bundle_encoder_set_immediates :: fn(
+    handle: RenderBundleEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+) {
     unsafe { wgpuRenderBundleEncoderSetImmediates(handle, offset, data, size) }
 }
-wgpuRenderBundleEncoderDraw :: extern fn(handle: RenderBundleEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
-render_bundle_encoder_draw :: fn(handle: RenderBundleEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+wgpuRenderBundleEncoderDraw :: extern fn(
+    handle: RenderBundleEncoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32
+)
+render_bundle_encoder_draw :: fn(
+    handle: RenderBundleEncoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32
+) {
     unsafe { wgpuRenderBundleEncoderDraw(handle, vertex_count, instance_count, first_vertex, first_instance) }
 }
-wgpuRenderBundleEncoderDrawIndexed :: extern fn(handle: RenderBundleEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32)
-render_bundle_encoder_draw_indexed :: fn(handle: RenderBundleEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) {
+wgpuRenderBundleEncoderDrawIndexed :: extern fn(
+    handle: RenderBundleEncoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32
+)
+render_bundle_encoder_draw_indexed :: fn(
+    handle: RenderBundleEncoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32
+) {
     unsafe { wgpuRenderBundleEncoderDrawIndexed(handle, index_count, instance_count, first_index, base_vertex, first_instance) }
 }
-wgpuRenderBundleEncoderDrawIndirect :: extern fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64)
-render_bundle_encoder_draw_indirect :: fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+wgpuRenderBundleEncoderDrawIndirect :: extern fn(
+    handle: RenderBundleEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+)
+render_bundle_encoder_draw_indirect :: fn(
+    handle: RenderBundleEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+) {
     unsafe { wgpuRenderBundleEncoderDrawIndirect(handle, indirect_buffer, indirect_offset) }
 }
-wgpuRenderBundleEncoderDrawIndexedIndirect :: extern fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64)
-render_bundle_encoder_draw_indexed_indirect :: fn(handle: RenderBundleEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+wgpuRenderBundleEncoderDrawIndexedIndirect :: extern fn(
+    handle: RenderBundleEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+)
+render_bundle_encoder_draw_indexed_indirect :: fn(
+    handle: RenderBundleEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+) {
     unsafe { wgpuRenderBundleEncoderDrawIndexedIndirect(handle, indirect_buffer, indirect_offset) }
 }
-wgpuRenderBundleEncoderInsertDebugMarker :: extern fn(handle: RenderBundleEncoder, value marker_label: StringView)
-render_bundle_encoder_insert_debug_marker :: fn(handle: RenderBundleEncoder, value marker_label: StringView) {
+wgpuRenderBundleEncoderInsertDebugMarker :: extern fn(
+    handle: RenderBundleEncoder,
+    value marker_label: StringView
+)
+render_bundle_encoder_insert_debug_marker :: fn(
+    handle: RenderBundleEncoder,
+    value marker_label: StringView
+) {
     unsafe { wgpuRenderBundleEncoderInsertDebugMarker(handle, marker_label) }
 }
 wgpuRenderBundleEncoderPopDebugGroup :: extern fn(handle: RenderBundleEncoder)
 render_bundle_encoder_pop_debug_group :: fn(handle: RenderBundleEncoder) {
     unsafe { wgpuRenderBundleEncoderPopDebugGroup(handle) }
 }
-wgpuRenderBundleEncoderPushDebugGroup :: extern fn(handle: RenderBundleEncoder, value group_label: StringView)
-render_bundle_encoder_push_debug_group :: fn(handle: RenderBundleEncoder, value group_label: StringView) {
+wgpuRenderBundleEncoderPushDebugGroup :: extern fn(
+    handle: RenderBundleEncoder,
+    value group_label: StringView
+)
+render_bundle_encoder_push_debug_group :: fn(
+    handle: RenderBundleEncoder,
+    value group_label: StringView
+) {
     unsafe { wgpuRenderBundleEncoderPushDebugGroup(handle, group_label) }
 }
-wgpuRenderBundleEncoderSetVertexBuffer :: extern fn(handle: RenderBundleEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64)
-render_bundle_encoder_set_vertex_buffer :: fn(handle: RenderBundleEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64) {
+wgpuRenderBundleEncoderSetVertexBuffer :: extern fn(
+    handle: RenderBundleEncoder,
+    slot: u32,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+)
+render_bundle_encoder_set_vertex_buffer :: fn(
+    handle: RenderBundleEncoder,
+    slot: u32,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+) {
     unsafe { wgpuRenderBundleEncoderSetVertexBuffer(handle, slot, buffer, offset, size) }
 }
-wgpuRenderBundleEncoderSetIndexBuffer :: extern fn(handle: RenderBundleEncoder, buffer: Buffer, format: u32, offset: u64, size: u64)
-render_bundle_encoder_set_index_buffer :: fn(handle: RenderBundleEncoder, buffer: Buffer, format: u32, offset: u64, size: u64) {
+wgpuRenderBundleEncoderSetIndexBuffer :: extern fn(
+    handle: RenderBundleEncoder,
+    buffer: Buffer,
+    format: u32,
+    offset: u64,
+    size: u64
+)
+render_bundle_encoder_set_index_buffer :: fn(
+    handle: RenderBundleEncoder,
+    buffer: Buffer,
+    format: u32,
+    offset: u64,
+    size: u64
+) {
     unsafe { wgpuRenderBundleEncoderSetIndexBuffer(handle, buffer, format, offset, size) }
 }
-wgpuRenderBundleEncoderFinish :: extern fn(handle: RenderBundleEncoder, descriptor: ^RenderBundleDescriptor) -> RenderBundle
-render_bundle_encoder_finish :: fn(handle: RenderBundleEncoder, descriptor: ^RenderBundleDescriptor) -> RenderBundle {
+wgpuRenderBundleEncoderFinish :: extern fn(
+    handle: RenderBundleEncoder,
+    descriptor: ^RenderBundleDescriptor
+) -> RenderBundle
+render_bundle_encoder_finish :: fn(
+    handle: RenderBundleEncoder,
+    descriptor: ^RenderBundleDescriptor
+) -> RenderBundle {
     held := unsafe { wgpuRenderBundleEncoderFinish(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: render_bundle_encoder_finish answered with nothing\n") }
@@ -2096,80 +2668,246 @@ render_bundle_encoder_finish :: fn(handle: RenderBundleEncoder, descriptor: ^Ren
     }
     held
 }
-wgpuRenderBundleEncoderSetLabel :: extern fn(handle: RenderBundleEncoder, value label: StringView)
-render_bundle_encoder_set_label :: fn(handle: RenderBundleEncoder, value label: StringView) {
+wgpuRenderBundleEncoderSetLabel :: extern fn(
+    handle: RenderBundleEncoder,
+    value label: StringView
+)
+render_bundle_encoder_set_label :: fn(
+    handle: RenderBundleEncoder,
+    value label: StringView
+) {
     unsafe { wgpuRenderBundleEncoderSetLabel(handle, label) }
 }
-wgpuRenderPassEncoderSetPipeline :: extern fn(handle: RenderPassEncoder, pipeline: RenderPipeline)
-render_pass_encoder_set_pipeline :: fn(handle: RenderPassEncoder, pipeline: RenderPipeline) {
+wgpuRenderPassEncoderSetPipeline :: extern fn(
+    handle: RenderPassEncoder,
+    pipeline: RenderPipeline
+)
+render_pass_encoder_set_pipeline :: fn(
+    handle: RenderPassEncoder,
+    pipeline: RenderPipeline
+) {
     unsafe { wgpuRenderPassEncoderSetPipeline(handle, pipeline) }
 }
-wgpuRenderPassEncoderSetBindGroup :: extern fn(handle: RenderPassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8)
-render_pass_encoder_set_bind_group :: fn(handle: RenderPassEncoder, group_index: u32, group: BindGroup, dynamic_offsets_count: u64, dynamic_offsets: ^u8) {
+wgpuRenderPassEncoderSetBindGroup :: extern fn(
+    handle: RenderPassEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+)
+render_pass_encoder_set_bind_group :: fn(
+    handle: RenderPassEncoder,
+    group_index: u32,
+    group: BindGroup,
+    dynamic_offsets_count: u64,
+    dynamic_offsets: ^u8
+) {
     unsafe { wgpuRenderPassEncoderSetBindGroup(handle, group_index, group, dynamic_offsets_count, dynamic_offsets) }
 }
-wgpuRenderPassEncoderSetImmediates :: extern fn(handle: RenderPassEncoder, offset: u32, data: ^u8, size: u64)
-render_pass_encoder_set_immediates :: fn(handle: RenderPassEncoder, offset: u32, data: ^u8, size: u64) {
+wgpuRenderPassEncoderSetImmediates :: extern fn(
+    handle: RenderPassEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+)
+render_pass_encoder_set_immediates :: fn(
+    handle: RenderPassEncoder,
+    offset: u32,
+    data: ^u8,
+    size: u64
+) {
     unsafe { wgpuRenderPassEncoderSetImmediates(handle, offset, data, size) }
 }
-wgpuRenderPassEncoderDraw :: extern fn(handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
-render_pass_encoder_draw :: fn(handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+wgpuRenderPassEncoderDraw :: extern fn(
+    handle: RenderPassEncoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32
+)
+render_pass_encoder_draw :: fn(
+    handle: RenderPassEncoder,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32
+) {
     unsafe { wgpuRenderPassEncoderDraw(handle, vertex_count, instance_count, first_vertex, first_instance) }
 }
-wgpuRenderPassEncoderDrawIndexed :: extern fn(handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32)
-render_pass_encoder_draw_indexed :: fn(handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) {
+wgpuRenderPassEncoderDrawIndexed :: extern fn(
+    handle: RenderPassEncoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32
+)
+render_pass_encoder_draw_indexed :: fn(
+    handle: RenderPassEncoder,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32
+) {
     unsafe { wgpuRenderPassEncoderDrawIndexed(handle, index_count, instance_count, first_index, base_vertex, first_instance) }
 }
-wgpuRenderPassEncoderDrawIndirect :: extern fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
-render_pass_encoder_draw_indirect :: fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+wgpuRenderPassEncoderDrawIndirect :: extern fn(
+    handle: RenderPassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+)
+render_pass_encoder_draw_indirect :: fn(
+    handle: RenderPassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+) {
     unsafe { wgpuRenderPassEncoderDrawIndirect(handle, indirect_buffer, indirect_offset) }
 }
-wgpuRenderPassEncoderDrawIndexedIndirect :: extern fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64)
-render_pass_encoder_draw_indexed_indirect :: fn(handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) {
+wgpuRenderPassEncoderDrawIndexedIndirect :: extern fn(
+    handle: RenderPassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+)
+render_pass_encoder_draw_indexed_indirect :: fn(
+    handle: RenderPassEncoder,
+    indirect_buffer: Buffer,
+    indirect_offset: u64
+) {
     unsafe { wgpuRenderPassEncoderDrawIndexedIndirect(handle, indirect_buffer, indirect_offset) }
 }
-wgpuRenderPassEncoderExecuteBundles :: extern fn(handle: RenderPassEncoder, bundles_count: u64, bundles: ^RenderBundle)
-render_pass_encoder_execute_bundles :: fn(handle: RenderPassEncoder, bundles_count: u64, bundles: ^RenderBundle) {
+wgpuRenderPassEncoderExecuteBundles :: extern fn(
+    handle: RenderPassEncoder,
+    bundles_count: u64,
+    bundles: ^RenderBundle
+)
+render_pass_encoder_execute_bundles :: fn(
+    handle: RenderPassEncoder,
+    bundles_count: u64,
+    bundles: ^RenderBundle
+) {
     unsafe { wgpuRenderPassEncoderExecuteBundles(handle, bundles_count, bundles) }
 }
-wgpuRenderPassEncoderInsertDebugMarker :: extern fn(handle: RenderPassEncoder, value marker_label: StringView)
-render_pass_encoder_insert_debug_marker :: fn(handle: RenderPassEncoder, value marker_label: StringView) {
+wgpuRenderPassEncoderInsertDebugMarker :: extern fn(
+    handle: RenderPassEncoder,
+    value marker_label: StringView
+)
+render_pass_encoder_insert_debug_marker :: fn(
+    handle: RenderPassEncoder,
+    value marker_label: StringView
+) {
     unsafe { wgpuRenderPassEncoderInsertDebugMarker(handle, marker_label) }
 }
 wgpuRenderPassEncoderPopDebugGroup :: extern fn(handle: RenderPassEncoder)
 render_pass_encoder_pop_debug_group :: fn(handle: RenderPassEncoder) {
     unsafe { wgpuRenderPassEncoderPopDebugGroup(handle) }
 }
-wgpuRenderPassEncoderPushDebugGroup :: extern fn(handle: RenderPassEncoder, value group_label: StringView)
-render_pass_encoder_push_debug_group :: fn(handle: RenderPassEncoder, value group_label: StringView) {
+wgpuRenderPassEncoderPushDebugGroup :: extern fn(
+    handle: RenderPassEncoder,
+    value group_label: StringView
+)
+render_pass_encoder_push_debug_group :: fn(
+    handle: RenderPassEncoder,
+    value group_label: StringView
+) {
     unsafe { wgpuRenderPassEncoderPushDebugGroup(handle, group_label) }
 }
-wgpuRenderPassEncoderSetStencilReference :: extern fn(handle: RenderPassEncoder, reference: u32)
-render_pass_encoder_set_stencil_reference :: fn(handle: RenderPassEncoder, reference: u32) {
+wgpuRenderPassEncoderSetStencilReference :: extern fn(
+    handle: RenderPassEncoder,
+    reference: u32
+)
+render_pass_encoder_set_stencil_reference :: fn(
+    handle: RenderPassEncoder,
+    reference: u32
+) {
     unsafe { wgpuRenderPassEncoderSetStencilReference(handle, reference) }
 }
-wgpuRenderPassEncoderSetBlendConstant :: extern fn(handle: RenderPassEncoder, color: ^Color)
-render_pass_encoder_set_blend_constant :: fn(handle: RenderPassEncoder, color: ^Color) {
+wgpuRenderPassEncoderSetBlendConstant :: extern fn(
+    handle: RenderPassEncoder,
+    color: ^Color
+)
+render_pass_encoder_set_blend_constant :: fn(
+    handle: RenderPassEncoder,
+    color: ^Color
+) {
     unsafe { wgpuRenderPassEncoderSetBlendConstant(handle, color) }
 }
-wgpuRenderPassEncoderSetViewport :: extern fn(handle: RenderPassEncoder, x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32)
-render_pass_encoder_set_viewport :: fn(handle: RenderPassEncoder, x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32) {
+wgpuRenderPassEncoderSetViewport :: extern fn(
+    handle: RenderPassEncoder,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    min_depth: f32,
+    max_depth: f32
+)
+render_pass_encoder_set_viewport :: fn(
+    handle: RenderPassEncoder,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    min_depth: f32,
+    max_depth: f32
+) {
     unsafe { wgpuRenderPassEncoderSetViewport(handle, x, y, width, height, min_depth, max_depth) }
 }
-wgpuRenderPassEncoderSetScissorRect :: extern fn(handle: RenderPassEncoder, x: u32, y: u32, width: u32, height: u32)
-render_pass_encoder_set_scissor_rect :: fn(handle: RenderPassEncoder, x: u32, y: u32, width: u32, height: u32) {
+wgpuRenderPassEncoderSetScissorRect :: extern fn(
+    handle: RenderPassEncoder,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32
+)
+render_pass_encoder_set_scissor_rect :: fn(
+    handle: RenderPassEncoder,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32
+) {
     unsafe { wgpuRenderPassEncoderSetScissorRect(handle, x, y, width, height) }
 }
-wgpuRenderPassEncoderSetVertexBuffer :: extern fn(handle: RenderPassEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64)
-render_pass_encoder_set_vertex_buffer :: fn(handle: RenderPassEncoder, slot: u32, buffer: Buffer, offset: u64, size: u64) {
+wgpuRenderPassEncoderSetVertexBuffer :: extern fn(
+    handle: RenderPassEncoder,
+    slot: u32,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+)
+render_pass_encoder_set_vertex_buffer :: fn(
+    handle: RenderPassEncoder,
+    slot: u32,
+    buffer: Buffer,
+    offset: u64,
+    size: u64
+) {
     unsafe { wgpuRenderPassEncoderSetVertexBuffer(handle, slot, buffer, offset, size) }
 }
-wgpuRenderPassEncoderSetIndexBuffer :: extern fn(handle: RenderPassEncoder, buffer: Buffer, format: u32, offset: u64, size: u64)
-render_pass_encoder_set_index_buffer :: fn(handle: RenderPassEncoder, buffer: Buffer, format: u32, offset: u64, size: u64) {
+wgpuRenderPassEncoderSetIndexBuffer :: extern fn(
+    handle: RenderPassEncoder,
+    buffer: Buffer,
+    format: u32,
+    offset: u64,
+    size: u64
+)
+render_pass_encoder_set_index_buffer :: fn(
+    handle: RenderPassEncoder,
+    buffer: Buffer,
+    format: u32,
+    offset: u64,
+    size: u64
+) {
     unsafe { wgpuRenderPassEncoderSetIndexBuffer(handle, buffer, format, offset, size) }
 }
-wgpuRenderPassEncoderBeginOcclusionQuery :: extern fn(handle: RenderPassEncoder, query_index: u32)
-render_pass_encoder_begin_occlusion_query :: fn(handle: RenderPassEncoder, query_index: u32) {
+wgpuRenderPassEncoderBeginOcclusionQuery :: extern fn(
+    handle: RenderPassEncoder,
+    query_index: u32
+)
+render_pass_encoder_begin_occlusion_query :: fn(
+    handle: RenderPassEncoder,
+    query_index: u32
+) {
     unsafe { wgpuRenderPassEncoderBeginOcclusionQuery(handle, query_index) }
 }
 wgpuRenderPassEncoderEndOcclusionQuery :: extern fn(handle: RenderPassEncoder)
@@ -2180,12 +2918,24 @@ wgpuRenderPassEncoderEnd :: extern fn(handle: RenderPassEncoder)
 render_pass_encoder_end :: fn(handle: RenderPassEncoder) {
     unsafe { wgpuRenderPassEncoderEnd(handle) }
 }
-wgpuRenderPassEncoderSetLabel :: extern fn(handle: RenderPassEncoder, value label: StringView)
-render_pass_encoder_set_label :: fn(handle: RenderPassEncoder, value label: StringView) {
+wgpuRenderPassEncoderSetLabel :: extern fn(
+    handle: RenderPassEncoder,
+    value label: StringView
+)
+render_pass_encoder_set_label :: fn(
+    handle: RenderPassEncoder,
+    value label: StringView
+) {
     unsafe { wgpuRenderPassEncoderSetLabel(handle, label) }
 }
-wgpuRenderPipelineGetBindGroupLayout :: extern fn(handle: RenderPipeline, group_index: u32) -> BindGroupLayout
-render_pipeline_get_bind_group_layout :: fn(handle: RenderPipeline, group_index: u32) -> BindGroupLayout {
+wgpuRenderPipelineGetBindGroupLayout :: extern fn(
+    handle: RenderPipeline,
+    group_index: u32
+) -> BindGroupLayout
+render_pipeline_get_bind_group_layout :: fn(
+    handle: RenderPipeline,
+    group_index: u32
+) -> BindGroupLayout {
     held := unsafe { wgpuRenderPipelineGetBindGroupLayout(handle, group_index) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: render_pipeline_get_bind_group_layout answered with nothing\n") }
@@ -2193,32 +2943,64 @@ render_pipeline_get_bind_group_layout :: fn(handle: RenderPipeline, group_index:
     }
     held
 }
-wgpuRenderPipelineSetLabel :: extern fn(handle: RenderPipeline, value label: StringView)
-render_pipeline_set_label :: fn(handle: RenderPipeline, value label: StringView) {
+wgpuRenderPipelineSetLabel :: extern fn(
+    handle: RenderPipeline,
+    value label: StringView
+)
+render_pipeline_set_label :: fn(
+    handle: RenderPipeline,
+    value label: StringView
+) {
     unsafe { wgpuRenderPipelineSetLabel(handle, label) }
 }
 wgpuSamplerSetLabel :: extern fn(handle: Sampler, value label: StringView)
 sampler_set_label :: fn(handle: Sampler, value label: StringView) {
     unsafe { wgpuSamplerSetLabel(handle, label) }
 }
-wgpuShaderModuleGetCompilationInfo :: extern fn(handle: ShaderModule, callback_info: ^u8)
-shader_module_get_compilation_info :: fn(handle: ShaderModule, callback_info: ^u8) {
+wgpuShaderModuleGetCompilationInfo :: extern fn(
+    handle: ShaderModule,
+    callback_info: ^u8
+)
+shader_module_get_compilation_info :: fn(
+    handle: ShaderModule,
+    callback_info: ^u8
+) {
     unsafe { wgpuShaderModuleGetCompilationInfo(handle, callback_info) }
 }
-wgpuShaderModuleSetLabel :: extern fn(handle: ShaderModule, value label: StringView)
+wgpuShaderModuleSetLabel :: extern fn(
+    handle: ShaderModule,
+    value label: StringView
+)
 shader_module_set_label :: fn(handle: ShaderModule, value label: StringView) {
     unsafe { wgpuShaderModuleSetLabel(handle, label) }
 }
-wgpuSurfaceConfigure :: extern fn(handle: Surface, config: ^SurfaceConfiguration)
+wgpuSurfaceConfigure :: extern fn(
+    handle: Surface,
+    config: ^SurfaceConfiguration
+)
 surface_configure :: fn(handle: Surface, config: ^SurfaceConfiguration) {
     unsafe { wgpuSurfaceConfigure(handle, config) }
 }
-wgpuSurfaceGetCapabilities :: extern fn(handle: Surface, adapter: Adapter, capabilities: ^SurfaceCapabilities) -> u32
-surface_get_capabilities :: fn(handle: Surface, adapter: Adapter, capabilities: ^SurfaceCapabilities) -> u32 {
+wgpuSurfaceGetCapabilities :: extern fn(
+    handle: Surface,
+    adapter: Adapter,
+    capabilities: ^SurfaceCapabilities
+) -> u32
+surface_get_capabilities :: fn(
+    handle: Surface,
+    adapter: Adapter,
+    capabilities: ^SurfaceCapabilities
+) -> u32 {
     unsafe { wgpuSurfaceGetCapabilities(handle, adapter, capabilities) }
 }
-wgpuSurfaceGetCurrentTexture :: extern fn(handle: Surface, surface_texture: ^SurfaceTexture)
-surface_get_current_texture :: fn(handle: Surface, surface_texture: ^SurfaceTexture) {
+wgpuSurfaceGetCurrentTexture :: extern fn(
+    handle: Surface,
+    surface_texture: ^SurfaceTexture
+)
+surface_get_current_texture :: fn(
+    handle: Surface,
+    surface_texture: ^SurfaceTexture
+) {
     unsafe { wgpuSurfaceGetCurrentTexture(handle, surface_texture) }
 }
 wgpuSurfacePresent :: extern fn(handle: Surface) -> u32
@@ -2233,8 +3015,14 @@ wgpuSurfaceSetLabel :: extern fn(handle: Surface, value label: StringView)
 surface_set_label :: fn(handle: Surface, value label: StringView) {
     unsafe { wgpuSurfaceSetLabel(handle, label) }
 }
-wgpuTextureCreateView :: extern fn(handle: Texture, descriptor: ^TextureViewDescriptor) -> TextureView
-texture_create_view :: fn(handle: Texture, descriptor: ^TextureViewDescriptor) -> TextureView {
+wgpuTextureCreateView :: extern fn(
+    handle: Texture,
+    descriptor: ^TextureViewDescriptor
+) -> TextureView
+texture_create_view :: fn(
+    handle: Texture,
+    descriptor: ^TextureViewDescriptor
+) -> TextureView {
     held := unsafe { wgpuTextureCreateView(handle, descriptor) }
     if (held == null_handle()) {
         unsafe { frost_rt_error("wgpu: texture_create_view answered with nothing\n") }
@@ -2286,7 +3074,10 @@ wgpuTextureDestroy :: extern fn(handle: Texture)
 texture_destroy :: fn(handle: Texture) {
     unsafe { wgpuTextureDestroy(handle) }
 }
-wgpuTextureViewSetLabel :: extern fn(handle: TextureView, value label: StringView)
+wgpuTextureViewSetLabel :: extern fn(
+    handle: TextureView,
+    value label: StringView
+)
 texture_view_set_label :: fn(handle: TextureView, value label: StringView) {
     unsafe { wgpuTextureViewSetLabel(handle, label) }
 }
@@ -2310,10 +3101,22 @@ adapter_info_init :: fn() -> AdapterInfo {
     zero := 0
     AdapterInfo {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        vendor = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
-        architecture = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
-        device = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
-        description = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        vendor = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
+        architecture = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
+        device = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
+        description = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         backend_type = 0,
         adapter_type = 0,
         vendor_ID = 0,
@@ -2327,7 +3130,10 @@ bind_group_descriptor_init :: fn() -> BindGroupDescriptor {
     zero := 0
     BindGroupDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         layout = unsafe { ptr_cast($u8, zero) },
         entries_count = 0,
         entries = unsafe { ptr_cast($u8, zero) },
@@ -2351,7 +3157,10 @@ bind_group_layout_descriptor_init :: fn() -> BindGroupLayoutDescriptor {
     zero := 0
     BindGroupLayoutDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         entries_count = 0,
         entries = unsafe { ptr_cast($u8, zero) },
     }
@@ -2373,11 +3182,7 @@ bind_group_layout_entry_init :: fn() -> BindGroupLayoutEntry {
 
 blend_component_init :: fn() -> BlendComponent {
     zero := 0
-    BlendComponent {
-        operation = 0,
-        src_factor = 0,
-        dst_factor = 0,
-    }
+    BlendComponent { operation = 0, src_factor = 0, dst_factor = 0, }
 }
 
 blend_state_init :: fn() -> BlendState {
@@ -2402,7 +3207,10 @@ buffer_descriptor_init :: fn() -> BufferDescriptor {
     zero := 0
     BufferDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         usage = BufferUsage::None,
         size = 0,
         mapped_at_creation = 0,
@@ -2411,12 +3219,7 @@ buffer_descriptor_init :: fn() -> BufferDescriptor {
 
 color_init :: fn() -> Color {
     zero := 0
-    Color {
-        r = 0.0,
-        g = 0.0,
-        b = 0.0,
-        a = 0.0,
-    }
+    Color { r = 0.0, g = 0.0, b = 0.0, a = 0.0, }
 }
 
 color_target_state_init :: fn() -> ColorTargetState {
@@ -2433,7 +3236,10 @@ command_buffer_descriptor_init :: fn() -> CommandBufferDescriptor {
     zero := 0
     CommandBufferDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -2441,7 +3247,10 @@ command_encoder_descriptor_init :: fn() -> CommandEncoderDescriptor {
     zero := 0
     CommandEncoderDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -2467,7 +3276,10 @@ compilation_info_init :: fn() -> CompilationInfo {
 compilation_message_init :: fn() -> CompilationMessage {
     zero := 0
     CompilationMessage {
-        message = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        message = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         type = 0,
         line_num = 0,
         line_pos = 0,
@@ -2480,7 +3292,10 @@ compute_pass_descriptor_init :: fn() -> ComputePassDescriptor {
     zero := 0
     ComputePassDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         timestamp_writes = unsafe { ptr_cast($u8, zero) },
     }
 }
@@ -2489,7 +3304,10 @@ compute_pipeline_descriptor_init :: fn() -> ComputePipelineDescriptor {
     zero := 0
     ComputePipelineDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         layout = unsafe { ptr_cast($u8, zero) },
         compute = compute_state_init(),
     }
@@ -2500,7 +3318,10 @@ compute_state_init :: fn() -> ComputeState {
     ComputeState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         module = unsafe { ptr_cast($u8, zero) },
-        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        entry_point = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         constants_count = 0,
         constants = unsafe { ptr_cast($u8, zero) },
     }
@@ -2536,7 +3357,10 @@ device_descriptor_init :: fn() -> DeviceDescriptor {
     zero := 0
     DeviceDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         required_features_count = 0,
         required_features = unsafe { ptr_cast($u8, zero) },
         required_limits = unsafe { ptr_cast($u8, zero) },
@@ -2548,11 +3372,7 @@ device_descriptor_init :: fn() -> DeviceDescriptor {
 
 extent_3D_init :: fn() -> Extent3D {
     zero := 0
-    Extent3D {
-        width = 0,
-        height = 1,
-        depth_or_array_layers = 1,
-    }
+    Extent3D { width = 0, height = 1, depth_or_array_layers = 1, }
 }
 
 external_texture_binding_entry_init :: fn() -> ExternalTextureBindingEntry {
@@ -2575,7 +3395,10 @@ fragment_state_init :: fn() -> FragmentState {
     FragmentState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         module = unsafe { ptr_cast($u8, zero) },
-        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        entry_point = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         constants_count = 0,
         constants = unsafe { ptr_cast($u8, zero) },
         targets_count = 0,
@@ -2592,10 +3415,7 @@ future_init :: fn() -> Future {
 
 future_wait_info_init :: fn() -> FutureWaitInfo {
     zero := 0
-    FutureWaitInfo {
-        future = future_init(),
-        completed = 0,
-    }
+    FutureWaitInfo { future = future_init(), completed = 0, }
 }
 
 instance_descriptor_init :: fn() -> InstanceDescriptor {
@@ -2667,11 +3487,7 @@ multisample_state_init :: fn() -> MultisampleState {
 
 origin_3D_init :: fn() -> Origin3D {
     zero := 0
-    Origin3D {
-        x = 0,
-        y = 0,
-        z = 0,
-    }
+    Origin3D { x = 0, y = 0, z = 0, }
 }
 
 pass_timestamp_writes_init :: fn() -> PassTimestampWrites {
@@ -2688,7 +3504,10 @@ pipeline_layout_descriptor_init :: fn() -> PipelineLayoutDescriptor {
     zero := 0
     PipelineLayoutDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         bind_group_layouts_count = 0,
         bind_group_layouts = unsafe { ptr_cast($u8, zero) },
         immediate_size = 0,
@@ -2711,7 +3530,10 @@ query_set_descriptor_init :: fn() -> QuerySetDescriptor {
     zero := 0
     QuerySetDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         type = 0,
         count = 0,
     }
@@ -2721,7 +3543,10 @@ queue_descriptor_init :: fn() -> QueueDescriptor {
     zero := 0
     QueueDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -2729,7 +3554,10 @@ render_bundle_descriptor_init :: fn() -> RenderBundleDescriptor {
     zero := 0
     RenderBundleDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -2737,7 +3565,10 @@ render_bundle_encoder_descriptor_init :: fn() -> RenderBundleEncoderDescriptor {
     zero := 0
     RenderBundleEncoderDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         color_formats_count = 0,
         color_formats = unsafe { ptr_cast($u8, zero) },
         depth_stencil_format = 0,
@@ -2780,7 +3611,10 @@ render_pass_descriptor_init :: fn() -> RenderPassDescriptor {
     zero := 0
     RenderPassDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         color_attachments_count = 0,
         color_attachments = unsafe { ptr_cast($u8, zero) },
         depth_stencil_attachment = unsafe { ptr_cast($u8, zero) },
@@ -2801,7 +3635,10 @@ render_pipeline_descriptor_init :: fn() -> RenderPipelineDescriptor {
     zero := 0
     RenderPipelineDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         layout = unsafe { ptr_cast($u8, zero) },
         vertex = vertex_state_init(),
         primitive = primitive_state_init(),
@@ -2843,7 +3680,10 @@ sampler_descriptor_init :: fn() -> SamplerDescriptor {
     zero := 0
     SamplerDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         address_mode_u = 0,
         address_mode_v = 0,
         address_mode_w = 0,
@@ -2861,7 +3701,10 @@ shader_module_descriptor_init :: fn() -> ShaderModuleDescriptor {
     zero := 0
     ShaderModuleDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -2969,7 +3812,10 @@ surface_descriptor_init :: fn() -> SurfaceDescriptor {
     zero := 0
     SurfaceDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
     }
 }
 
@@ -3081,12 +3927,7 @@ texture_binding_view_dimension_init :: fn() -> TextureBindingViewDimension {
 
 texture_component_swizzle_init :: fn() -> TextureComponentSwizzle {
     zero := 0
-    TextureComponentSwizzle {
-        r = 0,
-        g = 0,
-        b = 0,
-        a = 0,
-    }
+    TextureComponentSwizzle { r = 0, g = 0, b = 0, a = 0, }
 }
 
 texture_component_swizzle_descriptor_init :: fn() -> TextureComponentSwizzleDescriptor {
@@ -3101,7 +3942,10 @@ texture_descriptor_init :: fn() -> TextureDescriptor {
     zero := 0
     TextureDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         usage = TextureUsage::None,
         dimension = 0,
         size = extent_3D_init(),
@@ -3117,7 +3961,10 @@ texture_view_descriptor_init :: fn() -> TextureViewDescriptor {
     zero := 0
     TextureViewDescriptor {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        label = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        label = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         format = 0,
         dimension = 0,
         base_mip_level = 0,
@@ -3155,7 +4002,10 @@ vertex_state_init :: fn() -> VertexState {
     VertexState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         module = unsafe { ptr_cast($u8, zero) },
-        entry_point = StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 },
+        entry_point = StringView {
+            data = unsafe { ptr_cast($i8, zero) },
+            length = 0
+        },
         constants_count = 0,
         constants = unsafe { ptr_cast($u8, zero) },
         buffers_count = 0,

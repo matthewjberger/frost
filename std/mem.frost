@@ -68,9 +68,13 @@ heap_grow :: fn($T: Type, move block: ^T, count: i64) -> ^T {
         room = 1
     }
     unsafe {
-        ptr_cast($T,
-            frost_rt_heap_realloc(ptr_cast($u8, block),
-                frost_rt_check_size(room, sizeof(T))))
+        ptr_cast(
+            $T,
+            frost_rt_heap_realloc(
+                ptr_cast($u8, block),
+                frost_rt_check_size(room, sizeof(T))
+            )
+        )
     }
 }
 
@@ -81,9 +85,13 @@ heap_grow_slice :: fn($T: Type, move held: []T, count: i64) -> []T {
         room = 1
     }
     grown := unsafe {
-        ptr_cast($T,
-            frost_rt_heap_realloc(ptr_cast($u8, ptr_to(held[0])),
-                frost_rt_check_size(room, sizeof(T))))
+        ptr_cast(
+            $T,
+            frost_rt_heap_realloc(
+                ptr_cast($u8, ptr_to(held[0])),
+                frost_rt_check_size(room, sizeof(T))
+            )
+        )
     }
     unsafe { slice_from($T, grown, room) }
 }

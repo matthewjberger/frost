@@ -107,8 +107,13 @@ synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
 // Two source names joined by an underscore, for a field that belongs to one
 // variant of an enum: `Enemy` and `damage` become `Enemy_damage`. Two variants
 // may each carry a `damage` and they stay apart.
-synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
-    second_len: i64) -> i64 {
+synth_join :: fn(
+    mut p: Parser,
+    first_off: i64,
+    first_len: i64,
+    second_off: i64,
+    second_len: i64
+) -> i64 {
     synth_room_for(p, first_len + second_len + 2)
     start := p.synth_next
     var k: i64 = 0
@@ -148,8 +153,13 @@ synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 
 // The same comparison across two buffers, for a name kept somewhere other than
 // the source it was read from.
-bytes_equal_across :: fn(first: str, first_off: i64, second: str,
-    second_off: i64, length: i64) -> bool {
+bytes_equal_across :: fn(
+    first: str,
+    first_off: i64,
+    second: str,
+    second_off: i64,
+    length: i64
+) -> bool {
     var k: i64 = 0
     while (k < length) {
         if (first[first_off + k]
@@ -233,9 +243,19 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     }
     arena_push(
         p.fns,
-        Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
-            is_inline = 0, keeps_name = 0, ret_type = TY_I64,
-            params = -1, defined = 0, cap_start = 0, cap_count = 0 },
+        Sym {
+            off = offset,
+            len = length,
+            is_extern = 0,
+            is_safe = 0,
+            is_inline = 0,
+            keeps_name = 0,
+            ret_type = TY_I64,
+            params = -1,
+            defined = 0,
+            cap_start = 0,
+            cap_count = 0
+        },
     )
 }
 
@@ -331,31 +351,57 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
     head
 }
 
-record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
-    tparam_len: i64, tparam_is_value: i64, tparam_is_fn: i64,
-    tparam_is_slot: i64, xparam_start: i64, xparam_count: i64,
+record_generic_fn :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    tparam_off: i64,
+    tparam_len: i64,
+    tparam_is_value: i64,
+    tparam_is_fn: i64,
+    tparam_is_slot: i64,
+    xparam_start: i64,
+    xparam_count: i64,
     token_start: i64,
-    bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64,
-    pack_format: i64, format_off: i64, format_len: i64) {
+    bound_token: i64,
+    pack_off: i64,
+    pack_len: i64,
+    pack_fixed: i64,
+    pack_format: i64,
+    format_off: i64,
+    format_len: i64
+) {
     arena_push(
         p.generic_fns,
-        GenericFn { fn_index = fn_index, tparam_off = tparam_off,
-            tparam_len = tparam_len, tparam_is_value = tparam_is_value,
-            tparam_is_fn = tparam_is_fn, tparam_is_slot = tparam_is_slot,
+        GenericFn {
+            fn_index = fn_index,
+            tparam_off = tparam_off,
+            tparam_len = tparam_len,
+            tparam_is_value = tparam_is_value,
+            tparam_is_fn = tparam_is_fn,
+            tparam_is_slot = tparam_is_slot,
             xparam_start = xparam_start,
-            xparam_count = xparam_count, token_start = token_start,
-            bound_token = bound_token, pack_off = pack_off,
-            pack_len = pack_len, pack_fixed = pack_fixed,
-            pack_format = pack_format, format_off = format_off,
-            format_len = format_len },
+            xparam_count = xparam_count,
+            token_start = token_start,
+            bound_token = bound_token,
+            pack_off = pack_off,
+            pack_len = pack_len,
+            pack_fixed = pack_fixed,
+            pack_format = pack_format,
+            format_off = format_off,
+            format_len = format_len
+        },
     )
 }
 
 // The name a compile-time list's nth element takes: the list's own name, two
 // underscores and the position. It is a name the body can be read against and a
 // parameter the call fills once.
-pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
-    index: i64) -> (start: i64, length: i64) {
+pack_element_name :: fn(
+    mut p: Parser,
+    off: i64,
+    len: i64,
+    index: i64
+) -> (start: i64, length: i64) {
     start := p.synth_next
     var k: i64 = 0
     while (k < len) {
@@ -388,18 +434,33 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
 
 // Bind one name to another while a body is read again, and answer the height to
 // restore afterwards.
-push_alias :: fn(mut p: Parser, from_off: i64, from_len: i64, to_off: i64,
-    to_len: i64) -> i64 {
+push_alias :: fn(
+    mut p: Parser,
+    from_off: i64,
+    from_len: i64,
+    to_off: i64,
+    to_len: i64
+) -> i64 {
     mark := p.aliases.count
-    arena_push(p.aliases, Alias { from_off = from_off, from_len = from_len,
-            to_off = to_off, to_len = to_len })
+    arena_push(
+        p.aliases,
+        Alias {
+            from_off = from_off,
+            from_len = from_len,
+            to_off = to_off,
+            to_len = to_len
+        }
+    )
     mark
 }
 
 // The name in force for a name being read, following the aliases a compile-time
 // `for` put there. The most recent wins, so a nested loop shadows an outer one.
-alias_for :: fn(mut p: Parser, off: i64, len: i64) -> (start: i64,
-    length: i64) {
+alias_for :: fn(
+    mut p: Parser,
+    off: i64,
+    len: i64
+) -> (start: i64, length: i64) {
     var i: i64 = p.aliases.count
     while (i > 0) {
         i = i - 1
@@ -417,8 +478,13 @@ alias_for :: fn(mut p: Parser, off: i64, len: i64) -> (start: i64,
 register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
     arena_push(
         p.consts,
-        ConstDef { name_off = offset, name_len = length, value = value,
-            kind = CONST_INT, count = 0 },
+        ConstDef {
+            name_off = offset,
+            name_len = length,
+            value = value,
+            kind = CONST_INT,
+            count = 0
+        },
     )
 }
 
@@ -539,8 +605,13 @@ name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
     while (i < p.exports.count) {
         entry := arena_at(p.exports, i)
         if (entry.module == owner && entry.len == decl_len
-            && bytes_equal_across(p.export_names, entry.off, p.src, decl_off,
-                decl_len)) {
+            && bytes_equal_across(
+                p.export_names,
+                entry.off,
+                p.src,
+                decl_off,
+                decl_len
+            )) {
             return true
         }
         i = i + 1
@@ -679,11 +750,25 @@ is_main_name :: fn(src: str, offset: i64, length: i64) -> bool {
 // The `_at` forms take the offset instead, and a parser that builds a node out
 // of children captures it before reading them. The plain forms stay for the
 // nodes with no children, where now and the start are the same place.
-new_node_at :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64,
-    at: i64) -> i64 {
+new_node_at :: fn(
+    mut p: Parser,
+    kind: NodeKind,
+    a: i64,
+    b: i64,
+    val: i64,
+    at: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = a, b = b, c = 0, val = val, next = -1, pos = at },
+        Node {
+            kind = kind,
+            a = a,
+            b = b,
+            c = 0,
+            val = val,
+            next = -1,
+            pos = at
+        },
     )
 }
 
@@ -695,17 +780,35 @@ new_node :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64) -> i64 {
 // A node that names a local by its source byte range: `val` is the offset and
 // `c` is the length, so code generation re-emits the identifier text directly.
 // This is what lets locals become named C variables instead of `v[]` slots.
-new_named_node_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
-    offset: i64, length: i64, at: i64) -> i64 {
+new_named_node_at :: fn(
+    mut p: Parser,
+    kind: NodeKind,
+    child: i64,
+    offset: i64,
+    length: i64,
+    at: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = child, b = 0, c = length, val = offset,
-            next = -1, pos = at },
+        Node {
+            kind = kind,
+            a = child,
+            b = 0,
+            c = length,
+            val = offset,
+            next = -1,
+            pos = at
+        },
     )
 }
 
-new_named_node :: fn(mut p: Parser, kind: NodeKind, child: i64, offset: i64,
-    length: i64) -> i64 {
+new_named_node :: fn(
+    mut p: Parser,
+    kind: NodeKind,
+    child: i64,
+    offset: i64,
+    length: i64
+) -> i64 {
     held := cur_off(p)
     new_named_node_at(p, kind, child, offset, length, held)
 }
@@ -713,8 +816,13 @@ new_named_node :: fn(mut p: Parser, kind: NodeKind, child: i64, offset: i64,
 // A local binding. `b` carries the annotated type, or -1 to infer the type from
 // the initializer. An annotation wins where the initializer alone does not pin
 // the type down, as a value read back at a narrower type than it was stored.
-new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
-    annotation: i64) -> i64 {
+new_let_node :: fn(
+    mut p: Parser,
+    value: i64,
+    offset: i64,
+    length: i64,
+    annotation: i64
+) -> i64 {
     arena_push(
         p.arena,
     // The name it binds, which is where the binding is. The cursor is past
@@ -724,8 +832,13 @@ new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
     )
 }
 
-new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
-    is_main: i64) -> i64 {
+new_func_node :: fn(
+    mut p: Parser,
+    body: i64,
+    params: i64,
+    fn_index: i64,
+    is_main: i64
+) -> i64 {
     arena_push(
         p.arena,
         Node {
@@ -747,11 +860,23 @@ set_next :: fn(mut p: Parser, id: i64, next_id: i64) {
 
 // A field access `base.name`: `a` is the base expression, `val`/`c` the field
 // name's byte range.
-new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 {
+new_field_node :: fn(
+    mut p: Parser,
+    base: i64,
+    offset: i64,
+    length: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::Field, a = base, b = 0, c = length, val = offset,
-            next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::Field,
+            a = base,
+            b = 0,
+            c = length,
+            val = offset,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
@@ -760,18 +885,37 @@ new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 
 new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::StructLit, a = inits, b = 0, c = 0,
-            val = struct_index, next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::StructLit,
+            a = inits,
+            b = 0,
+            c = 0,
+            val = struct_index,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
 // One `name = value` inside a struct literal: `a` is the value, `val`/`c` the
 // field name's byte range, `next` the following initializer.
-new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64 {
+new_field_init :: fn(
+    mut p: Parser,
+    value: i64,
+    offset: i64,
+    length: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::FieldInit, a = value, b = 0, c = length,
-            val = offset, next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::FieldInit,
+            a = value,
+            b = 0,
+            c = length,
+            val = offset,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
@@ -830,8 +974,10 @@ flag_bit_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
 }
 
 record_flag_bit :: fn(mut p: Parser, ty: i64, off: i64, len: i64, value: i64) {
-    arena_push(p.flag_bits,
-        FlagBit { ty = ty, name_off = off, name_len = len, value = value })
+    arena_push(
+        p.flag_bits,
+        FlagBit { ty = ty, name_off = off, name_len = len, value = value }
+    )
 }
 
 // The identity half: which declaration this is. Two distinct types over the
@@ -1240,8 +1386,10 @@ indirect_of :: fn(mut p: Parser, target: i64, borrow: i64) -> i64 {
         }
         i = i + 1
     }
-    made := arena_push(p.indirects,
-        Indirect { target = target, borrow = borrow })
+    made := arena_push(
+        p.indirects,
+        Indirect { target = target, borrow = borrow }
+    )
     INDIRECT_BASE + made * 2 + borrow
 }
 
@@ -1262,14 +1410,24 @@ proc_of :: fn(mut p: Parser, ret: i64, param_start: i64, param_count: i64)
     while (i < p.procs.count) {
         entry := arena_at(p.procs, i)
         if (entry.ret == ret && entry.param_count == param_count
-            && gargs_run_equal(p, entry.param_start, param_start, param_count)) {
+            && gargs_run_equal(
+                p,
+                entry.param_start,
+                param_start,
+                param_count
+            )) {
             return PROC_BASE + i
         }
         i = i + 1
     }
-    PROC_BASE + arena_push(p.procs,
-        ProcSig { ret = ret, param_start = param_start,
-            param_count = param_count })
+    PROC_BASE + arena_push(
+        p.procs,
+        ProcSig {
+            ret = ret,
+            param_start = param_start,
+            param_count = param_count
+        }
+    )
 }
 
 proc_index_of :: fn(ty: i64) -> i64 {
@@ -1410,8 +1568,10 @@ array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    ARRAY_BASE + arena_push(p.arrays,
-        ArrayDef { element = element, length = length, emitted = 0 })
+    ARRAY_BASE + arena_push(
+        p.arrays,
+        ArrayDef { element = element, length = length, emitted = 0 }
+    )
 }
 
 struct_index_of :: fn(ty: i64) -> i64 {
@@ -1502,7 +1662,11 @@ is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
 
 // Every field of the element struct `element` has a matching `[N]field` column
 // array in `candidate`, so `candidate` is the columns container for `element`.
-columns_fields_match :: fn(mut p: Parser, candidate: i64, element: i64) -> bool {
+columns_fields_match :: fn(
+    mut p: Parser,
+    candidate: i64,
+    element: i64
+) -> bool {
     if (is_struct_ty(element) == false) {
         return false
     }
@@ -1647,7 +1811,12 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 // True when two argument runs in the `gargs` arena hold the same values.
-gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool {
+gargs_equal :: fn(
+    mut p: Parser,
+    a_start: i64,
+    b_start: i64,
+    count: i64
+) -> bool {
     var i: i64 = 0
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
@@ -1667,7 +1836,12 @@ gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool
 // same as one that does. Once both are settled the wait is gone from each and
 // this is `gargs_equal` again, which is what lets two that settled alike
 // collapse into one instance.
-gargs_alike :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool {
+gargs_alike :: fn(
+    mut p: Parser,
+    a_start: i64,
+    b_start: i64,
+    count: i64
+) -> bool {
     var i: i64 = 0
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
@@ -1822,11 +1996,18 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 // A unary node wrapping a single child expression (deref, address-of).
-new_unary_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
-    at: i64) -> i64 {
+new_unary_at :: fn(mut p: Parser, kind: NodeKind, child: i64, at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = -1, pos = at },
+        Node {
+            kind = kind,
+            a = child,
+            b = 0,
+            c = 0,
+            val = 0,
+            next = -1,
+            pos = at
+        },
     )
 }
 
@@ -1842,8 +2023,15 @@ new_unary :: fn(mut p: Parser, kind: NodeKind, child: i64) -> i64 {
 new_index :: fn(mut p: Parser, base: i64, index: i64, at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::Index, a = base, b = index, c = 0, val = 0,
-            next = -1, pos = at },
+        Node {
+            kind = NodeKind::Index,
+            a = base,
+            b = index,
+            c = 0,
+            val = 0,
+            next = -1,
+            pos = at
+        },
     )
 }
 
@@ -1852,30 +2040,62 @@ new_index :: fn(mut p: Parser, base: i64, index: i64, at: i64) -> i64 {
 new_type_node :: fn(mut p: Parser, kind: NodeKind, expr: i64, ty: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = -1, pos = cur_off(p) },
+        Node {
+            kind = kind,
+            a = expr,
+            b = 0,
+            c = 0,
+            val = ty,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
 // One arm of a match: `a` is the body statement, `val` the integer pattern, and
 // `c` a flag marking the `_` default arm. `b` is the list of patterns the arm
 // names, and -1 where it names none, which is the `_` arm.
-new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64,
-    alts: i64) -> i64 {
+new_case :: fn(
+    mut p: Parser,
+    body: i64,
+    value: i64,
+    is_default: i64,
+    alts: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::Case, a = body, b = alts, c = is_default,
-            val = value, next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::Case,
+            a = body,
+            b = alts,
+            c = is_default,
+            val = value,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 
 // One of the patterns a `case` names: the span `low` to `high` under the
 // spelling `form`, from the variant `entry` where a name wrote it.
-new_case_alt :: fn(mut p: Parser, low: i64, high: i64, form: i64,
-    entry: i64) -> i64 {
+new_case_alt :: fn(
+    mut p: Parser,
+    low: i64,
+    high: i64,
+    form: i64,
+    entry: i64
+) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = NodeKind::CaseAlt, a = entry, b = high, c = form,
-            val = low, next = -1, pos = cur_off(p) },
+        Node {
+            kind = NodeKind::CaseAlt,
+            a = entry,
+            b = high,
+            c = form,
+            val = low,
+            next = -1,
+            pos = cur_off(p)
+        },
     )
 }
 

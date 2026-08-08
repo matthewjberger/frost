@@ -82,7 +82,10 @@ bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
 gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
     // 4. A container over the run. `Fixed<T>` is a growable array over storage
     // it does not own, so it fills the run and never allocates.
-    var kept := fixed_over($i64, bump_carve($i64, $1024, bump, slice_len(world)))
+    var kept := fixed_over(
+        $i64,
+        bump_carve($i64, $1024, bump, slice_len(world))
+    )
     for value in world {
         if (value > over) {
             fixed_push($i64, kept, value)
@@ -109,8 +112,13 @@ main :: fn() -> i64 {
         // is also the region: what `gather` carved may not outlive it.
         with scratch {
             kept := gather(world, round * 3)
-            print("over {}: {} values totalling {}, {} bytes out\n",
-                round * 3, slice_len(kept), total_of(kept), bump_used($1024, scratch))
+            print(
+                "over {}: {} values totalling {}, {} bytes out\n",
+                round * 3,
+                slice_len(kept),
+                total_of(kept),
+                bump_used($1024, scratch)
+            )
         }
         // The whole round's storage, back in one step. Nothing was freed one
         // value at a time, and the next round carves the same bytes again.

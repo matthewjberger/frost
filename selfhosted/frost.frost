@@ -171,8 +171,10 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             command := join_two(
                 join_two(
                     join_two(join_two(c_compiler(), " -c "), source),
-                    " -o "),
-                object)
+                    " -o "
+                ),
+                object
+            )
             arena_push(jobs, Assembling { command = command, status = 0 })
             arena_push(records, Assembling { command = record, status = sum })
         }
@@ -189,8 +191,10 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         // reads the job while this loop goes on to the next one, and a copy
         // would be a stack slot this loop reuses.
         handle := unsafe {
-            frost_rt_thread_spawn(run_assembling,
-                ptr_cast($u8, ptr_to(jobs.data[started])))
+            frost_rt_thread_spawn(
+                run_assembling,
+                ptr_cast($u8, ptr_to(jobs.data[started]))
+            )
         }
         arena_push(handles, Assembling { command = "", status = handle })
         started = started + 1
@@ -221,12 +225,18 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         join_two(
             join_two(
                 join_two(
-                    join_two(join_two(join_two(c_compiler(), objects), " "),
-                        runtime_object),
-                    " "),
-                frost_runtime),
-            " -o "),
-        executable)
+                    join_two(
+                        join_two(join_two(c_compiler(), objects), " "),
+                        runtime_object
+                    ),
+                    " "
+                ),
+                frost_runtime
+            ),
+            " -o "
+        ),
+        executable
+    )
     command = join_two(command, options.libs)
     if (frost_rt_is_windows() == 0) {
         command = join_two(command, " -lm")
@@ -302,12 +312,15 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
 link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     extra := join_two(
         join_two(join_two(" ", cached_runtime_object(executable)), " "),
-        cached_frost_runtime_object(executable))
+        cached_frost_runtime_object(executable)
+    )
     var base := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), " "), unit), extra),
-            " -o "),
-        executable)
+            " -o "
+        ),
+        executable
+    )
     // A C unit is held to what Frost means rather than to what C allows: an
     // integer wraps on overflow here rather than being undefined, and
     // `ptr_cast` reads the same bytes through another type on purpose. A C
@@ -438,8 +451,18 @@ main :: fn() -> i64 {
         // assembles them in.
         manifest_roots(input_path, options.roots, options.layers)
         search_roots_from(options.roots)
-        resolve_imports(buffer, input_path, export_names, modules, exports,
-            import_edges, renames, scratch, options.roots, options.layers)
+        resolve_imports(
+            buffer,
+            input_path,
+            export_names,
+            modules,
+            exports,
+            import_edges,
+            renames,
+            scratch,
+            options.roots,
+            options.layers
+        )
         source = buffer
     }
     if (str_len(source) <= 1) {
@@ -919,9 +942,12 @@ main :: fn() -> i64 {
     // `--emit-asm` is for.
     if (options.object == 1 && options.link == 0) {
         build := join_two(
-            join_two(join_two(join_two(c_compiler(), " -c "), emit_path),
-                " -o "),
-            options.output)
+            join_two(
+                join_two(join_two(c_compiler(), " -c "), emit_path),
+                " -o "
+            ),
+            options.output
+        )
         status := unsafe { frost_rt_run_command(build) }
         unsafe { frost_rt_remove_file(emit_path) }
         if (status != 0) {

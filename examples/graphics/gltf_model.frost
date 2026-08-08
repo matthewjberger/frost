@@ -158,13 +158,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 draw_scene :: fn(mut s: Scene, context: NodeContext) {
     held := render_world_at(s.render)
     batching_record(s.steps, held, context.encoder)
-    pass := encoder_pass_into(context.encoder, context.into,
-        context.color_load, context.clear, context.depth_load)
+    pass := encoder_pass_into(
+        context.encoder,
+        context.into,
+        context.color_load,
+        context.clear,
+        context.depth_load
+    )
     render_pass_encoder_set_pipeline(pass, s.pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
-        no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(held), 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        1,
+        render_world_group(held),
+        0,
+        no_pointer()
+    )
     geometry_bind(pass, geometry_at(s.store))
     render_world_draw_all(pass, held)
     render_pass_encoder_end(pass)
@@ -197,12 +206,14 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[29] = 0.2
     values[30] = 0.24
     values[31] = 1.0
-    queue_write_buffer(queue, uniform, 0,
-        ptr_to(values[0]), FRAME_BYTES)
+    queue_write_buffer(queue, uniform, 0, ptr_to(values[0]), FRAME_BYTES)
 }
 
-make_pipeline :: fn(device: Device, format: u32,
-    layout: PipelineLayout) -> RenderPipeline {
+make_pipeline :: fn(
+    device: Device,
+    format: u32,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
@@ -268,19 +279,31 @@ declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
     scene_pass := graph_node_pass($Scene, g, "scene", draw_scene, ptr_to(s))
-    graph_writes_color(g, scene_pass, screen,
-        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
+    graph_writes_color(
+        g,
+        scene_pass,
+        screen,
+        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 }
+    )
     graph_writes_depth(g, scene_pass, depth)
 }
 
 // What a frame does between the world and the graph. A system cannot reach a
 // device, so writing the frame's uniform and filling the run are this instead.
 before_frame :: fn(mut s: Scene, mut app: App) {
-    write_frame(app_queue(app), s.frame_uniform, app_camera(app),
-        app_width(app), app_height(app))
+    write_frame(
+        app_queue(app),
+        s.frame_uniform,
+        app_camera(app),
+        app_width(app),
+        app_height(app)
+    )
     ids := app_ids(app)
-    app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
-        app_view(app))
+    app_extract(
+        app,
+        all_drawn(ids.global_transform, ids.transform, ids.drawn),
+        app_view(app)
+    )
 }
 
 main :: fn() -> i64 {
@@ -305,19 +328,30 @@ run :: fn(move app: App) -> i64 {
     device := app_device(app)
     queue := app_queue(app)
 
-    frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
-    var layouts: [2]BindGroupLayout = [frame_layout,
-        render_world_layout(app.render)]
+    frame_layout := uniform_layout(
+        device,
+        FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment
+    )
+    var layouts: [2]BindGroupLayout = [
+        frame_layout,
+        render_world_layout(app.render)
+    ]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
-    pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
+    pipeline_layout := device_create_pipeline_layout(
+        device,
+        ptr_to(pipeline_layout_descriptor)
+    )
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
-    frame_group := uniform_group(device, frame_layout, frame_uniform,
-        FRAME_BYTES)
+    frame_group := uniform_group(
+        device,
+        frame_layout,
+        frame_uniform,
+        FRAME_BYTES
+    )
 
     ids := app_ids(app)
 
@@ -325,24 +359,42 @@ run :: fn(move app: App) -> i64 {
     // from the root of the checkout, which is where `just gltf` runs it.
     var held := gltf_read(MODEL)
     loaded := gltf_ok(held)
-    root := gltf_spawn(app.world, held, app.store, device, queue, app.materials,
-        app.meshes, ids)
+    root := gltf_spawn(
+        app.world,
+        held,
+        app.store,
+        device,
+        queue,
+        app.materials,
+        app.meshes,
+        ids
+    )
     gltf_free(held)
     if (loaded == false) {
-        print("no model at:\n{}\nrun this from the root of the checkout, or `just gltf`\n", MODEL)
+        print(
+            "no model at:\n{}\nrun this from the root of the checkout, or `just gltf`\n",
+            MODEL
+        )
     } else {
         // The model turns as one thing. Its own tree is untouched: this is a
         // spin added to the entity everything the file spawned hangs off. Added
         // rather than set, because turning is this program's idea and the loader
         // spawned a node with no room for one.
-        ecs_add($Spin, app.world, root, spin,
-            spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity()))
+        ecs_add(
+            $Spin,
+            app.world,
+            root,
+            spin,
+            spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity())
+        )
     }
 
     var scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
-        steps = render_world_batch_pipelines(device,
-            render_world_batch_layout(app.render)),
+        steps = render_world_batch_pipelines(
+            device,
+            render_world_batch_layout(app.render)
+        ),
         frame_group = frame_group,
         render = ptr_to(app.render),
         store = ptr_to(app.store),

@@ -157,13 +157,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 draw_layer :: fn(mut s: Scene, context: NodeContext) {
     held := render_world_at(s.render)
     batching_record(s.steps, held, context.encoder)
-    pass := encoder_pass_into(context.encoder, context.into,
-        context.color_load, context.clear, context.depth_load)
+    pass := encoder_pass_into(
+        context.encoder,
+        context.into,
+        context.color_load,
+        context.clear,
+        context.depth_load
+    )
     render_pass_encoder_set_pipeline(pass, s.pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
-        no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1,
-        render_world_group(held), 0, no_pointer())
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        1,
+        render_world_group(held),
+        0,
+        no_pointer()
+    )
     geometry_bind(pass, geometry_at(s.store))
     render_world_draw_all(pass, held)
     render_pass_encoder_end(pass)
@@ -176,16 +185,29 @@ draw_layer :: fn(mut s: Scene, context: NodeContext) {
 // view they are culled against is the same one.
 before_frame :: fn(mut s: FrameState, mut app: App) {
     queue := app_queue(app)
-    write_frame(queue, s.frame_uniform, app_camera(app),
-        app_width(app), app_height(app))
+    write_frame(
+        queue,
+        s.frame_uniform,
+        app_camera(app),
+        app_width(app),
+        app_height(app)
+    )
     ids := app_ids(app)
     view := app_view(app)
-    app_extract(app, drawn_in_layer(ids.global_transform, ids.transform,
-            ids.drawn, NEAR), view)
+    app_extract(
+        app,
+        drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, NEAR),
+        view
+    )
     far := render_world_at(s.far)
     render_world_begin(far)
-    scene_sync(app.world, far, app.materials, app.meshes,
-        drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR))
+    scene_sync(
+        app.world,
+        far,
+        app.materials,
+        app.meshes,
+        drawn_in_layer(ids.global_transform, ids.transform, ids.drawn, FAR)
+    )
     render_world_upload(far, queue, view, app.materials, app.meshes)
 }
 
@@ -203,8 +225,12 @@ FrameState :: struct {
 // Both passes write both targets and nothing stands between them, so the graph
 // keeps them in the order they were declared: near clears, far draws over what
 // near left and sorts against the depth it wrote.
-declare_passes :: fn(mut s: FrameState, mut g: Graph, device: Device,
-    format: u32) {
+declare_passes :: fn(
+    mut s: FrameState,
+    mut g: Graph,
+    device: Device,
+    format: u32
+) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
     background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
@@ -226,12 +252,20 @@ scene_at :: fn(held: ^Scene) -> ref Scene {
 // The camera, as the bytes the shader reads it as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     var view_projection := camera_view_projection(eye, w, h)
-    queue_write_buffer(queue, uniform, 0, ptr_to(view_projection.m[0]),
-        FRAME_BYTES)
+    queue_write_buffer(
+        queue,
+        uniform,
+        0,
+        ptr_to(view_projection.m[0]),
+        FRAME_BYTES
+    )
 }
 
-make_pipeline :: fn(device: Device, format: u32,
-    layout: PipelineLayout) -> RenderPipeline {
+make_pipeline :: fn(
+    device: Device,
+    format: u32,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
@@ -312,18 +346,35 @@ run :: fn(move app: App) -> i64 {
 
     // A cube for the near layer and a sphere for the far one, so which pass
     // drew a thing is readable off the screen.
-    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
-        cube_mesh())
-    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
-        sphere_mesh(0.6, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube", cube_mesh())
+    mesh_cache_insert(
+        app.meshes,
+        app.store,
+        device,
+        queue,
+        "sphere",
+        sphere_mesh(0.6, 16, 24)
+    )
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
     var looks: [INSTANCES]i64 = [0; INSTANCES]
-    looks[0] = materials_add(app.materials, material_of(vec4(1.0, 0.35, 0.35, 1.0), 0.5, 0.0))
-    looks[1] = materials_add(app.materials, material_of(vec4(0.35, 1.0, 0.45, 1.0), 0.5, 0.0))
-    looks[2] = materials_add(app.materials, material_of(vec4(0.45, 0.55, 1.0, 1.0), 0.5, 0.0))
-    looks[3] = materials_add(app.materials, material_of(vec4(1.0, 0.85, 0.4, 1.0), 0.5, 0.0))
+    looks[0] = materials_add(
+        app.materials,
+        material_of(vec4(1.0, 0.35, 0.35, 1.0), 0.5, 0.0)
+    )
+    looks[1] = materials_add(
+        app.materials,
+        material_of(vec4(0.35, 1.0, 0.45, 1.0), 0.5, 0.0)
+    )
+    looks[2] = materials_add(
+        app.materials,
+        material_of(vec4(0.45, 0.55, 1.0, 1.0), 0.5, 0.0)
+    )
+    looks[3] = materials_add(
+        app.materials,
+        material_of(vec4(1.0, 0.85, 0.4, 1.0), 0.5, 0.0)
+    )
 
     // One run per layer, and each is its own set of buffers: what a pass draws
     // is decided before it records, and two passes over two halves of a world
@@ -332,25 +383,42 @@ run :: fn(move app: App) -> i64 {
     // world is what this demo is about.
     var far_render := render_world_new(device, INSTANCES, MAX_MESHES, MAX_LOOKS)
 
-    frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
-    var layouts: [2]BindGroupLayout = [frame_layout,
-        render_world_layout(app.render)]
+    frame_layout := uniform_layout(
+        device,
+        FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment
+    )
+    var layouts: [2]BindGroupLayout = [
+        frame_layout,
+        render_world_layout(app.render)
+    ]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
-    pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
+    pipeline_layout := device_create_pipeline_layout(
+        device,
+        ptr_to(pipeline_layout_descriptor)
+    )
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
-    frame_group := uniform_group(device, frame_layout, frame_uniform,
-        FRAME_BYTES)
+    frame_group := uniform_group(
+        device,
+        frame_layout,
+        frame_uniform,
+        FRAME_BYTES
+    )
 
     ids := app_ids(app)
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-                        mask_empty(),
-                        ids.local_transform), spin), ids.drawn),
-            ids.global_transform), ids.transform)
+    wanted := mask_with(
+        mask_with(
+            mask_with(
+                mask_with(mask_with(mask_empty(), ids.local_transform), spin),
+                ids.drawn
+            ),
+            ids.global_transform
+        ),
+        ids.transform
+    )
 
     var spread: [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
     var depths: [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
@@ -362,38 +430,69 @@ run :: fn(move app: App) -> i64 {
         // Straight into the archetype it belongs in, rather than spawning bare
         // and migrating once per component.
         held := ecs_spawn_with(app.world, wanted)
-        ecs_set($LocalTransform, app.world, held,
-            ids.local_transform, LocalTransform {
+        ecs_set(
+            $LocalTransform,
+            app.world,
+            held,
+            ids.local_transform,
+            LocalTransform {
                 translation = vec3(spread[made], 0.0, depths[made]),
-                rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
-        ecs_set($Spin, app.world, held, spin,
-            spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity()))
+                rotation = quat_identity(),
+                scale = vec3(0.6, 0.6, 0.6)
+            }
+        )
+        ecs_set(
+            $Spin,
+            app.world,
+            held,
+            spin,
+            spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity())
+        )
         var shape := cube
         if (layers[made] == FAR) {
             shape = sphere
         }
-        ecs_set($Drawn, app.world, held, ids.drawn, Drawn { mesh = shape,
-                material = looks[made], layer = layers[made] })
+        ecs_set(
+            $Drawn,
+            app.world,
+            held,
+            ids.drawn,
+            Drawn { mesh = shape, material = looks[made], layer = layers[made] }
+        )
         made = made + 1
     }
 
     pipeline := make_pipeline(device, app_format(app), pipeline_layout)
     // One chain per run. They share a module and differ in the tables they
     // work on, which is what makes the two layers two answers.
-    var near_scene := Scene { pipeline = pipeline,
-        steps = render_world_batch_pipelines(device,
-            render_world_batch_layout(app.render)),
-        frame_group = frame_group, render = ptr_to(app.render),
-        store = ptr_to(app.store) }
-    var far_scene := Scene { pipeline = pipeline,
-        steps = render_world_batch_pipelines(device,
-            render_world_batch_layout(far_render)),
-        frame_group = frame_group, render = ptr_to(far_render),
-        store = ptr_to(app.store) }
+    var near_scene := Scene {
+        pipeline = pipeline,
+        steps = render_world_batch_pipelines(
+            device,
+            render_world_batch_layout(app.render)
+        ),
+        frame_group = frame_group,
+        render = ptr_to(app.render),
+        store = ptr_to(app.store)
+    }
+    var far_scene := Scene {
+        pipeline = pipeline,
+        steps = render_world_batch_pipelines(
+            device,
+            render_world_batch_layout(far_render)
+        ),
+        frame_group = frame_group,
+        render = ptr_to(far_render),
+        store = ptr_to(app.store)
+    }
 
-    var frame := FrameState { frame_uniform = frame_uniform,
-        near = ptr_to(app.render), far = ptr_to(far_render),
-        near_scene = ptr_to(near_scene), far_scene = ptr_to(far_scene) }
+    var frame := FrameState {
+        frame_uniform = frame_uniform,
+        near = ptr_to(app.render),
+        far = ptr_to(far_render),
+        near_scene = ptr_to(near_scene),
+        far_scene = ptr_to(far_scene)
+    }
     app_configure_graph($FrameState, app, declare_passes, ptr_to(frame))
     app_before_render($FrameState, app, before_frame, ptr_to(frame))
     app_run(app)

@@ -75,8 +75,13 @@ nearest_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 }
 
 // How many single-character edits turn one name into the other.
-name_distance :: fn(src: str, a_off: i64, a_len: i64, b_off: i64,
-    b_len: i64) -> i64 {
+name_distance :: fn(
+    src: str,
+    a_off: i64,
+    a_len: i64,
+    b_off: i64,
+    b_len: i64
+) -> i64 {
     if (a_len > 64 || b_len > 64) {
         return 999
     }

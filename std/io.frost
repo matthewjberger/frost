@@ -145,8 +145,11 @@ put_f64 :: fn(mut line: Line, value: f64) {
     // is left of this line, so the run offered is inside the buffer by
     // construction.
     written := unsafe {
-        frost_rt_format_f64(value, ptr_to(line.bytes[line.used]),
-            LINE - line.used)
+        frost_rt_format_f64(
+            value,
+            ptr_to(line.bytes[line.used]),
+            LINE - line.used
+        )
     }
     line.used = line.used + written
 }

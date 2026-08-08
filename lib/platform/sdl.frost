@@ -29,13 +29,20 @@ export Window, is_no_window, Event, event_new, event_kind, event_number,
 // given, and says so with `safe`.
 SDL_Init :: safe extern fn(flags: u32) -> bool
 SDL_Quit :: safe extern fn()
-SDL_CreateWindow :: extern fn(title: ^i8, width: i32, height: i32,
-    flags: u64) -> Window
+SDL_CreateWindow :: extern fn(
+    title: ^i8,
+    width: i32,
+    height: i32,
+    flags: u64
+) -> Window
 SDL_DestroyWindow :: extern fn(window: Window)
 SDL_PollEvent :: extern fn(event: ^u8) -> bool
 SDL_GetWindowProperties :: extern fn(window: Window) -> u32
-SDL_GetPointerProperty :: extern fn(properties: u32, name: ^i8,
-    fallback: ^u8) -> ^u8
+SDL_GetPointerProperty :: extern fn(
+    properties: u32,
+    name: ^i8,
+    fallback: ^u8
+) -> ^u8
 SDL_GetTicks :: safe extern fn() -> u64
 SDL_Delay :: safe extern fn(milliseconds: u32)
 SDL_GetError :: extern fn() -> ^i8
@@ -221,8 +228,12 @@ sdl_error :: fn() -> str {
 // Answers `no_window()` when SDL could not make one, which a program is
 // expected to check: a display that is not there is an ordinary thing to find
 // out about rather than a reason to stop.
-window_create :: fn(title: str, width: i32, height: i32,
-    flags: WindowFlags) -> Window {
+window_create :: fn(
+    title: str,
+    width: i32,
+    height: i32,
+    flags: WindowFlags
+) -> Window {
     held := c_string(title)
     made := unsafe {
         SDL_CreateWindow(ptr_cast($i8, held), width, height, flags)
@@ -246,8 +257,11 @@ window_pointer_property :: fn(properties: u32, name: str) -> ^u8 {
     held := c_string(name)
     zero := 0
     found := unsafe {
-        SDL_GetPointerProperty(properties, ptr_cast($i8, held),
-            ptr_cast($u8, zero))
+        SDL_GetPointerProperty(
+            properties,
+            ptr_cast($i8, held),
+            ptr_cast($u8, zero)
+        )
     }
     heap_release($u8, held)
     found

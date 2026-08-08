@@ -121,8 +121,10 @@ camera_advance :: fn(mut c: Camera, held: Input, step: f32) {
     // Normalised, so holding two keys is not faster than holding one, and
     // skipped when nothing is held, since normalising zero is a division by it.
     if (vec3_length(motion) > 0.0) {
-        c.position = vec3_add(c.position,
-            vec3_scale(vec3_normalize(motion), c.move_speed * step))
+        c.position = vec3_add(
+            c.position,
+            vec3_scale(vec3_normalize(motion), c.move_speed * step)
+        )
     }
 }
 

@@ -27,11 +27,24 @@ main :: fn() -> i64 {
     var world: Slab<Entity, 16> = slab_new()
     slab_reset($Entity, $16, world)
 
-    player := slab_insert($Entity, $16, world, Entity { hp = 100, kind = Kind::Player })
-    goblin := slab_insert($Entity, $16, world,
-        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
-    potion := slab_insert($Entity, $16, world,
-        Entity { hp = 0, kind = Kind::Pickup { amount = 25 } })
+    player := slab_insert(
+        $Entity,
+        $16,
+        world,
+        Entity { hp = 100, kind = Kind::Player }
+    )
+    goblin := slab_insert(
+        $Entity,
+        $16,
+        world,
+        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
+    )
+    potion := slab_insert(
+        $Entity,
+        $16,
+        world,
+        Entity { hp = 0, kind = Kind::Pickup { amount = 25 } }
+    )
 
     // Read the kind out and apply it, all through handles, with the entities
     // never leaving the slab.
@@ -45,7 +58,12 @@ main :: fn() -> i64 {
     show(slab_alive($Entity, $16, world, player)) // 1, untouched
 
     // The newcomer takes the goblin's slot, and the goblin's handle stays stale.
-    newcomer := slab_insert($Entity, $16, world, Entity { hp = 5, kind = Kind::Player })
+    newcomer := slab_insert(
+        $Entity,
+        $16,
+        world,
+        Entity { hp = 5, kind = Kind::Player }
+    )
     show(slab_alive($Entity, $16, world, goblin)) // 0
     print("{}\n", world[newcomer].hp) // 5
     0

@@ -183,20 +183,34 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 draw_scene :: fn(mut s: Scene, context: NodeContext) {
     held := render_world_at(s.render)
     batching_record(s.steps, held, context.encoder)
-    pass := encoder_pass_into(context.encoder, context.into,
-        context.color_load, context.clear, context.depth_load)
+    pass := encoder_pass_into(
+        context.encoder,
+        context.into,
+        context.color_load,
+        context.clear,
+        context.depth_load
+    )
     render_pass_encoder_set_pipeline(pass, s.pipeline)
-    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0,
-        no_pointer())
-    render_pass_encoder_set_bind_group(pass, 1, render_world_group(held), 0,
-        no_pointer())
+    render_pass_encoder_set_bind_group(pass, 0, s.frame_group, 0, no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        1,
+        render_world_group(held),
+        0,
+        no_pointer()
+    )
     geometry_bind(pass, geometry_at(s.store))
 
     // Every image at once, bound here and never again. What each thing reads
     // is a layer number it carries, so a draw covers every material and the
     // count of draws is the count of meshes.
-    render_pass_encoder_set_bind_group(pass, 2, s.material_group, 0,
-        no_pointer())
+    render_pass_encoder_set_bind_group(
+        pass,
+        2,
+        s.material_group,
+        0,
+        no_pointer()
+    )
     render_world_draw_all(pass, held)
     render_pass_encoder_end(pass)
     render_pass_encoder_release(pass)
@@ -228,8 +242,7 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[29] = 0.14
     values[30] = 0.18
     values[31] = 1.0
-    queue_write_buffer(queue, uniform, 0,
-        ptr_to(values[0]), FRAME_BYTES)
+    queue_write_buffer(queue, uniform, 0, ptr_to(values[0]), FRAME_BYTES)
 }
 
 // Every image and the sampler that reads them, which are two entries of one
@@ -249,8 +262,11 @@ surface_layout :: fn(device: Device) -> BindGroupLayout {
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
-surface_group :: fn(device: Device, layout: BindGroupLayout,
-    held: Texture2D) -> BindGroup {
+surface_group :: fn(
+    device: Device,
+    layout: BindGroupLayout,
+    held: Texture2D
+) -> BindGroup {
     var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = texture_view_of(held)
@@ -263,8 +279,11 @@ surface_group :: fn(device: Device, layout: BindGroupLayout,
     device_create_bind_group(device, ptr_to(descriptor))
 }
 
-make_pipeline :: fn(device: Device, format: u32,
-    layout: PipelineLayout) -> RenderPipeline {
+make_pipeline :: fn(
+    device: Device,
+    format: u32,
+    layout: PipelineLayout
+) -> RenderPipeline {
     var wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
@@ -326,18 +345,32 @@ make_pipeline :: fn(device: Device, format: u32,
 build_image :: fn(which: i64) -> Image {
     var held := image_new(IMAGE_SIZE, IMAGE_SIZE)
     if (which == 0) {
-        image_checker(held, 8, vec4(0.9, 0.9, 0.92, 1.0),
-            vec4(0.25, 0.26, 0.3, 1.0))
+        image_checker(
+            held,
+            8,
+            vec4(0.9, 0.9, 0.92, 1.0),
+            vec4(0.25, 0.26, 0.3, 1.0)
+        )
     } else if (which == 1) {
-        image_bricks(held, vec4(0.75, 0.36, 0.28, 1.0),
-            vec4(0.85, 0.84, 0.8, 1.0))
+        image_bricks(
+            held,
+            vec4(0.75, 0.36, 0.28, 1.0),
+            vec4(0.85, 0.84, 0.8, 1.0)
+        )
     } else if (which == 2) {
-        image_rings(held, vec4(0.95, 0.93, 0.85, 1.0),
-            vec4(0.3, 0.55, 0.75, 1.0))
+        image_rings(
+            held,
+            vec4(0.95, 0.93, 0.85, 1.0),
+            vec4(0.3, 0.55, 0.75, 1.0)
+        )
     } else {
         image_fill(held, vec4(0.55, 0.75, 0.5, 1.0))
-        image_checker(held, 4, vec4(0.55, 0.75, 0.5, 1.0),
-            vec4(0.45, 0.62, 0.42, 1.0))
+        image_checker(
+            held,
+            4,
+            vec4(0.55, 0.75, 0.5, 1.0),
+            vec4(0.45, 0.62, 0.42, 1.0)
+        )
     }
     image_corner_marks(held, vec4(1.0, 0.2, 0.35, 1.0))
     held
@@ -354,19 +387,31 @@ declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
     scene_pass := graph_node_pass($Scene, g, "scene", draw_scene, ptr_to(s))
-    graph_writes_color(g, scene_pass, screen,
-        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
+    graph_writes_color(
+        g,
+        scene_pass,
+        screen,
+        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 }
+    )
     graph_writes_depth(g, scene_pass, depth)
 }
 
 // What a frame does between the world and the graph. A system cannot reach a
 // device, so writing the frame's uniform and filling the run are this instead.
 before_frame :: fn(mut s: Scene, mut app: App) {
-    write_frame(app_queue(app), s.frame_uniform, app_camera(app),
-        app_width(app), app_height(app))
+    write_frame(
+        app_queue(app),
+        s.frame_uniform,
+        app_camera(app),
+        app_width(app),
+        app_height(app)
+    )
     ids := app_ids(app)
-    app_extract(app, all_drawn(ids.global_transform, ids.transform, ids.drawn),
-        app_view(app))
+    app_extract(
+        app,
+        all_drawn(ids.global_transform, ids.transform, ids.drawn),
+        app_view(app)
+    )
 }
 
 main :: fn() -> i64 {
@@ -391,10 +436,15 @@ run :: fn(move app: App) -> i64 {
     device := app_device(app)
     queue := app_queue(app)
 
-    mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
-        cube_mesh())
-    mesh_cache_insert(app.meshes, app.store, device, queue, "sphere",
-        sphere_mesh(0.6, 16, 24))
+    mesh_cache_insert(app.meshes, app.store, device, queue, "cube", cube_mesh())
+    mesh_cache_insert(
+        app.meshes,
+        app.store,
+        device,
+        queue,
+        "sphere",
+        sphere_mesh(0.6, 16, 24)
+    )
     cube := mesh_cache_find(app.meshes, "cube")
     sphere := mesh_cache_find(app.meshes, "sphere")
 
@@ -402,22 +452,42 @@ run :: fn(move app: App) -> i64 {
     // being the whole of the surface, so these are nearer to white than the
     // untextured field's are.
     var looks: [LOOKS]i64 = [0; LOOKS]
-    looks[0] = materials_add(app.materials, material_of(vec4(1.0, 0.95, 0.92, 1.0), 0.35, 0.0))
-    looks[1] = materials_add(app.materials, material_of(vec4(1.0, 0.98, 0.95, 1.0), 0.6, 0.0))
-    looks[2] = materials_add(app.materials, material_of(vec4(0.95, 0.97, 1.0, 1.0), 0.2, 0.0))
-    looks[3] = materials_add(app.materials, material_of(vec4(0.98, 1.0, 0.94, 1.0), 0.45, 0.0))
+    looks[0] = materials_add(
+        app.materials,
+        material_of(vec4(1.0, 0.95, 0.92, 1.0), 0.35, 0.0)
+    )
+    looks[1] = materials_add(
+        app.materials,
+        material_of(vec4(1.0, 0.98, 0.95, 1.0), 0.6, 0.0)
+    )
+    looks[2] = materials_add(
+        app.materials,
+        material_of(vec4(0.95, 0.97, 1.0, 1.0), 0.2, 0.0)
+    )
+    looks[3] = materials_add(
+        app.materials,
+        material_of(vec4(0.98, 1.0, 0.94, 1.0), 0.45, 0.0)
+    )
 
-    frame_layout := uniform_layout(device, FRAME_BYTES,
-        ShaderStage::Vertex | ShaderStage::Fragment)
+    frame_layout := uniform_layout(
+        device,
+        FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment
+    )
     material_layout := surface_layout(device)
-    var layouts: [3]BindGroupLayout = [frame_layout,
-        render_world_layout(app.render), material_layout]
+    var layouts: [3]BindGroupLayout = [
+        frame_layout,
+        render_world_layout(app.render),
+        material_layout
+    ]
     var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 3
     pipeline_layout_descriptor.bind_group_layouts =
     ptr_to(layouts[0])
-    pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
+    pipeline_layout := device_create_pipeline_layout(
+        device,
+        ptr_to(pipeline_layout_descriptor)
+    )
 
     // Every material's image in one array, made once and bound once for the
     // whole frame. Which layer a thing reads is a number it carries.
@@ -432,14 +502,24 @@ run :: fn(move app: App) -> i64 {
     material_group := surface_group(device, material_layout, images)
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
-    frame_group := uniform_group(device, frame_layout, frame_uniform,
-        FRAME_BYTES)
+    frame_group := uniform_group(
+        device,
+        frame_layout,
+        frame_uniform,
+        FRAME_BYTES
+    )
 
     ids := app_ids(app)
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_with(
-                        mask_empty(),
-                        ids.local_transform), spin), ids.drawn),
-            ids.global_transform), ids.transform)
+    wanted := mask_with(
+        mask_with(
+            mask_with(
+                mask_with(mask_with(mask_empty(), ids.local_transform), spin),
+                ids.drawn
+            ),
+            ids.global_transform
+        ),
+        ids.transform
+    )
 
     half: f32 = 2.5
     var made: i64 = 0
@@ -449,30 +529,53 @@ run :: fn(move app: App) -> i64 {
         across: f32 = column
         up: f32 = row
         entity := ecs_spawn_with(app.world, wanted)
-        ecs_set($LocalTransform, app.world, entity,
-            ids.local_transform, LocalTransform {
-                translation = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
-                rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
+        ecs_set(
+            $LocalTransform,
+            app.world,
+            entity,
+            ids.local_transform,
+            LocalTransform {
+                translation = vec3(
+                    (across - half) * 1.8,
+                    (up - half) * 1.8,
+                    0.0
+                ),
+                rotation = quat_identity(),
+                scale = vec3(1.0, 1.0, 1.0)
+            }
+        )
 
         turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
         speed: f32 = 0.4 + 0.09 * made
-        ecs_set($Spin, app.world, entity, spin,
-            spinning(turning, speed, quat_identity()))
+        ecs_set(
+            $Spin,
+            app.world,
+            entity,
+            spin,
+            spinning(turning, speed, quat_identity())
+        )
 
         var shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
         which := made - (made / LOOKS) * LOOKS
-        ecs_set($Drawn, app.world, entity, ids.drawn, Drawn { mesh = shape,
-                material = looks[which], layer = ONE_LAYER })
+        ecs_set(
+            $Drawn,
+            app.world,
+            entity,
+            ids.drawn,
+            Drawn { mesh = shape, material = looks[which], layer = ONE_LAYER }
+        )
         made = made + 1
     }
 
     var scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
-        steps = render_world_batch_pipelines(device,
-            render_world_batch_layout(app.render)),
+        steps = render_world_batch_pipelines(
+            device,
+            render_world_batch_layout(app.render)
+        ),
         frame_group = frame_group,
         material_group = material_group,
         render = ptr_to(app.render),

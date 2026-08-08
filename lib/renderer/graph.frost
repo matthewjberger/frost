@@ -330,13 +330,23 @@ graph_backbuffer :: fn(mut g: Graph) -> ResourceId {
     add_resource(g, "backbuffer", ResourceKind::Backbuffer, 0, 0, 0)
 }
 
-graph_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
-    format: u32) -> ResourceId {
+graph_color :: fn(
+    mut g: Graph,
+    name: str,
+    w: i64,
+    h: i64,
+    format: u32
+) -> ResourceId {
     add_resource(g, name, ResourceKind::Color, format, w, h)
 }
 
-graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
-    format: u32) -> ResourceId {
+graph_depth :: fn(
+    mut g: Graph,
+    name: str,
+    w: i64,
+    h: i64,
+    format: u32
+) -> ResourceId {
     add_resource(g, name, ResourceKind::Depth, format, w, h)
 }
 
@@ -344,13 +354,23 @@ graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
 // a later one, and after that its memory is the graph's to hand to anything of
 // the same shape that starts later. A chain of post-process steps at one size
 // costs one texture per step that is alive at once rather than one per step.
-graph_transient_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
-    format: u32) -> ResourceId {
+graph_transient_color :: fn(
+    mut g: Graph,
+    name: str,
+    w: i64,
+    h: i64,
+    format: u32
+) -> ResourceId {
     mark_transient(g, add_resource(g, name, ResourceKind::Color, format, w, h))
 }
 
-graph_transient_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
-    format: u32) -> ResourceId {
+graph_transient_depth :: fn(
+    mut g: Graph,
+    name: str,
+    w: i64,
+    h: i64,
+    format: u32
+) -> ResourceId {
     mark_transient(g, add_resource(g, name, ResourceKind::Depth, format, w, h))
 }
 
@@ -371,8 +391,10 @@ graph_set_external :: fn(mut g: Graph, r: ResourceId, held: Texture2D) {
     var kept := g.resources
     index := resource_index(r)
     if (kept[index].external == false) {
-        print("graph: this resource is the graph's own, so it takes no texture from outside:\n{}\n",
-            kept[index].name)
+        print(
+            "graph: this resource is the graph's own, so it takes no texture from outside:\n{}\n",
+            kept[index].name
+        )
         return
     }
     kept[index].held = held
@@ -391,8 +413,12 @@ mark_transient :: fn(mut g: Graph, r: ResourceId) -> ResourceId {
 // counterpart of a colour or depth target for everything that is not a picture:
 // a culling list a compute pass fills in, the bone matrices a skinned mesh
 // reads, the counts an indirect draw is issued from.
-graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
-    usage: BufferUsage) -> ResourceId {
+graph_buffer :: fn(
+    mut g: Graph,
+    name: str,
+    bytes: i64,
+    usage: BufferUsage
+) -> ResourceId {
     made := add_resource(g, name, ResourceKind::Buffer, 0, bytes, 0)
     if (resource_is_none(made) == false) {
         var held := g.resources
@@ -401,25 +427,45 @@ graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
     made
 }
 
-add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
-    w: i64, h: i64) -> ResourceId {
+add_resource :: fn(
+    mut g: Graph,
+    name: str,
+    kind: ResourceKind,
+    format: u32,
+    w: i64,
+    h: i64
+) -> ResourceId {
     index := g.resource_count
     // Grown here rather than in a helper, because handing this borrow to
     // another `mut` parameter copies the header and the new storage would be
     // written to the copy. Every table below grows the same way and for the
     // same reason.
     if (index >= slice_len(g.resources)) {
-        g.resources = heap_grow_slice($Resource, g.resources,
-            slice_len(g.resources) * 2)
+        g.resources = heap_grow_slice(
+            $Resource,
+            g.resources,
+            slice_len(g.resources) * 2
+        )
     }
     var held := g.resources
     held[index] = Resource {
-        name = name, kind = kind, format = format, width = w, height = h,
+        name = name,
+        kind = kind,
+        format = format,
+        width = w,
+        height = h,
         usage = BufferUsage::None,
-        held = no_texture2d(), buffer = no_buffer(),
-        made = false, written = false, sampled = false,
-        transient = false, slot = -1, first_use = -1, last_use = -1,
-        external = false, remade = false,
+        held = no_texture2d(),
+        buffer = no_buffer(),
+        made = false,
+        written = false,
+        sampled = false,
+        transient = false,
+        slot = -1,
+        first_use = -1,
+        last_use = -1,
+        external = false,
+        remade = false,
     }
     g.resource_count = index + 1
     cast($ResourceId, index)
@@ -433,12 +479,22 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
 // `fn(^u8, RenderPassEncoder)` are one function and the cast generates nothing.
 // This is the only place in the graph that knows a pass state has a type, which
 // is what keeps `unsafe` out of the passes themselves.
-graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
-    draw: fn(mut Ctx, RenderPassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Render,
+graph_pass :: fn(
+    $Ctx: Type,
+    mut g: Graph,
+    name: str,
+    draw: fn(mut Ctx, RenderPassEncoder),
+    state: ^Ctx
+) -> PassId {
+    add_pass(
+        g,
+        name,
+        PassKind::Render,
         unsafe { ptr_cast($fn(^u8, RenderPassEncoder), draw) },
-        dispatches_nothing, records_nothing,
-        unsafe { ptr_cast($u8, state) })
+        dispatches_nothing,
+        records_nothing,
+        unsafe { ptr_cast($u8, state) }
+    )
 }
 
 // A pass that records for itself. It is handed the encoder and its targets and
@@ -449,26 +505,54 @@ graph_pass :: fn($Ctx: Type, mut g: Graph, name: str,
 // It declares the targets it writes exactly as a drawing pass does, so the graph
 // orders it the same way and decides its load ops the same way; what differs is
 // only that the node applies them itself.
-graph_node_pass :: fn($Ctx: Type, mut g: Graph, name: str,
-    record: fn(mut Ctx, NodeContext), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Node, draws_nothing, dispatches_nothing,
+graph_node_pass :: fn(
+    $Ctx: Type,
+    mut g: Graph,
+    name: str,
+    record: fn(mut Ctx, NodeContext),
+    state: ^Ctx
+) -> PassId {
+    add_pass(
+        g,
+        name,
+        PassKind::Node,
+        draws_nothing,
+        dispatches_nothing,
         unsafe { ptr_cast($fn(^u8, NodeContext), record) },
-        unsafe { ptr_cast($u8, state) })
+        unsafe { ptr_cast($u8, state) }
+    )
 }
 
 // A pass that runs a compute shader. It declares what it reads and writes the
 // same way a drawing one does, and the order follows from the same edges: the
 // difference is only what it is handed to record into.
-graph_compute_pass :: fn($Ctx: Type, mut g: Graph, name: str,
-    dispatch: fn(mut Ctx, ComputePassEncoder), state: ^Ctx) -> PassId {
-    add_pass(g, name, PassKind::Compute, draws_nothing,
+graph_compute_pass :: fn(
+    $Ctx: Type,
+    mut g: Graph,
+    name: str,
+    dispatch: fn(mut Ctx, ComputePassEncoder),
+    state: ^Ctx
+) -> PassId {
+    add_pass(
+        g,
+        name,
+        PassKind::Compute,
+        draws_nothing,
         unsafe { ptr_cast($fn(^u8, ComputePassEncoder), dispatch) },
-        records_nothing, unsafe { ptr_cast($u8, state) })
+        records_nothing,
+        unsafe { ptr_cast($u8, state) }
+    )
 }
 
-add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
-    draw: fn(^u8, RenderPassEncoder), dispatch: fn(^u8, ComputePassEncoder),
-    record: fn(^u8, NodeContext), state: ^u8) -> PassId {
+add_pass :: fn(
+    mut g: Graph,
+    name: str,
+    kind: PassKind,
+    draw: fn(^u8, RenderPassEncoder),
+    dispatch: fn(^u8, ComputePassEncoder),
+    record: fn(^u8, NodeContext),
+    state: ^u8
+) -> PassId {
     index := g.pass_count
     // The order and the saved flags are read at a pass's own index, so they
     // grow with the passes.
@@ -480,14 +564,24 @@ add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
     }
     var held := g.passes
     held[index] = GraphPass {
-        name = name, kind = kind, draw = draw, dispatch = dispatch,
-        record = record, state = state,
-        color = no_resource(), depth = no_resource(),
-        clear = clear_black(), reads = [no_resource(); MAX_READS],
+        name = name,
+        kind = kind,
+        draw = draw,
+        dispatch = dispatch,
+        record = record,
+        state = state,
+        color = no_resource(),
+        depth = no_resource(),
+        clear = clear_black(),
+        reads = [no_resource(); MAX_READS],
         read_count = 0,
-        writes = [no_resource(); MAX_WRITES], write_count = 0,
-        rebuild = rebuilds_nothing, rebuild_state = no_pointer(),
-        sub = -1, phase = 0, enabled = true,
+        writes = [no_resource(); MAX_WRITES],
+        write_count = 0,
+        rebuild = rebuilds_nothing,
+        rebuild_state = no_pointer(),
+        sub = -1,
+        phase = 0,
+        enabled = true,
     }
     g.pass_count = index + 1
     cast($PassId, index)
@@ -511,8 +605,15 @@ graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
 // other, which is what puts the nested work in the right place in this graph's
 // order.
 graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
-    made := add_pass(g, name, PassKind::SubGraph, draws_nothing,
-        dispatches_nothing, records_nothing, no_pointer())
+    made := add_pass(
+        g,
+        name,
+        PassKind::SubGraph,
+        draws_nothing,
+        dispatches_nothing,
+        records_nothing,
+        no_pointer()
+    )
     if (pass_index(made) >= 0) {
         var held := g.passes
         held[pass_index(made)].sub = sub
@@ -523,15 +624,25 @@ graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
 // A resource of the sub-graph takes what this graph holds for one of its own.
 // Applied every time the child runs, so a parent that binds a different target
 // per camera draws each view where that view goes.
-graph_takes :: fn(mut g: Graph, sub: i64, inner: ResourceId,
-    outer: ResourceId) {
+graph_takes :: fn(
+    mut g: Graph,
+    sub: i64,
+    inner: ResourceId,
+    outer: ResourceId
+) {
     if (g.binding_count >= slice_len(g.bindings)) {
-        g.bindings = heap_grow_slice($Binding, g.bindings,
-            slice_len(g.bindings) * 2)
+        g.bindings = heap_grow_slice(
+            $Binding,
+            g.bindings,
+            slice_len(g.bindings) * 2
+        )
     }
     var held := g.bindings
-    held[g.binding_count] = Binding { sub = sub,
-        inner = resource_index(inner), outer = resource_index(outer) }
+    held[g.binding_count] = Binding {
+        sub = sub,
+        inner = resource_index(inner),
+        outer = resource_index(outer)
+    }
     g.binding_count = g.binding_count + 1
 }
 
@@ -546,8 +657,13 @@ is_sub :: fn(one: GraphPass) -> bool {
 
 // What a pass does when the targets it reads have been made again. Told rather
 // than worked out: only the pass knows which bindings name which view.
-graph_rebuilds :: fn($Ctx: Type, mut g: Graph, p: PassId,
-    rebuild: fn(mut Ctx, mut Graph), state: ^Ctx) {
+graph_rebuilds :: fn(
+    $Ctx: Type,
+    mut g: Graph,
+    p: PassId,
+    rebuild: fn(mut Ctx, mut Graph),
+    state: ^Ctx
+) {
     var held := g.passes
     held[pass_index(p)].rebuild =
     unsafe { ptr_cast($fn(^u8, mut Graph), rebuild) }
@@ -830,9 +946,13 @@ slot_for :: fn(mut g: Graph, one: Resource) -> i64 {
     }
     var pool := g.pool
     pool[made] = PoolSlot {
-        kind = one.kind, format = one.format,
-        width = one.width, height = one.height,
-        held = no_texture2d(), made = false, free_at = one.last_use,
+        kind = one.kind,
+        format = one.format,
+        width = one.width,
+        height = one.height,
+        held = no_texture2d(),
+        made = false,
+        free_at = one.last_use,
     }
     g.pool_count = made + 1
     made
@@ -860,7 +980,10 @@ check_declarations :: fn(mut g: Graph) -> bool {
         one := held[i]
         if (resource_is_none(one.color) && resource_is_none(one.depth)
             && one.write_count == 0) {
-            print("graph: a pass writes nothing, so nothing it did could be read:\n{}\n", one.name)
+            print(
+                "graph: a pass writes nothing, so nothing it did could be read:\n{}\n",
+                one.name
+            )
             ok = false
         }
         var k: i64 = 0
@@ -875,8 +998,11 @@ check_declarations :: fn(mut g: Graph) -> bool {
                 j = j + 1
             }
             if (written == false) {
-                print("graph: a pass reads a resource no pass writes:\n{}\n{}\n",
-                    one.name, resource_name(g, wanted))
+                print(
+                    "graph: a pass reads a resource no pass writes:\n{}\n{}\n",
+                    one.name,
+                    resource_name(g, wanted)
+                )
                 ok = false
             }
             // A target sized by the window is thrown away and made again on a
@@ -884,8 +1010,11 @@ check_declarations :: fn(mut g: Graph) -> bool {
             // A pass that says how is handed the shape; one that does not
             // would read a view of a texture that no longer exists.
             if (resource_window_sized(g, wanted) && rebuilds(one) == false) {
-                print("graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:\n{}\n{}\n",
-                    one.name, resource_name(g, wanted))
+                print(
+                    "graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:\n{}\n{}\n",
+                    one.name,
+                    resource_name(g, wanted)
+                )
                 ok = false
             }
             k = k + 1
@@ -905,7 +1034,10 @@ check_declarations :: fn(mut g: Graph) -> bool {
         // in here.
         if (one.sampled == false && one.external == false
             && (is_color(one) || is_buffer(one))) {
-            print("graph: nothing reads or presents this resource, so it is dead:\n{}\n", one.name)
+            print(
+                "graph: nothing reads or presents this resource, so it is dead:\n{}\n",
+                one.name
+            )
         }
         r = r + 1
     }
@@ -1034,8 +1166,12 @@ mark_slot_remade :: fn(mut g: Graph, slot: i64) {
     }
 }
 
-make_pool_one :: fn(device: Device, slot: PoolSlot, w: i64,
-    h: i64) -> Texture2D {
+make_pool_one :: fn(
+    device: Device,
+    slot: PoolSlot,
+    w: i64,
+    h: i64
+) -> Texture2D {
     match slot.kind {
         case.Depth: texture_depth_target(device, w, h, slot.format)
         case.Color: texture_render_target(device, w, h, slot.format)
@@ -1156,8 +1292,10 @@ graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
         return pool_view(g, one)
     }
     if (one.made == false) {
-        print("graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
-            one.name)
+        print(
+            "graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name
+        )
         return no_view()
     }
     one.held.view
@@ -1168,13 +1306,18 @@ graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
 // resource of its own would.
 pool_view :: fn(g: Graph, one: Resource) -> TextureView {
     if (one.slot < 0) {
-        print("graph: this resource has no slot yet, so schedule the graph first:\n{}\n", one.name)
+        print(
+            "graph: this resource has no slot yet, so schedule the graph first:\n{}\n",
+            one.name
+        )
         return no_view()
     }
     pool := g.pool
     if (pool[one.slot].made == false) {
-        print("graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
-            one.name)
+        print(
+            "graph: this resource has no view yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name
+        )
         return no_view()
     }
     pool[one.slot].held.view
@@ -1198,8 +1341,10 @@ graph_sampler :: fn(g: Graph, r: ResourceId) -> Sampler {
         return pool_sampler(g, one)
     }
     if (one.made == false) {
-        print("graph: this resource has no sampler yet, so give the graph a size with graph_resize first:\n{}\n",
-            one.name)
+        print(
+            "graph: this resource has no sampler yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name
+        )
         return no_sampler()
     }
     one.held.sampler
@@ -1211,8 +1356,10 @@ graph_buffer_of :: fn(g: Graph, r: ResourceId) -> Buffer {
     held := g.resources
     one := held[resource_index(r)]
     if (one.made == false) {
-        print("graph: this buffer has not been made yet, so give the graph a size with graph_resize first:\n{}\n",
-            one.name)
+        print(
+            "graph: this buffer has not been made yet, so give the graph a size with graph_resize first:\n{}\n",
+            one.name
+        )
         return no_buffer()
     }
     one.buffer
@@ -1394,13 +1541,16 @@ run_node :: fn(mut g: Graph, mut f: Frame, one: GraphPass) {
     depth_load := load_for(g, one.depth)
     mark_written(g, one.color)
     mark_written(g, one.depth)
-    one.record(one.state, NodeContext {
+    one.record(
+        one.state,
+        NodeContext {
             encoder = frame_encoder(f),
             into = target_for(g, f, one),
             color_load = color_load,
             depth_load = depth_load,
             clear = one.clear,
-        })
+        }
+    )
 }
 
 // A compute pass over the frame's encoder. It writes buffers, so it has no
@@ -1408,8 +1558,10 @@ run_node :: fn(mut g: Graph, mut f: Frame, one: GraphPass) {
 // whole of what the graph gave it.
 run_compute :: fn(mut f: Frame, one: GraphPass) {
     var descriptor := compute_pass_descriptor_init()
-    encoder := command_encoder_begin_compute_pass(frame_encoder(f),
-        ptr_to(descriptor))
+    encoder := command_encoder_begin_compute_pass(
+        frame_encoder(f),
+        ptr_to(descriptor)
+    )
     one.dispatch(one.state, encoder)
     compute_pass_encoder_end(encoder)
     compute_pass_encoder_release(encoder)
@@ -1621,7 +1773,13 @@ test "a pass runs after the compute pass whose buffer it reads" {
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, visible)
-    cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
+    cull := graph_compute_pass(
+        $Recorded,
+        g,
+        "cull",
+        nothing_dispatched,
+        ptr_to(nothing)
+    )
     graph_writes(g, cull, visible)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 1)
@@ -1634,7 +1792,13 @@ test "a compute pass that writes a buffer draws nowhere and is allowed" {
     var g := graph_new(no_device())
     screen := graph_backbuffer(g)
     counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
-    cull := graph_compute_pass($Recorded, g, "cull", nothing_dispatched, ptr_to(nothing))
+    cull := graph_compute_pass(
+        $Recorded,
+        g,
+        "cull",
+        nothing_dispatched,
+        ptr_to(nothing)
+    )
     graph_writes(g, cull, counts)
     scene := graph_pass($Recorded, g, "scene", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, scene, screen, clear_black())
@@ -1662,7 +1826,13 @@ test "a chain of three targets costs two textures" {
     blur := graph_pass($Recorded, g, "blur", nothing_drawn, ptr_to(nothing))
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass(
+        $Recorded,
+        g,
+        "compose",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1684,7 +1854,13 @@ test "two transients alive at once are two textures" {
     graph_writes_color(g, one, left, clear_black())
     two := graph_pass($Recorded, g, "two", nothing_drawn, ptr_to(nothing))
     graph_writes_color(g, two, right, clear_black())
-    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass(
+        $Recorded,
+        g,
+        "compose",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, left)
     graph_reads(g, compose, right)
@@ -1712,7 +1888,13 @@ test "two transients of different shapes never share" {
     blur := graph_pass($Recorded, g, "blur", nothing_drawn, ptr_to(nothing))
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass(
+        $Recorded,
+        g,
+        "compose",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1838,7 +2020,13 @@ test "a sub-graph is ordered by what its pass declares" {
     offscreen := graph_color(g, "offscreen", 64, 64, 0)
     // Declared second and reading what the sub-graph writes, so the nested
     // work is ordered first by the same rule any other pass follows.
-    compose := graph_pass($Recorded, g, "compose", nothing_drawn, ptr_to(nothing))
+    compose := graph_pass(
+        $Recorded,
+        g,
+        "compose",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, offscreen)
     sub := graph_sub(g, child)
@@ -1902,8 +2090,13 @@ test "a graph takes more passes and resources than it started with" {
     // the next reads it, which is both what keeps every resource alive and what
     // fixes the order against the doublings.
     var held := graph_color(g, "first", 8, 8, 0)
-    var writer := graph_pass($Recorded, g, "write", nothing_drawn,
-        ptr_to(nothing))
+    var writer := graph_pass(
+        $Recorded,
+        g,
+        "write",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_writes_color(g, writer, held, clear_black())
     var made: i64 = 1
     while (made < FIRST_ROOM * 2) {
@@ -1936,8 +2129,13 @@ test "a graph takes more sub-graphs and inputs than it started with" {
     while (made < FIRST_ROOM * 2) {
         var child := graph_new(no_device())
         inner := graph_external_color(child, "target")
-        draw := graph_pass($Recorded, child, "draw", nothing_drawn,
-            ptr_to(nothing))
+        draw := graph_pass(
+            $Recorded,
+            child,
+            "draw",
+            nothing_drawn,
+            ptr_to(nothing)
+        )
         graph_writes_color(child, draw, inner, clear_black())
         assert(graph_schedule(child))
 
@@ -1947,8 +2145,13 @@ test "a graph takes more sub-graphs and inputs than it started with" {
         graph_takes(g, sub, inner, held)
 
         next := graph_color(g, "after", 8, 8, 0)
-        reader := graph_pass($Recorded, g, "reads", nothing_drawn,
-            ptr_to(nothing))
+        reader := graph_pass(
+            $Recorded,
+            g,
+            "reads",
+            nothing_drawn,
+            ptr_to(nothing)
+        )
         graph_writes_color(g, reader, next, clear_black())
         graph_reads(g, reader, held)
         held = next
@@ -1969,8 +2172,13 @@ test "a graph takes more pool slots than it started with" {
     // overlap a slot that is free, and every one of them takes a slot of its
     // own rather than reusing the one before.
     var held := graph_transient_color(g, "first", 8, 8, 0)
-    var writer := graph_pass($Recorded, g, "write", nothing_drawn,
-        ptr_to(nothing))
+    var writer := graph_pass(
+        $Recorded,
+        g,
+        "write",
+        nothing_drawn,
+        ptr_to(nothing)
+    )
     graph_writes_color(g, writer, held, clear_black())
     var made: i64 = 1
     while (made < FIRST_ROOM * 2) {

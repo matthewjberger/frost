@@ -96,8 +96,10 @@ begin_provider :: fn(mut p: Parser, fn_index: i64) {
     var i: i64 = 0
     while (i < count) {
         held := cap_at(p, fn_index, i)
-        arena_push(p.providers,
-            Provider { off = held.off, len = held.len, borrow = 0 })
+        arena_push(
+            p.providers,
+            Provider { off = held.off, len = held.len, borrow = 0 }
+        )
         i = i + 1
     }
 }

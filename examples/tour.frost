@@ -115,7 +115,8 @@ main :: fn() -> i64 {
 
     print("{}\n", damage_of(hero)) // 20
 
-    party: [3]Entity = [ { hp = 100, kind =.Hero },
+    party: [3]Entity = [
+        { hp = 100, kind =.Hero },
         { hp = 40, kind =.Monster { damage = 12 } },
         { hp = 25, kind =.Monster { damage = 30 } },
     ]

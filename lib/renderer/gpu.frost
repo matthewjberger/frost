@@ -52,14 +52,24 @@ gpu_wait :: fn(instance: Instance, mut ready: i64, limit: i64) -> bool {
 AdapterSlot :: struct { handle: Adapter, ready: i64 }
 DeviceSlot :: struct { handle: Device, ready: i64 }
 
-take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
-    mut slot: AdapterSlot, userdata2: ^u8) {
+take_adapter :: fn(
+    status: u32,
+    handle: Adapter,
+    value message: StringView,
+    mut slot: AdapterSlot,
+    userdata2: ^u8
+) {
     slot.handle = handle
     slot.ready = 1
 }
 
-take_device :: fn(status: u32, handle: Device, value message: StringView,
-    mut slot: DeviceSlot, userdata2: ^u8) {
+take_device :: fn(
+    status: u32,
+    handle: Device,
+    value message: StringView,
+    mut slot: DeviceSlot,
+    userdata2: ^u8
+) {
     slot.handle = handle
     slot.ready = 1
 }
@@ -72,12 +82,21 @@ take_device :: fn(status: u32, handle: Device, value message: StringView,
 // one. Choosing it first can hand back one the surface cannot use, and the
 // surface only says so later, when it is asked what formats it takes.
 gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
-    var held := Gpu { instance = instance, adapter = no_adapter(),
-        device = no_device(), queue = no_queue(), ok = false }
+    var held := Gpu {
+        instance = instance,
+        adapter = no_adapter(),
+        device = no_device(),
+        queue = no_queue(),
+        ok = false
+    }
 
     var adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
-    var adapter_info := request_adapter_callback_info_of($AdapterSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_adapter, ptr_to(adapter_slot))
+    var adapter_info := request_adapter_callback_info_of(
+        $AdapterSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        take_adapter,
+        ptr_to(adapter_slot)
+    )
     var options := request_adapter_options_init()
     options.feature_level = FEATURE_LEVEL_CORE
     options.compatible_surface = surface
@@ -88,8 +107,12 @@ gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
     held.adapter = adapter_slot.handle
 
     var device_slot := DeviceSlot { handle = no_device(), ready = 0 }
-    var device_info := request_device_callback_info_of($DeviceSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, take_device, ptr_to(device_slot))
+    var device_info := request_device_callback_info_of(
+        $DeviceSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        take_device,
+        ptr_to(device_slot)
+    )
     // What a draw whose arguments come off the GPU needs. An indirect draw may
     // only name a non-zero first instance where the device says it can, and
     // that number is how a batch finds its own slice of the list a compute pass
@@ -107,8 +130,11 @@ gpu_request :: fn(instance: Instance, surface: Surface) -> Gpu {
     descriptor.required_features_count = 1
     descriptor.required_features = ptr_to(wanted[0])
     descriptor.required_limits = ptr_to(limits)
-    adapter_request_device(held.adapter, ptr_to(descriptor),
-        ptr_to(device_info))
+    adapter_request_device(
+        held.adapter,
+        ptr_to(descriptor),
+        ptr_to(device_info)
+    )
     if (gpu_wait(instance, device_slot.ready, 2000000) == false) {
         return held
     }
@@ -127,8 +153,12 @@ gpu_open :: fn() -> Gpu {
 
 MapSlot :: struct { status: u32, ready: i64 }
 
-took_map :: fn(status: u32, value message: StringView, mut slot: MapSlot,
-    userdata2: ^u8) {
+took_map :: fn(
+    status: u32,
+    value message: StringView,
+    mut slot: MapSlot,
+    userdata2: ^u8
+) {
     slot.status = status
     slot.ready = 1
 }
@@ -139,8 +169,13 @@ took_map :: fn(status: u32, value message: StringView, mut slot: MapSlot,
 // staging buffer that may be mapped, a copy into it, and the map. Slow by
 // construction, since the map waits for everything already submitted to run,
 // which is why nothing in a frame does this and a test is what it is for.
-gpu_read_buffer :: fn(held: Gpu, from: Buffer, offset: i64, bytes: i64,
-    into: ^u8) -> bool {
+gpu_read_buffer :: fn(
+    held: Gpu,
+    from: Buffer,
+    offset: i64,
+    bytes: i64,
+    into: ^u8
+) -> bool {
     if (bytes <= 0) {
         return false
     }
@@ -150,18 +185,33 @@ gpu_read_buffer :: fn(held: Gpu, from: Buffer, offset: i64, bytes: i64,
     staging := device_create_buffer(held.device, ptr_to(descriptor))
 
     encoder := device_create_command_encoder(held.device, no_pointer())
-    command_encoder_copy_buffer_to_buffer(encoder, from, cast($u64, offset),
-        staging, 0, cast($u64, bytes))
+    command_encoder_copy_buffer_to_buffer(
+        encoder,
+        from,
+        cast($u64, offset),
+        staging,
+        0,
+        cast($u64, bytes)
+    )
     var command := command_encoder_finish(encoder, no_pointer())
     queue_submit(held.queue, 1, ptr_to(command))
     command_buffer_release(command)
     command_encoder_release(encoder)
 
     var slot := MapSlot { status = 0, ready = 0 }
-    var info := buffer_map_callback_info_of($MapSlot,
-        CALLBACK_MODE_ALLOW_PROCESS_EVENTS, took_map, ptr_to(slot))
-    buffer_map_async(staging, MapMode::Read, 0, cast($u64, bytes),
-        unsafe { ptr_cast($u8, ptr_to(info)) })
+    var info := buffer_map_callback_info_of(
+        $MapSlot,
+        CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        took_map,
+        ptr_to(slot)
+    )
+    buffer_map_async(
+        staging,
+        MapMode::Read,
+        0,
+        cast($u64, bytes),
+        unsafe { ptr_cast($u8, ptr_to(info)) }
+    )
     var answered := gpu_wait(held.instance, slot.ready, 2000000)
     if (answered && slot.status == MAP_ASYNC_STATUS_SUCCESS) {
         mapped := buffer_get_mapped_range(staging, 0, cast($u64, bytes))

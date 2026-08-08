@@ -59,8 +59,11 @@ TemplateState :: struct { frames: i64, elapsed: f32 }
 // runs once a frame from then on.
 template_plugin :: fn(mut app: App) {
     component_for($Spin, app.world)
-    app_insert_resource($TemplateState, app,
-        TemplateState { frames = 0, elapsed = 0.0 })
+    app_insert_resource(
+        $TemplateState,
+        app,
+        TemplateState { frames = 0, elapsed = 0.0 }
+    )
     app_add_system(app, Stage::FrameUpdate, tick)
 }
 
@@ -70,12 +73,19 @@ template_plugin :: fn(mut app: App) {
 tick :: fn(mut world: World) {
     step := input_delta_seconds(
         ecs_resource($Input, world, resource_of($Input, world)))
-    var state := ecs_resource($TemplateState, world,
-        resource_of($TemplateState, world))
+    var state := ecs_resource(
+        $TemplateState,
+        world,
+        resource_of($TemplateState, world)
+    )
     state.frames = state.frames + 1
     state.elapsed = state.elapsed + step
-    ecs_resource_set($TemplateState, world,
-        resource_of($TemplateState, world), state)
+    ecs_resource_set(
+        $TemplateState,
+        world,
+        resource_of($TemplateState, world),
+        state
+    )
 
     spin := component_of($Spin, world)
     local := component_of($LocalTransform, world)
@@ -122,58 +132,129 @@ run :: fn(move app: App) -> i64 {
     // shader indexes.
     device := app_device(app)
     queue := app_queue(app)
-    cube := mesh_cache_insert(app.meshes, app.store, device, queue, "cube",
-        cube_mesh())
-    orange := materials_add(app.materials,
-        material_of(vec4(0.9, 0.45, 0.2, 1.0), 0.4, 0.0))
-    slate := materials_add(app.materials,
-        material_of(vec4(0.55, 0.57, 0.62, 1.0), 0.9, 0.0))
+    cube := mesh_cache_insert(
+        app.meshes,
+        app.store,
+        device,
+        queue,
+        "cube",
+        cube_mesh()
+    )
+    orange := materials_add(
+        app.materials,
+        material_of(vec4(0.9, 0.45, 0.2, 1.0), 0.4, 0.0)
+    )
+    slate := materials_add(
+        app.materials,
+        material_of(vec4(0.55, 0.57, 0.62, 1.0), 0.9, 0.0)
+    )
 
     // What the world holds when the first frame runs: a floor, the cube that
     // turns, a sun, and a lamp beside the cube.
     ids := app_ids(app)
     spin := component_of($Spin, app.world)
     lights := light_ids(app.world)
-    drawn := mask_with(mask_with(mask_with(mask_with(mask_empty(),
-                    ids.local_transform), ids.drawn),
-            ids.global_transform), ids.transform)
+    drawn := mask_with(
+        mask_with(
+            mask_with(mask_with(mask_empty(), ids.local_transform), ids.drawn),
+            ids.global_transform
+        ),
+        ids.transform
+    )
     spinning := mask_with(drawn, spin)
-    lighting := mask_with(mask_with(mask_with(mask_empty(),
-                ids.local_transform), ids.global_transform), lights.light)
+    lighting := mask_with(
+        mask_with(
+            mask_with(mask_empty(), ids.local_transform),
+            ids.global_transform
+        ),
+        lights.light
+    )
 
     floor := ecs_spawn_with(app.world, drawn)
-    ecs_set($LocalTransform, app.world, floor, ids.local_transform,
-        LocalTransform { translation = vec3(0.0, -1.0, 0.0),
-            rotation = quat_identity(), scale = vec3(6.0, 0.2, 6.0) })
-    ecs_set($Drawn, app.world, floor, ids.drawn,
-        Drawn { mesh = cube, material = slate, layer = ONE_LAYER })
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        floor,
+        ids.local_transform,
+        LocalTransform {
+            translation = vec3(0.0, -1.0, 0.0),
+            rotation = quat_identity(),
+            scale = vec3(6.0, 0.2, 6.0)
+        }
+    )
+    ecs_set(
+        $Drawn,
+        app.world,
+        floor,
+        ids.drawn,
+        Drawn { mesh = cube, material = slate, layer = ONE_LAYER }
+    )
 
     turning := ecs_spawn_with(app.world, spinning)
-    ecs_set($LocalTransform, app.world, turning, ids.local_transform,
-        LocalTransform { translation = vec3(0.0, 0.2, 0.0),
-            rotation = quat_identity(), scale = vec3(0.8, 0.8, 0.8) })
-    ecs_set($Drawn, app.world, turning, ids.drawn,
-        Drawn { mesh = cube, material = orange, layer = ONE_LAYER })
-    ecs_set($Spin, app.world, turning, spin,
-        Spin { axis = vec3(0.0, 1.0, 0.0), speed = 1.0, angle = 0.0 })
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        turning,
+        ids.local_transform,
+        LocalTransform {
+            translation = vec3(0.0, 0.2, 0.0),
+            rotation = quat_identity(),
+            scale = vec3(0.8, 0.8, 0.8)
+        }
+    )
+    ecs_set(
+        $Drawn,
+        app.world,
+        turning,
+        ids.drawn,
+        Drawn { mesh = cube, material = orange, layer = ONE_LAYER }
+    )
+    ecs_set(
+        $Spin,
+        app.world,
+        turning,
+        spin,
+        Spin { axis = vec3(0.0, 1.0, 0.0), speed = 1.0, angle = 0.0 }
+    )
 
     // A directional light is aimed rather than placed: what aims it is the
     // entity's rotation, so the transform is the whole of where it comes from.
     sunlight := ecs_spawn_with(app.world, lighting)
-    ecs_set($LocalTransform, app.world, sunlight, ids.local_transform,
-        LocalTransform { translation = vec3(0.0, 5.0, 0.0),
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        sunlight,
+        ids.local_transform,
+        LocalTransform {
+            translation = vec3(0.0, 5.0, 0.0),
             rotation = quat_mul(
                 quat_from_axis_angle(vec3(0.0, 1.0, 0.0), 0.5),
-                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), -0.8)),
-            scale = vec3(1.0, 1.0, 1.0) })
+                quat_from_axis_angle(vec3(1.0, 0.0, 0.0), -0.8)
+            ),
+            scale = vec3(1.0, 1.0, 1.0)
+        }
+    )
     ecs_set($Light, app.world, sunlight, lights.light, sun())
 
     lamp_holder := ecs_spawn_with(app.world, lighting)
-    ecs_set($LocalTransform, app.world, lamp_holder, ids.local_transform,
-        LocalTransform { translation = vec3(-1.8, 0.6, 1.8),
-            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
-    ecs_set($Light, app.world, lamp_holder, lights.light,
-        lamp(vec3(1.0, 0.7, 0.4), 10.0))
+    ecs_set(
+        $LocalTransform,
+        app.world,
+        lamp_holder,
+        ids.local_transform,
+        LocalTransform {
+            translation = vec3(-1.8, 0.6, 1.8),
+            rotation = quat_identity(),
+            scale = vec3(1.0, 1.0, 1.0)
+        }
+    )
+    ecs_set(
+        $Light,
+        app.world,
+        lamp_holder,
+        lights.light,
+        lamp(vec3(1.0, 0.7, 0.4), 10.0)
+    )
 
     var eye := camera_default()
     eye.position = vec3(0.0, 1.2, 5.0)

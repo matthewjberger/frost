@@ -61,10 +61,18 @@ Target :: struct {
 // A target naming views a caller made, for a pass drawing somewhere other than
 // the window. `no_view()` fills the slot a pass does not use, which is the
 // colour slot for a depth-only pass and the depth slot for one that needs none.
-target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
-    has_depth: bool) -> Target {
-    Target { color = color, depth = depth, has_color = has_color,
-        has_depth = has_depth }
+target_of :: fn(
+    color: TextureView,
+    depth: TextureView,
+    has_color: bool,
+    has_depth: bool
+) -> Target {
+    Target {
+        color = color,
+        depth = depth,
+        has_color = has_color,
+        has_depth = has_depth
+    }
 }
 
 no_view :: fn() -> TextureView { no_texture_view() }
@@ -79,16 +87,26 @@ no_view :: fn() -> TextureView { no_texture_view() }
 // load the depth the passes before it wrote, or each sorts only against itself
 // and the last to draw wins wherever they overlap. The graph decides both, from
 // what each pass declared it writes.
-frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
-    depth_load: u32) -> RenderPassEncoder {
+frame_pass_into :: fn(
+    mut f: Frame,
+    into: Target,
+    load: u32,
+    clear: Color,
+    depth_load: u32
+) -> RenderPassEncoder {
     encoder_pass_into(f.encoder, into, load, clear, depth_load)
 }
 
 // The same, from an encoder rather than a frame. A node records several passes
 // into the encoder it was handed and decides for itself what each of them
 // attaches, so it needs this without a `Frame` in reach.
-encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
-    clear: Color, depth_load: u32) -> RenderPassEncoder {
+encoder_pass_into :: fn(
+    encoder: CommandEncoder,
+    into: Target,
+    load: u32,
+    clear: Color,
+    depth_load: u32
+) -> RenderPassEncoder {
     var attachment := render_pass_color_attachment_init()
     attachment.view = into.color
     attachment.load_op = load
@@ -120,6 +138,10 @@ encoder_pass_into :: fn(encoder: CommandEncoder, into: Target, load: u32,
 // with its colour dropped, so a node opens one over the attachments it already
 // has rather than being given a second target.
 depth_only :: fn(into: Target) -> Target {
-    Target { color = no_view(), depth = into.depth, has_color = false,
-        has_depth = into.has_depth }
+    Target {
+        color = no_view(),
+        depth = into.depth,
+        has_color = false,
+        has_depth = into.has_depth
+    }
 }

@@ -213,10 +213,20 @@ json_parse :: fn(source: str) -> Json {
 
 new_node :: fn(mut document: Json, kind: JsonKind) -> i64 {
     index := vec_len($JsonNode, document.nodes)
-    vec_push($JsonNode, document.nodes, JsonNode {
-            kind = kind, number = 0, text_off = 0, text_len = 0,
-            key_off = 0, key_len = 0, first = -1, next = -1,
-        })
+    vec_push(
+        $JsonNode,
+        document.nodes,
+        JsonNode {
+            kind = kind,
+            number = 0,
+            text_off = 0,
+            text_len = 0,
+            key_off = 0,
+            key_len = 0,
+            first = -1,
+            next = -1,
+        }
+    )
     index
 }
 

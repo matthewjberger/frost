@@ -147,9 +147,18 @@ elf_align :: fn(at: i64, alignment: i64) -> i64 {
 // One section header. Everything an object like this needs is here; the fields
 // a relocatable file leaves empty are written as zeros rather than skipped,
 // since a header is a fixed sixty-four bytes either way.
-elf_section_header :: fn(mut object: Blob, name: i64, kind: i64, flags: i64,
-    offset: i64, size: i64, link: i64, info: i64, alignment: i64,
-    entry_size: i64) {
+elf_section_header :: fn(
+    mut object: Blob,
+    name: i64,
+    kind: i64,
+    flags: i64,
+    offset: i64,
+    size: i64,
+    link: i64,
+    info: i64,
+    alignment: i64,
+    entry_size: i64
+) {
     blob_word32(object, name)
     blob_word32(object, kind)
     blob_word64(object, flags)
@@ -162,8 +171,14 @@ elf_section_header :: fn(mut object: Blob, name: i64, kind: i64, flags: i64,
     blob_word64(object, entry_size)
 }
 
-elf_symbol :: fn(mut object: Blob, name: i64, binding: i64, kind: i64,
-    section: i64, value: i64) {
+elf_symbol :: fn(
+    mut object: Blob,
+    name: i64,
+    binding: i64,
+    kind: i64,
+    section: i64,
+    value: i64
+) {
     blob_word32(object, name)
     blob_byte(object, binding * 16 + kind)
     blob_byte(object, 0)
@@ -172,8 +187,13 @@ elf_symbol :: fn(mut object: Blob, name: i64, binding: i64, kind: i64,
     blob_word64(object, 0)
 }
 
-elf_rela :: fn(mut object: Blob, offset: i64, kind: i64, sym: i64,
-    addend: i64) {
+elf_rela :: fn(
+    mut object: Blob,
+    offset: i64,
+    kind: i64,
+    sym: i64,
+    addend: i64
+) {
     blob_word64(object, offset)
     // The named symbol in the high half and the kind of fixup in the low.
     blob_word32(object, kind)
@@ -278,8 +298,10 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     strtab_at := symtab_at + symbol_count * ELF_SYMBOL_SIZE
     shstrtab_at := strtab_at + names_size
     headers_at := elf_align(shstrtab_at + elf_section_names_size(debug), 8)
-    blob_room(object,
-        headers_at + elf_section_total(debug) * ELF_SECTION_HEADER_SIZE)
+    blob_room(
+        object,
+        headers_at + elf_section_total(debug) * ELF_SECTION_HEADER_SIZE
+    )
 
     // The header. 127 'E' 'L' 'F' names the format, then a 64-bit
     // least-significant-first object of the first version, for no particular
@@ -324,30 +346,67 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         if (fixup.kind == FIXUP_CALL) {
             kind = R_X86_64_PLT32
         }
-        elf_rela(object, fixup.offset, kind,
-            elf_reloc_symbol(unit, fixup.sym), fixup.addend)
+        elf_rela(
+            object,
+            fixup.offset,
+            kind,
+            elf_reloc_symbol(unit, fixup.sym),
+            fixup.addend
+        )
         r = r + 1
     }
 
     if (debug) {
-        elf_rela(object, marks.line_address - marks.line_at, R_X86_64_64,
-            ELF_SYM_TEXT, 0)
-        elf_rela(object, marks.info_abbrev - marks.info_at, R_X86_64_32,
-            ELF_SYM_ABBREV, 0)
-        elf_rela(object, marks.info_address - marks.info_at, R_X86_64_64,
-            ELF_SYM_TEXT, 0)
-        elf_rela(object, marks.info_stmt - marks.info_at, R_X86_64_32,
-            ELF_SYM_LINE, 0)
+        elf_rela(
+            object,
+            marks.line_address - marks.line_at,
+            R_X86_64_64,
+            ELF_SYM_TEXT,
+            0
+        )
+        elf_rela(
+            object,
+            marks.info_abbrev - marks.info_at,
+            R_X86_64_32,
+            ELF_SYM_ABBREV,
+            0
+        )
+        elf_rela(
+            object,
+            marks.info_address - marks.info_at,
+            R_X86_64_64,
+            ELF_SYM_TEXT,
+            0
+        )
+        elf_rela(
+            object,
+            marks.info_stmt - marks.info_at,
+            R_X86_64_32,
+            ELF_SYM_LINE,
+            0
+        )
     }
 
     // Nothing, then the ones that stand for sections, then every carried name.
     // Everything local has to come before anything global, which is what the
     // symbol table's header says of itself.
     elf_symbol(object, 0, STB_LOCAL, STT_NOTYPE, ELF_SEC_NULL, 0)
-    elf_symbol(object, 0, STB_LOCAL, STT_SECTION,
-        elf_section(ELF_SEC_TEXT, debug), 0)
-    elf_symbol(object, 0, STB_LOCAL, STT_SECTION,
-        elf_section(ELF_SEC_DATA, debug), 0)
+    elf_symbol(
+        object,
+        0,
+        STB_LOCAL,
+        STT_SECTION,
+        elf_section(ELF_SEC_TEXT, debug),
+        0
+    )
+    elf_symbol(
+        object,
+        0,
+        STB_LOCAL,
+        STT_SECTION,
+        elf_section(ELF_SEC_DATA, debug),
+        0
+    )
     if (debug) {
         elf_symbol(object, 0, STB_LOCAL, STT_SECTION, ELF_SEC_LINE, 0)
         elf_symbol(object, 0, STB_LOCAL, STT_SECTION, ELF_SEC_ABBREV, 0)
@@ -398,54 +457,145 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     blob_zeros(object, headers_at - object.count)
 
     elf_section_header(object, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    elf_section_header(object,
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_TEXT, debug), debug),
-        SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, text_at, text_count,
-        0, 0, SECTION_ALIGNMENT, 0)
+        SHT_PROGBITS,
+        SHF_ALLOC | SHF_EXECINSTR,
+        text_at,
+        text_count,
+        0,
+        0,
+        SECTION_ALIGNMENT,
+        0
+    )
     // A fixup table says which symbols it names and which section it fixes up.
-    elf_section_header(object,
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_RELA, debug), debug),
-        SHT_RELA, 0, rela_at, reloc_count * ELF_RELA_SIZE,
-        elf_section(ELF_SEC_SYMTAB, debug), elf_section(ELF_SEC_TEXT, debug),
-        8, ELF_RELA_SIZE)
-    elf_section_header(object,
+        SHT_RELA,
+        0,
+        rela_at,
+        reloc_count * ELF_RELA_SIZE,
+        elf_section(ELF_SEC_SYMTAB, debug),
+        elf_section(ELF_SEC_TEXT, debug),
+        8,
+        ELF_RELA_SIZE
+    )
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_DATA, debug), debug),
-        SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, data_at, data_count,
-        0, 0, SECTION_ALIGNMENT, 0)
+        SHT_PROGBITS,
+        SHF_ALLOC | SHF_WRITE,
+        data_at,
+        data_count,
+        0,
+        0,
+        SECTION_ALIGNMENT,
+        0
+    )
     if (debug) {
         // A debug section takes no room at run time and is aligned to a byte,
         // which is what makes a linker drop it from the loaded image.
-        elf_section_header(object,
+        elf_section_header(
+            object,
             elf_section_name_at(ELF_SEC_LINE, debug),
-            SHT_PROGBITS, 0, line_at, line_size, 0, 0, 1, 0)
-        elf_section_header(object,
+            SHT_PROGBITS,
+            0,
+            line_at,
+            line_size,
+            0,
+            0,
+            1,
+            0
+        )
+        elf_section_header(
+            object,
             elf_section_name_at(ELF_SEC_RELA_LINE, debug),
-            SHT_RELA, 0, rela_line_at, line_relocs * ELF_RELA_SIZE,
-            ELF_SEC_SYMTAB, ELF_SEC_LINE, 8, ELF_RELA_SIZE)
-        elf_section_header(object,
+            SHT_RELA,
+            0,
+            rela_line_at,
+            line_relocs * ELF_RELA_SIZE,
+            ELF_SEC_SYMTAB,
+            ELF_SEC_LINE,
+            8,
+            ELF_RELA_SIZE
+        )
+        elf_section_header(
+            object,
             elf_section_name_at(ELF_SEC_ABBREV, debug),
-            SHT_PROGBITS, 0, abbrev_at, abbrev_size, 0, 0, 1, 0)
-        elf_section_header(object,
+            SHT_PROGBITS,
+            0,
+            abbrev_at,
+            abbrev_size,
+            0,
+            0,
+            1,
+            0
+        )
+        elf_section_header(
+            object,
             elf_section_name_at(ELF_SEC_INFO, debug),
-            SHT_PROGBITS, 0, info_at, info_size, 0, 0, 1, 0)
-        elf_section_header(object,
+            SHT_PROGBITS,
+            0,
+            info_at,
+            info_size,
+            0,
+            0,
+            1,
+            0
+        )
+        elf_section_header(
+            object,
             elf_section_name_at(ELF_SEC_RELA_INFO, debug),
-            SHT_RELA, 0, rela_info_at, info_relocs * ELF_RELA_SIZE,
-            ELF_SEC_SYMTAB, ELF_SEC_INFO, 8, ELF_RELA_SIZE)
+            SHT_RELA,
+            0,
+            rela_info_at,
+            info_relocs * ELF_RELA_SIZE,
+            ELF_SEC_SYMTAB,
+            ELF_SEC_INFO,
+            8,
+            ELF_RELA_SIZE
+        )
     }
     // A symbol table says where its names are kept and where the local ones
     // stop, which is the ones before the first carried name.
-    elf_section_header(object,
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_SYMTAB, debug), debug),
-        SHT_SYMTAB, 0, symtab_at, symbol_count * ELF_SYMBOL_SIZE,
-        elf_section(ELF_SEC_STRTAB, debug), elf_first_named(debug),
-        8, ELF_SYMBOL_SIZE)
-    elf_section_header(object,
+        SHT_SYMTAB,
+        0,
+        symtab_at,
+        symbol_count * ELF_SYMBOL_SIZE,
+        elf_section(ELF_SEC_STRTAB, debug),
+        elf_first_named(debug),
+        8,
+        ELF_SYMBOL_SIZE
+    )
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_STRTAB, debug), debug),
-        SHT_STRTAB, 0, strtab_at, names_size, 0, 0, 1, 0)
-    elf_section_header(object,
+        SHT_STRTAB,
+        0,
+        strtab_at,
+        names_size,
+        0,
+        0,
+        1,
+        0
+    )
+    elf_section_header(
+        object,
         elf_section_name_at(elf_section(ELF_SEC_SHSTRTAB, debug), debug),
-        SHT_STRTAB, 0, shstrtab_at, elf_section_names_size(debug), 0, 0, 1, 0)
+        SHT_STRTAB,
+        0,
+        shstrtab_at,
+        elf_section_names_size(debug),
+        0,
+        0,
+        1,
+        0
+    )
 
     blob_write(object, path)
 }

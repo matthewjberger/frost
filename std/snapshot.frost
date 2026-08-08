@@ -212,10 +212,12 @@ ecs_save :: fn(world: World, mut s: Snapshot) {
             snapshot_put(s, column.item_size)
             snapshot_put(s, column.count)
             if (column.count > 0) {
-                snapshot_put_bytes(s, column.data,
-                    column.count * column.item_size)
-                snapshot_put_bytes(s, column.changed,
-                    column.count * TICK_SIZE)
+                snapshot_put_bytes(
+                    s,
+                    column.data,
+                    column.count * column.item_size
+                )
+                snapshot_put_bytes(s, column.changed, column.count * TICK_SIZE)
                 snapshot_put_bytes(s, column.added, column.count * TICK_SIZE)
             }
             held = held + 1
@@ -261,9 +263,16 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         alive := snapshot_take(s)
         table := snapshot_take(s)
         row := snapshot_take(s)
-        vec_push($EntitySlot, world.slots,
-            EntitySlot { generation = generation, alive = alive == 1,
-                table = table, row = row })
+        vec_push(
+            $EntitySlot,
+            world.slots,
+            EntitySlot {
+                generation = generation,
+                alive = alive == 1,
+                table = table,
+                row = row
+            }
+        )
         slot = slot + 1
     }
 
@@ -280,9 +289,15 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         // The table is made first and its mask read into it, rather than a
         // mask being built beside it and handed over. One less copy of the
         // thing, and the lookup is told about the table's own.
-        vec_push($Table, world.tables,
-            Table { mask = mask_empty(), entities = vec_new($Entity, 16),
-                columns = vec_new($Column, 4) })
+        vec_push(
+            $Table,
+            world.tables,
+            Table {
+                mask = mask_empty(),
+                entities = vec_new($Entity, 16),
+                columns = vec_new($Column, 4)
+            }
+        )
         ref table := vec_slice($Table, world.tables)[index]
         var word: i64 = 0
         while (word < MASK_WORDS) {
@@ -296,8 +311,11 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         while (row < rows) {
             id := snapshot_take(s)
             generation := snapshot_take(s)
-            vec_push($Entity, table.entities,
-                Entity { id = id, generation = generation })
+            vec_push(
+                $Entity,
+                table.entities,
+                Entity { id = id, generation = generation }
+            )
             row = row + 1
         }
         columns := snapshot_take(s)
@@ -340,11 +358,21 @@ test "a world survives being written down and read back" {
     while (index < 3) {
         entity := ecs_spawn(world)
         held: f32 = index
-        ecs_add($SavedPosition, world, entity, position,
-            SavedPosition { x = held, y = held + 1.0 })
+        ecs_add(
+            $SavedPosition,
+            world,
+            entity,
+            position,
+            SavedPosition { x = held, y = held + 1.0 }
+        )
         if (index == 1) {
-            ecs_add($SavedHealth, world, entity, health,
-                SavedHealth { points = 42 })
+            ecs_add(
+                $SavedHealth,
+                world,
+                entity,
+                health,
+                SavedHealth { points = 42 }
+            )
         }
         kept[index] = entity
         index = index + 1
@@ -390,7 +418,13 @@ test "a snapshot refuses a world whose components are in another order" {
     ecs_register($SavedPosition, world)
     ecs_register($SavedHealth, world)
     entity := ecs_spawn(world)
-    ecs_add($SavedPosition, world, entity, 0, SavedPosition { x = 1.0, y = 2.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        entity,
+        0,
+        SavedPosition { x = 1.0, y = 2.0 }
+    )
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -420,8 +454,13 @@ test "a snapshot refuses a registry naming a different component" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     entity := ecs_spawn(world)
-    ecs_add($SavedPosition, world, entity, position,
-        SavedPosition { x = 1.0, y = 2.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        entity,
+        position,
+        SavedPosition { x = 1.0, y = 2.0 }
+    )
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -449,8 +488,13 @@ test "a snapshot is a run of bytes that reads back" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     entity := ecs_spawn(world)
-    ecs_add($SavedPosition, world, entity, position,
-        SavedPosition { x = 3.0, y = 4.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        entity,
+        position,
+        SavedPosition { x = 3.0, y = 4.0 }
+    )
 
     var written := snapshot_new()
     ecs_save(world, written)
@@ -481,8 +525,13 @@ test "a read replaces whatever the world held" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     first := ecs_spawn(world)
-    ecs_add($SavedPosition, world, first, position,
-        SavedPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        first,
+        position,
+        SavedPosition { x = 1.0, y = 0.0 }
+    )
 
     var s := snapshot_new()
     ecs_save(world, s)
@@ -492,8 +541,13 @@ test "a read replaces whatever the world held" {
     var extra: i64 = 0
     while (extra < 5) {
         other := ecs_spawn(read)
-        ecs_add($SavedPosition, read, other, position,
-            SavedPosition { x = 99.0, y = 0.0 })
+        ecs_add(
+            $SavedPosition,
+            read,
+            other,
+            position,
+            SavedPosition { x = 99.0, y = 0.0 }
+        )
         extra = extra + 1
     }
     assert(ecs_count(read) == 5)
@@ -511,13 +565,23 @@ test "a snapshot carries the write times" {
     var world := ecs_new()
     position := ecs_register($SavedPosition, world)
     quiet := ecs_spawn(world)
-    ecs_add($SavedPosition, world, quiet, position,
-        SavedPosition { x = 0.0, y = 0.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        quiet,
+        position,
+        SavedPosition { x = 0.0, y = 0.0 }
+    )
     mark := ecs_now(world)
     ecs_tick(world)
     loud := ecs_spawn(world)
-    ecs_add($SavedPosition, world, loud, position,
-        SavedPosition { x = 1.0, y = 0.0 })
+    ecs_add(
+        $SavedPosition,
+        world,
+        loud,
+        position,
+        SavedPosition { x = 1.0, y = 0.0 }
+    )
 
     var s := snapshot_new()
     ecs_save(world, s)

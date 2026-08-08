@@ -89,7 +89,13 @@ slab_full :: fn($T: Type, $N: usize, s: Slab<T, N>) -> bool {
 // The caller checks `slab_full` first. There is no in-band "no handle" value,
 // because a handle that means nothing is exactly the thing generations exist to
 // stop being readable.
-slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+slab_insert :: fn(
+    $T: Type,
+    $N: usize,
+    mut s: Slab<T,
+    N>,
+    move value: $T
+) -> Handle<T> {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -99,7 +105,13 @@ slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Han
     packed
 }
 
-slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool {
+slab_alive :: fn(
+    $T: Type,
+    $N: usize,
+    s: Slab<T,
+    N>,
+    handle: Handle<T>
+) -> bool {
     raw: i64 = handle
     s.generations[raw & 4294967295] == (raw >> 32)
 }
@@ -141,7 +153,13 @@ slab_slot :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
 
 // Bumping the generation is what makes every outstanding handle to this slot
 // stale, so a later read through one aborts rather than seeing the next tenant.
-slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> bool {
+slab_release :: fn(
+    $T: Type,
+    $N: usize,
+    mut s: Slab<T,
+    N>,
+    handle: Handle<T>
+) -> bool {
     raw: i64 = handle
     index := raw & 4294967295
     if (s.generations[index] != (raw >> 32)) { return false }
@@ -208,7 +226,6 @@ test "a slot whose generation is spent is retired rather than reused" {
     spent := raw_again & 4294967295
     s.generations[spent] = stamp | GENERATION_LIMIT
     before := s.free_count
-    assert(slab_release($SlabThing, $2, s,
-            (s.generations[spent] << 32) | spent))
+    assert(slab_release($SlabThing, $2, s, (s.generations[spent] << 32) | spent))
     assert(s.free_count == before)
 }

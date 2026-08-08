@@ -150,8 +150,14 @@ map_len :: fn($K: Type, $V: Type, m: Map<K, V>) -> i64 {
 // The slot a key sits in, or the first empty slot on its probe run, whichever
 // comes first. A tombstone is probed past rather than stopped at, so a key put
 // after a removal is still found.
-map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
-    key: $K) -> i64 {
+map_find :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    m: Map<K,
+    V>,
+    key: $K
+) -> i64 {
     var i := ops.hash(key) % m.cap
     if (i < 0) {
         i = -i
@@ -172,8 +178,15 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 // Place a key and value into a table that is known to have room, without the
 // load-factor check or the growth. Both `map_put` and the rehash in `map_grow`
 // insert through this, which keeps the two out of a mutual recursion.
-map_insert :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
-    key: $K, move value: $V) {
+map_insert :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    mut m: Map<K,
+    V>,
+    key: $K,
+    move value: $V
+) {
     slot := map_find($K, $V, $ops, m, key)
     if (m.state[slot] != Slot::Used) {
         m.count = m.count + 1
@@ -220,16 +233,29 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
 
 // Held to keys and values that are not resources: an insert into a slot that
 // was already used overwrites what was there and nothing consumes it.
-map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
-    key: $K, move value: $V) where !is_linear(K) && !is_linear(V) {
+map_put :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    mut m: Map<K,
+    V>,
+    key: $K,
+    move value: $V
+) where !is_linear(K) && !is_linear(V) {
     if (m.count * 2 >= m.cap) {
         map_grow($K, $V, $ops, m)
     }
     map_insert($K, $V, $ops, m, key, value)
 }
 
-map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
-    key: $K) -> bool {
+map_has :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    m: Map<K,
+    V>,
+    key: $K
+) -> bool {
     slot := map_find($K, $V, $ops, m, key)
     m.state[slot] == Slot::Used
 }
@@ -242,8 +268,15 @@ map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 // out of a table it only borrows by a slot worked out while the program runs:
 // nothing can be told which value went, and asking twice hands out the same
 // one. Presence is `map_has`, which borrows and answers a bool.
-map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
-    move fallback: $V) -> $V where !is_linear(V) {
+map_get :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    m: Map<K,
+    V>,
+    key: $K,
+    move fallback: $V
+) -> $V where !is_linear(V) {
     slot := map_find($K, $V, $ops, m, key)
     if (m.state[slot] == Slot::Used) {
         return m.values[slot]
@@ -253,8 +286,14 @@ map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
 
 // Remove a key, leaving a tombstone so a probe run through the slot still
 // reaches keys placed after it. Answers whether the key was there.
-map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
-    key: $K) -> bool {
+map_remove :: fn(
+    $K: Type,
+    $V: Type,
+    $ops: Hashing<K>,
+    mut m: Map<K,
+    V>,
+    key: $K
+) -> bool {
     slot := map_find($K, $V, $ops, m, key)
     found := m.state[slot] == Slot::Used
     if (found) {

@@ -201,14 +201,26 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     TokenKind::Ident
 }
 
-push_token :: fn(mut tokens: Arena<Token>, kind: TokenKind, off: i64, len: i64,
-    value: i64) {
-    id := arena_push(tokens, Token { kind = kind, off = off, len = len,
-            value = value })
+push_token :: fn(
+    mut tokens: Arena<Token>,
+    kind: TokenKind,
+    off: i64,
+    len: i64,
+    value: i64
+) {
+    id := arena_push(
+        tokens,
+        Token { kind = kind, off = off, len = len, value = value }
+    )
     id
 }
 
-lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 {
+lex_operator :: fn(
+    src: str,
+    i: i64,
+    len: i64,
+    mut tokens: Arena<Token>
+) -> i64 {
     c := byte_of(src, i, len)
     d := byte_of(src, i + 1, len)
     if (c == CH_COLON && d == CH_COLON) {
@@ -364,8 +376,10 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                         // Wrapping on purpose: `0xFFFFFFFFFFFFFFFF` is a bit
                         // pattern, and the digits build it by leaving the
                         // signed range on the way.
-                        value = wrap_add(wrap_mul(value, base),
-                            radix_digit(held))
+                        value = wrap_add(
+                            wrap_mul(value, base),
+                            radix_digit(held)
+                        )
                     }
                     i = i + 1
                 }
@@ -419,8 +433,13 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                 i = i + 1
             }
             length := i - start
-            push_token(tokens, classify_ident(src, start, length), start,
-                length, 0)
+            push_token(
+                tokens,
+                classify_ident(src, start, length),
+                start,
+                length,
+                0
+            )
         } else if (c == CH_DQUOTE) {
             start := i
             i = i + 1
@@ -440,6 +459,4 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
     push_token(tokens, TokenKind::Eof, len, 0, 0)
 }
 
-// ---------------------------------------------------------------------------
-// Token cursor. The parser reads token kinds through these rather than bytes.
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- // Token cursor. The parser reads token kinds through these rather than bytes. // ---------------------------------------------------------------------------
