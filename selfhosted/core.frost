@@ -826,6 +826,13 @@ GParam :: struct {
     // matters, since only then does the body name something that has to be
     // there.
     is_fn: i64,
+    // What was written after the colon, where that was a signature or a bundle
+    // type. Nothing declares the name this parameter binds, so this is the only
+    // thing that says where a call through it can have got its answer from, and
+    // what fields a bundle read off it has. -1 where the kind says nothing: a
+    // type parameter and a number parameter both stand for something the call
+    // site names rather than something the body reaches through.
+    ty: i64,
 }
 
 // One generic argument beyond the first, held in the `gargs` arena. The value is
@@ -1747,6 +1754,12 @@ Parser :: struct {
     // names lives. `ref x := place` binds one, and so does a binding taken from
     // a call answering with a `ref`.
     frame_places: Arena<LocalVar>,
+    // Where the frame check has already refused, in `name_off`. A generic's
+    // instance is the declaration parsed again with its arguments bound, so the
+    // same written line is walked once for the declaration and once per
+    // instance. One place in the source is one fault, which is what the other
+    // compiler says about it too.
+    frame_reported: Arena<LocalVar>,
     // The declared or inferred type of each parameter and local, in `ty`. The
     // frame check runs before the type pass, so it carries its own.
     walk_types: Arena<LocalVar>,

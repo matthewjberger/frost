@@ -120,18 +120,40 @@ This is a library pattern, separate from the language's mechanism. `uses` and
 nothing. The struct above decides it at run time and costs an indirect call, so
 use it when the answer is not known until then.
 
-The middle of those two would be a data structure generic over its allocator
-type, which costs nothing and covers most of what a swap is wanted for. It is
-not writable yet. A capability bundle expresses the interface, and a bundle
-holding `take`, `resize` and `give` over `[]u8` runs and mutates its state
-correctly on both compilers. What stops it is the checks: a call to a function
-supplied at compile time is one whose body they cannot see, so a view it answers
-with has no traceable storage, and `carve` reading a run back out of
-`source.take(...)` is refused twice, once for indexing a value of unknown type
-and once for answering with what reads as this frame's storage. A `$f` argument
-is refused the same way, so the bundle is not what is in the way. Until a
-compile-time call can answer with a view, `Fixed<T>` beside `Vec<T>` is what a
-container in an arena is.
+The middle of those two is a data structure generic over its allocator type,
+which costs nothing and covers most of what a swap is wanted for. That is a
+capability bundle: `std/allocation.frost` declares `Allocation<A>` holding
+`take`, `resize` and `give` over `[]u8`, and `carve`, `carve_grow` and
+`carve_give` are the typed face over them. The bundle arrives as a compile-time
+argument, so a call through one of its fields is a direct call to the function
+that field names, and the same body draws from the heap or from an arena:
+
+```frost
+import "allocation.frost"
+import "arena.frost"
+
+main :: fn() -> i64 {
+    var h := heap_state()
+    var run := carve($i64, $Heap, $heap_source, h, 4)
+    carve_give($i64, $Heap, $heap_source, h, run)
+
+    var backing: [64]u8 = [0; 64]
+    var a := arena_over(backing)
+    var scratch := carve($i64, $Arena, $arena_source, a, 4)
+    scratch[0]
+}
+```
+
+What the checks say about such a call is what they say about any call whose body
+they cannot see: the answer is worth the shortest-lived argument that could have
+reached it. Carving from the caller's arena hands back the caller's storage;
+carving from one built in this frame is refused, in the same words either
+compiler gives for a bare pointer out of a frame.
+
+What is left is the ergonomics. The type after `uses` is still concrete, so a
+container generic over its source takes the bundle as parameters rather than
+drawing it the way a `uses Arena` function draws an arena, and `Vec<T>` is still
+nailed to the heap with `Fixed<T>` beside it.
 
 ## What is left in C
 

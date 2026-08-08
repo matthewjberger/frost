@@ -515,9 +515,17 @@ impl Checker<'_> {
                 | Type::RefMut(pointee) => Some(*pointee),
                 _ => None,
             },
+            // A call through a value rather than a name: a bundle's field, or
+            // anything else holding a function. The signature it was declared
+            // under says what it answers with, which is what this pass needs;
+            // the body it names belongs to the walk of that function.
             Expression::Call(callee, arguments) => {
                 let Expression::Identifier(name) = ast.expr(*callee) else {
-                    return None;
+                    let Some(Type::Proc(_, answer)) = self.type_of(*callee)
+                    else {
+                        return None;
+                    };
+                    return Some(*answer);
                 };
                 // The type builtins parse as calls to these names and answer
                 // constants, so their types are known here without a
@@ -526,6 +534,15 @@ impl Checker<'_> {
                     "sizeof" | "alignof" | "type_id" => return Some(Type::I64),
                     "typename" => return Some(Type::Str),
                     _ => {}
+                }
+                // A name bound to a function the call site chose, which is a
+                // `$f` parameter. There is no declaration under that name to
+                // read a return type off, and the signature it was declared
+                // under is the same promise a declaration would be.
+                if let Some(Type::Proc(_, answer)) =
+                    self.lookup(ast.name(*name))
+                {
+                    return Some((**answer).clone());
                 }
                 let declared = self.returns.get(ast.name(*name))?;
                 let Some(parameters) = self.generics.get(ast.name(*name))
@@ -722,8 +739,10 @@ impl Checker<'_> {
         let ast = self.ast;
         match ast.expr(value) {
             Expression::Call(callee, arguments) => {
+                // A call through a value names none of the three below, so what
+                // it answers with is whatever its signature says.
                 let Expression::Identifier(name) = ast.expr(*callee) else {
-                    return None;
+                    return self.type_of(value);
                 };
                 match ast.name(*name) {
                     "ptr_cast" => match ast
@@ -845,7 +864,16 @@ impl Checker<'_> {
             | Expression::Proc(parameters, signature, body) => {
                 self.scope.push(HashMap::new());
                 for parameter in ast.params_in(*parameters) {
-                    let annotation = parameter.type_annotation.clone();
+                    // A compile-time parameter is annotated with its own name,
+                    // which says nothing about what it holds. Where it was
+                    // declared under a signature or a bundle type, that is what
+                    // the body has: `$take: fn(mut A, i64, i64) -> []u8` calls
+                    // a function answering with a slice, and `$source:
+                    // Allocation<A>` reads fields off a struct.
+                    let annotation = parameter
+                        .compile_time_signature
+                        .clone()
+                        .or_else(|| parameter.type_annotation.clone());
                     self.bind(ast.name(parameter.name), annotation);
                 }
                 // An allocation capability is threaded in as a parameter by a

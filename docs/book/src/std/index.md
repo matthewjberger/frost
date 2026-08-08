@@ -1,6 +1,6 @@
 # The standard library
 
-`std/` is twenty files of Frost, compiled the way your own modules are compiled
+`std/` is twenty-one files of Frost, compiled the way your own modules are compiled
 and written with the same language your own code has. `Vec` and `Map` are
 structs over a heap slice, `Option` is a generic enum, and `Slab` and `columns`
 use the handle indexing of section 10.2 of
@@ -14,7 +14,7 @@ would, with an `extern` declaration. `mem.frost` declares the C allocator,
 transcendentals. `ecs.frost` adds two runtime calls, for reporting a fault and
 for stopping on one, and `slab.frost` one, for the identifier a container stamps
 into its handles. Those eight files hold every `extern` in the library. The
-other twelve declare none.
+other thirteen declare none.
 
 Nothing is imported implicitly. A program that wants to print says
 `import "io.frost"`, and the file is found on the standard library search path
@@ -24,6 +24,7 @@ standard library is the last of them.
 
 | Module | What it is | Page |
 | --- | --- | --- |
+| `allocation.frost` | Where storage comes from, as a bundle a call site names | [Typed allocation](mem.md) |
 | `mem.frost` | Typed heap allocation, and the block counter the leak tests use | [mem.md](mem.md) |
 | `arena.frost` | A bump allocator over a fixed buffer, carving `[]T` runs | [mem.md](mem.md) |
 | `vec.frost` | A growable array, `linear`, over one heap block | [containers.md](containers.md) |
@@ -53,7 +54,9 @@ worked example of a binding to a real C library.
 
 Almost everything allocating in the library goes through `mem.frost`, which is
 where the `unsafe` is concentrated. `arena.frost` is the one other allocator,
-and its single `unsafe` block is the reinterpret from bytes to `T`.
+and it holds no `unsafe` block at all: `mem.frost` has the one reinterpret from
+bytes to `T`, and `allocation.frost` puts the two behind one bundle without
+adding any.
 `vec.frost`, `fixed.frost` and `map.frost` hold slices, so they contain no
 `unsafe` block of their own.
 `slab.frost` and `columns.frost` allocate nothing at all. `io.frost`,
@@ -86,9 +89,9 @@ many files failed. A single module is the same command with the file named:
 frost --test std/map.frost
 ```
 
-Fourteen of the twenty carry tests: `ecs.frost` (116 blocks), `math.frost` (33),
-`math64.frost` (23), `map.frost` and `mem.frost` (13 each), `strings.frost`
-(12), `snapshot.frost` (6), `vec.frost` (5), `arena.frost` and `fixed.frost`
-(4 each), `sort.frost` and `thread.frost` (3 each), and `fs.frost` and
-`slab.frost` (2 each). The other six are covered where they are used, and each
-page says where.
+Fifteen of the twenty-one carry tests: `ecs.frost` (116 blocks), `math.frost`
+(33), `math64.frost` (23), `map.frost` and `mem.frost` (13 each),
+`strings.frost` (12), `arena.frost` and `snapshot.frost` (6 each), `vec.frost`
+(5), `fixed.frost` (4), `allocation.frost`, `sort.frost` and `thread.frost`
+(3 each), and `fs.frost` and `slab.frost` (2 each). The other six are covered
+where they are used, and each page says where.

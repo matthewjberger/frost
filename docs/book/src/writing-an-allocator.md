@@ -190,8 +190,20 @@ saying which allocator it came from.
 
 ```frost,sketch
 with scratch {
-    var visible := fixed_over($Sprite, arena_carve($Sprite, $4096, scratch, 64))
+    var visible := fixed_over($Sprite, arena_carve($Sprite, scratch, 64))
     fixed_push($Sprite, visible, sprite)
+}
+```
+
+A function that should work against whichever source it is handed takes the
+source as a compile-time argument instead of naming one. `Allocation<A>` in
+[std/allocation.frost](std/mem.md) is the bundle for that, and `arena_source`
+puts an arena behind it, so the same body draws from the arena here and from the
+heap elsewhere at no cost either way.
+
+```frost,sketch
+with scratch {
+    var visible := carve($Sprite, $Arena, $arena_source, scratch, 64)
 }
 ```
 
