@@ -2828,6 +2828,37 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n",
         "3 7 9\n24\n",
     ),
+    // A compile-time parameter with a default is written or left out, and the
+    // call is aligned by the `$` rather than by counting: an argument carrying
+    // one binds a compile-time parameter and every other binds a value
+    // parameter. All three kinds of default in one program, since each rides in
+    // the same slot and a reader has to see that they do.
+    (
+        "a_compile_time_parameter_may_stand_for_a_default",
+        "import \"io.frost\"\n\
+         Heap :: struct { }\n\
+         Bump :: struct { room: i64, mark: i64 }\n\
+         Sizing :: struct($A: Type) { room: fn(i64) -> i64 }\n\
+         heap_room :: fn(count: i64) -> i64 { count * 8 }\n\
+         bump_room :: fn(count: i64) -> i64 { count * 4 }\n\
+         heap_sizing :: Sizing<Heap> { room = heap_room }\n\
+         bump_sizing :: Sizing<Bump> { room = bump_room }\n\
+         room_of :: fn(\n\
+         \x20   $A: Type = Heap,\n\
+         \x20   $sizing: Sizing<A> = heap_sizing,\n\
+         \x20   $slack: usize = 2,\n\
+         \x20   count: i64\n\
+         ) -> i64 {\n\
+         \x20   sizing.room(count) + slack + sizeof(A)\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\n\", room_of(3))\n\
+         \x20   print(\"{}\n\", room_of($Bump, $bump_sizing, 3))\n\
+         \x20   print(\"{}\n\", room_of($Bump, $bump_sizing, $10, 3))\n\
+         \x20   0\n\
+         }\n",
+        "26\n30\n38\n",
+    ),
     // A compile-time parameter a value parameter settles is read off that
     // argument, and one nothing else names is written. Both spellings in one
     // program, since what decides which is the signature and a reader has to be

@@ -7418,6 +7418,13 @@ check_calls :: fn(mut p: Parser) {
                     generic = true
                     expected = expected + declared
                     got = got + written
+                    // A compile-time parameter with a default may be written
+                    // or left out, so what a call gives is a range and only a
+                    // count outside it is wrong.
+                    optional := fallback_gparam_count(p, gi)
+                    if (got > expected && got <= expected + optional) {
+                        got = expected
+                    }
                 }
             }
             if (generic && expected != got && is_supplied == false) {

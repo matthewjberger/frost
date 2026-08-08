@@ -376,6 +376,7 @@ record_generic_fn :: fn(
     // been parsed for this one yet, so this is the last moment the declared
     // shape can be read off it.
     template_ret := arena_at(p.fns, fn_index).ret_type
+    tparam_fallback := p.tparam_fallback
     arena_push(
         p.generic_fns,
         GenericFn {
@@ -395,7 +396,8 @@ record_generic_fn :: fn(
             pack_format = pack_format,
             format_off = format_off,
             format_len = format_len,
-            template_ret = template_ret
+            template_ret = template_ret,
+            tparam_fallback = tparam_fallback
         },
     )
 }

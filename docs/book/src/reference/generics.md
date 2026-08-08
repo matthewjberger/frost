@@ -344,6 +344,43 @@ A `$f: fn(T, T) -> bool` (11.1b) and a `$ops: Ordering<T>` (11.4b) are written
 whatever else the signature says. What arrives for them is a name the call
 picks rather than a type to read off an argument, so nothing settles them.
 
+## 11.1f Defaults
+
+A compile-time parameter may say what it stands for where a call writes nothing
+for it:
+
+```frost
+import "io.frost"
+
+Heap :: struct { }
+Bump :: struct { room: i64, mark: i64 }
+
+room_of :: fn($A: Type = Heap, $slack: usize = 2, count: i64) -> i64 {
+    count * 8 + slack + sizeof(A)
+}
+
+main :: fn() -> i64 {
+    print("{}
+", room_of(3))
+    print("{}
+", room_of($Bump, $16, 3))
+    0
+}
+```
+
+A default may be a type, a name that is a function or a constant, or a number,
+which are the three kinds of compile-time argument (11.3). It is written after
+the kind: `$A: Type = Heap`, `$source: Allocation<A> = heap_source`,
+`$slack: usize = 2`.
+
+A call is lined up against the parameters by the `$` rather than by counting: an
+argument carrying one binds a compile-time parameter and every other binds a
+value parameter. So a defaulted parameter is passed over wherever it sits in the
+list, and the arguments after it are still the value ones.
+
+Where a value parameter settles the parameter (11.1e), the default is never
+reached: the argument says what it is.
+
 ## 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its

@@ -661,6 +661,7 @@ main :: fn() -> i64 {
         decl_format_off = 0,
         decl_format_len = 0,
         tparam_is_value = 0,
+        tparam_fallback = -1,
         last_return_type = 0,
         no_struct_lit = false,
         last_type_was_generic = 0,

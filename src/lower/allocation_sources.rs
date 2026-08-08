@@ -98,6 +98,7 @@ pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
                 mutable: true,
                 mode: ParamMode::Write,
                 compile_time_signature: None,
+                compile_time_default: None,
                 pack: false,
                 format: false,
             });

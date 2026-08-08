@@ -816,6 +816,10 @@ GenericFn :: struct {
     xparam_start: i64,
     xparam_count: i64,
     token_start: i64,
+    // What the first compile-time parameter stands for where a call writes
+    // nothing for it, as the code a `$` argument would carry, and -1 for one
+    // every call writes.
+    tparam_fallback: i64,
     // What the template was declared to answer with, still naming its type
     // parameter. The symbol's own return type is rewritten to each instance's
     // as that instance is parsed, so this is the only place the declared shape
@@ -838,6 +842,10 @@ GParam :: struct {
     // matters, since only then does the body name something that has to be
     // there.
     is_fn: i64,
+    // What `= Heap` after the kind says this parameter stands for where a call
+    // writes nothing for it, as the code a `$` argument would carry. -1 for a
+    // parameter every call writes.
+    fallback: i64,
     // What was written after the colon, where that was a signature or a bundle
     // type. Nothing declares the name this parameter binds, so this is the only
     // thing that says where a call through it can have got its answer from, and
@@ -1641,6 +1649,10 @@ Parser :: struct {
     decl_format_len: i64,
     // Whether that first parameter was declared as taking a number.
     tparam_is_value: i64,
+    // What the first compile-time parameter of the declaration being parsed
+    // stands for where a call writes nothing for it, and -1 for one every call
+    // writes.
+    tparam_fallback: i64,
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,

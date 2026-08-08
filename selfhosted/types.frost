@@ -10,7 +10,9 @@ import "layout.frost"
 
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position, gparam_position, written_gparam_count,
-    first_settled_gparam, settled_type_args, hold_pending_tuple,
+    first_settled_gparam, has_fallback_gparam, fallback_gparam_count,
+    settled_type_args,
+    hold_pending_tuple,
     settle_pending_tuples, hold_declaration, restore_declaration,
     MONO_DEPTH_MAX, Declaring,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
@@ -1014,6 +1016,13 @@ settled_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
             name_off = param.name_off
             name_len = param.name_len
         }
+        var fallback := gfn.tparam_fallback
+        if (index > 0) {
+            fallback = arena_at(
+                p.gparams,
+                gfn.xparam_start + index - 1
+            ).fallback
+        }
         at := gparam_position(p, gfn.token_start, name_off, name_len)
         settled := p.gparam_settled
         through := p.tparam_through
@@ -1022,6 +1031,12 @@ settled_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
             if (at >= 0) {
                 bound = call_arg_type_at(p, head, at, through)
             }
+        } else if (fallback >= 0 && nth_type_arg(p, head, written) < 0) {
+            // Nothing written for it, so it stands for what its declaration
+            // said. Told apart by the `$` rather than by counting: an argument
+            // carrying one binds a compile-time parameter and every other binds
+            // a value parameter.
+            bound = fallback
         } else {
             bound = nth_type_arg(p, head, written)
             written = written + 1
@@ -1197,7 +1212,8 @@ nth_type_arg :: fn(mut p: Parser, head: i64, at: i64) -> i64 {
 // It is what says which argument stands for the type parameter; without it the
 // first argument whose type is known has to do.
 call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
-    if (owner >= 0 && first_settled_gparam(p, owner)) {
+    if (owner >= 0
+        && (first_settled_gparam(p, owner) || has_fallback_gparam(p, owner))) {
         return settled_type_args(p, head, owner)
     }
     var count: i64 = 0
@@ -1568,6 +1584,7 @@ Declaring :: struct {
     saw_type_param: i64,
     tparam_is_slot: i64,
     tparam_is_value: i64,
+    tparam_fallback: i64,
     tparam_called: i64,
     bound_token: i64,
     xparam_start: i64,
@@ -1610,6 +1627,7 @@ hold_declaration :: fn(mut p: Parser) -> Declaring {
         saw_type_param = p.saw_type_param,
         tparam_is_slot = p.tparam_is_slot,
         tparam_is_value = p.tparam_is_value,
+        tparam_fallback = p.tparam_fallback,
         tparam_called = p.tparam_called,
         bound_token = p.bound_token,
         xparam_start = p.xparam_start,
@@ -1652,6 +1670,7 @@ restore_declaration :: fn(mut p: Parser, held: Declaring) {
     p.saw_type_param = held.saw_type_param
     p.tparam_is_slot = held.tparam_is_slot
     p.tparam_is_value = held.tparam_is_value
+    p.tparam_fallback = held.tparam_fallback
     p.tparam_called = held.tparam_called
     p.bound_token = held.bound_token
     p.xparam_start = held.xparam_start
@@ -2454,7 +2473,8 @@ gparam_position :: fn(
 written_gparam_count :: fn(mut p: Parser, gfn_index: i64) -> i64 {
     gfn := arena_at(p.generic_fns, gfn_index)
     var count: i64 = 0
-    if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1) {
+    if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1
+        && gfn.tparam_fallback < 0) {
         gparam_position(p, gfn.token_start, gfn.tparam_off, gfn.tparam_len)
         if (p.gparam_settled == 0) {
             count = count + 1
@@ -2463,8 +2483,47 @@ written_gparam_count :: fn(mut p: Parser, gfn_index: i64) -> i64 {
     var index: i64 = 0
     while (index < gfn.xparam_count) {
         param := arena_at(p.gparams, gfn.xparam_start + index)
-        gparam_position(p, gfn.token_start, param.name_off, param.name_len)
-        if (p.gparam_settled == 0) {
+        if (param.fallback < 0) {
+            gparam_position(p, gfn.token_start, param.name_off, param.name_len)
+            if (p.gparam_settled == 0) {
+                count = count + 1
+            }
+        }
+        index = index + 1
+    }
+    count
+}
+
+// Whether any compile-time parameter of this generic carries a default, so a
+// call may write nothing for it and the walk that binds them has to run.
+has_fallback_gparam :: fn(mut p: Parser, gfn_index: i64) -> bool {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    if (gfn.tparam_fallback >= 0) {
+        return true
+    }
+    var index: i64 = 0
+    while (index < gfn.xparam_count) {
+        if (arena_at(p.gparams, gfn.xparam_start + index).fallback >= 0) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
+// How many of this generic's compile-time parameters carry a default. A call
+// may write each of them or leave it out, so what a call gives is a range
+// rather than a count.
+fallback_gparam_count :: fn(mut p: Parser, gfn_index: i64) -> i64 {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    var count: i64 = 0
+    if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1
+        && gfn.tparam_fallback >= 0) {
+        count = count + 1
+    }
+    var index: i64 = 0
+    while (index < gfn.xparam_count) {
+        if (arena_at(p.gparams, gfn.xparam_start + index).fallback >= 0) {
             count = count + 1
         }
         index = index + 1

@@ -322,6 +322,12 @@ pub struct Parameter {
     pub mutable: bool,
     pub mode: crate::parser::ParamMode,
     pub compile_time_signature: Option<crate::types::Type>,
+    // What a compile-time parameter stands for when the call writes nothing for
+    // it. `$A: Type = Heap` is one, and so is `$source: Allocation<A> =
+    // heap_source`. A call is aligned by the sigil rather than by counting: a
+    // `$` argument binds a `$` parameter and anything else binds a value
+    // parameter, so a defaulted one is skipped over wherever it sits.
+    pub compile_time_default: Option<crate::types::Type>,
     pub pack: bool,
     // Whether the argument here has to be a string literal whose holes are
     // counted against the compile-time list that follows it. Declared `format`,

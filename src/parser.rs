@@ -2165,6 +2165,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    compile_time_default: None,
                     pack: false,
                     format: false,
                 });
@@ -3259,6 +3260,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    compile_time_default: None,
                     pack,
                     format,
                 });
@@ -3845,6 +3847,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    compile_time_default: None,
                     pack,
                     format,
                 });
@@ -3955,6 +3958,21 @@ impl<'a> Parser<'a> {
                 "Expected 'Type', 'usize', a struct type or a function signature after ':' in the compile-time parameter '${name}'"
             ),
         };
+        // `= Heap` says what the parameter stands for where a call writes
+        // nothing for it. A type, a name that is a constant or a function, or a
+        // number, since those are the three kinds of compile-time argument.
+        let mut compile_time_default = None;
+        if matches!(self.peek_nth(0), Token::Assign) {
+            self.read_token();
+            compile_time_default = Some(match self.peek_nth(0) {
+                Token::Integer(value) => {
+                    let held = *value;
+                    self.read_token();
+                    Type::ConstUsize(held as usize)
+                }
+                _ => self.parse_type()?,
+            });
+        }
         let symbol = self.ast.intern(&name);
         Ok(Parameter {
             name: symbol,
@@ -3962,6 +3980,7 @@ impl<'a> Parser<'a> {
             mutable: false,
             mode: ParamMode::Read,
             compile_time_signature,
+            compile_time_default,
             pack: false,
             format: false,
         })

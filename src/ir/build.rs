@@ -592,6 +592,7 @@ fn build_module_inner(
                     mutable: parameter.mutable,
                     mode: parameter.mode,
                     compile_time_signature: None,
+                    compile_time_default: None,
                     pack: false,
                     // The word travels with the parameter. A body that hands
                     // its own literal on to another `format` parameter is
@@ -634,6 +635,7 @@ fn build_module_inner(
                         mutable: false,
                         mode: crate::parser::ParamMode::Read,
                         compile_time_signature: None,
+                        compile_time_default: None,
                         pack: false,
                         format: false,
                     });
@@ -7322,6 +7324,10 @@ impl<'a> FunctionLowering<'a> {
             .then(|| target.to_string())
     }
 
+    /// Bind one compile-time parameter to what the call gives it, or to the
+    /// default its declaration carries where the call gives nothing. The two
+    /// arrive at the same place: a `$T` argument and a `= Heap` default are
+    /// both a type written where a type belongs.
     fn lower_generic_call(
         &mut self,
         name: &str,
@@ -7387,10 +7393,26 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
+        // Which argument each parameter written before the list takes. Two
+        // parameters take none: one a value parameter settles, and a
+        // compile-time one with a declared default the call wrote no `$`
+        // argument for. The second is aligned by the sigil rather than by
+        // counting, since a `$` argument binds a compile-time parameter and
+        // anything else binds a value one.
         let mut aligned: Vec<Option<usize>> = Vec::with_capacity(fixed);
         let mut consumed = 0usize;
-        for held in settled.iter().take(fixed) {
-            if held.is_some() {
+        for (index, parameter) in
+            generic_parameters.iter().take(fixed).enumerate()
+        {
+            if settled[index].is_some() {
+                aligned.push(None);
+                continue;
+            }
+            if parameter.compile_time_default.is_some()
+                && !arguments.get(consumed).is_some_and(|argument| {
+                    matches!(self.ast.expr(*argument), Expression::TypeValue(_))
+                })
+            {
                 aligned.push(None);
                 continue;
             }
@@ -7433,20 +7455,29 @@ impl<'a> FunctionLowering<'a> {
             if parameter.pack {
                 break;
             }
-            // A compile-time parameter a value parameter settles is bound by
-            // the walk of that parameter, so there is nothing to read here.
-            let Some(index) = *slot else {
-                continue;
-            };
-            let argument = &arguments[index];
+            // A compile-time parameter takes no argument in two cases, and
+            // they end differently. One a value parameter settles is bound by
+            // the walk of that parameter, so there is nothing to do here; one
+            // the call wrote nothing for stands for the default its declaration
+            // gave it, which lands where a written argument would.
             if is_type_parameter(self.ast, parameter) {
-                let Expression::TypeValue(ty) = self.ast.expr(*argument) else {
-                    bail!(
-                        "type parameter '{parameter_name}' of '{name}' requires a type argument like '${parameter_name}'",
-                        parameter_name = self.ast.name(parameter.name)
-                    );
+                let ty = match slot {
+                    Some(index) => {
+                        let Expression::TypeValue(ty) =
+                            self.ast.expr(arguments[*index])
+                        else {
+                            bail!(
+                                "type parameter '{parameter_name}' of '{name}' requires a type argument like '${parameter_name}'",
+                                parameter_name = self.ast.name(parameter.name)
+                            );
+                        };
+                        ty.clone()
+                    }
+                    None => match &parameter.compile_time_default {
+                        Some(default) => default.clone(),
+                        None => continue,
+                    },
                 };
-                let ty = ty.clone();
                 // `$f` where f is a function rather than a type is a
                 // compile-time function argument. It reads as a named type
                 // here, so which one it is comes from whether the name is a
@@ -7508,6 +7539,12 @@ impl<'a> FunctionLowering<'a> {
                 subst.insert(self.ast.name(parameter.name).to_string(), bound);
                 continue;
             }
+            // A value parameter always takes an argument: only a compile-time
+            // one stands for anything the call did not write.
+            let Some(index) = *slot else {
+                continue;
+            };
+            let argument = &arguments[index];
             // A read-mode `$T` parameter became `Ref(T)` before `T` was known.
             // Had `T` been written out as a copy type it would have stayed a
             // value, so once the argument says it is one, this parameter is a
