@@ -5,9 +5,10 @@ time, has no garbage collector, no runtime, no exceptions, and no hidden
 allocation. It is memory-safe without lifetimes: a borrow is a parameter mode
 and cannot escape the call it was made for.
 
-This page covers the whole language, in order, as code. The test suite compiles
-every block below, so the compiler accepts everything written here. Blocks
-marked `sketch` show a shape and skip compilation.
+This page covers the whole language in order, then the standard library, as
+code. The test suite compiles every block below, so the compiler accepts
+everything written here. Blocks marked `sketch` show a shape and skip
+compilation.
 
 Run a file with `frost program.frost`. Keep the executable with
 `frost program.frost --link -o program`.
@@ -429,7 +430,7 @@ main :: fn() -> i64 {
 }
 ```
 
-## Errors are values in the signature
+## Errors
 
 `-> T ! E` reads "answers with a `T`, or fails with an `E`". `E` is an ordinary
 type the program declared. There is no error interface, no backtrace, no
@@ -471,7 +472,7 @@ statement reads neither arm, so writing one for effect alone is refused.
 `errdefer` runs only where the function leaves through its failure set, which
 releases a resource that a `?` would otherwise step over.
 
-## Borrows that are written down
+## Returning a borrow with `ref T`
 
 The borrow a parameter mode gives is implicit, and an implicit borrow cannot
 escape: it may not be stored in a field, put in an array, or returned. That rule
@@ -633,7 +634,7 @@ main :: fn() -> i64 {
 There is no compile-time string parsing, no recursion, and no unbounded loop.
 Every compile-time `for` walks a list whose length the call fixed.
 
-## Asking a type about itself
+## Compile-time questions about a type
 
 `sizeof`, `typename` and `type_id` are compile-time constants, and `fields(T)`
 walks a struct's layout. Use it to derive a vertex format or a descriptor table
@@ -706,7 +707,7 @@ main :: fn() -> i64 {
 }
 ```
 
-## Allocation is a capability
+## Where memory comes from
 
 An allocator is an ordinary struct a program declares, and an allocation is an
 ordinary call. `uses A` on a function says it draws a capability of type `A`,
@@ -810,7 +811,7 @@ import "../lib/engine/world.frost"
 export spawn, despawn
 ```
 
-## Tests live beside the code
+## Tests
 
 ```frost
 import "io.frost"
@@ -824,7 +825,7 @@ test "adding two numbers" {
 main :: fn() -> i64 { 0 }
 ```
 
-## Arithmetic over lanes
+## Lane-wise arithmetic on a small array
 
 A small array of numbers takes the arithmetic operators lane by lane. Frost
 defines the operators over `[4]f32` itself, so there is no SIMD type to reach
@@ -843,7 +844,7 @@ main :: fn() -> i64 {
 }
 ```
 
-## Absences, and what stands in for each
+## What Frost leaves out, and what to write instead
 
 No garbage collector, no runtime, no exceptions, no panics to catch, no
 destructors, no traits, no interfaces, no inheritance, no methods, no operator
@@ -857,6 +858,260 @@ of a closure, an index loop instead of an iterator, a generational handle
 instead of a pointer into a container, and a failure set in the signature
 instead of an exception.
 
+## The standard library
+
+`std/` is twenty files of ordinary Frost, compiled the way your own modules are.
+Nothing is imported for you: a program that prints says `import "io.frost"`.
+Everything below is covered in full under
+[the standard library](std/index.md).
+
+### Text
+
+`str` is a byte slice, and `strings.frost` asks questions of one.
+
+```frost
+import "io.frost"
+import "strings.frost"
+
+main :: fn() -> i64 {
+    name := "frost.frost"
+    print("{}\n", str_len(name))                  // 11
+    print("{}\n", str_ends_with(name, ".frost"))  // 1
+    print("{}\n", str_index_of(name, "."))        // 5
+    print("{}\n", str_slice(name, 0, 5))          // frost
+    print("{}\n", str_to_i64("42"))               // 42
+    0
+}
+```
+
+### A growable array
+
+`Vec<T>` is `linear`, so a vector nothing frees is a compile error.
+`vec_slice` hands out the live elements as a bounds-checked slice.
+
+```frost
+import "io.frost"
+import "vec.frost"
+
+main :: fn() -> i64 {
+    var scores := vec_new($i64, 4)
+    vec_push($i64, scores, 10)
+    vec_push($i64, scores, 30)
+    vec_push($i64, scores, 20)
+
+    var total : i64 = 0
+    for value in vec_slice($i64, scores) {
+        total = total + value
+    }
+    print("{} in {}\n", total, vec_len($i64, scores))   // 60 in 3
+
+    vec_free($i64, scores)
+    0
+}
+```
+
+`fixed.frost` is the same array over storage you hand it, for a container that
+lives in an arena.
+
+### A hash map
+
+Keys of any type. `$text_keys` is the `Hashing<K>` bundle for text, and hashing
+and comparison fold to direct calls at each site.
+
+```frost
+import "io.frost"
+import "map.frost"
+
+main :: fn() -> i64 {
+    var ages := map_new($Text, $i64, 8)
+    map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
+    map_put($Text, $i64, $text_keys, ages, text("alan"), 41)
+
+    print("{}\n", map_get($Text, $i64, $text_keys, ages, text("ada"), 0))
+    print("{}\n", map_has($Text, $i64, $text_keys, ages, text("grace")))
+    print("{}\n", map_len($Text, $i64, ages))
+    map_free($Text, $i64, ages)
+    0
+}
+```
+
+`map_get` takes the value to answer with when the key is absent. Ask `map_has`
+where absence and a zero differ.
+
+### A value that may be absent
+
+`Option<T>` is a generic enum, with no compiler support behind it.
+
+```frost
+import "io.frost"
+import "option.frost"
+
+lookup :: fn(key: i64) -> Option<i64> {
+    if (key == 1) { return option_some($i64, 100) }
+    option_none($i64)
+}
+
+main :: fn() -> i64 {
+    hit := lookup(1)
+    miss := lookup(2)
+    print("{}\n", option_unwrap_or($i64, hit, 0))     // 100
+    print("{}\n", option_unwrap_or($i64, miss, 0))    // 0
+    0
+}
+```
+
+### Sorting
+
+`sort` orders a slice in place and takes an `Ordering<T>`, a struct of two
+functions, as a compile-time argument.
+
+```frost
+import "io.frost"
+import "ordering.frost"
+import "sort.frost"
+
+main :: fn() -> i64 {
+    var numbers : [5]i64 = [4, 1, 5, 3, 2]
+    view : []i64 = numbers
+    sort($i64, $i64_ascending, view)
+    for value in view {
+        print("{} ", value)      // 1 2 3 4 5
+    }
+    print("\n")
+    0
+}
+```
+
+`i64_descending`, `f64_ascending` and `f64_descending` come with it, and
+`sort_vec` does the same to a `Vec<T>`.
+
+### Assembling text
+
+`print` writes a line. `Builder` collects bytes so a program can build a string
+and keep it.
+
+```frost
+import "io.frost"
+import "format.frost"
+
+main :: fn() -> i64 {
+    var line := builder_new(64)
+    builder_str_value(line, "hp ")
+    builder_int(line, 75)
+    builder_str_value(line, "/100")
+    print("{}\n", builder_str(line))   // hp 75/100
+    builder_free(line)
+    0
+}
+```
+
+### Files and JSON
+
+`fs_read` answers with a `ReadResult` holding the whole file. `json_parse`
+reads text into a flat array of nodes reached by index.
+
+```frost
+import "io.frost"
+import "fs.frost"
+import "json.frost"
+
+main :: fn() -> i64 {
+    fs_write("hero.json", "{\"hp\": 75, \"name\": \"ada\"}")
+
+    result := fs_read("hero.json")
+    var document := json_parse(result.text)
+    root := json_root(document)
+    hp := json_member(document, root, "hp")
+    print("{}\n", json_number(document, hp))   // 75
+
+    json_free(document)
+    fs_free(result)
+    fs_remove("hero.json")
+    0
+}
+```
+
+### Math
+
+`math.frost` is vectors, matrices and quaternions at `f32`, and
+`math64.frost` is the same library at `f64` with a `d` on every name.
+
+```frost
+import "io.frost"
+import "math.frost"
+
+main :: fn() -> i64 {
+    up := vec3(0.0, 1.0, 0.0)
+    over := vec3(1.0, 0.0, 0.0)
+    turn := quat_from_axis_angle(up, radians(90.0))
+    spun := quat_rotate_vec3(turn, over)
+    print("{}\n", spun.z * 1000.0)   // -1000, +X turned onto -Z
+    0
+}
+```
+
+### An entity-component system
+
+`ecs.frost` stores entities by archetype, so a system reading one component
+walks a packed column.
+
+```frost
+import "io.frost"
+import "ecs.frost"
+
+Health :: struct { points: i64 }
+
+main :: fn() -> i64 {
+    var world := ecs_new()
+    health := ecs_register($Health, world)
+
+    hero := ecs_spawn(world)
+    ecs_add($Health, world, hero, health, Health { points = 100 })
+    ecs_set($Health, world, hero, health, Health { points = 75 })
+
+    held := ecs_get($Health, world, hero, health)
+    print("{}\n", held.points)   // 75
+
+    ecs_free(world)
+    0
+}
+```
+
+`ecs_slice` hands a whole column to a system, and `snapshot.frost` writes a
+world to bytes and reads it back.
+
+### Threads
+
+`spawn` takes a function and a context pointer, `join` waits, and `atomic_add`
+is the one shared-memory operation.
+
+```frost
+import "io.frost"
+import "thread.frost"
+
+Counter :: struct { total: i64 }
+
+bump :: fn(context: ^u8) {
+    counter := unsafe { ptr_cast($Counter, context) }
+    var index : i64 = 0
+    while (index < 1000) {
+        unsafe { atomic_add(ptr_to(counter^.total), 1) }
+        index = index + 1
+    }
+}
+
+main :: fn() -> i64 {
+    var counter := Counter { total = 0 }
+    handle := unsafe { spawn(bump, ptr_cast($u8, ptr_to(counter))) }
+    bump(unsafe { ptr_cast($u8, ptr_to(counter)) })
+    join(handle)
+    print("{}\n", counter.total)   // 2000
+    0
+}
+```
+
+This is the reasonable-C floor. Nothing here is checked for data races.
+
 ## Where to go next
 
 - [A tour of Frost](tour.md), the same ground at a slower pace.
@@ -864,5 +1119,6 @@ instead of an exception.
   from.
 - [The language reference](reference/conformance.md), which states every rule in
   full.
+- [The standard library](std/index.md), for the twenty modules in full.
 - [Design philosophy](design/philosophy.md), for the reasoning behind the
   absences above.
