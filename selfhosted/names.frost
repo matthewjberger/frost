@@ -559,6 +559,7 @@ check_name_is_free :: fn(mut p: Parser, off: i64, len: i64) {
     if (owner < 0) {
         return
     }
+    check_name_is_not_declared_twice(p, owner, off, len)
     mut i: i64 = 0
     while (i < p.exports.count) {
         entry := arena_at(p.exports, i)
@@ -579,6 +580,50 @@ check_name_is_free :: fn(mut p: Parser, off: i64, len: i64) {
         }
         i = i + 1
     }
+}
+
+// Refuse a name this file has already declared.
+//
+// The namespace is flat, so two declarations of one name are two things called
+// the same thing and nothing tells them apart at a use. Every table is asked,
+// since the two need not be the same kind of declaration, and only what stands
+// earlier in the file counts, so the second one is what the reader is told
+// about and the pair is named once.
+check_name_is_not_declared_twice :: fn(
+    mut p: Parser,
+    owner: i64,
+    off: i64,
+    len: i64
+) {
+    // An entry at this very offset is this declaration seen again, which is
+    // what a generic function is: its body is parsed once where it is written
+    // and once more for every instance a call asks for.
+    mut seen: i64 = 0
+    mut i: i64 = 0
+    while (i < p.declared.count) {
+        entry := arena_at(p.declared, i)
+        if (entry.module == owner && entry.len == len
+            && bytes_equal(p.src, entry.off, off, len)) {
+            if (entry.off == off) {
+                seen = 1
+            } else {
+                report_declared_twice(p, off, len)
+            }
+        }
+        i = i + 1
+    }
+    if (seen == 0) {
+        arena_push(p.declared, Export { module = owner, off = off, len = len })
+    }
+}
+
+report_declared_twice :: fn(mut p: Parser, off: i64, len: i64) {
+    report_where(p.modules, p.src, off)
+    report("'")
+    report_src(p.src, off, len)
+    report("' is declared twice here, and a name means one thing wherever it ")
+    report("is written; rename one of them")
+    frost_rt_die()
 }
 
 // Whether this module read that name under another one, which is what keeps both

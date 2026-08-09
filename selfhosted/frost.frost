@@ -760,6 +760,7 @@ main :: fn() -> i64 {
         move_scratch = arena_make($LocalVar, 4096),
         modules = modules,
         exports = exports,
+        declared = arena_make($Export, 16384),
         import_edges = import_edges,
         renames = renames,
         shared_exports = 0,

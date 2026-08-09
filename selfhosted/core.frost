@@ -1914,6 +1914,11 @@ Parser :: struct {
     move_scratch: Arena<LocalVar>,
     modules: Arena<Module>,
     exports: Arena<Export>,
+    // Every top-level name a file declares, in source order, one entry per
+    // declaration. A name interns at its first mention, so the function table
+    // holds calls written ahead of a declaration too and cannot say which
+    // entries are declarations; this can.
+    declared: Arena<Export>,
     import_edges: Arena<ImportEdge>,
     renames: Arena<Rename>,
     // Whether two modules in this program export the same name. Nothing is

@@ -332,6 +332,44 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'sizeof' is the compiler's own, and a name means one thing wherever \
          it is written; call it something else",
     ),
+    // Two declarations of one name in one file are two things called the same
+    // thing, and nothing at a use tells them apart. Both compilers took one and
+    // said nothing, and they took different ones: `A :: 5` then `A :: 6` read as
+    // six in the bootstrap and five in the self-hosted compiler, and two
+    // functions of one name emitted two bodies under one symbol, which the
+    // assembler caught in one and let through in the other. Pinned for a
+    // constant, for two functions, and for two kinds of declaration, since the
+    // pair need not be the same kind.
+    (
+        "a_constant_is_declared_once",
+        "import \"io.frost\"\n\
+         A :: 5\n\
+         A :: 6\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", A)\n\
+         \x20   0\n\
+         }\n",
+        "'A' is declared twice here, and a name means one thing wherever it is \
+         written; rename one of them",
+    ),
+    (
+        "a_function_is_declared_once",
+        "import \"io.frost\"\n\
+         f :: fn() -> i64 { 1 }\n\
+         f :: fn() -> i64 { 2 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'f' is declared twice here, and a name means one thing wherever it is \
+         written; rename one of them",
+    ),
+    (
+        "a_name_is_declared_once_across_kinds",
+        "import \"io.frost\"\n\
+         A :: struct { x: i64 }\n\
+         A :: fn() -> i64 { 1 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'A' is declared twice here, and a name means one thing wherever it is \
+         written; rename one of them",
+    ),
     // The namespace is flat, so a declaration and an import of one name are two
     // things called the same thing. Both compilers refused a function that did
     // it and neither refused a constant, a struct or an enum, and the two
@@ -3289,6 +3327,38 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A generic function's body is parsed again for every instance a call asks
+    // for, and a call written ahead of the declaration interns the name where
+    // the call is, so neither reading of the tables says which entries are
+    // declarations. Both readings refused this program for a while.
+    (
+        "a_generic_called_before_it_is_declared_is_declared_once",
+        "import \"io.frost\"\n\
+         caller :: fn(held: []i64) -> i64 { empty(held) }\n\
+         empty :: fn($T: Type, held: []T) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := [1, 2, 3]\n\
+         \x20   print(\"{}\\n\", caller(held))\n\
+         \x20   0\n\
+         }\n",
+        "0\n",
+    ),
+    // The same call with the parameter reached through a pointer. The reading
+    // taken down at a call to a callee not yet declared skipped the step that
+    // reads a pointer through, so `^T` bound the pointer and the instance was
+    // emitted for a `^^i64` nobody wrote, under a name no call made.
+    (
+        "a_generic_called_through_a_pointer_before_it_is_declared",
+        "import \"io.frost\"\n\
+         caller :: fn(held: ^i64) -> i64 { deref(held) }\n\
+         deref :: fn($T: Type, held: ^T) -> i64 { unsafe { held^ } }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut n := 41\n\
+         \x20   print(\"{}\\n\", caller(ptr_to(n)))\n\
+         \x20   0\n\
+         }\n",
+        "41\n",
+    ),
     // A target constant is an ordinary boolean anywhere a value is read, not
     // only in the condition of a `when`. One compiler declared the three and the
     // other knew them as the condition's vocabulary and nothing more, so the

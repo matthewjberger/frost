@@ -1173,6 +1173,12 @@ pending_type_args :: fn(mut p: Parser, held: PendingTuple, owner: i64) -> i64 {
                 if (entry.node >= 0) {
                     raw = type_of(p, entry.node)
                 }
+                // The same reading `call_arg_type_at` makes of an argument
+                // written where its callee was already known. A pointer is read
+                // through, so `^T` binds what a bare `T` would.
+                if (is_pointer(raw)) {
+                    raw = pointee(p, raw)
+                }
                 bound = read_through(p, raw, through)
             }
         } else {

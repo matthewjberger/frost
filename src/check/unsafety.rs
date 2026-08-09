@@ -799,14 +799,18 @@ impl Checker<'_> {
         let ast = self.ast;
         match ast.expr(value) {
             Expression::Unsafe(body) => {
+                // A block already told it sits inside another is told that and
+                // nothing else. Both reports say to delete it, and one block
+                // carrying two of them reads as two things to fix.
+                let nested = self.audit && self.depth > 0;
+                if nested {
+                    self.diagnostics.push(Diagnostic {
+                        position: at,
+                        message: "this `unsafe` block is inside another one, which already vouches for what is in it".to_string(),
+                        related: Vec::new(),
+                    });
+                }
                 if self.audit {
-                    if self.depth > 0 {
-                        self.diagnostics.push(Diagnostic {
-                            position: at,
-                            message: "this `unsafe` block is inside another one, which already vouches for what is in it".to_string(),
-                            related: Vec::new(),
-                        });
-                    }
                     self.vouched.push(false);
                 }
                 self.depth += 1;
@@ -815,6 +819,7 @@ impl Checker<'_> {
                 if self.audit
                     && let Some(used) = self.vouched.pop()
                     && !used
+                    && !nested
                 {
                     self.diagnostics.push(Diagnostic {
                         position: at,

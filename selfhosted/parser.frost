@@ -316,8 +316,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // Its span is recorded the same way the statement form's is, so the gate
     // sees the expression as written inside one.
     if (kind == TokenKind::KwUnsafe) {
-        advance(p)
+        // The keyword, which is what a report about the block is about and
+        // what a reader looks for on the line.
         start := cur_off(p)
+        advance(p)
         p.unsafe_depth = p.unsafe_depth + 1
         advance(p)
         inner := parse_expr(p)
@@ -5072,8 +5074,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             }
             return new_unary_at(p, NodeKind::ExprStmt, expr, start)
         }
-        advance(p)
         start := cur_off(p)
+        advance(p)
         p.unsafe_depth = p.unsafe_depth + 1
         body := parse_block(p)
         p.unsafe_depth = p.unsafe_depth - 1

@@ -15,7 +15,8 @@ use crate::modules::build_cache::{
     module_fingerprint, stamp_file,
 };
 use crate::modules::import_visibility::{
-    FileNames, declared_compiler_names, shadowed_imports, unimported_names,
+    FileNames, declared_compiler_names, declared_twice, shadowed_imports,
+    unimported_names,
 };
 use crate::modules::interface::ModuleInterface;
 use crate::modules::layers::Layer;
@@ -710,6 +711,16 @@ pub fn resolve_imports_cached(
         );
     }
     let reports = declared_compiler_names(&walk.files);
+    if !reports.is_empty() {
+        bail!(
+            "{}",
+            reports.join(
+                "
+"
+            )
+        );
+    }
+    let reports = declared_twice(&walk.files);
     if !reports.is_empty() {
         bail!(
             "{}",

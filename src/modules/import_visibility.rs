@@ -41,6 +41,8 @@ pub struct FileNames {
     // The exported names this file read under another name. One of those does
     // not arrive under its own, so it is not a name this file holds twice.
     pub renamed: HashSet<String>,
+    // Each name this file declares more than once, at the second declaration.
+    pub twice: Vec<(String, crate::lexer::Position)>,
 }
 
 impl FileNames {
@@ -52,9 +54,15 @@ impl FileNames {
     ) -> Self {
         let mut declared = HashSet::new();
         let mut declared_at = HashMap::new();
+        let mut twice = Vec::new();
         for statement in roots {
             if let Some(name) = top_level_name(ast, *statement) {
-                declared.insert(name.to_string());
+                if !declared.insert(name.to_string()) {
+                    twice.push((
+                        name.to_string(),
+                        ast.stmt_position(*statement),
+                    ));
+                }
                 declared_at
                     .entry(name.to_string())
                     .or_insert_with(|| ast.stmt_position(*statement));
@@ -85,8 +93,31 @@ impl FileNames {
             imports: imports.to_vec(),
             used,
             renamed,
+            twice,
         }
     }
+}
+
+// Every name a file declares more than once.
+//
+// The namespace is flat, so two declarations of one name are two things called
+// the same thing and nothing tells them apart at a use. Left alone the two
+// compilers answered differently: `A :: 5` followed by `A :: 6` read as six in
+// one and five in the other, and two functions of one name emitted two bodies
+// under one symbol, which whichever assembler read the output caught in one and
+// let through in the other.
+pub fn declared_twice(files: &[FileNames]) -> Vec<String> {
+    let mut reports = Vec::new();
+    for file in files {
+        for (name, position) in &file.twice {
+            reports.push(format!(
+                "at {}: '{name}' is declared twice here, and a name means one thing wherever it is written; rename one of them",
+                position.describe()
+            ));
+        }
+    }
+    reports.sort();
+    reports
 }
 
 // Every name a file declares that an import already brought in.
