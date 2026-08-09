@@ -1031,12 +1031,15 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
     let (tokens, positions) =
         frost::expand_includes(tokens, positions, &base_dir)
             .with_context(|| format!("in {}", cli.file))?;
+    let (tokens, positions, lifted) = frost::resolve_when(tokens, positions)
+        .with_context(|| format!("in {}", cli.file))?;
 
     let project_root =
         base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
     let (roots, layers) = search_roots(&cli, &project_root)?;
 
     let mut parser = FrostParser::with_positions(&tokens, &positions);
+    parser.also_lifted_lines(lifted);
     // The runtime is the one file that may define names in the runtime's own
     // name space, and it is the one this compiler resolved as the runtime.
     if is_the_runtime(&cli.file) {

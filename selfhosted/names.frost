@@ -39,7 +39,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, type_text, place_text, instance_text,
+    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, synth_bytes, type_text, place_text, instance_text,
     type_code_for
 
 // Whether there is room for `wanted` more bytes past the source, said here

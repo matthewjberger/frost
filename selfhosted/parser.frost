@@ -5843,7 +5843,8 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         // that lost the operator joining it to that line.
         stmt_at := cur_off(p)
         if (block_column > 0 && breaks_between(p.src, previous_at, stmt_at)
-            && column_at(p.src, stmt_at) > block_column) {
+            && column_at(p.src, stmt_at) > block_column
+            && in_lifted(p, stmt_at) == false) {
             report_where(p.modules, p.src, stmt_at)
             report("this line is indented past the statement above it, so it reads as continuing that line, and it begins a statement of its own. An expression broken over lines carries the operator that joins them onto the second, or is written inside brackets")
             frost_rt_recover_note()
@@ -8958,7 +8959,287 @@ synchronize_declaration :: fn(mut p: Parser) {
     }
 }
 
+// The three the build is for, as constants a program may read and a `when` may
+// choose on. They are declared here rather than in a file every program would
+// have to import, since which machine a build is for is not something a library
+// hands out. Their names are written into the source buffer, so they are looked
+// up by the same byte comparison every other name is.
+predeclare_target :: fn(mut p: Parser) {
+    which := frost_rt_target_os()
+    mut i: i64 = 0
+    while (i < 3) {
+        at := p.synth_next
+        if (i == 0) {
+            synth_bytes(p, "TARGET_WINDOWS")
+        } else if (i == 1) {
+            synth_bytes(p, "TARGET_LINUX")
+        } else {
+            synth_bytes(p, "TARGET_MACOS")
+        }
+        mut held: i64 = 0
+        if (which == i) {
+            held = 1
+        }
+        register_const(p, at, p.synth_next - at, held)
+        i = i + 1
+    }
+}
+
+// Which the name stands for, or -1 for a name that is not one of the three. A
+// `when` chooses on what the build is for, which is known before anything is
+// read, so this is the whole vocabulary a condition is written over.
+when_target :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    which := frost_rt_target_os()
+    mut wanted: i64 = -1
+    if (str_range_eq(p.src, off, len, "TARGET_WINDOWS")) { wanted = 0 }
+    if (str_range_eq(p.src, off, len, "TARGET_LINUX")) { wanted = 1 }
+    if (str_range_eq(p.src, off, len, "TARGET_MACOS")) { wanted = 2 }
+    if (wanted < 0) {
+        return -1
+    }
+    if (which == wanted) {
+        return 1
+    }
+    0
+}
+
+when_term :: fn(mut p: Parser, at: i64) -> (held: i64, next: i64) {
+    token := arena_at(p.tokens, at)
+    if (token.kind == TokenKind::Bang) {
+        inner, past := when_term(p, at + 1)
+        return 1 - inner, past
+    }
+    if (token.kind == TokenKind::Lparen) {
+        inner, past := when_or(p, at + 1)
+        if (arena_at(p.tokens, past).kind == TokenKind::Rparen) {
+            return inner, past + 1
+        }
+        return inner, past
+    }
+    if (token.kind != TokenKind::Ident) {
+        report_where(p.modules, p.src, token.off)
+        report("a `when` chooses on the target, so its condition is the target constants joined by `&&`, `||` and `!`")
+        frost_rt_recover_escape()
+    }
+    held := when_target(p, token.off, token.len)
+    if (held < 0) {
+        report_where(p.modules, p.src, token.off)
+        report_fmt(
+            "'{}' is not one of the targets a `when` chooses on, ",
+            source_text(p.src, token.off, token.len)
+        )
+        report("which are TARGET_WINDOWS, TARGET_LINUX and TARGET_MACOS")
+        frost_rt_recover_escape()
+    }
+    return held, at + 1
+}
+
+when_and :: fn(mut p: Parser, at: i64) -> (held: i64, next: i64) {
+    mut held, mut past := when_term(p, at)
+    while (arena_at(p.tokens, past).kind == TokenKind::Andand) {
+        right, after := when_term(p, past + 1)
+        if (right == 0) { held = 0 }
+        past = after
+    }
+    return held, past
+}
+
+when_or :: fn(mut p: Parser, at: i64) -> (held: i64, next: i64) {
+    mut held, mut past := when_and(p, at)
+    while (arena_at(p.tokens, past).kind == TokenKind::Oror) {
+        right, after := when_and(p, past + 1)
+        if (right == 1) { held = 1 }
+        past = after
+    }
+    return held, past
+}
+
+// Past the token closing a run opened at `at`.
+past_run :: fn(
+    mut p: Parser,
+    at: i64,
+    open: TokenKind,
+    close: TokenKind
+) -> i64 {
+    mut depth: i64 = 0
+    mut i := at
+    while (i < p.tokens.count) {
+        kind := arena_at(p.tokens, i).kind
+        if (kind == open) {
+            depth = depth + 1
+        } else if (kind == close) {
+            depth = depth - 1
+            if (depth == 0) {
+                return i + 1
+            }
+        }
+        i = i + 1
+    }
+    p.tokens.count
+}
+
+// Whether `when` opens a compile-time conditional at this token. The word is
+// not reserved, so a program may still call a function by that name, and what
+// tells them apart is that a call is not followed by a block.
+opens_when :: fn(mut p: Parser, at: i64) -> bool {
+    if (at + 1 >= p.tokens.count) {
+        return false
+    }
+    token := arena_at(p.tokens, at)
+    if (token.kind != TokenKind::Ident) {
+        return false
+    }
+    if (str_range_eq(p.src, token.off, token.len, "when") == false) {
+        return false
+    }
+    arena_at(p.tokens, at + 1).kind == TokenKind::Lparen
+}
+
+// Past the whole construct opening at `at`, however many `else when` arms it
+// carries.
+past_when :: fn(mut p: Parser, at: i64) -> i64 {
+    after_condition := past_run(p, at + 1, TokenKind::Lparen, TokenKind::Rparen)
+    after_block := past_run(
+        p,
+        after_condition,
+        TokenKind::Lbrace,
+        TokenKind::Rbrace
+    )
+    if (after_block < p.tokens.count
+        && arena_at(p.tokens, after_block).kind == TokenKind::KwElse) {
+        if (opens_when(p, after_block + 1)) {
+            return past_when(p, after_block + 1)
+        }
+        return past_run(
+            p,
+            after_block + 1,
+            TokenKind::Lbrace,
+            TokenKind::Rbrace
+        )
+    }
+    after_block
+}
+
+// A compile-time conditional, decided while the tokens are still tokens.
+//
+// The branch that is not taken is removed from the stream, so nothing after
+// this reads it: no name is interned, no type is laid out, and the emitted
+// output does not depend on it having been there. What the taken branch holds
+// stands where the `when` stood, which is what lets one choose between
+// declarations as well as between statements, and is why the block opens no
+// scope of its own: a name bound inside one is bound for what follows it, the
+// way a name written without the `when` would be.
+resolve_when :: fn(mut p: Parser) {
+    mut going: bool = true
+    while (going) {
+        mut at: i64 = -1
+        mut i: i64 = 0
+        while (i < p.tokens.count && at < 0) {
+            if (opens_when(p, i)) {
+                at = i
+            }
+            i = i + 1
+        }
+        if (at < 0) {
+            going = false
+        } else {
+            settle_when(p, at)
+        }
+    }
+    p.ti = 0
+}
+
+settle_when :: fn(mut p: Parser, at: i64) {
+    after_condition := past_run(p, at + 1, TokenKind::Lparen, TokenKind::Rparen)
+    holds, _unused := when_or(p, at + 2)
+    after_block := past_run(
+        p,
+        after_condition,
+        TokenKind::Lbrace,
+        TokenKind::Rbrace
+    )
+    mut from: i64 = at
+    mut to: i64 = at
+    if (holds == 1) {
+        from = after_condition + 1
+        to = after_block - 1
+    }
+    mut past := after_block
+    if (after_block < p.tokens.count
+        && arena_at(p.tokens, after_block).kind == TokenKind::KwElse) {
+        opens := after_block + 1
+        if (opens_when(p, opens)) {
+            past = past_when(p, opens)
+            if (holds == 0) {
+                from = opens
+                to = past
+            }
+        } else {
+            past = past_run(p, opens, TokenKind::Lbrace, TokenKind::Rbrace)
+            if (holds == 0) {
+                from = opens + 1
+                to = past - 1
+            }
+        }
+    }
+    // The lines the branch came from, so the rule that every statement of a
+    // block begins at the same column is not asked about them: they begin one
+    // level in from the block they now belong to.
+    if (to > from) {
+        arena_push(
+            p.when_lifted,
+            LocalVar {
+                name_off = arena_at(p.tokens, from).off,
+                name_len = arena_at(p.tokens, to - 1).off,
+                ty = 0,
+                slot = 0
+            }
+        )
+    }
+    mut write: i64 = at
+    mut read := from
+    while (read < to) {
+        copy_token(p, read, write)
+        write = write + 1
+        read = read + 1
+    }
+    read = past
+    while (read < p.tokens.count) {
+        copy_token(p, read, write)
+        write = write + 1
+        read = read + 1
+    }
+    p.tokens.count = write
+}
+
+copy_token :: fn(mut p: Parser, from: i64, to: i64) {
+    kind := arena_at(p.tokens, from).kind
+    off := arena_at(p.tokens, from).off
+    len := arena_at(p.tokens, from).len
+    value := arena_at(p.tokens, from).value
+    held := arena_at(p.tokens, to)
+    held.kind = kind
+    held.off = off
+    held.len = len
+    held.value = value
+}
+
+// Whether this offset sits in a branch a `when` kept.
+in_lifted :: fn(mut p: Parser, off: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.when_lifted.count) {
+        entry := arena_at(p.when_lifted, i)
+        if (off >= entry.name_off && off <= entry.name_len) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 parse_program :: fn(mut p: Parser) -> i64 {
+    predeclare_target(p)
+    resolve_when(p)
     predeclare_types(p)
     start := p.ti
     // Every function a compile-time call may run, before the constants that

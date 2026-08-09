@@ -6052,6 +6052,41 @@ Bad :: enum { Nope }
         "41
 ",
     ),
+    // A `when` chooses on what the build is for, while the tokens are still
+    // tokens. The branch that is not taken is removed from the stream, so
+    // nothing after it reads it: no name is interned and no type is laid out,
+    // which is what lets one branch name a thing the other machine has not got.
+    // What the taken branch holds stands where the `when` stood, so it chooses
+    // between declarations as well as between statements, and between values.
+    (
+        "a_when_chooses_on_the_target",
+        "import \"io.frost\"
+         when (TARGET_WINDOWS) {
+             NAME :: \"windows\"
+             width :: fn() -> i64 { 64 }
+         } else {
+             NAME :: \"other\"
+             width :: fn() -> i64 { 32 }
+         }
+         main :: fn() -> i64 {
+             print(\"{}\\n\", NAME)
+             print(\"{}\\n\", width())
+             when (TARGET_WINDOWS || TARGET_LINUX) {
+                 print(\"desktop\\n\")
+             } else {
+                 print(\"other\\n\")
+             }
+             held := when (!TARGET_MACOS) { 7 } else { 9 }
+             print(\"{}\\n\", held)
+             0
+         }
+",
+        "windows
+64
+desktop
+7
+",
+    ),
     // A constant may ask a type what it measures. A layout is what the types
     // answer once they have been read, and a constant is settled before they
     // are, so the two compile-time answer sites could not see each other and

@@ -344,6 +344,8 @@ pub struct Parser<'a> {
     // from the comparison `a < b` is a question of whether the name is one of
     // these.
     generic_types: GenericDefaults,
+    // The lines a `when` kept, by the range each branch spanned.
+    lifted_lines: Vec<(usize, usize)>,
     // How many blocks deep the parse is. `name :: Type { .. }` is a declaration
     // at the top level and `Enum::Variant { .. }` inside a body, and the two
     // read the same token for token, so where it is written is what tells them
@@ -528,6 +530,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         imported_bodies: HashMap::new(),
         settled: true,
         generic_types: GenericDefaults::new(),
+        lifted_lines: Vec::new(),
         block_depth: 0,
         bracket_depth: 0,
         runtime_names: false,
@@ -818,6 +821,7 @@ impl<'a> Parser<'a> {
             imported_bodies: HashMap::new(),
             settled: false,
             generic_types: scan_generic_types(tokens),
+            lifted_lines: Vec::new(),
             block_depth: 0,
             bracket_depth: 0,
             runtime_names: false,
@@ -886,6 +890,7 @@ impl<'a> Parser<'a> {
             imported_bodies: HashMap::new(),
             settled: false,
             generic_types: scan_generic_types(tokens),
+            lifted_lines: Vec::new(),
             block_depth: 0,
             bracket_depth: 0,
             runtime_names: false,
@@ -899,6 +904,24 @@ impl<'a> Parser<'a> {
     pub fn also_generic(&mut self, names: GenericDefaults) -> &mut Self {
         self.generic_types.extend(names);
         self
+    }
+
+    /// The lines a `when` kept, which now stand one level out from the braces
+    /// they were written inside. Every statement of a block begins at the same
+    /// column, and these begin deeper, so the rule that reads a deeper line as
+    /// continuing the one above it is not asked about them.
+    pub fn also_lifted_lines(
+        &mut self,
+        lines: Vec<(usize, usize)>,
+    ) -> &mut Self {
+        self.lifted_lines.extend(lines);
+        self
+    }
+
+    fn was_lifted(&self, line: usize) -> bool {
+        self.lifted_lines
+            .iter()
+            .any(|(from, to)| line >= *from && line <= *to)
     }
 
     pub fn tests(&self) -> &[(String, String)] {
@@ -4626,6 +4649,7 @@ impl<'a> Parser<'a> {
             if let Some(column) = block_column
                 && position.line != previous_line
                 && position.column > column
+                && !self.was_lifted(position.line)
             {
                 self.record_error(
                     position,

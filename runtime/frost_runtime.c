@@ -1066,3 +1066,17 @@ int64_t frost_rt_is_windows(void) {
     return 0;
 #endif
 }
+
+// Which of the three the build is for, as 0, 1 and 2. A compiler reads it to
+// settle the target constants a `when` chooses on, and the two compilers have
+// to answer alike, so the answer comes from one place rather than from each
+// asking its own host in its own way.
+int64_t frost_rt_target_os(void) {
+#ifdef _WIN32
+    return 0;
+#elif defined(__APPLE__)
+    return 2;
+#else
+    return 1;
+#endif
+}

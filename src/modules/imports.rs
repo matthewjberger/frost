@@ -162,6 +162,277 @@ fn locate_import(
 // module that uses it wherever the library is installed. Carriage returns are
 // dropped, so a file checked out with CRLF line endings reads the same bytes
 // as the same file checked out with LF.
+/// Which of the three this build is for. Both compilers answer alike because
+/// both compile for the machine they run on, and the constants a `when` chooses
+/// on are these and nothing else.
+pub fn target_constant(name: &str) -> Option<bool> {
+    match name {
+        "TARGET_WINDOWS" => Some(cfg!(windows)),
+        "TARGET_MACOS" => Some(cfg!(target_os = "macos")),
+        "TARGET_LINUX" => Some(!cfg!(windows) && !cfg!(target_os = "macos")),
+        _ => None,
+    }
+}
+
+/// What a `when` leaves behind: the stream with the untaken branches gone, the
+/// positions beside it, and the lines each kept branch came from.
+pub type WhenResolved =
+    (Vec<Token>, Vec<crate::lexer::Position>, Vec<(usize, usize)>);
+
+fn is_when(token: &Token) -> bool {
+    matches!(token, Token::Identifier(name) if name == "when")
+}
+
+// Where a `when` opens one, or nothing for a word that is only a name. The
+// shape is what tells them apart: `when` is not reserved, so a program may
+// still call a function by that name, and a call is not followed by a block.
+fn opens_when(tokens: &[Token], at: usize) -> bool {
+    is_when(&tokens[at])
+        && matches!(tokens.get(at + 1), Some(Token::LeftParentheses))
+}
+
+// The token past the one that closes a run opened at `at`.
+fn past_match(
+    tokens: &[Token],
+    at: usize,
+    open: &Token,
+    close: &Token,
+) -> usize {
+    let mut depth = 0usize;
+    let mut index = at;
+    while index < tokens.len() {
+        if &tokens[index] == open {
+            depth += 1;
+        } else if &tokens[index] == close {
+            depth -= 1;
+            if depth == 0 {
+                return index + 1;
+            }
+        }
+        index += 1;
+    }
+    tokens.len()
+}
+
+// The token past the whole `when` construct opening at `at`, however many
+// `else when` arms follow it.
+fn past_when(tokens: &[Token], at: usize) -> usize {
+    let after_condition = past_match(
+        tokens,
+        at + 1,
+        &Token::LeftParentheses,
+        &Token::RightParentheses,
+    );
+    let after_block = past_match(
+        tokens,
+        after_condition,
+        &Token::LeftBrace,
+        &Token::RightBrace,
+    );
+    if matches!(tokens.get(after_block), Some(Token::Else)) {
+        if opens_when(tokens, after_block + 1) {
+            return past_when(tokens, after_block + 1);
+        }
+        return past_match(
+            tokens,
+            after_block + 1,
+            &Token::LeftBrace,
+            &Token::RightBrace,
+        );
+    }
+    after_block
+}
+
+/// A compile-time conditional, decided while the tokens are still tokens.
+///
+/// The branch that is not taken is removed from the stream, so nothing after
+/// this reads it: no name is interned, no type is laid out, and the emitted
+/// output does not depend on it having been there. What the taken branch holds
+/// stands where the `when` stood, which is what lets one choose between
+/// declarations as well as between statements, and is why the block opens no
+/// scope of its own: a name bound inside one is bound for what follows it, the
+/// way a name written without the `when` would be.
+pub fn resolve_when(
+    tokens: Vec<Token>,
+    positions: Vec<crate::lexer::Position>,
+) -> Result<WhenResolved> {
+    if !tokens.iter().any(is_when) {
+        return Ok((tokens, positions, Vec::new()));
+    }
+    let mut held_tokens = tokens;
+    let mut held_positions = positions;
+    // The lines a kept branch came from. Every statement of a block begins at
+    // the same column, and these begin one level in from the block they now
+    // belong to, so the rule that reads a deeper line as continuing the one
+    // above it is not asked about them.
+    let mut lifted: Vec<(usize, usize)> = Vec::new();
+    // A branch may hold another, so what is kept is read again. The stream
+    // shrinks every round, which is what ends this.
+    loop {
+        let mut depth = 0usize;
+        let mut found = None;
+        for index in 0..held_tokens.len() {
+            if opens_when(&held_tokens, index) {
+                found = Some((index, depth));
+                break;
+            }
+            match held_tokens[index] {
+                Token::LeftBrace => depth += 1,
+                Token::RightBrace => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let Some((at, depth)) = found else {
+            return Ok((held_tokens, held_positions, lifted));
+        };
+        let _ = depth;
+        let after_condition = past_match(
+            &held_tokens,
+            at + 1,
+            &Token::LeftParentheses,
+            &Token::RightParentheses,
+        );
+        let holds = when_condition(
+            &held_tokens[at + 2..after_condition - 1],
+            &held_positions[at],
+        )?;
+        let after_block = past_match(
+            &held_tokens,
+            after_condition,
+            &Token::LeftBrace,
+            &Token::RightBrace,
+        );
+        let mut kept = if holds {
+            Some((after_condition + 1, after_block - 1))
+        } else {
+            None
+        };
+        let past = if matches!(held_tokens.get(after_block), Some(Token::Else))
+        {
+            let opens = after_block + 1;
+            if opens_when(&held_tokens, opens) {
+                let end = past_when(&held_tokens, opens);
+                if !holds {
+                    kept = Some((opens, end));
+                }
+                end
+            } else {
+                let end = past_match(
+                    &held_tokens,
+                    opens,
+                    &Token::LeftBrace,
+                    &Token::RightBrace,
+                );
+                if !holds {
+                    kept = Some((opens + 1, end - 1));
+                }
+                end
+            }
+        } else {
+            after_block
+        };
+        let (from, to) = kept.unwrap_or((at, at));
+        if to > from {
+            lifted
+                .push((held_positions[from].line, held_positions[to - 1].line));
+        }
+        let mut rebuilt_tokens = Vec::with_capacity(held_tokens.len());
+        let mut rebuilt_positions = Vec::with_capacity(held_positions.len());
+        for index in (0..at).chain(from..to).chain(past..held_tokens.len()) {
+            rebuilt_tokens.push(held_tokens[index].clone());
+            rebuilt_positions.push(held_positions[index]);
+        }
+        held_tokens = rebuilt_tokens;
+        held_positions = rebuilt_positions;
+    }
+}
+
+// `TARGET_WINDOWS`, `!`, `&&`, `||` and parentheses. A `when` chooses on what
+// the build is for, which is known before anything is read, so the vocabulary
+// is that and nothing else: a condition a reader has to run the program to
+// settle is not one a compile-time conditional can be written over.
+fn when_condition(
+    tokens: &[Token],
+    position: &crate::lexer::Position,
+) -> Result<bool> {
+    let mut at = 0usize;
+    let held = when_or(tokens, &mut at, position)?;
+    if at != tokens.len() {
+        return Err(crate::diagnostic::LocatedError {
+            position: *position,
+            message: "a `when` chooses on the target, so its condition is the target constants joined by `&&`, `||` and `!`".to_string(),
+        }
+        .into());
+    }
+    Ok(held)
+}
+
+fn when_or(
+    tokens: &[Token],
+    at: &mut usize,
+    position: &crate::lexer::Position,
+) -> Result<bool> {
+    let mut held = when_and(tokens, at, position)?;
+    while matches!(tokens.get(*at), Some(Token::Or)) {
+        *at += 1;
+        held = when_and(tokens, at, position)? || held;
+    }
+    Ok(held)
+}
+
+fn when_and(
+    tokens: &[Token],
+    at: &mut usize,
+    position: &crate::lexer::Position,
+) -> Result<bool> {
+    let mut held = when_term(tokens, at, position)?;
+    while matches!(tokens.get(*at), Some(Token::And)) {
+        *at += 1;
+        held = when_term(tokens, at, position)? && held;
+    }
+    Ok(held)
+}
+
+fn when_term(
+    tokens: &[Token],
+    at: &mut usize,
+    position: &crate::lexer::Position,
+) -> Result<bool> {
+    match tokens.get(*at) {
+        Some(Token::Bang) => {
+            *at += 1;
+            Ok(!when_term(tokens, at, position)?)
+        }
+        Some(Token::LeftParentheses) => {
+            *at += 1;
+            let held = when_or(tokens, at, position)?;
+            if matches!(tokens.get(*at), Some(Token::RightParentheses)) {
+                *at += 1;
+            }
+            Ok(held)
+        }
+        Some(Token::Identifier(name)) => {
+            let named = name.clone();
+            *at += 1;
+            match target_constant(&named) {
+                Some(held) => Ok(held),
+                None => Err(crate::diagnostic::LocatedError {
+                    position: *position,
+                    message: format!(
+                        "'{named}' is not one of the targets a `when` chooses on, which are TARGET_WINDOWS, TARGET_LINUX and TARGET_MACOS"
+                    ),
+                }
+                .into()),
+            }
+        }
+        _ => Err(crate::diagnostic::LocatedError {
+            position: *position,
+            message: "a `when` chooses on the target, so its condition is the target constants joined by `&&`, `||` and `!`".to_string(),
+        }
+        .into()),
+    }
+}
+
 pub fn expand_includes(
     tokens: Vec<Token>,
     positions: Vec<crate::lexer::Position>,
@@ -502,7 +773,10 @@ fn parse_module(
     let (tokens, positions) =
         expand_includes(tokens, positions, &directory_of(path))
             .with_context(|| format!("in {}", path.display()))?;
+    let (tokens, positions, lifted) = resolve_when(tokens, positions)
+        .with_context(|| format!("in {}", path.display()))?;
     let mut parser = Parser::with_positions(&tokens, &positions);
+    parser.also_lifted_lines(lifted);
     parser.also_generic(imported.generic_types);
     parser.also_const_functions(imported.const_functions);
     parser.preload_diagnostics(lexer.diagnostics_in_file(file));

@@ -2585,6 +2585,7 @@ const BOUND_DEPTH: usize = 32;
 #[derive(Clone, Copy)]
 struct Bounding<'a> {
     bounds: &'a HashMap<String, (String, ExprId)>,
+    linear: &'a HashSet<String>,
     structs: &'a HashMap<String, StructLayout>,
     enums: &'a HashMap<String, EnumLayout>,
 }
@@ -2661,7 +2662,6 @@ fn evaluate_bound(
     ast: &Ast,
     expression: ExprId,
     subst: &HashMap<String, Type>,
-    linear: &HashSet<String>,
     context: Bounding<'_>,
     depth: usize,
 ) -> Result<bool> {
@@ -2692,10 +2692,8 @@ fn evaluate_bound(
             })
         }
         Expression::Infix(left, operator, right) => {
-            let left =
-                evaluate_bound(ast, *left, subst, linear, context, depth)?;
-            let right =
-                evaluate_bound(ast, *right, subst, linear, context, depth)?;
+            let left = evaluate_bound(ast, *left, subst, context, depth)?;
+            let right = evaluate_bound(ast, *right, subst, context, depth)?;
             match operator {
                 crate::parser::Operator::And => Ok(left && right),
                 crate::parser::Operator::Or => Ok(left || right),
@@ -2705,7 +2703,7 @@ fn evaluate_bound(
             }
         }
         Expression::Prefix(crate::parser::Operator::Not, inner) => {
-            Ok(!evaluate_bound(ast, *inner, subst, linear, context, depth)?)
+            Ok(!evaluate_bound(ast, *inner, subst, context, depth)?)
         }
         Expression::Call(callee, arguments) => {
             let Expression::Identifier(predicate) = ast.expr(*callee) else {
@@ -2731,7 +2729,8 @@ fn evaluate_bound(
                     "the bound names '{parameter}', which is not a compile-time parameter of this function"
                 )
             };
-            if let Some(answer) = type_predicate(predicate, ty, linear) {
+            if let Some(answer) = type_predicate(predicate, ty, context.linear)
+            {
                 return Ok(answer);
             }
             // A function the program declares, asked the same question. Its
@@ -2748,14 +2747,7 @@ fn evaluate_bound(
                 }
                 let mut held: HashMap<String, Type> = HashMap::new();
                 held.insert(parameter.clone(), ty.clone());
-                return evaluate_bound(
-                    ast,
-                    *body,
-                    &held,
-                    linear,
-                    context,
-                    depth + 1,
-                );
+                return evaluate_bound(ast, *body, &held, context, depth + 1);
             }
             // A name that is neither a bound nor a function of one is a mistake
             // in the declaration, so the fault lands on the predicate rather
@@ -2781,13 +2773,12 @@ fn check_bound(
     signature: &ReturnSignature,
     subst: &HashMap<String, Type>,
     callee: &str,
-    linear: &HashSet<String>,
     context: Bounding<'_>,
 ) -> Result<()> {
     let Some(bound) = signature.bound else {
         return Ok(());
     };
-    if evaluate_bound(ast, bound, subst, linear, context, 0)? {
+    if evaluate_bound(ast, bound, subst, context, 0)? {
         return Ok(());
     }
     let written = &signature.bound_text;
@@ -8134,9 +8125,9 @@ impl<'a> FunctionLowering<'a> {
             &signature,
             &subst,
             name,
-            &self.builder.linear,
             Bounding {
                 bounds: &self.builder.bound_functions,
+                linear: &self.builder.linear,
                 structs: &self.builder.structs,
                 enums: &self.builder.enums,
             },

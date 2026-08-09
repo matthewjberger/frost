@@ -45,7 +45,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_die, frost_rt_emit_char, frost_rt_emit_close, frost_rt_emit_int,
     frost_rt_emit_open, frost_rt_error, frost_rt_error_int, frost_rt_error_src,
     frost_rt_file_exists, frost_rt_absolute_path,
-    frost_rt_getenv, frost_rt_setenv, frost_rt_is_windows,
+    frost_rt_getenv, frost_rt_setenv, frost_rt_is_windows, frost_rt_target_os,
     frost_rt_read_file, frost_rt_remove_file, frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
@@ -125,6 +125,9 @@ frost_rt_error_bytes :: extern fn(data: ^u8, length: i64)
 frost_rt_error_int :: safe extern fn(value: i64)
 frost_rt_die :: safe extern fn()
 frost_rt_is_windows :: safe extern fn() -> i64
+// Which of the three the build is for, as 0, 1 and 2. Safe because it is a
+// number and nothing else.
+frost_rt_target_os :: safe extern fn() -> i64
 frost_rt_getenv :: extern fn(name: ^i8) -> ^i8
 
 // Set a variable in this process's own environment, which is what a command run
@@ -1512,6 +1515,10 @@ Parser :: struct {
     // and inside that body the parameter is the type the call chose rather than
     // one of the generic's own, so the mapping is held here while the body is
     // read and put back afterwards.
+    // The source a `when` kept, by the first and last token offset of each
+    // branch, so the block-column rule is not asked about lines that now stand
+    // one level out from the braces they were written inside.
+    when_lifted: Arena<LocalVar>,
     bound_sub_off: i64,
     bound_sub_len: i64,
     bound_sub_ty: i64,
