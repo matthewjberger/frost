@@ -424,6 +424,16 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
         && array_element(p, to) == TY_U8 && is_str_literal(p, value)) {
         return true
     }
+    // Text is a run of bytes, and what it reaches is a run of them or an
+    // address a call into C reads. Its type here is the address it holds, and
+    // an address reaches a whole number so that a call into C can hand one
+    // over, so `show("abc")` filled an `i64` parameter with a pointer and
+    // nothing said a word. Asked of the expression, the way the allowance above
+    // is, since being a literal is what decides it.
+    if (is_str_literal(p, value) && is_array_ty(to) == false
+        && is_pointer(to) == false) {
+        return false
+    }
     types_compatible(p, from, to)
 }
 

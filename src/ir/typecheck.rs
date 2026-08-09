@@ -586,6 +586,19 @@ pub(crate) fn fits(given: &Type, wanted: &Type) -> bool {
     {
         return fits(given_element, wanted_element);
     }
+    // An array reaches a slice of its own element type, since the length a
+    // slice carries is part of what the array is. Nothing needed the rule while
+    // this only ever saw the two after lowering, where both are an address, and
+    // it is needed the moment an argument is weighed as it was written. A run
+    // of bytes is that same rule under the name `str`.
+    if let (Type::Array(given_element, _), Type::Slice(wanted_element)) =
+        (given, wanted)
+    {
+        return fits(given_element, wanted_element);
+    }
+    if let (Type::Array(given_element, _), Type::Str) = (given, wanted) {
+        return matches!(**given_element, Type::U8 | Type::I8);
+    }
     // An aggregate travels by address: the mode pass rewrites a parameter that
     // holds one into a pointer to it, so a call passes the address where the
     // signature says the value. What travels has to be the address of the thing

@@ -8127,6 +8127,36 @@ impl<'a> FunctionLowering<'a> {
                     self.at_expression(*argument),
                 );
             }
+            // An argument stands where its parameter's type is written. Asked
+            // here, ahead of the address-taking below, because an aggregate
+            // parameter is a reference by the time it reaches this and the
+            // address is taken without a word about what it points at; the IR
+            // check that follows sees two pointers, and a pointer fits every
+            // other. That is how an 'Other' reached a 'Point' parameter and the
+            // callee read one layout as the other. The rule is that check's,
+            // asked while both sides are still spelled the way they were
+            // written, and the borrow a mode added is read through.
+            if let Some(target) = expected
+                && let Some(given) = self.answer_type(*argument)
+            {
+                let wanted = match target {
+                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if self.type_is_settled(&given)
+                    && self.type_is_settled(wanted)
+                    && !crate::ir::typecheck::fits(&given, wanted)
+                {
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "this argument is a '{}' and a '{}' is what is wanted here",
+                            spelled(&given),
+                            spelled(wanted)
+                        )),
+                        self.at_expression(*argument),
+                    );
+                }
+            }
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
@@ -8266,6 +8296,36 @@ impl<'a> FunctionLowering<'a> {
                     )),
                     self.at_expression(*argument),
                 );
+            }
+            // An argument stands where its parameter's type is written. Asked
+            // here, ahead of the address-taking below, because an aggregate
+            // parameter is a reference by the time it reaches this and the
+            // address is taken without a word about what it points at; the IR
+            // check that follows sees two pointers, and a pointer fits every
+            // other. That is how an 'Other' reached a 'Point' parameter and the
+            // callee read one layout as the other. The rule is that check's,
+            // asked while both sides are still spelled the way they were
+            // written, and the borrow a mode added is read through.
+            if let Some(target) = expected
+                && let Some(given) = self.answer_type(*argument)
+            {
+                let wanted = match target {
+                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if self.type_is_settled(&given)
+                    && self.type_is_settled(wanted)
+                    && !crate::ir::typecheck::fits(&given, wanted)
+                {
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "this argument is a '{}' and a '{}' is what is wanted here",
+                            spelled(&given),
+                            spelled(wanted)
+                        )),
+                        self.at_expression(*argument),
+                    );
+                }
             }
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
@@ -8785,6 +8845,34 @@ impl<'a> FunctionLowering<'a> {
                 Box::new(signature.return_type.clone()),
             )
         })
+    }
+
+    /// Whether every name a type is built from is one this call has settled. A
+    /// generic's declared answer still carries its own parameter's name, and
+    /// `arena_at` written as answering `ref T` is a borrow of that name rather
+    /// than of the element the call chose. Nothing is comparable until the name
+    /// resolves, so an argument whose type mentions one is left alone.
+    fn type_is_settled(&self, ty: &Type) -> bool {
+        match ty {
+            Type::TypeParam(_) | Type::Unknown => false,
+            Type::Struct(name) | Type::Enum(name) => {
+                self.builder.struct_layout(name).is_some()
+                    || self.builder.enum_layout(name).is_some()
+            }
+            Type::Ptr(inner)
+            | Type::Ref(inner)
+            | Type::RefMut(inner)
+            | Type::Slice(inner)
+            | Type::Array(inner, _)
+            | Type::ArrayGeneric(inner, _)
+            | Type::Handle(inner)
+            | Type::Distinct(_, inner) => self.type_is_settled(inner),
+            Type::Proc(parameters, answer) => {
+                parameters.iter().all(|held| self.type_is_settled(held))
+                    && self.type_is_settled(answer)
+            }
+            _ => true,
+        }
     }
 
     fn probe_type(&self, expression: ExprId) -> Option<Type> {

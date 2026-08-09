@@ -164,6 +164,33 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'sizeof' is answered once the types are read, and a compile-time \
          value is worked out before that",
     ),
+    // An argument stands where its parameter's type is written. An aggregate
+    // travels by address, so by the time the bootstrap's IR check saw this both
+    // sides were pointers and a pointer fits every other; the nominal check it
+    // does have asks about a place, and a literal is not one, so a value written
+    // out at the call went by. The callee then read one layout as the other.
+    (
+        "an_argument_takes_the_struct_its_parameter_names",
+        "import \"io.frost\"\n\
+         Point :: struct { x: i64, y: i64, z: i64 }\n\
+         Other :: struct { x: i64, y: i64, z: i64 }\n\
+         show :: fn(p: Point) -> i64 { p.x }\n\
+         main :: fn() -> i64 { show(Other { x = 1, y = 2, z = 3 }) }\n",
+        "this argument is a 'Other' and a 'Point' is what is wanted here",
+    ),
+    // The same rule where the parameter is a scalar, which both already caught,
+    // pinned beside it so the pair moves together.
+    (
+        "an_argument_takes_the_scalar_its_parameter_names",
+        "import \"io.frost\"\n\
+         Point :: struct { x: i64 }\n\
+         show :: fn(n: i64) -> i64 { n }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := Point { x = 1 }\n\
+         \x20   show(p)\n\
+         }\n",
+        "this argument is a 'Point' and a 'i64' is what is wanted here",
+    ),
     // A call standing where a generic's value argument goes is worked out, and
     // one this file cannot name has no number to stand for. The self-hosted
     // compiler took the name for a constant, leaving the parentheses to be read
