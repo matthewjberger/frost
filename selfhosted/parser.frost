@@ -2401,7 +2401,30 @@ consume_generic_close :: fn(mut p: Parser) {
 // parameter. If none is bound yet in the current generic, this use establishes
 // it. `Generic<Arg>` instantiates the generic struct to a concrete one. A `<...>`
 // on a non-generic name is consumed and treated as i64.
+// What a layout answers is a number, and the three places this is called from
+// read a type or a length. A reader who wrote one meant it as a compile-time
+// number, and the order is what there is to say: the layout pass reads the
+// types, and every one of these is settled before it does.
+//
+// Read on instead, the word was taken for a type name and each of its
+// parentheses was what the reader was told about.
+refuse_layout_answer :: fn(mut p: Parser) {
+    if (cur(p) != TokenKind::Ident || peek_kind(p, 1) != TokenKind::Lparen) {
+        return
+    }
+    if (names_a_layout(p, cur_off(p), cur_len(p)) == false) {
+        return
+    }
+    report_where(p.modules, p.src, cur_off(p))
+    report("'")
+    report_src(p.src, cur_off(p), cur_len(p))
+    report("' is answered once the types are read, and a ")
+    report("compile-time value is worked out before that")
+    frost_rt_recover_escape()
+}
+
 parse_type :: fn(mut p: Parser) -> i64 {
+    refuse_layout_answer(p)
     // `ref T` is a borrow of T: the same address a `^T` is, but one the
     // checker has proven points at a live value, so reaching through it is
     // not gated the way a raw pointer is.
@@ -2477,15 +2500,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
         // worked out later than either. Named here rather than left to the
         // size parser, which met the `]` with nothing read and said so about
         // the bracket instead of about the word before it.
-        if (cur(p) == TokenKind::Ident
-            && peek_kind(p, 1) == TokenKind::Lparen
-            && names_a_layout(p, cur_off(p), cur_len(p))) {
-            report_where(p.modules, p.src, cur_off(p))
-            report("a compile-time value is worked out before the types are ")
-            report("laid out, so it cannot ask a type for its size, ")
-            report("alignment, offset or field count")
-            frost_rt_recover_escape()
-        }
+        refuse_layout_answer(p)
         mut length: i64 = -1
         if (cur(p) != TokenKind::Rbracket) {
             length = parse_size_expr(p)
@@ -2575,6 +2590,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
             mut all_concrete: i64 = 1
             while (cur(p) != TokenKind::Gt && cur(p) != TokenKind::Shr
                 && p.pending_gt == 0 && cur(p) != TokenKind::Eof) {
+                refuse_layout_answer(p)
                 mut a: i64 = TY_I64
                 if (cur(p) == TokenKind::Int) {
                     a = CONST_BASE + cur_val(p)
@@ -5713,18 +5729,6 @@ column_at :: fn(src: str, off: i64) -> i64 {
         first = first + 1
     }
     first - start + 1
-}
-
-// Whether a line break sits between two offsets.
-breaks_between :: fn(src: str, from: i64, to: i64) -> bool {
-    mut at := from
-    while (at < to) {
-        if (src[at] == CH_LF) {
-            return true
-        }
-        at = at + 1
-    }
-    false
 }
 
 // Whether a token joins the line it opens to the line above it. A `-` is not

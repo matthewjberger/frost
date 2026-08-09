@@ -2339,14 +2339,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Whether a type's answer stands where the cursor is: one of the names a
-    /// layout settles, with the parentheses that make it a call.
-    fn at_layout_answer(&self) -> bool {
+    /// The name of a type's answer standing where the cursor is: one of the
+    /// names the layout pass settles, with the parentheses that make it a call.
+    fn at_layout_answer(&self) -> Option<String> {
         let Token::Identifier(word) = self.peek_nth(0) else {
-            return false;
+            return None;
         };
-        crate::const_eval::LAYOUT_ANSWERS.contains(&word.as_str())
+        if crate::const_eval::LAYOUT_ANSWERS.contains(&word.as_str())
             && matches!(self.peek_nth(1), Token::LeftParentheses)
+        {
+            return Some(word.clone());
+        }
+        None
     }
 
     /// A field names a type parameter by writing its name. The `$` is what
@@ -4272,6 +4276,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type> {
+        // What a layout answers is a number, and a number is not a type, so a
+        // reader who wrote one here meant it as a generic's value argument or
+        // as a length. Named where it stands: read on as a type it became the
+        // element type of nothing, and the parentheses after it were what the
+        // reader was told about.
+        if let Some(named) = self.at_layout_answer() {
+            bail!("{}", crate::const_eval::layout_message(&named));
+        }
         let base_type = match self.peek_nth(0) {
             Token::Caret => {
                 self.read_token();
@@ -4307,8 +4319,8 @@ impl<'a> Parser<'a> {
                 // layout is worked out later than either. Named here rather
                 // than left to the size parser, which read the word as the
                 // element type and asked for the `;` of a form Frost has not.
-                if self.at_layout_answer() {
-                    bail!("{}", crate::const_eval::LAYOUT);
+                if let Some(named) = self.at_layout_answer() {
+                    bail!("{}", crate::const_eval::layout_message(&named));
                 }
                 if matches!(self.peek_nth(0), Token::RightBracket) {
                     self.read_token();

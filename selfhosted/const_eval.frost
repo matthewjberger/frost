@@ -636,8 +636,17 @@ at_place_write :: fn(mut p: Parser) -> bool {
     }
     mut ahead: i64 = 1
     mut depth: i64 = 0
+    mut previous := cur_off(p) + cur_len(p)
     while (peek_kind(p, ahead) != TokenKind::Eof) {
         kind := peek_kind(p, ahead)
+        // A place and the `=` behind it are one statement, so a line break ends
+        // the search. Without it `out[index]` on one line and `index = index + 1`
+        // on the next read as one write to a place, and a body doing that was
+        // refused for something nobody wrote. A break inside brackets says
+        // nothing, which is the rule everywhere else.
+        if (depth == 0 && breaks_between(p.src, previous, peek_off(p, ahead))) {
+            return false
+        }
         if (kind == TokenKind::Lbracket) {
             depth = depth + 1
         } else if (kind == TokenKind::Rbracket) {
@@ -648,6 +657,7 @@ at_place_write :: fn(mut p: Parser) -> bool {
             && kind != TokenKind::Ident) {
             return false
         }
+        previous = peek_off(p, ahead) + peek_len(p, ahead)
         ahead = ahead + 1
     }
     false
@@ -1280,9 +1290,10 @@ const_named_call :: fn(
     // `sizeof` in a constant is told when a layout exists.
     if (names_a_layout(p, name_off, name_len)) {
         const_fault(p, at)
-        creport(p, "a compile-time value is worked out before the types are ")
-        creport(p, "laid out, so it cannot ask a type for its size, ")
-        creport(p, "alignment, offset or field count")
+        creport(p, "'")
+        creport_src(p, name_off, name_len)
+        creport(p, "' is answered once the types are read, and a ")
+        creport(p, "compile-time value is worked out before that")
         const_stop(p)
     }
     index := const_fn_index(p, name_off, name_len, name_off)

@@ -4,7 +4,7 @@ import "core.frost"
 import "lexer.frost"
 
 export joins_line, advance, cur, cur_len, cur_off, cur_val, on_same_line, peek_kind,
-    peek_is_word, peek_off, peek_len
+    peek_is_word, peek_off, peek_len, breaks_between
 
 // Whether the token `offset` ahead is written as the given word. Reading a
 // token's spelling rather than its kind is how a word that is not a keyword,
@@ -75,6 +75,20 @@ advance :: fn(mut p: Parser) {
 // so it joins nothing, unless a bracket is open where a break says nothing.
 joins_line :: fn(mut p: Parser) -> bool {
     on_same_line(p) || p.bracket_depth > 0
+}
+
+// Whether a line ends between two offsets. A statement ends at a line break, so
+// this is what a walk over tokens reads to know it has left the statement it
+// started in.
+breaks_between :: fn(src: str, from: i64, to: i64) -> bool {
+    mut at := from
+    while (at < to) {
+        if (src[at] == CH_LF) {
+            return true
+        }
+        at = at + 1
+    }
+    false
 }
 
 // Whether the token here began on the line the one before it ended on. A `(` or

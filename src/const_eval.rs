@@ -29,9 +29,13 @@ pub const LAYOUT_ANSWERS: &[&str] = &[
 
 /// What a compile-time value is told when it asks a type for one of those. The
 /// two answer sites cannot see each other, so this names the order rather than
-/// the site: a reader who writes `sizeof` in a constant is told when a layout
-/// exists, which is what decides where the answer can be read.
-pub const LAYOUT: &str = "a compile-time value is worked out before the types are laid out, so it cannot ask a type for its size, alignment, offset or field count";
+/// the site, and it names the word that was written: the six answer different
+/// questions and a reader who asked for one is told about that one.
+pub fn layout_message(named: &str) -> String {
+    format!(
+        "'{named}' is answered once the types are read, and a compile-time value is worked out before that"
+    )
+}
 
 /// What a compile-time expression works out to.
 ///
@@ -427,6 +431,17 @@ impl<'a> Folder<'a> {
             // A set of named values. Every field is named at the literal, so
             // what a field reads is decided here without a layout.
             Expression::StructInit(name, initializers) => {
+                // A literal that named no type takes it from what the context
+                // expects, and a value written back where a constant is named
+                // carries its own type or none at all. Folded anyway it became
+                // a set of named values belonging to nothing, and the reader was
+                // told about the use rather than about the literal.
+                if ast.name(*name).is_empty() {
+                    return Err(
+                        "this is not something a compile-time call may do"
+                            .to_string(),
+                    );
+                }
                 let mut held = Vec::new();
                 for named in ast.named_in(*initializers).to_vec() {
                     let value = self.value(ast, named.value, locals, stack)?;
@@ -568,7 +583,7 @@ impl<'a> Folder<'a> {
                 };
                 let name = ast.name(*name).to_string();
                 if LAYOUT_ANSWERS.contains(&name.as_str()) {
-                    return Err(LAYOUT.to_string());
+                    return Err(layout_message(&name));
                 }
                 let mut held = Vec::new();
                 for argument in ast.exprs_in(*arguments).to_vec() {

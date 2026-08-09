@@ -129,8 +129,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }\n\
          LANES :: round_up(sizeof(Vertex), 64)\n\
          main :: fn() -> i64 { LANES }\n",
-        "a compile-time value is worked out before the types are laid out, so \
-         it cannot ask a type for its size, alignment, offset or field count",
+        "'sizeof' is answered once the types are read, and a compile-time \
+         value is worked out before that",
     ),
     // The same rule in the other position a compile-time number is read. The
     // size parser met the word before the folder could, so the bootstrap read
@@ -145,8 +145,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   mut held: [sizeof(Vertex)]u8 = [0; 12]\n\
          \x20   slice_len(held)\n\
          }\n",
-        "a compile-time value is worked out before the types are laid out, so \
-         it cannot ask a type for its size, alignment, offset or field count",
+        "'sizeof' is answered once the types are read, and a compile-time \
+         value is worked out before that",
+    ),
+    // The third position a compile-time number is read: the value argument a
+    // generic takes. The word was taken for a name of a type and each of its
+    // parentheses became a report of its own, so one mistake was told four
+    // times and none of the four said what was wrong.
+    (
+        "a_layout_answer_is_not_a_generic_argument",
+        "import \"io.frost\"\n\
+         Vertex :: struct { x: f32, y: f32 }\n\
+         Bag :: struct($N: usize) { data: [N]u8 }\n\
+         Held :: struct { b: Bag<sizeof(Vertex)> }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'sizeof' is answered once the types are read, and a compile-time \
+         value is worked out before that",
+    ),
+    // A literal that names no type takes it from what the context expects, and
+    // a value written back where a constant is named carries its own type or
+    // none. The bootstrap folded one anyway into a set of named values
+    // belonging to nothing, and the reader was told about the use of the
+    // constant rather than about the literal inside the call.
+    (
+        "an_untyped_literal_is_not_a_compile_time_value",
+        "import \"io.frost\"\n\
+         Point :: struct { x: i64, y: i64 }\n\
+         made :: fn() -> Point {\n\
+         \x20   mut p: Point = { x = 1, y = 2 }\n\
+         \x20   p\n\
+         }\n\
+         P :: made()\n\
+         main :: fn() -> i64 { P.x }\n",
+        "this is not something a compile-time call may do",
     ),
     // `offset_of` names a field, which is what a walk over a type's fields
     // binds. Both said so and the bootstrap said it about the head of the
@@ -5917,6 +5948,31 @@ Bad :: enum { Nope }
 -2
 -4
 1
+",
+    ),
+    // A compile-time call refuses a write to an element or a field, and the
+    // scan that recognises one reads forward for the `=` behind the place. It
+    // had no statement boundary, so a body reading an element on one line and
+    // assigning to a name on the next was two statements read as one write and
+    // refused for something nobody wrote. A line break ends a statement, and
+    // one inside brackets says nothing, which is the rule everywhere else.
+    (
+        "a_place_write_is_one_statement",
+        "import \"io.frost\"
+         depths :: fn(base: i64) -> i64 {
+             mut out: [4]i64 = [0, 0, 0, 0]
+             mut index: i64 = 0
+             out[index]
+             index = index + 1
+             base + index
+         }
+         TABLE :: depths(10)
+         main :: fn() -> i64 {
+             print(\"{}\\n\", TABLE)
+             0
+         }
+",
+        "11
 ",
     ),
     // A type predicate answers the same question wherever it is asked. It
