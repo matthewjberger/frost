@@ -1,18 +1,19 @@
 // Generates Frost bindings for wgpu from webgpu.json.
 //
-//   just bindgen
+//   frost run tools/build.frost bindgen
 //
-// `webgpu.h` is itself generated from that file upstream, so this reads the
-// same source of truth the C header does rather than parsing the header.
+// The file to write and the file to read are the first two arguments, so this
+// runs from wherever it is started rather than only from the directory a pair
+// of hardcoded paths were once relative to. `webgpu.h` is itself generated from
+// that same file upstream, so this reads what the C header is made from rather
+// than parsing the header.
 
 import "json.frost"
 import "fs.frost"
 import "format.frost"
 import "strings.frost"
 import "io.frost"
-
-IDL :: "lib/renderer/wgpu/webgpu.json"
-OUT :: "lib/renderer/wgpu.frost"
+import "os.frost"
 
 // ---------------------------------------------------------------------------
 // Names
@@ -1275,7 +1276,12 @@ emit_functions :: fn(
 }
 
 main :: fn() -> i64 {
-    read := fs_read(IDL)
+    if (os_arg_count() < 3) {
+        print("usage: wgpu_bindgen <output.frost> <webgpu.json>\n")
+        return 1
+    }
+    written := os_arg(1)
+    read := fs_read(os_arg(2))
     if (read.ok == false) {
         print("{}\n", 0)
         fs_free(read)
@@ -1316,9 +1322,12 @@ main :: fn() -> i64 {
         "// Generated from webgpu.json by tools/wgpu_bindgen.frost.
 "
     )
-    builder_str_value(out, "// Do not edit. Run `just bindgen` instead.
+    builder_str_value(
+        out,
+        "// Do not edit. Run `frost run tools/build.frost bindgen` instead.
 
-")
+"
+    )
     builder_str_value(out, "export ")
     builder_str_value(out, builder_str(names))
     builder_str_value(out, "Chained
@@ -1359,7 +1368,7 @@ main :: fn() -> i64 {
     )
     builder_str_value(out, builder_str(body))
 
-    if (fs_write(OUT, builder_str(out)) == false) {
+    if (fs_write(written, builder_str(out)) == false) {
         print("{}\n", 0)
         builder_free(out)
         builder_free(body)

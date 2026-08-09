@@ -1,0 +1,140 @@
+// The project's build steps, written as a program in the language rather than
+// as recipes in a shell.
+//
+//   frost run tools/build.frost bindgen
+//   frost run tools/build.frost bindgen --check
+//
+// `frost run` names the compiler that ran this in FROST_COMPILER, so a step
+// drives the same compiler the caller used rather than whichever one is on
+// PATH. That is what lets one checkout hold two compilers and have each build
+// with itself.
+//
+// Paths are written relative to the repository root, which is where a build is
+// run from. A step that generates a file always writes it, and `--check` writes
+// somewhere else and compares the bytes, so staleness is decided from content: a
+// checkout stamps every file with the time it was made, and the bytes are what
+// carries the answer.
+
+import "io.frost"
+import "os.frost"
+import "fs.frost"
+import "strings.frost"
+import "format.frost"
+
+GENERATOR :: "tools/wgpu_bindgen.frost"
+GENERATOR_EXE :: "tools/wgpu_bindgen.exe"
+BINDINGS :: "lib/renderer/wgpu.frost"
+SCHEMA :: "lib/renderer/wgpu/webgpu.json"
+SCRATCH :: "tools/wgpu_bindgen.check.tmp"
+
+// One part of a command line, quoted, since the line goes to a shell and a path
+// with a space in it is one argument rather than two.
+quoted :: fn(mut out: Builder, part: str) {
+    builder_str_value(out, " \"")
+    builder_str_value(out, part)
+    builder_str_value(out, "\"")
+}
+
+// The compiler that ran this program. Empty text where the variable is unset,
+// which is what a file compiled and started by hand sees, and what `frost run`
+// fills in.
+compiler :: fn() -> str {
+    held := os_getenv("FROST_COMPILER")
+    if (str_len(held) == 0) {
+        print("build: FROST_COMPILER names no compiler. ")
+        print("Start this with `frost run tools/build.frost`.\n")
+    }
+    held
+}
+
+// The wgpu bindings, regenerated from the schema the C header is generated
+// from. Checking runs the same generator against a scratch file and compares,
+// so the answer is what the generator would write rather than when anything was
+// last touched.
+bindgen :: fn(checking: bool) -> i64 {
+    held := compiler()
+    if (str_len(held) == 0) {
+        return 1
+    }
+    mut building := builder_new(4096)
+    quoted(building, held)
+    builder_str_value(building, " --link -o")
+    quoted(building, GENERATOR_EXE)
+    quoted(building, GENERATOR)
+    built := os_run(builder_str(building))
+    builder_free(building)
+    if (built != 0) {
+        print("build: {} did not compile\n", GENERATOR)
+        return 1
+    }
+
+    mut written: str = BINDINGS
+    if (checking) {
+        written = SCRATCH
+    }
+    mut running := builder_new(4096)
+    quoted(running, GENERATOR_EXE)
+    quoted(running, written)
+    quoted(running, SCHEMA)
+    generated := os_run(builder_str(running))
+    builder_free(running)
+    if (generated != 0) {
+        print("build: {} did not run\n", GENERATOR_EXE)
+        return 1
+    }
+
+    // The generator lays its output out to be read while it is assembled, and
+    // the tree holds every Frost file to one rendering. Formatting here is what
+    // makes the two agree, so `--check` compares what a build would leave on
+    // disk rather than the intermediate form on its way there.
+    mut rendering := builder_new(4096)
+    quoted(rendering, held)
+    builder_str_value(rendering, " fmt")
+    quoted(rendering, written)
+    rendered := os_run(builder_str(rendering))
+    builder_free(rendering)
+    if (rendered != 0) {
+        print("build: the formatter refused {}\n", written)
+        return 1
+    }
+    if (checking == false) {
+        print("build: wrote {}\n", BINDINGS)
+        return 0
+    }
+
+    fresh := fs_read(SCRATCH)
+    current := fs_read(BINDINGS)
+    settled := fresh.ok && current.ok && str_eq(fresh.text, current.text)
+    fs_free(fresh)
+    fs_free(current)
+    fs_remove(SCRATCH)
+    if (settled) {
+        print("build: {} is up to date\n", BINDINGS)
+        return 0
+    }
+    print("build: {} is out of date beside {}.\n", BINDINGS, SCHEMA)
+    print("build: run `frost run tools/build.frost bindgen`.\n")
+    1
+}
+
+main :: fn() -> i64 {
+    if (os_arg_count() < 2) {
+        print("usage: build <step> [--check]\n")
+        print("steps: bindgen\n")
+        return 1
+    }
+    step := os_arg(1)
+    mut checking: bool = false
+    mut index: i64 = 2
+    while (index < os_arg_count()) {
+        if (str_eq(os_arg(index), "--check")) {
+            checking = true
+        }
+        index = index + 1
+    }
+    if (str_eq(step, "bindgen")) {
+        return bindgen(checking)
+    }
+    print("build: no step is named '{}'\n", step)
+    1
+}

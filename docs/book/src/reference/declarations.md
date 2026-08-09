@@ -358,6 +358,12 @@ A run is held by the compiler once it is worked out. An element that is itself a
 call runs once, however many times the run is named, and the held value outlives
 the names that built it.
 
+What a call answered stands wherever the name is read while the program runs,
+written as the literal of whatever kind it turned out to be. `NAME` is those
+five bytes, `TABLE` is that run of four, `ORIGIN` is that pair of numbers, and a
+call answering a yes or no is `true` or `false`. The call itself is gone by
+then: it ran once, before the program did.
+
 Everything else is refused, naming what stopped it:
 
 - A function that reaches itself, directly or through others.
@@ -368,6 +374,8 @@ Everything else is refused, naming what stopped it:
   named where it is written.
 - A number with a fraction. A compile-time value is a whole number or a yes or
   no.
+- A write to an element or a field, `out[index] = v` or `p.x = v`. A
+  compile-time call writes to a name.
 - More than a million steps, or calls nested deeper than thirty-two.
 
 A call names a function the file can name: what it declares, and what the files

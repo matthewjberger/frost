@@ -285,18 +285,60 @@ the parent. `json_at` walks that chain, so reading an array element by element
 with `json_at` is quadratic. Following `next` yourself reads it in linear time,
 and the node fields are exported for that walk.
 
-## The five together
+## `std/os.frost`, arguments, environment, and running a program
+
+Four functions. `os_arg_count` and `os_arg` read the arguments the program was
+started with, where argument 0 is the program's own name and an index outside
+the range answers with empty text, so a program asks for an argument rather than
+counting first. `os_getenv` answers what a variable holds, or empty text where
+nothing set it. `os_run` puts a command line through the platform's shell and
+answers with the exit status it finished on.
+
+The text that comes back views storage the process already holds, its argument
+vector and its environment block, so every answer stays good for as long as the
+program runs and the storage stays the process's own. Text going the other way
+is copied and terminated, because C reads a name and a command line until a NUL.
+
+```frost
+import "io.frost"
+import "os.frost"
+
+main :: fn() -> i64 {
+    mut index: i64 = 1
+    while (index < os_arg_count()) {
+        print("{}\n", os_arg(index))
+        index = index + 1
+    }
+    os_run("echo done")
+}
+```
+
+`os_run` passes the line on as it was written, so a caller quotes each part that
+might hold a space itself. What the shell is differs per platform, and so does
+one detail this module settles. Windows strips the outermost pair of quotes off
+a command line before reading what is left, so a line whose first word is quoted
+arrives as a path the shell then fails to find. `os_run` puts one more pair
+around the whole line there, and hands the line straight through everywhere
+else.
+
+## The six of them together
 
 `tools/wgpu_bindgen.frost` reads `lib/renderer/wgpu/webgpu.json` with
 `fs_read`, walks it with `json_member` and `json_at`, classifies bytes with
 `str_byte_is_digit` and friends, assembles the whole generated module in three
-`Builder`s, and writes it with `fs_write`. That is a code generator in fourteen
-hundred lines, importing these five modules and nothing else. See
+`Builder`s, and writes it with `fs_write`. It takes the file to write and the
+file to read as arguments, through `os_arg`, so it runs from wherever it is
+started. That is a code generator built from these six modules alone. See
 [graphics.md](graphics.md).
+
+`tools/build.frost` is what starts it, and it is built out of the same six:
+`os_getenv` finds the compiler that ran it, `os_run` drives that compiler and
+then the generator, and `fs_read` plus `str_eq` decide whether what the
+generator would write is what is already on disk.
 
 ## Tests
 
-`std/strings.frost` has twelve test blocks and `std/fs.frost` two:
+`std/strings.frost`, `std/os.frost` and `std/fs.frost` carry their own blocks:
 
 ```bash
 frost --test std/strings.frost

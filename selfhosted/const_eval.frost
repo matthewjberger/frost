@@ -609,6 +609,15 @@ const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
             count = 0
         }
     }
+    // A write to an element or a field, which is the one assignment a
+    // compile-time call has no answer for. The shape is read here so what is
+    // named is the write, rather than the first token the value reader met and
+    // could not use.
+    if (at_place_write(p)) {
+        const_fault(p, at)
+        creport(p, "a compile-time call writes to a name and nothing else")
+        const_stop(p)
+    }
     held := const_expr(p, at)
     ConstFlow {
         flow = FLOW_VALUE,
@@ -616,6 +625,32 @@ const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
         value = held.value,
         count = held.count
     }
+}
+
+// Whether a write to a place stands where the cursor is: a name with indices
+// or fields after it, and an `=` behind those. Brackets nest, so an index that
+// is itself an index is one place and not two.
+at_place_write :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident) {
+        return false
+    }
+    mut ahead: i64 = 1
+    mut depth: i64 = 0
+    while (peek_kind(p, ahead) != TokenKind::Eof) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Lbracket) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        } else if (depth == 0 && kind == TokenKind::Assign) {
+            return ahead > 1
+        } else if (depth == 0 && kind != TokenKind::Dot
+            && kind != TokenKind::Ident) {
+            return false
+        }
+        ahead = ahead + 1
+    }
+    false
 }
 
 // `name := expr`, `name : T = expr`, with the cursor on the name.
@@ -631,6 +666,14 @@ const_bind :: fn(mut p: Parser, at: i64) -> ConstFlow {
     if (cur(p) == TokenKind::Colon) {
         advance(p)
         const_skip_type(p)
+    }
+    // What stands after the name is what binds it. Anything else is a write to
+    // a place worked out while the program runs, an element or a field, which
+    // is the one assignment a compile-time call has no answer for.
+    if (cur(p) != TokenKind::Coloneq && cur(p) != TokenKind::Assign) {
+        const_fault(p, at)
+        creport(p, "a compile-time call writes to a name and nothing else")
+        const_stop(p)
     }
     advance(p)
     held := const_expr(p, at)
@@ -967,9 +1010,16 @@ const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
     ConstValue { kind = CONST_ARRAY, value = start, count = count }
 }
 
-// One `Name { field = value, ... }`, with the cursor on the `{`. Every field is
-// named at the literal, so what a field reads is decided here without a layout.
-const_record :: fn(mut p: Parser, at: i64) -> ConstValue {
+// One `Name { field = value, ... }`, with the cursor on the `{` and the type's
+// name behind it. Every field is named at the literal, so what a field reads is
+// decided here without a layout; the type's name is kept because writing the
+// value back into the program writes a literal of that type.
+const_record :: fn(
+    mut p: Parser,
+    at: i64,
+    type_off: i64,
+    type_len: i64
+) -> ConstValue {
     advance(p)
     start := p.const_items.count
     mut count: i64 = 0
@@ -995,7 +1045,17 @@ const_record :: fn(mut p: Parser, at: i64) -> ConstValue {
         }
     }
     advance(p)
-    ConstValue { kind = CONST_RECORD, value = start, count = count }
+    held := p.const_records.count
+    arena_push(
+        p.const_records,
+        ConstRecord {
+            name_off = type_off,
+            name_len = type_len,
+            start = start,
+            count = count
+        }
+    )
+    ConstValue { kind = CONST_RECORD, value = held, count = count }
 }
 
 // Where an index lands, or what is wrong with it. Bounds are decided here,
@@ -1074,13 +1134,14 @@ const_postfix :: fn(mut p: Parser, at: i64, held_in: ConstValue) -> ConstValue {
                 const_stop(p)
                 return const_int(0)
             }
+            record := arena_at(p.const_records, held.value)
             mut i: i64 = 0
             mut found: i64 = -1
-            while (i < held.count) {
-                item := arena_at(p.const_items, held.value + i)
+            while (i < record.count) {
+                item := arena_at(p.const_items, record.start + i)
                 if (item.name_len == name_len
                     && bytes_equal(p.src, item.name_off, name_off, name_len)) {
-                    found = held.value + i
+                    found = record.start + i
                 }
                 i = i + 1
             }
@@ -1167,7 +1228,7 @@ const_factor :: fn(mut p: Parser, at: i64) -> ConstValue {
         if (peek_kind(p, 1) == TokenKind::Lbrace
             && is_type_name(p, name_off, name_len)) {
             advance(p)
-            return const_postfix(p, at, const_record(p, at))
+            return const_postfix(p, at, const_record(p, at, name_off, name_len))
         }
         slot := const_local_index(p, name_off, name_len)
         if (slot >= 0) {

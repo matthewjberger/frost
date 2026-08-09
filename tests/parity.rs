@@ -64,7 +64,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_settled_compile_time_argument_may_not_be_written_at_the_call",
         "import \"io.frost\"\n\
-         Box :: struct($T: Type) { held: $T }\n\
+         Box :: struct($T: Type) { held: T }\n\
          unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }\n\
          main :: fn() -> i64 {\n\
          \x20   mut b := Box<i64> { held = 41 }\n\
@@ -72,6 +72,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "is settled by the type of",
+    ),
+    // A name that is not a bound is a mistake in the declaration, so the fault
+    // lands on the predicate rather than on the call, which chose a type and
+    // nothing else. The whole vocabulary is quoted here because the two lists
+    // drifted by one entry while both compilers answered `is_linear`: a test
+    // asking only for the sentence they share cannot see the part they do not.
+    (
+        "a_where_bound_names_a_predicate_that_is_not_one",
+        "twice :: fn($T: Type, v: $T) -> T where is_sortable(T) { v }\n\
+         main :: fn() -> i64 { twice(1) }\n",
+        "'is_sortable' is not one of the bounds a type can be held to, which \
+         are: is_numeric, is_integer, is_float, is_struct, is_array, is_slice, \
+         is_pointer, is_linear",
     ),
     // One permission word at both layers, so the older spelling gets a sentence
     // saying what to write rather than whatever a stray word parses as. `var` is
@@ -103,6 +116,65 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "a local that is reassigned is declared with `mut`, the word a \
          parameter that writes the caller's value carries",
+    ),
+    // A field names a type parameter by writing its name, which is what the
+    // reference and every template in `std` write. The `$` is what declares one.
+    // The bootstrap read the sigil as the name and the self-hosted compiler read
+    // the field as something it could not weigh, so one accepted the declaration
+    // and inferred an instance from it and the other refused every literal of
+    // the type, naming the literal rather than the field it came from.
+    (
+        "a_field_names_a_type_parameter_without_the_sigil",
+        "import \"io.frost\"\n\
+         Box :: struct($T: Type) { held: $T }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := Box<i64> { held = 41 }\n\
+         \x20   held.held\n\
+         }\n",
+        "a field names a type parameter by its name, and '$' is what declares \
+         one, so this field is written 'held: T'",
+    ),
+    // A constant that cannot be worked out ends that declaration and no more, so
+    // a program holding a second fault is told about both. The self-hosted
+    // compiler read its constants outside the recovery its declaration loop
+    // runs under, so the first one it could not settle ended the compile and
+    // everything after it went unsaid. Pinned as two faults rather than one
+    // because the harness compares every sentence, which is what sees the
+    // second one go missing.
+    (
+        "a_constant_that_cannot_be_worked_out_ends_one_declaration",
+        "import \"io.frost\"\n\
+         nope :: fn() -> i64 { heap_bytes(4)[0] }\n\
+         MADE :: nope()\n\
+         main :: fn() -> i64 {\n\
+         \x20   var count := 3\n\
+         \x20   count\n\
+         }\n",
+        "a local that is reassigned is declared with `mut`, the word a \
+         parameter that writes the caller's value carries",
+    ),
+    // A compile-time call binds names, and a write to an element or a field
+    // names a place worked out while the program runs. Both compilers stopped at
+    // it, and the self-hosted one said only that it had met something it could
+    // not read: its statement reader routes a name followed by `:=`, `:` or `=`
+    // and lets everything else fall to the value reader, and `out[index]` is a
+    // name followed by `[`. Reading the shape through to the `=` first is what
+    // lets the refusal name the write.
+    (
+        "a_compile_time_call_writes_to_a_name",
+        "import \"io.frost\"\n\
+         depths :: fn(base: i64) -> [4]i64 {\n\
+         \x20   mut out: [4]i64 = [0, 0, 0, 0]\n\
+         \x20   mut index: i64 = 0\n\
+         \x20   while (index < 4) {\n\
+         \x20       out[index] = base + index\n\
+         \x20       index = index + 1\n\
+         \x20   }\n\
+         \x20   out\n\
+         }\n\
+         TABLE :: depths(10)\n\
+         main :: fn() -> i64 { TABLE[0] }\n",
+        "a compile-time call writes to a name and nothing else",
     ),
     // An arena answers `Allocation<A>` and no `Resizing<A>`, so nothing can ask
     // one to hand back a bigger run: it has nowhere to grow into, and the run it
@@ -211,7 +283,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_container_carrying_one_bundle_is_not_one_carrying_another",
         "import \"io.frost\"\n\
          Hashing :: struct($K: Type) { hash: fn(K) -> i64 }\n\
-         Bag :: struct($K: Type, $ops: Hashing<K>) { first: $K }\n\
+         Bag :: struct($K: Type, $ops: Hashing<K>) { first: K }\n\
          one :: fn(k: i64) -> i64 { k }\n\
          two :: fn(k: i64) -> i64 { k * 2 }\n\
          plain :: Hashing<i64> { hash = one }\n\
@@ -2557,6 +2629,72 @@ fn both_compilers_warn_about_the_same_programs() {
     );
 }
 
+// `frost run` on both compilers: one program, one set of arguments, the same
+// output and the same exit code. A build program written in Frost is started by
+// whichever compiler the caller has, so two answers here would be two build
+// systems. The two get there by different routes, an argument vector on one
+// side and a shell line on the other, which is what the argument holding a
+// space is here to catch.
+#[test]
+fn both_compilers_run_a_program_the_same_way() {
+    let Some(compiler) = build_self_hosted_compiler("runparity") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let source =
+        directory.join(format!("{}.frost", support::unique("frost_run_both")));
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\n\
+         import \"os.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut index: i64 = 1\n\
+         \x20   while (index < os_arg_count()) {\n\
+         \x20       print(\"{}\\n\", os_arg(index))\n\
+         \x20       index = index + 1\n\
+         \x20   }\n\
+         \x20   if (str_len(os_getenv(\"FROST_COMPILER\")) == 0) {\n\
+         \x20       return 9\n\
+         \x20   }\n\
+         \x20   4\n\
+         }\n",
+    )
+    .unwrap();
+    let mut answers = Vec::new();
+    for driver in [std::path::Path::new(env!("CARGO_BIN_EXE_frost")), &compiler]
+    {
+        let run = Command::new(driver)
+            .arg("run")
+            .arg(&source)
+            .arg("--check")
+            .arg("a path with spaces")
+            .output()
+            .unwrap();
+        answers.push((
+            run.status.code(),
+            String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&run.stderr).into_owned(),
+        ));
+    }
+    let _ = std::fs::remove_file(&source);
+    assert_eq!(
+        answers[0].0, answers[1].0,
+        "the two compilers exit differently on the same run:\n{}\n{}",
+        answers[0].2, answers[1].2
+    );
+    assert_eq!(
+        answers[0].1, answers[1].1,
+        "the two compilers hand the program different arguments"
+    );
+    assert_eq!(
+        answers[0].0,
+        Some(4),
+        "neither compiler ran the program as written:\n{}",
+        answers[0].2
+    );
+    assert_eq!(answers[0].1, "--check\na path with spaces\n");
+}
+
 #[test]
 fn both_compilers_refuse_the_same_programs() {
     let Some(compiler) = build_self_hosted_compiler("refuseboth") else {
@@ -3054,7 +3192,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "a_settled_compile_time_parameter_is_read_off_the_argument",
         "import \"io.frost\"\n\
-         Box :: struct($T: Type) { held: $T }\n\
+         Box :: struct($T: Type) { held: T }\n\
          unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }\n\
          twice :: fn($T: Type, value: $T) -> $T { value }\n\
          first :: fn($T: Type, run: []$T) -> $T { run[0] }\n\
@@ -3100,7 +3238,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_bundle_travels_in_the_containers_type",
         "import \"io.frost\"\n\
          Hashing :: struct($K: Type) { hash: fn(K) -> i64 }\n\
-         Bag :: struct($K: Type, $ops: Hashing<K>) { first: $K }\n\
+         Bag :: struct($K: Type, $ops: Hashing<K>) { first: K }\n\
          one :: fn(k: i64) -> i64 { k }\n\
          two :: fn(k: i64) -> i64 { k * 2 }\n\
          plain :: Hashing<i64> { hash = one }\n\
@@ -5737,6 +5875,46 @@ Bad :: enum { Nope }
 -2
 -4
 1
+",
+    ),
+    // A constant whose value comes from a compile-time call is that value
+    // wherever the name is read, whatever kind the value turned out to be. A run
+    // of bytes, a yes or no, a run of values and a set of named ones each reach
+    // the program the way a literal written there would.
+    //
+    // Each of the four found the two compilers on opposite sides of the line.
+    // The bootstrap wrote back a whole number and a yes or no and left the rest
+    // as the call, so the program worked the answer out again while it ran; the
+    // self-hosted compiler held everything but the whole number where only the
+    // evaluator could read it, so naming one was an unknown variable.
+    (
+        "a_folded_constant_reaches_the_program_whatever_kind_it_is",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         label :: fn() -> str { \"held\" }
+         wide :: fn(a: i64) -> bool { a > 3 }
+         pair :: fn(a: i64) -> [2]i64 { [a, a + 1] }
+         made :: fn(a: i64) -> Point { Point { x = a, y = a + 1 } }
+         NAME :: label()
+         BIG :: wide(9)
+         TABLE :: pair(10)
+         ORIGIN :: made(3)
+         main :: fn() -> i64 {
+             print(\"{}\\n\", NAME)
+             if (BIG) { print(\"yes\\n\") }
+             print(\"{}\\n\", TABLE[0])
+             print(\"{}\\n\", TABLE[1])
+             print(\"{}\\n\", ORIGIN.x)
+             print(\"{}\\n\", ORIGIN.y)
+             0
+         }
+",
+        "held
+yes
+10
+11
+3
+4
 ",
     ),
 ];

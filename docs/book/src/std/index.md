@@ -1,6 +1,6 @@
 # The standard library
 
-`std/` is twenty-one files of Frost, compiled the way your own modules are compiled
+`std/` is Frost, compiled the way your own modules are compiled
 and written with the same language your own code has. `Vec` and `Map` are
 structs over a heap slice, `Option` is a generic enum, and `Slab` and `columns`
 use the handle indexing of section 10.2 of
@@ -10,11 +10,11 @@ the same shape gets on the same terms.
 Where the library reaches outside the language it does it the way a program
 would, with an `extern` declaration. `mem.frost` declares the C allocator,
 `io.frost` the runtime's write helpers, `fs.frost` its file calls,
-`thread.frost` its threading ones, and `math.frost` and `math64.frost` the C
-transcendentals. `ecs.frost` adds two runtime calls, for reporting a fault and
-for stopping on one, and `slab.frost` one, for the identifier a container stamps
-into its handles. Those eight files hold every `extern` in the library. The
-other thirteen declare none.
+`os.frost` its arguments, environment and shell, `thread.frost` its threading
+ones, and `math.frost` and `math64.frost` the C transcendentals. `ecs.frost`
+adds two runtime calls, for reporting a fault and for stopping on one, and
+`slab.frost` one, for the identifier a container stamps into its handles. Those
+files hold every `extern` in the library.
 
 Nothing is imported implicitly. A program that wants to print says
 `import "io.frost"`, and the file is found on the standard library search path
@@ -40,6 +40,7 @@ standard library is the last of them.
 | `io.frost` | Writing to standard output without declaring `printf` | [text-and-io.md](text-and-io.md) |
 | `fs.frost` | Reading and writing whole files | [text-and-io.md](text-and-io.md) |
 | `json.frost` | A JSON reader over a flat node array | [text-and-io.md](text-and-io.md) |
+| `os.frost` | A program's own arguments, its environment, and running another program | [text-and-io.md](text-and-io.md) |
 | `thread.frost` | Spawn, join, and an atomic add | [thread.md](thread.md) |
 | `math.frost` | Vectors, matrices and quaternions at `f32` | [math.md](math.md) |
 | `math64.frost` | The same library at `f64` | [math.md](math.md) |
@@ -89,9 +90,5 @@ many files failed. A single module is the same command with the file named:
 frost --test std/map.frost
 ```
 
-Fifteen of the twenty-one carry tests: `ecs.frost` (116 blocks), `math.frost`
-(33), `math64.frost` (23), `map.frost` and `mem.frost` (13 each),
-`strings.frost` (12), `arena.frost` and `snapshot.frost` (6 each), `vec.frost`
-(5), `fixed.frost` (4), `allocation.frost`, `sort.frost` and `thread.frost`
-(3 each), and `fs.frost` and `slab.frost` (2 each). The other six are covered
-where they are used, and each page says where.
+Most modules carry their own blocks, and each page says where its module is
+exercised.

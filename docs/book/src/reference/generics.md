@@ -11,6 +11,11 @@ Option :: enum($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
+The `$` is what declares the parameter, and the declaration stands in the list
+after the type's name. A field then names it: `first: T`. Writing `first: $T` is
+refused where it stands, since the sigil there is a second spelling for a name
+the declaration already wrote.
+
 A parameter may name the type parameter inside a generic type's argument list,
 where it binds to whatever that instance was made with:
 

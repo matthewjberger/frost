@@ -229,9 +229,12 @@ bound_term :: fn(
     answer := bound_predicate(p, pred_off, pred_len, ty)
     if (answer < 0) {
         report_where(p.modules, p.src, pred_off)
-        report_src(p.src, pred_off, pred_len)
-        report(" is not one of the bounds a type can be held to, which are: ")
-        report("is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer")
+        report_fmt(
+            "'{}' is not one of the bounds a type can be held to, ",
+            source_text(p.src, pred_off, pred_len)
+        )
+        report("which are: is_numeric, is_integer, is_float, is_struct, ")
+        report("is_array, is_slice, is_pointer, is_linear")
         frost_rt_recover_escape()
     }
     answer == 1

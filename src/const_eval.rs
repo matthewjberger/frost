@@ -31,7 +31,10 @@ pub enum Value {
     Integer(i64),
     Boolean(bool),
     Array(Rc<Vec<Value>>),
-    Record(Rc<Vec<(String, Value)>>),
+    /// The type it was written as, and its fields. The name rides along
+    /// because a set of named values is written back into the program as a
+    /// literal of that type, and a literal says which type it is.
+    Record(Rc<String>, Rc<Vec<(String, Value)>>),
     Text(Rc<String>),
 }
 
@@ -48,7 +51,7 @@ impl Value {
             Value::Integer(_) => "a whole number",
             Value::Boolean(_) => "a yes or no",
             Value::Array(_) => "a run of values",
-            Value::Record(_) => "a set of named values",
+            Value::Record(..) => "a set of named values",
             Value::Text(_) => "a run of bytes",
         }
     }
@@ -405,13 +408,16 @@ impl<'a> Folder<'a> {
             }
             // A set of named values. Every field is named at the literal, so
             // what a field reads is decided here without a layout.
-            Expression::StructInit(_, initializers) => {
+            Expression::StructInit(name, initializers) => {
                 let mut held = Vec::new();
                 for named in ast.named_in(*initializers).to_vec() {
                     let value = self.value(ast, named.value, locals, stack)?;
                     held.push((ast.name(named.name).to_string(), value));
                 }
-                Ok(Value::Record(Rc::new(held)))
+                Ok(Value::Record(
+                    Rc::new(ast.name(*name).to_string()),
+                    Rc::new(held),
+                ))
             }
             Expression::Index(base, index) => {
                 let base = self.value(ast, *base, locals, stack)?;
@@ -442,7 +448,7 @@ impl<'a> Folder<'a> {
             Expression::FieldAccess(base, field) => {
                 let base = self.value(ast, *base, locals, stack)?;
                 let name = ast.name(*field);
-                let Value::Record(fields) = &base else {
+                let Value::Record(_, fields) = &base else {
                     return Err(format!(
                         "{} has no field to read",
                         base.describe()

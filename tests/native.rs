@@ -8518,7 +8518,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
 // called and never emitted, and the program failed to link.
 #[test]
 fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
-    let source = "import \"io.frost\"\nBox :: struct($T: Type) { value: $T }\n\
+    let source = "import \"io.frost\"\nBox :: struct($T: Type) { value: T }\n\
                   wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
                   unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
                   main :: fn() -> i64 {\n\
@@ -8762,6 +8762,54 @@ fn a_defer_in_a_test_body_runs() {
     );
 }
 
+// `frost run` hands the program everything written after the file and exits on
+// what the program returned. That split is the whole reason the word exists: it
+// puts a program's own `--check` in front of the program. The argument holding
+// a space is here because the self-hosted compiler builds a shell line rather
+// than an argument vector, and an unquoted one arrives as two.
+#[test]
+fn frost_run_forwards_arguments_and_the_exit_code() {
+    let directory = std::env::temp_dir();
+    let source = directory.join(format!("{}.frost", unique("frost_run_args")));
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\n\
+         import \"os.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut index: i64 = 1\n\
+         \x20   while (index < os_arg_count()) {\n\
+         \x20       print(\"{}\\n\", os_arg(index))\n\
+         \x20       index = index + 1\n\
+         \x20   }\n\
+         \x20   if (str_len(os_getenv(\"FROST_COMPILER\")) == 0) {\n\
+         \x20       return 9\n\
+         \x20   }\n\
+         \x20   4\n\
+         }\n",
+    )
+    .unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("run")
+        .arg(&source)
+        .arg("--check")
+        .arg("a path with spaces")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source);
+    let printed = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    let complained = String::from_utf8_lossy(&run.stderr);
+    // 9 is the program saying nothing named the compiler that ran it.
+    assert_eq!(
+        run.status.code(),
+        Some(4),
+        "frost run did not exit on what the program returned:\n{printed}{complained}"
+    );
+    assert_eq!(
+        printed, "--check\na path with spaces\n",
+        "frost run did not hand the program its arguments:\n{complained}"
+    );
+}
+
 // The standard library modules that carry `test` blocks, and how many each
 // carries. One list rather than two that currently match: the bootstrap suite
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
@@ -8776,6 +8824,7 @@ const STD_MODULES: &[(&str, &str)] = &[
     ("math.frost", "33 passed"),
     ("math64.frost", "23 passed"),
     ("mem.frost", "13 passed"),
+    ("os.frost", "4 passed"),
     ("slab.frost", "2 passed"),
     ("snapshot.frost", "6 passed"),
     ("sort.frost", "3 passed"),
@@ -8916,7 +8965,7 @@ fn self_hosted_backends_agree() {
          Outer :: struct { first: i64, mid: Inner, last: i64 }\n\
          Bytes :: struct { flag: i8, count: i64, mark: i8 }\n\
          Kind :: enum { None, One { x: i64 }, Two { x: i64, y: i64 } }\n\
-         Box :: struct($T: Type) { value: $T }\n\
+         Box :: struct($T: Type) { value: T }\n\
          wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
          unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
          sum_kind :: fn(k: Kind) -> i64 {\n\
@@ -11435,7 +11484,7 @@ const GENERIC_INSTANCE_COMBINATIONS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Pair :: struct($T: Type) { first: T, second: T }
-Op :: struct($T: Type) { f: fn($T) -> $T, seed: $T }
+Op :: struct($T: Type) { f: fn(T) -> T, seed: T }
 
 inc :: fn(x: i64) -> i64 { x + 1 }
 swap :: fn(mut a: $T, mut b: $T) {

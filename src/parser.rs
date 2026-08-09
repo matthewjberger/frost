@@ -2020,6 +2020,7 @@ impl<'a> Parser<'a> {
                     if !matches!(self.read_token(), Token::Colon) {
                         bail!("Expected ':' after field name");
                     }
+                    self.refuse_field_sigil(&field_name)?;
                     let field_type = self.parse_type()?;
                     let field_align = self.parse_field_alignment(packed)?;
                     let field_name = self.ast.intern(&field_name);
@@ -2072,6 +2073,7 @@ impl<'a> Parser<'a> {
                                 "Expected ':' after field name in enum variant"
                             );
                         }
+                        self.refuse_field_sigil(&field_name)?;
                         let field_type = self.parse_type()?;
                         let field_name = self.ast.intern(&field_name);
                         variant_fields.push(StructField {
@@ -2322,24 +2324,12 @@ impl<'a> Parser<'a> {
             // and what it answered stands here in place of the call. Left as
             // written it would be a call the program makes while it runs,
             // which is a second meaning for one declaration.
-            // An aggregate keeps the expression it was written as: what stands
-            // here has to be something a program can hold, and the value the
-            // folder worked out is for the compile-time positions that read it.
             if holds_a_call(&self.ast, expression)
                 && let Some(value) = self.constant_values.get(&identifier)
-                && let Some(literal) = match value {
-                    crate::const_eval::Value::Integer(held) => {
-                        Some(Literal::Integer(*held))
-                    }
-                    crate::const_eval::Value::Boolean(held) => {
-                        Some(Literal::Boolean(*held))
-                    }
-                    _ => None,
-                }
             {
+                let value = value.clone();
                 let span = self.ast.expr_span(expression);
-                expression =
-                    self.ast.push_expr(Expression::Literal(literal), span);
+                expression = self.written_back(&value, span);
             }
             let name = self.ast.intern(&identifier);
             Ok(self.ast.push_stmt(
@@ -2347,6 +2337,74 @@ impl<'a> Parser<'a> {
                 self.span_from(start),
             ))
         }
+    }
+
+    /// A field names a type parameter by writing its name. The `$` is what
+    /// declares one, and the declaration stands in the parameter list, so a
+    /// sigil here is a second spelling for a name already written. It was
+    /// accepted and read as the parameter, which left the two compilers on
+    /// opposite sides of one declaration.
+    fn refuse_field_sigil(&mut self, field: &str) -> Result<()> {
+        if !matches!(self.peek_nth(0), Token::Dollar) {
+            return Ok(());
+        }
+        let named = match self.peek_nth(1) {
+            Token::Identifier(name) => name.to_string(),
+            _ => "T".to_string(),
+        };
+        bail!(
+            "a field names a type parameter by its name, and '$' is what declares one, so this field is written '{field}: {named}'"
+        )
+    }
+
+    /// What a worked-out value is written as where the constant naming it
+    /// stands. A whole number and a yes or no are the literals they read as; a
+    /// run of bytes, a run of values and a set of named ones are written the
+    /// way a program writes each, so the answer reaches every use as though it
+    /// had been written there.
+    fn written_back(
+        &mut self,
+        value: &crate::const_eval::Value,
+        span: TokenSpan,
+    ) -> ExprId {
+        let expression = match value {
+            crate::const_eval::Value::Integer(held) => {
+                Expression::Literal(Literal::Integer(*held))
+            }
+            crate::const_eval::Value::Boolean(held) => {
+                Expression::Literal(Literal::Boolean(*held))
+            }
+            crate::const_eval::Value::Text(held) => {
+                Expression::Literal(Literal::String(held.to_string()))
+            }
+            crate::const_eval::Value::Array(items) => {
+                let elements: Vec<ExprId> = items
+                    .iter()
+                    .map(|item| self.written_back(item, span))
+                    .collect();
+                Expression::Literal(Literal::Array(
+                    self.ast.add_expr_list(&elements),
+                ))
+            }
+            crate::const_eval::Value::Record(name, fields) => {
+                let initializers: Vec<NamedExpr> = fields
+                    .iter()
+                    .map(|(field, held)| {
+                        let value = self.written_back(held, span);
+                        NamedExpr {
+                            name: self.ast.intern(field),
+                            value,
+                        }
+                    })
+                    .collect();
+                let name = self.ast.intern(name);
+                Expression::StructInit(
+                    name,
+                    self.ast.add_named_exprs(&initializers),
+                )
+            }
+        };
+        self.ast.push_expr(expression, span)
     }
 
     fn parse_return_statement(&mut self) -> Result<StmtId> {

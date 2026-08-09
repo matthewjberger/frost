@@ -456,6 +456,19 @@ const char *frost_rt_getenv(const char *name) {
     return value;
 }
 
+/* Set a variable in this process's own environment, which is what a command
+   run through `system` inherits. There is no way to hand a child one variable
+   without going through here, since the shell line is the only other channel
+   and quoting an assignment onto it differs per platform. Answers whether it
+   took. */
+int64_t frost_rt_setenv(const char *name, const char *value) {
+#if defined(_WIN32)
+    return _putenv_s(name, value) == 0;
+#else
+    return setenv(name, value, 1) == 0;
+#endif
+}
+
 const char *frost_rt_read_file(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == 0) {

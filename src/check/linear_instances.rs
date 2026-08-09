@@ -734,7 +734,7 @@ mod tests {
     #[test]
     fn an_instantiation_binding_a_resource_is_one() {
         let source = "File :: linear struct { handle: i64 }\n\
-                      Pool :: struct($T: Type) { slot: $T }\n\
+                      Pool :: struct($T: Type) { slot: T }\n\
                       run :: fn() {\n\
                           held : Pool<File> = Pool { slot = File { handle = 1 } }\n\
                       }";
@@ -753,7 +753,7 @@ mod tests {
     fn an_annotation_names_its_instantiation() {
         let found = instances(
             "File :: linear struct { handle: i64 }\n\
-             Pool :: struct($T: Type) { slot: $T }\n\
+             Pool :: struct($T: Type) { slot: T }\n\
              run :: fn() {\n\
                  held : Pool<File> = Pool { slot = File { handle = 1 } }\n\
              }",

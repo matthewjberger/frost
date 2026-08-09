@@ -89,6 +89,24 @@ runnable :: fn(path: ^i8) -> ^i8 {
     join_two("./", path)
 }
 
+// The program this build produced, run with the arguments written after the
+// file, and taken away again. `FROST_COMPILER` names the compiler that ran it,
+// so a build program written in Frost reaches the compiler without being told
+// where it is on a command line of its own. The path is resolved, since a
+// compiler invoked by a relative name is one a child cannot find.
+run_built_program :: fn(executable: ^i8, options: Options) -> i64 {
+    unsafe {
+        frost_rt_setenv(
+            "FROST_COMPILER",
+            frost_rt_absolute_path(frost_rt_arg_at(0))
+        )
+    }
+    command := join_two(runnable(executable), options.run_args)
+    status := unsafe { frost_rt_run_command(command) }
+    unsafe { frost_rt_remove_file(executable) }
+    status
+}
+
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
@@ -255,6 +273,9 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     if (options.testing == 1) {
         return unsafe { frost_rt_run_command(runnable(executable)) }
     }
+    if (options.running == 1) {
+        return run_built_program(executable, options)
+    }
     0
 }
 
@@ -366,6 +387,9 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     // process ends on what they said.
     if (options.testing == 1) {
         return unsafe { frost_rt_run_command(runnable(executable)) }
+    }
+    if (options.running == 1) {
+        return run_built_program(executable, options)
     }
     0
 }
@@ -508,7 +532,7 @@ main :: fn() -> i64 {
             return result
         }
 
-        Box :: struct($T: Type) { value: $T }
+        Box :: struct($T: Type) { value: T }
 
         Holder :: struct { item: Box<i64> }
 
@@ -579,6 +603,7 @@ main :: fn() -> i64 {
         const_stack = arena_make($ConstFrame, 64),
         const_args = arena_make($ConstValue, 256),
         const_items = arena_make($ConstItem, 65536),
+        const_records = arena_make($ConstRecord, 1024),
         const_aggregates = arena_make($ConstDef, 1024),
         const_steps = 0,
         const_quiet = 0,

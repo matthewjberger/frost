@@ -29,6 +29,11 @@ Options :: struct {
     // rather than compiling a Frost source at all.
     assemble: i64,
     testing: i64,
+    // Link the program, run it, and exit on what it returned. The arguments
+    // after the file on the command line are the program's own rather than the
+    // compiler's, and travel as one string ready to append to the command.
+    running: i64,
+    run_args: ^i8,
     audit_unsafe: i64,
     linting: i64,
     debug_lines: i64,
@@ -61,6 +66,8 @@ usage :: fn() {
     report("    --assemble    turn an assembly file into an object, with\n")
     report("                  this compiler's own encoder rather than `as`\n")
     report("    --test        build and run the file's `test` blocks\n")
+    report("    run <file> [args]  compile the file, run it with those\n")
+    report("                  arguments, and exit on what it returned\n")
     report("    --audit-unsafe  also report every `unsafe` block vouching for nothing\n")
     report("    -h, --help    this\n\n")
     report("Words read before the options, each taking files or ")
@@ -557,6 +564,8 @@ options_from_command_line :: fn() -> Options {
         object = 0,
         assemble = 0,
         testing = 0,
+        running = 0,
+        run_args = "",
         audit_unsafe = 0,
         linting = 0,
         debug_lines = 0,
@@ -575,6 +584,39 @@ options_from_command_line :: fn() -> Options {
         if (index == 1 && cstr_eq(argument, "lint")) {
             options.linting = 1
             index = index + 1
+            continue
+        }
+        // `run <file> [args...]`: the file is the only thing the compiler reads
+        // off the line, and everything after it is the program's own. The split
+        // is what puts a program's `--check` in front of the program rather
+        // than in front of this. Each argument is quoted, since the line goes
+        // to a shell and a path with a space in it is one argument.
+        if (index == 1 && cstr_eq(argument, "run")) {
+            options.running = 1
+            options.link = 1
+            index = index + 1
+            if (index >= count) {
+                report("frost run: which file?\n")
+                options.ok = 0
+                return options
+            }
+            options.input = frost_rt_arg_at(index)
+            options.output = join_number(
+                join_two(temp_directory(), "/frost_run_"),
+                cstr_checksum(options.input),
+                ".exe"
+            )
+            index = index + 1
+            while (index < count) {
+                options.run_args = join_two(
+                    join_two(
+                        join_two(options.run_args, " \""),
+                        frost_rt_arg_at(index)
+                    ),
+                    "\""
+                )
+                index = index + 1
+            }
             continue
         }
         if (cstr_eq(argument, "--diagnostics=json")) {

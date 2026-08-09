@@ -2717,6 +2717,54 @@ parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
     value
 }
 
+// A field names a type parameter by its name. The `$` is what declares one, and
+// the declaration stands in the parameter list, so a sigil here is a second
+// spelling for a name already written. It was read as the parameter by one
+// compiler and left the other unable to say which instance a literal was.
+//
+// The body is read here, with the cursor on its `{`, so a template is weighed
+// where it is written rather than once per instance, which is the only place
+// its fields are otherwise parsed. A variant's payload sits one brace deeper
+// and reads the same way.
+refuse_field_sigils :: fn(mut p: Parser) {
+    mut ahead: i64 = 0
+    mut depth: i64 = 0
+    mut started: i64 = 0
+    while (started == 0 || depth > 0) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Eof) {
+            return
+        }
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+            started = 1
+        }
+        if (kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        }
+        if (kind == TokenKind::Ident
+            && peek_kind(p, ahead + 1) == TokenKind::Colon
+            && peek_kind(p, ahead + 2) == TokenKind::Dollar) {
+            report_where(p.modules, p.src, peek_off(p, ahead + 2))
+            report("a field names a type parameter by its name, and '$' is what declares one, so this field is written '")
+            report_src(p.src, peek_off(p, ahead), peek_len(p, ahead))
+            report(": ")
+            if (peek_kind(p, ahead + 3) == TokenKind::Ident) {
+                report_src(
+                    p.src,
+                    peek_off(p, ahead + 3),
+                    peek_len(p, ahead + 3)
+                )
+            } else {
+                report("T")
+            }
+            report("'")
+            frost_rt_recover_escape()
+        }
+        ahead = ahead + 1
+    }
+}
+
 parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
     advance(p)
     mut head: i64 = -1
@@ -6621,6 +6669,7 @@ parse_struct :: fn(mut p: Parser) {
         tparam_fallback := p.tparam_fallback
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
+        refuse_field_sigils(p)
         field_token := p.ti
         mut brace_depth: i64 = 0
         mut started: i64 = 0
@@ -6659,6 +6708,7 @@ parse_struct :: fn(mut p: Parser) {
             }
         )
     } else {
+        refuse_field_sigils(p)
         head := parse_struct_fields(p, packed_flag)
         record_struct(
             p,
@@ -6861,6 +6911,7 @@ parse_enum :: fn(mut p: Parser) {
         tparam_fallback := p.tparam_fallback
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
+        refuse_field_sigils(p)
         field_token := p.ti
         mut brace_depth: i64 = 0
         mut started: i64 = 0
@@ -6907,6 +6958,7 @@ parse_enum :: fn(mut p: Parser) {
         enum_index = p.structs.count
     }
     enum_ty := STRUCT_BASE + enum_index
+    refuse_field_sigils(p)
     field_head := parse_enum_body(p, enum_ty)
     record_struct(
         p,
@@ -7893,6 +7945,119 @@ parse_const :: fn(mut p: Parser) {
     register_const(p, name_offset, name_length, value)
 }
 
+// The node a worked-out value writes out to, so what a compile-time call
+// answered reaches the program the way writing it there would. A run and a set
+// of named values are built item by item out of what the evaluator holds.
+folded_const_node :: fn(
+    mut p: Parser,
+    kind: i64,
+    value: i64,
+    count: i64
+) -> i64 {
+    if (kind == CONST_BOOL) {
+        return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, value)
+    }
+    if (kind == CONST_TEXT) {
+        return new_named_node(p, NodeKind::StrLit, 0, value, count)
+    }
+    if (kind == CONST_ARRAY) {
+        mut head: i64 = -1
+        mut tail: i64 = -1
+        mut i: i64 = 0
+        while (i < count) {
+            item := arena_at(p.const_items, value + i)
+            item_kind := item.kind
+            item_value := item.value
+            item_count := item.count
+            held := folded_const_node(p, item_kind, item_value, item_count)
+            element := new_node(p, NodeKind::Arg, held, 0, 0)
+            if (head == (-1)) {
+                head = element
+            } else {
+                set_next(p, tail, element)
+            }
+            tail = element
+            i = i + 1
+        }
+        made := new_node(p, NodeKind::ArrayLit, head, 0, 0)
+        literal := arena_at(p.arena, made)
+        literal.c = count
+        return made
+    }
+    if (kind == CONST_RECORD) {
+        record := arena_at(p.const_records, value)
+        type_off := record.name_off
+        type_len := record.name_len
+        start := record.start
+        fields := record.count
+        mut head: i64 = -1
+        mut tail: i64 = -1
+        mut i: i64 = 0
+        while (i < fields) {
+            item := arena_at(p.const_items, start + i)
+            item_kind := item.kind
+            item_value := item.value
+            item_count := item.count
+            name_off := item.name_off
+            name_len := item.name_len
+            held := folded_const_node(p, item_kind, item_value, item_count)
+            init := new_field_init(p, held, name_off, name_len)
+            if (head == (-1)) {
+                head = init
+            } else {
+                set_next(p, tail, init)
+            }
+            tail = init
+            i = i + 1
+        }
+        // The type is resolved the way a literal written here resolves it, so
+        // the value reaches the program as the one the reader would have
+        // written. A template names no instance on its own, and the instance is
+        // read off the field values, which are already in hand.
+        struct_ty := resolve_lit_type(p, type_off, type_len)
+        refuse_unknown_lit_type(p, struct_ty, type_off, type_len)
+        if (struct_ty == TY_INFER) {
+            made := instantiate_inferred(
+                p,
+                generic_index_for(p, type_off, type_len),
+                head,
+                type_off,
+                type_len
+            )
+            return new_struct_lit(p, made, head)
+        }
+        return new_struct_lit(p, struct_ty, head)
+    }
+    new_node(p, NodeKind::Num, 0, 0, value)
+}
+
+// The constant declared at this name, where what it worked out to is more than
+// a whole number, as a node every use of the name writes out again.
+register_folded_const :: fn(mut p: Parser, off: i64, len: i64) {
+    mut i: i64 = 0
+    while (i < p.const_aggregates.count) {
+        entry := arena_at(p.const_aggregates, i)
+        if (entry.name_off == off) {
+            kind := entry.kind
+            value := entry.value
+            count := entry.count
+            node := folded_const_node(p, kind, value, count)
+            arena_push(
+                p.value_consts,
+                ConstDef {
+                    name_off = off,
+                    name_len = len,
+                    value = node,
+                    kind = CONST_INT,
+                    count = 0
+                },
+            )
+            return
+        }
+        i = i + 1
+    }
+}
+
 // A constant whatever kind it turned out to be. A whole number lands in the
 // table every other reader already looks at; the rest carry their kind beside
 // it, and only the compile-time evaluator reads those.
@@ -8243,10 +8408,54 @@ skip_declaration :: fn(mut p: Parser) {
 parse_constant_declarations :: fn(mut p: Parser) {
     while (cur(p) != TokenKind::Eof) {
         if (at_const_declaration(p) || at_folded_declaration(p)) {
-            parse_const(p)
+            // With an escape armed, the way the declaration loop reads its
+            // own. A value that cannot be worked out ends this constant and
+            // the pass reads the next, so a program is told everything that is
+            // wrong with it rather than the first thing.
+            mut turn := RecoverTurn {
+                parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+                item = -1,
+                block_depth = p.block_depth,
+                unsafe_depth = p.unsafe_depth,
+                defer_depth = p.defer_depth,
+                ti = p.ti
+            }
+            escaped := unsafe {
+                frost_rt_recover_run(
+                    parse_constant_guarded,
+                    ptr_cast($u8, ptr_to(turn))
+                )
+            }
+            if (escaped == 1) {
+                p.block_depth = turn.block_depth
+                p.unsafe_depth = turn.unsafe_depth
+                p.defer_depth = turn.defer_depth
+                p.ti = turn.ti
+                skip_declaration(p)
+            }
         } else {
             skip_declaration(p)
         }
+    }
+}
+
+parse_constant_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($RecoverTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    unsafe { parse_const(parser^) }
+}
+
+// Every constant whose value came out as more than a whole number, as the node
+// that value writes out to. A whole number lands in the table the size parser
+// reads; the rest reach the program where the name is read, the way a literal
+// written there would. This runs after the types, since a set of named values
+// names one.
+parse_folded_constants :: fn(mut p: Parser) {
+    while (cur(p) != TokenKind::Eof) {
+        if (at_const_declaration(p)) {
+            register_folded_const(p, cur_off(p), cur_len(p))
+        }
+        skip_declaration(p)
     }
 }
 
@@ -8459,6 +8668,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
     // Every declaration is in the tables now, so a type name that resolves to
     // nothing is a name nothing declares.
     p.type_check_names = 1
+    p.ti = start
+    parse_folded_constants(p)
     p.ti = start
     mut head: i64 = -1
     mut tail: i64 = -1

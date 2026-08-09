@@ -140,6 +140,12 @@ and the flag is what turns naming one into a refusal.
 
 The rest of the search order is [finding a module](../impl/modules.md).
 
+### Set by both compilers
+
+| Variable | Effect |
+| --- | --- |
+| `FROST_COMPILER` | The resolved path of the compiler that ran a program under `frost run`, put in that program's environment. A build program written in Frost drives the compiler that started it rather than whichever one is on PATH, which is what lets one checkout hold two compilers and have each build with itself |
+
 ### Read by the bootstrap compiler only
 
 | Variable | Effect |
@@ -190,6 +196,8 @@ worth reaching for:
 | `just install` | Builds the bootstrap compiler and puts it on PATH as `frost` |
 | `just install-self` | Builds the self-hosted compiler and puts it on PATH as `frostc` |
 | `just run FILE` | Compiles and runs a frost file |
+| `just bindgen` | Regenerates `lib/renderer/wgpu.frost` from `webgpu.json` |
+| `just bindgen-check` | Says whether those bindings are what the generator would write, and exits nonzero when they are not |
 | `just compile FILE` | Compiles a frost file to a native executable |
 | `just compile-c FILE` | Compiles a frost file through the C backend instead of the native one |
 | `just check-file FILE` | Checks a frost file without producing an executable, for the editor |
@@ -219,6 +227,20 @@ left out here.
 
 Read from the first argument, before any flag. `frost <file.frost>` and every
 flag above keep their meaning alongside them.
+
+### `frost run <file> [args...]`
+
+Compiles the file, runs what it built, and exits on what the program returned.
+Everything written after the file belongs to the program, so a program's own
+`--check` is answered by the program rather than by the compiler.
+
+The executable is temporary and is taken away again, the way `--test` builds
+one. Both compilers accept this and both set `FROST_COMPILER` for the program
+they run.
+
+This is what a build program written in Frost is started with. `tools/build.frost`
+is the one in this repository, and `just bindgen` and `just bindgen-check` are
+two lines that call it.
 
 ### `frost fmt <paths...>`
 

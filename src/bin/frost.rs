@@ -21,6 +21,7 @@ use frost::{
 // because clap cannot know about them and a reader who cannot see one in `--help`
 // concludes it does not exist.
 const SUBCOMMANDS: &str = "Words read before the options, each taking files or directories:
+  run <file> [args] compile the file, run it with those arguments, and exit on what it returned
   fmt <path>...     write each file the way the formatter renders it, `-` for stdin
   lint <path>...    findings a build does not refuse on: `--diagnostics=json` for one object a line
   fix <file>        apply the fixes the diagnostics offered
@@ -920,9 +921,24 @@ fn main() -> std::process::ExitCode {
         };
     }
 
+    // `frost run <file> [args...]`: the file is the only thing the compiler
+    // reads off the line, and everything after it is the program's own. The
+    // split is what puts a program's `--check` in front of the program rather
+    // than in front of the compiler.
+    let mut parsed: Vec<String> = std::env::args().collect();
+    let mut forwarded: Vec<String> = Vec::new();
+    if arguments.first().is_some_and(|held| held == "run") {
+        let Some(file) = arguments.get(1) else {
+            eprintln!("frost run: which file?");
+            return std::process::ExitCode::FAILURE;
+        };
+        parsed = vec![parsed[0].clone(), file.clone()];
+        forwarded = arguments[2..].to_vec();
+    }
+
     let outcome = std::thread::Builder::new()
         .stack_size(COMPILER_STACK_BYTES)
-        .spawn(compile)
+        .spawn(move || compile(parsed, forwarded))
         .map_err(|error| {
             anyhow!("failed to start the compiler thread: {error}")
         })
@@ -972,8 +988,8 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-fn compile() -> Result<()> {
-    let cli = Cli::parse();
+fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
+    let cli = Cli::parse_from(parsed);
 
     // A directory is a suite rather than a program, so it never reaches the
     // rest of this.
@@ -1465,9 +1481,15 @@ fn compile() -> Result<()> {
             false,
         )?;
         fs::remove_file(&object_path).ok();
-        let status = Command::new(&exe_path)
-            .status()
-            .context("Failed to run executable")?;
+        // A program the compiler ran can reach the compiler that ran it, which
+        // is what a build program written in Frost needs and what it would
+        // otherwise have to be told on its own command line.
+        let mut running = Command::new(&exe_path);
+        running.args(&forwarded);
+        if let Ok(self_path) = std::env::current_exe() {
+            running.env("FROST_COMPILER", self_path);
+        }
+        let status = running.status().context("Failed to run executable")?;
         fs::remove_file(&exe_path).ok();
         if !status.success() {
             std::process::exit(status.code().unwrap_or(1));

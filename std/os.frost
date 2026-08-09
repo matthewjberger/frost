@@ -1,0 +1,114 @@
+// What a program asks the operating system for: its own arguments, its
+// environment, and running another program.
+//
+// The text that comes back views storage the process already holds, its
+// argument vector and its environment block, so every answer stays good for as
+// long as the program runs and the storage stays the process's own. Text going
+// the other way is copied and terminated, because C reads a name and a command
+// line until a NUL.
+//
+// The extern calls are the unsafe floor, wrapped here so a program that reads
+// its arguments or runs a command names none of them.
+
+import "mem.frost"
+
+export os_arg_count, os_arg, os_getenv, os_run
+
+frost_rt_arg_count :: safe extern fn() -> i64
+frost_rt_arg_at :: extern fn(index: i64) -> ^i8
+frost_rt_getenv :: extern fn(name: ^i8) -> ^i8
+frost_rt_run_command :: extern fn(command: ^i8) -> i64
+frost_rt_str_len :: extern fn(text: ^i8) -> i64
+frost_rt_is_windows :: safe extern fn() -> i64
+
+// A C string as a `str` over the same bytes. What the environment hands a
+// program says where it stops with a terminator rather than with a count, so
+// the length is walked once here and everything above this reads through a
+// bounds-checked slice.
+viewed :: fn(text: ^i8) -> str {
+    unsafe { slice_from($u8, ptr_cast($u8, text), frost_rt_str_len(text)) }
+}
+
+// How many arguments the program was started with, counting the program's own
+// name as the first.
+os_arg_count :: fn() -> i64 {
+    frost_rt_arg_count()
+}
+
+// The argument at `index`, where 0 is the program's own name. An index outside
+// the range answers with empty text, so a program reads its arguments by asking
+// for one rather than by counting first.
+os_arg :: fn(index: i64) -> str {
+    viewed(unsafe { frost_rt_arg_at(index) })
+}
+
+// What an environment variable holds, or empty text where nothing set it. The
+// answer views the environment block rather than the terminated copy of the
+// name, which is given back here.
+os_getenv :: fn(name: str) -> str {
+    held := heap_terminated(name)
+    value := viewed(unsafe { frost_rt_getenv(ptr_cast($i8, held)) })
+    heap_release(held)
+    value
+}
+
+// The command as the platform's shell has to receive it, terminated.
+//
+// Windows takes one more pair of quotes around the whole line, because the
+// shell there strips the outermost pair before reading what is left. Without
+// them a line whose first word is quoted, which is any line naming a path with
+// a space in it, comes back as a path that could not be found.
+shell_line :: fn(command: str) -> ^u8 {
+    if (frost_rt_is_windows() == 0) {
+        return heap_terminated(command)
+    }
+    marks := "\""
+    length := str_len(command)
+    block := heap_bytes(length + 3)
+    mut view := bytes_as($u8, block, length + 3)
+    view[0] = marks[0]
+    mut index: i64 = 0
+    while (index < length) {
+        view[index + 1] = command[index]
+        index = index + 1
+    }
+    view[length + 1] = marks[0]
+    view[length + 2] = 0
+    block
+}
+
+// Run a command line through the shell and answer with the exit status it
+// finished on. Which shell that is, and how it splits the line, is the
+// platform's own answer, so a caller quotes each part it passes.
+os_run :: fn(command: str) -> i64 {
+    held := shell_line(command)
+    status := unsafe { frost_rt_run_command(ptr_cast($i8, held)) }
+    heap_release(held)
+    status
+}
+
+test "a program knows its own name" {
+    assert(os_arg_count() >= 1)
+    assert(str_len(os_arg(0)) > 0)
+}
+
+test "an argument outside the range is empty text" {
+    assert(str_len(os_arg(os_arg_count())) == 0)
+    assert(str_len(os_arg(-1)) == 0)
+}
+
+test "a variable nothing set reads as empty text" {
+    assert(str_len(os_getenv("FROST_NO_SUCH_VARIABLE_IS_SET")) == 0)
+}
+
+test "a command that succeeds answers zero" {
+    // `exit 0` is a builtin of both the shell `system` reaches on Windows and
+    // the one it reaches everywhere else, so this runs the same on every
+    // platform and writes nothing while it does.
+    assert(os_run("exit 0") == 0)
+    // What the terminated copy took it gives back, which is what says the two
+    // calls above did not leave a block out per command they ran.
+    before := heap_live()
+    assert(os_run("exit 0") == 0)
+    assert(heap_live() == before)
+}

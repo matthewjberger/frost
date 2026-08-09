@@ -339,8 +339,11 @@ deps:
 
 # Regenerates the wgpu bindings from webgpu.json
 bindgen:
-    cargo run -r -q -p frost --bin frost -- --link -o tools/wgpu_bindgen.exe tools/wgpu_bindgen.frost
-    ./tools/wgpu_bindgen.exe
+    cargo run -r -q -p frost --bin frost -- run tools/build.frost bindgen
+
+# Checks the wgpu bindings are what the generator would write from webgpu.json
+bindgen-check:
+    cargo run -r -q -p frost --bin frost -- run tools/build.frost bindgen --check
 
 # Builds the self-hosted compiler (frost written in frost)
 #

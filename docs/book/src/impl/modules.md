@@ -70,6 +70,38 @@ keeps the test harness out of every program that uses it and `--test` on a
 program runs the program's own tests. `frost --test std/` runs the standard
 library's own.
 
+## A file spliced in while compiling
+
+`include_str("path")` puts a file's bytes into the program as a string literal.
+
+```frost,sketch
+SHADER :: include_str("shape.wgsl")
+```
+
+The path is relative to the file the call is written in, and it takes one string
+literal, so what gets read is settled while the program is being compiled.
+
+The splice happens between the lexer and the parser: four tokens become one
+string literal, and everything downstream of the lexer sees an ordinary one. The
+type checker sees a `str`, the region walk sees a literal, and both backends
+emit it the way they emit any other. That is the whole implementation, and it is
+why an included file may hold any bytes at all: they arrive as text.
+
+Carriage returns are dropped as the bytes come in, so a file checked out with
+Windows line endings and one checked out with Unix line endings splice the same
+program. A shader whose text differed by line ending would otherwise hash
+differently on two machines and force a rebuild on each.
+
+Which is the other half. An included file is part of the module's hash, so
+`--incremental` rebuilds a module when a file it reads changes, the same way it
+rebuilds when the module's own source changes. The include paths are read off
+the tokens rather than off the parsed tree, because whether a cached module is
+stale is answered before it is parsed.
+
+`lib/renderer/lit.frost` uses it for the shader it hands the GPU, which is what
+keeps the shader a `.wgsl` file an editor highlights rather than a string
+constant in the middle of Frost.
+
 ## Identity
 
 A module's identity is the path relative to the root it was found under, with

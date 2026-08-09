@@ -2359,8 +2359,14 @@ fn evaluate_bound(
             };
             match type_predicate(predicate, ty, linear) {
                 Some(answer) => Ok(answer),
-                None => bail!(
-                    "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}"
+                // A name that is not a bound is a mistake in the declaration,
+                // so the fault lands on the predicate rather than on the call,
+                // which chose a type and nothing else.
+                None => locate(
+                    Err(anyhow::anyhow!(
+                        "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}"
+                    )),
+                    ast.position_of(ast.expr_span(*callee)),
                 ),
             }
         }
@@ -6247,7 +6253,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::Switch(scrutinee, cases) => {
                 self.lower_match(scrutinee, cases, expected)
             }
-            Expression::StructInit(struct_name, _) => {
+            Expression::StructInit(struct_name, field_inits) => {
                 let struct_name = self.ast.name(struct_name).to_string();
                 let ty = match expected {
                     Some(Type::Struct(instance))
@@ -6256,6 +6262,25 @@ impl<'a> FunctionLowering<'a> {
                                 .starts_with(&format!("{struct_name}<")) =>
                     {
                         Type::Struct(instance.clone())
+                    }
+                    // A template names no instance, so which one this is comes
+                    // off the values written for the fields that declare its
+                    // parameters. Taking the template's own name instead typed
+                    // the value by the declaration, whose fields are parameters,
+                    // and the reader was told a field held a `$T`.
+                    _ if self
+                        .builder
+                        .generic_struct_defs
+                        .contains_key(&struct_name) =>
+                    {
+                        let Some(instance) =
+                            self.generic_instance_of(&struct_name, field_inits)
+                        else {
+                            bail!(
+                                "'{struct_name}' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '{struct_name}<i64> {{ ... }}', or give the binding a declared type that names them"
+                            );
+                        };
+                        Type::Struct(instance)
                     }
                     _ => Type::Struct(struct_name.clone()),
                 };

@@ -16,7 +16,8 @@
 // are unchecked, and both are here.
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
-    heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
+    heap_release_slice, heap_bytes, heap_terminated, heap_grow_bytes, heap_zero,
+    heap_copy,
     bytes_at, bytes_as, as_bytes, slice_prefix, slice_range, slice_span,
     slice_chunk, heap_live
 
@@ -205,6 +206,24 @@ heap_bytes :: fn(size: i64) -> ^u8 {
         room = 1
     }
     unsafe { frost_rt_heap_alloc(room) }
+}
+
+// A NUL-terminated copy of some text, which is what a C call reads a path, a
+// command or a variable name from. C reads until a NUL and a `str` has none, so
+// the terminator is added here, once, rather than promised by every caller
+// through a `^i8` the compiler cannot check. The block is the caller's to give
+// back with `heap_release`.
+heap_terminated :: fn(text: str) -> ^u8 {
+    length := str_len(text)
+    block := heap_bytes(length + 1)
+    mut view := bytes_as($u8, block, length + 1)
+    mut index: i64 = 0
+    while (index < length) {
+        view[index] = text[index]
+        index = index + 1
+    }
+    view[length] = 0
+    block
 }
 
 heap_grow_bytes :: fn(move block: ^u8, size: i64) -> ^u8 {
