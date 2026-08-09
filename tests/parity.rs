@@ -370,6 +370,22 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'A' is declared twice here, and a name means one thing wherever it is \
          written; rename one of them",
     ),
+    // A generic struct is written `Pair<i64>` and the shape reads as the same
+    // thing for a call, which is what other languages do with it. Frost writes a
+    // call's compile-time argument among its arguments with a `$` on it, so what
+    // stands here is a comparison of a name against a type. Both compilers found
+    // that out somewhere further on and reported wherever they got to: one said
+    // the name was an unknown variable and the other said a line cannot open
+    // with '>'.
+    (
+        "a_call_writes_a_compile_time_argument_among_its_arguments",
+        "import \"io.frost\"\n\
+         empty :: fn($T: Type, n: i64) -> i64 { n }\n\
+         caller :: fn() -> i64 { empty<i64>(3) }\n\
+         main :: fn() -> i64 { caller() }\n",
+        "a call writes a compile-time argument among its arguments, so this is \
+         written 'empty($i64, ...)'",
+    ),
     // The namespace is flat, so a declaration and an import of one name are two
     // things called the same thing. Both compilers refused a function that did
     // it and neither refused a constant, a struct or an enum, and the two

@@ -844,6 +844,24 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // literal is of instead of leaving it to the context. The type is read the
     // way every other generic instance is: rewind to the name and let the type
     // parser instantiate it.
+    // `empty<i64>(3)` after a name that is no generic type. A generic struct is
+    // written that way, and the shape reads as the same thing for a call, which
+    // is what other languages do with it. Frost writes a call's compile-time
+    // argument among its arguments with a `$` on it, so what stands here is a
+    // comparison of a name against a type, and both compilers found that out
+    // somewhere further on and reported wherever they got to.
+    if (cur(p) == TokenKind::Lt && generic_index_for(p, offset, length) < 0) {
+        first := angled_call_argument(p)
+        if (first >= 0) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a call writes a compile-time argument among its arguments, so this is written '")
+            report_src(p.src, offset, length)
+            report("($")
+            report_src(p.src, peek_off(p, first), peek_len(p, first))
+            report(", ...)'")
+            frost_rt_recover_escape()
+        }
+    }
     if (cur(p) == TokenKind::Lt && p.no_struct_lit == false
         && generic_index_for(p, offset, length) >= 0) {
         p.ti = p.ti - 1
@@ -5812,6 +5830,32 @@ column_at :: fn(src: str, off: i64) -> i64 {
         first = first + 1
     }
     first - start + 1
+}
+
+// The lookahead of the first type in `name<T, U>(...)`, or -1 where what
+// stands here is something else. The cursor is on the `<`.
+angled_call_argument :: fn(mut p: Parser) -> i64 {
+    mut ahead: i64 = 1
+    mut first: i64 = -1
+    while (true) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Ident) {
+            if (first < 0) {
+                first = ahead
+            }
+        } else if (kind == TokenKind::Gt) {
+            if (peek_kind(p, ahead + 1) == TokenKind::Lparen) {
+                return first
+            }
+            return -1
+        } else if (kind != TokenKind::Comma && kind != TokenKind::Caret
+            && kind != TokenKind::Lbracket
+            && kind != TokenKind::Rbracket) {
+            return -1
+        }
+        ahead = ahead + 1
+    }
+    -1
 }
 
 // Whether a token joins the line it opens to the line above it. A `-` is not

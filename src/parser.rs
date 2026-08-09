@@ -1249,6 +1249,41 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // The first type in `name<T, U>(...)` written after a name that is not a
+    // generic type, or nothing where the shape is something else.
+    //
+    // A generic struct is written `Pair<i64>`, and the shape reads as the same
+    // thing for a call, which is what other languages do with it. Frost writes a
+    // call's compile-time argument among its arguments with a `$` on it, so this
+    // is a comparison chain of a name against a type, and both compilers found
+    // that out somewhere further on and said something about wherever they got
+    // to rather than about what was written.
+    fn angled_call_argument(&self) -> Option<String> {
+        let mut ahead = 2usize;
+        let mut first = None;
+        loop {
+            match self.peek_nth(ahead) {
+                Token::Identifier(name) => {
+                    if first.is_none() {
+                        first = Some(name.to_string());
+                    }
+                }
+                Token::Comma
+                | Token::Caret
+                | Token::LeftBracket
+                | Token::RightBracket => {}
+                Token::GreaterThan => {
+                    return match self.peek_nth(ahead + 1) {
+                        Token::LeftParentheses => first,
+                        _ => None,
+                    };
+                }
+                _ => return None,
+            }
+            ahead += 1;
+        }
+    }
+
     // The same, for a token the reader has looked ahead to and not consumed.
     fn at_ahead(&self, ahead: usize, message: String) -> anyhow::Error {
         let position = if self.positions.is_empty() {
@@ -2648,6 +2683,17 @@ impl<'a> Parser<'a> {
                 // `Pair<i64, bool> { .. }`: the literal says which instance it
                 // is. What comes out is the instance's name, so the literal
                 // itself is read the way every other one is.
+                if matches!(self.peek_nth(1), Token::LessThan)
+                    && !self.generic_types.contains_key(&identifier)
+                    && let Some(written) = self.angled_call_argument()
+                {
+                    return Err(self.at_ahead(
+                        1,
+                        format!(
+                            "a call writes a compile-time argument among its arguments, so this is written '{identifier}(${written}, ...)'"
+                        ),
+                    ));
+                }
                 if matches!(self.peek_nth(1), Token::LessThan)
                     && self.generic_types.contains_key(&identifier)
                 {
