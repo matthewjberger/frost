@@ -86,6 +86,12 @@ pub struct IrBuilder {
     // `InitFlags::Video` is, and which operators a bit set answers to.
     flags: HashMap<String, FlagsLayout>,
     constants: HashMap<String, ExprId>,
+    // A function a `where` bound may name, by the one expression its body is.
+    // A bound holds a type to what it is, and the vocabulary answers that of a
+    // type directly; a program that wants to ask several things at once, or to
+    // give the question a name, writes an ordinary function over the same
+    // vocabulary and names it where a predicate would stand.
+    bound_functions: HashMap<String, (String, ExprId)>,
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: GenericStructDefs,
     linear: HashSet<String>,
@@ -439,6 +445,53 @@ fn write_value_back(
     ast.push_expr(expression, span)
 }
 
+// Every function a `where` bound may name: one compile-time type parameter, and
+// a body that is one expression. The expression is the bound, written once under
+// a name instead of at every declaration that asks it, and it is read by the
+// same reader, so what a bound may say is the same either way.
+//
+// A body of more than one expression is not one of these. What a bound does is
+// answer a question about a type, and everything the answer can be built from
+// is an expression; a body with statements in it would be asking for a language
+// the bound reader does not have.
+fn collect_bound_functions(
+    ast: &Ast,
+    roots: &[StmtId],
+) -> HashMap<String, (String, ExprId)> {
+    let mut found = HashMap::new();
+    for statement in roots {
+        let Statement::Constant(name, value) = ast.stmt(*statement) else {
+            continue;
+        };
+        let (Expression::Function(parameters, _, body)
+        | Expression::Proc(parameters, _, body)) = ast.expr(*value)
+        else {
+            continue;
+        };
+        let written = ast.params_in(*parameters);
+        let [only] = written else {
+            continue;
+        };
+        if !is_type_parameter(ast, only) {
+            continue;
+        }
+        let statements = ast.stmts_in(*body);
+        let [held] = statements else {
+            continue;
+        };
+        let (Statement::Expression(answer) | Statement::Return(answer)) =
+            ast.stmt(*held)
+        else {
+            continue;
+        };
+        found.insert(
+            ast.name(*name).to_string(),
+            (ast.name(only.name).to_string(), *answer),
+        );
+    }
+    found
+}
+
 fn build_module_inner(
     ast: &mut Ast,
     roots: &[StmtId],
@@ -462,6 +515,7 @@ fn build_module_inner(
         }
     }
     check_constant_cycles(ast, &constants)?;
+    let bound_functions = collect_bound_functions(ast, roots);
     let mut generic_functions = HashMap::new();
     for statement in roots {
         if let Statement::Constant(name, value) = ast.stmt(*statement)
@@ -539,6 +593,7 @@ fn build_module_inner(
         enums,
         flags,
         constants,
+        bound_functions,
         generic_functions,
         generic_struct_defs,
         linear: linear_with_holders(linear, ast, &with_instances),
@@ -2521,16 +2576,126 @@ fn check_format(
     Ok(())
 }
 
+/// How deep a bound naming a function may reach. One that reaches itself is
+/// caught by name where a call is, and this is what catches a long chain.
+const BOUND_DEPTH: usize = 32;
+
+/// What a bound reads besides the types it was given: the functions it may name
+/// and the layouts a measurement in one is answered from.
+#[derive(Clone, Copy)]
+struct Bounding<'a> {
+    bounds: &'a HashMap<String, (String, ExprId)>,
+    structs: &'a HashMap<String, StructLayout>,
+    enums: &'a HashMap<String, EnumLayout>,
+}
+
+/// A number a bound compares against: one written down, or what a type
+/// measures. A measurement is the same question `sizeof` answers anywhere, and
+/// the types have been laid out by the time a call is checked against a bound.
+fn bound_number(
+    ast: &Ast,
+    expression: ExprId,
+    subst: &HashMap<String, Type>,
+    context: Bounding<'_>,
+) -> Result<i64> {
+    match ast.expr(expression) {
+        Expression::Literal(Literal::Integer(held)) => Ok(*held),
+        Expression::Infix(left, operator, right) => {
+            let left = bound_number(ast, *left, subst, context)?;
+            let right = bound_number(ast, *right, subst, context)?;
+            match operator {
+                crate::parser::Operator::Add => Ok(left + right),
+                crate::parser::Operator::Subtract => Ok(left - right),
+                crate::parser::Operator::Multiply => Ok(left * right),
+                crate::parser::Operator::Divide if right != 0 => {
+                    Ok(left / right)
+                }
+                crate::parser::Operator::Modulo if right != 0 => {
+                    Ok(left % right)
+                }
+                other => bail!(
+                    "a number in a bound is arithmetic over what a type measures, and '{other}' is not part of that"
+                ),
+            }
+        }
+        Expression::Call(callee, arguments) => {
+            let Expression::Identifier(named) = ast.expr(*callee) else {
+                bail!("a number in a bound is what a type measures")
+            };
+            let named = ast.name(*named).to_string();
+            let [only] = ast.exprs_in(*arguments) else {
+                bail!("'{named}' measures one type")
+            };
+            let ty = match ast.expr(*only) {
+                // `sizeof(T)` reads its argument as a type, so the parameter
+                // arrives as a name of one and what the call bound it to is
+                // what it measures.
+                Expression::TypeValue(held) => substitute_type(held, subst),
+                Expression::Identifier(parameter) => {
+                    let parameter = ast.name(*parameter);
+                    let Some(held) = subst.get(parameter) else {
+                        bail!(
+                            "the bound names '{parameter}', which is not a compile-time parameter of this function"
+                        )
+                    };
+                    held.clone()
+                }
+                _ => bail!("'{named}' measures a type"),
+            };
+            let Some(Literal::Integer(held)) =
+                measured(&ty, context.structs, context.enums, &named)
+            else {
+                bail!(
+                    "'{named}' is not a measurement a bound can be written over, which are sizeof, alignof and field_count"
+                )
+            };
+            Ok(held)
+        }
+        _ => bail!(
+            "a number in a bound is what a type measures, or arithmetic over one"
+        ),
+    }
+}
+
 fn evaluate_bound(
     ast: &Ast,
     expression: ExprId,
     subst: &HashMap<String, Type>,
     linear: &HashSet<String>,
+    context: Bounding<'_>,
+    depth: usize,
 ) -> Result<bool> {
     match ast.expr(expression) {
+        // A bound may weigh what a type measures against a number: a container
+        // that packs its element into a word is written for the types that fit
+        // in one, and saying so is what a bound is for.
+        Expression::Infix(left, operator, right)
+            if matches!(
+                operator,
+                crate::parser::Operator::LessThan
+                    | crate::parser::Operator::LessThanOrEqual
+                    | crate::parser::Operator::GreaterThan
+                    | crate::parser::Operator::GreaterThanOrEqual
+                    | crate::parser::Operator::Equal
+                    | crate::parser::Operator::NotEqual
+            ) =>
+        {
+            let left = bound_number(ast, *left, subst, context)?;
+            let right = bound_number(ast, *right, subst, context)?;
+            Ok(match operator {
+                crate::parser::Operator::LessThan => left < right,
+                crate::parser::Operator::LessThanOrEqual => left <= right,
+                crate::parser::Operator::GreaterThan => left > right,
+                crate::parser::Operator::GreaterThanOrEqual => left >= right,
+                crate::parser::Operator::Equal => left == right,
+                _ => left != right,
+            })
+        }
         Expression::Infix(left, operator, right) => {
-            let left = evaluate_bound(ast, *left, subst, linear)?;
-            let right = evaluate_bound(ast, *right, subst, linear)?;
+            let left =
+                evaluate_bound(ast, *left, subst, linear, context, depth)?;
+            let right =
+                evaluate_bound(ast, *right, subst, linear, context, depth)?;
             match operator {
                 crate::parser::Operator::And => Ok(left && right),
                 crate::parser::Operator::Or => Ok(left || right),
@@ -2540,7 +2705,7 @@ fn evaluate_bound(
             }
         }
         Expression::Prefix(crate::parser::Operator::Not, inner) => {
-            Ok(!evaluate_bound(ast, *inner, subst, linear)?)
+            Ok(!evaluate_bound(ast, *inner, subst, linear, context, depth)?)
         }
         Expression::Call(callee, arguments) => {
             let Expression::Identifier(predicate) = ast.expr(*callee) else {
@@ -2566,18 +2731,41 @@ fn evaluate_bound(
                     "the bound names '{parameter}', which is not a compile-time parameter of this function"
                 )
             };
-            match type_predicate(predicate, ty, linear) {
-                Some(answer) => Ok(answer),
-                // A name that is not a bound is a mistake in the declaration,
-                // so the fault lands on the predicate rather than on the call,
-                // which chose a type and nothing else.
-                None => locate(
-                    Err(anyhow::anyhow!(
-                        "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}"
-                    )),
-                    ast.position_of(ast.expr_span(*callee)),
-                ),
+            if let Some(answer) = type_predicate(predicate, ty, linear) {
+                return Ok(answer);
             }
+            // A function the program declares, asked the same question. Its
+            // body is one expression over this same vocabulary, read by this
+            // same reader with its own parameter standing for the type, so a
+            // bound written once under a name says what it would have said
+            // written out. One that reaches itself is caught by the depth this
+            // recursion is held to.
+            if let Some((parameter, body)) = context.bounds.get(predicate) {
+                if depth >= BOUND_DEPTH {
+                    bail!(
+                        "'{predicate}' reaches itself, and a bound is answered by reading it, which never ends"
+                    )
+                }
+                let mut held: HashMap<String, Type> = HashMap::new();
+                held.insert(parameter.clone(), ty.clone());
+                return evaluate_bound(
+                    ast,
+                    *body,
+                    &held,
+                    linear,
+                    context,
+                    depth + 1,
+                );
+            }
+            // A name that is neither a bound nor a function of one is a mistake
+            // in the declaration, so the fault lands on the predicate rather
+            // than on the call, which chose a type and nothing else.
+            locate(
+                Err(anyhow::anyhow!(
+                    "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}, and no function of this program answers it"
+                )),
+                ast.position_of(ast.expr_span(*callee)),
+            )
         }
         _ => bail!(
             "a `where` bound is a predicate applied to a compile-time parameter, and '{}' is not one",
@@ -2594,11 +2782,12 @@ fn check_bound(
     subst: &HashMap<String, Type>,
     callee: &str,
     linear: &HashSet<String>,
+    context: Bounding<'_>,
 ) -> Result<()> {
     let Some(bound) = signature.bound else {
         return Ok(());
     };
-    if evaluate_bound(ast, bound, subst, linear)? {
+    if evaluate_bound(ast, bound, subst, linear, context, 0)? {
         return Ok(());
     }
     let written = &signature.bound_text;
@@ -7940,7 +8129,18 @@ impl<'a> FunctionLowering<'a> {
         // The bound, before the body is specialized, so a type that cannot
         // work is refused here rather than inside code the reader never wrote.
         let signature = self.ast.signature(generic.return_sig).clone();
-        check_bound(self.ast, &signature, &subst, name, &self.builder.linear)?;
+        check_bound(
+            self.ast,
+            &signature,
+            &subst,
+            name,
+            &self.builder.linear,
+            Bounding {
+                bounds: &self.builder.bound_functions,
+                structs: &self.builder.structs,
+                enums: &self.builder.enums,
+            },
+        )?;
 
         for (parameter, target) in bundle_checks {
             let Some(declared) = parameter.compile_time_signature.as_ref()

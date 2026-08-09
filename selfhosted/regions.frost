@@ -10,6 +10,8 @@ import "types.frost"
 import "emit_asm.frost"
 import "cursor.frost"
 import "parser.frost"
+import "layout.frost"
+import "const_eval.frost"
 
 export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
@@ -159,6 +161,13 @@ bound_argument :: fn(
     xarg_start: i64,
     xarg_count: i64
 ) -> i64 {
+    // A body being read under a name of its own answers for that name first:
+    // inside `packable`, `T` is the type the call chose rather than whatever
+    // the generic being checked calls its own parameter.
+    if (p.bound_sub_len == len && p.bound_sub_ty >= 0
+        && bytes_equal(p.src, p.bound_sub_off, off, len)) {
+        return p.bound_sub_ty
+    }
     gfn := arena_at(p.generic_fns, gfn_index)
     if (gfn.tparam_len == len
         && bytes_equal(p.src, gfn.tparam_off, off, len)) {
@@ -196,6 +205,24 @@ bound_term :: fn(
         advance(p)
         return held
     }
+    // A bound may weigh what a type measures against a number: a container that
+    // packs its element into a word is written for the types that fit in one,
+    // and saying so is what a bound is for.
+    if (names_a_measurement(p, cur_off(p), cur_len(p))) {
+        left := bound_number(p, gfn_index, arg, xarg_start, xarg_count)
+        op := cur(p)
+        advance(p)
+        right := bound_number(p, gfn_index, arg, xarg_start, xarg_count)
+        if (op == TokenKind::Le) { return left <= right }
+        if (op == TokenKind::Lt) { return left < right }
+        if (op == TokenKind::Ge) { return left >= right }
+        if (op == TokenKind::Gt) { return left > right }
+        if (op == TokenKind::Eqeq) { return left == right }
+        if (op == TokenKind::Ne) { return left != right }
+        report_where(p.modules, p.src, cur_off(p))
+        report("a measurement in a bound is weighed against a number, so what follows it compares")
+        frost_rt_recover_escape()
+    }
     pred_off := cur_off(p)
     pred_len := cur_len(p)
     advance(p)
@@ -227,17 +254,204 @@ bound_term :: fn(
         frost_rt_recover_escape()
     }
     answer := bound_predicate(p, pred_off, pred_len, ty)
-    if (answer < 0) {
-        report_where(p.modules, p.src, pred_off)
-        report_fmt(
-            "'{}' is not one of the bounds a type can be held to, ",
-            source_text(p.src, pred_off, pred_len)
+    if (answer >= 0) {
+        return answer == 1
+    }
+    // A function the program declares, asked the same question. Its body is one
+    // expression over this same vocabulary, read by this same reader with its
+    // own parameter standing for the type, so a bound written once under a name
+    // says what it would have said written out.
+    body := bound_function_body(p, pred_off, pred_len)
+    if (body >= 0) {
+        return bound_through(
+            p,
+            gfn_index,
+            arg,
+            xarg_start,
+            xarg_count,
+            pred_off,
+            pred_len,
+            body,
+            ty
         )
-        report("which are: is_numeric, is_integer, is_float, is_struct, ")
-        report("is_array, is_slice, is_pointer, is_linear")
+    }
+    report_where(p.modules, p.src, pred_off)
+    report_fmt(
+        "'{}' is not one of the bounds a type can be held to, ",
+        source_text(p.src, pred_off, pred_len)
+    )
+    report("which are: is_numeric, is_integer, is_float, is_struct, ")
+    report("is_array, is_slice, is_pointer, is_linear")
+    report(", and no function of this program answers it")
+    frost_rt_recover_escape()
+    false
+}
+
+// Where the body of a function a bound may name begins, or -1 for a name that
+// is not one. It takes one compile-time parameter and its body is one
+// expression, which is what a bound is.
+bound_function_body :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    index := const_fn_index(p, off, len, off)
+    if (index < 0) {
+        return -1
+    }
+    entry := arena_at(p.const_fns, index)
+    held := p.ti
+    p.ti = entry.at
+    advance(p)
+    if (cur(p) != TokenKind::Lparen) {
+        p.ti = held
+        return -1
+    }
+    // Past the parameter list and the answer, to the `{` its body opens with.
+    mut depth: i64 = 0
+    mut going: bool = true
+    while (going && cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (cur(p) == TokenKind::Rparen) {
+            depth = depth - 1
+            if (depth == 0) {
+                going = false
+            }
+        }
+        advance(p)
+    }
+    while (cur(p) != TokenKind::Lbrace && cur(p) != TokenKind::Eof) {
+        advance(p)
+    }
+    if (cur(p) != TokenKind::Lbrace) {
+        p.ti = held
+        return -1
+    }
+    at := p.ti + 1
+    p.ti = held
+    at
+}
+
+// One function's body, read as the bound it is, with its own parameter standing
+// for the type being weighed. The cursor and the standing name are put back, so
+// a bound naming several reads each on its own.
+bound_through :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    pred_off: i64,
+    pred_len: i64,
+    body: i64,
+    ty: i64
+) -> bool {
+    if (p.bound_depth >= 32) {
+        report_where(p.modules, p.src, pred_off)
+        report("a bound reaches itself, and one is answered by reading it, which never ends")
         frost_rt_recover_escape()
     }
-    answer == 1
+    held_ti := p.ti
+    held_off := p.bound_sub_off
+    held_len := p.bound_sub_len
+    held_ty := p.bound_sub_ty
+    // The name its own parameter is written under, read forward off the
+    // declaration: `fn`, then `(`, then the `$` a compile-time one carries.
+    index := const_fn_index(p, pred_off, pred_len, pred_off)
+    p.ti = arena_at(p.const_fns, index).at
+    advance(p)
+    advance(p)
+    if (cur(p) == TokenKind::Dollar) {
+        advance(p)
+    }
+    p.bound_sub_off = cur_off(p)
+    p.bound_sub_len = cur_len(p)
+    p.bound_sub_ty = ty
+    p.bound_depth = p.bound_depth + 1
+    p.ti = body
+    answered := bound_expr(p, gfn_index, arg, xarg_start, xarg_count)
+    p.bound_depth = p.bound_depth - 1
+    p.bound_sub_off = held_off
+    p.bound_sub_len = held_len
+    p.bound_sub_ty = held_ty
+    p.ti = held_ti
+    answered
+}
+
+// A number a bound compares against: one written down, or what a type measures,
+// with `+ - * /` over those read left to right.
+bound_number :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
+    mut held := bound_atom(p, gfn_index, arg, xarg_start, xarg_count)
+    while (cur(p) == TokenKind::Plus || cur(p) == TokenKind::Minus
+        || cur(p) == TokenKind::Star || cur(p) == TokenKind::Slash) {
+        op := cur(p)
+        advance(p)
+        right := bound_atom(p, gfn_index, arg, xarg_start, xarg_count)
+        if (op == TokenKind::Plus) {
+            held = held + right
+        } else if (op == TokenKind::Minus) {
+            held = held - right
+        } else if (op == TokenKind::Star) {
+            held = held * right
+        } else if (right != 0) {
+            held = held / right
+        }
+    }
+    held
+}
+
+bound_atom :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
+    if (cur(p) == TokenKind::Int) {
+        held := cur_val(p)
+        advance(p)
+        return held
+    }
+    name_off := cur_off(p)
+    name_len := cur_len(p)
+    if (names_a_measurement(p, name_off, name_len) == false) {
+        report_where(p.modules, p.src, name_off)
+        report("a number in a bound is what a type measures, or arithmetic over one")
+        frost_rt_recover_escape()
+    }
+    advance(p)
+    advance(p)
+    param_off := cur_off(p)
+    param_len := cur_len(p)
+    advance(p)
+    advance(p)
+    ty := bound_argument(
+        p,
+        gfn_index,
+        param_off,
+        param_len,
+        arg,
+        xarg_start,
+        xarg_count
+    )
+    if (ty < 0) {
+        report_where(p.modules, p.src, param_off)
+        report_fmt(
+            "the bound names '{}', which is not a compile-time parameter of this function",
+            source_text(p.src, param_off, param_len)
+        )
+        frost_rt_recover_escape()
+    }
+    if (str_range_eq(p.src, name_off, name_len, "sizeof")) {
+        return type_size(p, ty)
+    }
+    if (str_range_eq(p.src, name_off, name_len, "alignof")) {
+        return align_of(p, ty)
+    }
+    struct_field_count(p, ty)
 }
 
 // Terms joined by `&&` and `||`, left to right, with `&&` binding tighter.

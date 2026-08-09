@@ -15,7 +15,7 @@ export expand_includes, instance_fits_kind, tuple_is_first_for,
     instance_params,
     parse_generic_instance, parse_program,
     record_mono_rets,
-    resolve_variant_fixups
+    resolve_variant_fixups, struct_field_count
 
 // The code a compile-time argument carries, with the cursor on the token after
 // the `$`. The three kinds of argument are a number, a name that is a function

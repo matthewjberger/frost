@@ -1507,6 +1507,15 @@ Parser :: struct {
     // What a type measures, by the token of the call that asked, and whether
     // those answers are in hand yet. A constant that asks one is set aside and
     // worked out again once they are.
+    // The name a bound is reading a function's body under, and the type it
+    // stands for. A bound may name a function of one compile-time parameter,
+    // and inside that body the parameter is the type the call chose rather than
+    // one of the generic's own, so the mapping is held here while the body is
+    // read and put back afterwards.
+    bound_sub_off: i64,
+    bound_sub_len: i64,
+    bound_sub_ty: i64,
+    bound_depth: i64,
     const_layouts: Arena<ConstLayout>,
     const_layouts_ready: i64,
     const_needs_layout: i64,
