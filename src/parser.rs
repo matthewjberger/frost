@@ -1286,10 +1286,28 @@ impl<'a> Parser<'a> {
         if !matches!(self.peek_nth(0), Token::EndOfFile | Token::RightBrace) {
             self.read_token();
         }
-        while !matches!(self.peek_nth(0), Token::EndOfFile | Token::RightBrace)
-        {
-            if self.at_block_statement_boundary() {
+        // A run, an argument list and a nested block are counted, so a
+        // statement that failed with one of them still open is walked over
+        // whole. Uncounted, a fault before `Bag<8> { data = [0; 8] }` stopped
+        // recovery on that literal's own closing brace, the enclosing block
+        // ended there, and everything after it read as a declaration: one fault
+        // was told twice and the second time about a line that was fine.
+        let mut depth: u32 = 0;
+        while !matches!(self.peek_nth(0), Token::EndOfFile) {
+            if depth == 0
+                && (matches!(self.peek_nth(0), Token::RightBrace)
+                    || self.at_block_statement_boundary())
+            {
                 return;
+            }
+            match self.peek_nth(0) {
+                Token::LeftBrace
+                | Token::LeftParentheses
+                | Token::LeftBracket => depth += 1,
+                Token::RightBrace
+                | Token::RightParentheses
+                | Token::RightBracket => depth = depth.saturating_sub(1),
+                _ => {}
             }
             self.read_token();
         }
@@ -4468,6 +4486,17 @@ impl<'a> Parser<'a> {
                     );
                 };
                 Type::ConstUsize(held)
+            }
+            // A call this file cannot name has no number to stand for. Read on,
+            // the name was taken for a type and the parentheses after it were
+            // what the reader was told about.
+            Token::Identifier(name)
+                if matches!(self.peek_nth(1), Token::LeftParentheses) =>
+            {
+                let name = name.clone();
+                bail!(
+                    "'{name}' is not a function this program declares, so there is nothing to work out here"
+                )
             }
             Token::Identifier(name) => {
                 let name = name.to_string();

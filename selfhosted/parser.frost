@@ -2521,6 +2521,17 @@ parse_type :: fn(mut p: Parser) -> i64 {
     if (at_const_call(p)) {
         return CONST_BASE + const_size_here(p)
     }
+    // A call this file cannot name has no number to stand for. Read on, the
+    // name was taken for a type and each of its parentheses became a report
+    // about a type nothing declares.
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Lparen) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("'")
+        report_src(p.src, cur_off(p), cur_len(p))
+        report("' is not a function this program declares, so there is ")
+        report("nothing to work out here")
+        frost_rt_recover_escape()
+    }
     mut dollar: i64 = 0
     if (cur(p) == TokenKind::Dollar) {
         advance(p)
@@ -2601,7 +2612,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 // is. That is how a capability travels in a container's type:
                 // `Map<Mask, i64, mask_keys>` says which bundle every operation
                 // over one reads off it.
+                // A name with a call after it is a compile-time number rather
+                // than a constant standing for one, so it goes to the type
+                // reader, which works the call out. Taken as a constant here it
+                // swallowed the name and left the parentheses to be read as
+                // types of their own, which is how `Bag<next_pow2(5)>` came to
+                // be refused for a bracket while the bootstrap answered 8.
                 else if (cur(p) == TokenKind::Ident
+                    && peek_kind(p, 1) != TokenKind::Lparen
                     && is_type_name(p, cur_off(p), cur_len(p)) == false) {
                     arg_off := cur_off(p)
                     arg_len := cur_len(p)

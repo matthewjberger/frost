@@ -157,10 +157,27 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\n\
          Vertex :: struct { x: f32, y: f32 }\n\
          Bag :: struct($N: usize) { data: [N]u8 }\n\
-         Held :: struct { b: Bag<sizeof(Vertex)> }\n\
-         main :: fn() -> i64 { 0 }\n",
+         main :: fn() -> i64 {\n\
+         \x20   mut b: Bag<sizeof(Vertex)> = Bag<8> { data = [0; 8] }\n\
+         \x20   slice_len(b.data)\n\
+         }\n",
         "'sizeof' is answered once the types are read, and a compile-time \
          value is worked out before that",
+    ),
+    // A call standing where a generic's value argument goes is worked out, and
+    // one this file cannot name has no number to stand for. The self-hosted
+    // compiler took the name for a constant, leaving the parentheses to be read
+    // as types of their own, so it said a bracket was not a type twice and, in
+    // a type declaration where no name is checked yet, said nothing at all and
+    // built the program.
+    (
+        "a_generic_argument_names_a_function_this_program_declares",
+        "import \"io.frost\"\n\
+         Bag :: struct($N: usize) { data: [N]u8 }\n\
+         Held :: struct { b: Bag<str_len(\"abc\")> }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'str_len' is not a function this program declares, so there is nothing \
+         to work out here",
     ),
     // A literal that names no type takes it from what the context expects, and
     // a value written back where a constant is named carries its own type or
@@ -5948,6 +5965,29 @@ Bad :: enum { Nope }
 -2
 -4
 1
+",
+    ),
+    // The third place a compile-time number is read, and the one the reference
+    // writes as `Slab<Entity, next_power_of_two(300)>`. The self-hosted
+    // compiler read the name as a constant standing for a number rather than as
+    // a call answering one, so a documented form built under one compiler and
+    // was refused by the other for a bracket.
+    (
+        "a_call_answers_the_value_argument_a_generic_takes",
+        "import \"io.frost\"
+         next_pow2 :: fn(n: i64) -> i64 {
+             mut held: i64 = 1
+             while (held < n) { held = held * 2 }
+             held
+         }
+         Bag :: struct($N: usize) { data: [N]u8 }
+         main :: fn() -> i64 {
+             mut b: Bag<next_pow2(5)> = Bag<8> { data = [0; 8] }
+             print(\"{}\\n\", slice_len(b.data))
+             0
+         }
+",
+        "8
 ",
     ),
     // A compile-time call refuses a write to an element or a field, and the
