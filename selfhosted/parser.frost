@@ -2423,6 +2423,27 @@ refuse_layout_answer :: fn(mut p: Parser) {
     frost_rt_recover_escape()
 }
 
+// Whether this name is one of the compile-time parameters the declaration being
+// read takes: the one that fills the primary slot, or any of the rest written
+// after it. `map_put` writes `$K` and `$V`, and asking only about the primary
+// left every `$V` parameter reading as a type rather than as the parameter.
+names_a_compile_time_param :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    if (p.type_param_len == len && p.type_param_len > 0
+        && bytes_equal(p.src, off, p.type_param_off, len)) {
+        return true
+    }
+    mut i: i64 = 0
+    while (i < p.xparam_count) {
+        param := arena_at(p.gparams, p.xparam_start + i)
+        if (param.name_len == len
+            && bytes_equal(p.src, param.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 parse_type :: fn(mut p: Parser) -> i64 {
     refuse_layout_answer(p)
     // `ref T` is a borrow of T: the same address a `^T` is, but one the
@@ -2715,6 +2736,24 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // can tell a `Foo<T>` template placeholder (which collapses to a scalar code)
     // apart from a real scalar and still borrow it by pointer.
     p.last_type_was_generic = was_generic
+    // And whether it was the template's own compile-time parameter, written
+    // bare. What a parameter node records is whatever instantiation was made
+    // last, so the move walk needs the written form back, and reading it off
+    // the recorded type asks about the wrong thing. Assigned here because every
+    // path converges here: a nested read for `Vec<T>`'s own argument would
+    // otherwise be the last word. A `^T` names a pointer to the parameter
+    // rather than the parameter, so the levels are part of the answer.
+    // Asked of the sigil rather than of the code the name resolved to. A
+    // declaration is read once as the template, where the name is the
+    // placeholder, and again per instance with it bound to a real type, and the
+    // move walk reads whichever node came last; the `$` is there both times.
+    // Reading the name instead matched a compile-time list's own elements, and
+    // the compiler stopped building itself.
+    p.last_type_was_param = 0
+    if (dollar == 1 && pointer_levels == 0 && was_generic == 0
+        && names_a_compile_time_param(p, offset, length)) {
+        p.last_type_was_param = 1
+    }
     mut result := base
     mut k: i64 = 0
     while (k < pointer_levels) {
@@ -3015,6 +3054,7 @@ declared_bundle_type :: fn(
     // What reading a type leaves behind, kept because this reads one in the
     // middle of a call rather than where a declaration is being taken down.
     held_was_generic := p.last_type_was_generic
+    held_was_param := p.last_type_was_param
     held_saw_param := p.saw_type_param
     p.type_param_off = gfn.tparam_off
     p.type_param_len = gfn.tparam_len
@@ -3037,6 +3077,7 @@ declared_bundle_type :: fn(
     p.type_binding = held_binding
     p.binding_active = held_active
     p.last_type_was_generic = held_was_generic
+    p.last_type_was_param = held_was_param
     p.saw_type_param = held_saw_param
     p.ti = held_ti
     declared
@@ -6416,6 +6457,21 @@ parse_params :: fn(mut p: Parser) -> i64 {
                         },
                     )
                     record_parse_local(p, name_off, name_len, element_ty, -1)
+                    // An element of a compile-time list is written `$...` and
+                    // stands for whatever the call handed over, so its node
+                    // holds the last call's type the way a `$T` parameter does
+                    // and the same substitution puts the right one back. It is
+                    // recorded here because nothing parsed a type for it: the
+                    // list's elements are synthesized from what the call gave.
+                    arena_push(
+                        p.template_params,
+                        LocalVar {
+                            name_off = held,
+                            name_len = 0,
+                            ty = 0,
+                            slot = 0
+                        }
+                    )
                     if (head == (-1)) {
                         head = held
                         tail = held
@@ -6477,6 +6533,11 @@ parse_params :: fn(mut p: Parser) -> i64 {
             refuse_literal_name(p, offset, length)
             advance(p)
             mut ty := parse_type_annotation(p)
+            // Whether it was written as the template's own parameter, held
+            // before the borrow flag goes on and before anything else reads a
+            // type. What the node records is a type, and the move walk needs to
+            // know which spelling put it there.
+            wrote_param := p.last_type_was_param
             // A mode borrow of a value is passed by pointer, and the call site
             // takes its address automatically (auto_borrow = 1). `mut` always
             // borrows. An unmarked read borrows a struct or generic instance and
@@ -6526,6 +6587,17 @@ parse_params :: fn(mut p: Parser) -> i64 {
                     pos = cur_off(p)
                 },
             )
+            if (wrote_param == 1) {
+                arena_push(
+                    p.template_params,
+                    LocalVar {
+                        name_off = param,
+                        name_len = 0,
+                        ty = 0,
+                        slot = 0
+                    }
+                )
+            }
             // A `mut` parameter borrows exclusively. Record it so the exclusivity
             // check can tell it from a shared read of an aggregate, which the
             // auto-borrow flag alone cannot.

@@ -1626,6 +1626,7 @@ Declaring :: struct {
     unsafe_depth: i64,
     last_return_type: i64,
     last_type_was_generic: i64,
+    last_type_was_param: i64,
     pending_gt: i64,
     frame_used: i64,
     no_struct_lit: bool,
@@ -1669,6 +1670,7 @@ hold_declaration :: fn(mut p: Parser) -> Declaring {
         unsafe_depth = p.unsafe_depth,
         last_return_type = p.last_return_type,
         last_type_was_generic = p.last_type_was_generic,
+        last_type_was_param = p.last_type_was_param,
         pending_gt = p.pending_gt,
         frame_used = p.frame_used,
         no_struct_lit = p.no_struct_lit
@@ -1712,6 +1714,7 @@ restore_declaration :: fn(mut p: Parser, held: Declaring) {
     p.unsafe_depth = held.unsafe_depth
     p.last_return_type = held.last_return_type
     p.last_type_was_generic = held.last_type_was_generic
+    p.last_type_was_param = held.last_type_was_param
     p.pending_gt = held.pending_gt
     p.frame_used = held.frame_used
     p.no_struct_lit = held.no_struct_lit

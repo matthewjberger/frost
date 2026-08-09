@@ -164,6 +164,25 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'sizeof' is answered once the types are read, and a compile-time \
          value is worked out before that",
     ),
+    // The other half of the same guard. A value handed to a `move` parameter of
+    // the template's own type is gone, and the self-hosted compiler read the
+    // parameter's recorded type instead of the one this call bound, so a plain
+    // generic aggregate could be handed over twice. It built and ran, answering
+    // 82. Written with a second fault in the same file, since the two compilers
+    // recover at different granularities and one report cannot see that.
+    (
+        "a_value_handed_to_a_move_parameter_of_a_generic_is_gone",
+        "import \"io.frost\"\n\
+         Box :: struct($T: Type) { held: T }\n\
+         take :: fn($T: Type, move b: Box<T>) -> i64 { b.held }\n\
+         main :: fn() -> i64 {\n\
+         \x20   b := Box<i64> { held = 41 }\n\
+         \x20   first := take(b)\n\
+         \x20   second := take(b)\n\
+         \x20   first + second\n\
+         }\n",
+        "use of moved value 'b'",
+    ),
     // Text written down is a run of bytes, and what it reaches is a run of them
     // or the address a call into C reads. Its type in the self-hosted compiler
     // is that address, and an address reaches a whole number so a call into C
@@ -6005,6 +6024,31 @@ Bad :: enum { Nope }
 -2
 -4
 1
+",
+    ),
+    // Handing an argument over takes the value from the caller where the
+    // parameter takes it and the type leaves something behind. A generic's
+    // parameter node records whichever instantiation came last, so the call's
+    // own type argument stands in its place, and which parameters that is for
+    // was being recovered from the linearity of that last instantiation. The
+    // reading was wrong both ways: one `Vec<Res>` anywhere in a program made
+    // every later `vec_push(v, i)` report a move of a number, and a plain
+    // `Box<T>` could be handed over twice with nothing said, which ran. The
+    // parse records the spelling now, for a `$T` parameter and for an element
+    // of a compile-time list, which is written `$...` and is the same case.
+    (
+        "a_generic_takes_what_the_call_binds_it_to",
+        "import \"io.frost\"
+         Box :: struct($T: Type) { held: T }
+         take :: fn($T: Type, move b: Box<T>) -> i64 { b.held }
+         main :: fn() -> i64 {
+             b := Box<i64> { held = 41 }
+             first := take(b)
+             print(\"{}\\n\", first)
+             0
+         }
+",
+        "41
 ",
     ),
     // A run written out where a slice is wanted holds that slice's element, the

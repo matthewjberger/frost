@@ -3517,19 +3517,22 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             // call, which is what this asks for instead. Inside the template
             // itself nothing is bound yet, and the specializations are walked on
             // their own, so an unresolved one is left alone.
-            // Not where the declared type is a resource. A parameter written
-            // `Vec<T>` or `Sink<T>` is a type built from the template rather
-            // than the template itself, and substituting there turned the
-            // container into its own element type: `is_aggregate` then answered
-            // no, the move went unrecorded, and a generic container could be
-            // freed and read afterwards with nothing said. What the
-            // substitution is for is a parameter written `$T`, whose recorded
-            // type is whatever instantiation was made last, and a resource is
-            // never that.
+            // Only where the declared type was written as the parameter itself.
+            // One written `Vec<T>` or `Sink<T>` is a type built from the
+            // template rather than the template, and substituting there turned
+            // the container into its own element type, so the move went
+            // unrecorded and a generic container could be freed and read after.
+            //
+            // Which of the two was written is a fact about the source, and it
+            // was being recovered from the linearity of whichever instantiation
+            // came last. That reading was wrong in both directions: a `$T` bound
+            // to a resource stopped substituting and every later call reported a
+            // move of a name nothing moved, and a plain `Box<T>` went on
+            // substituting so the same value could be handed over twice with
+            // nothing said. The parse records the spelling now.
             mut ptype := pnode.b
             if (generic_fn_of(p, fn_index) >= 0
-                && (is_aggregate(pnode.b) || pnode.b == TY_PARAM)
-                && is_linear_type(p, pnode.b) == false) {
+                && wrote_template_param(p, param)) {
                 ptype = call_type_args(p, args, generic_fn_of(p, fn_index))
                 if (ptype < 0 || ptype == TY_PARAM) {
                     ptype = TY_VOID
@@ -4299,6 +4302,23 @@ nth_param_node :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
         id = node.next
     }
     -1
+}
+
+// Whether this parameter's written type was the template's own compile-time
+// parameter. A parameter node records a type, and a type cannot say which
+// spelling put it there: `$T` and `Vec<T>` both leave one behind, and which of
+// the two was written is what decides whether the call's type argument stands
+// in its place.
+wrote_template_param :: fn(mut p: Parser, param_node: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.template_params.count) {
+        entry := arena_at(p.template_params, i)
+        if (entry.name_off == param_node) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 is_mut_param :: fn(mut p: Parser, param_node: i64) -> bool {

@@ -1679,6 +1679,10 @@ Parser :: struct {
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,
+    // Whether the type just read was the template's own compile-time parameter,
+    // written bare. A parameter node records whichever instantiation was made
+    // last, so this is how the written form is asked about instead.
+    last_type_was_param: i64,
     // Where each `unsafe { ... }` was written, and how deep the parser is in
     // one, so the gate can ask where a node came from.
     unsafe_spans: Arena<UnsafeSpan>,
@@ -1861,6 +1865,10 @@ Parser :: struct {
     // check can tell an exclusive borrow from a shared one where the type alone
     // cannot. A `mut` and a read of an aggregate both pass by address.
     mut_params: Arena<LocalVar>,
+    // Every parameter whose written type was the template's own compile-time
+    // parameter, by the node it was built as. `name_off` holds that node, the
+    // way `mut_params` holds one.
+    template_params: Arena<LocalVar>,
     // The parameter nodes declared `value` on an `extern`, by node index. The
     // parameter behaves as a borrow everywhere else, so only the call's
     // argument placement consults this, which is the one thing that differs.
