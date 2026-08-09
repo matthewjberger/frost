@@ -164,6 +164,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'sizeof' is answered once the types are read, and a compile-time \
          value is worked out before that",
     ),
+    // Text written down is a run of bytes, and what it reaches is a run of them
+    // or the address a call into C reads. Its type in the self-hosted compiler
+    // is that address, and an address reaches a whole number so a call into C
+    // can hand one over, so this filled an `i64` parameter with a pointer and
+    // was built. Asked of the expression on both sides now, since being a
+    // literal is what decides it, and named the way the reader wrote it.
+    (
+        "text_reaches_a_run_of_bytes_and_not_a_number",
+        "import \"io.frost\"\n\
+         show :: fn(n: i64) -> i64 { n }\n\
+         main :: fn() -> i64 { show(\"abc\") }\n",
+        "this argument is a 'str' and a 'i64' is what is wanted here",
+    ),
     // An argument stands where its parameter's type is written. An aggregate
     // travels by address, so by the time the bootstrap's IR check saw this both
     // sides were pointers and a pointer fits every other; the nominal check it
@@ -5992,6 +6005,22 @@ Bad :: enum { Nope }
 -2
 -4
 1
+",
+    ),
+    // A run written out where a slice is wanted holds that slice's element, the
+    // way one written into a declared array does, and its own length is the
+    // slice's. The bootstrap gave the temp the slice's own type and then told
+    // the reader an array literal had a type that is not an array.
+    (
+        "a_run_written_at_a_call_holds_what_the_slice_holds",
+        "import \"io.frost\"
+         show :: fn(b: []u8) -> i64 { slice_len(b) }
+         main :: fn() -> i64 {
+             print(\"{}\\n\", show([1, 2, 3]))
+             0
+         }
+",
+        "3
 ",
     ),
     // The third place a compile-time number is read, and the one the reference

@@ -1153,10 +1153,19 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
                     fits = true
                 }
                 if (expected != TY_PARAM && fits == false) {
+                    // Text written down is a run of bytes. What it carries here
+                    // is the address of those bytes, which is how it travels
+                    // and not what the reader wrote, so a literal handed to a
+                    // number was named a '^i8' by one compiler and a 'str' by
+                    // the other about one program.
+                    mut written := arg_ty
+                    if (is_str_literal(p, value)) {
+                        written = array_of(p, TY_U8, -1)
+                    }
                     report_where(p.modules, p.src, vnode.pos)
                     report_fmt(
                         "this argument is a '{}' and a '{}' is what is wanted here",
-                        type_text(p, arg_ty),
+                        type_text(p, written),
                         type_text(p, expected)
                     )
                     report_distinct_note(p, value, arg_ty, expected)

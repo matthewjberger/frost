@@ -8136,6 +8136,39 @@ impl<'a> FunctionLowering<'a> {
             // callee read one layout as the other. The rule is that check's,
             // asked while both sides are still spelled the way they were
             // written, and the borrow a mode added is read through.
+            if let Some(target) = expected {
+                let wanted = match target {
+                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                };
+                // Text written down is a run of bytes, and what it reaches is a
+                // run of them or the address a call into C reads. Asked of the
+                // expression rather than of a type, since being a literal is
+                // what decides it: the bytes the compiler wrote down are the
+                // ones it terminated. Its type alone is an address, and an
+                // address reaches a whole number, which is how `show("abc")`
+                // filled an `i64` parameter with a pointer.
+                if matches!(
+                    self.ast.expr(*argument),
+                    Expression::Literal(Literal::String(_))
+                ) && !matches!(
+                    wanted,
+                    Type::Str
+                        | Type::Slice(_)
+                        | Type::Ptr(_)
+                        | Type::Array(..)
+                        | Type::TypeParam(_)
+                        | Type::Unknown
+                ) {
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "this argument is a 'str' and a '{}' is what is wanted here",
+                            spelled(wanted)
+                        )),
+                        self.at_expression(*argument),
+                    );
+                }
+            }
             if let Some(target) = expected
                 && let Some(given) = self.answer_type(*argument)
             {
@@ -8306,6 +8339,39 @@ impl<'a> FunctionLowering<'a> {
             // callee read one layout as the other. The rule is that check's,
             // asked while both sides are still spelled the way they were
             // written, and the borrow a mode added is read through.
+            if let Some(target) = expected {
+                let wanted = match target {
+                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                };
+                // Text written down is a run of bytes, and what it reaches is a
+                // run of them or the address a call into C reads. Asked of the
+                // expression rather than of a type, since being a literal is
+                // what decides it: the bytes the compiler wrote down are the
+                // ones it terminated. Its type alone is an address, and an
+                // address reaches a whole number, which is how `show("abc")`
+                // filled an `i64` parameter with a pointer.
+                if matches!(
+                    self.ast.expr(*argument),
+                    Expression::Literal(Literal::String(_))
+                ) && !matches!(
+                    wanted,
+                    Type::Str
+                        | Type::Slice(_)
+                        | Type::Ptr(_)
+                        | Type::Array(..)
+                        | Type::TypeParam(_)
+                        | Type::Unknown
+                ) {
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "this argument is a 'str' and a '{}' is what is wanted here",
+                            spelled(wanted)
+                        )),
+                        self.at_expression(*argument),
+                    );
+                }
+            }
             if let Some(target) = expected
                 && let Some(given) = self.answer_type(*argument)
             {
@@ -8502,6 +8568,30 @@ impl<'a> FunctionLowering<'a> {
             | Expression::Dereference(_) => {
                 let (address, _) = self.place_address(argument)?;
                 Ok(address)
+            }
+            // A run written out where a slice is wanted holds that slice's
+            // element, the way one written into a declared array does, and its
+            // own length is the slice's. It is built as the array it is and
+            // handed over as a view of that, which is the road a named array
+            // already takes. Given the slice's own type instead, the temp was a
+            // slice holding elements and the reader was told an array literal
+            // had a type that is not an array.
+            Expression::Literal(Literal::Array(elements))
+                if slice_element_wanted(target).is_some() =>
+            {
+                let element = slice_element_wanted(target)
+                    .expect("a slice element, just asked for");
+                let count = elements.len();
+                let held = Type::Array(Box::new(element.clone()), count);
+                let temp = self.fresh_local(held.clone(), None);
+                self.materialize_aggregate(temp, argument)?;
+                let base = self.address_of_local(temp, &element);
+                let slice =
+                    self.build_slice_from_address(base, &element, count);
+                let IrOperand::Local(slice_local) = slice else {
+                    bail!("slice construction did not yield a place");
+                };
+                Ok(self.address_of_local(slice_local, target))
             }
             Expression::StructInit(..)
             | Expression::EnumVariantInit(..)
