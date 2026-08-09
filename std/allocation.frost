@@ -90,7 +90,7 @@ carve :: fn(
     mut a: A,
     count: i64
 ) -> []T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -108,7 +108,7 @@ carve_grow :: fn(
     held: []T,
     count: i64
 ) -> []T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -138,8 +138,8 @@ AllocPoint :: struct { x: i64, y: i64 }
 
 test "a carve from the heap hands back a run that is written and given back" {
     before := heap_live()
-    var h := heap_state()
-    var run := carve($i64, $heap_source, h, 4)
+    mut h := heap_state()
+    mut run := carve($i64, $heap_source, h, 4)
     assert(slice_len(run) == 4)
     run[0] = 11
     run[3] = 44
@@ -151,11 +151,11 @@ test "a carve from the heap hands back a run that is written and given back" {
 
 test "a grown run keeps what the old one held" {
     before := heap_live()
-    var h := heap_state()
-    var run := carve($i64, $heap_source, h, 2)
+    mut h := heap_state()
+    mut run := carve($i64, $heap_source, h, 2)
     run[0] = 7
     run[1] = 8
-    var grown := carve_grow($heap_resizing, h, run, 8)
+    mut grown := carve_grow($heap_resizing, h, run, 8)
     assert(slice_len(grown) == 8)
     assert(grown[0] == 7)
     assert(grown[1] == 8)
@@ -164,8 +164,8 @@ test "a grown run keeps what the old one held" {
 }
 
 test "a carve of a struct is sized by the struct" {
-    var h := heap_state()
-    var points := carve($AllocPoint, $heap_source, h, 3)
+    mut h := heap_state()
+    mut points := carve($AllocPoint, $heap_source, h, 3)
     points[0] = AllocPoint { x = 1, y = 2 }
     points[2] = AllocPoint { x = 3, y = 4 }
     assert(points[0].y + points[2].x == 5)

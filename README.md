@@ -64,7 +64,7 @@ walk :: fn(mut hero: Hero, to: i64) -> i64 ! NoExit {
 trade :: fn(mut hero: Hero, mut foe: Monster) -> (dealt: i64, taken: i64) {
     foe.hp = foe.hp - hero.blade
     if (foe.hp < 0) { foe.hp = 0 }
-    var taken: i64 = 0
+    mut taken: i64 = 0
     if (foe.hp > 0) {
         taken = foe.bite
         hero.hp = hero.hp - taken
@@ -85,8 +85,8 @@ report :: fn(foe: Monster, dealt: i64, taken: i64) {
 main :: fn() -> i64 {
     torch := light(6)
 
-    var hero: Hero = { hp = 30, blade = 6, room = 0 }
-    var here: [ROOMS]Monster = [
+    mut hero: Hero = { hp = 30, blade = 6, room = 0 }
+    mut here: [ROOMS]Monster = [
         { name = "the dark", hp = 0, bite = 0 },
         { name = "a rat", hp = 8, bite = 3 },
         { name = "a wight", hp = 20, bite = 7 },

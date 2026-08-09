@@ -240,7 +240,7 @@ Nothing fails, the tests pass, and the program leaks three blocks per column.
 ```frost
 test "a world gives back every block it took" {
     before := heap_live()
-    var world := ecs_new()
+    mut world := ecs_new()
     ecs_free(world)
     assert(heap_live() == before)
 }
@@ -277,8 +277,8 @@ Binding a *local* struct to a second name moves it.
 
 ```frost,sketch
 root := ecs_spawn(world)
-var parent := root          // root is gone from here on
-var parent := Entity { id = root.id, generation = root.generation }   // instead
+mut parent := root          // root is gone from here on
+mut parent := Entity { id = root.id, generation = root.generation }   // instead
 ```
 
 Binding a *parameter* to a name is the other way round. It copies, so writing
@@ -287,7 +287,7 @@ through the binding does not reach the caller, which is how a function like
 
 ```frost,sketch
 mask_with :: fn(m: Mask, index: i64) -> Mask {
-    var out := m                  // a copy of the caller's mask
+    mut out := m                  // a copy of the caller's mask
     out.words[index / 64] = ...
     out
 }
@@ -361,7 +361,7 @@ somewhere else. Write the plain form.
 - Write a match as `match value { case .Variant: ... }`. The scrutinee takes no
   parentheses, and the error you get from the other form names a later line.
 - Do not write through a read parameter. `into[at] = x` where `into: str` is a
-  read borrow lowered differently by each backend. Bind `var destination :=
+  read borrow lowered differently by each backend. Bind `mut destination :=
   into` first.
 - A `(` or `[` that opens a line starts a statement. `(table.mask & mask)` on
   its own line is a statement of its own, not a call of the line above it.

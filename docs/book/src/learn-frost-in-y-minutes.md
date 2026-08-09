@@ -32,8 +32,8 @@ main :: fn() -> i64 {
     // `:` states the type instead of inferring it.
     total : i64 = 0
 
-    // `var` makes a binding assignable. Without it a binding is fixed.
-    var running : i64 = 0
+    // `mut` makes a binding assignable. A binding without it is fixed.
+    mut running : i64 = 0
     running = running + count
 
     // A block is an expression whose value is its trailing expression, so a
@@ -89,7 +89,7 @@ Arithmetic traps on overflow on every backend. Use `wrap_add`, `wrap_sub` and
 import "io.frost"
 
 main :: fn() -> i64 {
-    var hash : u64 = 1469598103934665603
+    mut hash : u64 = 1469598103934665603
     hash = wrap_mul(hash, 1099511628211)
     print("{}\n", hash)
     0
@@ -169,7 +169,7 @@ main :: fn() -> i64 {
     print("{}\n", classify(-5))
 
     // As a statement, an arm may end in a statement and answer with nothing.
-    var total : i64 = 0
+    mut total : i64 = 0
     if (total == 0) {
         total = 10
     } else {
@@ -177,7 +177,7 @@ main :: fn() -> i64 {
     }
 
     // `while`.
-    var index : i64 = 0
+    mut index : i64 = 0
     while (index < 3) {
         index = index + 1
     }
@@ -346,7 +346,7 @@ scale :: fn(mut p: Point, by: i64) {
 }
 
 main :: fn() -> i64 {
-    var p := Point { x = 3, y = 4 }
+    mut p := Point { x = 3, y = 4 }
     print("{}\n", length_squared(p))
     scale(p, 2)                        // no sigil at the call
     print("{}\n", p.x)
@@ -492,7 +492,7 @@ at :: fn(values: []i64, index: i64) -> ref i64 {
 }
 
 main :: fn() -> i64 {
-    var storage : [3]i64 = [1, 2, 3]
+    mut storage : [3]i64 = [1, 2, 3]
     ref second := storage[1]
     second = 20                     // written through the borrow
     print("{}\n", storage[1])
@@ -528,8 +528,8 @@ main :: fn() -> i64 {
     p := make_pair(3, 4)
     print("{}\n", p.first + p.second)
 
-    var x : i64 = 1
-    var y : i64 = 2
+    mut x : i64 = 1
+    mut y : i64 = 2
     swap(x, y)
     print("{}\n", x)
     0
@@ -577,7 +577,7 @@ import "io.frost"
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 smaller :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
-    var held := x
+    mut held := x
     if (before(y, held)) { held = y }
     held
 }
@@ -671,7 +671,7 @@ import "io.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -698,7 +698,7 @@ import "io.frost"
 Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    var world : columns<Particle, 8> = columns_new()
+    mut world : columns<Particle, 8> = columns_new()
     columns_reset(world)
     h := columns_insert(world, Particle { x = 10, y = 1 })
 
@@ -736,7 +736,7 @@ make_two :: fn() -> i64 uses Arena<256> {
 }
 
 main :: fn() -> i64 {
-    var scratch : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut scratch : Arena<256> = Arena { data = [0; 256], offset = 0 }
     with scratch {
         print("{}\n", make_two())
     }
@@ -758,7 +758,7 @@ is not marked `safe`. Everything else in the language is checked.
 import "io.frost"
 
 main :: fn() -> i64 {
-    var value : i64 = 41
+    mut value : i64 = 41
 
     // Taking an address is safe. Reading through one is not.
     p := ptr_to(value)
@@ -896,12 +896,12 @@ import "io.frost"
 import "vec.frost"
 
 main :: fn() -> i64 {
-    var scores := vec_new($i64, 4)
+    mut scores := vec_new($i64, 4)
     vec_push(scores, 10)
     vec_push(scores, 30)
     vec_push(scores, 20)
 
-    var total : i64 = 0
+    mut total : i64 = 0
     for value in vec_slice(scores) {
         total = total + value
     }
@@ -926,7 +926,7 @@ import "io.frost"
 import "map.frost"
 
 main :: fn() -> i64 {
-    var ages := map_new($Text, $i64, $text_keys, 8)
+    mut ages := map_new($Text, $i64, $text_keys, 8)
     map_put(ages, text("ada"), 36)
     map_put(ages, text("alan"), 41)
 
@@ -974,7 +974,7 @@ import "ordering.frost"
 import "sort.frost"
 
 main :: fn() -> i64 {
-    var numbers : [5]i64 = [4, 1, 5, 3, 2]
+    mut numbers : [5]i64 = [4, 1, 5, 3, 2]
     view : []i64 = numbers
     sort($i64_ascending, view)
     for value in view {
@@ -998,7 +998,7 @@ import "io.frost"
 import "format.frost"
 
 main :: fn() -> i64 {
-    var line := builder_new(64)
+    mut line := builder_new(64)
     builder_str_value(line, "hp ")
     builder_int(line, 75)
     builder_str_value(line, "/100")
@@ -1022,7 +1022,7 @@ main :: fn() -> i64 {
     fs_write("hero.json", "{\"hp\": 75, \"name\": \"ada\"}")
 
     result := fs_read("hero.json")
-    var document := json_parse(result.text)
+    mut document := json_parse(result.text)
     root := json_root(document)
     hp := json_member(document, root, "hp")
     print("{}\n", json_number(document, hp))   // 75
@@ -1065,7 +1065,7 @@ import "ecs.frost"
 Health :: struct { points: i64 }
 
 main :: fn() -> i64 {
-    var world := ecs_new()
+    mut world := ecs_new()
     health := ecs_register($Health, world)
 
     hero := ecs_spawn(world)
@@ -1096,7 +1096,7 @@ Counter :: struct { total: i64 }
 
 bump :: fn(context: ^u8) {
     counter := unsafe { ptr_cast($Counter, context) }
-    var index : i64 = 0
+    mut index : i64 = 0
     while (index < 1000) {
         unsafe { atomic_add(ptr_to(counter^.total), 1) }
         index = index + 1
@@ -1104,7 +1104,7 @@ bump :: fn(context: ^u8) {
 }
 
 main :: fn() -> i64 {
-    var counter := Counter { total = 0 }
+    mut counter := Counter { total = 0 }
     handle := unsafe { spawn(bump, ptr_cast($u8, ptr_to(counter))) }
     bump(unsafe { ptr_cast($u8, ptr_to(counter)) })
     join(handle)

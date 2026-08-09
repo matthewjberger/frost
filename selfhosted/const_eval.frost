@@ -48,7 +48,7 @@ const_int :: fn(value: i64) -> ConstValue {
 }
 
 const_bool :: fn(held: bool) -> ConstValue {
-    var value: i64 = 0
+    mut value: i64 = 0
     if (held) { value = 1 }
     ConstValue { kind = CONST_BOOL, value = value, count = 0 }
 }
@@ -58,7 +58,7 @@ const_bool :: fn(held: bool) -> ConstValue {
 // below the line that calls it.
 record_const_functions :: fn(mut p: Parser) {
     start := p.ti
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lbrace || kind == TokenKind::Lparen
@@ -88,7 +88,7 @@ record_const_functions :: fn(mut p: Parser) {
 // A file may name what it declares and what the files it imports export, which
 // is the rule every other name follows.
 const_fn_index :: fn(mut p: Parser, off: i64, len: i64, use_off: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.const_fns.count) {
         entry := arena_at(p.const_fns, i)
         if (entry.name_len == len
@@ -105,8 +105,8 @@ const_fn_index :: fn(mut p: Parser, off: i64, len: i64, use_off: i64) -> i64 {
 // followed by `(` is a call and nothing else is, and the value ends where the
 // next declaration head begins.
 const_call_ahead :: fn(mut p: Parser) -> bool {
-    var ahead: i64 = 0
-    var depth: i64 = 0
+    mut ahead: i64 = 0
+    mut depth: i64 = 0
     while (peek_kind(p, ahead) != TokenKind::Eof) {
         kind := peek_kind(p, ahead)
         if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
@@ -178,8 +178,8 @@ const_fold_ahead :: fn(mut p: Parser) -> bool {
 // is expected to settle, so failing to settle one is a fault; a literal that
 // happens not to fold is left alone, the way it always was.
 const_asks_folding :: fn(mut p: Parser) -> bool {
-    var ahead: i64 = 0
-    var depth: i64 = 0
+    mut ahead: i64 = 0
+    mut depth: i64 = 0
     while (peek_kind(p, ahead) != TokenKind::Eof) {
         kind := peek_kind(p, ahead)
         if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
@@ -239,7 +239,7 @@ const_fault :: fn(mut p: Parser, at: i64) {
 
 // Whether a constant fault at this offset has already been reported.
 const_fault_told :: fn(mut p: Parser, at: i64) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.const_faults.count) {
         if (arena_at(p.const_faults, i) == at) {
             return true
@@ -299,7 +299,7 @@ const_call :: fn(
     name_off := entry.name_off
     name_len := entry.name_len
     body_at := entry.at
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.const_stack.count) {
         held := arena_at(p.const_stack, i)
         if (held.name_len == name_len
@@ -341,7 +341,7 @@ const_call :: fn(
         const_stop(p)
     }
     advance(p)
-    var taken: i64 = 0
+    mut taken: i64 = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         if (cur(p) != TokenKind::Ident) {
             const_fault(p, at)
@@ -438,7 +438,7 @@ const_call :: fn(
 // Past a type written after a `:` or an `->`, which a compile-time call reads
 // and does not use: what the arithmetic answers is decided by the values.
 const_skip_type :: fn(mut p: Parser) {
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lbracket || kind == TokenKind::Lparen) {
@@ -464,7 +464,7 @@ const_skip_type :: fn(mut p: Parser) {
 // value where an earlier one would only have run.
 const_block :: fn(mut p: Parser, at: i64) -> ConstFlow {
     advance(p)
-    var answered := ConstFlow {
+    mut answered := ConstFlow {
         flow = FLOW_RAN,
         kind = CONST_INT,
         value = 0,
@@ -494,7 +494,7 @@ const_block :: fn(mut p: Parser, at: i64) -> ConstFlow {
 
 // Past the rest of the block the cursor is inside, leaving it on the `}`.
 const_skip_to_close :: fn(mut p: Parser) {
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lbrace) {
@@ -517,7 +517,7 @@ const_skip_block :: fn(mut p: Parser) {
 }
 
 const_local_index :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i: i64 = p.const_locals.count
+    mut i: i64 = p.const_locals.count
     while (i > 0) {
         i = i - 1
         entry := arena_at(p.const_locals, i)
@@ -568,9 +568,9 @@ const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
     if (kind == TokenKind::Lbrace) {
         return const_block(p, at)
     }
-    // `var name : T = expr` and `name := expr` both bind. A `var` written
+    // `mut name : T = expr` and `name := expr` both bind. A `var` written
     // without a type is the same binding with a word in front of it.
-    if (kind == TokenKind::KwVar) {
+    if (kind == TokenKind::KwMut) {
         advance(p)
         return const_bind(p, at)
     }
@@ -668,7 +668,7 @@ const_condition :: fn(mut p: Parser, at: i64, word: ^i8) -> bool {
 const_if :: fn(mut p: Parser, at: i64) -> ConstFlow {
     advance(p)
     holds := const_condition(p, at, "`if`")
-    var answered := ConstFlow {
+    mut answered := ConstFlow {
         flow = FLOW_RAN,
         kind = CONST_INT,
         value = 0,
@@ -701,7 +701,7 @@ const_if :: fn(mut p: Parser, at: i64) -> ConstFlow {
 const_skip_if :: fn(mut p: Parser) {
     advance(p)
     advance(p)
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lparen) {
@@ -765,7 +765,7 @@ const_while :: fn(mut p: Parser, at: i64) -> ConstFlow {
 // unasked are still read, since that is what says where the expression ends,
 // and nothing is worked out while they are.
 const_expr :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_and(p, at)
+    mut left := const_and(p, at)
     while (cur(p) == TokenKind::Oror) {
         advance(p)
         settled := left.kind == CONST_BOOL && left.value == 1
@@ -782,7 +782,7 @@ const_expr :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_and :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_cmp(p, at)
+    mut left := const_cmp(p, at)
     while (cur(p) == TokenKind::Andand) {
         advance(p)
         settled := left.kind == CONST_BOOL && left.value == 0
@@ -829,7 +829,7 @@ const_cmp :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_bitor :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_bitand(p, at)
+    mut left := const_bitand(p, at)
     while (cur(p) == TokenKind::Pipe) {
         advance(p)
         right := const_bitand(p, at)
@@ -839,7 +839,7 @@ const_bitor :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_bitand :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_shift(p, at)
+    mut left := const_shift(p, at)
     while (cur(p) == TokenKind::Amp) {
         advance(p)
         right := const_shift(p, at)
@@ -849,9 +849,9 @@ const_bitand :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_shift :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_add(p, at)
+    mut left := const_add(p, at)
     while (cur(p) == TokenKind::Shl || cur(p) == TokenKind::Shr) {
-        var op: i64 = OP_SHL
+        mut op: i64 = OP_SHL
         if (cur(p) == TokenKind::Shr) {
             op = OP_SHR
         }
@@ -863,9 +863,9 @@ const_shift :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_add :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_mul(p, at)
+    mut left := const_mul(p, at)
     while (cur(p) == TokenKind::Plus || cur(p) == TokenKind::Minus) {
-        var op: i64 = OP_ADD
+        mut op: i64 = OP_ADD
         if (cur(p) == TokenKind::Minus) {
             op = OP_SUB
         }
@@ -877,10 +877,10 @@ const_add :: fn(mut p: Parser, at: i64) -> ConstValue {
 }
 
 const_mul :: fn(mut p: Parser, at: i64) -> ConstValue {
-    var left := const_unary(p, at)
+    mut left := const_unary(p, at)
     while (cur(p) == TokenKind::Star || cur(p) == TokenKind::Slash
         || cur(p) == TokenKind::Percent) {
-        var op: i64 = OP_MUL
+        mut op: i64 = OP_MUL
         if (cur(p) == TokenKind::Slash) {
             op = OP_DIV
         }
@@ -919,7 +919,7 @@ const_unary :: fn(mut p: Parser, at: i64) -> ConstValue {
 const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
     advance(p)
     start := p.const_items.count
-    var count: i64 = 0
+    mut count: i64 = 0
     while (cur(p) != TokenKind::Rbracket && cur(p) != TokenKind::Eof) {
         held := const_expr(p, at)
         arena_push(
@@ -972,7 +972,7 @@ const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
 const_record :: fn(mut p: Parser, at: i64) -> ConstValue {
     advance(p)
     start := p.const_items.count
-    var count: i64 = 0
+    mut count: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         name_off := cur_off(p)
         name_len := cur_len(p)
@@ -1026,7 +1026,7 @@ const_in_range :: fn(mut p: Parser, at: i64, index: i64, count: i64) -> i64 {
 
 // `base[index]` and `base.field`, however many of each follow a value.
 const_postfix :: fn(mut p: Parser, at: i64, held_in: ConstValue) -> ConstValue {
-    var held := held_in
+    mut held := held_in
     while (cur(p) == TokenKind::Lbracket || cur(p) == TokenKind::Dot) {
         if (cur(p) == TokenKind::Lbracket) {
             advance(p)
@@ -1074,8 +1074,8 @@ const_postfix :: fn(mut p: Parser, at: i64, held_in: ConstValue) -> ConstValue {
                 const_stop(p)
                 return const_int(0)
             }
-            var i: i64 = 0
-            var found: i64 = -1
+            mut i: i64 = 0
+            mut found: i64 = -1
             while (i < held.count) {
                 item := arena_at(p.const_items, held.value + i)
                 if (item.name_len == name_len
@@ -1328,7 +1328,7 @@ const_wrapped :: fn(
 // What a constant stands for, whatever kind it is. A plain integer keeps the
 // shape every other reader of the table sees.
 const_named :: fn(mut p: Parser, off: i64, len: i64) -> ConstValue {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.const_aggregates.count) {
         entry := arena_at(p.const_aggregates, i)
         if (entry.name_len == len
@@ -1351,7 +1351,7 @@ const_names_a_value :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     if (is_const(p, off, len)) {
         return true
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.const_aggregates.count) {
         entry := arena_at(p.const_aggregates, i)
         if (entry.name_len == len

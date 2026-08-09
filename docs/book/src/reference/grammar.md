@@ -33,7 +33,7 @@ Statement =
     | "with" IDENT Block                      // a region, 8a
     | "break" ";"?
     | "continue" ";"?
-    | "var" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
+    | "mut" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
     | "ref" IDENT ":=" Expr ";"?             // bind a borrow of a place (5.1)
     | MultiNames ":=" Expr ";"?              // several values from one call
     | "_" ":=" Expr ";"?                     // an answer meant to go unread
@@ -48,7 +48,7 @@ subject of the walk.
 
 ```
 MultiNames = MultiName ( "," MultiName )+
-MultiName  = "var"? IDENT | "_"
+MultiName  = "mut"? IDENT | "_"
 
 ImportRenames = "(" IDENT "as" IDENT ( "," IDENT "as" IDENT )* ","? ")"
 ExportLine    = "export" IDENT ( "," IDENT )*
@@ -64,11 +64,12 @@ same line as the import path.
 A name followed by a comma at statement position is a list binding and nothing
 else. That comma tells the two `:=` forms apart.
 
-The `var` / `:=` / `: =` / `::` forms are selected by the token after the
+The `mut` / `:=` / `: =` / `::` forms are selected by the token after the
 identifier. These are `:=` (inferred binding), `:` then a non-`:` (typed
 binding), and `::` (constant). The last alternative covers expression statements
-and assignments to a place. `mut` never opens a statement: it is the parameter
-mode, and a local that is reassigned is declared with `var`.
+and assignments to a place. `mut` opens a statement where it declares a slot
+this frame owns, and stands in a parameter list where it marks the caller's
+value; which of the two it is comes from where it is written.
 
 ## 13.2 Constants and items
 

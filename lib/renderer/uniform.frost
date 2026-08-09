@@ -25,19 +25,19 @@ uniform_layout :: fn(
     size: i64,
     stages: ShaderStage
 ) -> BindGroupLayout {
-    var entry := bind_group_layout_entry_init()
+    mut entry := bind_group_layout_entry_init()
     entry.binding = 0
     entry.visibility = stages
     entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     entry.buffer.min_binding_size = size
-    var descriptor := bind_group_layout_descriptor_init()
+    mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 1
     descriptor.entries = ptr_to(entry)
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
 uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
@@ -49,11 +49,11 @@ uniform_group :: fn(
     held: Buffer,
     size: i64
 ) -> BindGroup {
-    var entry := bind_group_entry_init()
+    mut entry := bind_group_entry_init()
     entry.binding = 0
     entry.buffer = held
     entry.size = size
-    var descriptor := bind_group_descriptor_init()
+    mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 1
     descriptor.entries = ptr_to(entry)

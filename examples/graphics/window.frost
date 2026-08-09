@@ -34,9 +34,9 @@ main :: fn() -> i64 {
     }
     print("{}\n", 1)
 
-    var running: bool = true
+    mut running: bool = true
     while (running) {
-        var event := event_new()
+        mut event := event_new()
         while (poll_event(event)) {
             if (event_kind(event) == EventKind::Quit) {
                 running = false

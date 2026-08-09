@@ -10,12 +10,12 @@ externs, and imports.
 | --- | --- |
 | `name := expr` | bind a local, type inferred |
 | `name : Type = expr` | bind a local, type explicit |
-| `var name := expr` / `var name : Type = expr` | bind an assignable local |
+| `mut name := expr` / `mut name : Type = expr` | bind an assignable local |
 | `a, b := call()` | bind the several values of one call (5.2a) |
 | `ref name := place` | bind a borrow of a place |
 | `NAME :: expr` | declare a constant, evaluated once |
 
-Bindings are immutable unless `var`. A `var` local is reassigned with `=`.
+Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
 `mut` is not a binding form: it is the parameter mode of 3.3, and a
 `mut` written at statement position is refused with the words that say so.
 
@@ -151,10 +151,10 @@ ends every path with a `return`. A `return` that lists a different number of
 values than the list has is a compile error, as is one that lists several values
 in a function that returns one.
 
-`var` goes in front of any name the body goes on to write:
+`mut` goes in front of any name the body goes on to write:
 
 ```
-magnitude, var negative := classify(value)
+magnitude, mut negative := classify(value)
 negative = false
 ```
 
@@ -253,8 +253,8 @@ its failure from the function the `?` is written in:
 
 ```frost,sketch
 number :: fn(text: str) -> i64 ! Parse {
-    var total : i64 = 0
-    var index : i64 = 0
+    mut total : i64 = 0
+    mut index : i64 = 0
     while (index < str_len(text)) {
         d := digit(text, index)?
         total = total * 10 + d
@@ -312,7 +312,7 @@ The two places one is read are a constant's value and an array's length.
 round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
 
 next_power_of_two :: fn(n: i64) -> i64 {
-    var held: i64 = 1
+    mut held: i64 = 1
     while (held < n) { held = held * 2 }
     held
 }

@@ -83,8 +83,8 @@ object_room :: fn(
     debug_bytes: i64,
     reloc_bytes: i64
 ) -> i64 {
-    var names: i64 = 4
-    var i: i64 = 0
+    mut names: i64 = 4
+    mut i: i64 = 0
     while (i < asm_symbol_count(unit)) {
         if (carried(unit, i)) {
             held := asm_symbol_at(unit, i)
@@ -111,9 +111,9 @@ COFF_INFO_NAME :: ".debug_info"
 
 coff_long_name :: fn(mut object: Blob, at: i64) {
     blob_byte(object, CH_SLASH)
-    var digits: [8]u8 = [0; 8]
-    var count: i64 = 0
-    var held := at
+    mut digits: [8]u8 = [0; 8]
+    mut count: i64 = 0
+    mut held := at
     if (held == 0) {
         digits[0] = cast($u8, CH_0)
         count = 1
@@ -123,12 +123,12 @@ coff_long_name :: fn(mut object: Blob, at: i64) {
         held = held / 10
         count = count + 1
     }
-    var i := count
+    mut i := count
     while (i > 0) {
         i = i - 1
         blob_byte(object, digits[i])
     }
-    var pad := 1 + count
+    mut pad := 1 + count
     while (pad < 8) {
         blob_byte(object, 0)
         pad = pad + 1
@@ -179,7 +179,7 @@ coff_section_header :: fn(
 // each section, the fixups, the symbol table and the names too long to sit in a
 // symbol entry.
 write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
-    var debug_blob := object_blob()
+    mut debug_blob := object_blob()
     marks := dwarf_build(unit, debug_blob, "frost")
     debug := marks.wanted
     line_size := marks.line_size
@@ -194,7 +194,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     // and where its line program is.
     line_relocs := 0
     info_relocs := 0
-    var section_count: i64 = 2
+    mut section_count: i64 = 2
     if (debug) {
         line_relocs = 1
         info_relocs = 3
@@ -219,13 +219,13 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     data_symbol := 2
     line_symbol := 4
     abbrev_symbol := 6
-    var next_index := section_count * 2
+    mut next_index := section_count * 2
     // The three debug names go in the string table first, so where each one
     // sits is known before any header is written.
-    var string_size: i64 = 4
-    var line_name_at: i64 = 0
-    var abbrev_name_at: i64 = 0
-    var info_name_at: i64 = 0
+    mut string_size: i64 = 4
+    mut line_name_at: i64 = 0
+    mut abbrev_name_at: i64 = 0
+    mut info_name_at: i64 = 0
     if (debug) {
         line_name_at = string_size
         string_size = string_size + str_len(COFF_LINE_NAME) + 1
@@ -234,7 +234,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         info_name_at = string_size
         string_size = string_size + str_len(COFF_INFO_NAME) + 1
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < asm_symbol_count(unit)) {
         if (carried(unit, i)) {
             held := asm_symbol_at(unit, i)
@@ -326,7 +326,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         blob_range(object, debug_blob, marks.info_at, info_size)
     }
 
-    var r: i64 = 0
+    mut r: i64 = 0
     while (r < reloc_count) {
         fixup := asm_reloc_at(unit, r)
         coff_reloc(
@@ -405,11 +405,11 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     // section headers could point at them. Starting at 4 gave the first symbol
     // name too long for its entry the offset of `.debug_line`, so the linker
     // read that as the name and looked for a definition of it.
-    var string_at: i64 = 4
+    mut string_at: i64 = 4
     if (debug) {
         string_at = info_name_at + str_len(COFF_INFO_NAME) + 1
     }
-    var s: i64 = 0
+    mut s: i64 = 0
     while (s < asm_symbol_count(unit)) {
         if (carried(unit, s)) {
             held := asm_symbol_at(unit, s)
@@ -418,7 +418,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
                 blob_word32(object, string_at)
                 string_at = string_at + held.len + 1
             } else {
-                var k: i64 = 0
+                mut k: i64 = 0
                 while (k < 8) {
                     if (k < held.len) {
                         blob_byte(object, unit.src[held.off + k])
@@ -451,12 +451,12 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         coff_string(object, COFF_ABBREV_NAME)
         coff_string(object, COFF_INFO_NAME)
     }
-    var n: i64 = 0
+    mut n: i64 = 0
     while (n < asm_symbol_count(unit)) {
         if (carried(unit, n)) {
             held := asm_symbol_at(unit, n)
             if (held.len > 8) {
-                var k: i64 = 0
+                mut k: i64 = 0
                 while (k < held.len) {
                     blob_byte(object, unit.src[held.off + k])
                     k = k + 1

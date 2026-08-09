@@ -114,8 +114,8 @@ inside it are supplied from it.
 
 ```frost,sketch
 main :: fn() -> i64 {
-    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    var result : i64 = 0
+    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut result : i64 = 0
     with arena {
         result = forward()
     }
@@ -180,8 +180,8 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    var escaped : ^i64 = ptr_to(arena.offset)
+    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut escaped : ^i64 = ptr_to(arena.offset)
     with arena {
         escaped = alloc_int(arena)     // error: escapes its region
     }
@@ -240,10 +240,10 @@ check enforces:
 
 ```frost,sketch
 draw_frame :: fn(mut scratch: Arena, world: []Sprite) -> i64 {
-    var total : i64 = 0
+    mut total : i64 = 0
     with scratch {
         run := arena_carve($Sprite, scratch, 16)
-        var visible := fixed_over(run)
+        mut visible := fixed_over(run)
         for sprite in world { fixed_push(visible, sprite) }
         total = tally(fixed_slice(visible))
     }

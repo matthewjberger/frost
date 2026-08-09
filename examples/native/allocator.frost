@@ -30,8 +30,8 @@ alloc :: fn(a: Allocator, size: i64) -> ^u8 {
 }
 
 main :: fn() -> i64 {
-    var backing: [64]u8 = [0; 64]
-    var bump: Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0, }
+    mut backing: [64]u8 = [0; 64]
+    mut bump: Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0, }
     a: Allocator = Allocator {
         take = bump_take,
         state = unsafe { ptr_cast($u8, ptr_to(bump)) },

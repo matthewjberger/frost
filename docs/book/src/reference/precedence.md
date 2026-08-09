@@ -30,7 +30,7 @@ Specified language, matching the keyword table of `src/lexer.rs` (2.4):
 ```
 break case continue defer distinct else enum errdefer extern fn for if
 import in inline linear match move mut ref return safe struct
-type unsafe uses var where while with
+type unsafe uses where while with
 ```
 
 The primitive type names `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64

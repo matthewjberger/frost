@@ -181,12 +181,12 @@ platform_error :: fn() -> str { sdl_error() }
 // and the wheel accumulate across however many events arrived, so a frame that
 // saw three motion events sees one total rather than the last of them.
 platform_poll :: fn(mut p: Platform) -> bool {
-    var index: i64 = 0
+    mut index: i64 = 0
     while (index < KEY_COUNT) {
         p.state.keys_before[index] = p.state.keys[index]
         index = index + 1
     }
-    var button: i64 = 0
+    mut button: i64 = 0
     while (button < BUTTON_COUNT) {
         p.state.buttons_before[button] = p.state.buttons[button]
         button = button + 1
@@ -196,7 +196,7 @@ platform_poll :: fn(mut p: Platform) -> bool {
     p.state.scrolled = 0.0
     p.state.was_resized = false
 
-    var event := event_new()
+    mut event := event_new()
     while (poll_event(event)) {
         kind := event_kind(event)
         if (kind == EventKind::Quit || kind == EventKind::WindowClosed) {

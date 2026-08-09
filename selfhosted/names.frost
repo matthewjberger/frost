@@ -60,7 +60,7 @@ synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
     synth_room_for(p, cstr_len(word) + 1)
     start := p.synth_next
     length := cstr_len(word)
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         p.src[start + k] = cast($u8, byte_at(word, k))
         k = k + 1
@@ -71,8 +71,8 @@ synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
 }
 
 digits_in :: fn(number: i64) -> i64 {
-    var value := number
-    var digits: i64 = 1
+    mut value := number
+    mut digits: i64 = 1
     while (value >= 10) {
         value = value / 10
         digits = digits + 1
@@ -85,14 +85,14 @@ digits_in :: fn(number: i64) -> i64 {
 synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
     start := synth_literal(p, word)
     digits := digits_in(number)
-    var scale: i64 = 1
-    var left: i64 = 1
+    mut scale: i64 = 1
+    mut left: i64 = 1
     while (left < digits) {
         scale = scale * 10
         left = left + 1
     }
-    var value := number
-    var written: i64 = 0
+    mut value := number
+    mut written: i64 = 0
     while (written < digits) {
         digit := value / scale
         p.src[p.synth_next - 1 + written] = cast($u8, CH_0 + digit)
@@ -117,7 +117,7 @@ synth_join :: fn(
 ) -> i64 {
     synth_room_for(p, first_len + second_len + 2)
     start := p.synth_next
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < first_len) {
         p.src[start + k] = p.src[first_off + k]
         k = k + 1
@@ -138,9 +138,9 @@ synth_join :: fn(
 // names it the way the caller's `with arena` block does.
 synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     start := p.synth_next
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < len) {
-        var byte := p.src[off + k]
+        mut byte := p.src[off + k]
         if (k == 0 && byte >= CH_UPPER_A && byte <= CH_UPPER_Z) {
             byte = byte + 32
         }
@@ -161,7 +161,7 @@ bytes_equal_across :: fn(
     second_off: i64,
     length: i64
 ) -> bool {
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         if (first[first_off + k]
             != second[second_off + k]) {
@@ -173,7 +173,7 @@ bytes_equal_across :: fn(
 }
 
 bytes_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         if (src[first + k] != src[second + k]) {
             return false
@@ -192,9 +192,9 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     }
     // A renamed import is looked up under the name the module declares, and
     // only in that module.
-    var sought_off := offset
-    var sought_len := length
-    var wanted: i64 = -1
+    mut sought_off := offset
+    mut sought_len := length
+    mut wanted: i64 = -1
     held := rename_for(p, offset, length)
     if (held >= 0) {
         entry := arena_at(p.renames, held)
@@ -202,8 +202,8 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         sought_len = entry.exported_len
         wanted = entry.imported
     }
-    var i: i64 = 0
-    var found: i64 = -1
+    mut i: i64 = 0
+    mut found: i64 = -1
     while (i < p.fns.count) {
         entry := arena_at(p.fns, i)
         if (entry.len == sought_len
@@ -342,8 +342,8 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
     if (head == (-1)) {
         return extra
     }
-    var tail := head
-    var following := node_next(p, tail)
+    mut tail := head
+    mut following := node_next(p, tail)
     while (following != (-1)) {
         tail = following
         following = node_next(p, tail)
@@ -412,7 +412,7 @@ pack_element_name :: fn(
     index: i64
 ) -> (start: i64, length: i64) {
     start := p.synth_next
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < len) {
         p.src[start + k] = p.src[off + k]
         k = k + 1
@@ -420,14 +420,14 @@ pack_element_name :: fn(
     p.src[start + len] = CH_UNDERSCORE
     p.src[start + len + 1] = CH_UNDERSCORE
     digits := digits_in(index)
-    var scale: i64 = 1
-    var left: i64 = 1
+    mut scale: i64 = 1
+    mut left: i64 = 1
     while (left < digits) {
         scale = scale * 10
         left = left + 1
     }
-    var value := index
-    var written: i64 = 0
+    mut value := index
+    mut written: i64 = 0
     while (written < digits) {
         digit := value / scale
         p.src[start + len + 2 + written] = cast($u8, CH_0 + digit)
@@ -470,7 +470,7 @@ alias_for :: fn(
     off: i64,
     len: i64
 ) -> (start: i64, length: i64) {
-    var i: i64 = p.aliases.count
+    mut i: i64 = p.aliases.count
     while (i > 0) {
         i = i - 1
         held := arena_at(p.aliases, i)
@@ -556,7 +556,7 @@ check_name_is_free :: fn(mut p: Parser, off: i64, len: i64) {
     if (owner < 0) {
         return
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.exports.count) {
         entry := arena_at(p.exports, i)
         module := entry.module
@@ -580,7 +580,7 @@ check_name_is_free :: fn(mut p: Parser, off: i64, len: i64) {
 // and is the way out the diagnostic names. A rename's two names live in the
 // source buffer by the time the parser runs.
 renamed_away :: fn(mut p: Parser, importer: i64, off: i64, len: i64) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.renames.count) {
         entry := arena_at(p.renames, i)
         if (entry.importer == importer && entry.exported_len == len
@@ -611,7 +611,7 @@ name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
     if (imports_module(p, user, owner) == false) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.exports.count) {
         entry := arena_at(p.exports, i)
         if (entry.module == owner && entry.len == decl_len
@@ -633,7 +633,7 @@ name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
 // once the parser is running. They were copied out of the import line before it
 // was blanked.
 place_renames :: fn(mut p: Parser, held: str) {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.renames.count) {
         entry := arena_at(p.renames, i)
         local_len := entry.local_len
@@ -662,7 +662,7 @@ rename_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         return -1
     }
     user := module_at(p.modules, offset)
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.renames.count) {
         entry := arena_at(p.renames, i)
         if (entry.importer == user && entry.local_len == length
@@ -678,7 +678,7 @@ rename_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // no modules recorded and no edges, and everything in it belongs to the root,
 // which the caller has already answered for.
 imports_module :: fn(mut p: Parser, importer: i64, imported: i64) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.import_edges.count) {
         edge := arena_at(p.import_edges, i)
         if (edge.importer == importer && edge.imported == imported) {
@@ -692,7 +692,7 @@ imports_module :: fn(mut p: Parser, importer: i64, imported: i64) -> bool {
 // If a name is a declared constant, return its value through `out` (as the
 // return) and true, otherwise false. Consts are looked up by byte comparison.
 const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.consts.count) {
         entry := arena_at(p.consts, i)
         if (entry.name_len == length
@@ -709,7 +709,7 @@ const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // one. A struct constant is its value wherever it is named, so every use writes
 // that node out again rather than referring to storage somewhere.
 value_const_node :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.value_consts.count) {
         entry := arena_at(p.value_consts, i)
         if (entry.name_len == length
@@ -723,7 +723,7 @@ value_const_node :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.consts.count) {
         entry := arena_at(p.consts, i)
         if (entry.name_len == length
@@ -958,7 +958,7 @@ is_flags_type :: fn(mut p: Parser, ty: i64) -> bool {
     if (is_distinct(ty) == false) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.flag_bits.count) {
         entry := arena_at(p.flag_bits, i)
         if (entry.ty == ty) {
@@ -971,7 +971,7 @@ is_flags_type :: fn(mut p: Parser, ty: i64) -> bool {
 
 // The number a bit of `ty` stands for, or -1 when the type names no such bit.
 flag_bit_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.flag_bits.count) {
         entry := arena_at(p.flag_bits, i)
         if (entry.ty == ty && entry.name_len == len
@@ -1008,7 +1008,7 @@ distinct_type :: fn(repr: i64, index: i64) -> i64 {
 // is named, since the name is the whole of what is being complained about.
 report_type_name :: fn(mut p: Parser, ty: i64) {
     if (is_distinct(ty)) {
-        var a: i64 = 0
+        mut a: i64 = 0
         while (a < p.type_aliases.count) {
             entry := arena_at(p.type_aliases, a)
             if (entry.value == ty) {
@@ -1064,7 +1064,7 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
     if (is_proc(held)) {
         report("fn(")
         count := proc_param_count(p, held)
-        var k: i64 = 0
+        mut k: i64 = 0
         while (k < count) {
             if (k > 0) {
                 report(", ")
@@ -1140,8 +1140,8 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
     index := struct_index_of(struct_ty)
     def := arena_at(p.structs, index)
     synth_range(p, def.name_off, def.name_len)
-    var found: i64 = -1
-    var i: i64 = 0
+    mut found: i64 = -1
+    mut i: i64 = 0
     while (i < p.instances.count) {
         held := arena_at(p.instances, i)
         if (held.struct_index == index) {
@@ -1155,7 +1155,7 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
         made := arena_at(p.instances, found)
         synth_bytes(p, "<")
         write_argument_name(p, made.arg)
-        var k: i64 = 0
+        mut k: i64 = 0
         while (k < made.xarg_count) {
             garg := arena_at(p.gargs, made.xarg_start + k)
             synth_bytes(p, ", ")
@@ -1240,14 +1240,14 @@ synth_digits :: fn(mut p: Parser, value: i64) {
     }
     count := digits_in(value)
     synth_room_for(p, count + 1)
-    var scale: i64 = 1
-    var left: i64 = 1
+    mut scale: i64 = 1
+    mut left: i64 = 1
     while (left < count) {
         scale = scale * 10
         left = left + 1
     }
-    var held := value
-    var written: i64 = 0
+    mut held := value
+    mut written: i64 = 0
     while (written < count) {
         digit := held / scale
         p.src[p.synth_next + written] = cast($u8, CH_0 + digit)
@@ -1261,7 +1261,7 @@ synth_digits :: fn(mut p: Parser, value: i64) {
 synth_bytes :: fn(mut p: Parser, word: ^i8) {
     length := cstr_len(word)
     synth_room_for(p, length + 1)
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         p.src[p.synth_next + k] = cast($u8, byte_at(word, k))
         k = k + 1
@@ -1271,7 +1271,7 @@ synth_bytes :: fn(mut p: Parser, word: ^i8) {
 
 synth_range :: fn(mut p: Parser, off: i64, len: i64) {
     synth_room_for(p, len + 1)
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < len) {
         p.src[p.synth_next + k] = p.src[off + k]
         k = k + 1
@@ -1281,7 +1281,7 @@ synth_range :: fn(mut p: Parser, off: i64, len: i64) {
 
 write_type_name :: fn(mut p: Parser, ty: i64) {
     if (is_distinct(ty)) {
-        var a: i64 = 0
+        mut a: i64 = 0
         while (a < p.type_aliases.count) {
             entry := arena_at(p.type_aliases, a)
             if (entry.value == ty) {
@@ -1333,7 +1333,7 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (is_proc(held)) {
         synth_bytes(p, "fn(")
         count := proc_param_count(p, held)
-        var k: i64 = 0
+        mut k: i64 = 0
         while (k < count) {
             if (k > 0) {
                 synth_bytes(p, ", ")
@@ -1411,7 +1411,7 @@ is_pointer :: fn(ty: i64) -> bool {
 // arrives as, or -1 for anything that is not one. A slice is not one: its
 // length is decided where the program runs, and a vector's is in its type.
 vector_of :: fn(mut p: Parser, ty: i64) -> i64 {
-    var held := ty
+    mut held := ty
     if (is_borrow(held) || is_pointer(held)) {
         held = pointee(p, held)
     }
@@ -1463,7 +1463,7 @@ borrow_of :: fn(mut p: Parser, target: i64) -> i64 {
 // Deduplicated, so two spellings of `^Meters` share a code and comparing two
 // types stays a comparison of two numbers.
 indirect_of :: fn(mut p: Parser, target: i64, borrow: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.indirects.count) {
         entry := arena_at(p.indirects, i)
         if (entry.target == target && entry.borrow == borrow) {
@@ -1491,7 +1491,7 @@ is_proc :: fn(ty: i64) -> bool {
 // deduplicated so two spellings of the same one share a code.
 proc_of :: fn(mut p: Parser, ret: i64, param_start: i64, param_count: i64)
     -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.procs.count) {
         entry := arena_at(p.procs, i)
         if (entry.ret == ret && entry.param_count == param_count
@@ -1539,7 +1539,7 @@ proc_param_at :: fn(mut p: Parser, ty: i64, n: i64) -> i64 {
 // for gargs, so a signature's parameter run can be deduplicated.
 gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
     -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < count) {
         left := arena_at(p.proc_params, a_start + i)
         right := arena_at(p.proc_params, b_start + i)
@@ -1561,7 +1561,7 @@ gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
 // module in the room after the source, so it belongs to no module by this
 // question and its body's position is what answers instead.
 in_any_module :: fn(mut p: Parser, off: i64) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.modules.count) {
         entry := arena_at(p.modules, i)
         if (off >= entry.start && off < entry.finish) {
@@ -1645,7 +1645,7 @@ is_slice_ty :: fn(mut p: Parser, ty: i64) -> bool {
 // One code per (element, length) pair, so two spellings of the same array are
 // the same type and the backends can key their declarations on the code.
 array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.arrays.count) {
         entry := arena_at(p.arrays, i)
         if (entry.element == element && entry.length == length) {
@@ -1667,7 +1667,7 @@ struct_index_of :: fn(ty: i64) -> i64 {
 // is none. A pointer to the struct is looked through, so `mut s: Slab` (a
 // borrow) answers the same as a value.
 slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
-    var base := struct_ty
+    mut base := struct_ty
     if (is_pointer(base)) {
         base = pointee(p, base)
     }
@@ -1675,7 +1675,7 @@ slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
         return -1
     }
     def := arena_at(p.structs, struct_index_of(base))
-    var fid := def.field_head
+    mut fid := def.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (str_range_eq(p.src, field.name_off, field.name_len, name)) {
@@ -1712,7 +1712,7 @@ is_slab_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
 // without a C string.
 field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
     -> i64 {
-    var base := struct_ty
+    mut base := struct_ty
     if (is_pointer(base)) {
         base = pointee(p, base)
     }
@@ -1720,7 +1720,7 @@ field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
         return -1
     }
     def := arena_at(p.structs, struct_index_of(base))
-    var fid := def.field_head
+    mut fid := def.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.name_len == len
@@ -1756,7 +1756,7 @@ columns_fields_match :: fn(
         return false
     }
     def := arena_at(p.structs, struct_index_of(element))
-    var fid := def.field_head
+    mut fid := def.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         col := field_type_by_range(p, candidate, field.name_off, field.name_len)
@@ -1799,7 +1799,7 @@ is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 // `count`, or -1. Structural dedup so the same `columns<T,N>` written in two
 // places is one type, which is what lets a value pass between functions.
 columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
         if (entry.generic_index == COLUMNS_OF && entry.arg == element) {
@@ -1824,7 +1824,7 @@ columns_made_for :: fn(mut p: Parser, container: i64) -> i64 {
         return -1
     }
     index := struct_index_of(container)
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
         if (entry.generic_index == COLUMNS_OF
@@ -1889,7 +1889,7 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // instantiation shadows an outer one. What comes back is the bound type, or
     // for a value parameter the CONST_BASE-encoded number, which is what lets a
     // nested `Slab<T, N>` pass the value on.
-    var b: i64 = p.gbindings.count
+    mut b: i64 = p.gbindings.count
     while (b > 0) {
         b = b - 1
         binding := arena_at(p.gbindings, b)
@@ -1898,7 +1898,7 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             return binding.bound
         }
     }
-    var a: i64 = 0
+    mut a: i64 = 0
     while (a < p.type_aliases.count) {
         entry := arena_at(p.type_aliases, a)
         if (entry.name_len == length
@@ -1907,7 +1907,7 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         a = a + 1
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
         if (entry.is_generic == 0 && entry.name_len == length
@@ -1940,7 +1940,7 @@ gargs_equal :: fn(
     b_start: i64,
     count: i64
 ) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
         right := arena_at(p.gargs, b_start + i)
@@ -1965,7 +1965,7 @@ gargs_alike :: fn(
     b_start: i64,
     count: i64
 ) -> bool {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
         right := arena_at(p.gargs, b_start + i)
@@ -1987,7 +1987,7 @@ value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         && p.type_binding >= CONST_BASE && p.type_binding < PROC_BASE) {
         return p.type_binding - CONST_BASE
     }
-    var b: i64 = p.gbindings.count
+    mut b: i64 = p.gbindings.count
     while (b > 0) {
         b = b - 1
         binding := arena_at(p.gbindings, b)
@@ -2008,7 +2008,7 @@ binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         return p.type_binding
     }
-    var b: i64 = p.gbindings.count
+    mut b: i64 = p.gbindings.count
     while (b > 0) {
         b = b - 1
         binding := arena_at(p.gbindings, b)
@@ -2029,7 +2029,7 @@ fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         && p.type_binding >= FN_BASE) {
         return p.type_binding - FN_BASE
     }
-    var b: i64 = p.gbindings.count
+    mut b: i64 = p.gbindings.count
     while (b > 0) {
         b = b - 1
         binding := arena_at(p.gbindings, b)
@@ -2069,7 +2069,7 @@ is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         return true
     }
-    var b: i64 = p.gbindings.count
+    mut b: i64 = p.gbindings.count
     while (b > 0) {
         b = b - 1
         binding := arena_at(p.gbindings, b)
@@ -2078,7 +2078,7 @@ is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
             return true
         }
     }
-    var a: i64 = 0
+    mut a: i64 = 0
     while (a < p.type_aliases.count) {
         entry := arena_at(p.type_aliases, a)
         if (entry.name_len == length
@@ -2087,7 +2087,7 @@ is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
         }
         a = a + 1
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
         if (entry.name_len == length
@@ -2101,7 +2101,7 @@ is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
 
 // Find the index of a generic struct template by name, or -1.
 generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
         // A template still holding only its name has no body to instantiate

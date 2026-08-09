@@ -77,7 +77,7 @@ once and serves every size:
 
 ```frost,sketch
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
-    var i : i64 = 0
+    mut i : i64 = 0
     while (i < N) { s.generations[i] = 0  i = i + 1 }
 }
 
@@ -99,7 +99,7 @@ function pointer and no indirect call:
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
-    var result := x
+    mut result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -265,7 +265,7 @@ a compile-time list. The body is written once and compiled once per field of
 Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
 
 describe :: fn($T: Type, mut out: []Attribute) -> i64 {
-    var index : i64 = 0
+    mut index : i64 = 0
     for field in fields(T) {
         out[index] = Attribute {
             offset = offset_of(field),
@@ -328,7 +328,7 @@ says what it is:
 vec_new    :: fn($T: Type, capacity: i64) -> Vec<T>
 heap_slice :: fn($T: Type, count: i64) -> []T
 
-var v := vec_new($i64, 8)
+mut v := vec_new($i64, 8)
 run := heap_slice($f32, 16)
 ```
 
@@ -354,7 +354,7 @@ map_new :: fn($K: Type, $V: Type, $ops: Hashing<K>, capacity: i64) -> Map<K, V, 
 map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V, ops>,
               key: $K, move value: $V)
 
-var ages := map_new($Text, $i64, $text_keys, 16)
+mut ages := map_new($Text, $i64, $text_keys, 16)
 map_put(ages, text("ada"), 36)
 ```
 
@@ -406,8 +406,8 @@ Bump :: struct { room: i64 }
 Holder :: struct($T: Type, $A: Type = Heap) { value: T, where_from: A }
 
 main :: fn() -> i64 {
-    var plain := Holder<i64> { value = 7, where_from = Heap { } }
-    var named: Holder<i64, Heap> = plain
+    mut plain := Holder<i64> { value = 7, where_from = Heap { } }
+    mut named: Holder<i64, Heap> = plain
     print("{}
 ", named.value)
     0
@@ -566,7 +566,7 @@ type, written once at the constructor and settled off the value after (11.1e):
 ```frost,sketch
 Map :: linear struct($K: Type, $V: Type, $ops: Hashing<K>) { ... }
 
-var ages := map_new($Text, $i64, $text_keys, 16)
+mut ages := map_new($Text, $i64, $text_keys, 16)
 map_put(ages, text("ada"), 36)
 ```
 

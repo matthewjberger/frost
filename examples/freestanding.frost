@@ -28,7 +28,7 @@ alloc_int :: fn(mut a: Arena<64>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    var arena: Arena<64> = Arena { data = [0; 64], offset = 0 }
+    mut arena: Arena<64> = Arena { data = [0; 64], offset = 0 }
     p := alloc_int(arena)
     q := alloc_int(arena)
     // Two distinct slots, eight bytes apart, both inside an arena that outlives

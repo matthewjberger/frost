@@ -13,16 +13,16 @@ Unit :: struct { id: i64, stats: Stats }
 show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) } }
 
 main :: fn() -> i64 {
-    var p: Slab<Unit, 4> = slab_new()
+    mut p: Slab<Unit, 4> = slab_new()
     slab_reset(p)
 
-    var handles: [4]Handle<Unit> = [0; 4]
+    mut handles: [4]Handle<Unit> = [0; 4]
     for i in 0 .. 4 {
         u := Unit { id = i, stats = Stats { hp = i * 10, xp = i, slot = i } }
         handles[i] = slab_insert(p, u)
     }
 
-    var alive: i64 = 0
+    mut alive: i64 = 0
     for i in 0 .. 4 {
         if (slab_alive(p, handles[i])) { alive = alive + 1 }
     }
@@ -33,7 +33,7 @@ main :: fn() -> i64 {
     show(slab_release(p, handles[1])) // 1
     show(slab_release(p, handles[3])) // 1
 
-    var sum_hp: i64 = 0
+    mut sum_hp: i64 = 0
     for i in 0 .. 4 {
         if (slab_alive(p, handles[i])) {
             sum_hp = sum_hp + p[handles[i]].stats.hp

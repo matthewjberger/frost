@@ -98,10 +98,10 @@ WIDTH :: 80
 // run with one element is one expression, and where a line breaks inside it is
 // the author's answer rather than a width's.
 element_count :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> i64 {
-    var held: i64 = 0
-    var start := open + 1
-    var depth: i64 = 0
-    var index := open + 1
+    mut held: i64 = 0
+    mut start := open + 1
+    mut depth: i64 = 0
+    mut index := open + 1
     while (index < close) {
         depth = depth + nesting_of(kind_at(tokens, index))
         if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
@@ -133,9 +133,9 @@ holds_fields :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> bool {
     if (element_count(tokens, open, close) < 2) {
         return false
     }
-    var start := open + 1
-    var depth: i64 = 0
-    var index := open + 1
+    mut start := open + 1
+    mut depth: i64 = 0
+    mut index := open + 1
     while (index <= close) {
         if (index == close
             || (depth == 0 && kind_at(tokens, index) == TokenKind::Comma)) {
@@ -191,8 +191,8 @@ reflowable :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
 
 // Where the bracket opened at `open` closes.
 matching_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
-    var depth: i64 = 0
-    var index := open
+    mut depth: i64 = 0
+    mut index := open
     while (index < tokens.count) {
         depth = depth + nesting_of(kind_at(tokens, index))
         if (depth == 0) {
@@ -206,8 +206,8 @@ matching_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
 // Where a run of type arguments opened at `open` closes, or -1 when the run
 // holds something no type argument can be.
 type_arguments_close :: fn(mut tokens: Arena<Token>, open: i64) -> i64 {
-    var depth: i64 = 0
-    var index := open
+    mut depth: i64 = 0
+    mut index := open
     while (index < tokens.count) {
         kind := kind_at(tokens, index)
         if (kind == TokenKind::Lt) {
@@ -343,11 +343,11 @@ spaced :: fn(
 
 // The column the line holding an offset begins its text at.
 line_indent_at :: fn(src: str, off: i64) -> i64 {
-    var start := off
+    mut start := off
     while (start > 0 && src[start - 1] != CH_LF) {
         start = start - 1
     }
-    var first := start
+    mut first := start
     while (first < off && (src[first] == CH_SPACE || src[first] == CH_TAB)) {
         first = first + 1
     }
@@ -355,7 +355,7 @@ line_indent_at :: fn(src: str, off: i64) -> i64 {
 }
 
 emit_spaces :: fn(count: i64) {
-    var written: i64 = 0
+    mut written: i64 = 0
     while (written < count) {
         emit_text(" ")
         written = written + 1
@@ -364,7 +364,7 @@ emit_spaces :: fn(count: i64) {
 
 // The one rendering of a source, written to the emit stream.
 format_source :: fn(src: str, length: i64) {
-    var tokens := arena_make($Token, 262144)
+    mut tokens := arena_make($Token, 262144)
     tokenize(src, length, tokens)
     // The end marker is not a token of the program, and rendering it would put
     // an indent and a line after the last thing written.
@@ -387,13 +387,13 @@ format_source :: fn(src: str, length: i64) {
     // is a question about the output. The two agree wherever a declaration can
     // be written, and answering it with something else would be a rule holding
     // by luck.
-    var opens_line := arena_make($LocalVar, 262144)
-    var index: i64 = 0
-    var previous_end: i64 = 0
-    var braces_before: i64 = 0
+    mut opens_line := arena_make($LocalVar, 262144)
+    mut index: i64 = 0
+    mut previous_end: i64 = 0
+    mut braces_before: i64 = 0
     while (index < tokens.count) {
         token := arena_at(tokens, index)
-        var opens: i64 = 0
+        mut opens: i64 = 0
         if (index == 0
             || (breaks_in(src, previous_end, token_start(tokens, index))
                 && arena_at(joined, index).name_off == 0
@@ -421,16 +421,16 @@ format_source :: fn(src: str, length: i64) {
 
     roles := settle_roles(tokens, opens_line)
 
-    var braces: i64 = 0
-    var brackets: i64 = 0
-    var at: i64 = 0
+    mut braces: i64 = 0
+    mut brackets: i64 = 0
+    mut at: i64 = 0
     // The run of tokens waiting to be laid out, what it is indented by, and the
     // span holding the comments that sit at the end of its last line.
-    var pending_from: i64 = -1
-    var pending_to: i64 = 0
-    var pending_indent: i64 = 0
-    var trail_from: i64 = 0
-    var trail_to: i64 = 0
+    mut pending_from: i64 = -1
+    mut pending_to: i64 = 0
+    mut pending_indent: i64 = 0
+    mut trail_from: i64 = 0
+    mut trail_to: i64 = 0
     index = 0
     while (index < tokens.count) {
         token := arena_at(tokens, index)
@@ -438,7 +438,7 @@ format_source :: fn(src: str, length: i64) {
         gap_to := token_start(tokens, index)
         at = token_end(tokens, index)
 
-        var line_depth := braces
+        mut line_depth := braces
         if (nesting_of(token.kind) < 0) {
             line_depth = braces - 1
         }
@@ -446,7 +446,7 @@ format_source :: fn(src: str, length: i64) {
         joins := arena_at(joined, index).name_off == 1
         // A comment in front of the first break in the gap sits at the end of
         // the line above rather than on one of its own.
-        var rest_from := gap_from
+        mut rest_from := gap_from
         if (pending_from >= 0) {
             rest_from = first_break_at(src, gap_from, gap_to)
             if (rest_from > gap_from) {
@@ -457,7 +457,7 @@ format_source :: fn(src: str, length: i64) {
             }
         }
         wrote_break := breaks_in(src, rest_from, gap_to)
-        var starts_line: bool = index == 0
+        mut starts_line: bool = index == 0
         if (wrote_break && joins == false
             && (arena_at(decided, index).name_off == 0 || pending_from < 0)) {
             starts_line = true
@@ -480,16 +480,16 @@ format_source :: fn(src: str, length: i64) {
                 trail_to = 0
             }
             write_between(src, rest_from, gap_to, line_depth)
-            var open_braces := braces
+            mut open_braces := braces
             if (token.kind == TokenKind::Rbrace) {
                 open_braces = braces - 1
             }
-            var open_brackets := brackets
+            mut open_brackets := brackets
             if (token.kind == TokenKind::Rparen
                 || token.kind == TokenKind::Rbracket) {
                 open_brackets = brackets - 1
             }
-            var running_on: i64 = 0
+            mut running_on: i64 = 0
             if (open_brackets > 0) {
                 running_on = open_brackets
             } else if (open_braces == 0) {
@@ -513,7 +513,7 @@ format_source :: fn(src: str, length: i64) {
             } else if (continues_a_line(token.kind)) {
                 running_on = 1
             }
-            var wanted := open_braces
+            mut wanted := open_braces
             if (wanted < 0) {
                 wanted = 0
             }
@@ -558,8 +558,8 @@ format_source :: fn(src: str, length: i64) {
 // A bracket holding a comment keeps every break it was written with. A comment
 // says which line it belongs to and a width does not know.
 decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
-    var held := arena_make($LocalVar, 262144)
-    var index: i64 = 0
+    mut held := arena_make($LocalVar, 262144)
+    mut index: i64 = 0
     while (index < tokens.count) {
         arena_push(
             held,
@@ -567,11 +567,11 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
         )
         index = index + 1
     }
-    var opens := arena_make($LocalVar, 4096)
+    mut opens := arena_make($LocalVar, 4096)
     index = 0
     while (index < tokens.count) {
         kind := kind_at(tokens, index)
-        var inside: i64 = -1
+        mut inside: i64 = -1
         if (opens.count > 0) {
             inside = arena_at(opens, opens.count - 1).name_off
         }
@@ -581,13 +581,13 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
         if (kind == TokenKind::Lparen || kind == TokenKind::Lbrace
             || kind == TokenKind::Lbracket) {
             opens_a_run := reflowable(tokens, index) >= 0
-            var opened: i64 = -1
+            mut opened: i64 = -1
             // Inside a run already, so the whole thing travels together, and a
             // block among it is what stops that.
             if (inside >= 0 || opens_a_run) {
                 opened = index
             }
-            var blocked: i64 = 0
+            mut blocked: i64 = 0
             if (inside >= 0 && opens_a_run == false) {
                 blocked = 1
             }
@@ -602,15 +602,15 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
             )
         } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbrace
             || kind == TokenKind::Rbracket) {
-            var closed: i64 = -1
-            var was_blocked: i64 = 0
+            mut closed: i64 = -1
+            mut was_blocked: i64 = 0
             if (opens.count > 0) {
                 entry := arena_at(opens, opens.count - 1)
                 closed = entry.name_off
                 was_blocked = entry.name_len
                 opens.count = opens.count - 1
             }
-            var outer: i64 = -1
+            mut outer: i64 = -1
             if (opens.count > 0) {
                 outer = arena_at(opens, opens.count - 1).name_off
             }
@@ -620,7 +620,7 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
             // written over several lines had its closing brace on a line of its
             // own, and the run it closed was never a whole group for anything to
             // lay out.
-            var decided: i64 = 0
+            mut decided: i64 = 0
             if (closed >= 0 || outer >= 0) {
                 decided = 1
             }
@@ -629,8 +629,8 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
                 // A comment anywhere inside puts every break back, and so does
                 // a block: joining the statements of one onto a line is what a
                 // layout may not do.
-                var commented: bool = false
-                var at := closed + 1
+                mut commented: bool = false
+                mut at := closed + 1
                 while (at <= index) {
                     if (comment_in(src, token_end(tokens, at - 1), token_start(tokens, at))) {
                         commented = true
@@ -663,10 +663,10 @@ decided_here :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
 // across whitespace. The space in front of one is what puts it there rather than
 // any rule about the pair, so it is carried into the layout beside the tokens.
 joined_tokens :: fn(src: str, mut tokens: Arena<Token>) -> Arena<LocalVar> {
-    var held := arena_make($LocalVar, 262144)
-    var index: i64 = 0
+    mut held := arena_make($LocalVar, 262144)
+    mut index: i64 = 0
     while (index < tokens.count) {
-        var joins: i64 = 0
+        mut joins: i64 = 0
         if (index > 0
             && comment_in(
                 src,
@@ -707,11 +707,11 @@ flat_width :: fn(
     from: i64,
     to: i64
 ) -> i64 {
-    var held: i64 = 0
-    var index := from
+    mut held: i64 = 0
+    mut index := from
     while (index < to) {
         if (index > from) {
-            var before := TokenKind::Eof
+            mut before := TokenKind::Eof
             if (index - 1 > from && index >= 2) {
                 before = kind_at(tokens, index - 2)
             }
@@ -741,10 +741,10 @@ emit_flat :: fn(
     from: i64,
     to: i64
 ) {
-    var index := from
+    mut index := from
     while (index < to) {
         if (index > from) {
-            var before := TokenKind::Eof
+            mut before := TokenKind::Eof
             if (index - 1 > from && index >= 2) {
                 before = kind_at(tokens, index - 2)
             }
@@ -767,8 +767,8 @@ emit_flat :: fn(
 
 // The first bracket at the top level of a run that a layout may break, or -1.
 breakable_open :: fn(mut tokens: Arena<Token>, from: i64, to: i64) -> i64 {
-    var depth: i64 = 0
-    var index := from
+    mut depth: i64 = 0
+    mut index := from
     while (index < to) {
         if (depth == 0) {
             close := reflowable(tokens, index)
@@ -819,9 +819,9 @@ write_run :: fn(
     emit_text("\n")
     // Each element carries the comma that ends it, so a run written over several
     // lines has exactly the commas the source had, a trailing one included.
-    var start := open + 1
-    var depth: i64 = 0
-    var index := open + 1
+    mut start := open + 1
+    mut depth: i64 = 0
+    mut index := open + 1
     while (index < close) {
         depth = depth + nesting_of(kind_at(tokens, index))
         if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
@@ -844,7 +844,7 @@ write_run :: fn(
 
 // Where the first line break in a span is, or the end of it when there is none.
 first_break_at :: fn(src: str, from: i64, to: i64) -> i64 {
-    var index := from
+    mut index := from
     while (index < to) {
         if (src[index] == CH_LF) {
             return index
@@ -879,7 +879,7 @@ comment_opens :: fn(src: str, pos: i64, to: i64) -> bool {
 // wrote the file back without it.
 comment_ends :: fn(src: str, pos: i64, to: i64) -> i64 {
     if (pos + 1 < to && src[pos + 1] == CH_STAR) {
-        var end := pos + 2
+        mut end := pos + 2
         while (end + 1 < to) {
             if (src[end] == CH_STAR && src[end + 1] == CH_SLASH) {
                 return end + 2
@@ -888,7 +888,7 @@ comment_ends :: fn(src: str, pos: i64, to: i64) -> i64 {
         }
         return to
     }
-    var end := pos
+    mut end := pos
     while (end < to && src[end] != CH_LF) {
         end = end + 1
     }
@@ -897,7 +897,7 @@ comment_ends :: fn(src: str, pos: i64, to: i64) -> i64 {
 
 // The comments in a span, each put at the end of the line already written.
 emit_trailing_span :: fn(src: str, from: i64, to: i64) {
-    var index := from
+    mut index := from
     while (index + 1 < to) {
         if (comment_opens(src, index, to)) {
             stop := comment_ends(src, index, to)
@@ -912,8 +912,8 @@ emit_trailing_span :: fn(src: str, from: i64, to: i64) {
 
 // The blank lines and the whole-line comments between two runs.
 write_between :: fn(src: str, from: i64, to: i64, line_depth: i64) {
-    var breaks: i64 = 0
-    var index := from
+    mut breaks: i64 = 0
+    mut index := from
     while (index < to) {
         if (src[index] == CH_LF) {
             // One blank line between two lines, never more. Nothing in the
@@ -958,8 +958,8 @@ role_at :: fn(mut roles: Arena<LocalVar>, index: i64) -> i64 {
 // The job each token is doing.
 settle_roles :: fn(mut tokens: Arena<Token>, mut opens: Arena<LocalVar>)
     -> Arena<LocalVar> {
-    var roles := arena_make($LocalVar, 262144)
-    var index: i64 = 0
+    mut roles := arena_make($LocalVar, 262144)
+    mut index: i64 = 0
     while (index < tokens.count) {
         arena_push(
             roles,
@@ -1007,7 +1007,7 @@ set_role :: fn(mut roles: Arena<LocalVar>, index: i64, role: i64) {
 
 // Whether a line break sits between two offsets.
 breaks_in :: fn(src: str, from: i64, to: i64) -> bool {
-    var index := from
+    mut index := from
     while (index < to) {
         if (src[index] == CH_LF) {
             return true
@@ -1019,7 +1019,7 @@ breaks_in :: fn(src: str, from: i64, to: i64) -> bool {
 
 // Whether a comment sits between two offsets.
 comment_in :: fn(src: str, from: i64, to: i64) -> bool {
-    var index := from
+    mut index := from
     while (index + 1 < to) {
         if (comment_opens(src, index, to)) {
             return true
@@ -1072,10 +1072,10 @@ write_gap :: fn(
     index: i64,
     at_line_start: bool
 ) -> GapOutcome {
-    var outcome := GapOutcome { at_line_start = at_line_start }
-    var breaks: i64 = 0
-    var starting := at_line_start
-    var pos := from
+    mut outcome := GapOutcome { at_line_start = at_line_start }
+    mut breaks: i64 = 0
+    mut starting := at_line_start
+    mut pos := from
     while (pos < to) {
         if (src[pos] == CH_LF) {
             if (joins == false) {
@@ -1088,7 +1088,7 @@ write_gap :: fn(
             pos = pos + 1
         } else if (comment_opens(src, pos, to)) {
             end := comment_ends(src, pos, to)
-            var stop := end
+            mut stop := end
             while (stop > pos
                 && (src[stop - 1] == CH_SPACE || src[stop - 1] == CH_TAB
                     || src[stop - 1] == CH_CR)) {
@@ -1116,9 +1116,9 @@ write_gap :: fn(
 // after that comment are not written and the file ends with one newline.
 emit_trailing_comments :: fn(src: str, from: i64, to: i64, braces: i64) {
     stop := last_comment_end(src, from, to)
-    var breaks: i64 = 0
-    var starting: bool = true
-    var pos := from
+    mut breaks: i64 = 0
+    mut starting: bool = true
+    mut pos := from
     while (pos < stop) {
         if (src[pos] == CH_LF) {
             if (breaks < 2) {
@@ -1130,7 +1130,7 @@ emit_trailing_comments :: fn(src: str, from: i64, to: i64, braces: i64) {
             pos = pos + 1
         } else if (comment_opens(src, pos, stop)) {
             end := comment_ends(src, pos, stop)
-            var trimmed := end
+            mut trimmed := end
             while (trimmed > pos
                 && (src[trimmed - 1] == CH_SPACE || src[trimmed - 1] == CH_TAB
                     || src[trimmed - 1] == CH_CR)) {
@@ -1156,8 +1156,8 @@ emit_trailing_comments :: fn(src: str, from: i64, to: i64, braces: i64) {
 // Where the last comment in a region ends, or the start of the region when it
 // holds none.
 last_comment_end :: fn(src: str, from: i64, to: i64) -> i64 {
-    var found := from
-    var pos := from
+    mut found := from
+    mut pos := from
     while (pos + 1 < to) {
         if (comment_opens(src, pos, to)) {
             end := comment_ends(src, pos, to)
@@ -1172,7 +1172,7 @@ last_comment_end :: fn(src: str, from: i64, to: i64) -> i64 {
 
 // A run of source bytes, written as it stands.
 emit_src :: fn(src: str, offset: i64, length: i64) {
-    var index: i64 = 0
+    mut index: i64 = 0
     while (index < length) {
         emit_char_of(src, offset + index)
         index = index + 1

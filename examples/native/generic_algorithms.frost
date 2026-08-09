@@ -27,8 +27,8 @@ main :: fn() -> i64 {
         clamp(-5, 0, 10)
     )
 
-    var a: i64 = 100
-    var b: i64 = 200
+    mut a: i64 = 100
+    mut b: i64 = 200
     swap(a, b)
     print("{}\n", a)
 

@@ -259,7 +259,7 @@ frost_rt_byte_set :: extern fn(buffer: ^i8, index: i64, value: i64) {
 // How many bytes a C string holds, counted to its terminator. The terminator is
 // the caller's promise, and it is the whole of what bounds this read.
 frost_rt_str_len :: extern fn(text: ^i8) -> i64 {
-    var length: i64 = 0
+    mut length: i64 = 0
     while (unsafe { text[length] } != 0) {
         length = length + 1
     }

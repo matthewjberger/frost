@@ -87,10 +87,10 @@ room_for :: fn(mut line: Line, want: i64) -> i64 {
 }
 
 put_bytes :: fn(mut line: Line, text: str) {
-    var at: i64 = 0
+    mut at: i64 = 0
     while (at < str_len(text)) {
         room := room_for(line, str_len(text) - at)
-        var k: i64 = 0
+        mut k: i64 = 0
         while (k < room) {
             line.bytes[line.used + k] = text[at + k]
             k = k + 1
@@ -107,16 +107,16 @@ put_bytes :: fn(mut line: Line, text: str) {
 // Each digit is taken off the negative side, so the most negative i64 needs no
 // negation of its own and there is no value this cannot write.
 put_int :: fn(mut line: Line, value: i64) {
-    var digits: [20]u8 = [0; 20]
-    var count: i64 = 0
-    var rest := value
+    mut digits: [20]u8 = [0; 20]
+    mut count: i64 = 0
+    mut rest := value
     negative := value < 0
     if (rest == 0) {
         digits[0] = 48
         count = 1
     }
     while (rest != 0) {
-        var digit := rest % 10
+        mut digit := rest % 10
         if (negative) {
             digit = 0 - digit
         }
@@ -127,7 +127,7 @@ put_int :: fn(mut line: Line, value: i64) {
     if (negative) {
         put_bytes(line, "-")
     }
-    var k := count
+    mut k := count
     while (k > 0) {
         k = k - 1
         room_for(line, 1)
@@ -167,8 +167,8 @@ span :: fn(text: str, from: i64, count: i64) -> str {
 // itself. That is why nothing here reports a fault: a lone `}` is a `}`.
 run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
     length := str_len(fmt)
-    var start := at
-    var index := at
+    mut start := at
+    mut index := at
     while (index < length) {
         byte := fmt[index]
         if (byte == 123 || byte == 125) {
@@ -200,8 +200,8 @@ run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
 // The order the arms are asked in is what routes a `bool`, which answers no to
 // every predicate and lands in the last two arms.
 write :: fn(out: fn(str), format fmt: str, args: $...) {
-    var line := Line { bytes = [0; LINE], used = 0, out = out }
-    var at: i64 = 0
+    mut line := Line { bytes = [0; LINE], used = 0, out = out }
+    mut at: i64 = 0
     for value in args {
         at = run_from(line, fmt, at)
         if (is_float(value)) {

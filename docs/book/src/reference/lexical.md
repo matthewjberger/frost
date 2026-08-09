@@ -67,7 +67,7 @@ in full:
 ```
 break case continue defer distinct else enum errdefer extern fn for if
 import in inline linear match move mut ref return safe struct
-type unsafe uses var where while with
+type unsafe uses where while with
 ```
 
 The primitive type names are predeclared identifiers:

@@ -39,10 +39,10 @@ the live prefix, so a vector with room for sixty-four holding two elements gives
 a slice of length two. Writing through it writes into the vector:
 
 ```frost,sketch
-var v := vec_new($VecPoint, 2)
+mut v := vec_new($VecPoint, 2)
 vec_push(v, VecPoint { x = 1, y = 2 })
 vec_push(v, VecPoint { x = 3, y = 4 })
-var held := vec_slice(v)
+mut held := vec_slice(v)
 held[1].x = 30
 assert(vec_get(v, 1).x == 30)
 vec_free(v)
@@ -158,7 +158,7 @@ cell_hash :: fn(c: Cell) -> i64 {
 cell_same :: fn(a: Cell, b: Cell) -> bool { a.x == b.x && a.y == b.y }
 cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
 
-var grid := map_new($Cell, $i64, $cell_keys, 8)
+mut grid := map_new($Cell, $i64, $cell_keys, 8)
 map_put(grid, Cell { x = 1, y = 2 }, 12)
 ```
 
@@ -177,7 +177,7 @@ struct:
 ```frost,sketch
 Text :: struct { bytes: str }
 
-var ages := map_new($Text, $i64, $text_keys, 8)
+mut ages := map_new($Text, $i64, $text_keys, 8)
 map_put(ages, text("ada"), 36)
 held := map_get(ages, text("ada"), 0)
 ```
@@ -240,7 +240,7 @@ section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md).
 
 ```frost,sketch
-var world : Slab<Entity, 8> = slab_new()
+mut world : Slab<Entity, 8> = slab_new()
 slab_reset(world)
 
 h := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -285,7 +285,7 @@ else.
 ```frost,sketch
 Particle :: struct { x: i64, y: i64 }
 
-var world : columns<Particle, 8> = columns_new()
+mut world : columns<Particle, 8> = columns_new()
 columns_reset(world)
 
 a := columns_insert(world, Particle { x = 10, y = 1 })

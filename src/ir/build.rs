@@ -10006,7 +10006,7 @@ impl<'a> FunctionLowering<'a> {
         let wanted = if slab { "Slab<T, N>" } else { "columns<T, N>" };
         let Some(Type::Struct(name)) = expected else {
             bail!(
-                "{called}() needs its type from the context, e.g. `var c : {wanted} = {called}()`"
+                "{called}() needs its type from the context, e.g. `mut c : {wanted} = {called}()`"
             );
         };
         // A columns container is known by its name, since the compiler is what

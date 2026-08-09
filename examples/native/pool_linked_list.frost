@@ -22,8 +22,8 @@ push_front :: fn(mut p: Slab<Node, 16>, head: i64, value: i64) -> i64 {
 }
 
 sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
-    var total: i64 = 0
-    var current: i64 = head
+    mut total: i64 = 0
+    mut current: i64 = head
     while (current >= 0) {
         link: Handle<Node> = current
         total = total + p[link].value
@@ -33,10 +33,10 @@ sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var p: Slab<Node, 16> = slab_new()
+    mut p: Slab<Node, 16> = slab_new()
     slab_reset(p)
 
-    var head: i64 = -1
+    mut head: i64 = -1
     head = push_front(p, head, 10)
     head = push_front(p, head, 20)
     head = push_front(p, head, 30)

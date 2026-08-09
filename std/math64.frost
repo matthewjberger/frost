@@ -65,7 +65,7 @@ vec2d_dot :: inline fn(a: Vec2d, b: Vec2d) -> f64 { a.x * b.x + a.y * b.y }
 vec2d_length :: fn(a: Vec2d) -> f64 { sqrt(vec2d_dot(a, a)) }
 vec2d_normalize :: fn(a: Vec2d) -> Vec2d {
     length := vec2d_length(a)
-    var inv: f64 = 0.0
+    mut inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec2d_scale(a, inv)
 }
@@ -109,7 +109,7 @@ vec3d_distance :: fn(
 ) -> f64 { vec3d_length(vec3d_sub(a, b)) }
 vec3d_normalize :: fn(a: Vec3d) -> Vec3d {
     length := vec3d_length(a)
-    var inv: f64 = 0.0
+    mut inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     vec3d_scale(a, inv)
 }
@@ -150,13 +150,13 @@ mat4d_identity :: fn() -> Mat4d {
 // `a` applied after `b`: the product that transforms a column vector by `b`
 // then by `a`.
 mat4d_mul :: fn(a: Mat4d, b: Mat4d) -> Mat4d {
-    var out := mat4d_zero()
-    var col: i64 = 0
+    mut out := mat4d_zero()
+    mut col: i64 = 0
     while (col < 4) {
-        var row: i64 = 0
+        mut row: i64 = 0
         while (row < 4) {
-            var sum: f64 = 0.0
-            var k: i64 = 0
+            mut sum: f64 = 0.0
+            mut k: i64 = 0
             while (k < 4) {
                 sum = sum + a.m[k * 4 + row] * b.m[col * 4 + k]
                 k = k + 1
@@ -190,14 +190,14 @@ mat4d_transform_dir :: fn(a: Mat4d, v: Vec3d) -> Vec3d {
 }
 
 mat4d_translation :: fn(v: Vec3d) -> Mat4d {
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[12] = v.x
     out.m[13] = v.y
     out.m[14] = v.z
     out
 }
 mat4d_scale :: fn(v: Vec3d) -> Mat4d {
-    var out := mat4d_zero()
+    mut out := mat4d_zero()
     out.m[0] = v.x
     out.m[5] = v.y
     out.m[10] = v.z
@@ -207,7 +207,7 @@ mat4d_scale :: fn(v: Vec3d) -> Mat4d {
 mat4d_rotation_x :: fn(angle: f64) -> Mat4d {
     c := cos(angle)
     s := sin(angle)
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[5] = c
     out.m[6] = s
     out.m[9] = -s
@@ -217,7 +217,7 @@ mat4d_rotation_x :: fn(angle: f64) -> Mat4d {
 mat4d_rotation_y :: fn(angle: f64) -> Mat4d {
     c := cos(angle)
     s := sin(angle)
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[0] = c
     out.m[2] = -s
     out.m[8] = s
@@ -227,7 +227,7 @@ mat4d_rotation_y :: fn(angle: f64) -> Mat4d {
 mat4d_rotation_z :: fn(angle: f64) -> Mat4d {
     c := cos(angle)
     s := sin(angle)
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[0] = c
     out.m[1] = s
     out.m[4] = -s
@@ -239,7 +239,7 @@ mat4d_rotation_z :: fn(angle: f64) -> Mat4d {
 // OpenGL clip convention.
 mat4d_perspective :: fn(fovy: f64, aspect: f64, near: f64, far: f64) -> Mat4d {
     f := 1.0 / tan(fovy * 0.5)
-    var out := mat4d_zero()
+    mut out := mat4d_zero()
     out.m[0] = f / aspect
     out.m[5] = f
     out.m[10] = (far + near) / (near - far)
@@ -259,7 +259,7 @@ mat4d_perspective_zo :: fn(
     far: f64
 ) -> Mat4d {
     f := 1.0 / tan(fovy * 0.5)
-    var out := mat4d_zero()
+    mut out := mat4d_zero()
     out.m[0] = f / aspect
     out.m[5] = f
     out.m[10] = far / (near - far)
@@ -276,7 +276,7 @@ mat4d_ortho :: fn(
     near: f64,
     far: f64
 ) -> Mat4d {
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -2.0 / (far - near)
@@ -298,7 +298,7 @@ mat4d_ortho_zo :: fn(
     near: f64,
     far: f64
 ) -> Mat4d {
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -1.0 / (far - near)
@@ -313,7 +313,7 @@ mat4d_look_at :: fn(eye: Vec3d, center: Vec3d, up: Vec3d) -> Mat4d {
     forward := vec3d_normalize(vec3d_sub(center, eye))
     side := vec3d_normalize(vec3d_cross(forward, up))
     upward := vec3d_cross(side, forward)
-    var out := mat4d_identity()
+    mut out := mat4d_identity()
     out.m[0] = side.x
     out.m[4] = side.y
     out.m[8] = side.z
@@ -355,7 +355,7 @@ quatd_length :: fn(a: Quatd) -> f64 {
 }
 quatd_normalize :: fn(a: Quatd) -> Quatd {
     length := quatd_length(a)
-    var inv: f64 = 0.0
+    mut inv: f64 = 0.0
     if (length != 0.0) { inv = 1.0 / length }
     Quatd { x = a.x * inv, y = a.y * inv, z = a.z * inv, w = a.w * inv }
 }

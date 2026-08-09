@@ -21,7 +21,7 @@ Slab :: struct {
 }
 
 reset :: fn(mut s: Slab) {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < 4) {
         s.generations[i] = 0
         s.free_list[i] = 3 - i
@@ -39,7 +39,7 @@ insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {
 }
 
 main :: fn() -> i64 {
-    var world: Slab = slab_new()
+    mut world: Slab = slab_new()
     reset(world)
 
     hero := insert(world, Entity { hp = 100, mana = 30 })

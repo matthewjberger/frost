@@ -67,7 +67,7 @@ Its arguments are read where it runs, so a variable reassigned after the
 `defer` changes what the deferred statement is given:
 
 ```frost,sketch
-var f : i64 = 1
+mut f : i64 = 1
 defer close(f)
 f = 2               // closes 2
 ```

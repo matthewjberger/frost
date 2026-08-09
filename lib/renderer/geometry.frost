@@ -98,7 +98,7 @@ geometry_new :: fn(
     vertex_room: i64,
     index_room: i64
 ) -> Geometry {
-    var vertex_descriptor := buffer_descriptor_init()
+    mut vertex_descriptor := buffer_descriptor_init()
     // Copied from as well as into: growing one is a copy on the device from the
     // old buffer to the new, and a buffer that cannot be read from would have to
     // make the trip through the CPU instead.
@@ -106,7 +106,7 @@ geometry_new :: fn(
         | BufferUsage::CopySrc)
     vertex_descriptor.size = vertex_room * VERTEX_STRIDE
 
-    var index_descriptor := buffer_descriptor_init()
+    mut index_descriptor := buffer_descriptor_init()
     index_descriptor.usage = (BufferUsage::Index | BufferUsage::CopyDst
         | BufferUsage::CopySrc)
     index_descriptor.size = index_room * INDEX_BYTES
@@ -166,8 +166,8 @@ geometry_add :: fn(
     }
     // Measured here rather than asked of the caller, since the vertices are in
     // hand and nothing else knows the shape.
-    var radius: f32 = 0.0
-    var at: i64 = 0
+    mut radius: f32 = 0.0
+    mut at: i64 = 0
     while (at < added) {
         reach := vec3_length(vertices[at].position)
         if (reach > radius) {
@@ -291,7 +291,7 @@ replace_vertices :: fn(
     queue: Queue,
     room: i64
 ) {
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = (BufferUsage::Vertex | BufferUsage::CopyDst
         | BufferUsage::CopySrc)
     descriptor.size = room * VERTEX_STRIDE
@@ -314,7 +314,7 @@ replace_indices :: fn(
     queue: Queue,
     room: i64
 ) {
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = (BufferUsage::Index | BufferUsage::CopyDst
         | BufferUsage::CopySrc)
     descriptor.size = room * INDEX_BYTES
@@ -364,7 +364,7 @@ carry_over :: fn(
         0,
         cast($u64, bytes)
     )
-    var command := command_encoder_finish(encoder, no_pointer())
+    mut command := command_encoder_finish(encoder, no_pointer())
     queue_submit(queue, 1, ptr_to(command))
     command_buffer_release(command)
     command_encoder_release(encoder)

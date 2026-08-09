@@ -107,7 +107,7 @@ encoder_pass_into :: fn(
     clear: Color,
     depth_load: u32
 ) -> RenderPassEncoder {
-    var attachment := render_pass_color_attachment_init()
+    mut attachment := render_pass_color_attachment_init()
     attachment.view = into.color
     attachment.load_op = load
     attachment.store_op = STORE_OP_STORE
@@ -115,13 +115,13 @@ encoder_pass_into :: fn(
 
     // Nearer is greater, so the buffer starts at the far plane, which is zero,
     // and every fragment that passes is closer than what was already there.
-    var depth := render_pass_depth_stencil_attachment_init()
+    mut depth := render_pass_depth_stencil_attachment_init()
     depth.view = into.depth
     depth.depth_load_op = depth_load
     depth.depth_store_op = STORE_OP_STORE
     depth.depth_clear_value = 0.0
 
-    var descriptor := render_pass_descriptor_init()
+    mut descriptor := render_pass_descriptor_init()
     descriptor.color_attachments_count = 0
     if (into.has_color) {
         descriptor.color_attachments_count = 1

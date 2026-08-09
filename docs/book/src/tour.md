@@ -18,7 +18,7 @@ frost program.frost --link -o program && ./program
 ## Declarations, values, and functions
 
 `::` declares a constant (including a function). `:=` binds an inferred local,
-`:` gives an explicit type, and `var` makes a binding assignable. There are no
+`:` gives an explicit type, and `mut` makes a binding assignable. There are no
 methods. Behavior lives in free functions.
 
 ```frost
@@ -28,7 +28,7 @@ square :: fn(x: i64) -> i64 { x * x }
 
 main :: fn() -> i64 {
     n := 6                 // inferred i64
-    var total : i64 = 0    // explicit, mutable
+    mut total : i64 = 0    // explicit, mutable
     for i in 0..n {
         total = total + square(i)
     }
@@ -58,7 +58,7 @@ are all value (copy) types. Control flow is `if`/`else` (an expression),
 A `for` walks a range, and it walks a sequence the same way:
 
 ```frost,sketch
-var total : i64 = 0
+mut total : i64 = 0
 for value in numbers {          // a slice, an array, or a `str`
     total = total + value
 }
@@ -170,7 +170,7 @@ scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
 }
 
 main :: fn() -> i64 {
-    var p := Point { x = 3, y = 4 }
+    mut p := Point { x = 3, y = 4 }
     scale(p, 2)                       // no sigil at the call
     print("{}\n", p.x)               // 6
     0
@@ -195,7 +195,7 @@ at :: fn(points: []Point, index: i64) -> ref Point {
 }
 
 main :: fn() -> i64 {
-    var storage : [3]Point = [Point { x = 0, y = 0 }; 3]
+    mut storage : [3]Point = [Point { x = 0, y = 0 }; 3]
     held := at(storage, 1)
     held.x = 9
     print("{}\n", storage[1].x)  // 9, written through the borrow
@@ -255,8 +255,8 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse {
 }
 
 number :: fn(text: str) -> i64 ! Parse {
-    var total : i64 = 0
-    var index : i64 = 0
+    mut total : i64 = 0
+    mut index : i64 = 0
     while (index < str_len(text)) {
         total = total * 10 + digit(text, index)?
         index = index + 1
@@ -309,7 +309,7 @@ import "io.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -346,7 +346,7 @@ import "io.frost"
 Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    var world : columns<Particle, 8> = columns_new()
+    mut world : columns<Particle, 8> = columns_new()
     columns_reset(world)
     h := columns_insert(world, Particle { x = 10, y = 1 })
 
@@ -378,8 +378,8 @@ main :: fn() -> i64 {
     p := make_pair(3, 4)               // Pair<i64> inferred
     print("{}\n", p.first + p.second) // 7
 
-    var x : i64 = 1
-    var y : i64 = 2
+    mut x : i64 = 1
+    mut y : i64 = 2
     swap(x, y)
     print("{}\n", x)                  // 2
     0
@@ -427,7 +427,7 @@ import "io.frost"
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
-    var result := x
+    mut result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -660,7 +660,7 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     player := slab_insert(world,

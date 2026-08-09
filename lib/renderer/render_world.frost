@@ -248,18 +248,18 @@ render_world_batch_pipelines :: fn(
     device: Device,
     layout: BindGroupLayout
 ) -> BatchPipelines {
-    var wgsl := shader_source_WGSL_init()
+    mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView {
         data = BATCH_SHADER,
         length = str_len(BATCH_SHADER)
     }
-    var module_descriptor := shader_module_descriptor_init()
+    mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var groups: [1]BindGroupLayout = [layout]
-    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    mut groups: [1]BindGroupLayout = [layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(groups[0])
     made := device_create_pipeline_layout(
@@ -338,7 +338,7 @@ step_pipeline :: fn(
     layout: PipelineLayout,
     entry_point: StringView
 ) -> ComputePipeline {
-    var descriptor := compute_pipeline_descriptor_init()
+    mut descriptor := compute_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.compute.module = shader
     descriptor.compute.entry_point = entry_point
@@ -377,7 +377,7 @@ step :: fn(
     pipeline: ComputePipeline,
     groups: u32
 ) {
-    var descriptor := compute_pass_descriptor_init()
+    mut descriptor := compute_pass_descriptor_init()
     pass := command_encoder_begin_compute_pass(encoder, ptr_to(descriptor))
     compute_pass_encoder_set_pipeline(pass, pipeline)
     compute_pass_encoder_set_bind_group(
@@ -401,7 +401,7 @@ render_world_new :: fn(
     // A class cannot hold more batches than there are objects, and cannot hold
     // more than one per combination of mesh and material. Whichever is smaller
     // is room enough, and one of the two is always small.
-    var per_class := meshes * materials
+    mut per_class := meshes * materials
     if (room < per_class) {
         per_class = room
     }
@@ -432,7 +432,7 @@ render_world_new :: fn(
     params_buffer := small_uniform(device, PARAMS_BYTES)
     // Both indirect and storage: the compute passes write it and the draws read
     // their arguments from it.
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = (BufferUsage::Indirect | BufferUsage::Storage
         | BufferUsage::CopyDst)
     descriptor.size = total_slots * INDIRECT_BYTES
@@ -541,13 +541,13 @@ render_world_push :: fn(
         print("render: more things to draw than the world was made room for\n")
         return
     }
-    var places := held.transforms
+    mut places := held.transforms
     places[held.count] = matrix
-    var overlay: u32 = 0
+    mut overlay: u32 = 0
     if (layer == OVERLAY_LAYER) {
         overlay = 1
     }
-    var items := held.objects
+    mut items := held.objects
     items[held.count] = ObjectData {
         transform_index = cast($u32, held.count),
         mesh_id = cast($u32, mesh),
@@ -575,8 +575,8 @@ render_world_upload :: fn(
     cache: MeshCache
 ) {
     planes := mat4_frustum_planes(view_projection)
-    var given: [32]f32 = [0.0; 32]
-    var plane: i64 = 0
+    mut given: [32]f32 = [0.0; 32]
+    mut plane: i64 = 0
     while (plane < CULL_PLANES) {
         given[plane * 4] = planes[plane].x
         given[plane * 4 + 1] = planes[plane].y
@@ -584,7 +584,7 @@ render_world_upload :: fn(
         given[plane * 4 + 3] = planes[plane].w
         plane = plane + 1
     }
-    var counts: [8]u32 = [
+    mut counts: [8]u32 = [
         cast($u32, held.count),
         cast($u32, held.mesh_room),
         cast($u32, held.material_room),
@@ -614,7 +614,7 @@ render_world_upload :: fn(
     if (held.count == 0) {
         return
     }
-    var items := held.objects
+    mut items := held.objects
     queue_write_buffer(
         queue,
         held.object_buffer,
@@ -622,7 +622,7 @@ render_world_upload :: fn(
         ptr_to(items[0]),
         held.count * OBJECT_BYTES
     )
-    var places := held.transforms
+    mut places := held.transforms
     queue_write_buffer(
         queue,
         held.transform_buffer,
@@ -644,9 +644,9 @@ upload_meshes :: fn(mut held: RenderWorld, queue: Queue, cache: MeshCache) {
     if (written == 0) {
         return
     }
-    var table := heap_slice($u32, written * MESH_GEO_WORDS)
-    var reals := float_view(table)
-    var index: i64 = 0
+    mut table := heap_slice($u32, written * MESH_GEO_WORDS)
+    mut reals := float_view(table)
+    mut index: i64 = 0
     while (index < written) {
         span := mesh_cache_at(cache, index)
         at := index * MESH_GEO_WORDS
@@ -682,9 +682,9 @@ upload_materials :: fn(
     if (written == 0) {
         return
     }
-    var table := heap_slice($u32, written * 8)
-    var reals := float_view(table)
-    var index: i64 = 0
+    mut table := heap_slice($u32, written * 8)
+    mut reals := float_view(table)
+    mut index: i64 = 0
     while (index < written) {
         one := materials_at(registry, index)
         at := index * 8
@@ -747,7 +747,7 @@ render_world_dispatch_dense :: fn(held: RenderWorld) -> u32 {
 // it wears is later made two-sided or blended. A program with a pipeline per
 // class calls the one below instead, once each.
 render_world_draw_all :: fn(pass: RenderPassEncoder, held: RenderWorld) {
-    var class: i64 = 0
+    mut class: i64 = 0
     while (class < NUM_DRAW_CLASSES) {
         render_world_draw_class(pass, held, class)
         class = class + 1
@@ -788,7 +788,7 @@ render_world_draw_prepass :: fn(
 // else about the design changes.
 draw_lane :: fn(pass: RenderPassEncoder, held: RenderWorld, lane: i64) {
     base := lane * held.batches_per_class
-    var slot: i64 = 0
+    mut slot: i64 = 0
     while (slot < held.batches_per_class) {
         render_pass_encoder_draw_indexed_indirect(
             pass,
@@ -1149,14 +1149,14 @@ fn assign(@builtin(global_invocation_id) id: vec3<u32>) {
 "
 
 storage_buffer :: fn(device: Device, size: i64) -> Buffer {
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Storage | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
 }
 
 small_uniform :: fn(device: Device, size: i64) -> Buffer {
-    var descriptor := buffer_descriptor_init()
+    mut descriptor := buffer_descriptor_init()
     descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
     descriptor.size = size
     device_create_buffer(device, ptr_to(descriptor))
@@ -1165,15 +1165,15 @@ small_uniform :: fn(device: Device, size: i64) -> Buffer {
 // What a drawing pass reads: the objects, which of them survived, where they
 // are, and what they are made of.
 scene_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
-    var slot: i64 = 0
+    mut entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    mut slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].visibility = ShaderStage::Vertex | ShaderStage::Fragment
         entries[slot].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
         slot = slot + 1
     }
-    var descriptor := bind_group_layout_descriptor_init()
+    mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
@@ -1191,7 +1191,7 @@ scene_group :: fn(
     transform_bytes: i64,
     material_bytes: i64
 ) -> BindGroup {
-    var entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
+    mut entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
     entries[0].binding = 0
     entries[0].buffer = objects
     entries[0].size = object_bytes
@@ -1204,7 +1204,7 @@ scene_group :: fn(
     entries[3].binding = 3
     entries[3].buffer = materials
     entries[3].size = material_bytes
-    var descriptor := bind_group_descriptor_init()
+    mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
@@ -1215,8 +1215,8 @@ scene_group :: fn(
 // are steps over one set of tables, and a step binding a subset would be a
 // second place the shapes are written down.
 batch_layout_of :: fn(device: Device) -> BindGroupLayout {
-    var entries: [11]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 11]
-    var slot: i64 = 0
+    mut entries: [11]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 11]
+    mut slot: i64 = 0
     while (slot < 11) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].visibility = ShaderStage::Compute
@@ -1229,7 +1229,7 @@ batch_layout_of :: fn(device: Device) -> BindGroupLayout {
     entries[3].buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
     entries[10].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     entries[10].buffer.min_binding_size = PARAMS_BYTES
-    var descriptor := bind_group_layout_descriptor_init()
+    mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 11
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
@@ -1254,8 +1254,8 @@ batch_group_of :: fn(
     material_count: i64,
     total_slots: i64
 ) -> BindGroup {
-    var entries: [11]BindGroupEntry = [bind_group_entry_init(); 11]
-    var sizes: [11]i64 = [
+    mut entries: [11]BindGroupEntry = [bind_group_entry_init(); 11]
+    mut sizes: [11]i64 = [
         room * OBJECT_BYTES,
         room * TRANSFORM_BYTES,
         material_count * MATERIAL_BYTES,
@@ -1268,7 +1268,7 @@ batch_group_of :: fn(
         room * 4,
         PARAMS_BYTES
     ]
-    var held: [11]Buffer = [
+    mut held: [11]Buffer = [
         objects,
         transforms,
         materials,
@@ -1281,14 +1281,14 @@ batch_group_of :: fn(
         visible,
         params
     ]
-    var slot: i64 = 0
+    mut slot: i64 = 0
     while (slot < 11) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]
         entries[slot].size = sizes[slot]
         slot = slot + 1
     }
-    var descriptor := bind_group_descriptor_init()
+    mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 11
     descriptor.entries = ptr_to(entries[0])

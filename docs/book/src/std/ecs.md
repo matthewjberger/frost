@@ -19,7 +19,7 @@ Position :: struct { x: f32, y: f32 }
 Velocity :: struct { x: f32, y: f32 }
 
 main :: fn() -> i64 {
-    var world := ecs_new()
+    mut world := ecs_new()
     position := ecs_register($Position, world)
     velocity := ecs_register($Velocity, world)
 
@@ -27,13 +27,13 @@ main :: fn() -> i64 {
     ecs_add(world, ship, position, Position { x = 0.0, y = 0.0 })
     ecs_add(world, ship, velocity, Velocity { x = 1.0, y = 0.5 })
 
-    var q := query_begin(world)
+    mut q := query_begin(world)
     query_with(q, position)
     query_with(q, velocity)
     while (query_next(world, q)) {
-        var p := query_column($Position, world, q, position)
+        mut p := query_column($Position, world, q, position)
         v := query_column($Velocity, world, q, velocity)
-        var i : i64 = 0
+        mut i : i64 = 0
         while (i < q.count) {
             p[i].x = p[i].x + v[i].x
             p[i].y = p[i].y + v[i].y
@@ -92,11 +92,11 @@ every column contiguous.
 A query is a cursor over the tables holding a set of components:
 
 ```frost,sketch
-var q := query_begin(world)
+mut q := query_begin(world)
 query_with(q, position)
 query_with(q, velocity)
 while (query_next(world, q)) {
-    var p := query_column($Position, world, q, position)
+    mut p := query_column($Position, world, q, position)
     v := query_column($Velocity, world, q, velocity)
     entities := query_entities(world, q)
     ...
@@ -113,7 +113,7 @@ reads through, and a `for` over it unrolls both where the call is written.
 
 ```frost,sketch
 integrate :: fn(mut p: []Position, mut v: []Velocity, count: i64) {
-    var i : i64 = 0
+    mut i : i64 = 0
     while (i < count) {
         p[i].x = p[i].x + v[i].x
         i = i + 1
@@ -130,7 +130,7 @@ A body taking a fourth component is a fourth element and a fourth parameter.
 What a query asks for beyond the components its body reads:
 
 ```frost,sketch
-var f := no_filters()
+mut f := no_filters()
 f = filter_without(f, frozen)             // table level
 f = filter_changed(f, velocity, last_run) // row level
 for_each_row($move, world, f, $Position, $Velocity)
@@ -158,12 +158,12 @@ program, once a frame, so everything written during a frame shares one time.
 watermark := ecs_tick(world)
 ... systems run ...
 
-var q := query_begin(world)
+mut q := query_begin(world)
 query_with(q, transform)
 while (query_next(world, q)) {
     stamps := query_changed(world, q, transform)
     t := query_column($Transform, world, q, transform)
-    var i : i64 = 0
+    mut i : i64 = 0
     while (i < q.count) {
         if (stamps[i] >= watermark) { upload(t[i]) }
         i = i + 1
@@ -187,7 +187,7 @@ a column of one and reached through the same typed slice.
 time := ecs_resource_register($Time, world)
 ecs_resource_set(world, time, time_new())
 held := ecs_resource($Time, world, time)
-var place := ecs_resource_slice($Time, world, time)
+mut place := ecs_resource_slice($Time, world, time)
 place[0].frame = place[0].frame + 1
 ```
 
@@ -223,8 +223,8 @@ own place by sequence number, so clearing the channel leaves every reader on
 exactly the events it has yet to see:
 
 ```frost,sketch
-var damage := events_new($Damage)
-var renderer := reader_new()
+mut damage := events_new($Damage)
+mut renderer := reader_new()
 events_send(damage, Damage { amount = 3 })
 
 held := events_read($Damage, damage, renderer)   // what this reader has not seen
@@ -241,7 +241,7 @@ mark, so a tag left on a despawned id stays off the entity that gets that id
 next.
 
 ```frost,sketch
-var selected := tag_new()
+mut selected := tag_new()
 tag_add(selected, entity)
 if (tag_has(selected, entity)) { ... }
 ```
@@ -252,7 +252,7 @@ A structural change made while a query is walking would move the rows the walk
 is holding, so it is queued and applied when the walk is done:
 
 ```frost,sketch
-var queued := commands_new()
+mut queued := commands_new()
 ... during the walk ...
 commands_despawn(queued, entities[i])
 ... after it ...
@@ -266,9 +266,9 @@ two entities. Three arrays indexed by entity id give a tree walked with no
 allocation per node: the parent, the first child, and the next sibling.
 
 ```frost,sketch
-var tree := hierarchy_new()
+mut tree := hierarchy_new()
 hierarchy_attach(tree, wheel, car)
-var child := hierarchy_first_child(tree, car)
+mut child := hierarchy_first_child(tree, car)
 while (is_no_entity(child) == false) {
     ...
     child = hierarchy_next_sibling(tree, child)
@@ -282,7 +282,7 @@ A system is a function of the world. A schedule is a list of them with a stage
 each, run in ascending stage order, so ordering is a number:
 
 ```frost,sketch
-var frame := schedule_new()
+mut frame := schedule_new()
 schedule_add(frame, Stage::First, read_input)
 schedule_add(frame, Stage::Update, integrate)
 schedule_add_in_state(frame, Stage::Update, PAUSED, draw_menu)

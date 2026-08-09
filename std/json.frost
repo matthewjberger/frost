@@ -138,7 +138,7 @@ json_member :: fn(mut document: Json, object: i64, name: str) -> i64 {
     if (object < 0) {
         return -1
     }
-    var child := vec_slice(document.nodes)[object].first
+    mut child := vec_slice(document.nodes)[object].first
     while (child >= 0) {
         held := vec_slice(document.nodes)[child]
         if (key_is(document, held, name)) {
@@ -167,8 +167,8 @@ json_at :: fn(mut document: Json, container: i64, wanted: i64) -> i64 {
     if (container < 0) {
         return -1
     }
-    var child := vec_slice(document.nodes)[container].first
-    var index: i64 = 0
+    mut child := vec_slice(document.nodes)[container].first
+    mut index: i64 = 0
     while (child >= 0) {
         if (index == wanted) {
             return child
@@ -183,8 +183,8 @@ json_count :: fn(mut document: Json, container: i64) -> i64 {
     if (container < 0) {
         return 0
     }
-    var child := vec_slice(document.nodes)[container].first
-    var total: i64 = 0
+    mut child := vec_slice(document.nodes)[container].first
+    mut total: i64 = 0
     while (child >= 0) {
         total = total + 1
         child = vec_slice(document.nodes)[child].next
@@ -197,7 +197,7 @@ json_count :: fn(mut document: Json, container: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 json_parse :: fn(source: str) -> Json {
-    var document: Json = Json {
+    mut document: Json = Json {
         source = source,
         nodes = vec_new($JsonNode, 1024),
         at = 0,
@@ -300,13 +300,13 @@ parse_number :: fn(mut document: Json) -> i64 {
     // Where the whole literal starts, sign and all, so `json_real` reads the
     // same bytes rather than a second copy of them.
     start := document.at
-    var negative: i64 = 0
+    mut negative: i64 = 0
     if (peek(document) == 45) {
         negative = 1
         document.at = document.at + 1
     }
     source := document.source
-    var value: i64 = 0
+    mut value: i64 = 0
     while (document.at < str_len(source)
         && str_byte_is_digit(source[document.at])) {
         value = value * 10 + (source[document.at] - 48)
@@ -340,7 +340,7 @@ parse_number :: fn(mut document: Json) -> i64 {
 parse_array :: fn(mut document: Json) -> i64 {
     document.at = document.at + 1
     node := new_node(document, JsonKind::Array)
-    var tail: i64 = -1
+    mut tail: i64 = -1
     skip_space(document)
     while (document.at < str_len(document.source) && peek(document) != 93) {
         child := parse_value(document)
@@ -361,7 +361,7 @@ parse_array :: fn(mut document: Json) -> i64 {
 parse_object :: fn(mut document: Json) -> i64 {
     document.at = document.at + 1
     node := new_node(document, JsonKind::Object)
-    var tail: i64 = -1
+    mut tail: i64 = -1
     skip_space(document)
     while (document.at < str_len(document.source) && peek(document) != 125) {
         key := parse_string(document)

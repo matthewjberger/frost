@@ -27,8 +27,8 @@ attack :: fn(e: Entity) -> i64 {
 // a return type list answers with two values without a tuple type behind them.
 // Naming the values says which is which, and lets the `return` say it too.
 tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
-    var sum: i64 = 0
-    var best: i64 = 0
+    mut sum: i64 = 0
+    mut best: i64 = 0
     for held in party {
         hit := attack(held)
         sum = sum + hit
@@ -108,7 +108,7 @@ damage_of :: fn(e: Entity) -> i64 {
 main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
-    var hero: Entity = { hp = 90, kind =.Hero }
+    mut hero: Entity = { hp = 90, kind =.Hero }
     heal(hero, 10) // hero is borrowed and changed
     print("{}\n", hero.hp) // 100
     print("{}\n", attack(hero)) // 10
@@ -133,16 +133,16 @@ main :: fn() -> i64 {
     // a pass over one field strides it rather than stepping over the rest.
     // `live_slots` walks the slots that hold an element, in slot order, and
     // never reaches one that was released.
-    var swarm: columns<Particle, 8> = columns_new()
+    mut swarm: columns<Particle, 8> = columns_new()
     columns_reset(swarm)
-    var made: [8]Handle<Particle> = [0; 8]
-    var i: i64 = 0
+    mut made: [8]Handle<Particle> = [0; 8]
+    mut i: i64 = 0
     while (i < 8) {
         made[i] = columns_insert(swarm, Particle { x = i })
         i = i + 1
     }
     assert(columns_release(swarm, made[2]))
-    var walked: i64 = 0
+    mut walked: i64 = 0
     for slot in live_slots(swarm) {
         walked = walked + swarm.x[slot]
     }
@@ -150,7 +150,7 @@ main :: fn() -> i64 {
 
     // A handle carries which container it came from, so one from another pool
     // of the same shape is refused rather than read.
-    var spare: columns<Particle, 8> = columns_new()
+    mut spare: columns<Particle, 8> = columns_new()
     columns_reset(spare)
     print("{}\n", cast($i64, columns_alive(spare, made[0]))) // 0
 

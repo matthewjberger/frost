@@ -146,13 +146,13 @@ report_int :: fn(value: i64) {
         report("0")
         return
     }
-    var held := value
+    mut held := value
     if (held < 0) {
         report("-")
         held = -held
     }
-    var digits: [24]u8 = [0; 24]
-    var count: i64 = 0
+    mut digits: [24]u8 = [0; 24]
+    mut count: i64 = 0
     while (held > 0) {
         digits[count] = cast($u8, 48 + (held % 10))
         held = held / 10
@@ -181,8 +181,8 @@ report_cstr :: fn(s: ^i8) {
 // `{` that opens nothing was refused where the call is written.
 report_run :: fn(fmt: str, at: i64) -> i64 {
     length := str_len(fmt)
-    var start := at
-    var index := at
+    mut start := at
+    mut index := at
     while (index < length) {
         byte := fmt[index]
         if (byte == 123 || byte == 125) {
@@ -220,7 +220,7 @@ text_matches :: fn(a: str, b: str) -> bool {
     if (str_len(a) != str_len(b)) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < str_len(a)) {
         if (a[i] != b[i]) {
             return false
@@ -257,7 +257,7 @@ source_text :: fn(src: str, off: i64, len: i64) -> str {
 // machinery, which is the part a probe is most often watching when it is
 // broken.
 report_fmt :: fn(format fmt: str, args: $...) {
-    var at: i64 = 0
+    mut at: i64 = 0
     for value in args {
         at = report_run(fmt, at)
         if (is_slice(value)) {
@@ -497,7 +497,6 @@ TokenKind :: enum {
     KwCase,
     KwExtern,
     KwMut,
-    KwVar,
     KwMove,
     KwLinear,
     KwUses,
@@ -1370,7 +1369,7 @@ empty_source :: fn() -> str {
 // The buffer is longer than its text: the room past the terminator is where the
 // names the compiler makes up go.
 source_end :: fn(text: str) -> i64 {
-    var at: i64 = 0
+    mut at: i64 = 0
     while (at < str_len(text) && text[at] != 0) {
         at = at + 1
     }
@@ -1419,7 +1418,7 @@ path_under :: fn(path: ^i8, directory: ^i8) -> bool {
     if (length == 0 || cstr_len(path) < length) {
         return false
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         if (byte_at(path, k) != byte_at(directory, k)) {
             return false
@@ -1436,9 +1435,9 @@ path_under :: fn(path: ^i8, directory: ^i8) -> bool {
 // layer containing it wins, so a layer declared inside another is the answer
 // for the files under it.
 layer_of :: fn(path: ^i8, mut layers: Arena<Layer>) -> i64 {
-    var best: i64 = -1
-    var deepest: i64 = -1
-    var i: i64 = 0
+    mut best: i64 = -1
+    mut deepest: i64 = -1
+    mut i: i64 = 0
     while (i < layers.count) {
         held := arena_at(layers, i)
         if (path_under(path, held.path)) {
@@ -1954,7 +1953,7 @@ cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
     if (la != lb) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < la) {
         if (byte_at(a, i) != byte_at(b, i)) {
             return false

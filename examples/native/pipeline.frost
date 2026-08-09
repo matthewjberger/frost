@@ -5,7 +5,7 @@ negate :: fn(x: i64) -> i64 { -x }
 square :: fn(x: i64) -> i64 { x * x }
 
 reduce :: fn(step: fn(i64) -> i64, data: [6]i64) -> i64 {
-    var total: i64 = 0
+    mut total: i64 = 0
     for i in 0 .. 6 {
         total = total + step(data[i])
     }

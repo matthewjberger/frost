@@ -74,7 +74,7 @@ arena_left :: fn(a: Arena) -> i64 {
 // is a bug in that choice, and handing back an empty slice would push the
 // mistake to the first write instead of naming it here.
 arena_take :: fn(mut a: Arena, size: i64, align: i64) -> []u8 {
-    var room := size
+    mut room := size
     if (room < 1) {
         room = 1
     }
@@ -102,7 +102,7 @@ arena_source :: Allocation<Arena> { take = arena_take, give = arena_give }
 // backing, and `bytes_as` holds the one reinterpret from bytes to `T`, so a
 // caller of this reads and writes through a bounds-checked slice.
 arena_carve :: fn($T: Type, mut a: Arena, count: i64) -> []T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -113,9 +113,9 @@ arena_carve :: fn($T: Type, mut a: Arena, count: i64) -> []T {
 ArenaPoint :: struct { x: i64, y: i64 }
 
 test "a carve hands back a run of the arena" {
-    var backing: [256]u8 = [0; 256]
-    var a := arena_over(backing)
-    var run := arena_carve($i64, a, 4)
+    mut backing: [256]u8 = [0; 256]
+    mut a := arena_over(backing)
+    mut run := arena_carve($i64, a, 4)
     assert(slice_len(run) == 4)
     run[0] = 11
     run[3] = 44
@@ -124,10 +124,10 @@ test "a carve hands back a run of the arena" {
 }
 
 test "two carves do not overlap" {
-    var backing: [256]u8 = [0; 256]
-    var a := arena_over(backing)
-    var first := arena_carve($i64, a, 2)
-    var second := arena_carve($i64, a, 2)
+    mut backing: [256]u8 = [0; 256]
+    mut a := arena_over(backing)
+    mut first := arena_carve($i64, a, 2)
+    mut second := arena_carve($i64, a, 2)
     first[0] = 1
     first[1] = 2
     second[0] = 3
@@ -137,25 +137,25 @@ test "two carves do not overlap" {
 }
 
 test "a reset hands the same bytes out again" {
-    var backing: [256]u8 = [0; 256]
-    var a := arena_over(backing)
+    mut backing: [256]u8 = [0; 256]
+    mut a := arena_over(backing)
     mark := arena_mark(a)
-    var first := arena_carve($i64, a, 3)
+    mut first := arena_carve($i64, a, 3)
     first[0] = 7
     assert(arena_used(a) == 24)
     arena_reset(a, mark)
     assert(arena_used(a) == 0)
-    var again := arena_carve($i64, a, 3)
+    mut again := arena_carve($i64, a, 3)
     assert(slice_len(again) == 3)
     assert(again[0] == 7)
 }
 
 test "a carve of a struct is aligned and sized by the struct" {
-    var backing: [256]u8 = [0; 256]
-    var a := arena_over(backing)
-    var one := arena_carve($u8, a, 1)
+    mut backing: [256]u8 = [0; 256]
+    mut a := arena_over(backing)
+    mut one := arena_carve($u8, a, 1)
     one[0] = 9
-    var points := arena_carve($ArenaPoint, a, 2)
+    mut points := arena_carve($ArenaPoint, a, 2)
     assert(arena_used(a) == 8 + 2 * sizeof(ArenaPoint))
     points[0] = ArenaPoint { x = 1, y = 2 }
     points[1] = ArenaPoint { x = 3, y = 4 }
@@ -164,10 +164,10 @@ test "a carve of a struct is aligned and sized by the struct" {
 }
 
 test "what is left counts down as runs go out" {
-    var backing: [128]u8 = [0; 128]
-    var a := arena_over(backing)
+    mut backing: [128]u8 = [0; 128]
+    mut a := arena_over(backing)
     assert(arena_left(a) == 128)
-    var run := arena_carve($i64, a, 4)
+    mut run := arena_carve($i64, a, 4)
     run[0] = 1
     assert(arena_left(a) == 96)
     arena_reset(a, 0)

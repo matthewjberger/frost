@@ -20,8 +20,8 @@ query_line :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
         return 0
     }
     entry := arena_at(modules, index)
-    var line: i64 = 1
-    var at := entry.start
+    mut line: i64 = 1
+    mut at := entry.start
     while (at < offset) {
         if (src[at] == CH_LF) {
             line = line + 1
@@ -35,8 +35,8 @@ query_line :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
 // where the question has no such word.
 query_word :: fn(question: ^i8, index: i64) -> i64 {
     length := cstr_len(question)
-    var at: i64 = 0
-    var word: i64 = 0
+    mut at: i64 = 0
+    mut word: i64 = 0
     while (at < length && byte_at(question, at) == CH_SPACE) {
         at = at + 1
     }
@@ -57,7 +57,7 @@ query_word :: fn(question: ^i8, index: i64) -> i64 {
 
 query_word_len :: fn(question: ^i8, start: i64) -> i64 {
     length := cstr_len(question)
-    var at := start
+    mut at := start
     while (at < length && byte_at(question, at) != CH_SPACE) {
         at = at + 1
     }
@@ -69,7 +69,7 @@ word_is :: fn(question: ^i8, start: i64, text: str) -> bool {
     if (query_word_len(question, start) != length) {
         return false
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         if (byte_at(question, start + k) != cast($i64, text[k])) {
             return false
@@ -89,7 +89,7 @@ word_names :: fn(
     if (query_word_len(question, start) != len) {
         return false
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < len) {
         if (byte_at(question, start + k) != cast($i64, src[off + k])) {
             return false
@@ -103,13 +103,13 @@ word_names :: fn(
 // kind, and a name's offset into the one source buffer is its source order,
 // so the smallest offset not yet written is always the next declaration.
 query_symbols :: fn(mut p: Parser) {
-    var written: i64 = -1
-    var going: bool = true
+    mut written: i64 = -1
+    mut going: bool = true
     while (going) {
-        var best_off: i64 = -1
-        var best_len: i64 = 0
-        var best_kind: i64 = 0
-        var si: i64 = 0
+        mut best_off: i64 = -1
+        mut best_len: i64 = 0
+        mut best_kind: i64 = 0
+        mut si: i64 = 0
         while (si < p.structs.count) {
             def := arena_at(p.structs, si)
             if (def.declared == 1 && def.instance_id < 0
@@ -124,7 +124,7 @@ query_symbols :: fn(mut p: Parser) {
             }
             si = si + 1
         }
-        var fi: i64 = 0
+        mut fi: i64 = 0
         while (fi < p.fns.count) {
             sym := arena_at(p.fns, fi)
             if (sym.off > written
@@ -138,7 +138,7 @@ query_symbols :: fn(mut p: Parser) {
             }
             fi = fi + 1
         }
-        var ci: i64 = 0
+        mut ci: i64 = 0
         while (ci < p.consts.count) {
             held := arena_at(p.consts, ci)
             if (held.name_off > written
@@ -149,7 +149,7 @@ query_symbols :: fn(mut p: Parser) {
             }
             ci = ci + 1
         }
-        var vi: i64 = 0
+        mut vi: i64 = 0
         while (vi < p.value_consts.count) {
             held := arena_at(p.value_consts, vi)
             if (held.name_off > written
@@ -193,7 +193,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     if (name_at < 0) {
         return
     }
-    var si: i64 = 0
+    mut si: i64 = 0
     while (si < p.structs.count) {
         def := arena_at(p.structs, si)
         if (def.declared == 1 && def.instance_id < 0
@@ -209,7 +209,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         }
         si = si + 1
     }
-    var fi: i64 = 0
+    mut fi: i64 = 0
     while (fi < p.fns.count) {
         sym := arena_at(p.fns, fi)
         if (word_names(question, name_at, p.src, sym.off, sym.len)) {
@@ -218,7 +218,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         }
         fi = fi + 1
     }
-    var ci: i64 = 0
+    mut ci: i64 = 0
     while (ci < p.consts.count) {
         held := arena_at(p.consts, ci)
         if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
@@ -227,7 +227,7 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         }
         ci = ci + 1
     }
-    var vi: i64 = 0
+    mut vi: i64 = 0
     while (vi < p.value_consts.count) {
         held := arena_at(p.value_consts, vi)
         if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
@@ -245,7 +245,7 @@ query_fields :: fn(mut p: Parser, question: ^i8) {
     if (name_at < 0) {
         return
     }
-    var si: i64 = 0
+    mut si: i64 = 0
     while (si < p.structs.count) {
         def := arena_at(p.structs, si)
         if (def.declared == 1 && def.instance_id < 0 && def.is_enum == 0
@@ -257,7 +257,7 @@ query_fields :: fn(mut p: Parser, question: ^i8) {
                 def.name_off,
                 def.name_len
             )) {
-            var fid := def.field_head
+            mut fid := def.field_head
             while (fid != (-1)) {
                 field := arena_at(p.fields, fid)
                 report_src(p.src, field.name_off, field.name_len)
@@ -281,7 +281,7 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
     if (fn_at < 0 || name_at < 0) {
         return
     }
-    var id := program
+    mut id := program
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
@@ -289,7 +289,7 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
             sym := arena_at(p.fns, node.val)
             if (word_names(question, fn_at, p.src, sym.off, sym.len)) {
                 check_types_in(p, node.a, node.b, node.val, sym.ret_type)
-                var li: i64 = 0
+                mut li: i64 = 0
                 while (li < p.locals.count) {
                     held := arena_at(p.locals, li)
                     if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {

@@ -20,8 +20,8 @@ export lint_program, nearest_name
 // list names one. A wrong finding sends a reader to delete working code, so the
 // question asked is the conservative one.
 lint_program :: fn(mut p: Parser) -> i64 {
-    var found: i64 = 0
-    var index: i64 = 0
+    mut found: i64 = 0
+    mut index: i64 = 0
     while (index < p.fns.count) {
         sym := arena_at(p.fns, index)
         if (sym.defined == 1 && sym.len > 0) {
@@ -47,10 +47,10 @@ lint_program :: fn(mut p: Parser) -> i64 {
 // Answers the index into the symbol table, since the name itself is a range in
 // the source.
 nearest_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var best: i64 = -1
-    var best_distance: i64 = 0
-    var ties: i64 = 0
-    var index: i64 = 0
+    mut best: i64 = -1
+    mut best_distance: i64 = 0
+    mut ties: i64 = 0
+    mut index: i64 = 0
     while (index < p.fns.count) {
         sym := arena_at(p.fns, index)
         if (sym.len > 0 && bytes_equal(p.src, sym.off, off, len) == false) {
@@ -85,25 +85,25 @@ name_distance :: fn(
     if (a_len > 64 || b_len > 64) {
         return 999
     }
-    var row: [65]i64 = [0; 65]
-    var j: i64 = 0
+    mut row: [65]i64 = [0; 65]
+    mut j: i64 = 0
     while (j <= b_len) {
         row[j] = j
         j = j + 1
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < a_len) {
-        var previous := row[0]
+        mut previous := row[0]
         row[0] = i + 1
         j = 0
         while (j < b_len) {
-            var cost: i64 = 1
+            mut cost: i64 = 1
             if (src[a_off + i] == src[b_off + j]) {
                 cost = 0
             }
             replaced := previous + cost
             previous = row[j + 1]
-            var best := row[j] + 1
+            mut best := row[j] + 1
             if (row[j + 1] + 1 < best) {
                 best = row[j + 1] + 1
             }
@@ -120,8 +120,8 @@ name_distance :: fn(
 
 // How many times a name is written as an identifier.
 mentions_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var count: i64 = 0
-    var index: i64 = 0
+    mut count: i64 = 0
+    mut index: i64 = 0
     while (index < p.tokens.count) {
         token := arena_at(p.tokens, index)
         if (token.kind == TokenKind::Ident && token.len == len

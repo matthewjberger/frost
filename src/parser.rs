@@ -1298,7 +1298,6 @@ impl<'a> Parser<'a> {
     fn at_block_statement_boundary(&self) -> bool {
         match self.peek_nth(0) {
             Token::Mut
-            | Token::Var
             | Token::Return
             | Token::Defer
             | Token::ErrDefer
@@ -1349,7 +1348,6 @@ impl<'a> Parser<'a> {
                     | Token::Break
                     | Token::Continue
                     | Token::Ref
-                    | Token::Var
                     | Token::Mut
                     | Token::If
                     | Token::Match
@@ -1413,21 +1411,26 @@ impl<'a> Parser<'a> {
             }
             Token::Import => Some(self.parse_import_statement()?),
             Token::Ref => Some(self.parse_ref_declaration()?),
-            Token::Var
+            Token::Mut
                 if matches!(self.peek_nth(1), Token::Identifier(_))
                     && matches!(self.peek_nth(2), Token::Comma) =>
             {
                 Some(self.parse_multiple_declaration()?)
             }
-            Token::Var => Some(self.parse_mutable_declaration()?),
-            // `mut` is one thing, the parameter mode. It used to declare an
-            // assignable local as well, and the two meanings shared nothing
-            // but the spelling, so the local form is `var` and this refusal
-            // is what a reader migrating old code meets.
-            Token::Mut => {
-                return Err(self.here(
-                    "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`".to_string(),
-                ));
+            Token::Mut => Some(self.parse_mutable_declaration()?),
+            // `var` is an ordinary name and opens nothing, so an older file
+            // reads as a name followed by a binding. Named here rather than
+            // left to whatever that parses as, which is a complaint about the
+            // second word.
+            Token::Identifier(name)
+                if name == "var"
+                    && matches!(self.peek_nth(1), Token::Identifier(_))
+                    && matches!(
+                        self.peek_nth(2),
+                        Token::ColonAssign | Token::Colon
+                    ) =>
+            {
+                return Err(self.here("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries".to_string()));
             }
             // A binding lives in a block. At the top level the same tokens
             // fall through to the arm below that names what may stand there,
@@ -1806,12 +1809,12 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         let mut bindings = Vec::new();
         loop {
-            if matches!(self.peek_nth(0), Token::Mut) {
-                return Err(self.here(
-                    "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`".to_string(),
-                ));
+            if matches!(self.peek_nth(0), Token::Identifier(name) if name == "var")
+                && matches!(self.peek_nth(1), Token::Identifier(_))
+            {
+                return Err(self.here("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries".to_string()));
             }
-            let mutable = if matches!(self.peek_nth(0), Token::Var) {
+            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
                 self.read_token();
                 true
             } else {
@@ -1832,7 +1835,7 @@ impl<'a> Parser<'a> {
             if name == "_" {
                 if mutable {
                     bail!(
-                        "`var` makes a binding assignable and `_` binds nothing; write `_` on its own"
+                        "`mut` makes a binding assignable and `_` binds nothing; write `_` on its own"
                     );
                 }
             } else {
@@ -1871,7 +1874,7 @@ impl<'a> Parser<'a> {
         } else if matches!(self.peek_nth(1), Token::Colon) {
             self.parse_typed_declaration(true)
         } else {
-            bail!("Expected ':=' or ': type =' after 'var identifier'")
+            bail!("Expected ':=' or ': type =' after 'mut identifier'")
         }
     }
 
@@ -5771,7 +5774,7 @@ mod tests {
 
     #[test]
     fn mutable_declaration() -> Result<()> {
-        let module = parse_module("var x := 5")?;
+        let module = parse_module("mut x := 5")?;
         assert_eq!(module.roots.len(), 1);
         match module.ast.stmt(module.roots[0]) {
             Statement::Let {
@@ -5792,7 +5795,7 @@ mod tests {
 
     #[test]
     fn mutable_typed_declaration() -> Result<()> {
-        let module = parse_module("var x : i64 = 42")?;
+        let module = parse_module("mut x : i64 = 42")?;
         assert_eq!(module.roots.len(), 1);
         match module.ast.stmt(module.roots[0]) {
             Statement::Let {
@@ -5826,7 +5829,7 @@ mod tests {
 
     #[test]
     fn mutable_ast_display() -> Result<()> {
-        let output = "var myVar := anotherVar;";
+        let output = "mut myVar := anotherVar;";
         let mut ast = Ast::default();
         let another = ast.intern("anotherVar");
         let value =
@@ -5847,7 +5850,7 @@ mod tests {
 
     #[test]
     fn mutable_typed_ast_display() -> Result<()> {
-        let output = "var x : i64 = 5;";
+        let output = "mut x : i64 = 5;";
         let mut ast = Ast::default();
         let value = ast.push_expr(
             Expression::Literal(Literal::Integer(5)),
@@ -6415,7 +6418,7 @@ mod tests {
 
     #[test]
     fn multiple_returns_bind_by_name() -> Result<()> {
-        let module = parse_module("quotient, var remainder := divide(7, 2)")?;
+        let module = parse_module("quotient, mut remainder := divide(7, 2)")?;
         assert_eq!(module.roots.len(), 1);
         let ast = &module.ast;
         if let Statement::LetMultiple(bindings, _) = ast.stmt(module.roots[0]) {

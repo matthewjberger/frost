@@ -41,7 +41,7 @@ frost_rt_mem_copy :: extern fn(destination: ^u8, source: ^u8, size: i64)
 // Room for `count` elements of `T`. A count of zero still allocates one, so a
 // container never holds a pointer to nothing.
 heap_array :: fn($T: Type, count: i64) -> ^T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -53,7 +53,7 @@ heap_array :: fn($T: Type, count: i64) -> ^T {
 // The same block as a slice of that length, which is what makes the code above
 // it bounds-checked.
 heap_slice :: fn($T: Type, count: i64) -> []T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -63,7 +63,7 @@ heap_slice :: fn($T: Type, count: i64) -> []T {
 // Resize a block, answering where it now is. The old pointer is not valid after
 // this, which is why it is taken by `move`.
 heap_grow :: fn($T: Type, move block: ^T, count: i64) -> ^T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -80,7 +80,7 @@ heap_grow :: fn($T: Type, move block: ^T, count: i64) -> ^T {
 
 // The same for a slice, answering one of the new length.
 heap_grow_slice :: fn($T: Type, move held: []T, count: i64) -> []T {
-    var room := count
+    mut room := count
     if (room < 1) {
         room = 1
     }
@@ -156,7 +156,7 @@ slice_span :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
     if (from >= length) {
         return slice_range(held, length - 1, 0)
     }
-    var room := length - from
+    mut room := length - from
     if (count < room) {
         room = count
     }
@@ -178,8 +178,8 @@ slice_chunk :: fn($T: Type, held: []T, count: i64, index: i64) -> []T {
     }
     per := total / count
     extra := total % count
-    var from := index * per
-    var room := per
+    mut from := index * per
+    mut room := per
     if (index < extra) {
         from = from + index
         room = room + 1
@@ -200,7 +200,7 @@ heap_release_slice :: fn($T: Type, move held: []T) {
 // A run of bytes with a width decided while the program runs, for a container
 // whose element type is not in the type system: the ECS's columns are this.
 heap_bytes :: fn(size: i64) -> ^u8 {
-    var room := size
+    mut room := size
     if (room < 1) {
         room = 1
     }
@@ -208,7 +208,7 @@ heap_bytes :: fn(size: i64) -> ^u8 {
 }
 
 heap_grow_bytes :: fn(move block: ^u8, size: i64) -> ^u8 {
-    var room := size
+    mut room := size
     if (room < 1) {
         room = 1
     }
@@ -256,8 +256,8 @@ heap_copy :: fn(destination: ^u8, source: ^u8, size: i64) {
 }
 
 test "a range views the middle of a slice" {
-    var held := heap_slice($i64, 8)
-    var fill: i64 = 0
+    mut held := heap_slice($i64, 8)
+    mut fill: i64 = 0
     while (fill < 8) {
         held[fill] = fill * 10
         fill = fill + 1
@@ -270,7 +270,7 @@ test "a range views the middle of a slice" {
 }
 
 test "a span stops at the end of what it views" {
-    var held := heap_slice($i64, 4)
+    mut held := heap_slice($i64, 4)
     held[3] = 7
     assert(slice_len(slice_span(held, 2, 99)) == 2)
     assert(slice_span(held, 2, 99)[1] == 7)
@@ -284,22 +284,22 @@ test "a span stops at the end of what it views" {
 // what says the spans covered it and did not overlap: an element two spans held
 // would be written twice and one no span held would keep its zero.
 test "chunks cover a slice exactly once" {
-    var counts: [5]i64 = [1, 2, 3, 4, 7]
-    var which: i64 = 0
+    mut counts: [5]i64 = [1, 2, 3, 4, 7]
+    mut which: i64 = 0
     while (which < 5) {
         count := counts[which]
-        var held := heap_slice($i64, 10)
-        var clear: i64 = 0
+        mut held := heap_slice($i64, 10)
+        mut clear: i64 = 0
         while (clear < 10) {
             held[clear] = 0
             clear = clear + 1
         }
-        var index: i64 = 0
-        var seen: i64 = 0
+        mut index: i64 = 0
+        mut seen: i64 = 0
         while (index < count) {
-            var span := slice_chunk(held, count, index)
+            mut span := slice_chunk(held, count, index)
             seen = seen + slice_len(span)
-            var at: i64 = 0
+            mut at: i64 = 0
             while (at < slice_len(span)) {
                 span[at] = span[at] + 1
                 at = at + 1
@@ -307,7 +307,7 @@ test "chunks cover a slice exactly once" {
             index = index + 1
         }
         assert(seen == 10)
-        var every: i64 = 0
+        mut every: i64 = 0
         while (every < 10) {
             assert(held[every] == 1)
             every = every + 1
@@ -318,7 +318,7 @@ test "chunks cover a slice exactly once" {
 }
 
 test "chunks answer empty where there is no work for them" {
-    var held := heap_slice($i64, 2)
+    mut held := heap_slice($i64, 2)
     assert(slice_len(slice_chunk(held, 5, 0)) == 1)
     assert(slice_len(slice_chunk(held, 5, 1)) == 1)
     assert(slice_len(slice_chunk(held, 5, 2)) == 0)
@@ -328,7 +328,7 @@ test "chunks answer empty where there is no work for them" {
 }
 
 test "a prefix is as long as it was asked for" {
-    var held := heap_slice($i64, 8)
+    mut held := heap_slice($i64, 8)
     held[0] = 1
     held[1] = 2
     front := slice_prefix(held, 2)
@@ -338,7 +338,7 @@ test "a prefix is as long as it was asked for" {
 }
 
 test "a typed block holds what is written into it" {
-    var held := heap_slice($i64, 4)
+    mut held := heap_slice($i64, 4)
     held[0] = 10
     held[3] = 40
     assert(slice_len(held) == 4)
@@ -348,10 +348,10 @@ test "a typed block holds what is written into it" {
 }
 
 test "a block keeps its contents across a grow" {
-    var held := heap_slice($i64, 2)
+    mut held := heap_slice($i64, 2)
     held[0] = 1
     held[1] = 2
-    var bigger := heap_grow_slice(held, 8)
+    mut bigger := heap_grow_slice(held, 8)
     assert(slice_len(bigger) == 8)
     assert(bigger[0] == 1)
     assert(bigger[1] == 2)
@@ -361,7 +361,7 @@ test "a block keeps its contents across a grow" {
 }
 
 test "a zero count still gives a block to write into" {
-    var held := heap_slice($i64, 0)
+    mut held := heap_slice($i64, 0)
     held[0] = 5
     assert(held[0] == 5)
     heap_release_slice(held)
@@ -370,7 +370,7 @@ test "a zero count still gives a block to write into" {
 MemPoint :: struct { x: i64, y: i64 }
 
 test "a struct element is one element rather than one byte" {
-    var held := heap_slice($MemPoint, 3)
+    mut held := heap_slice($MemPoint, 3)
     held[2] = MemPoint { x = 7, y = 8 }
     held[0] = MemPoint { x = 1, y = 2 }
     assert(held[2].x == 7)
@@ -383,7 +383,7 @@ test "bytes with a width are zeroed and copied" {
     source := heap_bytes(16)
     destination := heap_bytes(16)
     heap_zero(source, 16)
-    var written := bytes_as($i64, source, 2)
+    mut written := bytes_as($i64, source, 2)
     written[1] = 42
     heap_copy(destination, source, 16)
     view := bytes_as($i64, destination, 2)
@@ -397,8 +397,8 @@ test "bytes with a width are zeroed and copied" {
 }
 
 test "a byte run keeps what it held when it grows" {
-    var block := heap_bytes(8)
-    var written := bytes_as($i64, block, 1)
+    mut block := heap_bytes(8)
+    mut written := bytes_as($i64, block, 1)
     written[0] = 9
     block = heap_grow_bytes(block, 64)
     view := bytes_as($i64, block, 1)
@@ -408,10 +408,10 @@ test "a byte run keeps what it held when it grows" {
 
 test "what a block took is what releasing it gives back" {
     before := heap_live()
-    var held := heap_slice($i64, 16)
+    mut held := heap_slice($i64, 16)
     assert(heap_live() == before + 1)
     held[0] = 1
-    var bigger := heap_grow_slice(held, 64)
+    mut bigger := heap_grow_slice(held, 64)
     assert(heap_live() == before + 1)
     heap_release_slice(bigger)
     assert(heap_live() == before)

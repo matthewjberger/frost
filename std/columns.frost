@@ -29,13 +29,13 @@ export columns_reset, columns_full, columns_insert, columns_alive,
 // in.
 columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
     stamp := frost_rt_container_id() << CONTAINER_SHIFT
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < N) {
         c.generations[i] = stamp
         c.free_list[i] = N - 1 - i
         i = i + 1
     }
-    var w: i64 = 0
+    mut w: i64 = 0
     while (w < (N + 63) / 64) {
         c.live_words[w] = 0
         w = w + 1

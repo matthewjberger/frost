@@ -76,7 +76,7 @@ pub fn display_stmt(ast: &Ast, statement: StmtId) -> String {
             value,
             mutable,
         } => {
-            let mut_str = if *mutable { "var " } else { "" };
+            let mut_str = if *mutable { "mut " } else { "" };
             match type_annotation {
                 Some(typ) => format!(
                     "{}{} : {} = {};",
@@ -98,7 +98,7 @@ pub fn display_stmt(ast: &Ast, statement: StmtId) -> String {
                 .bindings_in(*bindings)
                 .iter()
                 .map(|binding| {
-                    let prefix = if binding.mutable { "var " } else { "" };
+                    let prefix = if binding.mutable { "mut " } else { "" };
                     format!("{}{}", prefix, ast.name(binding.name))
                 })
                 .collect();

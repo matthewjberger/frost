@@ -99,7 +99,7 @@ Swarm :: struct {
 }
 
 main :: fn() -> i64 {
-    var config := app_config("Frost swarm", WIDTH, HEIGHT)
+    mut config := app_config("Frost swarm", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = DRAWN
@@ -190,7 +190,7 @@ run :: fn(move app: App) -> i64 {
 
     // The ring, drawn as the sphere, so removing that mesh is visible as these
     // going and nothing else going.
-    var made: i64 = 0
+    mut made: i64 = 0
     while (made < RING) {
         turn: f32 = made
         angle := turn * 6.283185307179586 / RING
@@ -216,7 +216,7 @@ run :: fn(move app: App) -> i64 {
     // Four lamps that stop. Where they stop is what the grid is for: a box of
     // the grid more than six units from all four holds none of them, and a
     // fragment in it walks no local lights at all.
-    var lamp_index: i64 = 0
+    mut lamp_index: i64 = 0
     while (lamp_index < LAMPS) {
         which: f32 = lamp_index
         angle := which * 6.283185307179586 / LAMPS
@@ -227,7 +227,7 @@ run :: fn(move app: App) -> i64 {
             ids,
             vec3(cosf(angle) * 7.0, FLOOR_Y + 2.5, sinf(angle) * 7.0)
         )
-        var one := lamp(lamp_colour(lamp_index), 30.0)
+        mut one := lamp(lamp_colour(lamp_index), 30.0)
         one.range = LAMP_REACH
         ecs_set(app.world, held, lights.light, one)
         lamp_index = lamp_index + 1
@@ -237,11 +237,11 @@ run :: fn(move app: App) -> i64 {
     // black.
     sunlight := ecs_spawn_with(app.world, lighting)
     aim(app, sunlight, ids, vec3(0.0, 12.0, 0.0))
-    var overhead := sun()
+    mut overhead := sun()
     overhead.intensity = 0.5
     ecs_set(app.world, sunlight, lights.light, overhead)
 
-    var eye := camera_default()
+    mut eye := camera_default()
     eye.position = vec3(0.0, 6.0, 26.0)
     eye.pitch = -0.25
     app_camera_set(app, eye)
@@ -274,12 +274,12 @@ turn_the_swarm :: fn(mut world: World) {
     elapsed := input_elapsed_seconds(held)
     orbit := component_of($Orbit, world)
     local := component_of($LocalTransform, world)
-    var q := query_begin(world)
+    mut q := query_begin(world)
     query_with(q, orbit)
     query_with(q, local)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row: i64 = 0
+        mut row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             one := ecs_get($Orbit, world, entity, orbit)
@@ -320,7 +320,7 @@ watch_the_keys :: fn(mut world: World) {
         grow_the_swarm(world)
     }
     if (input_key_pressed(held, KEY_R)) {
-        var kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+        mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
         kit.sphere_wanted = kit.sphere_wanted == false
         ecs_resource_set(world, resource_of($Swarm, world), kit)
     }
@@ -339,7 +339,7 @@ watch_the_keys :: fn(mut world: World) {
 // there keeps its place. So the ring returns without anything it carries being
 // rewritten.
 settle_the_mesh :: fn(mut app: App, mut held: App) {
-    var kit := ecs_resource($Swarm, app.world, resource_of($Swarm, app.world))
+    mut kit := ecs_resource($Swarm, app.world, resource_of($Swarm, app.world))
     if (kit.sphere_wanted == kit.sphere_loaded) {
         return
     }
@@ -369,13 +369,13 @@ settle_the_mesh :: fn(mut app: App, mut held: App) {
 // a table into the hole it left. A walk that removed as it went would be
 // reading a table that moves under it.
 thin_the_swarm :: fn(mut world: World) {
-    var kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+    mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
     if (kit.wanted <= 0) {
         return
     }
-    var circling := ecs_gather(world, no_filters(), $Orbit)
+    mut circling := ecs_gather(world, no_filters(), $Orbit)
     going := vec_len(circling) / 2
-    var index: i64 = 0
+    mut index: i64 = 0
     while (index < going) {
         ecs_despawn(world, vec_get(circling, index))
         index = index + 1
@@ -387,7 +387,7 @@ thin_the_swarm :: fn(mut world: World) {
 
 // Back to the full count, spawned where the walk will find them next frame.
 grow_the_swarm :: fn(mut world: World) {
-    var kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
+    mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
     if (kit.wanted >= SWARM) {
         return
     }
@@ -401,7 +401,7 @@ grow_the_swarm :: fn(mut world: World) {
 // same mesh and the same material, so all of them land in one batch.
 spawn_swarm :: fn(mut world: World, ids: WorldIds, count: i64) {
     kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
-    var made: i64 = 0
+    mut made: i64 = 0
     while (made < count) {
         which: f32 = made
         held := ecs_spawn_with(world, kit.drawn_mask)

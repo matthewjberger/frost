@@ -93,8 +93,8 @@ Every allocating module in `std/` has a test of this shape:
 ```frost
 test "a vector gives back every block it took, however far it grew" {
     before := heap_live()
-    var v := vec_new($i64, 1)
-    var i : i64 = 0
+    mut v := vec_new($i64, 1)
+    mut i : i64 = 0
     while (i < 500) {
         vec_push(v, i)
         i = i + 1
@@ -114,10 +114,10 @@ A grow leaves the count where it was. The `mem.frost` tests check that directly:
 ```frost
 test "what a block took is what releasing it gives back" {
     before := heap_live()
-    var held := heap_slice($i64, 16)
+    mut held := heap_slice($i64, 16)
     assert(heap_live() == before + 1)
     held[0] = 1
-    var bigger := heap_grow_slice(held, 64)
+    mut bigger := heap_grow_slice(held, 64)
     assert(heap_live() == before + 1)
     heap_release_slice(bigger)
     assert(heap_live() == before)
@@ -143,8 +143,8 @@ A program builds the backing where it wants the storage to live and hands the
 view over, so the arena itself allocates nothing:
 
 ```frost,sketch
-var backing: [4096]u8 = [0; 4096]
-var scratch := arena_over(backing)
+mut backing: [4096]u8 = [0; 4096]
+mut scratch := arena_over(backing)
 ```
 
 | Call | What it does |
@@ -199,8 +199,8 @@ only one in the library.
 import "allocation.frost"
 
 main :: fn() -> i64 {
-    var h := heap_state()
-    var run := carve($i64, $heap_source, h, 4)
+    mut h := heap_state()
+    mut run := carve($i64, $heap_source, h, 4)
     run[0] = 11
     held := run[0]
     carve_give($heap_source, h, run)

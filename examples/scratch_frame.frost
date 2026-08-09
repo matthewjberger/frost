@@ -33,7 +33,7 @@ visible_layers :: fn(frame: i64) -> i64 {
 // a `[]Sprite` rather than the container, so everything above the arena is
 // ordinary slice code.
 tally :: fn(drawn: []Sprite) -> i64 {
-    var total: i64 = 0
+    mut total: i64 = 0
     for sprite in drawn {
         total = total + sprite.x + sprite.y
     }
@@ -43,10 +43,10 @@ tally :: fn(drawn: []Sprite) -> i64 {
 // One frame. The arena is handed in, the run is carved inside the region, and
 // what leaves is a number.
 draw_frame :: fn(mut scratch: Arena, world: []Sprite, frame: i64) -> i64 {
-    var total: i64 = 0
+    mut total: i64 = 0
     with scratch {
         run := arena_carve($Sprite, scratch, 16)
-        var visible := fixed_over(run)
+        mut visible := fixed_over(run)
         for sprite in world {
             if (sprite.layer < visible_layers(frame)) {
                 fixed_push(visible, sprite)
@@ -66,9 +66,9 @@ draw_frame :: fn(mut scratch: Arena, world: []Sprite, frame: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var backing: [4096]u8 = [0; 4096]
-    var scratch := arena_over(backing)
-    var world: [6]Sprite = [
+    mut backing: [4096]u8 = [0; 4096]
+    mut scratch := arena_over(backing)
+    mut world: [6]Sprite = [
         Sprite { x = 1, y = 2, layer = 0 },
         Sprite { x = 3, y = 4, layer = 0 },
         Sprite { x = 5, y = 6, layer = 1 },
@@ -76,8 +76,8 @@ main :: fn() -> i64 {
         Sprite { x = 9, y = 10, layer = 2 },
         Sprite { x = 11, y = 12, layer = 2 },
     ]
-    var total: i64 = 0
-    var frame: i64 = 0
+    mut total: i64 = 0
+    mut frame: i64 = 0
     while (frame < 3) {
         total = total + draw_frame(scratch, world, frame)
         // The whole frame's storage, back in one step. Nothing was freed one

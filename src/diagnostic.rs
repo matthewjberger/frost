@@ -513,7 +513,7 @@ mod tests {
     // place it names, and a reader applying them wants one for each.
     #[test]
     fn a_fixable_fault_is_not_folded() {
-        let message = "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`";
+        let message = "a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries";
         let kept = grouped(vec![at(2, message), at(9, message)]);
         assert_eq!(kept.len(), 2);
     }

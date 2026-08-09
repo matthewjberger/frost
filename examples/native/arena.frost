@@ -41,7 +41,7 @@ alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    var arena: Arena<256> = Arena { data = [0; 256], offset = 0, }
+    mut arena: Arena<256> = Arena { data = [0; 256], offset = 0, }
 
     // Reaching through a raw pointer is what the gate is for, so these blocks
     // carry the writes through one and nothing else. The allocation itself is

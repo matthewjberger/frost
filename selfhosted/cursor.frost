@@ -92,7 +92,7 @@ on_same_line :: fn(mut p: Parser) -> bool {
     }
     before := arena_at(p.tokens, p.ti - 1)
     here := arena_at(p.tokens, p.ti)
-    var at := before.off + before.len
+    mut at := before.off + before.len
     while (at < here.off) {
         if (p.src[at] == 10) {
             return false

@@ -30,7 +30,7 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "an_unsafe_block_that_vouches_for_nothing",
         "main :: fn() -> i64 {
-             var n : i64 = 3
+             mut n : i64 = 3
              unsafe {
                  n = n + 1
              }
@@ -43,7 +43,7 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "an_unsafe_block_inside_another",
         "main :: fn() -> i64 {
-             var cells : [2]i64 = [1, 2]
+             mut cells : [2]i64 = [1, 2]
              unsafe {
                  p := ptr_to(cells[0])
                  unsafe {
@@ -67,11 +67,25 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Box :: struct($T: Type) { held: $T }\n\
          unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }\n\
          main :: fn() -> i64 {\n\
-         \x20   var b := Box<i64> { held = 41 }\n\
+         \x20   mut b := Box<i64> { held = 41 }\n\
          \x20   print(\"{}\n\", unwrap($i64, b))\n\
          \x20   0\n\
          }\n",
         "is settled by the type of",
+    ),
+    // One permission word at both layers, so the older spelling gets a sentence
+    // saying what to write rather than whatever a stray word parses as. `var` is
+    // still a word the lexer knows, which is what lets the refusal name it and
+    // `frost fix` carry the edit.
+    (
+        "a_reassigned_local_is_declared_with_mut",
+        "main :: fn() -> i64 {\n\
+         \x20   var count := 3\n\
+         \x20   count = count + 1\n\
+         \x20   count\n\
+         }\n",
+        "a local that is reassigned is declared with `mut`, the word a \
+         parameter that writes the caller's value carries",
     ),
     // An arena answers `Allocation<A>` and no `Resizing<A>`, so nothing can ask
     // one to hand back a bigger run: it has nowhere to grow into, and the run it
@@ -84,11 +98,11 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          import \"arena.frost\"\n\
          import \"allocation.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var backing: [256]u8 = [0; 256]\n\
-         \x20   var a := arena_over(backing)\n\
-         \x20   var run := carve($i64, $arena_source, a, 2)\n\
+         \x20   mut backing: [256]u8 = [0; 256]\n\
+         \x20   mut a := arena_over(backing)\n\
+         \x20   mut run := carve($i64, $arena_source, a, 2)\n\
          \x20   run[0] = 7\n\
-         \x20   var grown := carve_grow($arena_source, a, run, 8)\n\
+         \x20   mut grown := carve_grow($arena_source, a, run, 8)\n\
          \x20   print(\"{}\n\", grown[0])\n\
          \x20   0\n\
          }\n",
@@ -128,8 +142,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Left :: struct { a: i64 }\n\
          Right :: struct { a: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var kept := Left { a = 1 }\n\
-         \x20   var swapped: Right = kept\n\
+         \x20   mut kept := Left { a = 1 }\n\
+         \x20   mut swapped: Right = kept\n\
          \x20   print(\"{}\n\", swapped.a)\n\
          \x20   0\n\
          }\n",
@@ -159,7 +173,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   bag_hash(b)\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   var kept := bag_new($plain, 21)\n\
+         \x20   mut kept := bag_new($plain, 21)\n\
          \x20   print(\"{}\n\", doubled_only(kept))\n\
          \x20   0\n\
          }\n",
@@ -184,8 +198,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
          bump_source :: Allocation<Bump> { take = bump_take }
          leak :: fn($source: Allocation<Bump>, n: i64) -> []u8 {
-             var backing: [64]u8 = [0; 64]
-             var here := Bump { data = backing, offset = 0 }
+             mut backing: [64]u8 = [0; 64]
+             mut here := Bump { data = backing, offset = 0 }
              source.take(here, n)
          }
          main :: fn() -> i64 {
@@ -210,8 +224,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              run
          }
          leak :: fn($take: fn(mut Bump, i64) -> []u8, n: i64) -> []u8 {
-             var backing: [64]u8 = [0; 64]
-             var here := Bump { data = backing, offset = 0 }
+             mut backing: [64]u8 = [0; 64]
+             mut here := Bump { data = backing, offset = 0 }
              take(here, n)
          }
          main :: fn() -> i64 {
@@ -280,8 +294,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
          call_it :: fn(f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
          main :: fn() -> i64 {
-             var scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var out: i64 = 0
+             mut scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut out: i64 = 0
              with scratch {
                  out = call_it(worker, 3)
              }
@@ -311,8 +325,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
          apply :: fn($f: fn(i64) -> i64, v: i64) -> i64 { f(v) }
          main :: fn() -> i64 {
-             var scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var out: i64 = 0
+             mut scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut out: i64 = 0
              with scratch {
                  out = apply($worker, 3)
              }
@@ -424,7 +438,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_format_string_given_a_generic_call",
         "import \"io.frost\"\nimport \"mem.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var xs: [3]i64 = [1, 2, 3]\n\
+         \x20   mut xs: [3]i64 = [1, 2, 3]\n\
          \x20   print(\"{}\n\", slice_range(xs, 0, 3))\n\
          \x20   0\n\
          }\n",
@@ -434,7 +448,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a_format_string_given_a_name_bound_to_a_generic_call",
         "import \"io.frost\"\nimport \"mem.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var xs: [3]i64 = [1, 2, 3]\n\
+         \x20   mut xs: [3]i64 = [1, 2, 3]\n\
          \x20   view := slice_range(xs, 0, 3)\n\
          \x20   print(\"{}\n\", view)\n\
          \x20   0\n\
@@ -468,7 +482,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_format_string_that_is_not_a_literal",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-         \x20   var held := \"x{}y\"\n\
+         \x20   mut held := \"x{}y\"\n\
          \x20   print(held, 1)\n\
          \x20   0\n\
          }\n",
@@ -565,7 +579,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
-             var c : columns<Cell, 8> = columns_new()
+             mut c : columns<Cell, 8> = columns_new()
              columns_reset(c)
              held := live_slots(c)
              print(\"{}\\n\", held)
@@ -609,19 +623,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "linear value 'held'",
     ),
-    // `var` on a discard. One makes a binding assignable and the other binds
+    // `mut` on a discard. One makes a binding assignable and the other binds
     // nothing, so the pair says two things that cannot both be true.
     (
-        "a_var_on_a_discard",
+        "a_mut_on_a_discard",
         "import \"io.frost\"
          split :: fn(v: i64) -> (high: i64, low: i64) { return v / 256, v % 256 }
          main :: fn() -> i64 {
-             high, var _ := split(4096)
+             high, mut _ := split(4096)
              print(\"{}\\n\", high)
              0
          }
 ",
-        "`var` makes a binding assignable and `_` binds nothing",
+        "`mut` makes a binding assignable and `_` binds nothing",
     ),
     // A `_` taking a value that has to be consumed. The list binds one name per
     // value, so a resource has to land on one and be consumed there. Refused
@@ -767,10 +781,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   source := Resource { held = no_trio(), transient = false, tag = 0,\n\
          \x20       slot = 0 }\n\
          \x20   given := backing_of(b, source)\n\
-         \x20   var into := b.into\n\
+         \x20   mut into := b.into\n\
          \x20   into[at].held = given\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var b := Box { pool = heap_slice($Slot, 2),\n\
+         \x20   mut b := Box { pool = heap_slice($Slot, 2),\n\
          \x20       into = heap_slice($Resource, 2) }\n\
          \x20   put(b, 0)\n\
          \x20   print(\"{}\\n\", 1)\n\
@@ -792,7 +806,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Holder :: struct { m: Meters }\n\
          main :: fn() -> i64 {\n\
          \x20   plain : i64 = 2\n\
-         \x20   var h := Holder { m = cast($Meters, 0) }\n\
+         \x20   mut h := Holder { m = cast($Meters, 0) }\n\
          \x20   h.m = plain\n\
          \x20   print(\"{}\\n\", 1)\n\
          \x20   0\n}\n",
@@ -804,7 +818,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          Holder :: struct { usage: Usage }\n\
          main :: fn() -> i64 {\n\
          \x20   plain : u32 = 2\n\
-         \x20   var h := Holder { usage = Usage::None }\n\
+         \x20   mut h := Holder { usage = Usage::None }\n\
          \x20   h.usage = plain\n\
          \x20   print(\"{}\\n\", 1)\n\
          \x20   0\n}\n",
@@ -834,7 +848,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          close :: fn(move f: File) -> i64 { f.fd }\n\
          drop_run :: fn(move xs: [2]File) -> i64 { 0 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var run : [2]File = [File { fd = 9 }; 2]\n\
+         \x20   mut run : [2]File = [File { fd = 9 }; 2]\n\
          \x20   close(run[0])\n\
          \x20   close(run[0])\n\
          \x20   drop_run(run)\n}\n",
@@ -854,7 +868,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   close(h.file)\n}\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
          \x20   twice(h)\n\
          \x20   drop_holder(h)\n}\n",
         "moved",
@@ -870,7 +884,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          open :: fn(n: i64) -> File { File { fd = n } }\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   var h := Holder { file = open(7), name = 1 }\n\
+         \x20   mut h := Holder { file = open(7), name = 1 }\n\
          \x20   drop_holder(h)\n\
          \x20   h.file = open(9)\n\
          \x20   drop_holder(h)\n}\n",
@@ -900,7 +914,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var pool : Slab<Node, 2> = slab_new()\n\
+         \x20   mut pool : Slab<Node, 2> = slab_new()\n\
          \x20   0\n}\n",
         "is a pool of",
     ),
@@ -946,7 +960,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          once :: fn(mut h: Holder) -> i64 { close(h.file) }\n\
          drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
          main :: fn() -> i64 {\n\
-         \x20   var h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
          \x20   print(\"{}\\n\", once(h))\n    print(\"{}\\n\", once(h))\n    drop_holder(h)\n}\n",
         "moved",
     ),
@@ -990,7 +1004,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nFile :: linear struct { fd: i64 }\n\
          close :: fn(move f: File) -> i64 { f.fd }\n\
          run :: fn() -> i64 {\n\
-         \x20   var i : i64 = 0\n\
+         \x20   mut i : i64 = 0\n\
          \x20   while (i < 4) {\n\
          \x20       f := File { fd = i }\n\
          \x20       if (i == 2) {\n            break\n        }\n\
@@ -1127,7 +1141,7 @@ File :: linear struct { fd: i64 }
         "import \"io.frost\"
 Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {
-             var h : Holder = Holder { a = 1, b = 2 }
+             mut h : Holder = Holder { a = 1, b = 2 }
              ref r := h
              print(\"{}\n\", r)
              0
@@ -1146,7 +1160,7 @@ Holder :: struct { a: i64, b: i64 }
          Other :: struct { x: i64 }
          take :: fn(o: Other) -> i64 { o.x }
          main :: fn() -> i64 {
-             var h : Holder = Holder { a = 1, b = 2 }
+             mut h : Holder = Holder { a = 1, b = 2 }
              ref r := h
              take(r)
 }
@@ -1277,7 +1291,7 @@ Holder :: struct { a: i64, b: i64 }
          }
          main :: fn() -> i64 {
              zero := 0
-             var o := Outer { kept = Held { at = unsafe { ptr_cast($Inner, zero) } } }
+             mut o := Outer { kept = Held { at = unsafe { ptr_cast($Inner, zero) } } }
              from_local(o)
              0
          }
@@ -1347,7 +1361,7 @@ Holder :: struct { a: i64, b: i64 }
          \x20   h.view = data\n}\n\
          main :: fn() -> i64 {\n\
          \x20   outer : [1]i64 = [0]\n\
-         \x20   var h : Holder = { view = outer }\n\
+         \x20   mut h : Holder = { view = outer }\n\
          \x20   stash(h)\n\
          \x20   h.view[0]\n}\n",
         "the storage it names dies when the call returns",
@@ -1362,7 +1376,7 @@ Holder :: struct { a: i64, b: i64 }
          \x20   keep(h, data)\n}\n\
          main :: fn() -> i64 {\n\
          \x20   outer : [1]i64 = [0]\n\
-         \x20   var h : Holder = { view = outer }\n\
+         \x20   mut h : Holder = { view = outer }\n\
          \x20   escape(h)\n\
          \x20   h.view[0]\n}\n",
         "the storage it names dies when the call returns",
@@ -1386,7 +1400,7 @@ Holder :: struct { a: i64, b: i64 }
         "Holder :: struct { view: []i64 }\n\
          escape :: fn(seed: []i64) -> Holder {\n\
          \x20   data : [4]i64 = [11, 22, 33, 44]\n\
-         \x20   var h : Holder = { view = seed }\n\
+         \x20   mut h : Holder = { view = seed }\n\
          \x20   h.view = data\n\
          \x20   h\n}\n\
          main :: fn() -> i64 {\n\
@@ -1451,7 +1465,7 @@ Holder :: struct { a: i64, b: i64 }
         "Point :: struct { x: i64, y: i64 }\n\
          both :: fn(mut a: Point, mut b: Point) { a.x = 1  b.x = 2 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var p : Point = { x = 0, y = 0 }\n\
+         \x20   mut p : Point = { x = 0, y = 0 }\n\
          \x20   both(p, p)\n\
          \x20   p.x\n}\n",
         "borrow",
@@ -1459,7 +1473,7 @@ Holder :: struct { a: i64, b: i64 }
     (
         "a_raw_pointer_read_outside_an_unsafe_block",
         "main :: fn() -> i64 {\n\
-         \x20   var n : i64 = 5\n\
+         \x20   mut n : i64 = 5\n\
          \x20   p := ptr_to(n)\n\
          \x20   p^\n}\n",
         "unsafe",
@@ -1467,7 +1481,7 @@ Holder :: struct { a: i64, b: i64 }
     (
         "a_pointer_cast_outside_an_unsafe_block",
         "main :: fn() -> i64 {\n\
-         \x20   var n : i64 = 5\n\
+         \x20   mut n : i64 = 5\n\
          \x20   p := ptr_to(n)\n\
          \x20   q := ptr_cast($i64, p)\n\
          \x20   0\n}\n",
@@ -1529,7 +1543,7 @@ Holder :: struct { a: i64, b: i64 }
         "a_view_read_after_its_container_grew",
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var v := vec_new($i64, 1)\n\
+         \x20   mut v := vec_new($i64, 1)\n\
          \x20   vec_push(v, 111)\n\
          \x20   view := vec_slice(v)\n\
          \x20   vec_push(v, 222)\n\
@@ -1545,10 +1559,10 @@ Holder :: struct { a: i64, b: i64 }
         "a_view_read_at_the_top_of_a_growing_loop",
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var v := vec_new($i64, 1)\n\
+         \x20   mut v := vec_new($i64, 1)\n\
          \x20   vec_push(v, 111)\n\
          \x20   view := vec_slice(v)\n\
-         \x20   var count : i64 = 0\n\
+         \x20   mut count : i64 = 0\n\
          \x20   while (count < 8) {\n\
          \x20       print(\"{}\\n\", view[0])\n\
          \x20       vec_push(v, count)\n\
@@ -1564,7 +1578,7 @@ Holder :: struct { a: i64, b: i64 }
         "a_ref_element_written_after_its_container_grew",
         "import \"vec.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   var v := vec_new($i64, 1)\n\
+         \x20   mut v := vec_new($i64, 1)\n\
          \x20   vec_push(v, 111)\n\
          \x20   ref held := vec_slice(v)[0]\n\
          \x20   vec_push(v, 222)\n\
@@ -1584,7 +1598,7 @@ Holder :: struct { a: i64, b: i64 }
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
-         \x20   var v := vec_new($i64, 1)\n\
+         \x20   mut v := vec_new($i64, 1)\n\
          \x20   vec_push(v, 111)\n\
          \x20   view := passthrough(vec_slice(v))\n\
          \x20   vec_push(v, 222)\n\
@@ -1598,7 +1612,7 @@ Holder :: struct { a: i64, b: i64 }
         "import \"io.frost\"\nimport \"vec.frost\"\n\
          passthrough :: fn(s: []i64) -> []i64 { s }\n\
          main :: fn() -> i64 {\n\
-         \x20   var v := vec_new($i64, 1)\n\
+         \x20   mut v := vec_new($i64, 1)\n\
          \x20   vec_push(v, 111)\n\
          \x20   view := passthrough(vec_slice(v))\n\
          \x20   vec_free(v)\n\
@@ -1678,9 +1692,9 @@ Holder :: struct { a: i64, b: i64 }
          carve :: fn() -> []u8 uses Arena<256> {\n\
          \x20   carve_from(arena)\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
+         \x20   mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }\n\
          \x20   other : [1]u8 = [0]\n\
-         \x20   var escaped : []u8 = other\n\
+         \x20   mut escaped : []u8 = other\n\
          \x20   with arena {\n\
          \x20       escaped = carve()\n\
          \x20   }\n\
@@ -1736,7 +1750,7 @@ Holder :: struct { a: i64, b: i64 }
         "a_compile_time_call_that_never_ends",
         "import \"io.frost\"\n\
          spin :: fn(n: i64) -> i64 {\n\
-         \x20   var i : i64 = 0\n\
+         \x20   mut i : i64 = 0\n\
          \x20   while (i >= 0) { i = i + 1 }\n\
          \x20   i\n}\n\
          FOREVER :: spin(1)\n\
@@ -1752,7 +1766,7 @@ Holder :: struct { a: i64, b: i64 }
          twice :: fn(n: i64) -> i64 { n * 2 }\n\
          Holder :: struct($N: usize) { cells: [twice(N)]i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var h : Holder<4> = Holder<4> { cells = [0; 8] }\n\
+         \x20   mut h : Holder<4> = Holder<4> { cells = [0; 8] }\n\
          \x20   print(\"{}\\n\", slice_len(h.cells))\n\
          \x20   0\n}\n",
         "has no value at compile time",
@@ -2168,9 +2182,9 @@ Holder :: struct { a: i64, b: i64 }
              0
          }
          main :: fn() -> i64 {
-             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var sink : i64 = 0
-             var held : Holder = Holder { p = ptr_to(sink), count = 0 }
+             mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut sink : i64 = 0
+             mut held : Holder = Holder { p = ptr_to(sink), count = 0 }
              with arena { sink = stash(held) }
              sink
          }
@@ -2189,8 +2203,8 @@ Holder :: struct { a: i64, b: i64 }
              unsafe { ptr_cast($i64, slot) }
          }
          main :: fn() -> i64 {
-             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var sink : i64 = 0
+             mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut sink : i64 = 0
              with arena {
                  alloc_int(arena)
              }
@@ -2210,10 +2224,10 @@ Holder :: struct { a: i64, b: i64 }
          import \"fixed.frost\"
          Sprite :: struct { x: i64 }
          main :: fn() -> i64 {
-             var bytes : [256]u8 = [0; 256]
-             var scratch := arena_over(bytes)
-             var backing : [1]Sprite = [Sprite { x = 0 }]
-             var escaped := fixed_over(backing)
+             mut bytes : [256]u8 = [0; 256]
+             mut scratch := arena_over(bytes)
+             mut backing : [1]Sprite = [Sprite { x = 0 }]
+             mut escaped := fixed_over(backing)
              with scratch {
                  run := arena_carve($Sprite, scratch, 4)
                  escaped = fixed_over(run)
@@ -2238,11 +2252,11 @@ Holder :: struct { a: i64, b: i64 }
              unsafe { slice_from($i64, ptr_to(h.len), 1) }
          }
          gather :: fn(run: []i64) -> []i64 {
-             var kept := hold(run)
+             mut kept := hold(run)
              bad(kept)
          }
          main :: fn() -> i64 {
-             var backing : [4]i64 = [1, 2, 3, 4]
+             mut backing : [4]i64 = [1, 2, 3, 4]
              gather(backing)[0]
          }
 ",
@@ -2261,7 +2275,7 @@ Holder :: struct { a: i64, b: i64 }
              Box { room = [0; N], offset = offset }
          }
          main :: fn() -> i64 {
-             var b := fresh(8)
+             mut b := fresh(8)
              b.offset
          }
 ",
@@ -2272,7 +2286,7 @@ Holder :: struct { a: i64, b: i64 }
     (
         "a_frame_pointer_as_the_calls_answer",
         "grab :: fn() -> ^i64 {
-             var x : i64 = 5
+             mut x : i64 = 5
              ptr_to(x)
          }
          main :: fn() -> i64 { 0 }
@@ -2318,7 +2332,7 @@ Holder :: struct { a: i64, b: i64 }
         "import \"io.frost\"
          look :: fn(view: []i64) -> i64 { str_len(view) }
          main :: fn() -> i64 {
-             var run: [4]i64 = [1; 4]
+             mut run: [4]i64 = [1; 4]
              print(\"{}\\n\", look(run))
              0
          }
@@ -2372,9 +2386,9 @@ const ARENA_PRELUDE_ESCAPE: &str =
              unsafe { ptr_cast($i64, slot) }
          }
          main :: fn() -> i64 {
-             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var sink : i64 = 0
-             var escaped : ^i64 = ptr_to(sink)
+             mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut sink : i64 = 0
+             mut escaped : ^i64 = ptr_to(sink)
              with arena {
                  escaped = alloc_int(arena)
              }
@@ -2391,9 +2405,9 @@ const ARENA_PRELUDE_STRUCT: &str =
              unsafe { ptr_cast($i64, slot) }
          }
          main :: fn() -> i64 {
-             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var sink : i64 = 0
-             var held : Holder = Holder { p = ptr_to(sink), count = 0 }
+             mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut sink : i64 = 0
+             mut held : Holder = Holder { p = ptr_to(sink), count = 0 }
              with arena {
                  held = Holder { p = alloc_int(arena), count = 1 }
              }
@@ -2410,9 +2424,9 @@ const ARENA_PRELUDE_FIELD: &str =
              unsafe { ptr_cast($i64, slot) }
          }
          main :: fn() -> i64 {
-             var arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-             var sink : i64 = 0
-             var escaped : ^i64 = ptr_to(sink)
+             mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+             mut sink : i64 = 0
+             mut escaped : ^i64 = ptr_to(sink)
              with arena {
                  inner := Holder { p = alloc_int(arena), count = 1 }
                  escaped = inner.p
@@ -2746,8 +2760,8 @@ fn range_edge_run(operation: &str, left: &str, right: &str) -> String {
         "import \"io.frost\"\n\
          step :: fn(a: i64, b: i64) -> i64 {{ {operation} }}\n\
          main :: fn() -> i64 {{\n\
-         \x20   var a : i64 = {left}\n\
-         \x20   var b : i64 = {right}\n\
+         \x20   mut a : i64 = {left}\n\
+         \x20   mut b : i64 = {right}\n\
          \x20   print(\"{{}}\\n\", step(a, b))\n\
          \x20   0\n}}\n"
     )
@@ -2869,13 +2883,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   a * 10000 + b * 100 + c\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   var c := Counter { n = 0 }\n\
+         \x20   mut c := Counter { n = 0 }\n\
          \x20   print(\"{}\n\", two(bump(c), c.n))\n\
-         \x20   var d := Counter { n = 0 }\n\
+         \x20   mut d := Counter { n = 0 }\n\
          \x20   print(\"{}\n\", two(d.n, bump(d)))\n\
-         \x20   var e := Counter { n = 0 }\n\
+         \x20   mut e := Counter { n = 0 }\n\
          \x20   print(\"{}\n\", three(bump(e), bump(e), e.n))\n\
-         \x20   var f := Counter { n = 0 }\n\
+         \x20   mut f := Counter { n = 0 }\n\
          \x20   print(\"{} {}\n\", bump(f), f.n)\n\
          \x20   0\n\
          }\n",
@@ -2910,8 +2924,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   bytes_as($T, ptr_to(run[0]), count)\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   var backing: [256]u8 = [0; 256]\n\
-         \x20   var b := Bump { data = backing, offset = 0 }\n\
+         \x20   mut backing: [256]u8 = [0; 256]\n\
+         \x20   mut b := Bump { data = backing, offset = 0 }\n\
          \x20   got := carve($i64, $bump_source, b, 3)\n\
          \x20   got[0] = 7\n\
          \x20   got[2] = 9\n\
@@ -2937,9 +2951,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   sizeof(A) * 100 + h.value\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   var plain := Holder<i64> { value = 7, where_from = Heap { } }\n\
-         \x20   var full: Holder<i64, Heap> = plain\n\
-         \x20   var wide := Holder<i64, Bump> {\n\
+         \x20   mut plain := Holder<i64> { value = 7, where_from = Heap { } }\n\
+         \x20   mut full: Holder<i64, Heap> = plain\n\
+         \x20   mut wide := Holder<i64, Bump> {\n\
          \x20       value = 9,\n\
          \x20       where_from = Bump { room = 1 }\n\
          \x20   }\n\
@@ -2993,9 +3007,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          first :: fn($T: Type, run: []$T) -> $T { run[0] }\n\
          widths :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }\n\
          main :: fn() -> i64 {\n\
-         \x20   var b := Box<i64> { held = 41 }\n\
-         \x20   var run: [3]i64 = [4, 5, 6]\n\
-         \x20   var view: []i64 = run\n\
+         \x20   mut b := Box<i64> { held = 41 }\n\
+         \x20   mut run: [3]i64 = [4, 5, 6]\n\
+         \x20   mut view: []i64 = run\n\
          \x20   print(\"{}\n\", unwrap(b))\n\
          \x20   print(\"{}\n\", twice(7))\n\
          \x20   print(\"{}\n\", first(view))\n\
@@ -3003,6 +3017,26 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "41\n7\n4\n24\n",
+    ),
+    // One permission word at both layers, in one body: a slot this frame owns,
+    // that slot handed to a parameter that writes the caller's value, and a
+    // borrow beside them. Which of the two `mut` means comes from where it is
+    // written, and both compilers have to read the same three lines the same way.
+    (
+        "mut_marks_a_slot_and_a_parameter_in_one_body",
+        "import \"io.frost\"\n\
+         Counter :: struct { n: i64 }\n\
+         bump :: fn(mut c: Counter, by: i64) { c.n = c.n + by }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut held := Counter { n = 1 }\n\
+         \x20   mut step: i64 = 2\n\
+         \x20   step = step * 3\n\
+         \x20   bump(held, step)\n\
+         \x20   ref seen := held.n\n\
+         \x20   print(\"{} {}\n\", seen, step)\n\
+         \x20   0\n\
+         }\n",
+        "7 6\n",
     ),
     // A bundle in a container's type. `ops` is written where the container is
     // made and settled off it after, so the two containers below run different
@@ -3025,8 +3059,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   ops.hash(b.first)\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   var kept := bag_new($plain, 21)\n\
-         \x20   var wide := bag_new($doubled, 21)\n\
+         \x20   mut kept := bag_new($plain, 21)\n\
+         \x20   mut wide := bag_new($doubled, 21)\n\
          \x20   print(\"{}\n\", bag_hash(kept))\n\
          \x20   print(\"{}\n\", bag_hash(wide))\n\
          \x20   0\n\
@@ -3061,11 +3095,11 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nimport \"arena.frost\"\n\
          Wide :: struct { v: f32 align(16) }\n\
          main :: fn() -> i64 {\n\
-         \x20   var backing: [256]u8 = [0; 256]\n\
-         \x20   var a := arena_over(backing)\n\
-         \x20   var one := arena_carve($u8, a, 1)\n\
+         \x20   mut backing: [256]u8 = [0; 256]\n\
+         \x20   mut a := arena_over(backing)\n\
+         \x20   mut one := arena_carve($u8, a, 1)\n\
          \x20   one[0] = 3\n\
-         \x20   var wide := arena_carve($Wide, a, 2)\n\
+         \x20   mut wide := arena_carve($Wide, a, 2)\n\
          \x20   print(\"{} {}\n\", arena_used(a), slice_len(wide))\n\
          \x20   print(\"{} {}\n\", one[0], arena_left(a))\n\
          \x20   arena_reset(a, 0)\n\
@@ -3129,10 +3163,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "each_arm_of_the_writer_chain",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-         \x20   var f: f32 = 1.5\n\
-         \x20   var d: f64 = 2.5\n\
-         \x20   var s: i8 = -3\n\
-         \x20   var u: u32 = 4\n\
+         \x20   mut f: f32 = 1.5\n\
+         \x20   mut d: f64 = 2.5\n\
+         \x20   mut s: i8 = -3\n\
+         \x20   mut u: u32 = 4\n\
          \x20   text := \"five\"\n\
          \x20   print(\"{}\n\", f)\n\
          \x20   print(\"{}\n\", d)\n\
@@ -3177,10 +3211,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "a_format_string_writes_every_width",
         "import \"io.frost\"\nmain :: fn() -> i64 {\n\
-         \x20   var a: u8 = 200\n\
-         \x20   var b: i32 = -7\n\
-         \x20   var c: u32 = 9\n\
-         \x20   var d: f32 = 1.5\n\
+         \x20   mut a: u8 = 200\n\
+         \x20   mut b: i32 = -7\n\
+         \x20   mut c: u32 = 9\n\
+         \x20   mut d: f32 = 1.5\n\
          \x20   print(\"{} {} {} {}\n\", a, b, c, d)\n\
          \x20   0\n\
          }\n",
@@ -3208,7 +3242,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "a_string_literal_is_a_list_element",
         "import \"io.frost\"\nlast :: fn(args: $...) -> i64 {\n\
-         \x20   var n: i64 = 0\n\
+         \x20   mut n: i64 = 0\n\
          \x20   for v in args { n = n + 1 }\n\
          \x20   n\n\
          }\n\
@@ -3355,16 +3389,16 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          SIDE :: 6
          Grid :: struct($N: usize) { cells: [N * N]i64, rows: [(N + 1) / 2]i64 }
          filled :: fn($N: usize, mut g: Grid<N>) -> i64 {
-             var i : i64 = 0
+             mut i : i64 = 0
              while (i < N * N) { g.cells[i] = i  i = i + 1 }
-             var total : i64 = 0
+             mut total : i64 = 0
              for value in g.cells { total = total + value }
              total
          }
          main :: fn() -> i64 {
-             var board : [SIDE * 2]i64 = [0; 12]
+             mut board : [SIDE * 2]i64 = [0; 12]
              print(\"{}\\n\", slice_len(board))
-             var g : Grid<4> = Grid<4> { cells = [0; 16], rows = [0; 2] }
+             mut g : Grid<4> = Grid<4> { cells = [0; 16], rows = [0; 2] }
              print(\"{}\\n\", filled(g))
              print(\"{}\\n\", slice_len(g.rows))
              0
@@ -3385,16 +3419,16 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          import \"slab.frost\"
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
-             var world : Slab<Entity, 130> = slab_new()
+             mut world : Slab<Entity, 130> = slab_new()
              slab_reset(world)
-             var made : [130]Handle<Entity> = [0; 130]
-             var i : i64 = 0
+             mut made : [130]Handle<Entity> = [0; 130]
+             mut i : i64 = 0
              while (i < 130) {
                  made[i] = slab_insert(world,
                      Entity { hp = i })
                  i = i + 1
              }
-             var d : i64 = 0
+             mut d : i64 = 0
              while (d < 130) {
                  if (d % 3 == 0) {
                      assert(slab_release(world, made[d]))
@@ -3402,9 +3436,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  d = d + 1
              }
              assert(slab_release(world, made[64]))
-             var total : i64 = 0
-             var seen : i64 = 0
-             var last : i64 = -1
+             mut total : i64 = 0
+             mut seen : i64 = 0
+             mut last : i64 = -1
              for rank, slot in live_slots(world) {
                  assert(slot > last)
                  assert(rank == seen)
@@ -3435,8 +3469,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
-             var active : Slab<Entity, 4> = slab_new()
-             var pending : Slab<Entity, 4> = slab_new()
+             mut active : Slab<Entity, 4> = slab_new()
+             mut pending : Slab<Entity, 4> = slab_new()
              slab_reset(active)
              slab_reset(pending)
              a := slab_insert(active, Entity { hp = 11 })
@@ -3448,8 +3482,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              assert(slab_slot(active, b) == (-1))
              assert(slab_release(active, a))
              assert(slab_alive(active, a) == false)
-             var one : columns<Entity, 4> = columns_new()
-             var two : columns<Entity, 4> = columns_new()
+             mut one : columns<Entity, 4> = columns_new()
+             mut two : columns<Entity, 4> = columns_new()
              columns_reset(one)
              columns_reset(two)
              p := columns_insert(one, Entity { hp = 33 })
@@ -3476,16 +3510,16 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Particle :: struct { x: i64, y: i64 }
          main :: fn() -> i64 {
-             var c : columns<Particle, 130> = columns_new()
+             mut c : columns<Particle, 130> = columns_new()
              columns_reset(c)
-             var made : [130]Handle<Particle> = [0; 130]
-             var i : i64 = 0
+             mut made : [130]Handle<Particle> = [0; 130]
+             mut i : i64 = 0
              while (i < 130) {
                  made[i] = columns_insert(c,
                      Particle { x = i, y = 0 })
                  i = i + 1
              }
-             var d : i64 = 0
+             mut d : i64 = 0
              while (d < 130) {
                  if (d % 3 == 0) {
                      assert(columns_release(c, made[d]))
@@ -3493,9 +3527,9 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
                  d = d + 1
              }
              assert(columns_release(c, made[64]))
-             var total : i64 = 0
-             var seen : i64 = 0
-             var last : i64 = -1
+             mut total : i64 = 0
+             mut seen : i64 = 0
+             mut last : i64 = -1
              for rank, slot in live_slots(c) {
                  assert(slot > last)
                  assert(rank == seen)
@@ -3524,31 +3558,31 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
-             var c : columns<Cell, 96> = columns_new()
+             mut c : columns<Cell, 96> = columns_new()
              columns_reset(c)
-             var made : [96]Handle<Cell> = [0; 96]
-             var i : i64 = 0
+             mut made : [96]Handle<Cell> = [0; 96]
+             mut i : i64 = 0
              while (i < 96) {
                  made[i] = columns_insert(c, Cell { v = i })
                  i = i + 1
              }
-             var d : i64 = 0
+             mut d : i64 = 0
              while (d < 96) {
                  if (d % 5 == 0) {
                      assert(columns_release(c, made[d]))
                  }
                  d = d + 1
              }
-             var counted : i64 = 0
+             mut counted : i64 = 0
              for slot in live_slots(c) {
                  if (c.v[slot] % 2 == 0) { continue }
                  if (c.v[slot] > 70) { break }
                  counted = counted + 1
              }
              print(\"{}\\n\", counted)
-             var empty : columns<Cell, 8> = columns_new()
+             mut empty : columns<Cell, 8> = columns_new()
              columns_reset(empty)
-             var none : i64 = 0
+             mut none : i64 = 0
              for slot in live_slots(empty) { none = none + 1 }
              print(\"{}\\n\", none)
              0
@@ -3567,7 +3601,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "a_str_is_a_slice_of_bytes",
         "import \"io.frost\"
          main :: fn() -> i64 {
-             var bytes : [3]u8 = [104, 105, 33]
+             mut bytes : [3]u8 = [104, 105, 33]
              text : str = bytes
              print(\"{}\\n\", text)
              print(\"{}\\n\", slice_len(text))
@@ -3653,7 +3687,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              return { row = [4, 5, 6], count = 3 }
          }
          main :: fn() -> i64 {
-             var data : [4]i64 = [10, 20, 30, 40]
+             mut data : [4]i64 = [10, 20, 30, 40]
              view, count := split(data)
              print(\"{}\\n\", view[0] + count)
              text, length := label()
@@ -3703,7 +3737,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              view[0] = 99
          }
          main :: fn() -> i64 {
-             var data : [4]i64 = [10, 20, 30, 40]
+             mut data : [4]i64 = [10, 20, 30, 40]
              print(\"{}\\n\", by_let(data))
              print(\"{}\\n\", by_literal(data))
              print(\"{}\\n\", by_argument(data))
@@ -3744,7 +3778,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              o.answer = build(a)
          }
          main :: fn() -> i64 {
-             var o := Outer { answer = Answer { held = made() }, source = made() }
+             mut o := Outer { answer = Answer { held = made() }, source = made() }
              from_field(o)
              from_temporary(o)
              from_local(o)
@@ -3796,8 +3830,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
              held.value = held.value + more
          }
          main :: fn() -> i64 {
-             var held := Held { value = 1 }
-             var table := Table {
+             mut held := Held { value = 1 }
+             mut table := Table {
                  call = unsafe { ptr_cast($fn(^u8, i64), add) } }
              table.call(unsafe { ptr_cast($u8, ptr_to(held)) }, 41)
              print(\"{}\\n\", held.value)
@@ -3887,8 +3921,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nFile :: linear struct { fd: i64 }\n\
          close :: fn(move f: File) -> i64 { f.fd }\n\
          run :: fn() -> i64 {\n\
-         \x20   var i : i64 = 0\n\
-         \x20   var total : i64 = 0\n\
+         \x20   mut i : i64 = 0\n\
+         \x20   mut total : i64 = 0\n\
          \x20   while (i < 4) {\n\
          \x20       f := File { fd = i }\n\
          \x20       total = total + close(f)\n\
@@ -4054,13 +4088,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Trio :: struct { a: Small, b: Small, tail: i64 }\n\
          take :: fn(held: Small) -> Small { held }\n\
          main :: fn() -> i64 {\n\
-         \x20   var t := Trio { a = Small { value = 0.0 },\n\
+         \x20   mut t := Trio { a = Small { value = 0.0 },\n\
          \x20       b = Small { value = 2.5 }, tail = 4242 }\n\
          \x20   t.a = take(Small { value = 1.5 })\n\
          \x20   print(\"{}\\n\", t.b.value == 2.5)\n\
          \x20   print(\"{}\\n\", t.tail)\n\
-         \x20   var held : [3]Small = [Small { value = 0.0 }; 3]\n\
-         \x20   var guard : i64 = 777\n\
+         \x20   mut held : [3]Small = [Small { value = 0.0 }; 3]\n\
+         \x20   mut guard : i64 = 777\n\
          \x20   held[1] = take(Small { value = 3.5 })\n\
          \x20   print(\"{}\\n\", held[2].value == 0.0)\n\
          \x20   print(\"{}\\n\", guard)\n    0\n}\n",
@@ -4080,7 +4114,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   out[0] = 7\n\
          \x20   out[3] = out[0] + 1\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var held : [4]i64 = [0; 4]\n\
+         \x20   mut held : [4]i64 = [0; 4]\n\
          \x20   fill(held)\n\
          \x20   print(\"{}\\n\", held[0])\n\
          \x20   print(\"{}\\n\", held[3])\n    0\n}\n",
@@ -4113,7 +4147,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "type_named_before_it_is_declared",
         "import \"io.frost\"\nmake :: fn() -> i64 {\n\
-         \x20   var held := Later { value = 3 }\n\
+         \x20   mut held := Later { value = 3 }\n\
          \x20   held.value\n}\n\
          Later :: struct { value: i64 }\n\
          main :: fn() -> i64 {\n    print(\"{}\\n\", make())\n    0\n}\n",
@@ -4125,7 +4159,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nHolder :: struct { inner: Later, tag: i64 }\n\
          Later :: struct { value: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   var h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
+         \x20   mut h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
          \x20   print(\"{}\\n\", h.inner.value)\n    print(\"{}\\n\", sizeof(Holder))\n    0\n}\n",
         "7\n16\n",
     ),
@@ -4146,7 +4180,7 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          Store :: struct { bag: Bag<Cell>, count: i64 }
          reach :: fn(mut a: Store) -> i64 { only(a.bag).value }
          main :: fn() -> i64 {
-             var s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
+             mut s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
              print(\"{}\\n\", reach(s))
     0
 }
@@ -4183,20 +4217,20 @@ many
     (
         "the_widest_unsigned_types_are_unsigned",
         "import \"io.frost\"\nmain :: fn() -> i64 {
-    var big : u64 = 9223372036854775807
+    mut big : u64 = 9223372036854775807
     big = big + 1
-    var two : u64 = 2
-    var one : u64 = 1
+    mut two : u64 = 2
+    mut one : u64 = 1
     print(\"{}\\n\", big / two)
     print(\"{}\\n\", big % 3)
     if (big > one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
     if (big < one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
     print(\"{}\\n\", big >> 1)
-    var span : usize = 9223372036854775807
+    mut span : usize = 9223372036854775807
     span = span + 2
     if (span > one) { print(\"{}\\n\", 1) } else { print(\"{}\\n\", 0) }
     print(\"{}\\n\", span / two)
-    var n : i64 = -100
+    mut n : i64 = -100
     print(\"{}\\n\", n / 7)
     print(\"{}\\n\", n >> 2)
     0
@@ -4225,7 +4259,7 @@ many
         "import \"io.frost\"\nmain :: fn() -> i64 {
     print(\"{}\\n\", 1 << 63)
     print(\"{}\\n\", 1 << 40)
-    var bits : i64 = 0
+    mut bits : i64 = 0
     bits = bits | (1 << 63)
     print(\"{}\\n\", bits)
     0
@@ -4246,18 +4280,18 @@ many
     (
         "a_for_over_a_range",
         "import \"io.frost\"\nmain :: fn() -> i64 {
-    var total : i64 = 0
+    mut total : i64 = 0
     for i in 0..6 {
         total = total + i
     }
     print(\"{}\\n\", total)
-    var closed : i64 = 0
+    mut closed : i64 = 0
     for i in 1..=4 {
         closed = closed + i
     }
     print(\"{}\\n\", closed)
     n := 3
-    var counted : i64 = 0
+    mut counted : i64 = 0
     for i in 0..n {
         counted = counted + 1
     }
@@ -4335,13 +4369,13 @@ swap :: fn(mut a: $T, mut b: $T) {
 bytes :: fn($T: Type) -> i64 { sizeof(T) }
 
 main :: fn() -> i64 {
-    var u := Vec3 { x = 1, y = 2, z = 3 }
-    var v := Vec3 { x = 4, y = 5, z = 6 }
+    mut u := Vec3 { x = 1, y = 2, z = 3 }
+    mut v := Vec3 { x = 4, y = 5, z = 6 }
     swap(u, v)
     print(\"{}\\n\", u.x)
     print(\"{}\\n\", v.x)
-    var a : i64 = 100
-    var b : i64 = 200
+    mut a : i64 = 100
+    mut b : i64 = 200
     swap(a, b)
     print(\"{}\\n\", a)
     print(\"{}\\n\", bytes($Vec3))
@@ -4380,7 +4414,7 @@ widest :: fn(mut a: $T, by: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var u := Vec3 { x = 3, y = 4, z = 5 }
+    mut u := Vec3 { x = 3, y = 4, z = 5 }
     scale(10, u)
     print(\"{}\\n\", u.x)
     print(\"{}\\n\", widest(u, 6))
@@ -4406,7 +4440,7 @@ main :: fn() -> i64 {
 }
 
 counted :: fn(v: []$T) -> i64 {
-    var n : i64 = 0
+    mut n : i64 = 0
     for x in v {
         n = n + 1
     }
@@ -4440,7 +4474,7 @@ main :: fn() -> i64 {
     (
         "a_loop_variable_read_carries_no_storage",
         "import \"io.frost\"\nwidest :: fn(v: []i64) -> i64 {
-    var best : i64 = 0
+    mut best : i64 = 0
     for x in v {
         if (x > best) { best = x }
     }
@@ -4448,7 +4482,7 @@ main :: fn() -> i64 {
 }
 
 counted :: fn(v: []$T) -> i64 {
-    var n : i64 = 0
+    mut n : i64 = 0
     for index, x in v {
         n = index
     }
@@ -4716,7 +4750,7 @@ main :: fn() -> i64 {
          \x20   count : i64 = held\n\
          \x20   count + 1\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var m : Meters = 41\n\
+         \x20   mut m : Meters = 41\n\
          \x20   print(\"{}\\n\", far(ptr_to(m)))\n\
          \x20   0\n}\n",
         "42\n",
@@ -4734,7 +4768,7 @@ main :: fn() -> i64 {
          \x20   }\n\
          \x20   0\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var g := no_grip()\n\
+         \x20   mut g := no_grip()\n\
          \x20   print(\"{}\\n\", same(ptr_to(g)))\n\
          \x20   0\n}\n",
         "1\n",
@@ -4752,8 +4786,8 @@ main :: fn() -> i64 {
          main :: fn() -> i64 {\n\
          \x20   named : f32 = FLOOR + RISE\n\
          \x20   written : f32 = -2.1 + 1.1\n\
-         \x20   var a : f32 = -2.1\n\
-         \x20   var b : f32 = 1.1\n\
+         \x20   mut a : f32 = -2.1\n\
+         \x20   mut b : f32 = 1.1\n\
          \x20   computed := a + b\n\
          \x20   wide : f64 = -2.1 + 1.1\n\
          \x20   print(\"{}\\n\", cast($i64, named * 100.0))\n\
@@ -4814,11 +4848,11 @@ main :: fn() -> i64 {
          \x20   print(\"{}\\n\", texts[1][0])\n\
          \x20   held : Holder = { rows = pair }\n\
          \x20   print(\"{}\\n\", held.rows[0][1])\n\
-         \x20   var v := vec_new($i64, 2)\n\
+         \x20   mut v := vec_new($i64, 2)\n\
          \x20   vec_push(v, 55)\n\
          \x20   print(\"{}\\n\", vec_slice(v)[0])\n\
          \x20   vec_free(v)\n\
-         \x20   var grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
+         \x20   mut grid : [2][2]i64 = [[7, 8], [9, 10]]\n\
          \x20   print(\"{}\\n\", grid[1][1])\n\
          \x20   0\n}\n",
         "3\n99\n2\n55\n10\n",
@@ -4856,7 +4890,7 @@ main :: fn() -> i64 {
              print(\"{}\\n\", t.a + t.b + t.c)
              w := Wide { a = 2, b = 400, c = 6 }
              print(\"{}\\n\", w.a + w.b + w.c)
-             var row : [4]Tight = [Tight { a = 0, b = 0, c = 0 }; 4]
+             mut row : [4]Tight = [Tight { a = 0, b = 0, c = 0 }; 4]
              row[3] = t
              print(\"{}\\n\", row[3].b)
              0
@@ -4905,7 +4939,7 @@ main :: fn() -> i64 {
         "import \"io.frost\"
          round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
          next_power_of_two :: fn(n: i64) -> i64 {
-             var held : i64 = 1
+             mut held : i64 = 1
              while (held < n) { held = held * 2 }
              held
          }
@@ -4914,8 +4948,8 @@ main :: fn() -> i64 {
              n + 1
          }
          digits :: fn(n: i64) -> i64 {
-             var left := n
-             var seen : i64 = 0
+             mut left := n
+             mut seen : i64 = 0
              while (true) {
                  seen = seen + 1
                  left = left / 10
@@ -4940,7 +4974,7 @@ main :: fn() -> i64 {
              print(\"{}\\n\", AROUND)
              print(\"{}\\n\", WIDE)
              print(\"{}\\n\", sizeof(Buffer))
-             var held : [next_power_of_two(100)]i64 = [0; 128]
+             mut held : [next_power_of_two(100)]i64 = [0; 128]
              print(\"{}\\n\", slice_len(held))
              0
          }
@@ -4992,8 +5026,8 @@ main :: fn() -> i64 {
          }
          total :: fn() -> i64 {
              held := [1, 2, 3, 4]
-             var sum : i64 = 0
-             var i : i64 = 0
+             mut sum : i64 = 0
+             mut i : i64 = 0
              while (i < 4) { sum = sum + held[i]  i = i + 1 }
              sum
          }
@@ -5044,7 +5078,7 @@ main :: fn() -> i64 {
              print(\"{}\\n\", MIX)
              print(\"{}\\n\", ROLL)
              print(\"{}\\n\", BACK)
-             var a : i64 = 9223372036854775807
+             mut a : i64 = 9223372036854775807
              print(\"{}\\n\", wrap_mul(a, 2654435761))
              0
          }
@@ -5059,14 +5093,14 @@ main :: fn() -> i64 {
         "import \"io.frost\"
          import \"columns.frost\"
          pow2 :: fn(n: i64) -> i64 {
-             var held : i64 = 1
+             mut held : i64 = 1
              while (held < n) { held = held * 2 }
              held
          }
          Particle :: struct { x: i64 }
          Buffer :: struct { bytes: [pow2(5)]u8 }
          main :: fn() -> i64 {
-             var c : columns<Particle, pow2(5)> = columns_new()
+             mut c : columns<Particle, pow2(5)> = columns_new()
              columns_reset(c)
              h := columns_insert(c, Particle { x = 7 })
              print(\"{}\\n\", c[h].x)
@@ -5091,7 +5125,7 @@ main :: fn() -> i64 {
          blend :: fn(a: [4]f32, b: [4]f32) -> [4]f32 { a * b + a }
          ramp :: fn(k: f32) -> [4]f32 { [k, k * 2.0, k * 3.0, k * 4.0] }
          show :: fn(v: [4]f32) {
-             var i : i64 = 0
+             mut i : i64 = 0
              while (i < 4) {
                  print(\"{}\\n\", cast($f64, v[i]))
                  i = i + 1
@@ -5117,8 +5151,8 @@ main :: fn() -> i64 {
              wide : [8]f32 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
              doubled := wide * 2.0
              print(\"{}\\n\", cast($f64, doubled[7]))
-             var w : [4]i32 = [1, 2, 3, 4]
-             var x : [4]i32 = [10, 20, 30, 40]
+             mut w : [4]i32 = [1, 2, 3, 4]
+             mut x : [4]i32 = [10, 20, 30, 40]
              y := w + x
              z := x * 2
              q := x & 12
@@ -5173,7 +5207,7 @@ main :: fn() -> i64 {
         "a_break_in_a_match_arm_leaves_the_loop",
         "import \"io.frost\"
          main :: fn() -> i64 {
-             var i : i64 = 0
+             mut i : i64 = 0
              while (i < 5) {
                  match i {
                      case 2: { break }
@@ -5386,18 +5420,18 @@ main :: fn() -> i64 {
              }
          }
          main :: fn() -> i64 {
-             var loose: Phase = .Opening
+             mut loose: Phase = .Opening
              loose = .Draining
              print(\"{}\\n\", reading(loose))
-             var h: Holder = { phase = .Opening, mark = 1 }
+             mut h: Holder = { phase = .Opening, mark = 1 }
              h.phase = .Draining
              print(\"{}\\n\", reading(h.phase))
              begin(h)
              print(\"{}\\n\", reading(h.phase))
-             var p: Point = { x = 1, y = 2 }
+             mut p: Point = { x = 1, y = 2 }
              p = { x = 5, y = 6 }
              print(\"{}\\n\", p.x + p.y)
-             var row: [2]Point = [{ x = 1, y = 1 }, { x = 2, y = 2 }]
+             mut row: [2]Point = [{ x = 1, y = 1 }, { x = 2, y = 2 }]
              row[1] = { x = 7, y = 8 }
              print(\"{}\\n\", row[1].x + row[1].y)
              0
@@ -5435,7 +5469,7 @@ main :: fn() -> i64 {
          \x20       r\n\
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
-         \x20   var cells : [4]i64 = [7, 8, 9, 10]\n\
+         \x20   mut cells : [4]i64 = [7, 8, 9, 10]\n\
          \x20   b := Bag { data = unsafe { ptr_to(cells[0]) }, count = 4 }\n\
          \x20   ref bound := cells[2]\n\
          \x20   print(\"{}\n\", bound == 9)\n\
@@ -5487,10 +5521,10 @@ main :: fn() -> i64 {
 }
          widened :: fn(b: Bytes, v: $T) -> i64 { byte(b, 0) + sizeof(T) }
          main :: fn() -> i64 {
-             var flags : [2]bool = [true, false]
-             var reals : [2]f64 = [1.5, 2.5]
-             var bytes : [2]u8 = [200, 3]
-             var six : i64 = 6
+             mut flags : [2]bool = [true, false]
+             mut reals : [2]f64 = [1.5, 2.5]
+             mut bytes : [2]u8 = [200, 3]
+             mut six : i64 = 6
              t := Truths { data = ptr_to(flags[0]), count = 2 }
              r := Reals { data = ptr_to(reals[0]), count = 2 }
              b := Bytes { data = ptr_to(bytes[0]), count = 2 }
@@ -5534,7 +5568,7 @@ main :: fn() -> i64 {
          plus :: fn(a: Bag<$T>, n: i64) -> i64 { only(a) + n }
          width :: fn(a: Bag<$T>) -> i64 { sizeof(T) }
          main :: fn() -> i64 {
-             var carrier : Bag<i64> = Bag { one = 7 }
+             mut carrier : Bag<i64> = Bag { one = 7 }
              print(\"{}\\n\", plus(carrier, 5))
              print(\"{}\\n\", width(carrier))
              0

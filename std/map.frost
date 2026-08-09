@@ -8,7 +8,7 @@
 // calls, the map holds no function pointer, and every operation over one map
 // hashes it the way it was filled.
 //
-//     var ages := map_new($Text, $i64, $text_keys, 16)
+//     mut ages := map_new($Text, $i64, $text_keys, 16)
 //     map_put(ages, text("ada"), 36)
 //     held := map_get(ages, text("ada"), 0)
 //
@@ -66,7 +66,7 @@ Hashing :: struct($K: Type) {
 // the low bits it keeps are the answer. Ordinary arithmetic refuses a result
 // that does not fit, which is what a count wants and what this does not.
 i64_hash :: fn(key: i64) -> i64 {
-    var h := wrap_mul(key, 2654435761)
+    mut h := wrap_mul(key, 2654435761)
     h = wrap_add(h, h / 4096)
     h
 }
@@ -79,7 +79,7 @@ i64_same :: fn(a: i64, b: i64) -> bool {
 // strings that read the same are one key however each was built. The mask keeps
 // the running value positive, since the slot is a remainder of it.
 str_hash :: fn(key: str) -> i64 {
-    var h: i64 = 2166136261
+    mut h: i64 = 2166136261
     for index, byte in key {
         h = wrap_add(wrap_mul(h, 33), byte) & 4611686018427387903
     }
@@ -110,7 +110,7 @@ str_same :: fn(a: str, b: str) -> bool {
     if (str_len(a) != str_len(b)) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < str_len(a)) {
         if (a[i] != b[i]) {
             return false
@@ -135,12 +135,12 @@ map_new :: fn(
     $ops: Hashing<K>,
     capacity: i64
 ) -> Map<K, V, ops> {
-    var cap: i64 = 8
+    mut cap: i64 = 8
     while (cap < capacity) { cap = cap * 2 }
     keys := heap_slice($K, cap)
     values := heap_slice($V, cap)
-    var state := heap_slice($Slot, cap)
-    var i: i64 = 0
+    mut state := heap_slice($Slot, cap)
+    mut i: i64 = 0
     while (i < cap) {
         state[i] = Slot::Empty
         i = i + 1
@@ -177,7 +177,7 @@ map_find :: fn(
     ops>,
     key: $K
 ) -> i64 {
-    var i := ops.hash(key) % m.cap
+    mut i := ops.hash(key) % m.cap
     if (i < 0) {
         i = -i
     }
@@ -211,9 +211,9 @@ map_insert :: fn(
     if (m.state[slot] != Slot::Used) {
         m.count = m.count + 1
     }
-    var keys := m.keys
-    var values := m.values
-    var state := m.state
+    mut keys := m.keys
+    mut values := m.values
+    mut state := m.state
     keys[slot] = key
     values[slot] = value
     state[slot] = Slot::Used
@@ -230,8 +230,8 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V, ops>) {
     room := old_cap * 2
     m.keys = heap_slice($K, room)
     m.values = heap_slice($V, room)
-    var fresh_state := heap_slice($Slot, room)
-    var s: i64 = 0
+    mut fresh_state := heap_slice($Slot, room)
+    mut s: i64 = 0
     while (s < room) {
         fresh_state[s] = Slot::Empty
         s = s + 1
@@ -239,7 +239,7 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V, ops>) {
     m.state = fresh_state
     m.cap = room
     m.count = 0
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < old_cap) {
         if (old_state[i] == Slot::Used) {
             map_insert(m, old_keys[i], old_values[i])
@@ -321,7 +321,7 @@ map_remove :: fn(
     slot := map_find(m, key)
     found := m.state[slot] == Slot::Used
     if (found) {
-        var state := m.state
+        mut state := m.state
         state[slot] = Slot::Gone
         m.count = m.count - 1
     }
@@ -339,8 +339,8 @@ map_clear :: fn(
     V,
     ops>
 ) where !is_linear(K) && !is_linear(V) {
-    var state := m.state
-    var i: i64 = 0
+    mut state := m.state
+    mut i: i64 = 0
     while (i < m.cap) {
         state[i] = Slot::Empty
         i = i + 1
@@ -362,7 +362,7 @@ cell_same :: fn(a: Cell, b: Cell) -> bool {
 cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
 
 test "a value is put and read back" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
+    mut m := map_new($i64, $i64, $i64_keys, 8)
     map_put(m, 1, 10)
     map_put(m, 2, 20)
     assert(map_len(m) == 2)
@@ -377,7 +377,7 @@ test "a value is put and read back" {
 // this is a run of slices, and the compiler that reads it has to hold that shape
 // through the instantiation and out the other side.
 test "a slice is a key" {
-    var m := map_new($str, $i64, $str_keys, 8)
+    mut m := map_new($str, $i64, $str_keys, 8)
     map_put(m, "ada", 36)
     map_put(m, "grace", 45)
     assert(map_len(m) == 2)
@@ -389,7 +389,7 @@ test "a slice is a key" {
 }
 
 test "a key put twice holds the second value" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
+    mut m := map_new($i64, $i64, $i64_keys, 8)
     map_put(m, 7, 1)
     map_put(m, 7, 2)
     assert(map_len(m) == 1)
@@ -398,8 +398,8 @@ test "a key put twice holds the second value" {
 }
 
 test "a removed key is gone and the ones after it are still found" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
-    var i: i64 = 0
+    mut m := map_new($i64, $i64, $i64_keys, 8)
+    mut i: i64 = 0
     while (i < 6) {
         map_put(m, i, i * 100)
         i = i + 1
@@ -413,14 +413,14 @@ test "a removed key is gone and the ones after it are still found" {
 }
 
 test "the table grows and keeps everything it held" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
-    var i: i64 = 0
+    mut m := map_new($i64, $i64, $i64_keys, 8)
+    mut i: i64 = 0
     while (i < 200) {
         map_put(m, i, i + 1)
         i = i + 1
     }
     assert(map_len(m) == 200)
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < 200) {
         assert(map_get(m, k, 0) == k + 1)
         k = k + 1
@@ -429,7 +429,7 @@ test "the table grows and keeps everything it held" {
 }
 
 test "a string is a key by what it holds rather than where it is" {
-    var ages := map_new($Text, $i64, $text_keys, 8)
+    mut ages := map_new($Text, $i64, $text_keys, 8)
     map_put(ages, text("ada"), 36)
     map_put(ages, text("grace"), 45)
     assert(map_get(ages, text("ada"), 0) == 36)
@@ -443,7 +443,7 @@ test "a string is a key by what it holds rather than where it is" {
 }
 
 test "a string key survives the table growing" {
-    var seen := map_new($Text, $i64, $text_keys, 8)
+    mut seen := map_new($Text, $i64, $text_keys, 8)
     map_put(seen, text("alpha"), 1)
     map_put(seen, text("beta"), 2)
     map_put(seen, text("gamma"), 3)
@@ -460,7 +460,7 @@ test "a string key survives the table growing" {
 }
 
 test "a struct is a key when it says how it hashes" {
-    var grid := map_new($Cell, $i64, $cell_keys, 8)
+    mut grid := map_new($Cell, $i64, $cell_keys, 8)
     map_put(grid, Cell { x = 1, y = 2 }, 12)
     map_put(grid, Cell { x = 3, y = 4 }, 34)
     assert(map_get(grid, Cell { x = 1, y = 2 }, 0) == 12)
@@ -470,7 +470,7 @@ test "a struct is a key when it says how it hashes" {
 }
 
 test "a map holds a struct value" {
-    var places := map_new($i64, $Cell, $i64_keys, 8)
+    mut places := map_new($i64, $Cell, $i64_keys, 8)
     map_put(places, 1, Cell { x = 5, y = 6 })
     held := map_get(places, 1, Cell { x = 0, y = 0 })
     assert(held.x == 5)
@@ -480,8 +480,8 @@ test "a map holds a struct value" {
 
 test "a map gives back every block it took, however far it grew" {
     before := heap_live()
-    var m := map_new($i64, $i64, $i64_keys, 8)
-    var i: i64 = 0
+    mut m := map_new($i64, $i64, $i64_keys, 8)
+    mut i: i64 = 0
     while (i < 500) {
         map_put(m, i, i)
         i = i + 1
@@ -492,7 +492,7 @@ test "a map gives back every block it took, however far it grew" {
 
 test "a map of text gives back every block it took" {
     before := heap_live()
-    var m := map_new($Text, $i64, $text_keys, 8)
+    mut m := map_new($Text, $i64, $text_keys, 8)
     map_put(m, text("one"), 1)
     map_put(m, text("two"), 2)
     map_free(m)
@@ -500,7 +500,7 @@ test "a map of text gives back every block it took" {
 }
 
 test "clearing a map keeps its storage and forgets its keys" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
+    mut m := map_new($i64, $i64, $i64_keys, 8)
     map_put(m, 1, 10)
     map_put(m, 2, 20)
     settled := heap_live()
@@ -514,8 +514,8 @@ test "clearing a map keeps its storage and forgets its keys" {
 }
 
 test "a tombstone is stepped over rather than stopped at" {
-    var m := map_new($i64, $i64, $i64_keys, 8)
-    var i: i64 = 0
+    mut m := map_new($i64, $i64, $i64_keys, 8)
+    mut i: i64 = 0
     while (i < 6) {
         map_put(m, i * 8, i)
         i = i + 1
@@ -523,7 +523,7 @@ test "a tombstone is stepped over rather than stopped at" {
     // Every key lands on the same slot before probing, so removing the first
     // one leaves a tombstone the rest are found through.
     assert(map_remove(m, 0))
-    var k: i64 = 1
+    mut k: i64 = 1
     while (k < 6) {
         assert(map_get(m, k * 8, -1) == k)
         k = k + 1

@@ -94,7 +94,7 @@ allocator down leave it out of the parameter list:
 
 ```frost,sketch
 gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
-    var kept := fixed_over(bump_carve($i64, bump, slice_len(world)))
+    mut kept := fixed_over(bump_carve($i64, bump, slice_len(world)))
     for value in world {
         if (value > over) { fixed_push(kept, value) }
     }
@@ -121,8 +121,8 @@ the program, which knows which allocator it built.
 
 ```frost,sketch
 main :: fn() -> i64 {
-    var scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
-    var round: i64 = 0
+    mut scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
+    mut round: i64 = 0
     while (round < 3) {
         mark := bump_mark(scratch)
         with scratch {
@@ -159,9 +159,9 @@ carve_one :: fn($N: usize, mut b: Bump<N>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    var scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
-    var sink: i64 = 0
-    var escaped: ^i64 = ptr_to(sink)
+    mut scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
+    mut sink: i64 = 0
+    mut escaped: ^i64 = ptr_to(sink)
     with scratch {
         escaped = carve_one($1024, scratch)
     }
@@ -190,7 +190,7 @@ saying which allocator it came from.
 
 ```frost,sketch
 with scratch {
-    var visible := fixed_over(arena_carve($Sprite, scratch, 64))
+    mut visible := fixed_over(arena_carve($Sprite, scratch, 64))
     fixed_push(visible, sprite)
 }
 ```
@@ -203,7 +203,7 @@ heap elsewhere at no cost either way.
 
 ```frost,sketch
 with scratch {
-    var visible := carve($Sprite, $arena_source, scratch, 64)
+    mut visible := carve($Sprite, $arena_source, scratch, 64)
 }
 ```
 

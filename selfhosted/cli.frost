@@ -104,7 +104,7 @@ value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
     if (argument_len <= flag_len) {
         return ""
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < flag_len) {
         if (byte_at(argument, k) != byte_at(flag, k)) {
             return ""
@@ -128,7 +128,7 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
     first_len := cstr_len(first)
     second_len := cstr_len(second)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(first_len + second_len + 1)) }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < first_len) {
         byte_set(out, k, byte_at(first, k))
         k = k + 1
@@ -145,9 +145,9 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
 // A string with a number after it, for the per-module file names an
 // incremental build works with: `<build>/m3.s` and `<build>/m3.o`.
 join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
-    var digits: i64 = 1
-    var scale: i64 = 1
-    var counted := number
+    mut digits: i64 = 1
+    mut scale: i64 = 1
+    mut counted := number
     while (counted >= 10) {
         counted = counted / 10
         digits = digits + 1
@@ -158,13 +158,13 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     out := unsafe {
         ptr_cast($i8, frost_rt_alloc(first_len + digits + last_len + 1))
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < first_len) {
         byte_set(out, k, byte_at(first, k))
         k = k + 1
     }
-    var value := number
-    var written: i64 = 0
+    mut value := number
+    mut written: i64 = 0
     while (written < digits) {
         digit := value / scale
         byte_set(out, first_len + written, CH_0 + digit)
@@ -193,8 +193,8 @@ file_checksum :: fn(path: ^i8) -> i64 {
     }
     text := unsafe { frost_rt_read_file(path) }
     length := cstr_len(text)
-    var sum: i64 = length + 1
-    var k: i64 = 0
+    mut sum: i64 = length + 1
+    mut k: i64 = 0
     while (k < length) {
         sum = wrap_add(wrap_mul(sum, 131), byte_at(text, k))
         k = k + 1
@@ -207,8 +207,8 @@ file_checksum :: fn(path: ^i8) -> i64 {
 // there is nothing to read back and checksum.
 text_checksum :: fn(text: str) -> i64 {
     length := str_len(text)
-    var sum: i64 = length + 1
-    var k: i64 = 0
+    mut sum: i64 = length + 1
+    mut k: i64 = 0
     while (k < length) {
         sum = wrap_add(wrap_mul(sum, 131), text[k])
         k = k + 1
@@ -224,9 +224,9 @@ stored_checksum :: fn(path: ^i8) -> i64 {
     }
     text := unsafe { frost_rt_read_file(path) }
     length := cstr_len(text)
-    var value: i64 = 0
-    var negative: bool = false
-    var k: i64 = 0
+    mut value: i64 = 0
+    mut negative: bool = false
+    mut k: i64 = 0
     while (k < length) {
         byte := byte_at(text, k)
         if (byte == CH_MINUS) {
@@ -263,8 +263,8 @@ runtime_beside :: fn(relative: ^i8) -> ^i8 {
     program := frost_rt_arg_at(0)
     length := cstr_len(program)
     if (length > 0) {
-        var directory := directory_part(program, length)
-        var tries: i64 = 0
+        mut directory := directory_part(program, length)
+        mut tries: i64 = 0
         while (tries < 3) {
             here := joined_path(program, directory, relative)
             if (unsafe { frost_rt_file_exists(here) } == 1) {
@@ -309,10 +309,10 @@ same_path :: fn(first: ^i8, second: ^i8) -> bool {
         return false
     }
     windows := frost_rt_is_windows()
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
-        var here := byte_at(first, k)
-        var there := byte_at(second, k)
+        mut here := byte_at(first, k)
+        mut there := byte_at(second, k)
         if (here == CH_BACKSLASH) {
             here = CH_SLASH
         }
@@ -356,7 +356,7 @@ compiling_the_runtime :: fn(path: ^i8) -> i64 {
 // than beside the program, so a link leaves nothing behind in the directory it
 // was run from.
 temp_directory :: fn() -> ^i8 {
-    var named := unsafe { frost_rt_getenv("TMPDIR") }
+    mut named := unsafe { frost_rt_getenv("TMPDIR") }
     if (cstr_len(named) == 0) {
         named = unsafe { frost_rt_getenv("TMP") }
     }
@@ -385,7 +385,7 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
         report("'. FROST_RUNTIME names it, or install it beside the compiler\n")
         frost_rt_die()
     }
-    var key := file_checksum(runtime) % 1000000007
+    mut key := file_checksum(runtime) % 1000000007
     if (key < 0) {
         key = -key
     }
@@ -434,7 +434,7 @@ cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
         report("compiler\n")
         frost_rt_die()
     }
-    var key := file_checksum(runtime) % 1000000007
+    mut key := file_checksum(runtime) % 1000000007
     if (key < 0) {
         key = -key
     }
@@ -473,8 +473,8 @@ cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
 // without a process id to ask for.
 cstr_checksum :: fn(text: ^i8) -> i64 {
     length := cstr_len(text)
-    var sum: i64 = length + 1
-    var k: i64 = 0
+    mut sum: i64 = length + 1
+    mut k: i64 = 0
     while (k < length) {
         sum = wrap_add(wrap_mul(sum, 131), byte_at(text, k))
         k = k + 1
@@ -491,7 +491,7 @@ cstr_checksum :: fn(text: ^i8) -> i64 {
 backslashed :: fn(path: ^i8) -> ^i8 {
     length := cstr_len(path)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(length + 1)) }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < length) {
         held := byte_at(path, k)
         if (held == CH_SLASH) {
@@ -511,7 +511,7 @@ backslashed :: fn(path: ^i8) -> ^i8 {
 // it emitted to standard output, and a shell announcing a file it moved would
 // land in the middle of it.
 move_file :: fn(from: ^i8, to: ^i8) {
-    var command := join_two(join_two(join_two("mv -f ", from), " "), to)
+    mut command := join_two(join_two(join_two("mv -f ", from), " "), to)
     if (frost_rt_is_windows() == 1) {
         command = join_two(
             join_two(join_two("move /Y \"", backslashed(from)), "\" \""),
@@ -532,7 +532,7 @@ move_file :: fn(from: ^i8, to: ^i8) {
 // makes a directory on either platform, and the command differs, so this is one
 // of the two places that knows which one it is running on.
 make_directory :: fn(path: ^i8) {
-    var command := join_two("mkdir -p ", path)
+    mut command := join_two("mkdir -p ", path)
     if (frost_rt_is_windows() == 1) {
         command = join_two(join_two("if not exist \"", path), "\" mkdir \"")
         command = join_two(join_two(command, path), "\"")
@@ -549,7 +549,7 @@ looks_like_a_flag :: fn(text: ^i8) -> bool {
 }
 
 options_from_command_line :: fn() -> Options {
-    var options := Options {
+    mut options := Options {
         input = "",
         output = "",
         backend = Backend::Unset,
@@ -569,7 +569,7 @@ options_from_command_line :: fn() -> Options {
         ok = 1,
     }
     count := frost_rt_arg_count()
-    var index: i64 = 1
+    mut index: i64 = 1
     while (index < count) {
         argument := frost_rt_arg_at(index)
         if (index == 1 && cstr_eq(argument, "lint")) {

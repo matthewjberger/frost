@@ -67,13 +67,13 @@ Slab :: struct($T: Type, $N: usize) {
 // which is what a reset means.
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     stamp := frost_rt_container_id() << CONTAINER_SHIFT
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < N) {
         s.generations[i] = stamp
         s.free_list[i] = N - 1 - i
         i = i + 1
     }
-    var w: i64 = 0
+    mut w: i64 = 0
     while (w < (N + 63) / 64) {
         s.live_words[w] = 0
         w = w + 1
@@ -188,7 +188,7 @@ SlabThing :: struct { hp: i64 }
 // which is what keeps the boundary honest: the check happens here or the caller
 // is told there is nothing to walk.
 test "a slot stands in for a handle until the handle goes stale" {
-    var s: Slab<SlabThing, 2> = slab_new()
+    mut s: Slab<SlabThing, 2> = slab_new()
     slab_reset(s)
     held := slab_insert(s, SlabThing { hp = 41 })
     slot := slab_slot(s, held)
@@ -204,7 +204,7 @@ test "a slot stands in for a handle until the handle goes stale" {
 // generation rather than by two billion releases, which is the only way to reach
 // this in a test and is why the bound went unnoticed.
 test "a slot whose generation is spent is retired rather than reused" {
-    var s: Slab<SlabThing, 2> = slab_new()
+    mut s: Slab<SlabThing, 2> = slab_new()
     slab_reset(s)
 
     first := slab_insert(s, SlabThing { hp = 7 })

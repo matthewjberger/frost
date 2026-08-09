@@ -24,7 +24,7 @@ delta :: fn(k: Kind) -> i64 {
 show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) } }
 
 main :: fn() -> i64 {
-    var world: Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     player := slab_insert(world, Entity { hp = 100, kind = Kind::Player })

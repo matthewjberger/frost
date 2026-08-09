@@ -184,7 +184,7 @@ names them. Every struct also gets a `<name>_init()` returning a zeroed one, so
 a program names only the fields it means:
 
 ```frost,sketch
-var configuration := surface_configuration_init()
+mut configuration := surface_configuration_init()
 configuration.device = device
 configuration.format = surface_format
 configuration.usage = TextureUsage::RenderAttachment
@@ -250,7 +250,7 @@ function and the state it records with, and it declares three things: the colour
 target it writes, the depth target it writes, and the resources it reads.
 
 ```frost,sketch
-var g := graph_new(device, 3, 2)
+mut g := graph_new(device, 3, 2)
 screen := graph_backbuffer(g)
 map := graph_depth(g, "shadow map", 1024, 1024, DEPTH_FORMAT)
 depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
@@ -471,7 +471,7 @@ a pass records every item it is handed.
 and `gltf_spawn` turns that into entities:
 
 ```frost,sketch
-var held := gltf_read("lib/engine/assets/shapes.glb")
+mut held := gltf_read("lib/engine/assets/shapes.glb")
 root := gltf_spawn(world, held, device, queue, registry, cache, ids)
 gltf_free(held)
 ```
@@ -530,7 +530,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) { ... }
 `move`, so the compiler checks the pairing. This shape does not compile:
 
 ```frost,sketch
-var f := renderer_begin(r)
+mut f := renderer_begin(r)
 if (frame_ok(f)) {
     graph_run(graph, f)
     renderer_end(r, f)      // ends the frame only when one was acquired

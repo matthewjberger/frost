@@ -65,8 +65,8 @@ parse_compile_time :: fn(mut p: Parser) -> i64 {
 // and a quote as an escaped one, and carriage returns are dropped so a file
 // checked out either way reads the same bytes.
 expand_includes :: fn(mut p: Parser) {
-    var read: i64 = 0
-    var write: i64 = 0
+    mut read: i64 = 0
+    mut write: i64 = 0
     while (read < p.tokens.count) {
         held := arena_at(p.tokens, read)
         kind := held.kind
@@ -80,7 +80,7 @@ expand_includes :: fn(mut p: Parser) {
             write = write + 1
         } else {
             if (write != read) {
-                var moved := arena_at(p.tokens, write)
+                mut moved := arena_at(p.tokens, write)
                 moved.kind = kind
                 moved.off = off
                 moved.len = len
@@ -124,8 +124,8 @@ splice_include :: fn(mut p: Parser, read: i64, write: i64) {
     length := cstr_len(raw)
     synth_room_for(p, length * 2 + 1)
     start := p.synth_next
-    var into := start
-    var k: i64 = 0
+    mut into := start
+    mut k: i64 = 0
     while (k < length) {
         b := byte_at(raw, k)
         if (b == CH_CR) {
@@ -142,7 +142,7 @@ splice_include :: fn(mut p: Parser, read: i64, write: i64) {
     }
     p.src[into] = 0
     p.synth_next = into + 1
-    var out := arena_at(p.tokens, write)
+    mut out := arena_at(p.tokens, write)
     out.kind = TokenKind::Str
     out.off = start
     out.len = into - start
@@ -166,7 +166,7 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
         return total
     }
     bound := value_binding_of(p, cur_off(p), cur_len(p))
-    var total := bound
+    mut total := bound
     if (bound < 0) {
         total = const_value(p, cur_off(p), cur_len(p))
     }
@@ -200,7 +200,7 @@ names_gparam :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         return true
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.xparam_count) {
         param := arena_at(p.gparams, p.xparam_start + i)
         if (param.name_len == length
@@ -229,16 +229,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // written, so an array literal needs no annotation to have a type.
     if (kind == TokenKind::Lbracket) {
         advance(p)
-        var head: i64 = -1
-        var tail: i64 = -1
-        var count: i64 = 0
+        mut head: i64 = -1
+        mut tail: i64 = -1
+        mut count: i64 = 0
         // When a declared type says what this literal holds, its element type is
         // taken from there rather than guessed from the first element, so
         // `mut d : [20]u8 = [0, 0, ...]` is a run of bytes, not of i64. The
         // expectation is narrowed to the element for each item, so a literal of
         // arrays resolves the same way at every level.
         had_expected := is_array_ty(p.expected_type)
-        var elem_expected: i64 = 0
+        mut elem_expected: i64 = 0
         if (had_expected) {
             elem_expected = array_element(p, p.expected_type)
         }
@@ -346,7 +346,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         node := arena_at(p.arena, chosen)
         then_head := node.b
         else_head := node.val
-        var answered := assign_block_value(p, then_head, name_off, name_len)
+        mut answered := assign_block_value(p, then_head, name_off, name_len)
         otherwise := assign_block_value(p, else_head, name_off, name_len)
         if (answered == (-1)) {
             answered = otherwise
@@ -402,7 +402,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // The second place to look is what a `return` in a fallible function
         // sets: the value it answers with is not a struct there, so a literal
         // written without a name is the failure.
-        var struct_ty := p.expected_type
+        mut struct_ty := p.expected_type
         if (is_struct_ty(struct_ty) == false) {
             struct_ty = p.expected_alt
         }
@@ -642,7 +642,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             // for a `for` over a run or for a live walk, carries 0 and is not
             // checked: it is not a call anybody wrote and its subject is
             // whatever the loop was given.
-            var written: i64 = 1
+            mut written: i64 = 1
             if (str_range_eq(p.src, offset, length, "str_len")) {
                 written = 2
             }
@@ -762,7 +762,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 // The tuple is read off the types of the arguments, and an
                 // argument that is itself a call to a generic has that type
                 // only once its instance has been parsed.
-                var arg := args
+                mut arg := args
                 while (arg != (-1)) {
                     entry := arena_at(p.arena, arg)
                     settle_call_answer(p, entry.a)
@@ -932,7 +932,7 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     xparam_start := template.xparam_start
     xparam_count := template.xparam_count
     run_start := p.gargs.count
-    var j: i64 = 0
+    mut j: i64 = 0
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         bound := type_code_for(p, param.name_off, param.name_len)
@@ -952,7 +952,7 @@ instance_generic_of :: fn(mut p: Parser, ty: i64) -> i64 {
         return -1
     }
     si := struct_index_of(ty)
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
         if (entry.struct_index == si) {
@@ -986,9 +986,9 @@ param_typed_value :: fn(
 ) -> i64 {
     saved := p.ti
     p.ti = field_token
-    var found: i64 = -1
-    var depth: i64 = 0
-    var started: i64 = 0
+    mut found: i64 = -1
+    mut depth: i64 = 0
+    mut started: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         if (cur(p) == TokenKind::Lbrace) {
             depth = depth + 1
@@ -1029,7 +1029,7 @@ init_value_for :: fn(
     name_off: i64,
     name_len: i64
 ) -> i64 {
-    var id := inits
+    mut id := inits
     while (id != (-1)) {
         init := arena_at(p.arena, id)
         init_off := init.val
@@ -1083,14 +1083,14 @@ instantiate_inferred :: fn(
         report_uninferable(p, offset, length)
     }
     run_start := p.gargs.count
-    var j: i64 = 0
+    mut j: i64 = 0
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         pname_off := param.name_off
         pname_len := param.name_len
         // A value parameter stands for a number rather than a type, so no
         // field's declared type is it and there is nothing to read it off.
-        var bound: i64 = -1
+        mut bound: i64 = -1
         if (param.is_value == 0) {
             bound = inferred_arg(p, field_token, pname_off, pname_len, inits)
         }
@@ -1197,7 +1197,7 @@ skip_brace_group :: fn(mut p: Parser) {
     if (cur(p) != TokenKind::Lbrace) {
         return
     }
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         if (cur(p) == TokenKind::Lbrace) {
             depth = depth + 1
@@ -1234,7 +1234,7 @@ tokens_touch :: fn(mut p: Parser, index: i64) -> bool {
 // binding, a variant name is a type, and one refusal becomes four about lines
 // with nothing wrong.
 skip_past_match :: fn(mut p: Parser) {
-    var depth: i64 = 1
+    mut depth: i64 = 1
     while (depth > 0 && cur(p) != TokenKind::Eof) {
         if (cur(p) == TokenKind::Lbrace) {
             depth = depth + 1
@@ -1368,8 +1368,8 @@ wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
     if (body == (-1)) {
         return
     }
-    var id := body
-    var last := body
+    mut id := body
+    mut last := body
     while (id != (-1)) {
         last = id
         id = node_next(p, id)
@@ -1381,7 +1381,7 @@ wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
 }
 
 parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
-    var node := start
+    mut node := start
     while (cur(p) == TokenKind::Dot || cur(p) == TokenKind::Caret
         || cur(p) == TokenKind::Question || cur(p) == TokenKind::Lbracket
         || cur(p) == TokenKind::Lparen) {
@@ -1394,8 +1394,8 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
         // the call is through whatever the expression so far answered with.
         if (cur(p) == TokenKind::Lparen) {
             advance(p)
-            var head: i64 = -1
-            var tail: i64 = -1
+            mut head: i64 = -1
+            mut tail: i64 = -1
             while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
                 // A call through a value takes an aggregate by address, the
                 // same as a call through a name, so an aggregate a call answers
@@ -1480,8 +1480,8 @@ parse_factor :: fn(mut p: Parser) -> i64 {
 }
 
 parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         offset := cur_off(p)
         length := cur_len(p)
@@ -1569,13 +1569,13 @@ splice_pack_arguments :: fn(
     index_in: i64,
     at: i64
 ) -> (head: i64, tail: i64, index: i64) {
-    var head := head_in
-    var tail := tail_in
-    var index := index_in
-    var k: i64 = 0
+    mut head := head_in
+    mut tail := tail_in
+    mut index := index_in
+    mut k: i64 = 0
     while (k < p.pack_count) {
         element := arena_at(p.gargs, p.pack_start + k)
-        var value: i64 = -1
+        mut value: i64 = -1
         if (element.is_type == 1) {
             value = new_type_node(p, NodeKind::TypeVal, 0, element.value)
         } else {
@@ -1636,8 +1636,8 @@ splice_pack_map :: fn(
     if (p.pack_len == 0) {
         p.args_unbound_map = 1
         arg := new_node(p, NodeKind::Arg, parsed, 0, 0)
-        var only_tail := tail_in
-        var only_head := head_in
+        mut only_tail := tail_in
+        mut only_head := head_in
         if (only_head == (-1)) {
             only_head = arg
         } else {
@@ -1654,16 +1654,16 @@ splice_pack_map :: fn(
         report("' is not the compile-time list this function takes, and `for` in an argument list walks one")
         frost_rt_recover_escape()
     }
-    var head := head_in
-    var tail := tail_in
-    var index := index_in
-    var k: i64 = 0
+    mut head := head_in
+    mut tail := tail_in
+    mut index := index_in
+    mut k: i64 = 0
     while (k < p.pack_count) {
         p.ti = argument_start
         element := arena_at(p.gargs, p.pack_start + k)
         element_ty := element.value
-        var mark: i64 = p.aliases.count
-        var type_mark: i64 = p.type_aliases.count
+        mut mark: i64 = p.aliases.count
+        mut type_mark: i64 = p.type_aliases.count
         if (element.is_type == 1) {
             arena_push(
                 p.type_aliases,
@@ -1703,9 +1703,9 @@ splice_pack_map :: fn(
 }
 
 parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
-    var index: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut index: i64 = 0
     p.args_unbound_map = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         saved_expected := p.expected_type
@@ -1713,7 +1713,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         if (callee >= 0) {
             entry := arena_at(p.fns, callee)
             params := entry.params
-            var declared := nth_param_type(p, params, index)
+            mut declared := nth_param_type(p, params, index)
             if (declared >= BORROW_FLAG) {
                 declared = declared - BORROW_FLAG
             }
@@ -1834,7 +1834,7 @@ parse_unary :: fn(mut p: Parser) -> i64 {
                 length,
                 start
             )
-            var node := arena_at(p.arena, made)
+            mut node := arena_at(p.arena, made)
             node.b = 1
             return made
         }
@@ -2030,7 +2030,7 @@ new_arith :: fn(
     if (left_vector == false && right_vector == false) {
         return new_node_at(p, NodeKind::Bin, left, right, op, start)
     }
-    var vector := vector_of(p, left_ty)
+    mut vector := vector_of(p, left_ty)
     if (left_vector == false) {
         vector = vector_of(p, right_ty)
     }
@@ -2102,20 +2102,20 @@ new_arith :: fn(
         )
         return new_node_at(p, NodeKind::Bin, left_side, right_side, op, start)
     }
-    var lhs := left
-    var rhs := right
+    mut lhs := left
+    mut rhs := right
     if (left_vector) {
         lhs = hold_vector_operand(p, left, left_ty)
     }
     if (right_vector) {
         rhs = hold_vector_operand(p, right, right_ty)
     }
-    var head: i64 = -1
-    var tail: i64 = -1
-    var lane: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut lane: i64 = 0
     while (lane < count) {
-        var a := lhs
-        var b := rhs
+        mut a := lhs
+        mut b := rhs
         if (left_vector) {
             a = new_index(
                 p,
@@ -2177,9 +2177,9 @@ vector_operand :: fn(
     if (is_vector) {
         return value
     }
-    var head: i64 = -1
-    var tail: i64 = -1
-    var lane: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut lane: i64 = 0
     while (lane < count) {
         item := new_node(p, NodeKind::Arg, value, 0, 0)
         if (head == (-1)) {
@@ -2199,10 +2199,10 @@ vector_operand :: fn(
 
 parse_mul :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_unary(p)
-    var kind := cur(p)
+    mut left := parse_unary(p)
+    mut kind := cur(p)
     while (joins_line(p) && (kind == TokenKind::Star || kind == TokenKind::Slash || kind == TokenKind::Percent)) {
-        var op: i64 = OP_MUL
+        mut op: i64 = OP_MUL
         if (kind == TokenKind::Slash) {
             op = OP_DIV
         }
@@ -2219,15 +2219,15 @@ parse_mul :: fn(mut p: Parser) -> i64 {
 
 parse_add :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_mul(p)
-    var kind := cur(p)
+    mut left := parse_mul(p)
+    mut kind := cur(p)
     // A `-` that opens a line negates what follows it rather than subtracting
     // it from the statement above, since a statement ends at the line break and
     // `-x` is a statement of its own. A `+` has no prefix form, so a line that
     // opens with one can only be the continuation of the line above it.
     while (joins_line(p) && (kind == TokenKind::Plus
             || (kind == TokenKind::Minus && on_same_line(p)))) {
-        var op: i64 = OP_ADD
+        mut op: i64 = OP_ADD
         if (kind == TokenKind::Minus) {
             op = OP_SUB
         }
@@ -2247,10 +2247,10 @@ parse_add :: fn(mut p: Parser) -> i64 {
 // can be written in the language.
 parse_shift :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_add(p)
-    var kind := cur(p)
+    mut left := parse_add(p)
+    mut kind := cur(p)
     while (joins_line(p) && (kind == TokenKind::Shl || kind == TokenKind::Shr)) {
-        var op: i64 = OP_SHL
+        mut op: i64 = OP_SHL
         if (kind == TokenKind::Shr) {
             op = OP_SHR
         }
@@ -2264,7 +2264,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
 
 parse_bitand :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_shift(p)
+    mut left := parse_shift(p)
     while (joins_line(p) && (cur(p) == TokenKind::Amp)) {
         advance(p)
         right := parse_shift(p)
@@ -2275,7 +2275,7 @@ parse_bitand :: fn(mut p: Parser) -> i64 {
 
 parse_bitor :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_bitand(p)
+    mut left := parse_bitand(p)
     while (joins_line(p) && (cur(p) == TokenKind::Pipe)) {
         advance(p)
         right := parse_bitand(p)
@@ -2323,7 +2323,7 @@ parse_cmp :: fn(mut p: Parser) -> i64 {
 
 parse_and :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_cmp(p)
+    mut left := parse_cmp(p)
     while (joins_line(p) && (cur(p) == TokenKind::Andand)) {
         advance(p)
         right := parse_cmp(p)
@@ -2334,7 +2334,7 @@ parse_and :: fn(mut p: Parser) -> i64 {
 
 parse_expr :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
-    var left := parse_and(p)
+    mut left := parse_and(p)
     while (joins_line(p) && cur(p) == TokenKind::Oror) {
         advance(p)
         right := parse_and(p)
@@ -2387,9 +2387,9 @@ parse_type :: fn(mut p: Parser) -> i64 {
         advance(p)
         advance(p)
         param_start := p.proc_params.count
-        var param_count: i64 = 0
+        mut param_count: i64 = 0
         while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
-            var is_mut: i64 = 0
+            mut is_mut: i64 = 0
             if (cur(p) == TokenKind::KwMut) {
                 is_mut = 1
                 advance(p)
@@ -2403,14 +2403,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
             // definition's `value` parameter has and the two match without a
             // rule of their own. As a mode it is followed by the type it marks,
             // which is what tells it from a type named `value`.
-            var is_value: i64 = 0
+            mut is_value: i64 = 0
             if (cur(p) == TokenKind::Ident && peek_kind(p, 1) != TokenKind::Comma
                 && peek_kind(p, 1) != TokenKind::Rparen
                 && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
                 is_value = 1
                 advance(p)
             }
-            var param_ty := parse_type(p)
+            mut param_ty := parse_type(p)
             if (is_mut == 1 && is_pointer(param_ty) == false) {
                 param_ty = borrow_of(p, param_ty)
             }
@@ -2427,14 +2427,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
             }
         }
         advance(p)
-        var ret: i64 = TY_VOID
+        mut ret: i64 = TY_VOID
         if (cur(p) == TokenKind::Arrow) {
             advance(p)
             ret = parse_type(p)
         }
         return proc_of(p, ret, param_start, param_count)
     }
-    var pointer_levels: i64 = 0
+    mut pointer_levels: i64 = 0
     while (cur(p) == TokenKind::Caret) {
         advance(p)
         pointer_levels = pointer_levels + 1
@@ -2443,14 +2443,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // the pointer levels above them so `^[]T` means what it looks like.
     if (cur(p) == TokenKind::Lbracket) {
         advance(p)
-        var length: i64 = -1
+        mut length: i64 = -1
         if (cur(p) != TokenKind::Rbracket) {
             length = parse_size_expr(p)
         }
         advance(p)
         element := parse_type(p)
-        var made := array_of(p, element, length)
-        var level: i64 = 0
+        mut made := array_of(p, element, length)
+        mut level: i64 = 0
         while (level < pointer_levels) {
             made = pointer_to(p, made)
             level = level + 1
@@ -2463,7 +2463,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     if (at_const_call(p)) {
         return CONST_BASE + const_size_here(p)
     }
-    var dollar: i64 = 0
+    mut dollar: i64 = 0
     if (cur(p) == TokenKind::Dollar) {
         advance(p)
         dollar = 1
@@ -2476,8 +2476,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
         p.type_param_len = length
         p.saw_type_param = 1
     }
-    var base: i64 = TY_I64
-    var was_generic: i64 = 0
+    mut base: i64 = TY_I64
+    mut was_generic: i64 = 0
     if (cur(p) == TokenKind::Lt) {
         // `columns<T, N>` is the SoA sibling of `Slab<T, N>`: a container that
         // stores one array per field of T, addressed by the same handle, rather
@@ -2490,7 +2490,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
-            var n: i64 = 0
+            mut n: i64 = 0
             if (at_const_call(p)) {
                 n = const_size_here(p)
             } else if (cur(p) == TokenKind::Int) {
@@ -2528,11 +2528,11 @@ parse_type :: fn(mut p: Parser) -> i64 {
             // one that is itself a generic pushes to `gargs`. Copying this
             // level's arguments out afterwards keeps its run there contiguous.
             buf_start := p.argbuf.count
-            var count: i64 = 0
-            var all_concrete: i64 = 1
+            mut count: i64 = 0
+            mut all_concrete: i64 = 1
             while (cur(p) != TokenKind::Gt && cur(p) != TokenKind::Shr
                 && p.pending_gt == 0 && cur(p) != TokenKind::Eof) {
-                var a: i64 = TY_I64
+                mut a: i64 = TY_I64
                 if (cur(p) == TokenKind::Int) {
                     a = CONST_BASE + cur_val(p)
                     advance(p)
@@ -2564,13 +2564,13 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 }
             }
             consume_generic_close(p)
-            var first_arg: i64 = TY_I64
+            mut first_arg: i64 = TY_I64
             xarg_start := p.gargs.count
-            var xarg_count: i64 = 0
+            mut xarg_count: i64 = 0
             if (count > 0) {
                 first := arena_at(p.argbuf, buf_start)
                 first_arg = first.value
-                var j: i64 = 1
+                mut j: i64 = 1
                 while (j < count) {
                     entry := arena_at(p.argbuf, buf_start + j)
                     arena_push(
@@ -2592,7 +2592,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
             // names for the same fields.
             if (gi >= 0 && count > 0) {
                 template := arena_at(p.structs, gi)
-                var at := xarg_count
+                mut at := xarg_count
                 while (at < template.xparam_count) {
                     fallback := arena_at(
                         p.gparams,
@@ -2638,8 +2638,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // can tell a `Foo<T>` template placeholder (which collapses to a scalar code)
     // apart from a real scalar and still borrow it by pointer.
     p.last_type_was_generic = was_generic
-    var result := base
-    var k: i64 = 0
+    mut result := base
+    mut k: i64 = 0
     while (k < pointer_levels) {
         result = pointer_to(p, result)
         k = k + 1
@@ -2701,8 +2701,8 @@ parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
 
 parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
     advance(p)
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         field_offset := cur_off(p)
         field_length := cur_len(p)
@@ -2854,8 +2854,8 @@ declared_bundle_type :: fn(
     while (cur(p) != TokenKind::Lparen && cur(p) != TokenKind::Eof) {
         advance(p)
     }
-    var depth: i64 = 0
-    var at: i64 = -1
+    mut depth: i64 = 0
+    mut at: i64 = -1
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Rparen) {
@@ -2939,11 +2939,11 @@ check_bundle_args :: fn(
     at: i64
 ) {
     gfn := arena_at(p.generic_fns, gfn_index)
-    var index: i64 = -1
+    mut index: i64 = -1
     while (index < gfn.xparam_count) {
-        var param_off := gfn.tparam_off
-        var param_len := gfn.tparam_len
-        var given := arg
+        mut param_off := gfn.tparam_off
+        mut param_len := gfn.tparam_len
+        mut given := arg
         if (index >= 0) {
             param := arena_at(p.gparams, gfn.xparam_start + index)
             param_off = param.name_off
@@ -3004,7 +3004,7 @@ push_bindings :: fn(
     xarg_start: i64
 ) -> i64 {
     mark := p.gbindings.count
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < xparam_count) {
         param := arena_at(p.gparams, xparam_start + i)
         garg := arena_at(p.gargs, xarg_start + i)
@@ -3028,7 +3028,7 @@ instantiate :: fn(
     xarg_start: i64,
     xarg_count: i64
 ) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
         if (entry.generic_index == generic_index && entry.arg == arg
@@ -3073,7 +3073,7 @@ instantiate :: fn(
     // which is the current end of the table so long as the body creates no
     // nested instance of its own, the same limitation the non-generic enum path
     // has.
-    var field_head: i64 = -1
+    mut field_head: i64 = -1
     if (is_enum == 1) {
         field_head = parse_enum_body(p, STRUCT_BASE + p.structs.count)
     } else {
@@ -3157,9 +3157,9 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     name_off := tdef.name_off
     name_len := tdef.name_len
 
-    var head: i64 = -1
-    var tail: i64 = -1
-    var fid := tdef.field_head
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut fid := tdef.field_head
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         field_name_off := field.name_off
@@ -3311,7 +3311,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
 // sharing a variant name are told apart by what is being matched rather than by
 // whichever was declared first.
 subject_enum_of :: fn(mut p: Parser, scrutinee: i64) -> i64 {
-    var ty := type_of(p, scrutinee)
+    mut ty := type_of(p, scrutinee)
     if (is_pointer(ty)) {
         ty = pointee(p, ty)
     }
@@ -3354,14 +3354,14 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
-    var index := find_variant(p, enum_ty, variant_off, variant_len)
+    mut index := find_variant(p, enum_ty, variant_off, variant_len)
     // A subject whose type is not yet known leaves the name to say which enum,
     // which is what every match had before a type could be asked for.
     if (index < 0 && enum_ty != (-1)) {
         index = find_variant(p, -1, variant_off, variant_len)
     }
     p.case_variant = index
-    var tag: i64 = 0
+    mut tag: i64 = 0
     if (index < 0) {
         // While parsing a generic template the enum instance a variant belongs
         // to does not exist yet. This parse is thrown away and re-done per
@@ -3379,8 +3379,8 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
         entry := arena_at(p.variants, index)
         tag = entry.tag
     }
-    var bindings: i64 = -1
-    var tail: i64 = -1
+    mut bindings: i64 = -1
+    mut tail: i64 = -1
     if (cur(p) == TokenKind::Lbrace) {
         advance(p)
         while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
@@ -3451,7 +3451,7 @@ at_case_boolean :: fn(mut p: Parser) -> bool {
 
 // One end of a span.
 parse_case_bound :: fn(mut p: Parser) -> i64 {
-    var sign: i64 = 1
+    mut sign: i64 = 1
     if (cur(p) == TokenKind::Minus) {
         sign = -1
         advance(p)
@@ -3485,13 +3485,13 @@ parse_case_number :: fn(mut p: Parser) -> i64 {
     if (cur(p) != TokenKind::Dotdot && cur(p) != TokenKind::Dotdoteq) {
         return new_case_alt(p, low, low, ALT_VALUE, ALT_NUMBER)
     }
-    var form := ALT_HALF_OPEN
+    mut form := ALT_HALF_OPEN
     if (cur(p) == TokenKind::Dotdoteq) {
         form = ALT_INCLUSIVE
     }
     advance(p)
     high := parse_case_bound(p)
-    var holds := low < high
+    mut holds := low < high
     if (form == ALT_INCLUSIVE) {
         holds = low <= high
     }
@@ -3548,12 +3548,12 @@ alt_reach_from :: fn(
     family: i64,
     at: i64
 ) -> (found: bool, reach: i64) {
-    var found: bool = false
-    var best: i64 = 0
-    var cid := head
+    mut found: bool = false
+    mut best: i64 = 0
+    mut cid := head
     while (cid != (-1)) {
         cnode := arena_at(p.arena, cid)
-        var earlier := cnode.b
+        mut earlier := cnode.b
         cid = cnode.next
         while (earlier != (-1)) {
             if (alt_family(p, earlier) == family) {
@@ -3584,8 +3584,8 @@ alt_is_covered :: fn(mut p: Parser, head: i64, held: i64) -> bool {
         return false
     }
     high := alt_high(p, held)
-    var at := alt_low(p, held)
-    var settled: bool = false
+    mut at := alt_low(p, held)
+    mut settled: bool = false
     while (settled == false) {
         found, reach := alt_reach_from(p, head, family, at)
         if (found == false) {
@@ -3607,7 +3607,7 @@ alt_is_covered :: fn(mut p: Parser, head: i64, held: i64) -> bool {
 // against the union of every arm above, which is the question a reader asks
 // looking down the arms.
 case_is_shadowed :: fn(mut p: Parser, head: i64, alts: i64) -> bool {
-    var held := alts
+    mut held := alts
     while (held != (-1)) {
         if (alt_is_covered(p, head, held) == false) {
             return false
@@ -3635,7 +3635,7 @@ bind_answer_type :: fn(mut p: Parser, bind: i64, answered: i64) {
     if (answered == (-1)) {
         return
     }
-    var node := arena_at(p.arena, bind)
+    mut node := arena_at(p.arena, bind)
     node.b = answered
     node.a = -1
 }
@@ -3652,8 +3652,8 @@ assign_block_value :: fn(
     if (head == (-1)) {
         return -1
     }
-    var last := head
-    var following := node_next(p, last)
+    mut last := head
+    mut following := node_next(p, last)
     while (following != (-1)) {
         last = following
         following = node_next(p, last)
@@ -3684,9 +3684,9 @@ return_block_tail :: fn(mut p: Parser, head: i64) -> i64 {
     if (head == (-1)) {
         return head
     }
-    var previous: i64 = -1
-    var last := head
-    var following := node_next(p, last)
+    mut previous: i64 = -1
+    mut last := head
+    mut following := node_next(p, last)
     while (following != (-1)) {
         previous = last
         last = following
@@ -3715,8 +3715,8 @@ block_returns :: fn(mut p: Parser, head: i64) -> bool {
     if (head == (-1)) {
         return false
     }
-    var last := head
-    var following := node_next(p, last)
+    mut last := head
+    mut following := node_next(p, last)
     while (following != (-1)) {
         last = following
         following = node_next(p, last)
@@ -3731,8 +3731,8 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
     if (body == (-1)) {
         return
     }
-    var last := body
-    var following := node_next(p, last)
+    mut last := body
+    mut following := node_next(p, last)
     while (following != (-1)) {
         last = following
         following = node_next(p, last)
@@ -3748,7 +3748,7 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
     // it was.
     made_then := return_block_tail(p, then_head)
     made_else := return_block_tail(p, else_head)
-    var held := arena_at(p.arena, last)
+    mut held := arena_at(p.arena, last)
     held.b = made_then
     held.val = made_else
 }
@@ -3782,8 +3782,8 @@ assign_chain_values :: fn(
     if (head == (-1)) {
         return -1
     }
-    var last := head
-    var following := node_next(p, last)
+    mut last := head
+    mut following := node_next(p, last)
     while (following != (-1)) {
         last = following
         following = node_next(p, last)
@@ -3809,11 +3809,11 @@ assign_case_values :: fn(
     name_len: i64
 ) -> i64 {
     node := arena_at(p.arena, match_node)
-    var answered: i64 = -1
-    var cid := node.b
+    mut answered: i64 = -1
+    mut cid := node.b
     while (cid != (-1)) {
         case_node := arena_at(p.arena, cid)
-        var last := case_node.a
+        mut last := case_node.a
         // An arm with nothing in it has no last statement to give a value, so
         // there is nothing here to rewrite. Reading one anyway is what indexed
         // the node arena at -1, which a `match` written as a statement with one
@@ -3822,7 +3822,7 @@ assign_case_values :: fn(
             cid = case_node.next
             continue
         }
-        var following := node_next(p, last)
+        mut following := node_next(p, last)
         while (following != (-1)) {
             last = following
             following = node_next(p, last)
@@ -3857,8 +3857,8 @@ match_is_tuple :: fn(mut p: Parser) -> bool {
     if (cur(p) != TokenKind::Lparen) {
         return false
     }
-    var offset: i64 = 1
-    var depth: i64 = 0
+    mut offset: i64 = 1
+    mut depth: i64 = 0
     while (peek_kind(p, offset) != TokenKind::Eof) {
         k := peek_kind(p, offset)
         if (k == TokenKind::Lparen) {
@@ -3894,7 +3894,7 @@ set_if_else :: fn(mut p: Parser, node_id: i64, else_head: i64) {
 parse_tuple_match :: fn(mut p: Parser) -> i64 {
     advance(p)
     unique := p.arena.count
-    var count: i64 = 0
+    mut count: i64 = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         value := parse_expr(p)
         name_off := synth_numbered(p, "__tup", unique + count)
@@ -3912,15 +3912,15 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
     advance(p)
     advance(p)
 
-    var head: i64 = -1
-    var tail: i64 = -1
-    var closed: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut closed: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
-        var condition: i64 = -1
+        mut condition: i64 = -1
         if (cur(p) == TokenKind::Lparen) {
             advance(p)
-            var index: i64 = 0
+            mut index: i64 = 0
             while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
                 if (cur(p) == TokenKind::Pipe || cur(p) == TokenKind::Dotdot
                     || cur(p) == TokenKind::Dotdoteq) {
@@ -3929,7 +3929,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                     frost_rt_recover_escape()
                 }
                 if (at_case_number(p) || at_case_boolean(p)) {
-                    var wanted: i64 = 0
+                    mut wanted: i64 = 0
                     if (at_case_boolean(p)) {
                         if (peek_is_word(p, 0, "true")) {
                             wanted = 1
@@ -4020,14 +4020,14 @@ parse_match :: fn(mut p: Parser) -> i64 {
         return parse_tuple_match(p)
     }
     p.no_struct_lit = true
-    var scrutinee := parse_expr(p)
+    mut scrutinee := parse_expr(p)
     p.no_struct_lit = false
     advance(p)
     // A variant pattern matches on which variant the value holds, so the thing
     // switched on is the tag rather than the value itself. The value is bound
     // first, since the arms read fields out of it too.
-    var subject: i64 = -1
-    var subject_enum: i64 = -1
+    mut subject: i64 = -1
+    mut subject_enum: i64 = -1
     if (at_variant_case(p, 1)) {
         subject_enum = subject_enum_of(p, scrutinee)
         name_off := synth_numbered(p, "__match", p.match_count)
@@ -4048,36 +4048,36 @@ parse_match :: fn(mut p: Parser) -> i64 {
         )
         scrutinee = new_field_node(p, subject, p.name_tag, 3)
     }
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     // What the arms covered, for the exhaustiveness check below. `covered` is a
     // bit per tag, `checkable` goes to zero when a variant did not resolve (an
     // uninstantiated generic template) or the enum has more variants than bits.
-    var match_enum: i64 = -1
-    var covered: i64 = 0
-    var checkable: i64 = 1
-    var saw_default: i64 = 0
+    mut match_enum: i64 = -1
+    mut covered: i64 = 0
+    mut checkable: i64 = 1
+    mut saw_default: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
-        var is_default: i64 = 0
-        var value: i64 = 0
-        var case_node: i64 = -1
-        var alts: i64 = -1
-        var bindings: i64 = -1
-        var written: i64 = 0
-        var reading: bool = true
+        mut is_default: i64 = 0
+        mut value: i64 = 0
+        mut case_node: i64 = -1
+        mut alts: i64 = -1
+        mut bindings: i64 = -1
+        mut written: i64 = 0
+        mut reading: bool = true
         // An arm names one pattern or several joined by `|`, and the body runs
         // for any of them. What the arm covers is their union, which is what
         // keeps the rule about covering every variant a matter of counting.
         while (reading) {
             reading = false
-            var alt: i64 = -1
+            mut alt: i64 = -1
             if (at_variant_case(p, 0)) {
                 skip_variant_qualifier(p)
                 // The enum an earlier arm settled on, so arms after the
                 // first are read within it and a name two enums share is
                 // the one this match is over.
-                var within := subject_enum
+                mut within := subject_enum
                 if (within == (-1)) {
                     within = match_enum
                 }
@@ -4109,7 +4109,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
                     bindings = p.case_bindings
                 }
                 value = tag
-                var entry_of := index
+                mut entry_of := index
                 if (entry_of < 0) {
                     entry_of = ALT_UNRESOLVED
                 }
@@ -4117,7 +4117,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
             } else if (at_case_boolean(p)) {
                 // A boolean is stored as the number it is, so an arm over one
                 // compares the way an arm over any other whole number does.
-                var held: i64 = 0
+                mut held: i64 = 0
                 if (peek_is_word(p, 0, "true")) {
                     held = 1
                 }
@@ -4144,7 +4144,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
                 frost_rt_recover_escape()
             }
             if (alt != (-1)) {
-                var seen := alts
+                mut seen := alts
                 while (seen != (-1)) {
                     if (alts_are_one(p, alt, seen)) {
                         report_where(p.modules, p.src, cur_off(p))
@@ -4210,8 +4210,8 @@ parse_match :: fn(mut p: Parser) -> i64 {
 // silently changes the meaning of every match on it rather than pointing at the
 // places that now have a case to write.
 check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
-    var i: i64 = 0
-    var missing: i64 = 0
+    mut i: i64 = 0
+    mut missing: i64 = 0
     while (i < p.variants.count) {
         entry := arena_at(p.variants, i)
         if (entry.enum_ty == enum_ty && entry.tag >= 0 && entry.tag < 63) {
@@ -4249,9 +4249,9 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
 // matching brace to the next token: a binary operator, `.`, `[`, `?` or `::`
 // there continues an expression, so the block is a value.
 unsafe_block_is_value :: fn(mut p: Parser) -> bool {
-    var offset: i64 = 1
-    var depth: i64 = 0
-    var started: i64 = 0
+    mut offset: i64 = 1
+    mut depth: i64 = 0
+    mut started: i64 = 0
     while (peek_kind(p, offset) != TokenKind::Eof) {
         k := peek_kind(p, offset)
         if (k == TokenKind::Lbrace) {
@@ -4308,7 +4308,7 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
             || peek_kind(p, 1) == TokenKind::Coloneq)) {
         return true
     }
-    (cur(p) == TokenKind::KwVar && peek_kind(p, 1) == TokenKind::Ident
+    (cur(p) == TokenKind::KwMut && peek_kind(p, 1) == TokenKind::Ident
         && peek_kind(p, 2) == TokenKind::Comma)
 }
 
@@ -4323,7 +4323,7 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
 // them out when the generic is instantiated, which is the same language read
 // two ways.
 parse_size_expr :: fn(mut p: Parser) -> i64 {
-    var left := parse_size_term(p)
+    mut left := parse_size_term(p)
     while (cur(p) == TokenKind::Plus || cur(p) == TokenKind::Minus) {
         adding := cur(p) == TokenKind::Plus
         advance(p)
@@ -4338,7 +4338,7 @@ parse_size_expr :: fn(mut p: Parser) -> i64 {
 }
 
 parse_size_term :: fn(mut p: Parser) -> i64 {
-    var left := parse_size_atom(p)
+    mut left := parse_size_atom(p)
     while (cur(p) == TokenKind::Star || cur(p) == TokenKind::Slash
         || cur(p) == TokenKind::Percent) {
         op := cur(p)
@@ -4522,9 +4522,9 @@ parse_for_live :: fn(
         -1
     )
 
-    var rank_off: i64 = 0
-    var rank_len: i64 = 0
-    var bind_rank: i64 = -1
+    mut rank_off: i64 = 0
+    mut rank_len: i64 = 0
+    mut bind_rank: i64 = -1
     if (has_index == 1) {
         rank_off = synth_numbered(p, "__live_rank", unique)
         rank_len = 11 + digits_in(unique)
@@ -4673,7 +4673,7 @@ parse_for_live :: fn(
     set_next(p, refill, bind_bit)
     set_next(p, bind_bit, drop_bit)
     set_next(p, drop_bit, bind_slot)
-    var tail := bind_slot
+    mut tail := bind_slot
     if (has_index == 1) {
         take_rank := new_let_node(
             p,
@@ -4753,7 +4753,7 @@ parse_for_range :: fn(
 
     index_var := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
     end_var := new_named_node(p, NodeKind::Var, 0, end_off, end_len)
-    var compare := OP_LT
+    mut compare := OP_LT
     if (closed == 1) {
         compare = OP_LE
     }
@@ -4770,8 +4770,8 @@ parse_for_range :: fn(
     bumped := new_node(p, NodeKind::Bin, step_at, one, OP_ADD)
     step_place := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
     step := new_node(p, NodeKind::Assign, step_place, bumped, 0)
-    var tail := bind_item
-    var following := node_next(p, tail)
+    mut tail := bind_item
+    mut following := node_next(p, tail)
     while (following != (-1)) {
         tail = following
         following = node_next(p, tail)
@@ -4828,7 +4828,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // which reads the table the emitters fill, and that one is empty while
         // a body is still being read: a borrow of a struct came back a borrow
         // of an i64, and the list element it became was a number.
-        var bound_ty := pack_local_type(p, place)
+        mut bound_ty := pack_local_type(p, place)
         if (bound_ty < 0) {
             bound_ty = binding_type(p, value)
         } else {
@@ -4894,18 +4894,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         )
         after := p.ti
         head := new_let_node(p, value, temp_off, temp_len, -1)
-        var tail := head
-        var index: i64 = 0
+        mut tail := head
+        mut index: i64 = 0
         callee := call_target(p, value)
         p.ti = names_at
         while (cur(p) != TokenKind::Coloneq && cur(p) != TokenKind::Eof) {
-            if (cur(p) == TokenKind::KwMut) {
+            if (cur(p) == TokenKind::Ident && cur_len(p) == 3
+                && str_range_eq(p.src, cur_off(p), 3, "var")
+                && peek_kind(p, 1) == TokenKind::Ident) {
                 report_where(p.modules, p.src, cur_off(p))
-                report("`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`")
+                report("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries")
                 frost_rt_recover_escape()
             }
-            var assignable: i64 = 0
-            if (cur(p) == TokenKind::KwVar) {
+            mut assignable: i64 = 0
+            if (cur(p) == TokenKind::KwMut) {
                 assignable = 1
                 advance(p)
             }
@@ -4917,12 +4919,12 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             // spell and a fresh one per discard: a linear value is a resource
             // somebody owes a consumer, and dropping the read would lose it
             // without a word.
-            var name_off := cur_off(p)
-            var name_len := cur_len(p)
+            mut name_off := cur_off(p)
+            mut name_len := cur_len(p)
             if (cur(p) == TokenKind::Underscore) {
                 if (assignable == 1) {
                     report_where(p.modules, p.src, cur_off(p))
-                    report("`var` makes a binding assignable and `_` binds nothing; write `_` on its own")
+                    report("`mut` makes a binding assignable and `_` binds nothing; write `_` on its own")
                     frost_rt_recover_escape()
                 }
                 // A resource taken by a `_` is refused once the resources are
@@ -4974,22 +4976,25 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return head
     }
 
-    // `mut` is one thing, the parameter mode. It used to declare an assignable
-    // local as well, and the two meanings shared nothing but the spelling, so
-    // the local form is `var` and this refusal is what a reader migrating old
-    // code meets.
-    if (kind == TokenKind::KwMut) {
+    // `var` is an ordinary name and opens nothing, so an older file reads as a
+    // name followed by a binding. Named here rather than left to whatever that
+    // parses as, which is a complaint about the second word.
+    if (kind == TokenKind::Ident && cur_len(p) == 3
+        && str_range_eq(p.src, cur_off(p), 3, "var")
+        && peek_kind(p, 1) == TokenKind::Ident
+        && (peek_kind(p, 2) == TokenKind::Coloneq
+            || peek_kind(p, 2) == TokenKind::Colon)) {
         report_where(p.modules, p.src, cur_off(p))
-        report("`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`")
+        report("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries")
         frost_rt_recover_escape()
     }
-    if (kind == TokenKind::KwVar) {
+    if (kind == TokenKind::KwMut) {
         advance(p)
         offset := cur_off(p)
         length := cur_len(p)
         refuse_literal_name(p, offset, length)
         advance(p)
-        var ann: i64 = -1
+        mut ann: i64 = -1
         if (cur(p) == TokenKind::Colon) {
             ann = parse_type_annotation(p)
             advance(p)
@@ -5067,7 +5072,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         saved_alt := p.expected_alt
         p.expected_type = p.ok_ty
         p.expected_alt = p.failure_ty
-        var value := parse_expr(p)
+        mut value := parse_expr(p)
         p.expected_type = saved_expected
         p.expected_alt = saved_alt
         if (cur(p) == TokenKind::Comma) {
@@ -5092,7 +5097,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         condition := parse_expr(p)
         advance(p)
         then_head := parse_block(p)
-        var else_head: i64 = -1
+        mut else_head: i64 = -1
         if (cur(p) == TokenKind::KwElse) {
             advance(p)
             if (cur(p) == TokenKind::KwIf) {
@@ -5117,9 +5122,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         first_len := cur_len(p)
         refuse_literal_name(p, first_off, first_len)
         advance(p)
-        var item_off := first_off
-        var item_len := first_len
-        var has_index: i64 = 0
+        mut item_off := first_off
+        mut item_len := first_len
+        mut has_index: i64 = 0
         if (cur(p) == TokenKind::Comma) {
             advance(p)
             item_off = cur_off(p)
@@ -5182,8 +5187,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // `for i in a..b` walks the numbers rather than a sequence, so it takes
         // the counted loop straight rather than reaching one through a length
         // and an index.
-        var range_end: i64 = -1
-        var range_closed: i64 = 0
+        mut range_end: i64 = -1
+        mut range_closed: i64 = 0
         if (cur(p) == TokenKind::Dotdot || cur(p) == TokenKind::Dotdoteq) {
             if (cur(p) == TokenKind::Dotdoteq) {
                 range_closed = 1
@@ -5216,11 +5221,11 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         seq_kind := seq_node.kind
         seq_at := seq_node.pos
         in_place := seq_kind == NodeKind::Var
-        var seq_off := seq_node.val
-        var seq_len := seq_node.c
-        var bind_seq: i64 = -1
+        mut seq_off := seq_node.val
+        mut seq_len := seq_node.c
+        mut bind_seq: i64 = -1
         if (in_place == false) {
-            var annotation: i64 = -1
+            mut annotation: i64 = -1
             if (seq_kind == NodeKind::StrLit) {
                 annotation = array_of(p, TY_U8, -1)
             }
@@ -5235,8 +5240,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         len_len := 9 + digits_in(unique)
         bind_len := new_let_node(p, length, len_off, len_len, -1)
 
-        var index_off := item_off
-        var index_len := item_len
+        mut index_off := item_off
+        mut index_len := item_len
         if (has_index == 1) {
             index_off = first_off
             index_len = first_len
@@ -5267,8 +5272,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         bumped := new_node(p, NodeKind::Bin, step_at, one, OP_ADD)
         step_place := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
         step := new_node(p, NodeKind::Assign, step_place, bumped, 0)
-        var tail := bind_item
-        var following := node_next(p, tail)
+        mut tail := bind_item
+        mut following := node_next(p, tail)
         while (following != (-1)) {
             tail = following
             following = node_next(p, tail)
@@ -5390,9 +5395,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 // in ahead of it, in the order it was written. Each queued entry is a run of
 // one or two statements, given by its first and last.
 flush_pending :: fn(mut p: Parser, mark: i64, statement: i64) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
-    var q := mark
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut q := mark
     while (q < p.pending.count) {
         queued := arena_at(p.pending, q)
         first := queued.name_off
@@ -5505,7 +5510,7 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
     // on the loop body's closing brace, which the statement list took for its
     // own: the function ended there and everything after it read as a
     // declaration, so one refusal was told twice and the second time wrongly.
-    var depth: i64 = 0
+    mut depth: i64 = 0
     if (cur(p) != terminator && cur(p) != TokenKind::Eof) {
         if (cur(p) == TokenKind::Lbrace) {
             depth = depth + 1
@@ -5542,7 +5547,7 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
             || kind == TokenKind::KwMatch || kind == TokenKind::KwDefer
             || kind == TokenKind::KwErrDefer
             || kind == TokenKind::KwBreak || kind == TokenKind::KwContinue
-            || kind == TokenKind::KwMut || kind == TokenKind::KwVar
+            || kind == TokenKind::KwMut
             || kind == TokenKind::KwRef
             || kind == TokenKind::KwWith) {
             return
@@ -5560,11 +5565,11 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
 // rather than from the token, since a token's offset is where its text starts
 // and a string literal's text starts after the quote.
 column_at :: fn(src: str, off: i64) -> i64 {
-    var start := off
+    mut start := off
     while (start > 0 && src[start - 1] != CH_LF) {
         start = start - 1
     }
-    var first := start
+    mut first := start
     while (first < off
         && (src[first] == CH_SPACE || src[first] == CH_TAB)) {
         first = first + 1
@@ -5574,7 +5579,7 @@ column_at :: fn(src: str, off: i64) -> i64 {
 
 // Whether a line break sits between two offsets.
 breaks_between :: fn(src: str, from: i64, to: i64) -> bool {
-    var at := from
+    mut at := from
     while (at < to) {
         if (src[at] == CH_LF) {
             return true
@@ -5599,13 +5604,13 @@ continues_an_expression :: fn(kind: TokenKind) -> bool {
 }
 
 parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     // The column every statement of this block begins at, set by the first.
-    var block_column: i64 = 0
+    mut block_column: i64 = 0
     // The brace this list opens after. A statement sharing its line is not
     // indented relative to anything.
-    var previous_at: i64 = 0
+    mut previous_at: i64 = 0
     if (p.ti > 0) {
         previous_at = arena_at(p.tokens, p.ti - 1).off
     }
@@ -5649,7 +5654,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         }
         previous_at = stmt_at
         mark := p.pending.count
-        var turn := StmtTurn {
+        mut turn := StmtTurn {
             parser = unsafe { ptr_cast($u8, ptr_to(p)) },
             mark = mark,
             depth = p.block_depth,
@@ -5682,8 +5687,8 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             continue
         }
         statement := turn.statement
-        var last := statement
-        var following := node_next(p, last)
+        mut last := statement
+        mut following := node_next(p, last)
         while (following != (-1)) {
             last = following
             following = node_next(p, last)
@@ -5755,8 +5760,8 @@ struct_field_count :: fn(mut p: Parser, ty: i64) -> i64 {
         return 0
     }
     def := arena_at(p.structs, struct_index_of(ty))
-    var fid := def.field_head
-    var counted: i64 = 0
+    mut fid := def.field_head
+    mut counted: i64 = 0
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         counted = counted + 1
@@ -5789,13 +5794,13 @@ unroll_fields :: fn(
         frost_rt_recover_escape()
     }
     body_start := p.ti
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     def := arena_at(p.structs, struct_index_of(walked))
     packed := def.is_packed
-    var fid := def.field_head
-    var running: i64 = 0
-    var any: i64 = 0
+    mut fid := def.field_head
+    mut running: i64 = 0
+    mut any: i64 = 0
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         field_ty := field.ty
@@ -5820,7 +5825,7 @@ unroll_fields :: fn(
         copy := parse_block(p)
         p.field_bindings.count = mark
         any = 1
-        var id := copy
+        mut id := copy
         while (id != (-1)) {
             following := node_next(p, id)
             if (head == (-1)) {
@@ -5856,7 +5861,7 @@ nothing_statement :: fn(mut p: Parser) -> i64 {
 // declaration order and never popped, so everything past a mark is what was
 // bound after the point that mark was taken.
 bound_after :: fn(mut p: Parser, from: i64, off: i64, len: i64) -> bool {
-    var i := from
+    mut i := from
     while (i < p.parse_locals.count) {
         entry := arena_at(p.parse_locals, i)
         if (entry.name_len == len
@@ -5875,13 +5880,13 @@ bound_after :: fn(mut p: Parser, from: i64, off: i64, len: i64) -> bool {
 // never wrote, so it is refused where it is written rather than given a meaning
 // nobody would predict.
 check_defer_shadowing :: fn(mut p: Parser) {
-    var k := p.defer_base
+    mut k := p.defer_base
     while (k < p.defers.count) {
         site := arena_at(p.defers, k)
         start := site.name_off
         finish := site.name_len
         bound := site.ty
-        var t := start
+        mut t := start
         while (t < finish) {
             token := arena_at(p.tokens, t)
             kind := token.kind
@@ -5905,8 +5910,8 @@ check_defer_shadowing :: fn(mut p: Parser) {
 // deferred is the first one run, so the walk goes back down the list.
 defer_copies :: fn(mut p: Parser, failing: i64) -> i64 {
     saved := p.ti
-    var head: i64 = -1
-    var k := p.defers.count
+    mut head: i64 = -1
+    mut k := p.defers.count
     while (k > p.defer_base) {
         k = k - 1
         site := arena_at(p.defers, k)
@@ -5934,8 +5939,8 @@ defer_before_return :: fn(
     if (p.defers.count <= p.defer_base) {
         return new_node_at(p, NodeKind::Return, value, 0, 0, start)
     }
-    var head: i64 = -1
-    var answer := value
+    mut head: i64 = -1
+    mut answer := value
     if (value != (-1)) {
         name_off := synth_numbered(p, "__defer", p.defer_count)
         name_len := 7 + digits_in(p.defer_count)
@@ -5963,9 +5968,9 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
     if (p.defers.count <= p.defer_base || body == (-1)) {
         return body
     }
-    var previous: i64 = -1
-    var last := body
-    var following := node_next(p, last)
+    mut previous: i64 = -1
+    mut last := body
+    mut following := node_next(p, last)
     while (following != (-1)) {
         previous = last
         last = following
@@ -5999,7 +6004,7 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
         name_len,
         name_off
     )
-    var tail := append_node(p, bind, defer_copies(p, 0))
+    mut tail := append_node(p, bind, defer_copies(p, 0))
     tail = append_node(p, tail, new_unary_at(p, NodeKind::ExprStmt, reader, at))
     if (previous == (-1)) {
         return tail
@@ -6022,9 +6027,9 @@ names_pack :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 // makes the tokens get consumed either way.
 unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
     body_start := p.ti
-    var head: i64 = -1
-    var tail: i64 = -1
-    var k: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut k: i64 = 0
     while (k < p.pack_count) {
         p.ti = body_start
         element := arena_at(p.gargs, p.pack_start + k)
@@ -6034,8 +6039,8 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         // is read as that parameter's name. A type element is not a value at
         // all: the loop's name is a type, so it goes in the type-alias table
         // for this one copy of the body.
-        var mark: i64 = p.aliases.count
-        var type_mark: i64 = p.type_aliases.count
+        mut mark: i64 = p.aliases.count
+        mut type_mark: i64 = p.type_aliases.count
         if (element_is_type == 1) {
             arena_push(
                 p.type_aliases,
@@ -6059,7 +6064,7 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         copy := parse_block(p)
         p.aliases.count = mark
         p.type_aliases.count = type_mark
-        var id := copy
+        mut id := copy
         while (id != (-1)) {
             following := node_next(p, id)
             if (head == (-1)) {
@@ -6095,7 +6100,7 @@ parse_expansion_if :: fn(mut p: Parser, taken: i64) -> i64 {
     advance(p)
     advance(p)
     kept := parse_block(p)
-    var other: i64 = -1
+    mut other: i64 = -1
     if (cur(p) == TokenKind::KwElse) {
         advance(p)
         // `else if` continues the chain, and the next `if` is read the way this
@@ -6121,15 +6126,15 @@ parse_expansion_if :: fn(mut p: Parser, taken: i64) -> i64 {
 }
 
 parse_params :: fn(mut p: Parser) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     // How many ordinary parameters have been read, which is what says where a
     // compile-time list starts taking arguments at a call.
-    var fixed: i64 = 0
+    mut fixed: i64 = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         // Capture the parameter mode. `mut` (write) is 1, `move` is 2, and an
         // unmarked read is 0.
-        var mode: i64 = 0
+        mut mode: i64 = 0
         if (cur(p) == TokenKind::KwMut) {
             mode = 1
             advance(p)
@@ -6144,7 +6149,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
         // rather than a keyword, so a parameter may still be called `value`;
         // what tells them apart is that a mode is followed by the name and a
         // name is followed by its type.
-        var by_value: i64 = 0
+        mut by_value: i64 = 0
         if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Ident
             && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
             by_value = 1
@@ -6183,7 +6188,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             p.decl_pack_len = pack_len
             p.decl_pack_fixed = fixed
             p.saw_type_param = 1
-            var k: i64 = 0
+            mut k: i64 = 0
             while (k < p.pack_count) {
                 element := arena_at(p.gargs, p.pack_start + k)
                 element_ty := element.value
@@ -6234,7 +6239,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             if (kind_is_bundle(p) == 1) {
                 note_called_name(p, poff, plen)
             }
-            var declared := parse_type_annotation(p)
+            mut declared := parse_type_annotation(p)
             note_fallback(p, primary, parse_fallback(p))
             // An instance re-parses the declaration with its arguments bound,
             // so the same parameter is written down again under the types this
@@ -6269,7 +6274,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             length := cur_len(p)
             refuse_literal_name(p, offset, length)
             advance(p)
-            var ty := parse_type_annotation(p)
+            mut ty := parse_type_annotation(p)
             // A mode borrow of a value is passed by pointer, and the call site
             // takes its address automatically (auto_borrow = 1). `mut` always
             // borrows. An unmarked read borrows a struct or generic instance and
@@ -6283,7 +6288,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 report("only an aggregate can be written 'value'; a scalar already goes to C by value")
                 frost_rt_recover_escape()
             }
-            var auto_borrow: i64 = 0
+            mut auto_borrow: i64 = 0
             if (is_pointer(ty) == false) {
                 if (mode == 1) {
                     auto_borrow = 1
@@ -6381,7 +6386,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // `name :: inline fn(...)` marks a function the C backend forces inline. The
     // keyword sits between the `::` and the `fn`, so it is consumed here before
     // the `fn` is stepped over like any other declaration.
-    var wants_inline: i64 = 0
+    mut wants_inline: i64 = 0
     if (cur(p) == TokenKind::KwInline) {
         wants_inline = 1
         advance(p)
@@ -6392,17 +6397,17 @@ parse_function :: fn(mut p: Parser) -> i64 {
     if (wants_inline == 1) {
         mark_inline(p, fn_index)
     }
-    var is_main: i64 = 0
+    mut is_main: i64 = 0
     if (is_main_name(p.src, name_offset, name_length)) {
         is_main = 1
     }
     advance(p)
-    var params := parse_params(p)
+    mut params := parse_params(p)
     p.parse_param_start = locals_mark
     p.parse_param_end = p.parse_locals.count
     set_params(p, fn_index, params)
     mark_defined(p, fn_index)
-    var ret: i64 = TY_VOID
+    mut ret: i64 = TY_VOID
     p.multi_ty = -1
     p.multi_count = 0
     // `-> (i64, i64)` is a return type list: several values from one call,
@@ -6420,7 +6425,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // `-> T ! E` answers with a T or fails with an E. The function's real
     // return type is the struct standing for the pair, so everything after this
     // handles an ordinary struct return.
-    var failure: i64 = -1
+    mut failure: i64 = -1
     // What the function answers with, before a failure set wraps it. A `return`
     // is parsed under this, so a `.Variant` there names a variant of it or of
     // the failure set beside it.
@@ -6450,7 +6455,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // order they were written, and a call supplies one argument for each.
     if (cur(p) == TokenKind::KwUses) {
         advance(p)
-        var reading: i64 = 1
+        mut reading: i64 = 1
         while (reading == 1) {
             cap_name_off := cur_off(p)
             cap_name_len := cur_len(p)
@@ -6496,7 +6501,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     saved_defer_depth := p.defer_depth
     p.defer_base = p.defers.count
     p.defer_depth = p.block_depth + 1
-    var body := parse_block(p)
+    mut body := parse_block(p)
     check_defer_shadowing(p)
     if (p.result_ty != (-1)) {
         wrap_trailing_ok(p, body)
@@ -6529,7 +6534,7 @@ parse_struct :: fn(mut p: Parser) {
     advance(p)
     // `Name :: linear struct { ... }` marks a resource that must be consumed
     // exactly once, so the keyword sits between `::` and `struct`.
-    var linear_flag: i64 = 0
+    mut linear_flag: i64 = 0
     if (cur(p) == TokenKind::KwLinear) {
         linear_flag = 1
         advance(p)
@@ -6537,7 +6542,7 @@ parse_struct :: fn(mut p: Parser) {
     // `Name :: packed struct { ... }` puts every field at the next byte. The
     // word is not a keyword, so a local, a field and a parameter may all still
     // be called `packed`; the `struct` after it is what marks the declaration.
-    var packed_flag: i64 = 0
+    mut packed_flag: i64 = 0
     if (at_packed_struct(p, 0)) {
         packed_flag = 1
         advance(p)
@@ -6573,8 +6578,8 @@ parse_struct :: fn(mut p: Parser) {
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
         field_token := p.ti
-        var brace_depth: i64 = 0
-        var started: i64 = 0
+        mut brace_depth: i64 = 0
+        mut started: i64 = 0
         while (started == 0 || brace_depth > 0) {
             if (cur(p) == TokenKind::Lbrace) {
                 brace_depth = brace_depth + 1
@@ -6647,7 +6652,7 @@ holds_linear :: fn(mut p: Parser, field_head: i64, declared: i64) -> i64 {
     if (declared == 1) {
         return 1
     }
-    var id := field_head
+    mut id := field_head
     while (id != (-1)) {
         field := arena_at(p.fields, id)
         if (is_linear_type(p, field.ty)) {
@@ -6678,7 +6683,7 @@ holds_linear :: fn(mut p: Parser, field_head: i64, declared: i64) -> i64 {
 // carry a variant of the same name are told apart by the scrutinee's type when
 // there is one.
 find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.variants.count) {
         entry := arena_at(p.variants, i)
         if (entry.name_len == len
@@ -6713,8 +6718,8 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
             align = 0
         },
     )
-    var tail := tag_field
-    var tag: i64 = 0
+    mut tail := tag_field
+    mut tag: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         variant_off := cur_off(p)
         variant_len := cur_len(p)
@@ -6779,7 +6784,7 @@ parse_enum :: fn(mut p: Parser) {
     // `Name :: linear enum { ... }` marks a resource that must be consumed
     // exactly once, the same as a linear struct does, so the keyword sits
     // between `::` and `enum`.
-    var linear_flag: i64 = 0
+    mut linear_flag: i64 = 0
     if (cur(p) == TokenKind::KwLinear) {
         linear_flag = 1
         advance(p)
@@ -6813,8 +6818,8 @@ parse_enum :: fn(mut p: Parser) {
         xparam_start := p.xparam_start
         xparam_count := p.xparam_count
         field_token := p.ti
-        var brace_depth: i64 = 0
-        var started: i64 = 0
+        mut brace_depth: i64 = 0
+        mut started: i64 = 0
         while (started == 0 || brace_depth > 0) {
             if (cur(p) == TokenKind::Lbrace) {
                 brace_depth = brace_depth + 1
@@ -6853,7 +6858,7 @@ parse_enum :: fn(mut p: Parser) {
     }
     // The enum's own index is known before its body is, since a variant has to
     // record which enum it belongs to.
-    var enum_index := entry_index
+    mut enum_index := entry_index
     if (enum_index < 0) {
         enum_index = p.structs.count
     }
@@ -6926,11 +6931,11 @@ parse_variant_body :: fn(
     // -1 is a `.Variant` whose enum is not decided yet, so there is nothing to
     // look the variant up in. The fixup pass resolves it once every signature
     // is known.
-    var index: i64 = -1
+    mut index: i64 = -1
     if (enum_ty != (-1)) {
         index = find_variant(p, enum_ty, variant_off, variant_len)
     }
-    var variant_tag: i64 = 0
+    mut variant_tag: i64 = 0
     if (index < 0) {
         // A construction in a generic template names a variant of an instance
         // that does not exist yet. This parse is thrown away and re-done per
@@ -6953,7 +6958,7 @@ parse_variant_body :: fn(
     }
     tag_value := new_node(p, NodeKind::Num, 0, 0, variant_tag)
     head := new_field_init(p, tag_value, p.name_tag, 3)
-    var tail := head
+    mut tail := head
     if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         advance(p)
         while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
@@ -7048,7 +7053,7 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     if (node.kind != NodeKind::StructLit || node.val != (-1)) {
         return
     }
-    var struct_ty := wanted
+    mut struct_ty := wanted
     if (struct_ty >= BORROW_FLAG) {
         struct_ty = struct_ty - BORROW_FLAG
     }
@@ -7081,7 +7086,7 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
         held := arena_at(p.arena, tag_node)
         held.val = tag
     }
-    var id := inits
+    mut id := inits
     while (id != (-1)) {
         init := arena_at(p.arena, id)
         value := init.a
@@ -7141,7 +7146,7 @@ resolve_multi_field :: fn(
 // since a struct holding a resource is one and that is settled at the end of
 // the parse. Run before then it would ask a flag that is not in yet.
 check_discarded_resources :: fn(mut p: Parser) {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.multi_discards.count) {
         entry := arena_at(p.multi_discards, i)
         callee := entry.name_off
@@ -7174,7 +7179,7 @@ check_discarded_resources :: fn(mut p: Parser) {
 // run. Anything that has to see every body is called from both places, or it
 // walks the file and never walks an instance.
 resolve_variant_fixups :: fn(mut p: Parser) {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.variant_fixups.count) {
         fixup := arena_at(p.variant_fixups, i)
         lit_id := fixup.lit
@@ -7333,8 +7338,8 @@ nth_field :: fn(mut p: Parser, struct_ty: i64, index: i64) -> i64 {
         return -1
     }
     def := arena_at(p.structs, struct_index_of(struct_ty))
-    var fid := def.field_head
-    var at: i64 = 0
+    mut fid := def.field_head
+    mut at: i64 = 0
     while (fid != (-1)) {
         if (at == index) {
             return fid
@@ -7351,12 +7356,12 @@ nth_field :: fn(mut p: Parser, struct_ty: i64, index: i64) -> i64 {
 // name as its field, so `return { quotient = .. }` writes what the signature
 // reads. The `(` has been consumed.
 synth_multi_struct :: fn(mut p: Parser) -> i64 {
-    var head: i64 = -1
-    var tail: i64 = -1
-    var count: i64 = 0
+    mut head: i64 = -1
+    mut tail: i64 = -1
+    mut count: i64 = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
-        var name_off: i64 = -1
-        var name_len: i64 = 0
+        mut name_off: i64 = -1
+        mut name_len: i64 = 0
         if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
             name_off = cur_off(p)
             name_len = cur_len(p)
@@ -7459,8 +7464,8 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
         multi_field_name_off(p, 0),
         multi_field_name_len(p, 0)
     )
-    var tail := init
-    var count: i64 = 1
+    mut tail := init
+    mut count: i64 = 1
     while (cur(p) == TokenKind::Comma) {
         advance(p)
         value := parse_expr(p)
@@ -7543,7 +7548,7 @@ starts_with_name :: fn(src: str, offset: i64, length: i64, text: str) -> bool {
     if (length < wanted) {
         return false
     }
-    var k: i64 = 0
+    mut k: i64 = 0
     while (k < wanted) {
         if (src[offset + k] != text[k]) {
             return false
@@ -7584,7 +7589,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     advance(p)
     // `safe extern fn` says this one was audited, so the gate lets its calls
     // stand outside a block.
-    var audited: i64 = 0
+    mut audited: i64 = 0
     if (cur(p) == TokenKind::KwSafe) {
         audited = 1
         advance(p)
@@ -7600,7 +7605,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     params := parse_params(p)
     set_params(p, fn_index, params)
     mark_defined(p, fn_index)
-    var ret: i64 = TY_VOID
+    mut ret: i64 = TY_VOID
     if (cur(p) == TokenKind::Arrow) {
         advance(p)
         ret = parse_type(p)
@@ -7925,7 +7930,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     saved_defer_depth := p.defer_depth
     p.defer_base = p.defers.count
     p.defer_depth = p.block_depth + 1
-    var body := parse_block(p)
+    mut body := parse_block(p)
     check_defer_shadowing(p)
     body = defer_trailing(p, body, TY_VOID)
     p.defers.count = p.defer_base
@@ -7952,7 +7957,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
 // declaration is reached.
 predeclare_types :: fn(mut p: Parser) {
     start := p.ti
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lbrace) {
@@ -7961,7 +7966,7 @@ predeclare_types :: fn(mut p: Parser) {
             depth = depth - 1
         } else if (depth == 0 && kind == TokenKind::Ident
             && peek_kind(p, 1) == TokenKind::Coloncolon) {
-            var at: i64 = 2
+            mut at: i64 = 2
             if (peek_kind(p, at) == TokenKind::KwLinear) {
                 at = at + 1
             }
@@ -7970,11 +7975,11 @@ predeclare_types :: fn(mut p: Parser) {
             }
             named := peek_kind(p, at)
             if (named == TokenKind::KwStruct || named == TokenKind::KwEnum) {
-                var generic: i64 = 0
+                mut generic: i64 = 0
                 if (peek_kind(p, at + 1) == TokenKind::Lparen) {
                     generic = 1
                 }
-                var holds_variants: i64 = 0
+                mut holds_variants: i64 = 0
                 if (named == TokenKind::KwEnum) {
                     holds_variants = 1
                 }
@@ -8012,7 +8017,7 @@ predeclare_types :: fn(mut p: Parser) {
 // reached in the order the pre-pass saw them, so the first entry still holding
 // only a name is this declaration's.
 predeclared_index :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
         if (entry.declared == 0 && entry.name_len == len
@@ -8052,10 +8057,10 @@ record_struct :: fn(mut p: Parser, index: i64, made: StructDef) -> i64 {
 // once, going round until nothing changes, so the answer does not depend on
 // the order the declarations were written in.
 settle_linear_types :: fn(mut p: Parser) {
-    var changed: i64 = 1
+    mut changed: i64 = 1
     while (changed == 1) {
         changed = 0
-        var i: i64 = 0
+        mut i: i64 = 0
         while (i < p.structs.count) {
             entry := arena_at(p.structs, i)
             head := entry.field_head
@@ -8175,7 +8180,7 @@ at_folded_declaration :: fn(mut p: Parser) -> bool {
 // walk of the file take the type declarations and the next take the rest.
 skip_declaration :: fn(mut p: Parser) {
     advance(p)
-    var depth: i64 = 0
+    mut depth: i64 = 0
     while (cur(p) != TokenKind::Eof) {
         kind := cur(p)
         if (kind == TokenKind::Lbrace) {
@@ -8411,10 +8416,10 @@ parse_program :: fn(mut p: Parser) -> i64 {
     // nothing is a name nothing declares.
     p.type_check_names = 1
     p.ti = start
-    var head: i64 = -1
-    var tail: i64 = -1
+    mut head: i64 = -1
+    mut tail: i64 = -1
     while (cur(p) != TokenKind::Eof) {
-        var turn := RecoverTurn {
+        mut turn := RecoverTurn {
             parser = unsafe { ptr_cast($u8, ptr_to(p)) },
             item = -1,
             block_depth = p.block_depth,
@@ -8521,7 +8526,7 @@ instance_params :: fn(mut p: Parser, fn_index: i64, args: i64) -> i64 {
     arg := call_args_for(p, args, fn_index)
     xstart := p.call_xarg_start
     xcount := p.call_xarg_count
-    var is_pack: i64 = 0
+    mut is_pack: i64 = 0
     if (takes_pack(p, fn_index)) {
         is_pack = gi + 1
     }
@@ -8589,7 +8594,7 @@ instance_fits_kind :: fn(
     if (is_number(arg) != (gfn.tparam_is_value == 1)) {
         return false
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < gfn.xparam_count) {
         param := arena_at(p.gparams, gfn.xparam_start + i)
         garg := arena_at(p.gargs, xarg_start + i)
@@ -8618,7 +8623,7 @@ tuple_is_first_for :: fn(mut p: Parser, gfn_index: i64, at: i64) -> bool {
     xstart := used.xarg_start
     xcount := used.xarg_count
     is_pack := used.is_pack
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < at) {
         other := arena_at(p.type_args, i)
         other_start := other.xarg_start
@@ -8659,7 +8664,7 @@ note_called_name :: fn(mut p: Parser, offset: i64, length: i64) {
         p.tparam_called = 1
         return
     }
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.xparam_count) {
         param := arena_at(p.gparams, p.xparam_start + i)
         if (param.name_len == length
@@ -8678,7 +8683,7 @@ parse_generic_instance :: fn(
     xarg_start: i64,
     xarg_count: i64
 ) -> i64 {
-    var i: i64 = 0
+    mut i: i64 = 0
     while (i < p.mono_nodes.count) {
         held := arena_at(p.mono_nodes, i)
         if (held.gfn_index == gfn_index && held.arg == arg
@@ -8782,9 +8787,9 @@ parse_generic_instance :: fn(
 // template's own return type still mentions the type parameter. This runs
 // before anything is checked or emitted, so both backends see the same answer.
 record_mono_rets :: fn(mut p: Parser) {
-    var gi: i64 = 0
+    mut gi: i64 = 0
     while (gi < p.generic_fns.count) {
-        var ii: i64 = 0
+        mut ii: i64 = 0
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg

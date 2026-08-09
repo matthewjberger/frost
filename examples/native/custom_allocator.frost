@@ -83,7 +83,7 @@ bump_carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> []T {
 gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
     // 4. A container over the run. `Fixed<T>` is a growable array over storage
     // it does not own, so it fills the run and never allocates.
-    var kept := fixed_over(
+    mut kept := fixed_over(
         bump_carve($i64, bump, slice_len(world))
     )
     for value in world {
@@ -95,7 +95,7 @@ gather :: fn(world: []i64, over: i64) -> []i64 uses Bump<1024> {
 }
 
 total_of :: fn(values: []i64) -> i64 {
-    var total: i64 = 0
+    mut total: i64 = 0
     for value in values {
         total = total + value
     }
@@ -103,9 +103,9 @@ total_of :: fn(values: []i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
-    var world: [6]i64 = [3, 9, 4, 12, 7, 1]
-    var round: i64 = 0
+    mut scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
+    mut world: [6]i64 = [3, 9, 4, 12, 7, 1]
+    mut round: i64 = 0
     while (round < 3) {
         mark := bump_mark(scratch)
         // `with` says which allocator the calls inside draw from, and the block

@@ -182,9 +182,9 @@ draw_scene :: fn(mut s: Scene, context: NodeContext) {
 
 // The camera and the light, as the bytes the shader reads them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
-    var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
-    var view_projection := camera_view_projection(eye, w, h)
-    var element: i64 = 0
+    mut values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    mut view_projection := camera_view_projection(eye, w, h)
+    mut element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
@@ -214,14 +214,14 @@ make_pipeline :: fn(
     format: u32,
     layout: PipelineLayout
 ) -> RenderPipeline {
-    var wgsl := shader_source_WGSL_init()
+    mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
-    var module_descriptor := shader_module_descriptor_init()
+    mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
+    mut attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -229,28 +229,28 @@ make_pipeline :: fn(
     attributes[1].offset = NORMAL_OFFSET
     attributes[1].shader_location = 1
 
-    var buffer_layout := vertex_buffer_layout_init()
+    mut buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
 
-    var target := color_target_state_init()
+    mut target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
 
-    var fragment := fragment_state_init()
+    mut fragment := fragment_state_init()
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
     fragment.targets = ptr_to(target)
 
-    var depth := depth_stencil_state_init()
+    mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     depth.depth_compare = COMPARE_FUNCTION_GREATER
 
-    var descriptor := render_pipeline_descriptor_init()
+    mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
@@ -307,7 +307,7 @@ before_frame :: fn(mut s: Scene, mut app: App) {
 }
 
 main :: fn() -> i64 {
-    var config := app_config("Frost glTF", WIDTH, HEIGHT)
+    mut config := app_config("Frost glTF", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
@@ -333,11 +333,11 @@ run :: fn(move app: App) -> i64 {
         FRAME_BYTES,
         ShaderStage::Vertex | ShaderStage::Fragment
     )
-    var layouts: [2]BindGroupLayout = [
+    mut layouts: [2]BindGroupLayout = [
         frame_layout,
         render_world_layout(app.render)
     ]
-    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 2
     pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(
@@ -357,7 +357,7 @@ run :: fn(move app: App) -> i64 {
 
     // The whole of what this demo has to say about what is drawn. The path is
     // from the root of the checkout, which is where `just gltf` runs it.
-    var held := gltf_read(MODEL)
+    mut held := gltf_read(MODEL)
     loaded := gltf_ok(held)
     root := gltf_spawn(
         app.world,
@@ -388,7 +388,7 @@ run :: fn(move app: App) -> i64 {
         )
     }
 
-    var scene := Scene {
+    mut scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
         steps = render_world_batch_pipelines(
             device,
@@ -399,7 +399,7 @@ run :: fn(move app: App) -> i64 {
         store = ptr_to(app.store),
         frame_uniform = frame_uniform,
     }
-    var eye := camera_default()
+    mut eye := camera_default()
     eye.position = vec3(0.0, 2.0, 7.0)
     eye.pitch = -0.2
     app_camera_set(app, eye)

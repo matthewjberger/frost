@@ -30,7 +30,7 @@ pub struct Edit {
     pub certain: bool,
 }
 
-const MUT_LOCAL: &str = "`mut` marks a parameter that writes the caller's value; a local that is reassigned is declared with `var`";
+const VAR_LOCAL: &str = "a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries";
 
 /// The edit that answers this report, when it has one.
 ///
@@ -41,11 +41,11 @@ const MUT_LOCAL: &str = "`mut` marks a parameter that writes the caller's value;
 pub fn edit_for(diagnostic: &Diagnostic) -> Option<Edit> {
     let position = diagnostic.position;
     let message = diagnostic.message.as_str();
-    if message == MUT_LOCAL {
+    if message == VAR_LOCAL {
         return Some(Edit {
             position,
-            replaces: "mut".len(),
-            replacement: "var".to_string(),
+            replaces: "var".len(),
+            replacement: "mut".to_string(),
             certain: true,
         });
     }
@@ -142,9 +142,9 @@ mod tests {
     }
 
     #[test]
-    fn a_mut_local_is_a_var() {
-        let edit = edit_for(&report(MUT_LOCAL)).expect("an edit");
-        assert_eq!(edit.replacement, "var");
+    fn a_var_local_is_a_mut() {
+        let edit = edit_for(&report(VAR_LOCAL)).expect("an edit");
+        assert_eq!(edit.replacement, "mut");
         assert_eq!(edit.replaces, 3);
         assert!(edit.certain);
     }

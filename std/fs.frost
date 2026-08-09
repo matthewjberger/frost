@@ -37,8 +37,8 @@ ReadResult :: linear struct {
 path_bytes :: fn(path: str) -> ^u8 {
     length := str_len(path)
     block := heap_bytes(length + 1)
-    var view := bytes_as($u8, block, length + 1)
-    var i: i64 = 0
+    mut view := bytes_as($u8, block, length + 1)
+    mut i: i64 = 0
     while (i < length) {
         view[i] = path[i]
         i = i + 1
@@ -75,7 +75,7 @@ fs_free :: fn(move result: ReadResult) {
 fs_write :: fn(path: str, text: str) -> bool {
     held := path_bytes(path)
     length := str_len(text)
-    var wrote: i64 = 0
+    mut wrote: i64 = 0
     if (length == 0) {
         wrote = unsafe { frost_rt_file_write(ptr_cast($i8, held), held, 0) }
     } else {
@@ -109,7 +109,7 @@ test "a file written is a file read back" {
     before := heap_live()
     assert(fs_write(SCRATCH, "one line and then some"))
     assert(fs_exists(SCRATCH))
-    var held := fs_read(SCRATCH)
+    mut held := fs_read(SCRATCH)
     assert(held.ok)
     assert(str_eq(held.text, "one line and then some"))
     fs_free(held)
@@ -123,7 +123,7 @@ test "a file written is a file read back" {
 
 test "a read that failed still gives back what it was handed" {
     before := heap_live()
-    var missing := fs_read("frost_no_such_file_is_here.txt")
+    mut missing := fs_read("frost_no_such_file_is_here.txt")
     assert(missing.ok == false)
     assert(str_len(missing.text) == 0)
     // The failing read is handed a block like any other, so freeing it is a

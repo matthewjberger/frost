@@ -12,7 +12,7 @@
 // and what it draws from is the `[]T` it is handed:
 //
 //     with scratch {
-//         var visible := fixed_over($Sprite, arena_carve($Sprite, scratch, 64))
+//         mut visible := fixed_over($Sprite, arena_carve($Sprite, scratch, 64))
 //         fixed_push($Sprite, visible, sprite)
 //     }
 //
@@ -100,8 +100,8 @@ fixed_truncate :: fn($T: Type, mut f: Fixed<T>, count: i64) {
 }
 
 test "a container over an array fills and reads back" {
-    var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over(backing)
+    mut backing: [4]i64 = [0, 0, 0, 0]
+    mut held := fixed_over(backing)
     assert(fixed_len(held) == 0)
     assert(fixed_room(held) == 4)
     fixed_push(held, 10)
@@ -112,12 +112,12 @@ test "a container over an array fills and reads back" {
 }
 
 test "the live prefix is what the slice hands out" {
-    var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over(backing)
+    mut backing: [4]i64 = [0, 0, 0, 0]
+    mut held := fixed_over(backing)
     fixed_push(held, 1)
     fixed_push(held, 2)
     fixed_push(held, 3)
-    var total: i64 = 0
+    mut total: i64 = 0
     for value in fixed_slice(held) {
         total = total + value
     }
@@ -126,8 +126,8 @@ test "the live prefix is what the slice hands out" {
 }
 
 test "a set writes through the live prefix" {
-    var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over(backing)
+    mut backing: [4]i64 = [0, 0, 0, 0]
+    mut held := fixed_over(backing)
     fixed_push(held, 1)
     fixed_push(held, 2)
     fixed_set(held, 1, 9)
@@ -135,8 +135,8 @@ test "a set writes through the live prefix" {
 }
 
 test "clearing and truncating move the mark and nothing else" {
-    var backing: [4]i64 = [0, 0, 0, 0]
-    var held := fixed_over(backing)
+    mut backing: [4]i64 = [0, 0, 0, 0]
+    mut held := fixed_over(backing)
     fixed_push(held, 1)
     fixed_push(held, 2)
     fixed_push(held, 3)

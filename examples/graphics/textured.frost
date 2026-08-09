@@ -218,9 +218,9 @@ draw_scene :: fn(mut s: Scene, context: NodeContext) {
 
 // The camera and the light, as the bytes the shader reads them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
-    var values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
-    var view_projection := camera_view_projection(eye, w, h)
-    var element: i64 = 0
+    mut values: [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    mut view_projection := camera_view_projection(eye, w, h)
+    mut element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         element = element + 1
@@ -248,7 +248,7 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
 // Every image and the sampler that reads them, which are two entries of one
 // group because they are used together and neither is any use alone.
 surface_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries: [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
+    mut entries: [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
     entries[0].binding = 0
     entries[0].visibility = ShaderStage::Fragment
     entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
@@ -256,7 +256,7 @@ surface_layout :: fn(device: Device) -> BindGroupLayout {
     entries[1].binding = 1
     entries[1].visibility = ShaderStage::Fragment
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
-    var descriptor := bind_group_layout_descriptor_init()
+    mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 2
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
@@ -267,12 +267,12 @@ surface_group :: fn(
     layout: BindGroupLayout,
     held: Texture2D
 ) -> BindGroup {
-    var entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
+    mut entries: [2]BindGroupEntry = [bind_group_entry_init(); 2]
     entries[0].binding = 0
     entries[0].texture_view = texture_view_of(held)
     entries[1].binding = 1
     entries[1].sampler = texture_sampler_of(held)
-    var descriptor := bind_group_descriptor_init()
+    mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 2
     descriptor.entries = ptr_to(entries[0])
@@ -284,14 +284,14 @@ make_pipeline :: fn(
     format: u32,
     layout: PipelineLayout
 ) -> RenderPipeline {
-    var wgsl := shader_source_WGSL_init()
+    mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
-    var module_descriptor := shader_module_descriptor_init()
+    mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    var attributes: [3]VertexAttribute = [vertex_attribute_init(); 3]
+    mut attributes: [3]VertexAttribute = [vertex_attribute_init(); 3]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -302,28 +302,28 @@ make_pipeline :: fn(
     attributes[2].offset = TEXCOORD_OFFSET
     attributes[2].shader_location = 2
 
-    var buffer_layout := vertex_buffer_layout_init()
+    mut buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 3
     buffer_layout.attributes = ptr_to(attributes[0])
 
-    var target := color_target_state_init()
+    mut target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
 
-    var fragment := fragment_state_init()
+    mut fragment := fragment_state_init()
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
     fragment.targets = ptr_to(target)
 
-    var depth := depth_stencil_state_init()
+    mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     depth.depth_compare = COMPARE_FUNCTION_GREATER
 
-    var descriptor := render_pipeline_descriptor_init()
+    mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
@@ -343,7 +343,7 @@ make_pipeline :: fn(
 // is readable off the screen, and each marked in one corner so which way up it
 // went on is readable too.
 build_image :: fn(which: i64) -> Image {
-    var held := image_new(IMAGE_SIZE, IMAGE_SIZE)
+    mut held := image_new(IMAGE_SIZE, IMAGE_SIZE)
     if (which == 0) {
         image_checker(
             held,
@@ -415,7 +415,7 @@ before_frame :: fn(mut s: Scene, mut app: App) {
 }
 
 main :: fn() -> i64 {
-    var config := app_config("Frost textured primitives", WIDTH, HEIGHT)
+    mut config := app_config("Frost textured primitives", WIDTH, HEIGHT)
     config.vertices = VERTEX_ROOM
     config.indices = INDEX_ROOM
     config.drawn = INSTANCES * 2
@@ -451,7 +451,7 @@ run :: fn(move app: App) -> i64 {
     // The colour a material carries now tints what the image gives rather than
     // being the whole of the surface, so these are nearer to white than the
     // untextured field's are.
-    var looks: [LOOKS]i64 = [0; LOOKS]
+    mut looks: [LOOKS]i64 = [0; LOOKS]
     looks[0] = materials_add(
         app.materials,
         material_of(vec4(1.0, 0.95, 0.92, 1.0), 0.35, 0.0)
@@ -475,12 +475,12 @@ run :: fn(move app: App) -> i64 {
         ShaderStage::Vertex | ShaderStage::Fragment
     )
     material_layout := surface_layout(device)
-    var layouts: [3]BindGroupLayout = [
+    mut layouts: [3]BindGroupLayout = [
         frame_layout,
         render_world_layout(app.render),
         material_layout
     ]
-    var pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 3
     pipeline_layout_descriptor.bind_group_layouts =
     ptr_to(layouts[0])
@@ -492,9 +492,9 @@ run :: fn(move app: App) -> i64 {
     // Every material's image in one array, made once and bound once for the
     // whole frame. Which layer a thing reads is a number it carries.
     images := texture_array_new(device, IMAGE_SIZE, IMAGE_SIZE, LOOKS)
-    var built: i64 = 0
+    mut built: i64 = 0
     while (built < LOOKS) {
-        var picture := build_image(built)
+        mut picture := build_image(built)
         texture_array_write(images, queue, built, picture)
         image_free(picture)
         built = built + 1
@@ -522,7 +522,7 @@ run :: fn(move app: App) -> i64 {
     )
 
     half: f32 = 2.5
-    var made: i64 = 0
+    mut made: i64 = 0
     while (made < INSTANCES) {
         row := made / GRID
         column := made - row * GRID
@@ -553,7 +553,7 @@ run :: fn(move app: App) -> i64 {
             spinning(turning, speed, quat_identity())
         )
 
-        var shape := cube
+        mut shape := cube
         if (made - (made / 2) * 2 == 1) {
             shape = sphere
         }
@@ -567,7 +567,7 @@ run :: fn(move app: App) -> i64 {
         made = made + 1
     }
 
-    var scene := Scene {
+    mut scene := Scene {
         pipeline = make_pipeline(device, app_format(app), pipeline_layout),
         steps = render_world_batch_pipelines(
             device,
@@ -579,7 +579,7 @@ run :: fn(move app: App) -> i64 {
         store = ptr_to(app.store),
         frame_uniform = frame_uniform,
     }
-    var eye := camera_default()
+    mut eye := camera_default()
     eye.position = vec3(0.0, 0.0, 14.0)
     eye.pitch = 0.0
     app_camera_set(app, eye)

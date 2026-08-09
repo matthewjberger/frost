@@ -64,10 +64,10 @@ str_index_of :: fn(s: str, needle: str) -> i64 {
     if (str_len(needle) == 0) { return 0 }
     if (str_len(needle) > str_len(s)) { return -1 }
     last := str_len(s) - str_len(needle)
-    var start: i64 = 0
+    mut start: i64 = 0
     while (start <= last) {
-        var i: i64 = 0
-        var same := true
+        mut i: i64 = 0
+        mut same := true
         while (i < str_len(needle)) {
             if (s[start + i] != needle[i]) { same = false i = str_len(needle) } else { i = i + 1 }
         }
@@ -82,7 +82,7 @@ str_contains :: fn(s: str, needle: str) -> bool {
 }
 
 str_count :: fn(s: str, byte: i64) -> i64 {
-    var found: i64 = 0
+    mut found: i64 = 0
     for held in s {
         if (held == byte) { found = found + 1 }
     }
@@ -100,10 +100,10 @@ str_byte_is_space :: fn(byte: i64) -> bool {
 // distinguish "0" from "not a number". A caller that needs the difference
 // checks the bytes first.
 str_to_i64 :: fn(s: str) -> i64 {
-    var i: i64 = 0
-    var negative := false
+    mut i: i64 = 0
+    mut negative := false
     if (str_len(s) > 0 && s[0] == 45) { negative = true i = 1 }
-    var value: i64 = 0
+    mut value: i64 = 0
     while (i < str_len(s)) {
         if (str_byte_is_digit(s[i]) == false) { return 0 }
         value = value * 10 + (s[i] - 48)
@@ -124,16 +124,16 @@ str_to_i64 :: fn(s: str) -> i64 {
 // was written. Past that the scaling goes in steps of twenty-two and the last
 // place can differ.
 str_to_f64 :: fn(s: str) -> f64 {
-    var at: i64 = 0
-    var negative := false
+    mut at: i64 = 0
+    mut negative := false
     if (str_len(s) > 0 && (s[0] == 45 || s[0] == 43)) {
         negative = s[0] == 45
         at = 1
     }
-    var mantissa: i64 = 0
-    var digits: i64 = 0
-    var exponent: i64 = 0
-    var any := false
+    mut mantissa: i64 = 0
+    mut digits: i64 = 0
+    mut exponent: i64 = 0
+    mut any := false
     while (at < str_len(s) && str_byte_is_digit(s[at])) {
         any = true
         if (digits < SIGNIFICANT) {
@@ -160,13 +160,13 @@ str_to_f64 :: fn(s: str) -> f64 {
     if (any == false) { return 0.0 }
     if (at < str_len(s) && (s[at] == 101 || s[at] == 69)) {
         at = at + 1
-        var power_negative := false
+        mut power_negative := false
         if (at < str_len(s) && (s[at] == 45 || s[at] == 43)) {
             power_negative = s[at] == 45
             at = at + 1
         }
-        var power: i64 = 0
-        var power_digits := false
+        mut power: i64 = 0
+        mut power_digits := false
         while (at < str_len(s) && str_byte_is_digit(s[at])) {
             power_digits = true
             // Bounded, since anything this far out is already past what a
@@ -199,7 +199,7 @@ EXACT_POWERS :: 23
 EXACT_INTEGER :: 9007199254740992
 
 scale_by_ten :: fn(mantissa: i64, exponent: i64) -> f64 {
-    var powers: [EXACT_POWERS]f64 = [
+    mut powers: [EXACT_POWERS]f64 = [
         1e0,
         1e1,
         1e2,
@@ -233,16 +233,16 @@ scale_by_ten :: fn(mantissa: i64, exponent: i64) -> f64 {
             return held / powers[-exponent]
         }
     }
-    var result := held
-    var left := exponent
+    mut result := held
+    mut left := exponent
     while (left > 0) {
-        var step := left
+        mut step := left
         if (step > EXACT_POWERS - 1) { step = EXACT_POWERS - 1 }
         result = result * powers[step]
         left = left - step
     }
     while (left < 0) {
-        var step := -left
+        mut step := -left
         if (step > EXACT_POWERS - 1) { step = EXACT_POWERS - 1 }
         result = result / powers[step]
         left = left + step

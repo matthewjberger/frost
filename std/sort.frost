@@ -28,9 +28,9 @@ insertion :: fn(
     low: i64,
     high: i64
 ) {
-    var i := low + 1
+    mut i := low + 1
     while (i <= high) {
-        var j := i
+        mut j := i
         while (j > low && ops.less(items[j], items[j - 1])) {
             swap(items, j, j - 1)
             j = j - 1
@@ -51,8 +51,8 @@ quicksort :: fn(
         return
     }
     pivot := items[low + (high - low) / 2]
-    var i := low
-    var j := high
+    mut i := low
+    mut j := high
     while (i <= j) {
         while (ops.less(items[i], pivot)) { i = i + 1 }
         while (ops.less(pivot, items[j])) { j = j - 1 }
@@ -83,7 +83,7 @@ sort_vec :: fn($T: Type, $ops: Ordering<T>, mut v: Vec<T>) {
 }
 
 test "a slice is ordered by the bundle it is given" {
-    var items := [5, 2, 9, 1, 7]
+    mut items := [5, 2, 9, 1, 7]
     sort($i64_ascending, items)
     assert(items[0] == 1)
     assert(items[2] == 5)
@@ -95,9 +95,9 @@ test "a slice is ordered by the bundle it is given" {
 }
 
 test "a run longer than the insertion threshold takes the quicksort path" {
-    var items := [13, 4, 17, 2, 8, 20, 1, 15, 6, 11, 19, 3, 9, 16, 5]
+    mut items := [13, 4, 17, 2, 8, 20, 1, 15, 6, 11, 19, 3, 9, 16, 5]
     sort($i64_ascending, items)
-    var i: i64 = 1
+    mut i: i64 = 1
     while (i < 15) {
         assert(items[i - 1] < items[i])
         i = i + 1
@@ -105,7 +105,7 @@ test "a run longer than the insertion threshold takes the quicksort path" {
 }
 
 test "a vector sorts over its live elements" {
-    var v := vec_new($i64, 4)
+    mut v := vec_new($i64, 4)
     vec_push(v, 3)
     vec_push(v, 1)
     vec_push(v, 2)

@@ -35,7 +35,7 @@ a cache), Frost reaches for a generational handle into a slab.
 | Rust | Frost |
 | --- | --- |
 | `let x = 5;` | `x := 5` |
-| `let mut x = 5;` | `var x := 5` |
+| `let mut x = 5;` | `mut x := 5` |
 | `let x: i64 = 5;` | `x : i64 = 5` |
 | `const MAX: i64 = 10;` | `MAX :: 10` |
 | `fn add(a: i64, b: i64) -> i64 { a + b }` | `add :: fn(a: i64, b: i64) -> i64 { a + b }` |
@@ -87,12 +87,19 @@ There is no `let`. A name is introduced with one of three operators:
   enums, and top-level items are all constants, which is why every function is
   written `name :: fn(..)`.
 
-Bindings are immutable by default, exactly as in Rust. `var` declares one the
-body may assign again. `mut` is reserved for the parameter mode, so wherever you
-read it, a caller's value is being written:
+Bindings are immutable by default, exactly as in Rust, and `mut` declares one
+the body may assign again. It is the same word a parameter mode carries, and
+which of the two it means comes from where it is written: in a parameter list
+`mut p` is the caller's value, and at a statement `mut x := 3` is a slot this
+frame owns.
+
+Rust's difficulty with `mut` is that a pattern `mut x` and a reference type
+`&mut T` are two ideas under one word. Frost has no `&` or `&mut` in the
+surface, so `mut` appears only as a mode on a name being introduced, and the
+syntax around the name says whose storage it is:
 
 ```frost,inside
-var total : i64 = 0
+mut total : i64 = 0
 total = total + 1
 ```
 
@@ -157,8 +164,8 @@ split :: fn(value: i64) -> (high: i64, low: i64) {
 A name in the list is a label for one of the values. Go's named results also let
 a naked `return` hand back whatever those names hold, and Frost has no such
 form. The `return` is required either way: a trailing expression is one value.
-`var` goes in front of any name the body writes afterwards, as in
-`magnitude, var negative := classify(value)`, and `_` takes a value the caller
+`mut` goes in front of any name the body writes afterwards, as in
+`magnitude, mut negative := classify(value)`, and `_` takes a value the caller
 has no use for, as in `quotient, _ := divide(17, 5)`.
 
 The list itself is never a value. `(i64, i64)` is not a type, so it cannot be
@@ -333,7 +340,7 @@ scale :: fn(mut p: Point, k: i64) {
 }
 
 main :: fn() -> i64 {
-    var p := Point { x = 3, y = 4 }
+    mut p := Point { x = 3, y = 4 }
     scale(p, 2)            // no '&mut' here
     p.x
 }
@@ -382,7 +389,7 @@ one, and taking an address is safe. Reading through one with the postfix `^`
 is what belongs in an `unsafe` block:
 
 ```frost,sketch
-var hero := Entity { hp = 100, mana = 30 }
+mut hero := Entity { hp = 100, mana = 30 }
 pe : ^Entity = ptr_to(hero)
 unsafe { pe^.hp = pe^.hp - 25 }
 ```
@@ -522,7 +529,7 @@ import "slab.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -617,7 +624,7 @@ which can declare the signature it needs:
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
-    var result := x
+    mut result := x
     if (before(y, result)) { result = y }
     result
 }
@@ -891,7 +898,7 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    var world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     player := slab_insert(world,

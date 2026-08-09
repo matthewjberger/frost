@@ -392,7 +392,7 @@ mod tests {
              File :: linear struct { fd: i64 }\n\
              ascending :: fn(a: i64, b: i64) -> bool { a < b }\n\
              best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {\n\
-             \x20   var result := x\n    if (before(y, result)) { result = y }\n    result\n}\n",
+             \x20   mut result := x\n    if (before(y, result)) { result = y }\n    result\n}\n",
         );
         check_interface_round_trip(&interface).unwrap();
         check_interface_covers_exports(&interface).unwrap();

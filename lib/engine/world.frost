@@ -151,7 +151,7 @@ Exit :: struct { wanted: bool }
 // the same three, through its own plugins, since a plugin is handed an App and
 // this file cannot name one.
 world_schedule :: fn() -> Schedule {
-    var held := schedule_new()
+    mut held := schedule_new()
     schedule_add(held, Stage::FramePostUpdate, place_things)
     schedule_add(held, Stage::FrameUpdate, move_camera)
     held
@@ -173,7 +173,7 @@ world_state :: fn(world: World) -> i64 {
 // screen and the rest under another, which is the one thing a state machine is
 // for stopping.
 world_state_request :: fn(mut world: World, value: i64) {
-    var held := ecs_resource($States, world, resource_of($States, world))
+    mut held := ecs_resource($States, world, resource_of($States, world))
     states_request(held, value)
     ecs_resource_set(world, resource_of($States, world), held)
 }
@@ -181,7 +181,7 @@ world_state_request :: fn(mut world: World, value: i64) {
 // The requested state taken, answering whether it was a change. Called by
 // whatever owns the frame, before the schedule runs.
 world_state_apply :: fn(mut world: World) -> bool {
-    var held := ecs_resource($States, world, resource_of($States, world))
+    mut held := ecs_resource($States, world, resource_of($States, world))
     changed := states_apply(held)
     ecs_resource_set(world, resource_of($States, world), held)
     changed
@@ -215,7 +215,7 @@ exit_on_escape :: fn(mut world: World) {
 // else.
 move_camera :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
-    var eye := ecs_resource($Camera, world, resource_of($Camera, world))
+    mut eye := ecs_resource($Camera, world, resource_of($Camera, world))
     camera_advance(eye, held, input_delta_seconds(held))
     ecs_resource_set(world, resource_of($Camera, world), eye)
 }
@@ -225,12 +225,12 @@ move_camera :: fn(mut world: World) {
 // to nothing is a root and is placed against nothing.
 place_things :: fn(mut world: World) {
     ids := world_ids(world)
-    var q := query_begin(world)
+    mut q := query_begin(world)
     query_with(q, ids.global_transform)
     query_with(q, ids.local_transform)
     while (query_next(world, q)) {
         rows := query_entities(world, q)
-        var row: i64 = 0
+        mut row: i64 = 0
         while (row < slice_len(rows)) {
             entity := rows[row]
             tree := world_tree(world)
@@ -263,7 +263,7 @@ place_subtree :: fn(
         GlobalTransform { matrix = mat4_mul(above, local_of(world, local, entity)) }
     )
     tree := world_tree(world)
-    var child := hierarchy_first_child(tree, entity)
+    mut child := hierarchy_first_child(tree, entity)
     while (is_no_entity(child) == false) {
         // Read before the walk goes down, since the tree is read again in
         // there and this is the last thing wanted from it here.
@@ -301,16 +301,16 @@ PLAYING :: 1
 Score :: struct { points: i64 }
 
 count_a_point :: fn(mut world: World) {
-    var held := ecs_resource($Score, world, resource_of($Score, world))
+    mut held := ecs_resource($Score, world, resource_of($Score, world))
     held.points = held.points + 1
     ecs_resource_set(world, resource_of($Score, world), held)
 }
 
 test "a system bound to a screen runs on that screen and no other" {
-    var world := ecs_new()
+    mut world := ecs_new()
     world_prepare(world)
     ecs_resource_register($Score, world)
-    var frame := schedule_new()
+    mut frame := schedule_new()
     schedule_add_in_state(frame, Stage::FrameUpdate, PLAYING, count_a_point)
 
     // The world starts on the title screen, where this system is not.
@@ -341,7 +341,7 @@ test "a system bound to a screen runs on that screen and no other" {
 }
 
 test "taking a state that was not asked for is not a change" {
-    var world := ecs_new()
+    mut world := ecs_new()
     world_prepare(world)
     // Nothing requested, so there is nothing to take and the hooks either side
     // of a change have no reason to run.
@@ -360,16 +360,16 @@ test "taking a state that was not asked for is not a change" {
 // resources at fixed numbers, this world would have had the camera moved by
 // whatever happened to sit where the camera used to.
 test "the engine finds its resources wherever they landed" {
-    var world := ecs_new()
+    mut world := ecs_new()
     ecs_resource_register($Bystander, world)
     world_prepare(world)
-    var held := ecs_resource($Input, world, resource_of($Input, world))
+    mut held := ecs_resource($Input, world, resource_of($Input, world))
     held.keys[KEY_W] = true
     held.step = 0.5
     world_input(world, held)
 
     before := world_camera(world)
-    var frame := world_schedule()
+    mut frame := world_schedule()
     schedule_run(frame, world, ANY_STATE)
     after := world_camera(world)
     assert(after.position.z < before.position.z)
@@ -384,17 +384,17 @@ test "the engine finds its resources wherever they landed" {
 }
 
 test "the camera moves by what the world was told was held" {
-    var world := ecs_new()
+    mut world := ecs_new()
     world_prepare(world)
     // A resource starts zeroed, so this is a frame in which nothing was held,
     // with one key and the clock written into it.
-    var held := ecs_resource($Input, world, resource_of($Input, world))
+    mut held := ecs_resource($Input, world, resource_of($Input, world))
     held.keys[KEY_W] = true
     held.step = 0.5
     world_input(world, held)
 
     before := world_camera(world)
-    var frame := world_schedule()
+    mut frame := world_schedule()
     schedule_run(frame, world, ANY_STATE)
     after := world_camera(world)
     // Zero yaw looks down -Z, so forward is a smaller z.
@@ -407,15 +407,15 @@ test "the camera moves by what the world was told was held" {
 }
 
 test "the camera turns by what the world was told was held" {
-    var world := ecs_new()
+    mut world := ecs_new()
     world_prepare(world)
-    var held := ecs_resource($Input, world, resource_of($Input, world))
+    mut held := ecs_resource($Input, world, resource_of($Input, world))
     held.keys[KEY_LEFT] = true
     held.step = 0.5
     world_input(world, held)
 
     before := world_camera(world)
-    var frame := world_schedule()
+    mut frame := world_schedule()
     schedule_run(frame, world, ANY_STATE)
     after := world_camera(world)
     assert(after.yaw > before.yaw)
@@ -428,16 +428,16 @@ test "the camera turns by what the world was told was held" {
 }
 
 test "a frame in which nothing was held moves nothing" {
-    var world := ecs_new()
+    mut world := ecs_new()
     world_prepare(world)
     // A frame that lasted a while with nothing held, since a frame of no time
     // at all would hold the camera still whatever it was told.
-    var held := ecs_resource($Input, world, resource_of($Input, world))
+    mut held := ecs_resource($Input, world, resource_of($Input, world))
     held.step = 0.5
     world_input(world, held)
 
     before := world_camera(world)
-    var frame := world_schedule()
+    mut frame := world_schedule()
     schedule_run(frame, world, ANY_STATE)
     after := world_camera(world)
     assert(after.position.z == before.position.z)
@@ -450,7 +450,7 @@ test "a frame in which nothing was held moves nothing" {
 }
 
 test "a thing is placed against whatever it hangs off, however deep" {
-    var world := ecs_new()
+    mut world := ecs_new()
     ids := world_prepare(world)
     wanted := mask_with(
         mask_with(mask_empty(), ids.local_transform),
@@ -458,12 +458,12 @@ test "a thing is placed against whatever it hangs off, however deep" {
     )
     // Held in one place, since spawning three and naming each would hand every
     // one of them over to the array anyway.
-    var chain: [3]Entity = [
+    mut chain: [3]Entity = [
         ecs_spawn_with(world, wanted),
         ecs_spawn_with(world, wanted),
         ecs_spawn_with(world, wanted)
     ]
-    var made: i64 = 0
+    mut made: i64 = 0
     while (made < 3) {
         ecs_set(
             world,
@@ -481,7 +481,7 @@ test "a thing is placed against whatever it hangs off, however deep" {
     hierarchy_attach(tree, chain[1], chain[0])
     hierarchy_attach(tree, chain[2], chain[1])
 
-    var frame := world_schedule()
+    mut frame := world_schedule()
     schedule_run(frame, world, ANY_STATE)
 
     // One step along x each, applied down the chain, so the leaf lands at

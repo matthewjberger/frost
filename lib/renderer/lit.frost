@@ -101,8 +101,8 @@ lit_new :: fn(
 
     light_layout := lights_layout(device)
 
-    var layouts: [3]BindGroupLayout = [frame_layout, scene_layout, light_layout]
-    var descriptor := pipeline_layout_descriptor_init()
+    mut layouts: [3]BindGroupLayout = [frame_layout, scene_layout, light_layout]
+    mut descriptor := pipeline_layout_descriptor_init()
     descriptor.bind_group_layouts_count = 3
     descriptor.bind_group_layouts = ptr_to(layouts[0])
     layout := device_create_pipeline_layout(device, ptr_to(descriptor))
@@ -336,8 +336,8 @@ lit_write_frame :: fn(
     total: i64,
     directional: i64
 ) {
-    var values: [44]f32 = [0.0; 44]
-    var element: i64 = 0
+    mut values: [44]f32 = [0.0; 44]
+    mut element: i64 = 0
     while (element < 16) {
         values[element] = view_projection.m[element]
         values[element + 16] = view.m[element]
@@ -355,7 +355,7 @@ lit_write_frame :: fn(
     // are directional. Four unsigned numbers to the shader and four floats
     // here, written through the same bytes since what the buffer holds is
     // bytes.
-    var counts: [4]u32 = [cast($u32, total), cast($u32, directional), 0, 0]
+    mut counts: [4]u32 = [cast($u32, total), cast($u32, directional), 0, 0]
     queue_write_buffer(queue, s.frame_uniform, 0, ptr_to(values[0]), 160)
     queue_write_buffer(queue, s.frame_uniform, 160, ptr_to(counts[0]), 16)
 }
@@ -365,8 +365,8 @@ lit_write_frame :: fn(
 // was built with. The three runs are storage bindings because how many there
 // are is a number rather than a shape.
 lights_layout :: fn(device: Device) -> BindGroupLayout {
-    var entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
-    var slot: i64 = 0
+    mut entries: [4]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 4]
+    mut slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].visibility = ShaderStage::Fragment
@@ -375,7 +375,7 @@ lights_layout :: fn(device: Device) -> BindGroupLayout {
     }
     entries[3].buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     entries[3].buffer.min_binding_size = CLUSTER_UNIFORM_BYTES
-    var descriptor := bind_group_layout_descriptor_init()
+    mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
@@ -386,27 +386,27 @@ lights_group :: fn(
     layout: BindGroupLayout,
     grid: Cluster
 ) -> BindGroup {
-    var entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
-    var held: [4]Buffer = [
+    mut entries: [4]BindGroupEntry = [bind_group_entry_init(); 4]
+    mut held: [4]Buffer = [
         cluster_lights_buffer(grid),
         cluster_grid_buffer(grid),
         cluster_indices_buffer(grid),
         cluster_uniform_buffer(grid)
     ]
-    var sizes: [4]i64 = [
+    mut sizes: [4]i64 = [
         LIGHT_BYTES * MAX_LIGHTS,
         TOTAL_CLUSTERS * 8,
         TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * 4,
         CLUSTER_UNIFORM_BYTES
     ]
-    var slot: i64 = 0
+    mut slot: i64 = 0
     while (slot < 4) {
         entries[slot].binding = cast($u32, slot)
         entries[slot].buffer = held[slot]
         entries[slot].size = sizes[slot]
         slot = slot + 1
     }
-    var descriptor := bind_group_descriptor_init()
+    mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 4
     descriptor.entries = ptr_to(entries[0])
@@ -414,10 +414,10 @@ lights_group :: fn(
 }
 
 lit_module :: fn(device: Device) -> ShaderModule {
-    var wgsl := shader_source_WGSL_init()
+    mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
-    var module_descriptor := shader_module_descriptor_init()
+    mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = ptr_to(wgsl)
     device_create_shader_module(device, ptr_to(module_descriptor))
 }
@@ -440,7 +440,7 @@ make_pipeline :: fn(
     blended: bool,
     compare: u32
 ) -> RenderPipeline {
-    var attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
+    mut attributes: [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
@@ -448,7 +448,7 @@ make_pipeline :: fn(
     attributes[1].offset = NORMAL_OFFSET
     attributes[1].shader_location = 1
 
-    var buffer_layout := vertex_buffer_layout_init()
+    mut buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 2
@@ -457,7 +457,7 @@ make_pipeline :: fn(
     // Source alpha over what is there, which is what a colour with an alpha
     // means. The alpha channel takes the newer of the two so a target that is
     // read afterwards says something sensible about coverage.
-    var blend := blend_state_init()
+    mut blend := blend_state_init()
     blend.color.operation = BLEND_OPERATION_ADD
     blend.color.src_factor = BLEND_FACTOR_SRC_ALPHA
     blend.color.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
@@ -465,20 +465,20 @@ make_pipeline :: fn(
     blend.alpha.src_factor = BLEND_FACTOR_ONE
     blend.alpha.dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
 
-    var target := color_target_state_init()
+    mut target := color_target_state_init()
     target.format = format
     target.write_mask = ColorWriteMask::All
     if (blended) {
         target.blend = ptr_to(blend)
     }
 
-    var fragment := fragment_state_init()
+    mut fragment := fragment_state_init()
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
     fragment.targets = ptr_to(target)
 
-    var depth := depth_stencil_state_init()
+    mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     if (blended) {
@@ -486,7 +486,7 @@ make_pipeline :: fn(
     }
     depth.depth_compare = compare
 
-    var descriptor := render_pipeline_descriptor_init()
+    mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
@@ -512,23 +512,23 @@ make_depth_pipeline :: fn(
     shader: ShaderModule,
     layout: PipelineLayout
 ) -> RenderPipeline {
-    var attributes: [1]VertexAttribute = [vertex_attribute_init(); 1]
+    mut attributes: [1]VertexAttribute = [vertex_attribute_init(); 1]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
 
-    var buffer_layout := vertex_buffer_layout_init()
+    mut buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 1
     buffer_layout.attributes = ptr_to(attributes[0])
 
-    var depth := depth_stencil_state_init()
+    mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     depth.depth_compare = COMPARE_FUNCTION_GREATER
 
-    var descriptor := render_pipeline_descriptor_init()
+    mut descriptor := render_pipeline_descriptor_init()
     descriptor.layout = layout
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_depth", length = 8 }

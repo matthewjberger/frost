@@ -190,8 +190,8 @@ is_no_window :: fn(w: Window) -> bool {
 c_string :: fn(text: str) -> ^u8 {
     length := str_len(text)
     block := heap_bytes(length + 1)
-    var view := bytes_as($u8, block, length + 1)
-    var i: i64 = 0
+    mut view := bytes_as($u8, block, length + 1)
+    mut i: i64 = 0
     while (i < length) {
         view[i] = text[i]
         i = i + 1
@@ -222,7 +222,7 @@ sdl_delay :: fn(milliseconds: u32) {
 // next call into it, so this is a view rather than a copy.
 sdl_error :: fn() -> str {
     raw: ^i8 = unsafe { SDL_GetError() }
-    var length: i64 = 0
+    mut length: i64 = 0
     while (unsafe { raw[length] } != 0) {
         length = length + 1
     }

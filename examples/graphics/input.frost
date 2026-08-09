@@ -15,7 +15,7 @@ import "io.frost"
 import "format.frost"
 
 say :: fn(label: str, value: i64) {
-    var line := builder_new(64)
+    mut line := builder_new(64)
     builder_str_value(line, label)
     builder_int(line, value)
     print("{}\n", builder_str(line))
@@ -23,19 +23,19 @@ say :: fn(label: str, value: i64) {
 }
 
 main :: fn() -> i64 {
-    var p := platform_open("Frost input", 960, 540)
+    mut p := platform_open("Frost input", 960, 540)
     if (platform_ok(p) == false) {
         print("no window\n{}\n", platform_error())
         return 1
     }
 
-    var key_downs: i64 = 0
-    var key_ups: i64 = 0
-    var clicks: i64 = 0
-    var moves: i64 = 0
-    var scrolls: i64 = 0
-    var resizes: i64 = 0
-    var travelled: f32 = 0.0
+    mut key_downs: i64 = 0
+    mut key_ups: i64 = 0
+    mut clicks: i64 = 0
+    mut moves: i64 = 0
+    mut scrolls: i64 = 0
+    mut resizes: i64 = 0
+    mut travelled: f32 = 0.0
 
     print("running. escape or close the window to finish.\n")
     while (platform_poll(p)) {
@@ -44,13 +44,13 @@ main :: fn() -> i64 {
         }
         // Counting edges rather than states is what says the two are different:
         // a held key adds one, not one per frame.
-        var code: i64 = 0
+        mut code: i64 = 0
         while (code < KEY_COUNT) {
             if (key_pressed(p, code)) { key_downs = key_downs + 1 }
             if (key_released(p, code)) { key_ups = key_ups + 1 }
             code = code + 1
         }
-        var held: i64 = 0
+        mut held: i64 = 0
         while (held < BUTTON_COUNT) {
             if (button_pressed(p, held)) { clicks = clicks + 1 }
             held = held + 1
@@ -59,9 +59,9 @@ main :: fn() -> i64 {
         dy := pointer_dy(p)
         if (dx != 0.0 || dy != 0.0) {
             moves = moves + 1
-            var far := dx
+            mut far := dx
             if (far < 0.0) { far = -far }
-            var down := dy
+            mut down := dy
             if (down < 0.0) { down = -down }
             travelled = travelled + far + down
         }
