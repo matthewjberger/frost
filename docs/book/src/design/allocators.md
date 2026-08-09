@@ -150,10 +150,34 @@ reached it. Carving from the caller's arena hands back the caller's storage;
 carving from one built in this frame is refused, in the same words either
 compiler gives for a bare pointer out of a frame.
 
-What is left is the ergonomics. The type after `uses` is still concrete, so a
-container generic over its source takes the bundle as parameters rather than
-drawing it the way a `uses Arena` function draws an arena, and `Vec<T>` is still
-nailed to the heap with `Fixed<T>` beside it.
+### Which container draws from which source
+
+`Vec<T>` draws from the heap and `Fixed<T>` draws from a run somebody else
+carved. That split is the answer rather than a stop on the way to one container
+parameterized by its source, and it follows from what a bump allocator is.
+
+A container that grows asks its source for a bigger run holding what the old one
+held. An arena answers by carving a second run and copying, because it has
+nowhere to grow into, and the old run stays out until the whole arena resets. So
+a container that grows out of an arena spends the arena at the rate it doubles,
+and the run it abandons is live storage nothing will hand back before the reset.
+A container in a scratch region is sized where it is carved instead, which is
+what `Fixed<T>` is: capacity is the run's length, a push past the end aborts at
+the index that reached past it, and there is no allocator under it to ask for
+more. Both programs in the tree that fill a container out of an arena carve a run
+whose size is known before the loop.
+
+That leaves the heap as the only source a growing container draws from, and the
+heap keeps no state, so `Vec<T>` names no allocator and carries no field saying
+where its block came from. A capability a value has to be used with the same way
+for its whole life belongs in that value's type, which is what `Map<K, V, ops>`
+does with its hashing; the allocation source of a growing container is not one of
+those, because there is only ever one of it.
+
+`arena_source` fills the third field of `Allocation<A>` with a resize, so
+`carve_grow($arena_source, a, run, n)` is written down and abandons the old run.
+Whether `Arena` stops being an `Allocation<A>` or the bundle splits into a
+resizing and a non-resizing one is open.
 
 ## What is left in C
 
