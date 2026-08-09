@@ -5318,16 +5318,29 @@ impl<'a> FunctionLowering<'a> {
                         spelled(annotated)
                     );
                 }
-                // A struct where another struct was declared. Both travel by
-                // address, so the coercion below takes one and every check
-                // after it agrees, and the complaint lands in the IR
-                // typechecker naming the lowered local rather than the binding.
-                // The same comparison an argument goes through, at the one
-                // other place a value is written into a declared type.
+                // A value written into a declared type it does not fit. The
+                // same question the IR typechecker asks, asked here while both
+                // types are still spelled the way the reader wrote them: an
+                // aggregate travels by address, so the coercion below takes one
+                // and every check after it agrees about a pointer, and the
+                // complaint lands naming the lowered local rather than the
+                // binding.
+                //
+                // Two bridges the coercion builds and `fits` does not carry: an
+                // array reaching a slice becomes a view of the whole of itself,
+                // and a bare number takes the width the binding declares, which
+                // is what `held : f64 = 0` means.
+                // A number takes the width and the kind the binding declares,
+                // which is what `held : f64 = mantissa` means and what the
+                // coercion below builds.
+                let numeric = |ty: &Type| ty.is_integer() || ty.is_float();
                 if let Some(annotated) = &type_annotation
-                    && let (Some(from), Some(into)) =
-                        (aggregate_name(&value_type), aggregate_name(annotated))
-                    && from != into
+                    && !(numeric(&value_type) && numeric(annotated))
+                    && !slice_element_wanted(annotated).is_some_and(|element| {
+                        matches!(&value_type, Type::Array(held, _)
+                            if **held == element)
+                    })
+                    && !crate::ir::typecheck::fits(&value_type, annotated)
                 {
                     bail!(
                         "this binding is a '{}' and the value is a '{}'",

@@ -148,6 +148,42 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'keys' given to 'pick' as 'ops' is a 'Hashing<i64>', but 'ops' is \
          declared as 'Ordering<i64>'",
     ),
+    // The same bundle rule where the generic settles nothing, so every
+    // compile-time parameter comes off what the call wrote. A different road to
+    // the same check, and the one the corpus does not walk: every bundle-taking
+    // signature in the tree settles something from a value parameter.
+    (
+        "a_bundle_argument_is_checked_where_nothing_is_settled",
+        "import \"io.frost\"\n\
+         Ordering :: struct($T: Type) { less: fn(T, T) -> bool }\n\
+         Hashing :: struct($T: Type) { hash: fn(T) -> i64 }\n\
+         i64_less :: fn(a: i64, b: i64) -> bool { a < b }\n\
+         i64_hash :: fn(a: i64) -> i64 { a }\n\
+         ascending :: Ordering<i64> { less = i64_less }\n\
+         keys :: Hashing<i64> { hash = i64_hash }\n\
+         decide :: fn($ops: Ordering<i64>, a: i64, b: i64) -> i64 {\n\
+         \x20   if (ops.less(a, b)) { a } else { b }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\n\", decide($keys, 3, 4))\n\
+         \x20   0\n\
+         }\n",
+        "'keys' given to 'decide' as 'ops' is a 'Hashing<i64>', but 'ops' is \
+         declared as 'Ordering<i64>'",
+    ),
+    // A binding weighed against its declared type where neither side is a
+    // struct. The rule is about what a value may be written into and not about
+    // aggregates, so a run of bytes reaching a run of numbers is the same
+    // refusal in the same words.
+    (
+        "a_binding_takes_what_its_declaration_names",
+        "main :: fn() -> i64 {\n\
+         \x20   text := \"hello\"\n\
+         \x20   held: []i64 = text\n\
+         \x20   held[0]\n\
+         }\n",
+        "this binding is a '[]i64' and the value is a 'str'",
+    ),
     // A struct written into a binding declared as another struct. Both travel
     // by address, so nothing downstream can tell the two apart and the
     // comparison has to happen while both are still spelled the way the reader

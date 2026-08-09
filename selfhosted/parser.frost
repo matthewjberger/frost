@@ -787,6 +787,24 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                     owner
                 )
             } else {
+                // A generic settling nothing takes every compile-time parameter
+                // from what the call wrote, and a constant among them is a
+                // bundle to weigh against the type its parameter declares. The
+                // run is built the same way the settled road builds it, since
+                // that walk reads a written argument wherever nothing settles
+                // the parameter.
+                if (names_a_constant(p, args)) {
+                    bound := settled_type_args(p, args, owner)
+                    check_bundle_args(
+                        p,
+                        owner,
+                        offset,
+                        length,
+                        bound,
+                        p.call_xarg_start,
+                        offset
+                    )
+                }
                 // A generic called over a plain type names it in the local
                 // table and nowhere else, so the tuple is read here or not at
                 // all.
@@ -2915,6 +2933,25 @@ declared_bundle_type :: fn(
     p.saw_type_param = held_saw_param
     p.ti = held_ti
     declared
+}
+
+// Whether any compile-time argument this call wrote names a constant, which is
+// what a bundle arrives as. Asked before the run of bound arguments is built,
+// so a call carrying only types pays a walk of its own argument list and
+// nothing else.
+names_a_constant :: fn(mut p: Parser, args: i64) -> bool {
+    mut index: i64 = 0
+    while (true) {
+        held := nth_type_arg(p, args, index)
+        if (held < 0) {
+            return false
+        }
+        if (held >= FN_BASE) {
+            return true
+        }
+        index = index + 1
+    }
+    false
 }
 
 // The type a bundle constant was declared with, read off the literal its name
