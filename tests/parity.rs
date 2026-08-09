@@ -267,6 +267,22 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "offset_of names a field of a type, which is what a `for` over \
          `fields(T)` binds",
     ),
+    // The other half of the same rule: a bound that does not hold names itself
+    // and what it was given, at the call the reader wrote rather than inside
+    // the body the bound was protecting.
+    (
+        "a_bound_naming_a_function_says_what_it_was_given",
+        "import \"io.frost\"\n\
+         Wide :: struct { a: i64, b: i64, c: i64, d: i64 }\n\
+         packable :: fn($T: Type) -> bool { is_struct(T) && sizeof(T) <= 16 }\n\
+         store :: fn($T: Type, v: $T) -> i64 where packable(T) { sizeof(T) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut w := Wide { a = 1, b = 2, c = 3, d = 4 }\n\
+         \x20   store(w)\n\
+         }\n",
+        "'store' is declared `where packable(T)`, and that does not hold for \
+         T = Wide",
+    ),
     // A field names a type parameter by writing its name, which is what the
     // reference and every template in `std` write. The `$` is what declares one.
     // The bootstrap read the sigil as the name and the self-hosted compiler read
@@ -6050,6 +6066,31 @@ Bad :: enum { Nope }
          }
 ",
         "41
+",
+    ),
+    // A bound holds a type to what it is, and the vocabulary answers that of a
+    // type directly. A program that wants to ask several things at once, or to
+    // give the question a name, writes an ordinary function over the same
+    // vocabulary and names it where a predicate would stand. The function takes
+    // one compile-time parameter and its body is one expression, which is what
+    // a bound already is, so the same reader reads both with the function's own
+    // parameter standing for the type the call chose.
+    //
+    // A bound may also weigh what a type measures against a number, which is
+    // what a container packing its element into a word is written for.
+    (
+        "a_where_bound_names_a_function_of_a_type",
+        "import \"io.frost\"
+         Small :: struct { x: i64 }
+         packable :: fn($T: Type) -> bool { is_struct(T) && sizeof(T) <= 16 }
+         store :: fn($T: Type, v: $T) -> i64 where packable(T) { sizeof(T) }
+         main :: fn() -> i64 {
+             mut s := Small { x = 1 }
+             print(\"{}\\n\", store(s))
+             0
+         }
+",
+        "8
 ",
     ),
     // A `when` chooses on what the build is for, while the tokens are still

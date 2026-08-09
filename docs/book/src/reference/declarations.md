@@ -410,6 +410,50 @@ name :: extern fn(params)             // foreign function returning nothing
 import "path"                         // bring another source file into scope
 ```
 
+## 5.3a Choosing on the target
+
+`when` chooses between two pieces of a program by what the build is for. It is
+decided while the tokens are still tokens, and the branch that is not taken is
+removed from the stream, so nothing after reads it: no name is interned, no type
+is laid out, and the emitted program cannot depend on it having been there. That
+is what lets one branch name something the other machine has not got.
+
+```frost
+when (TARGET_WINDOWS) {
+    NAME :: "windows"
+    width :: fn() -> i64 { 64 }
+} else {
+    NAME :: "other"
+    width :: fn() -> i64 { 32 }
+}
+```
+
+What the taken branch holds stands where the `when` stood, so one rule serves
+all three positions it can be written in: between declarations, as above;
+between statements; and between values.
+
+```frost,sketch
+when (TARGET_WINDOWS || TARGET_LINUX) { setup_desktop() } else { setup_phone() }
+
+held := when (!TARGET_MACOS) { 7 } else { 9 }
+```
+
+Because the branch stands where the `when` stood, its block opens no scope of
+its own: a name bound inside one is bound for what follows it, the way a name
+written without the `when` would be.
+
+The condition is `TARGET_WINDOWS`, `TARGET_LINUX` and `TARGET_MACOS`, joined by
+`&&`, `||`, `!` and parentheses. Those three are declared by the compiler rather
+than by a file a program imports, since which machine a build is for is not
+something a library hands out, and they are ordinary booleans anywhere else a
+value is read. A condition over anything else is refused: a `when` chooses on
+what is known before the program is read.
+
+`when` is not reserved. A program may still declare and call a function by that
+name, and what tells them apart is that a call is not followed by a block.
+
+An `else` may carry another `when`, which reads as the chain it looks like.
+
 ## 5.4 Tests
 
 A `test` block declares a named unit test.

@@ -507,6 +507,30 @@ reader wrote. A resource element is reached through `vec_slice`, where
 Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
 represented by.
 
+A bound may also weigh what a type measures against a number, using `sizeof`,
+`alignof` and `field_count` with `+ - * /` over them:
+
+```frost,sketch
+pack :: fn($T: Type, v: $T) -> i64 where sizeof(T) <= 8 { ... }
+```
+
+A bound may name a function this program declares, which takes one compile-time
+parameter and answers a yes or no. Its body is one expression, which is what a
+bound already is, so the same reader reads both and a question asked at several
+declarations is written once under a name:
+
+```frost
+Small :: struct { x: i64 }
+
+packable :: fn($T: Type) -> bool { is_struct(T) && sizeof(T) <= 16 }
+
+store :: fn($T: Type, v: $T) -> i64 where packable(T) { sizeof(T) }
+```
+
+The refusal names the function and what the call gave it: `'store' is declared
+`where packable(T)`, and that does not hold for T = Wide`. One that reaches
+itself is refused after thirty-two.
+
 There is no bound keyed by a name, such as asking whether a type has a field
 called `position`.
 
