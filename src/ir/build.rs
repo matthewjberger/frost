@@ -2747,13 +2747,20 @@ impl Expansion<'_> {
                     return Ok(None);
                 };
                 let subject = ast.name(*subject);
-                // A parameter of the specialization, or a field the `for`
-                // around this bound. Both are types known here.
+                // A field the `for` around this bound, a parameter of the
+                // specialization, or the type argument it was made for. The
+                // third is what a `where` bound asks about, and the same
+                // question in an `if` had no answer, so one vocabulary read two
+                // ways depending on which of the two positions it was written
+                // in.
                 let ty = match self.fields.get(subject) {
                     Some((_, ty)) => ty,
                     None => match self.types.get(subject) {
                         Some(ty) => ty,
-                        None => return Ok(None),
+                        None => match self.subst.get(subject) {
+                            Some(ty) => ty,
+                            None => return Ok(None),
+                        },
                     },
                 };
                 Ok(type_predicate(ast.name(*predicate), ty, self.linear))

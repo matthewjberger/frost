@@ -182,6 +182,20 @@ show :: fn(args: $...) {
 
 One body serves elements of different types.
 
+The subject may equally be the type parameter itself, which is what a `where`
+bound at the call asks about, so the same question reads the same way in both
+positions:
+
+```frost,sketch
+width :: fn($T: Type, move value: $T) -> i64 {
+    if (is_linear(T)) { return consume(value) } else { return 7 }
+}
+```
+
+A predicate is an answer wherever it is written, so `held := is_linear(T)` binds
+a yes or no and a table may carry one as an ordinary field. `!` in front of one
+reads as it does anywhere.
+
 Each element is evaluated once, however many times the unrolled body names it,
 because the specialization takes it as an ordinary parameter and the call passes
 it once.

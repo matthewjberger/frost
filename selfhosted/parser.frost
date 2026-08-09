@@ -585,13 +585,25 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 advance(p)
                 advance(p)
                 advance(p)
-                return new_node(p, NodeKind::Num, 0, 0, answer)
+                return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, answer)
+            }
+            // The type argument this instance was made for, which is what a
+            // `where` bound at the call asks about. The same question written
+            // in an `if` had no answer, so one vocabulary read two ways
+            // depending on which of the two positions it stood in.
+            bound := binding_of(p, peek_off(p, 1), peek_len(p, 1))
+            if (names_a_type_binding(bound)) {
+                answer := predicate_holds(p, offset, length, bound)
+                advance(p)
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, answer)
             }
             if (unbound_template(p)) {
                 advance(p)
                 advance(p)
                 advance(p)
-                return new_node(p, NodeKind::Num, 0, 0, 0)
+                return new_node(p, NodeKind::Num, 0, TY_BOOL + 1, 0)
             }
         }
         // The position it failed at is worth more than the fact that it did,
@@ -5851,25 +5863,62 @@ expansion_answer :: fn(mut p: Parser) -> i64 {
     if (p.binding_active == 0 && p.pack_count == 0) {
         return -1
     }
-    if (peek_kind(p, 1) != TokenKind::Lparen
-        || peek_kind(p, 2) != TokenKind::Ident
-        || peek_kind(p, 3) != TokenKind::Lparen
-        || peek_kind(p, 4) != TokenKind::Ident
-        || peek_kind(p, 5) != TokenKind::Rparen
-        || peek_kind(p, 6) != TokenKind::Rparen) {
+    if (peek_kind(p, 1) != TokenKind::Lparen) {
         return -1
     }
-    name_off := peek_off(p, 2)
-    name_len := peek_len(p, 2)
+    // `!is_linear(T)`, the other way a bound is written. The word after the
+    // bang is read the same way and the answer is turned over.
+    mut at: i64 = 2
+    mut negate: bool = false
+    if (peek_kind(p, at) == TokenKind::Bang) {
+        negate = true
+        at = at + 1
+    }
+    if (peek_kind(p, at) != TokenKind::Ident
+        || peek_kind(p, at + 1) != TokenKind::Lparen
+        || peek_kind(p, at + 2) != TokenKind::Ident
+        || peek_kind(p, at + 3) != TokenKind::Rparen
+        || peek_kind(p, at + 4) != TokenKind::Rparen) {
+        return -1
+    }
+    name_off := peek_off(p, at)
+    name_len := peek_len(p, at)
     if (is_type_predicate(p.src, name_off, name_len) == false) {
         return -1
     }
-    subject_off, subject_len := alias_for(p, peek_off(p, 4), peek_len(p, 4))
-    ty := parse_param_type(p, subject_off, subject_len)
+    subject_off, subject_len := alias_for(
+        p,
+        peek_off(p, at + 2),
+        peek_len(p, at + 2)
+    )
+    mut ty := parse_param_type(p, subject_off, subject_len)
     if (ty < 0) {
+        // The type argument this instance was made for, which is what a
+        // `where` bound at the call asks about. The same question written in an
+        // `if` had no answer, so one vocabulary read two ways depending on
+        // which of the two positions it stood in.
+        bound := binding_of(p, subject_off, subject_len)
+        if (names_a_type_binding(bound) == false) {
+            return -1
+        }
+        ty = bound
+    }
+    answer := predicate_holds(p, name_off, name_len, ty)
+    if (answer < 0) {
         return -1
     }
-    predicate_holds(p, name_off, name_len, ty)
+    if (negate) {
+        return 1 - answer
+    }
+    answer
+}
+
+// Whether a compile-time binding holds a type, which is what a predicate has an
+// answer for. The value, function-pointer and chosen-function ranges sit above
+// the type codes and below the `distinct` ones, so a `distinct` type answers
+// here the way the type it is represented by would.
+names_a_type_binding :: fn(bound: i64) -> bool {
+    bound >= 0 && (bound < CONST_BASE || bound >= DISTINCT_BASE)
 }
 
 // Whether this is a template being read with nothing bound to it. That parse is
@@ -6217,14 +6266,19 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
 // Read an `if` whose condition this pass answered: keep the branch that runs,
 // and read past the one that does not without keeping any of it.
 parse_expansion_if :: fn(mut p: Parser, taken: i64) -> i64 {
-    // `if`, `(`, the predicate, `(`, its subject, `)`, `)`.
+    // `if`, then the whole parenthesised condition however it was written, so
+    // a bang in front of the predicate is walked over with the rest of it.
     advance(p)
     advance(p)
-    advance(p)
-    advance(p)
-    advance(p)
-    advance(p)
-    advance(p)
+    mut depth: i64 = 1
+    while (depth > 0 && cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (cur(p) == TokenKind::Rparen) {
+            depth = depth - 1
+        }
+        advance(p)
+    }
     kept := parse_block(p)
     mut other: i64 = -1
     if (cur(p) == TokenKind::KwElse) {

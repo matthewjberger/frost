@@ -5919,6 +5919,50 @@ Bad :: enum { Nope }
 1
 ",
     ),
+    // A type predicate answers the same question wherever it is asked. It
+    // answered in a `where` bound at the call and about a field a walk bound,
+    // and had no answer about the type argument the instance was made for, so
+    // one vocabulary read two ways depending on which position it stood in. The
+    // bootstrap called `is_linear` an unknown variable and the self-hosted
+    // compiler called `T` one, twice.
+    //
+    // The branch that cannot run is dropped before anything checks it, which is
+    // what lets one body serve both: `drop_it` takes the linear type and the
+    // arm calling it is gone for the number.
+    (
+        "a_type_predicate_answers_about_the_type_an_instance_was_made_for",
+        "import \"io.frost\"
+         Held :: linear struct { n: i64 }
+         drop_it :: fn(move h: Held) -> i64 { h.n }
+         width :: fn($T: Type, move value: $T) -> i64 {
+             if (is_linear(T)) { return drop_it(value) } else { return 7 }
+         }
+         other :: fn($T: Type, move value: $T) -> i64 {
+             if (!is_linear(T)) { return 7 } else { return drop_it(value) }
+         }
+         tell :: fn($T: Type) -> i64 {
+             held := is_linear(T)
+             if (held) { return 1 }
+             0
+         }
+         main :: fn() -> i64 {
+             print(\"{}\\n\", width(Held { n = 3 }))
+             print(\"{}\\n\", width(41))
+             print(\"{}\\n\", other(Held { n = 5 }))
+             print(\"{}\\n\", other(41))
+             print(\"{}\\n\", tell($Held))
+             print(\"{}\\n\", tell($i64))
+             0
+         }
+",
+        "3
+7
+5
+7
+1
+0
+",
+    ),
     // A constant whose value comes from a compile-time call is that value
     // wherever the name is read, whatever kind the value turned out to be. A run
     // of bytes, a yes or no, a run of values and a set of named ones each reach
