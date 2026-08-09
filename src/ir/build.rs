@@ -231,6 +231,214 @@ fn report(
     diagnostics.push(crate::diagnostic::Diagnostic::new(position, message));
 }
 
+// What a type measures, for a constant asking before the program is emitted.
+// The declaration may spell an enum as a struct, which is the name the layout
+// pass files it under, so both tables are asked.
+fn measured(
+    ty: &Type,
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
+    named: &str,
+) -> Option<Literal> {
+    let held = match ty {
+        Type::Struct(name)
+            if !structs.contains_key(name) && enums.contains_key(name) =>
+        {
+            Type::Enum(name.clone())
+        }
+        other => other.clone(),
+    };
+    match named {
+        "sizeof" => size_and_align(&held, structs, enums)
+            .map(|(size, _)| Literal::Integer(size as i64)),
+        "alignof" => size_and_align(&held, structs, enums)
+            .map(|(_, align)| Literal::Integer(align as i64)),
+        "field_count" => match &held {
+            Type::Struct(name) => structs
+                .get(name)
+                .map(|layout| Literal::Integer(layout.fields.len() as i64)),
+            _ => None,
+        },
+        "typename" => Some(Literal::String(
+            crate::modules::imports::demangle_private_names(&held.to_string()),
+        )),
+        _ => None,
+    }
+}
+
+// The same expression with every measurement a type answers standing in place
+// of the call that asked for it, or nothing where none was asked. Only the
+// shapes a constant's value is built from are walked; one this misses is left
+// as it was, which is the constant staying refused rather than answering wrong.
+fn with_layout_answers(
+    ast: &mut Ast,
+    expression: ExprId,
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
+) -> Option<ExprId> {
+    let span = ast.expr_span(expression);
+    match ast.expr(expression).clone() {
+        Expression::Call(callee, arguments) => {
+            let name = match ast.expr(callee) {
+                Expression::Identifier(named) => ast.name(*named).to_string(),
+                _ => String::new(),
+            };
+            let written: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
+            if let [only] = written.as_slice()
+                && let Expression::TypeValue(ty) = ast.expr(*only).clone()
+                && let Some(literal) = measured(&ty, structs, enums, &name)
+            {
+                return Some(ast.push_expr(Expression::Literal(literal), span));
+            }
+            let mut answered = false;
+            let mut held = Vec::with_capacity(written.len());
+            for argument in written {
+                match with_layout_answers(ast, argument, structs, enums) {
+                    Some(settled) => {
+                        answered = true;
+                        held.push(settled);
+                    }
+                    None => held.push(argument),
+                }
+            }
+            if !answered {
+                return None;
+            }
+            let arguments = ast.add_expr_list(&held);
+            Some(ast.push_expr(Expression::Call(callee, arguments), span))
+        }
+        Expression::Infix(left, operator, right) => {
+            let settled_left = with_layout_answers(ast, left, structs, enums);
+            let settled_right = with_layout_answers(ast, right, structs, enums);
+            if settled_left.is_none() && settled_right.is_none() {
+                return None;
+            }
+            let left = settled_left.unwrap_or(left);
+            let right = settled_right.unwrap_or(right);
+            Some(ast.push_expr(Expression::Infix(left, operator, right), span))
+        }
+        Expression::Prefix(operator, inner) => {
+            let settled = with_layout_answers(ast, inner, structs, enums)?;
+            Some(ast.push_expr(Expression::Prefix(operator, settled), span))
+        }
+        _ => None,
+    }
+}
+
+// Every constant whose value asks a type what it measures, worked out here. A
+// layout is what the types answer once they have been read, and a constant is
+// settled before they are, so the two compile-time answer sites cannot see each
+// other and this is where they meet: the measurements stand in place of the
+// calls that asked for them, the value is worked out over the tree the program
+// is already built as, and what it answers stands in the program the way every
+// other constant's answer does.
+//
+// A length is read while the types are read, so a length may not ask. That is
+// the one rule the two positions differ by, and it is about when each is read
+// rather than about what either means.
+fn settle_layout_constants(
+    ast: &mut Ast,
+    roots: &[StmtId],
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
+) -> Result<()> {
+    let asking: Vec<(StmtId, Symbol, ExprId)> = roots
+        .iter()
+        .filter_map(|statement| match ast.stmt(*statement) {
+            Statement::Constant(name, value)
+                if !matches!(
+                    ast.expr(*value),
+                    Expression::Function(..) | Expression::Proc(..)
+                ) =>
+            {
+                Some((*statement, *name, *value))
+            }
+            _ => None,
+        })
+        .collect();
+    // What the constants already settled stand for, so one asking a layout may
+    // be written in terms of them. They are literals by now, which is what the
+    // writeback before the parse left behind.
+    let mut known: HashMap<String, crate::const_eval::Value> = HashMap::new();
+    for (_, name, value) in &asking {
+        let held = match ast.expr(*value) {
+            Expression::Literal(Literal::Integer(held)) => {
+                crate::const_eval::Value::Integer(*held)
+            }
+            Expression::Literal(Literal::Boolean(held)) => {
+                crate::const_eval::Value::Boolean(*held)
+            }
+            Expression::Literal(Literal::String(held)) => {
+                crate::const_eval::Value::Text(std::rc::Rc::new(held.clone()))
+            }
+            _ => continue,
+        };
+        known.insert(ast.name(*name).to_string(), held);
+    }
+    for (statement, name, value) in asking {
+        let Some(settled) = with_layout_answers(ast, value, structs, enums)
+        else {
+            continue;
+        };
+        let mut folder = crate::const_eval::Folder::over_tree(ast, roots);
+        let answered = match folder.expression(ast, settled, &known) {
+            Ok(answered) => answered,
+            Err(reason) => {
+                let position = ast.position_of(ast.expr_span(value));
+                return locate(Err(anyhow::anyhow!("{reason}")), position);
+            }
+        };
+        let span = ast.expr_span(value);
+        let written = write_value_back(ast, &answered, span);
+        ast.statements[statement.0 as usize] =
+            Statement::Constant(name, written);
+    }
+    Ok(())
+}
+
+// What a worked-out value is written as where the constant naming it stands.
+// The same shape the parse writes back, over the tree the program is built as
+// rather than over the one declaration being read.
+fn write_value_back(
+    ast: &mut Ast,
+    value: &crate::const_eval::Value,
+    span: TokenSpan,
+) -> ExprId {
+    let expression = match value {
+        crate::const_eval::Value::Integer(held) => {
+            Expression::Literal(Literal::Integer(*held))
+        }
+        crate::const_eval::Value::Boolean(held) => {
+            Expression::Literal(Literal::Boolean(*held))
+        }
+        crate::const_eval::Value::Text(held) => {
+            Expression::Literal(Literal::String(held.to_string()))
+        }
+        crate::const_eval::Value::Array(items) => {
+            let elements: Vec<ExprId> = items
+                .iter()
+                .map(|item| write_value_back(ast, item, span))
+                .collect();
+            Expression::Literal(Literal::Array(ast.add_expr_list(&elements)))
+        }
+        crate::const_eval::Value::Record(name, fields) => {
+            let initializers: Vec<crate::ast::NamedExpr> = fields
+                .iter()
+                .map(|(field, held)| {
+                    let value = write_value_back(ast, held, span);
+                    crate::ast::NamedExpr {
+                        name: ast.intern(field),
+                        value,
+                    }
+                })
+                .collect();
+            let name = ast.intern(name);
+            Expression::StructInit(name, ast.add_named_exprs(&initializers))
+        }
+    };
+    ast.push_expr(expression, span)
+}
+
 fn build_module_inner(
     ast: &mut Ast,
     roots: &[StmtId],
@@ -241,6 +449,7 @@ fn build_module_inner(
     let mut layout_roots: Vec<StmtId> = roots.to_vec();
     layout_roots.extend(synthetic_structs.iter().copied());
     let (structs, enums) = compute_layouts(ast, &layout_roots);
+    settle_layout_constants(ast, roots, &structs, &enums)?;
     let mut constants = HashMap::new();
     for statement in roots {
         if let Statement::Constant(name, value) = ast.stmt(*statement)

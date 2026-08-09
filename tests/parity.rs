@@ -6051,6 +6051,31 @@ Bad :: enum { Nope }
         "41
 ",
     ),
+    // A constant may ask a type what it measures. A layout is what the types
+    // answer once they have been read, and a constant is settled before they
+    // are, so the two compile-time answer sites could not see each other and
+    // both compilers refused this. They meet now: the measurements stand where
+    // the calls that asked for them stood, and the value is worked out again
+    // over the answers. An array's length is read while the types are, so a
+    // length may not ask, which is the one rule the two positions differ by and
+    // is about when each is read rather than about what either means.
+    (
+        "a_constant_asks_a_type_what_it_measures",
+        "import \"io.frost\"
+         Vertex :: struct { x: f32, y: f32, z: f32 }
+         round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
+         STRIDE :: sizeof(Vertex)
+         LANES :: round_up(sizeof(Vertex), 64)
+         main :: fn() -> i64 {
+             print(\"{}\\n\", STRIDE)
+             print(\"{}\\n\", LANES)
+             0
+         }
+",
+        "12
+64
+",
+    ),
     // A run written out where a slice is wanted holds that slice's element, the
     // way one written into a declared array does, and its own length is the
     // slice's. The bootstrap gave the temp the slice's own type and then told

@@ -8110,6 +8110,7 @@ parse_const :: fn(mut p: Parser) {
             p.const_quiet = p.const_quiet + 1
         }
         p.const_failed = 0
+        p.const_needs_layout = 0
         held := const_expr_here(p, at)
         if (asked == false) {
             p.const_quiet = p.const_quiet - 1
@@ -8117,6 +8118,13 @@ parse_const :: fn(mut p: Parser) {
         if (p.const_failed == 0) {
             register_const_value(p, name_offset, name_length, held)
             return
+        }
+        // One that asked a type what it measures is set aside, not refused. It
+        // is worked out again once the types have been read, which is where a
+        // layout has an answer, and refused there if it still has none.
+        if (p.const_needs_layout == 1) {
+            arena_push(p.const_deferred, resume - 2)
+            p.const_needs_layout = 0
         }
         p.ti = resume
         skip_declaration(p)
@@ -8627,6 +8635,119 @@ parse_constant_guarded :: fn(raw: ^u8) {
     unsafe { parse_const(parser^) }
 }
 
+// What one `sizeof(T)` and its siblings measure, left at the call's own token
+// for the evaluator to read back. The cursor is on the name and is left past
+// the closing parenthesis.
+note_one_layout :: fn(mut p: Parser) {
+    at := p.ti
+    name_off := cur_off(p)
+    name_len := cur_len(p)
+    advance(p)
+    advance(p)
+    ty := parse_type(p)
+    if (cur(p) == TokenKind::Rparen) {
+        advance(p)
+    }
+    mut kind: i64 = CONST_INT
+    mut value: i64 = 0
+    mut count: i64 = 0
+    if (str_range_eq(p.src, name_off, name_len, "sizeof")) {
+        value = type_size(p, ty)
+    } else if (str_range_eq(p.src, name_off, name_len, "alignof")) {
+        value = align_of(p, ty)
+    } else if (str_range_eq(p.src, name_off, name_len, "field_count")) {
+        value = struct_field_count(p, ty)
+    } else {
+        kind = CONST_TEXT
+        held_off, held_len := synth_type_name(p, ty)
+        value = held_off
+        count = held_len
+    }
+    arena_push(
+        p.const_layouts,
+        ConstLayout { at = at, kind = kind, value = value, count = count }
+    )
+}
+
+// Every measurement one declaration's value asks for, worked out and left where
+// it was asked. The cursor is on the value and is left wherever the walk ended.
+note_layout_answers :: fn(mut p: Parser) {
+    mut depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
+            || kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+            || kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        } else if (depth == 0 && at_declaration_start(p)) {
+            return
+        }
+        if (kind == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Lparen
+            && names_a_measurement(p, cur_off(p), cur_len(p))) {
+            note_one_layout(p)
+        } else {
+            advance(p)
+        }
+    }
+}
+
+// Every constant set aside for asking a type what it measures. The types have
+// been read by now, so each measurement is worked out and left at the call that
+// asked for it, and the value is worked out again over those answers.
+parse_layout_constants :: fn(mut p: Parser) {
+    mut i: i64 = 0
+    while (i < p.const_deferred.count) {
+        mut turn := RecoverTurn {
+            parser = unsafe { ptr_cast($u8, ptr_to(p)) },
+            item = -1,
+            block_depth = p.block_depth,
+            unsafe_depth = p.unsafe_depth,
+            defer_depth = p.defer_depth,
+            ti = arena_at(p.const_deferred, i)
+        }
+        // With an escape armed, the way every other pass reads its own. A
+        // measurement that has no answer even now says so and ends this
+        // constant; unarmed, it left through an escape nothing caught and the
+        // compile stopped without a word.
+        unsafe {
+            frost_rt_recover_run(
+                parse_layout_guarded,
+                ptr_cast($u8, ptr_to(turn))
+            )
+        }
+        p.const_layouts_ready = 0
+        i = i + 1
+    }
+}
+
+parse_layout_guarded :: fn(raw: ^u8) {
+    turn := unsafe { ptr_cast($RecoverTurn, raw) }
+    parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    at := unsafe { turn^.ti }
+    unsafe { settle_one_layout_constant(parser^, at) }
+}
+
+// One constant that asked a type what it measures, worked out now that the
+// types have been read. `at` is the declaration's own token.
+settle_one_layout_constant :: fn(mut p: Parser, at: i64) {
+    p.ti = at
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    note_layout_answers(p)
+    p.ti = at + 2
+    p.const_layouts_ready = 1
+    p.const_failed = 0
+    held := const_expr_here(p, cur_off(p))
+    p.const_layouts_ready = 0
+    if (p.const_failed == 0) {
+        register_const_value(p, name_offset, name_length, held)
+    }
+}
+
 // Every constant whose value came out as more than a whole number, as the node
 // that value writes out to. A whole number lands in the table the size parser
 // reads; the rest reach the program where the name is read, the way a literal
@@ -8850,6 +8971,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
     // Every declaration is in the tables now, so a type name that resolves to
     // nothing is a name nothing declares.
     p.type_check_names = 1
+    p.ti = start
+    parse_layout_constants(p)
     p.ti = start
     parse_folded_constants(p)
     p.ti = start

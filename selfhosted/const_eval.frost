@@ -16,7 +16,7 @@ import "names.frost"
 export record_const_functions, const_fn_index, const_call, const_arg_push,
     const_arg_mark, const_call_ahead, const_expr_here, const_call_here,
     at_const_call, const_int, const_bool, const_fold_ahead,
-    const_asks_folding, names_a_layout
+    const_asks_folding, names_a_layout, names_a_measurement
 
 // How far one evaluation may run. A body may loop, so how long it takes is not
 // read off the text, and this is what says a compile finishes.
@@ -225,7 +225,10 @@ const_arg_push :: fn(mut p: Parser, held: ConstValue) {
 // nobody records.
 const_fault :: fn(mut p: Parser, at: i64) {
     p.const_failed = 1
-    if (p.const_quiet > 0) {
+    // A reading that is only being set aside says nothing about what it met on
+    // the way: the placeholder standing where a measurement will go is not the
+    // value, so what it divides by or compares against is not either.
+    if (p.const_quiet > 0 || p.const_needs_layout == 1) {
         return
     }
     if (const_fault_told(p, at)) {
@@ -269,7 +272,7 @@ creport_src :: fn(mut p: Parser, off: i64, len: i64) {
 
 // The end of a refusal. A try carries on with a value nobody keeps.
 const_stop :: fn(mut p: Parser) {
-    if (p.const_quiet == 0) {
+    if (p.const_quiet == 0 && p.const_needs_layout == 0) {
         frost_rt_recover_escape()
     }
 }
@@ -1289,6 +1292,38 @@ const_named_call :: fn(
     // the order is what is named rather than the site: a reader who writes
     // `sizeof` in a constant is told when a layout exists.
     if (names_a_layout(p, name_off, name_len)) {
+        // Worked out already, by the pass that can read a type, and left at
+        // this call's own token. The tokens of the call are walked over here
+        // rather than read, since what they say has an answer already.
+        answer_at := layout_answer_at(p, p.ti)
+        if (answer_at >= 0) {
+            entry := arena_at(p.const_layouts, answer_at)
+            answered := ConstValue {
+                kind = entry.kind,
+                value = entry.value,
+                count = entry.count
+            }
+            advance(p)
+            const_skip_parens(p)
+            return const_postfix(p, at, answered)
+        }
+        // Nothing has read the types yet. A measurement is set aside rather
+        // than refused, and worked out again where the types have been read.
+        // The other two are answered later than that, so they are refused here.
+        if (p.const_layouts_ready == 0
+            && names_a_measurement(p, name_off, name_len)) {
+            // Marked and walked over rather than left through an escape. An
+            // escaped turn is counted, and the compile refuses at the end on
+            // the count, so a constant that was only set aside would have
+            // refused the program after being settled. What stands here is a
+            // placeholder nothing keeps: `const_failed` says the reading is
+            // worth nothing, and `const_needs_layout` silences the rest of it.
+            p.const_needs_layout = 1
+            p.const_failed = 1
+            advance(p)
+            const_skip_parens(p)
+            return const_int(0)
+        }
         const_fault(p, at)
         creport(p, "'")
         creport_src(p, name_off, name_len)
@@ -1357,6 +1392,46 @@ const_length_fault :: fn(mut p: Parser, at: i64, off: i64, len: i64) {
     report_src(p.src, off, len)
     report("' reads the length of a run, and this is not one")
     frost_rt_recover_escape()
+}
+
+// Which recorded answer stands at this token, or -1 where none does.
+layout_answer_at :: fn(mut p: Parser, at: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.const_layouts.count) {
+        if (arena_at(p.const_layouts, i).at == at) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Past a `( ... )` with the cursor on the `(`, however deep it nests.
+const_skip_parens :: fn(mut p: Parser) {
+    mut depth: i64 = 0
+    mut going: bool = true
+    while (going && cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (cur(p) == TokenKind::Rparen) {
+            depth = depth - 1
+            if (depth == 0) {
+                going = false
+            }
+        }
+        advance(p)
+    }
+}
+
+// Whether this name is one a type measures. These are what a constant may ask
+// for, since a measurement is what the layout pass works out and a constant is
+// worked out again after it. `type_id` is settled while the program is emitted
+// and `offset_of` names a field rather than a type, so neither is one of these.
+names_a_measurement :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    (str_range_eq(p.src, off, len, "sizeof")
+        || str_range_eq(p.src, off, len, "alignof")
+        || str_range_eq(p.src, off, len, "field_count")
+        || str_range_eq(p.src, off, len, "typename"))
 }
 
 // Whether this name is one a type answers once it is laid out.

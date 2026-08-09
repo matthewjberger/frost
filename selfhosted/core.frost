@@ -27,7 +27,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     BORROW_FLAG, POINTER_BASE, INDIRECT_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind,
     ConstFn, ConstLocal, ConstFrame, ConstValue, ConstItem, ConstRecord,
-    ConstFlow,
+    ConstLayout, ConstFlow,
     CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
@@ -1043,6 +1043,18 @@ ConstItem :: struct {
     count: i64,
 }
 
+// What a type measures, worked out once the types have been read and left where
+// the call that asked for it stands. `at` is that call's own token, which is
+// what the evaluator reads it back by: the evaluator settles a constant before
+// the types are read and has no way to ask a layout itself, and the pass that
+// can ask cannot be reached from it without the two importing each other.
+ConstLayout :: struct {
+    at: i64,
+    kind: i64,
+    value: i64,
+    count: i64,
+}
+
 // A set of named values: the type it was written as, and where its fields sit
 // in `const_items`. The type's name rides along because a record is written
 // back into the program as a literal of that type, and a literal says which
@@ -1492,6 +1504,13 @@ Parser :: struct {
     // Every set of named values the evaluator has worked out, each naming the
     // type it was written as.
     const_records: Arena<ConstRecord>,
+    // What a type measures, by the token of the call that asked, and whether
+    // those answers are in hand yet. A constant that asks one is set aside and
+    // worked out again once they are.
+    const_layouts: Arena<ConstLayout>,
+    const_layouts_ready: i64,
+    const_needs_layout: i64,
+    const_deferred: Arena<i64>,
     // A constant that is more than a number: a run, a set of named values, or
     // a run of bytes. Held apart from `consts`, which every other pass reads
     // as a number, so nothing outside the evaluator ever sees one.

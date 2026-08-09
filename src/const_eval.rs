@@ -37,6 +37,23 @@ pub fn layout_message(named: &str) -> String {
     )
 }
 
+/// What a type measures. These are what a constant may ask for, since a
+/// measurement is what the layout pass works out and a constant is worked out
+/// again after it. `type_id` is settled while the program is emitted and
+/// `offset_of` names a field rather than a type, so neither is one of these.
+pub const MEASUREMENTS: &[&str] =
+    &["sizeof", "alignof", "field_count", "typename"];
+
+/// Whether a value stopped because it asked a type what it measures. One that
+/// did is set aside rather than refused: a constant is worked out again once the
+/// types have been read, and there the question has an answer. A length is read
+/// while the types are, so nothing sets that one aside.
+pub fn asks_a_measurement(reason: &str) -> bool {
+    MEASUREMENTS
+        .iter()
+        .any(|named| reason == layout_message(named))
+}
+
 /// What a compile-time expression works out to.
 ///
 /// A whole number, a yes or no, and the three things built out of those: a run
@@ -80,8 +97,12 @@ impl Value {
 }
 
 /// A function body, parsed once and read for every call.
+///
+/// One read out of the tokens carries its own parse. One found in a tree that is
+/// already built carries none: its statements belong to the tree the call is
+/// being worked out in, which is the tree that is handed down.
 struct Body {
-    ast: Ast,
+    ast: Option<Ast>,
     parameters: Vec<String>,
     statements: Range32,
 }
@@ -135,6 +156,45 @@ impl<'a> Folder<'a> {
         }
     }
 
+    /// A folder over a tree that is already built, for the constants left to
+    /// settle once the types have been laid out. It reads no tokens: every body
+    /// it can run is one the tree already holds, which is what lets a constant
+    /// asking a type for its layout be worked out after the layouts exist and
+    /// still be the same evaluation as the one before the parse.
+    pub fn over_tree(ast: &Ast, roots: &[crate::ast::StmtId]) -> Self {
+        let mut parsed = HashMap::new();
+        for statement in roots {
+            let Statement::Constant(name, value) = ast.stmt(*statement) else {
+                continue;
+            };
+            let (Expression::Function(parameters, _, statements)
+            | Expression::Proc(parameters, _, statements)) = ast.expr(*value)
+            else {
+                continue;
+            };
+            let named = ast
+                .params_in(*parameters)
+                .iter()
+                .map(|parameter| ast.name(parameter.name).to_string())
+                .collect();
+            parsed.insert(
+                ast.name(*name).to_string(),
+                Some(Rc::new(Body {
+                    ast: None,
+                    parameters: named,
+                    statements: *statements,
+                })),
+            );
+        }
+        Self {
+            tokens: &[],
+            bodies: HashMap::new(),
+            imported: HashMap::new(),
+            parsed,
+            steps: 0,
+        }
+    }
+
     /// Whether this name has a body to read, which is what says a call written
     /// in a compile-time position was asking for one.
     pub fn declares(&self, name: &str) -> bool {
@@ -181,7 +241,7 @@ impl<'a> Folder<'a> {
                     .collect();
                 let statements = *statements;
                 Some(Rc::new(Body {
-                    ast,
+                    ast: Some(ast),
                     parameters: named,
                     statements,
                 }))
@@ -202,6 +262,7 @@ impl<'a> Folder<'a> {
 
     fn call(
         &mut self,
+        ast: &Ast,
         name: &str,
         arguments: Vec<Value>,
         stack: &mut Vec<String>,
@@ -233,8 +294,8 @@ impl<'a> Folder<'a> {
             locals.insert(parameter.clone(), argument);
         }
         stack.push(name.to_string());
-        let answered =
-            self.block(&body.ast, body.statements, &mut locals, stack);
+        let held = body.ast.as_ref().unwrap_or(ast);
+        let answered = self.block(held, body.statements, &mut locals, stack);
         stack.pop();
         match answered? {
             Flow::Left(value) => Ok(value),
@@ -596,7 +657,7 @@ impl<'a> Folder<'a> {
                 if let Some(answered) = builtin(&name, &held)? {
                     return Ok(answered);
                 }
-                self.call(&name, held, stack)
+                self.call(ast, &name, held, stack)
             }
             held => Err(format!(
                 "{} is not something a compile-time call may do",

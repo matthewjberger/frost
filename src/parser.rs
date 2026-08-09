@@ -748,7 +748,15 @@ fn scan_constants(
             Ok(value) => {
                 values.insert(name.clone(), value);
             }
-            Err(reason) if asked => faults.push((index + 2, reason)),
+            // One that asked a type for its layout is set aside rather than
+            // refused. It is worked out again once the types have been read,
+            // which is where a layout has an answer, and refused there if it
+            // still has none.
+            Err(reason)
+                if asked && !crate::const_eval::asks_a_measurement(&reason) =>
+            {
+                faults.push((index + 2, reason))
+            }
             Err(_) => {}
         }
     }
