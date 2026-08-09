@@ -374,6 +374,11 @@ Everything else is refused, naming what stopped it:
   named where it is written.
 - A number with a fraction. A compile-time value is a whole number or a yes or
   no.
+- What a type answers once it is laid out: `sizeof`, `alignof`, `offset_of`,
+  `field_count`, `typename`, `type_id`. A constant is settled before the types
+  are read, so it is settled before any of them has an answer. The same holds
+  for an array's length, which is read in the same place. Each is an ordinary
+  call where a program runs.
 - A write to an element or a field, `out[index] = v` or `p.x = v`. A
   compile-time call writes to a name.
 - More than a million steps, or calls nested deeper than thirty-two.

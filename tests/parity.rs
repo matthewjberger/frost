@@ -117,6 +117,48 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a local that is reassigned is declared with `mut`, the word a \
          parameter that writes the caller's value carries",
     ),
+    // A layout is worked out once the types are read, and a constant is
+    // settled before that, so the two compile-time answer sites cannot see each
+    // other. Both compilers refused this and neither said why: one called it
+    // something a compile-time call may not do, the other said the type had no
+    // value. The order is what the reader needs, so the order is what is said.
+    (
+        "a_constant_cannot_ask_a_type_for_its_layout",
+        "import \"io.frost\"\n\
+         Vertex :: struct { x: f32, y: f32, z: f32 }\n\
+         round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }\n\
+         LANES :: round_up(sizeof(Vertex), 64)\n\
+         main :: fn() -> i64 { LANES }\n",
+        "a compile-time value is worked out before the types are laid out, so \
+         it cannot ask a type for its size, alignment, offset or field count",
+    ),
+    // The same rule in the other position a compile-time number is read. The
+    // size parser met the word before the folder could, so the bootstrap read
+    // it as the element type and asked for the `;` of a form Frost has not,
+    // while the self-hosted compiler said the bracket was not an expression and
+    // then said it twice.
+    (
+        "an_array_length_cannot_ask_a_type_for_its_layout",
+        "import \"io.frost\"\n\
+         Vertex :: struct { x: f32, y: f32, z: f32 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut held: [sizeof(Vertex)]u8 = [0; 12]\n\
+         \x20   slice_len(held)\n\
+         }\n",
+        "a compile-time value is worked out before the types are laid out, so \
+         it cannot ask a type for its size, alignment, offset or field count",
+    ),
+    // `offset_of` names a field, which is what a walk over a type's fields
+    // binds. Both said so and the bootstrap said it about the head of the
+    // enclosing declaration, which is where a reader would then go looking.
+    (
+        "offset_of_names_a_field_of_a_type",
+        "import \"io.frost\"\n\
+         Vertex :: struct { x: f32, y: f32, z: f32 }\n\
+         main :: fn() -> i64 { offset_of(Vertex.z) }\n",
+        "offset_of names a field of a type, which is what a `for` over \
+         `fields(T)` binds",
+    ),
     // A field names a type parameter by writing its name, which is what the
     // reference and every template in `std` write. The `$` is what declares one.
     // The bootstrap read the sigil as the name and the self-hosted compiler read

@@ -2339,6 +2339,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether a type's answer stands where the cursor is: one of the names a
+    /// layout settles, with the parentheses that make it a call.
+    fn at_layout_answer(&self) -> bool {
+        let Token::Identifier(word) = self.peek_nth(0) else {
+            return false;
+        };
+        crate::const_eval::LAYOUT_ANSWERS.contains(&word.as_str())
+            && matches!(self.peek_nth(1), Token::LeftParentheses)
+    }
+
     /// A field names a type parameter by writing its name. The `$` is what
     /// declares one, and the declaration stands in the parameter list, so a
     /// sigil here is a second spelling for a name already written. It was
@@ -4293,6 +4303,13 @@ impl<'a> Parser<'a> {
             }
             Token::LeftBracket => {
                 self.read_token();
+                // A length is a compile-time value like a constant's, and a
+                // layout is worked out later than either. Named here rather
+                // than left to the size parser, which read the word as the
+                // element type and asked for the `;` of a form Frost has not.
+                if self.at_layout_answer() {
+                    bail!("{}", crate::const_eval::LAYOUT);
+                }
                 if matches!(self.peek_nth(0), Token::RightBracket) {
                     self.read_token();
                     Type::Slice(Box::new(self.parse_type()?))

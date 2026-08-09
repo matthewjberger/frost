@@ -15,6 +15,24 @@ const FRACTION: &str = "a compile-time value is a whole number or a yes or no, a
 /// so this is what catches a long chain of distinct functions.
 const DEPTH_LIMIT: usize = 32;
 
+/// What a type answers once it has been laid out. Each is a call where a
+/// program runs and each is answered by the layout pass, which reads the types
+/// after this has settled every constant.
+pub const LAYOUT_ANSWERS: &[&str] = &[
+    "sizeof",
+    "alignof",
+    "offset_of",
+    "field_count",
+    "typename",
+    "type_id",
+];
+
+/// What a compile-time value is told when it asks a type for one of those. The
+/// two answer sites cannot see each other, so this names the order rather than
+/// the site: a reader who writes `sizeof` in a constant is told when a layout
+/// exists, which is what decides where the answer can be read.
+pub const LAYOUT: &str = "a compile-time value is worked out before the types are laid out, so it cannot ask a type for its size, alignment, offset or field count";
+
 /// What a compile-time expression works out to.
 ///
 /// A whole number, a yes or no, and the three things built out of those: a run
@@ -549,6 +567,9 @@ impl<'a> Folder<'a> {
                     );
                 };
                 let name = ast.name(*name).to_string();
+                if LAYOUT_ANSWERS.contains(&name.as_str()) {
+                    return Err(LAYOUT.to_string());
+                }
                 let mut held = Vec::new();
                 for argument in ast.exprs_in(*arguments).to_vec() {
                     held.push(self.value(ast, argument, locals, stack)?);

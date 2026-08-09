@@ -2694,10 +2694,17 @@ impl Expansion<'_> {
             return Ok(Some(layout.fields.len() as i64));
         }
         if named == "offset_of" {
+            // The fault is what was written inside the parentheses, so it
+            // lands there. Left unplaced it carried the position of whatever
+            // declaration was being read, which is the head of the function a
+            // reader would then go looking through.
             let Some((offset, _)) = self.field_named(ast, argument) else {
-                bail!(
-                    "offset_of names a field of a type, which is what a `for` over `fields(T)` binds"
-                )
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "offset_of names a field of a type, which is what a `for` over `fields(T)` binds"
+                    )),
+                    ast.position_of(ast.expr_span(argument)),
+                );
             };
             return Ok(Some(*offset as i64));
         }

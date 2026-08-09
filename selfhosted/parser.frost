@@ -2461,6 +2461,19 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // the pointer levels above them so `^[]T` means what it looks like.
     if (cur(p) == TokenKind::Lbracket) {
         advance(p)
+        // A length is a compile-time value like a constant's, and a layout is
+        // worked out later than either. Named here rather than left to the
+        // size parser, which met the `]` with nothing read and said so about
+        // the bracket instead of about the word before it.
+        if (cur(p) == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Lparen
+            && names_a_layout(p, cur_off(p), cur_len(p))) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a compile-time value is worked out before the types are ")
+            report("laid out, so it cannot ask a type for its size, ")
+            report("alignment, offset or field count")
+            frost_rt_recover_escape()
+        }
         mut length: i64 = -1
         if (cur(p) != TokenKind::Rbracket) {
             length = parse_size_expr(p)
@@ -5621,6 +5634,27 @@ synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
                 return
             }
             depth = depth - 1
+            advance(p)
+            continue
+        }
+        // A run and an argument list are counted the way a block is. A
+        // statement that failed with a bracket still open would otherwise be
+        // resumed inside it, and the token that closes the run read as the
+        // start of the next statement, so one fault was told twice: once
+        // truly, and once about a bracket the reader had just been told about.
+        if (kind == TokenKind::Lbracket || kind == TokenKind::Lparen) {
+            depth = depth + 1
+            advance(p)
+            continue
+        }
+        // One with nothing open behind it closes a run the fault was found
+        // inside, so it is walked over. Stopping on it would read the closer
+        // as the start of the next statement, which is the fault this counting
+        // is here to prevent.
+        if (kind == TokenKind::Rbracket || kind == TokenKind::Rparen) {
+            if (depth > 0) {
+                depth = depth - 1
+            }
             advance(p)
             continue
         }
