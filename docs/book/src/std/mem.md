@@ -156,7 +156,6 @@ var scratch := arena_over(backing)
 | `arena_used(a) -> i64` | How many bytes are out |
 | `arena_left(a) -> i64` | How many are still there |
 | `arena_take(mut a, size, align) -> []u8` | The byte-level carve the typed one is built on |
-| `arena_resize(mut a, block, size, align) -> []u8` | A bigger run holding what the old one held |
 | `arena_give(mut a, block)` | Nothing; an arena reclaims by reset |
 
 `arena_carve` hands back a `[]T`, so everything built on it is bounds-checked,
@@ -174,18 +173,27 @@ stops a run outliving the arena is the region check, in
 
 A function that should work against whichever source it is given takes the
 source as a compile-time argument. `Allocation<A>` is the capability bundle for
-that: `take`, `resize` and `give`, all over `[]u8`.
+that: `take` and `give` over `[]u8`, which is what every source answers.
+
+Growing a run is `Resizing<A>`, a bundle of its own holding `resize`, because a
+source answers it only where it can. A bump allocator has nowhere to grow into:
+it would carve a second run and copy, and the run it copied from would stay out
+until the next reset, so a container growing that way spends the arena at the
+rate it doubles. The heap declares a `Resizing<Heap>` and an arena declares
+none, so `carve_grow($arena_source, ...)` names a bundle the arena has not got
+and is refused.
 
 | Call | What it does |
 | --- | --- |
 | `carve($T, $source, mut a, count) -> []T` | Room for `count` elements of `T` |
-| `carve_grow($source, mut a, held, count) -> []T` | A bigger run holding what the old one held |
+| `carve_grow($growing, mut a, held, count) -> []T` | A bigger run holding what the old one held |
 | `carve_give($source, mut a, held)` | The run handed back |
 
 Two sources ship with it. `heap_source` over `Heap`, which holds no fields
 because the runtime keeps the blocks and `heap_live` counts them, and
-`arena_source` over `Arena`, which is the three arena calls above under the
-bundle's names.
+`arena_source` over `Arena`, which is the two arena calls above under the
+bundle's names. `heap_resizing` is the heap's `Resizing<Heap>`, and it is the
+only one in the library.
 
 ```frost
 import "allocation.frost"

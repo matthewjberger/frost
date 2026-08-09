@@ -123,8 +123,9 @@ use it when the answer is not known until then.
 The middle of those two is a data structure generic over its allocator type,
 which costs nothing and covers most of what a swap is wanted for. That is a
 capability bundle: `std/allocation.frost` declares `Allocation<A>` holding
-`take`, `resize` and `give` over `[]u8`, and `carve`, `carve_grow` and
-`carve_give` are the typed face over them. The bundle arrives as a compile-time
+`take` and `give` over `[]u8`, with `Resizing<A>` beside it for a source that can
+grow a run, and `carve`, `carve_grow` and `carve_give` are the typed face over
+them. The bundle arrives as a compile-time
 argument, so a call through one of its fields is a direct call to the function
 that field names, and the same body draws from the heap or from an arena:
 
@@ -174,10 +175,12 @@ for its whole life belongs in that value's type, which is what `Map<K, V, ops>`
 does with its hashing; the allocation source of a growing container is not one of
 those, because there is only ever one of it.
 
-`arena_source` fills the third field of `Allocation<A>` with a resize, so
-`carve_grow($arena_source, a, run, n)` is written down and abandons the old run.
-Whether `Arena` stops being an `Allocation<A>` or the bundle splits into a
-resizing and a non-resizing one is open.
+So the bundle says which of the two a source is. `Allocation<A>` is `take` and
+`give`, what every source answers, and `Resizing<A>` is `resize` alone, what a
+source answers only where the old run is genuinely done afterwards. The heap
+declares both and an arena declares only the first, so `carve_grow` asking an
+arena to grow a run names a bundle the arena has not got and is refused at the
+call rather than quietly abandoning storage.
 
 ## What is left in C
 

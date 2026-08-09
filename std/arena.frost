@@ -14,15 +14,16 @@
 // view carved out of the arena inside one may not leave it. That is what makes
 // `fixed.frost` over an arena run safe rather than a convention.
 //
-// `arena_take`, `arena_resize` and `arena_give` are the byte-level three under
-// the carve, written out because they are what a container drawing from an
-// arena needs and what any other source would have to answer with.
+// `arena_take` and `arena_give` are the byte-level pair under the carve, and
+// they are what `Allocation<Arena>` is made of. There is no third: growing a run
+// is `Resizing<A>`, which an arena declares none of, because it has nowhere to
+// grow into and the run it copied from would stay out until the next reset.
 
 import "mem.frost"
 import "allocation.frost"
 
 export Arena, arena_over, arena_mark, arena_reset, arena_used, arena_left,
-    arena_carve, arena_take, arena_resize, arena_give, arena_source
+    arena_carve, arena_take, arena_give, arena_source
 
 Arena :: struct {
     data: []u8,
@@ -83,35 +84,16 @@ arena_take :: fn(mut a: Arena, size: i64, align: i64) -> []u8 {
     run
 }
 
-// A bigger run holding what the old one held. A bump allocator has nowhere to
-// grow into, so this carves a second run and copies; the old one stays where it
-// is until the next reset takes both. Growing by doubling is what keeps that
-// from being quadratic.
-arena_resize :: fn(mut a: Arena, block: []u8, size: i64, align: i64) -> []u8 {
-    var grown := arena_take(a, size, align)
-    var index: i64 = 0
-    held := slice_len(block)
-    while (index < held && index < size) {
-        grown[index] = block[index]
-        index = index + 1
-    }
-    grown
-}
-
 // Nothing. An arena reclaims by reset rather than one block at a time, and a
 // container that gives its storage back is saying it is done with it rather
 // than asking for bytes to be reused.
 arena_give :: fn(mut a: Arena, block: []u8) {
 }
 
-// The arena as an allocation source, so a container written over `Allocation`
-// draws from one. The three functions above are what the bundle wants, in the
+// The arena as an allocation source, so a function written over `Allocation`
+// draws from one. The two functions above are what the bundle wants, in the
 // order it wants them.
-arena_source :: Allocation<Arena> {
-    take = arena_take,
-    resize = arena_resize,
-    give = arena_give
-}
+arena_source :: Allocation<Arena> { take = arena_take, give = arena_give }
 
 // Room for `count` elements of `T`, taken from the front of what is left and
 // started on what `T` is aligned to.
@@ -190,16 +172,4 @@ test "what is left counts down as runs go out" {
     assert(arena_left(a) == 96)
     arena_reset(a, 0)
     assert(arena_left(a) == 128)
-}
-
-test "a resized run keeps what the old one held" {
-    var backing: [256]u8 = [0; 256]
-    var a := arena_over(backing)
-    var first := arena_take(a, 4, 8)
-    first[0] = 3
-    first[3] = 9
-    var grown := arena_resize(a, first, 16, 8)
-    assert(slice_len(grown) == 16)
-    assert(grown[0] == 3)
-    assert(grown[3] == 9)
 }

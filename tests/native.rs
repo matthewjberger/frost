@@ -8768,7 +8768,7 @@ fn a_defer_in_a_test_body_runs() {
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
     ("allocation.frost", "3 passed"),
-    ("arena.frost", "6 passed"),
+    ("arena.frost", "5 passed"),
     ("ecs.frost", "116 passed"),
     ("fixed.frost", "4 passed"),
     ("fs.frost", "2 passed"),
