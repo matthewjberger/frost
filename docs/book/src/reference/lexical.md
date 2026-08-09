@@ -101,6 +101,15 @@ The type builtins `sizeof`, `typename` and `type_id` are ordinary names read
 as the builtin only where one is called with a type argument (6.8), the way
 `ptr_to` and the other builtin functions are read at a call.
 
+A name the compiler answers to is one a program may not declare, since a
+spelling that meant two things would mean whichever the reader of the moment
+took it for. Those are the builtin calls above, the rest of 6.8 and 6.9, and the
+three targets a `when` chooses on (5.3a): `alignof`, `assert`, `cast`,
+`flags_has`, `live_slots`, `ptr_cast`, `ptr_to`, `sizeof`, `slice_from`,
+`slice_len`, `str_len`, `TARGET_LINUX`, `TARGET_MACOS`, `TARGET_WINDOWS`,
+`type_id`, `typename`, `wrap_add`, `wrap_mul` and `wrap_sub`. A declaration of
+one is refused where it is written.
+
 ## 2.5 Literals
 
 Integer. `INTEGER = DECIMAL | HEX | BINARY`, where

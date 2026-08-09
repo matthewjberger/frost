@@ -103,6 +103,10 @@ word_names :: fn(
 // kind, and a name's offset into the one source buffer is its source order,
 // so the smallest offset not yet written is always the next declaration.
 query_symbols :: fn(mut p: Parser) {
+    // Where the source ends and the names the compiler makes for itself begin.
+    // The three target constants are declared by the compiler and live up
+    // there, and a reader asking what a file declares is asking about the file.
+    read_end := source_end(p.src)
     mut written: i64 = -1
     mut going: bool = true
     while (going) {
@@ -141,7 +145,7 @@ query_symbols :: fn(mut p: Parser) {
         mut ci: i64 = 0
         while (ci < p.consts.count) {
             held := arena_at(p.consts, ci)
-            if (held.name_off > written
+            if (held.name_off > written && held.name_off < read_end
                 && (best_off < 0 || held.name_off < best_off)) {
                 best_off = held.name_off
                 best_len = held.name_len
@@ -152,7 +156,7 @@ query_symbols :: fn(mut p: Parser) {
         mut vi: i64 = 0
         while (vi < p.value_consts.count) {
             held := arena_at(p.value_consts, vi)
-            if (held.name_off > written
+            if (held.name_off > written && held.name_off < read_end
                 && (best_off < 0 || held.name_off < best_off)) {
                 best_off = held.name_off
                 best_len = held.name_len
@@ -218,10 +222,18 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
         }
         fi = fi + 1
     }
+    read_end := source_end(p.src)
     mut ci: i64 = 0
     while (ci < p.consts.count) {
         held := arena_at(p.consts, ci)
-        if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
+        if (held.name_off < read_end
+            && word_names(
+                question,
+                name_at,
+                p.src,
+                held.name_off,
+                held.name_len
+            )) {
             report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }
@@ -230,7 +242,14 @@ query_definition :: fn(mut p: Parser, question: ^i8) {
     mut vi: i64 = 0
     while (vi < p.value_consts.count) {
         held := arena_at(p.value_consts, vi)
-        if (word_names(question, name_at, p.src, held.name_off, held.name_len)) {
+        if (held.name_off < read_end
+            && word_names(
+                question,
+                name_at,
+                p.src,
+                held.name_off,
+                held.name_len
+            )) {
             report_fmt("{}\n", query_line(p.modules, p.src, held.name_off))
             return
         }

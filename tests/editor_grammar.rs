@@ -90,7 +90,12 @@ fn the_editor_grammar_lists_exactly_the_words_the_compiler_knows() {
         serde_json::from_str(&text).expect("the grammar is valid JSON");
 
     let mut found = BTreeSet::new();
-    for rule in ["keywords", "builtin-functions", "builtin-types"] {
+    for rule in [
+        "keywords",
+        "builtin-functions",
+        "builtin-constants",
+        "builtin-types",
+    ] {
         let mut patterns = Vec::new();
         collect_matches(&grammar["repository"][rule], &mut patterns);
         assert!(!patterns.is_empty(), "the grammar has no '{rule}' rule");
@@ -104,7 +109,7 @@ fn the_editor_grammar_lists_exactly_the_words_the_compiler_knows() {
         .copied()
         .map(String::from)
         .collect();
-    expected.extend(frost::BUILTIN_FUNCTIONS.iter().copied().map(String::from));
+    expected.extend(frost::COMPILER_NAMES.iter().copied().map(String::from));
     expected.extend(CONTEXTUAL.iter().copied().map(String::from));
     expected.extend(BUILTIN_TYPES.iter().copied().map(String::from));
 

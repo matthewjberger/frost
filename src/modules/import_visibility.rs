@@ -143,7 +143,7 @@ pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
     for file in files {
         let mut said = HashSet::new();
         for name in &file.declared {
-            if !crate::ir::build::BUILTIN_FUNCTIONS.contains(&name.as_str())
+            if !crate::ir::build::COMPILER_NAMES.contains(&name.as_str())
                 || !said.insert(name.as_str())
             {
                 continue;

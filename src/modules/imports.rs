@@ -243,6 +243,36 @@ fn past_when(tokens: &[Token], at: usize) -> usize {
     after_block
 }
 
+// The three target constants, wherever a value is read. They are the compiler's
+// own and a program may not declare one, so the spelling means this and nothing
+// else, and answering it here is what makes it an ordinary boolean outside a
+// `when` as well as inside one.
+//
+// After the conditionals, since a condition is read as the names it was written
+// with. A name being declared or naming a field is left alone: the declaration
+// is refused by name further on, and telling the reader that beats a parse that
+// fails on a `true` they did not write.
+fn answer_targets(tokens: &mut [Token]) {
+    for index in 0..tokens.len() {
+        let Token::Identifier(name) = &tokens[index] else {
+            continue;
+        };
+        let Some(holds) = target_constant(name) else {
+            continue;
+        };
+        if index > 0 && matches!(tokens[index - 1], Token::Dot) {
+            continue;
+        }
+        if matches!(
+            tokens.get(index + 1),
+            Some(Token::Colon | Token::DoubleColon)
+        ) {
+            continue;
+        }
+        tokens[index] = Token::Identifier(holds.to_string());
+    }
+}
+
 /// A compile-time conditional, decided while the tokens are still tokens.
 ///
 /// The branch that is not taken is removed from the stream, so nothing after
@@ -257,6 +287,8 @@ pub fn resolve_when(
     positions: Vec<crate::lexer::Position>,
 ) -> Result<WhenResolved> {
     if !tokens.iter().any(is_when) {
+        let mut tokens = tokens;
+        answer_targets(&mut tokens);
         return Ok((tokens, positions, Vec::new()));
     }
     let mut held_tokens = tokens;
@@ -283,6 +315,7 @@ pub fn resolve_when(
             }
         }
         let Some((at, depth)) = found else {
+            answer_targets(&mut held_tokens);
             return Ok((held_tokens, held_positions, lifted));
         };
         let _ = depth;

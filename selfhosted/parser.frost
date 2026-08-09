@@ -2824,6 +2824,36 @@ parse_field_alignment :: fn(mut p: Parser, packed: i64) -> i64 {
 // where it is written rather than once per instance, which is the only place
 // its fields are otherwise parsed. A variant's payload sits one brace deeper
 // and reads the same way.
+// The index of a `$` anywhere in the type a field is given, or -1. The whole of
+// the type, not only what opens it: `f: fn($T) -> $T` carries the sigil twice
+// inside a function type, and it is the same second spelling there as it is on
+// a bare name.
+field_sigil_at :: fn(mut p: Parser, start: i64) -> i64 {
+    mut ahead: i64 = start
+    mut depth: i64 = 0
+    while (true) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Eof) {
+            return -1
+        }
+        if (kind == TokenKind::Dollar) {
+            return ahead
+        }
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) {
+            depth = depth + 1
+        }
+        if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        }
+        if (depth <= 0
+            && (kind == TokenKind::Comma || kind == TokenKind::Rbrace)) {
+            return -1
+        }
+        ahead = ahead + 1
+    }
+    -1
+}
+
 refuse_field_sigils :: fn(mut p: Parser) {
     mut ahead: i64 = 0
     mut depth: i64 = 0
@@ -2841,23 +2871,15 @@ refuse_field_sigils :: fn(mut p: Parser) {
             depth = depth - 1
         }
         if (kind == TokenKind::Ident
-            && peek_kind(p, ahead + 1) == TokenKind::Colon
-            && peek_kind(p, ahead + 2) == TokenKind::Dollar) {
-            report_where(p.modules, p.src, peek_off(p, ahead + 2))
-            report("a field names a type parameter by its name, and '$' is what declares one, so this field is written '")
-            report_src(p.src, peek_off(p, ahead), peek_len(p, ahead))
-            report(": ")
-            if (peek_kind(p, ahead + 3) == TokenKind::Ident) {
-                report_src(
-                    p.src,
-                    peek_off(p, ahead + 3),
-                    peek_len(p, ahead + 3)
-                )
-            } else {
-                report("T")
+            && peek_kind(p, ahead + 1) == TokenKind::Colon) {
+            at := field_sigil_at(p, ahead + 2)
+            if (at >= 0) {
+                report_where(p.modules, p.src, peek_off(p, at))
+                report("a field names a type parameter by its name, and '$' is what declares one, so '")
+                report_src(p.src, peek_off(p, ahead), peek_len(p, ahead))
+                report("' is written without it")
+                frost_rt_recover_escape()
             }
-            report("'")
-            frost_rt_recover_escape()
         }
         ahead = ahead + 1
     }
@@ -6804,6 +6826,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
 parse_struct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    check_name_is_not_the_compiler_s(p, name_offset, name_length)
     entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
@@ -7055,6 +7078,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
 parse_enum :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    check_name_is_not_the_compiler_s(p, name_offset, name_length)
     entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
@@ -7996,6 +8020,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
 parse_distinct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    check_name_is_not_the_compiler_s(p, name_offset, name_length)
     advance(p)
     advance(p)
     advance(p)
@@ -8071,6 +8096,7 @@ parse_flags :: fn(mut p: Parser) {
 parse_value_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    check_name_is_not_the_compiler_s(p, name_offset, name_length)
     advance(p)
     advance(p)
     value := parse_expr(p)
@@ -8089,6 +8115,7 @@ parse_value_const :: fn(mut p: Parser) {
 parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    check_name_is_not_the_compiler_s(p, name_offset, name_length)
     advance(p)
     advance(p)
     // A value that calls something is worked out over the tokens rather than
@@ -8981,6 +9008,7 @@ predeclare_target :: fn(mut p: Parser) {
             held = 1
         }
         register_const(p, at, p.synth_next - at, held)
+        arena_at(p.consts, p.consts.count - 1).kind = CONST_BOOL
         i = i + 1
     }
 }

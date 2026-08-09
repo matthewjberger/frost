@@ -1878,7 +1878,11 @@ impl MoveChecker<'_> {
             } else if self.in_defer {
                 MoveState::Deferred
             } else {
-                self.moved_at.insert(key.clone(), self.at);
+                // The value as written, not the statement holding it. A
+                // statement may move two names and the note has to tell them
+                // apart, and it reads as a note on the same line either way.
+                self.moved_at
+                    .insert(key.clone(), self.ast.expr_position(expression));
                 MoveState::Moved
             };
             self.states.insert(key, consumed);
@@ -2462,7 +2466,10 @@ impl MoveChecker<'_> {
                             } else if self.in_defer {
                                 MoveState::Deferred
                             } else {
-                                self.moved_at.insert(name.to_string(), self.at);
+                                self.moved_at.insert(
+                                    name.to_string(),
+                                    self.ast.expr_position(expression),
+                                );
                                 MoveState::Moved
                             };
                             self.states.insert(name.to_string(), consumed);
@@ -2617,7 +2624,10 @@ impl MoveChecker<'_> {
                         } else if self.in_defer {
                             MoveState::Deferred
                         } else {
-                            self.moved_at.insert(key.clone(), self.at);
+                            self.moved_at.insert(
+                                key.clone(),
+                                self.ast.expr_position(*argument),
+                            );
                             MoveState::Moved
                         };
                         self.states.insert(key, consumed);

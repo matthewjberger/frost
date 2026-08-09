@@ -298,7 +298,47 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   held.held\n\
          }\n",
         "a field names a type parameter by its name, and '$' is what declares \
-         one, so this field is written 'held: T'",
+         one, so 'held' is written without it",
+    ),
+    // The same rule anywhere in the type, not only where it opens. A function
+    // type in a field carries the sigil past a `(`, and both compilers took it
+    // there for a while: the reader looked at the one token after the colon.
+    (
+        "a_field_carries_the_sigil_no_further_in",
+        "import \"io.frost\"\n\
+         Pair :: struct($T: Type) { f: fn($T) -> $T }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a field names a type parameter by its name, and '$' is what declares \
+         one, so 'f' is written without it",
+    ),
+    // The three the compiler declares are its own wherever they are written, so
+    // a program that declares one gave a second meaning to a spelling nothing
+    // tells apart. The self-hosted compiler asked this question of a function's
+    // name and of nothing else, so a constant, a struct, an enum or a distinct
+    // type could take a compiler name and the two read it differently after.
+    (
+        "a_target_constant_is_the_compiler_s_own_name",
+        "import \"io.frost\"\n\
+         TARGET_WINDOWS :: 5\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'TARGET_WINDOWS' is the compiler's own, and a name means one thing \
+         wherever it is written; call it something else",
+    ),
+    (
+        "a_constant_may_not_take_a_compiler_name",
+        "import \"io.frost\"\n\
+         sizeof :: 5\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'sizeof' is the compiler's own, and a name means one thing wherever \
+         it is written; call it something else",
+    ),
+    (
+        "a_struct_may_not_take_a_compiler_name",
+        "import \"io.frost\"\n\
+         typename :: struct { x: i64 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'typename' is the compiler's own, and a name means one thing wherever \
+         it is written; call it something else",
     ),
     // A constant that cannot be worked out ends that declaration and no more, so
     // a program holding a second fault is told about both. The self-hosted
@@ -3225,6 +3265,20 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A target constant is an ordinary boolean anywhere a value is read, not
+    // only in the condition of a `when`. One compiler declared the three and the
+    // other knew them as the condition's vocabulary and nothing more, so the
+    // same expression was a value there and an unknown name here.
+    (
+        "a_target_constant_is_a_value_anywhere",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := TARGET_WINDOWS || TARGET_LINUX || TARGET_MACOS\n\
+         \x20   if (held) { print(\"one of the three\\n\") }\n\
+         \x20   0\n\
+         }\n",
+        "one of the three\n",
+    ),
     // A call's arguments happen in the order they are written. C sequences
     // neither a call's arguments nor an operator's operands, so both backends
     // that go through C read whatever runs something into a slot ahead of the

@@ -7,7 +7,7 @@ import "cursor.frost"
 import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
-    check_name_is_free,
+    check_name_is_free, check_name_is_not_the_compiler_s,
     mark_safe, place_renames,
     bytes_equal, const_value, value_const_node, digits_in, gargs_equal,
     gargs_alike,
@@ -533,6 +533,9 @@ is_compiler_name :: fn(mut p: Parser, off: i64, len: i64) -> bool {
         || str_range_eq(p.src, off, len, "slice_from")
         || str_range_eq(p.src, off, len, "slice_len")
         || str_range_eq(p.src, off, len, "str_len")
+        || str_range_eq(p.src, off, len, "TARGET_LINUX")
+        || str_range_eq(p.src, off, len, "TARGET_MACOS")
+        || str_range_eq(p.src, off, len, "TARGET_WINDOWS")
         || str_range_eq(p.src, off, len, "type_id")
         || str_range_eq(p.src, off, len, "typename")
         || str_range_eq(p.src, off, len, "wrap_add")

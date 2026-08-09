@@ -18,7 +18,11 @@ use crate::lexer::Position;
 use crate::parser::Operator;
 use crate::types::{Type, spelled};
 
-pub const BUILTIN_FUNCTIONS: &[&str] = &[
+// The names the compiler reads as its own wherever they are written: the calls
+// it answers, and the three constants a `when` chooses on. What makes them
+// reserved is that a program may not declare one, and that is asked in one
+// place.
+pub const COMPILER_NAMES: &[&str] = &[
     "alignof",
     "assert",
     "cast",
@@ -30,6 +34,9 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "slice_from",
     "slice_len",
     "str_len",
+    "TARGET_LINUX",
+    "TARGET_MACOS",
+    "TARGET_WINDOWS",
     "type_id",
     "typename",
     "wrap_add",
@@ -7737,7 +7744,7 @@ impl<'a> FunctionLowering<'a> {
             && self.resolve_variable(name).is_none()
         {
             if self.builder.generic_functions.contains_key(name) {
-                return self.lower_generic_call(name, &arguments);
+                return self.lower_generic_call(name, callee, &arguments);
             }
             if self.builder.registrations.contains_key(name) {
                 return self.lower_registration_call(name, &arguments);
@@ -7794,6 +7801,7 @@ impl<'a> FunctionLowering<'a> {
     fn lower_generic_call(
         &mut self,
         name: &str,
+        callee: ExprId,
         arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
         let generic = self
@@ -8119,18 +8127,24 @@ impl<'a> FunctionLowering<'a> {
 
         // The bound, before the body is specialized, so a type that cannot
         // work is refused here rather than inside code the reader never wrote.
+        //
+        // At the call, which is where the reader chose the type the bound is
+        // asked about. The statement holding it may hold several.
         let signature = self.ast.signature(generic.return_sig).clone();
-        check_bound(
-            self.ast,
-            &signature,
-            &subst,
-            name,
-            Bounding {
-                bounds: &self.builder.bound_functions,
-                linear: &self.builder.linear,
-                structs: &self.builder.structs,
-                enums: &self.builder.enums,
-            },
+        locate(
+            check_bound(
+                self.ast,
+                &signature,
+                &subst,
+                name,
+                Bounding {
+                    bounds: &self.builder.bound_functions,
+                    linear: &self.builder.linear,
+                    structs: &self.builder.structs,
+                    enums: &self.builder.enums,
+                },
+            ),
+            self.ast.position_of(self.ast.expr_span(callee)),
         )?;
 
         for (parameter, target) in bundle_checks {

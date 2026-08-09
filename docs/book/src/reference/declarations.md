@@ -446,8 +446,10 @@ The condition is `TARGET_WINDOWS`, `TARGET_LINUX` and `TARGET_MACOS`, joined by
 `&&`, `||`, `!` and parentheses. Those three are declared by the compiler rather
 than by a file a program imports, since which machine a build is for is not
 something a library hands out, and they are ordinary booleans anywhere else a
-value is read. A condition over anything else is refused: a `when` chooses on
-what is known before the program is read.
+value is read. Being the compiler's own, they are among the names a program may
+not declare, so the spelling means this wherever it is written. A condition over
+anything else is refused: a `when` chooses on what is known before the program is
+read.
 
 `when` is not reserved. A program may still declare and call a function by that
 name, and what tells them apart is that a call is not followed by a block.

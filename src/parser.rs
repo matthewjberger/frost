@@ -1249,6 +1249,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // The same, for a token the reader has looked ahead to and not consumed.
+    fn at_ahead(&self, ahead: usize, message: String) -> anyhow::Error {
+        let position = if self.positions.is_empty() {
+            Position::default()
+        } else {
+            let index = (self.consumed + ahead).min(self.positions.len() - 1);
+            self.positions[index]
+        };
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position,
+            message,
+        })
+    }
+
     // The same, for a site that has already consumed the offending token.
     fn at_consumed(&self, message: String) -> anyhow::Error {
         let position = if self.positions.is_empty() || self.consumed == 0 {
@@ -2408,16 +2422,33 @@ impl<'a> Parser<'a> {
     /// accepted and read as the parameter, which left the two compilers on
     /// opposite sides of one declaration.
     fn refuse_field_sigil(&mut self, field: &str) -> Result<()> {
-        if !matches!(self.peek_nth(0), Token::Dollar) {
-            return Ok(());
+        // The whole of the type, not only what opens it. `f: fn($T) -> $T`
+        // carries the sigil twice inside a function type, and it is the same
+        // second spelling there as it is on a bare name.
+        let mut ahead = 0usize;
+        let mut depth = 0usize;
+        loop {
+            match self.peek_nth(ahead) {
+                Token::Dollar => {
+                    return Err(self.at_ahead(
+                        ahead,
+                        format!(
+                            "a field names a type parameter by its name, and '$' is what declares one, so '{field}' is written without it"
+                        ),
+                    ));
+                }
+                Token::LeftParentheses | Token::LeftBracket => depth += 1,
+                Token::RightParentheses | Token::RightBracket => {
+                    depth = depth.saturating_sub(1)
+                }
+                Token::Comma | Token::RightBrace if depth == 0 => {
+                    return Ok(());
+                }
+                Token::EndOfFile => return Ok(()),
+                _ => {}
+            }
+            ahead += 1;
         }
-        let named = match self.peek_nth(1) {
-            Token::Identifier(name) => name.to_string(),
-            _ => "T".to_string(),
-        };
-        bail!(
-            "a field names a type parameter by its name, and '$' is what declares one, so this field is written '{field}: {named}'"
-        )
     }
 
     /// What a worked-out value is written as where the constant naming it
