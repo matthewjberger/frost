@@ -73,6 +73,55 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "is settled by the type of",
     ),
+    // A struct written into a binding declared as another struct. Both travel
+    // by address, so nothing downstream can tell the two apart and the
+    // comparison has to happen while both are still spelled the way the reader
+    // wrote them. The bootstrap took the address and named the lowered local
+    // instead, which read as a compiler talking about itself.
+    (
+        "a_binding_takes_the_struct_its_declaration_names",
+        "import \"io.frost\"\n\
+         Left :: struct { a: i64 }\n\
+         Right :: struct { a: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var kept := Left { a = 1 }\n\
+         \x20   var swapped: Right = kept\n\
+         \x20   print(\"{}\n\", swapped.a)\n\
+         \x20   0\n\
+         }\n",
+        "this binding is a 'Right' and the value is a 'Left'",
+    ),
+    // A bundle a container carries is part of what the container is, so two
+    // containers hashed different ways are two types and neither passes where
+    // the other is wanted. Pinned on the type as each compiler spells it: the
+    // bundle has to reach the reader by name, since a report that wrote both
+    // sides the same way would say they differ and show nothing that does.
+    (
+        "a_container_carrying_one_bundle_is_not_one_carrying_another",
+        "import \"io.frost\"\n\
+         Hashing :: struct($K: Type) { hash: fn(K) -> i64 }\n\
+         Bag :: struct($K: Type, $ops: Hashing<K>) { first: $K }\n\
+         one :: fn(k: i64) -> i64 { k }\n\
+         two :: fn(k: i64) -> i64 { k * 2 }\n\
+         plain :: Hashing<i64> { hash = one }\n\
+         doubled :: Hashing<i64> { hash = two }\n\
+         bag_new :: fn($K: Type, $ops: Hashing<K>, first: $K) -> Bag<K, ops> {\n\
+         \x20   Bag { first = first }\n\
+         }\n\
+         bag_hash :: fn($K: Type, $ops: Hashing<K>, b: Bag<K, ops>) -> i64 {\n\
+         \x20   ops.hash(b.first)\n\
+         }\n\
+         doubled_only :: fn(b: Bag<i64, doubled>) -> i64 {\n\
+         \x20   bag_hash(b)\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var kept := bag_new($plain, 21)\n\
+         \x20   print(\"{}\n\", doubled_only(kept))\n\
+         \x20   0\n\
+         }\n",
+        "this argument is a 'Bag<i64, plain>' and a 'Bag<i64, doubled>' is what \
+         is wanted here",
+    ),
     // A function supplied at the call site is one whose body neither compiler
     // can see, so what it answers with is worth the shortest-lived argument
     // that could have reached it. An allocator built in this frame is one of
@@ -2910,6 +2959,35 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "41\n7\n4\n24\n",
+    ),
+    // A bundle in a container's type. `ops` is written where the container is
+    // made and settled off it after, so the two containers below run different
+    // hashes from one body and neither call names a bundle. What each compiler
+    // has to agree on is that the constant reaches the specialization through
+    // the instance rather than through an argument.
+    (
+        "a_bundle_travels_in_the_containers_type",
+        "import \"io.frost\"\n\
+         Hashing :: struct($K: Type) { hash: fn(K) -> i64 }\n\
+         Bag :: struct($K: Type, $ops: Hashing<K>) { first: $K }\n\
+         one :: fn(k: i64) -> i64 { k }\n\
+         two :: fn(k: i64) -> i64 { k * 2 }\n\
+         plain :: Hashing<i64> { hash = one }\n\
+         doubled :: Hashing<i64> { hash = two }\n\
+         bag_new :: fn($K: Type, $ops: Hashing<K>, first: $K) -> Bag<K, ops> {\n\
+         \x20   Bag { first = first }\n\
+         }\n\
+         bag_hash :: fn($K: Type, $ops: Hashing<K>, b: Bag<K, ops>) -> i64 {\n\
+         \x20   ops.hash(b.first)\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var kept := bag_new($plain, 21)\n\
+         \x20   var wide := bag_new($doubled, 21)\n\
+         \x20   print(\"{}\n\", bag_hash(kept))\n\
+         \x20   print(\"{}\n\", bag_hash(wide))\n\
+         \x20   0\n\
+         }\n",
+        "21\n42\n",
     ),
     // `alignof` reads the layout each compiler worked out rather than asking
     // the backend, so a stated alignment reaches it and the two agree. The C

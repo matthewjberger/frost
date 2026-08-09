@@ -97,7 +97,7 @@ one has no point at which it is required to come back out.
 
 Open addressing with linear probing, from keys of any type to values of any
 type. Three parallel heap slices: the keys, the values, and a state byte per
-slot. `Map<K, V>` is `linear`.
+slot. `Map<K, V, ops>` is `linear`.
 
 ```frost
 Slot :: enum { Empty, Used, Gone }
@@ -111,13 +111,13 @@ capacity, made positive where the hash was negative.
 
 | Call | What it does |
 | --- | --- |
-| `map_new($K, $V, capacity) -> Map<K, V>` | An empty table, at least eight slots, doubled up to the capacity asked for |
+| `map_new($K, $V, $ops, capacity) -> Map<K, V, ops>` | An empty table, at least eight slots, doubled up to the capacity asked for |
 | `map_free(move m)` | Releases all three runs. Consumes the map |
 | `map_len(m) -> i64` | How many keys are in it |
-| `map_put($ops, mut m, key, move value)` | Inserts or overwrites, growing if half full |
-| `map_get($ops, m, key, move fallback) -> V` | The value, or the fallback when the key is absent |
-| `map_has($ops, m, key) -> bool` | Whether the key is there |
-| `map_remove($ops, mut m, key) -> bool` | Removes it, leaving a tombstone. Answers whether it was there |
+| `map_put(mut m, key, move value)` | Inserts or overwrites, growing if half full |
+| `map_get(m, key, move fallback) -> V` | The value, or the fallback when the key is absent |
+| `map_has(m, key) -> bool` | Whether the key is there |
+| `map_remove(mut m, key) -> bool` | Removes it, leaving a tombstone. Answers whether it was there |
 | `map_clear(mut m)` | Empties every slot, keeps the storage |
 
 `map_get` takes a fallback, so the common read is one call with no match around
@@ -134,9 +134,15 @@ Hashing :: struct($K: Type) {
 }
 ```
 
-`$ops` is a compile-time argument, so the hash and the comparison fold to direct
-calls and the map stores no function pointer. This is the shape
-[sort.md](sort.md) describes for `Ordering<T>`, with two different fields.
+`ops` is a parameter of the map's own type, so the hash and the comparison fold
+to direct calls, the map stores no function pointer, and the bundle is written
+once at `map_new`. Every operation takes `m: Map<K, V, ops>`, which settles `ops`
+off the argument, so a call naming a second bundle is naming a different type and
+the table cannot be hashed two ways.
+
+That is the split against [sort.md](sort.md): an ordering is chosen per sort and
+stays at the call, a hashing has to be the same one for the life of the table and
+belongs in its type.
 
 The library ships `i64_keys`, `str_keys` and `text_keys`, built from
 `i64_hash`/`i64_same`, `str_hash`/`str_same` and `text_hash`/`text_same`. For a
@@ -152,7 +158,8 @@ cell_hash :: fn(c: Cell) -> i64 {
 cell_same :: fn(a: Cell, b: Cell) -> bool { a.x == b.x && a.y == b.y }
 cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
 
-map_put($cell_keys, grid, Cell { x = 1, y = 2 }, 12)
+var grid := map_new($Cell, $i64, $cell_keys, 8)
+map_put(grid, Cell { x = 1, y = 2 }, 12)
 ```
 
 `i64_hash` scrambles the number so keys differing only in their low bits land in
@@ -163,16 +170,16 @@ with `str_same`, for building a `Hashing` over a type that contains one.
 ### `Text`, a key that carries more than its bytes
 
 A `str` is a key on its own. `str_keys` hashes and compares the bytes bare, so
-`map_new($str, $i64, 8)` holds a run of slices and the module's own test puts
+`map_new($str, $i64, $str_keys, 8)` holds a run of slices and the module's own test puts
 `"ada"` and `"grace"` into one. `Text` is the same key wrapped in a one-field
 struct:
 
 ```frost,sketch
 Text :: struct { bytes: str }
 
-var ages := map_new($Text, $i64, 8)
-map_put($text_keys, ages, text("ada"), 36)
-held := map_get($text_keys, ages, text("ada"), 0)
+var ages := map_new($Text, $i64, $text_keys, 8)
+map_put(ages, text("ada"), 36)
+held := map_get(ages, text("ada"), 0)
 ```
 
 `text_hash` and `text_same` are `str_hash` and `str_same` reaching through the

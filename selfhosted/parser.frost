@@ -2527,6 +2527,18 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (cur(p) == TokenKind::Int) {
                     a = CONST_BASE + cur_val(p)
                     advance(p)
+                }
+                // A name that is no type is the constant it names, carried as
+                // FN_BASE plus its index the way a `$ops` argument at a call
+                // is. That is how a capability travels in a container's type:
+                // `Map<Mask, i64, mask_keys>` says which bundle every operation
+                // over one reads off it.
+                else if (cur(p) == TokenKind::Ident
+                    && is_type_name(p, cur_off(p), cur_len(p)) == false) {
+                    arg_off := cur_off(p)
+                    arg_len := cur_len(p)
+                    advance(p)
+                    a = FN_BASE + intern_global(p, arg_off, arg_len)
                 } else {
                     a = parse_type(p)
                 }

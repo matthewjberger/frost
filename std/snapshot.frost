@@ -303,7 +303,7 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
             table.mask.words[word] = held
             word = word + 1
         }
-        map_put($mask_keys, world.lookup, table.mask, index)
+        map_put(world.lookup, table.mask, index)
         rows := snapshot_take(s)
         var row: i64 = 0
         while (row < rows) {

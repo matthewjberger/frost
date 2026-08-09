@@ -1166,9 +1166,16 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
     }
 }
 
-// One argument of an instance. A number stands for itself and a type for its
-// name, which is what tells `Slab<Node, 2>` from `Slab<Node, Two>`.
+// One argument of an instance. A number stands for itself, a name that is a
+// constant or a function for that name, and a type for its own name, which is
+// what tells `Slab<Node, 2>` from `Slab<Node, Two>` and
+// `Map<Mask, i64, mask_keys>` from the same table hashed another way.
 write_argument_name :: fn(mut p: Parser, value: i64) {
+    if (value >= FN_BASE) {
+        entry := arena_at(p.fns, value - FN_BASE)
+        synth_range(p, entry.off, entry.len)
+        return
+    }
     if (value >= CONST_BASE && value < PROC_BASE) {
         synth_digits(p, value - CONST_BASE)
         return

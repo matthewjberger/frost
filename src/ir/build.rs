@@ -1631,17 +1631,22 @@ fn is_type_parameter(ast: &Ast, parameter: &Parameter) -> bool {
 /// rather than two. Both compilers run this same walk, over the same parameter
 /// list, in the same order.
 ///
-/// Only a value parameter settles one. A `$f: fn(T, T) -> bool` or a
-/// `$ops: Ordering<T>` names `T` in its own declared type, and neither is an
-/// argument whose type can be unified against: what arrives for them is a name,
-/// picked at the call.
+/// A bundle parameter is settled the same way a type is, which is what puts a
+/// capability in a value's type: `$ops: Hashing<K>` named in `m: Map<K, V, ops>`
+/// is read off the map, so every operation over one map hashes it the way it was
+/// built. Only a value parameter settles one. A `$f: fn(T, T) -> bool` names `T`
+/// in its own declared type, and that is not an argument whose type can be
+/// unified against: what arrives for it is a name, picked at the call.
 pub fn settled_by(ast: &Ast, parameters: &[Parameter]) -> Vec<Option<Symbol>> {
     parameters
         .iter()
         .enumerate()
         .map(|(index, parameter)| {
             if !is_type_parameter(ast, parameter)
-                || parameter.compile_time_signature.is_some()
+                || matches!(
+                    parameter.compile_time_signature,
+                    Some(Type::Proc(..))
+                )
             {
                 return None;
             }
@@ -5313,6 +5318,23 @@ impl<'a> FunctionLowering<'a> {
                         spelled(annotated)
                     );
                 }
+                // A struct where another struct was declared. Both travel by
+                // address, so the coercion below takes one and every check
+                // after it agrees, and the complaint lands in the IR
+                // typechecker naming the lowered local rather than the binding.
+                // The same comparison an argument goes through, at the one
+                // other place a value is written into a declared type.
+                if let Some(annotated) = &type_annotation
+                    && let (Some(from), Some(into)) =
+                        (aggregate_name(&value_type), aggregate_name(annotated))
+                    && from != into
+                {
+                    bail!(
+                        "this binding is a '{}' and the value is a '{}'",
+                        spelled(annotated),
+                        spelled(&value_type)
+                    );
+                }
                 if matches!(value_type, Type::Void) {
                     bail!(
                         "cannot bind '{name}' to a void value; this expression produces no value"
@@ -7631,6 +7653,27 @@ impl<'a> FunctionLowering<'a> {
                 );
                 plans.push(ArgPlan::Value(operand, value_type));
             }
+        }
+
+        // A bundle a value parameter settles arrives as the name unified out of
+        // that parameter's type, and the body names the constant wherever it
+        // names the parameter. This is what a written `$ops` argument becomes
+        // further up, reached from the other direction.
+        for (parameter, held) in generic_parameters.iter().zip(&settled) {
+            if held.is_none() || parameter.compile_time_signature.is_none() {
+                continue;
+            }
+            let parameter_name = self.ast.name(parameter.name).to_string();
+            let Some(Type::Struct(named) | Type::TypeParam(named)) =
+                subst.get(&parameter_name)
+            else {
+                continue;
+            };
+            if !self.builder.constants.contains_key(named) {
+                continue;
+            }
+            let bound = Type::ConstValue(named.clone());
+            subst.insert(parameter_name, bound);
         }
 
         // The bound, before the body is specialized, so a type that cannot

@@ -502,7 +502,7 @@ World :: struct {
     next_id: i64,
     tables: Vec<Table>,
     // Mask to table index, so a migration finds its destination without a scan.
-    lookup: Map<Mask, i64>,
+    lookup: Map<Mask, i64, mask_keys>,
     live: i64,
     // The clock every write is stamped with. It starts at one so that zero,
     // which is what a freshly allocated row holds, is a time before anything.
@@ -533,7 +533,7 @@ ecs_new :: fn() -> World {
         free_ids = vec_new($i64, 64),
         next_id = 0,
         tables = vec_new($Table, 16),
-        lookup = map_new($Mask, $i64, 32),
+        lookup = map_new($Mask, $i64, $mask_keys, 32),
         live = 0,
         tick = 1,
         resources = vec_new($Column, 4),
@@ -550,7 +550,7 @@ ecs_new :: fn() -> World {
             entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1)
         })
-    map_put($mask_keys, world.lookup, mask_empty(), 0)
+    map_put(world.lookup, mask_empty(), 0)
     world
 }
 
@@ -748,7 +748,7 @@ ecs_component_size :: fn(world: World, component: i64) -> i64 {
 // columns are created in ascending bit order, which is the order every lookup
 // assumes.
 table_for :: fn(mut world: World, mask: Mask) -> i64 {
-    held := map_get($mask_keys, world.lookup, mask, -1)
+    held := map_get(world.lookup, mask, -1)
     if (held >= 0) {
         return held
     }
@@ -769,7 +769,7 @@ table_for :: fn(mut world: World, mask: Mask) -> i64 {
     }
     made := vec_len(world.tables)
     vec_push(world.tables, table)
-    map_put($mask_keys, world.lookup, mask, made)
+    map_put(world.lookup, mask, made)
     made
 }
 
@@ -1960,11 +1960,16 @@ table_move :: fn(mut held: Table) -> Table {
 // over the tables that are left.
 rebuild_lookup :: fn(mut world: World) {
     map_free(world.lookup)
-    world.lookup = map_new($Mask, $i64, vec_len(world.tables) * 2 + 16)
+    world.lookup = map_new(
+        $Mask,
+        $i64,
+        $mask_keys,
+        vec_len(world.tables) * 2 + 16
+    )
     var index: i64 = 0
     while (index < vec_len(world.tables)) {
         ref table := vec_slice(world.tables)[index]
-        map_put($mask_keys, world.lookup, table.mask, index)
+        map_put(world.lookup, table.mask, index)
         rows := vec_slice(table.entities)
         var row: i64 = 0
         while (row < slice_len(rows)) {
@@ -2627,7 +2632,7 @@ world_clear :: fn(mut world: World) {
     world.live = 0
     world.next_id = 0
     map_free(world.lookup)
-    world.lookup = map_new($Mask, $i64, 32)
+    world.lookup = map_new($Mask, $i64, $mask_keys, 32)
     // The empty archetype comes back, because a world without one is not a
     // world: `ecs_spawn` reaches it by index rather than through the lookup, so
     // the next spawn into a cleared world would otherwise put a row where there
@@ -2639,7 +2644,7 @@ world_clear :: fn(mut world: World) {
             entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1)
         })
-    map_put($mask_keys, world.lookup, mask_empty(), 0)
+    map_put(world.lookup, mask_empty(), 0)
 }
 
 // ---------------------------------------------------------------------------

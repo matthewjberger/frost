@@ -606,7 +606,7 @@ main :: fn() -> i64 {
         pack_count = 0,
         gparams = arena_make($GParam, 4096),
         cfn_params = arena_make($GParam, 4096),
-        gargs = arena_make($GArg, 4096),
+        gargs = arena_make($GArg, 8192),
         // A signature per function type in the whole import closure, and a
         // slot per parameter of one. The wgpu binding alone declares a
         // callback type and a constructor against it per callback, so these

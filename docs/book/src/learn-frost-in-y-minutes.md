@@ -917,20 +917,21 @@ lives in an arena.
 
 ### A hash map
 
-Keys of any type. `$text_keys` is the `Hashing<K>` bundle for text, and hashing
-and comparison fold to direct calls at each site.
+Keys of any type. `$text_keys` is the `Hashing<K>` bundle for text, named once
+at the constructor and carried in the map's type from there, so hashing and
+comparison fold to direct calls at each site.
 
 ```frost
 import "io.frost"
 import "map.frost"
 
 main :: fn() -> i64 {
-    var ages := map_new($Text, $i64, 8)
-    map_put($text_keys, ages, text("ada"), 36)
-    map_put($text_keys, ages, text("alan"), 41)
+    var ages := map_new($Text, $i64, $text_keys, 8)
+    map_put(ages, text("ada"), 36)
+    map_put(ages, text("alan"), 41)
 
-    print("{}\n", map_get($text_keys, ages, text("ada"), 0))
-    print("{}\n", map_has($text_keys, ages, text("grace")))
+    print("{}\n", map_get(ages, text("ada"), 0))
+    print("{}\n", map_has(ages, text("grace")))
     print("{}\n", map_len(ages))
     map_free(ages)
     0

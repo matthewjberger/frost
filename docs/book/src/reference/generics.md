@@ -340,9 +340,30 @@ is refused:
 'T' of 'vec_push' is settled by the type of 'v', so it is not written at the call
 ```
 
-A `$f: fn(T, T) -> bool` (11.1b) and a `$ops: Ordering<T>` (11.4b) are written
-whatever else the signature says. What arrives for them is a name the call
-picks rather than a type to read off an argument, so nothing settles them.
+A `$f: fn(T, T) -> bool` (11.1b) is written whatever else the signature says.
+What arrives for it is a name the call picks rather than a type to read off an
+argument, so nothing settles it.
+
+A bundle (11.4b) is settled the way a type is, and that is what puts a capability
+in a value's type:
+
+```frost,sketch
+Map :: linear struct($K: Type, $V: Type, $ops: Hashing<K>) { ... }
+
+map_new :: fn($K: Type, $V: Type, $ops: Hashing<K>, capacity: i64) -> Map<K, V, ops>
+map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V, ops>,
+              key: $K, move value: $V)
+
+var ages := map_new($Text, $i64, $text_keys, 16)
+map_put(ages, text("ada"), 36)
+```
+
+The bundle is named where the map is made and read off the map after. Hashing one
+table two ways is then two types rather than one table with keys in slots the
+other bundle would never probe. An `Ordering<T>` for a sort stays at the call: it
+is chosen per sort and nothing chosen for it outlives the call, which is the line
+between the two. A capability a value has to be used with the same way every time
+belongs in that value's type; one chosen per operation belongs at the call.
 
 ## 11.1f Defaults
 
@@ -535,6 +556,25 @@ Composition is a struct with struct fields, and the body reads
 The declared type is checked at the call: an argument that is a constant of
 another type, or a name that is not a constant at all, is refused against the
 line the caller wrote.
+
+### Where the bundle is named
+
+A bundle chosen per operation stays at the call, which is `sort` above. One a
+value has to be used with the same way for its whole life goes in that value's
+type, written once at the constructor and settled off the value after (11.1e):
+
+```frost,sketch
+Map :: linear struct($K: Type, $V: Type, $ops: Hashing<K>) { ... }
+
+var ages := map_new($Text, $i64, $text_keys, 16)
+map_put(ages, text("ada"), 36)
+```
+
+`std/map.frost` is this written out. The rule reads off what the two do: a sort
+reads a run and answers, so a second ordering on the next call is a second
+question with the same meaning; a map keeps what it was given in slots the hash
+picked, so a second hashing on the next call reads slots the first would never
+have written to.
 
 ## 11.5 No traits
 
