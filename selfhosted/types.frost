@@ -9,7 +9,8 @@ import "names.frost"
 import "layout.frost"
 
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
-    settle_pack_args, tparam_position, gparam_position, written_gparam_count,
+    settle_pack_args, tparam_position, gparam_position, word_is_gparam,
+    written_gparam_count,
     first_settled_gparam, has_fallback_gparam, fallback_gparam_count,
     settled_type_args,
     hold_pending_tuple,

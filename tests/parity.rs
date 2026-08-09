@@ -73,6 +73,50 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "is settled by the type of",
     ),
+    // An arena answers `Allocation<A>` and no `Resizing<A>`, so nothing can ask
+    // one to hand back a bigger run: it has nowhere to grow into, and the run it
+    // copied from would stay out until the next reset. Refused against the
+    // declared bundle at the call, rather than by the specialized body failing
+    // to find a field, which points at the library instead of at the caller.
+    (
+        "an_arena_is_not_a_source_a_run_can_be_grown_out_of",
+        "import \"io.frost\"\n\
+         import \"arena.frost\"\n\
+         import \"allocation.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   var backing: [256]u8 = [0; 256]\n\
+         \x20   var a := arena_over(backing)\n\
+         \x20   var run := carve($i64, $arena_source, a, 2)\n\
+         \x20   run[0] = 7\n\
+         \x20   var grown := carve_grow($arena_source, a, run, 8)\n\
+         \x20   print(\"{}\n\", grown[0])\n\
+         \x20   0\n\
+         }\n",
+        "'arena_source' given to 'carve_grow' as 'growing' is a \
+         'Allocation<Arena>', but 'growing' is declared as 'Resizing<Arena>'",
+    ),
+    // The same rule with nothing to do with allocation, since what it is about
+    // is the bundle rather than the source: a constant of one bundle where
+    // another is declared.
+    (
+        "a_bundle_argument_is_checked_against_the_bundle_declared",
+        "import \"io.frost\"\n\
+         Ordering :: struct($T: Type) { less: fn(T, T) -> bool }\n\
+         Hashing :: struct($T: Type) { hash: fn(T) -> i64 }\n\
+         i64_less :: fn(a: i64, b: i64) -> bool { a < b }\n\
+         i64_hash :: fn(a: i64) -> i64 { a }\n\
+         ascending :: Ordering<i64> { less = i64_less }\n\
+         keys :: Hashing<i64> { hash = i64_hash }\n\
+         pick :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {\n\
+         \x20   if (ops.less(a, b)) { a } else { b }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\n\", pick($keys, 3, 4))\n\
+         \x20   0\n\
+         }\n",
+        "'keys' given to 'pick' as 'ops' is a 'Hashing<i64>', but 'ops' is \
+         declared as 'Ordering<i64>'",
+    ),
     // A struct written into a binding declared as another struct. Both travel
     // by address, so nothing downstream can tell the two apart and the
     // comparison has to happen while both are still spelled the way the reader

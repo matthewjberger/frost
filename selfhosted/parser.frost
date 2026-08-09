@@ -769,6 +769,15 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                     arg = entry.next
                 }
                 held := settled_type_args(p, args, owner)
+                check_bundle_args(
+                    p,
+                    owner,
+                    offset,
+                    length,
+                    held,
+                    p.call_xarg_start,
+                    offset
+                )
                 note_type_args(
                     p,
                     held,
@@ -2821,6 +2830,163 @@ note_fallback :: fn(mut p: Parser, primary: i64, fallback: i64) {
         return
     }
     arena_at(p.gparams, p.gparams.count - 1).fallback = fallback
+}
+
+// The type a compile-time parameter declares, where what follows the colon is a
+// bundle rather than a kind, read with this call's arguments bound so
+// `$growing: Resizing<A>` answers `Resizing<Arena>` and not the template. -1
+// where the parameter declares no bundle.
+//
+// The declaration's own tokens are read again rather than a type kept at the
+// declaration, because a bundle names the generic's other parameters and a type
+// worked out where it was written stands for none of them yet.
+declared_bundle_type :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    name_off: i64,
+    name_len: i64,
+    arg: i64,
+    xarg_start: i64
+) -> i64 {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    held_ti := p.ti
+    p.ti = gfn.token_start
+    while (cur(p) != TokenKind::Lparen && cur(p) != TokenKind::Eof) {
+        advance(p)
+    }
+    var depth: i64 = 0
+    var at: i64 = -1
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Rparen) {
+            depth = depth - 1
+            if (depth == 0) {
+                break
+            }
+        }
+        if (kind == TokenKind::Lparen) {
+            depth = depth + 1
+        }
+        if (kind == TokenKind::Dollar
+            && word_is_gparam(p, 1, name_off, name_len)
+            && peek_kind(p, 2) == TokenKind::Colon) {
+            advance(p)
+            advance(p)
+            if (kind_is_bundle(p) == 1 && peek_kind(p, 1) != TokenKind::KwFn) {
+                at = p.ti + 1
+            }
+            break
+        }
+        advance(p)
+    }
+    if (at < 0) {
+        p.ti = held_ti
+        return -1
+    }
+    held_param_off := p.type_param_off
+    held_param_len := p.type_param_len
+    held_binding := p.type_binding
+    held_active := p.binding_active
+    p.type_param_off = gfn.tparam_off
+    p.type_param_len = gfn.tparam_len
+    p.type_binding = arg
+    p.binding_active = 1
+    mark := push_bindings(
+        p,
+        gfn.tparam_off,
+        gfn.tparam_len,
+        gfn.xparam_start,
+        gfn.xparam_count,
+        arg,
+        xarg_start
+    )
+    p.ti = at
+    declared := parse_type(p)
+    p.gbindings.count = mark
+    p.type_param_off = held_param_off
+    p.type_param_len = held_param_len
+    p.type_binding = held_binding
+    p.binding_active = held_active
+    p.ti = held_ti
+    declared
+}
+
+// The type a bundle constant was declared with, read off the literal its name
+// stands for. -1 for an argument that names no constant.
+argument_bundle_type :: fn(mut p: Parser, value: i64) -> i64 {
+    if (value < FN_BASE) {
+        return -1
+    }
+    entry := arena_at(p.fns, value - FN_BASE)
+    node := value_const_node(p, entry.off, entry.len)
+    if (node < 0) {
+        return -1
+    }
+    type_of(p, node)
+}
+
+// What a call gave for each compile-time parameter the declaration wrote a
+// bundle type on, against that type. A bundle is what the body reaches its
+// fields through, so a constant of another bundle answers the call's own line
+// rather than a field the specialized body cannot find.
+check_bundle_args :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    name_off: i64,
+    name_len: i64,
+    arg: i64,
+    xarg_start: i64,
+    at: i64
+) {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    var index: i64 = -1
+    while (index < gfn.xparam_count) {
+        var param_off := gfn.tparam_off
+        var param_len := gfn.tparam_len
+        var given := arg
+        if (index >= 0) {
+            param := arena_at(p.gparams, gfn.xparam_start + index)
+            param_off = param.name_off
+            param_len = param.name_len
+            given = arena_at(p.gargs, xarg_start + index).value
+        }
+        index = index + 1
+        if (param_len == 0) {
+            continue
+        }
+        actual := argument_bundle_type(p, given)
+        if (actual < 0 || is_struct_ty(actual) == false) {
+            continue
+        }
+        declared := declared_bundle_type(
+            p,
+            gfn_index,
+            param_off,
+            param_len,
+            arg,
+            xarg_start
+        )
+        if (declared < 0 || is_struct_ty(declared) == false
+            || declared == actual) {
+            continue
+        }
+        held := arena_at(p.fns, given - FN_BASE)
+        report_where(p.modules, p.src, at)
+        report("'")
+        report_src(p.src, held.off, held.len)
+        report("' given to '")
+        report_src(p.src, name_off, name_len)
+        report("' as '")
+        report_src(p.src, param_off, param_len)
+        report("' is a '")
+        report(instance_text(p, actual))
+        report("', but '")
+        report_src(p.src, param_off, param_len)
+        report("' is declared as '")
+        report(instance_text(p, declared))
+        report("'")
+        frost_rt_recover_escape()
+    }
 }
 
 // Bind every parameter of a generic while its body is re-parsed. The first
