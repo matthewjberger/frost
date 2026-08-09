@@ -722,8 +722,11 @@ pub fn resolve_imports_cached(
     let reports = shadowed_imports(&walk.files, &walk.module_exports);
     if !reports.is_empty() {
         bail!(
-            "a name means one thing in a file, and these mean two:\n{}",
-            reports.join("\n")
+            "{}",
+            reports.join(
+                "
+"
+            )
         );
     }
     let mut resolved = walk.resolved;

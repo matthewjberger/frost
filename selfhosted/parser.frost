@@ -6826,7 +6826,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
 parse_struct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
-    check_name_is_not_the_compiler_s(p, name_offset, name_length)
+    check_name_is_free(p, name_offset, name_length)
     entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
@@ -7078,7 +7078,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
 parse_enum :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
-    check_name_is_not_the_compiler_s(p, name_offset, name_length)
+    check_name_is_free(p, name_offset, name_length)
     entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
@@ -8020,7 +8020,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
 parse_distinct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
-    check_name_is_not_the_compiler_s(p, name_offset, name_length)
+    check_name_is_free(p, name_offset, name_length)
     advance(p)
     advance(p)
     advance(p)
@@ -8096,7 +8096,7 @@ parse_flags :: fn(mut p: Parser) {
 parse_value_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
-    check_name_is_not_the_compiler_s(p, name_offset, name_length)
+    check_name_is_free(p, name_offset, name_length)
     advance(p)
     advance(p)
     value := parse_expr(p)
@@ -8115,7 +8115,7 @@ parse_value_const :: fn(mut p: Parser) {
 parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
-    check_name_is_not_the_compiler_s(p, name_offset, name_length)
+    check_name_is_free(p, name_offset, name_length)
     advance(p)
     advance(p)
     // A value that calls something is worked out over the tokens rather than

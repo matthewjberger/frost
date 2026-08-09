@@ -332,6 +332,30 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'sizeof' is the compiler's own, and a name means one thing wherever \
          it is written; call it something else",
     ),
+    // The namespace is flat, so a declaration and an import of one name are two
+    // things called the same thing. Both compilers refused a function that did
+    // it and neither refused a constant, a struct or an enum, and the two
+    // sentences differed anyway: one named the rename it suggests and one
+    // stopped a clause short, and one pointed at the file where the other
+    // pointed at the declaration.
+    (
+        "a_constant_may_not_take_an_imported_name",
+        "import \"io.frost\"\n\
+         print :: 5\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'print' is declared here and also arrives from an import; rename one \
+         of them, or read the import under another name with `import \"...\" \
+         (print as ...)`",
+    ),
+    (
+        "a_struct_may_not_take_an_imported_name",
+        "import \"io.frost\"\n\
+         print :: struct { x: i64 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'print' is declared here and also arrives from an import; rename one \
+         of them, or read the import under another name with `import \"...\" \
+         (print as ...)`",
+    ),
     (
         "a_struct_may_not_take_a_compiler_name",
         "import \"io.frost\"\n\

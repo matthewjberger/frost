@@ -120,9 +120,14 @@ pub fn shadowed_imports(
             {
                 continue;
             }
+            let position = file
+                .declared_at
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_default();
             reports.push(format!(
-                "{}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
-                file.module
+                "at {}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
+                position.describe()
             ));
         }
     }
