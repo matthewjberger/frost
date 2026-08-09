@@ -117,19 +117,20 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a local that is reassigned is declared with `mut`, the word a \
          parameter that writes the caller's value carries",
     ),
-    // A layout is worked out once the types are read, and a constant is
-    // settled before that, so the two compile-time answer sites cannot see each
-    // other. Both compilers refused this and neither said why: one called it
-    // something a compile-time call may not do, the other said the type had no
-    // value. The order is what the reader needs, so the order is what is said.
+    // What a type answers after it is laid out and what it answers while the
+    // program is emitted are not the same question. A measurement is worked out
+    // once the types have been read, which is what lets a constant ask for one;
+    // an identity is handed out first-come-first-served as the program lowers,
+    // so a constant asking for one would seed that counter from a different
+    // order in each compiler and the two would hand out different numbers for
+    // one type. Refused rather than answered differently.
     (
-        "a_constant_cannot_ask_a_type_for_its_layout",
+        "a_constant_does_not_ask_a_type_for_its_identity",
         "import \"io.frost\"\n\
          Vertex :: struct { x: f32, y: f32, z: f32 }\n\
-         round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }\n\
-         LANES :: round_up(sizeof(Vertex), 64)\n\
-         main :: fn() -> i64 { LANES }\n",
-        "'sizeof' is answered once the types are read, and a compile-time \
+         WHICH :: type_id(Vertex)\n\
+         main :: fn() -> i64 { WHICH }\n",
+        "'type_id' is answered once the types are read, and a compile-time \
          value is worked out before that",
     ),
     // The same rule in the other position a compile-time number is read. The
