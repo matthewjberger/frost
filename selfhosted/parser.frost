@@ -2872,7 +2872,7 @@ declared_bundle_type :: fn(
             && peek_kind(p, 2) == TokenKind::Colon) {
             advance(p)
             advance(p)
-            if (kind_is_bundle(p) == 1 && peek_kind(p, 1) != TokenKind::KwFn) {
+            if (kind_is_bundle(p) == 1) {
                 at = p.ti + 1
             }
             break
@@ -2887,6 +2887,10 @@ declared_bundle_type :: fn(
     held_param_len := p.type_param_len
     held_binding := p.type_binding
     held_active := p.binding_active
+    // What reading a type leaves behind, kept because this reads one in the
+    // middle of a call rather than where a declaration is being taken down.
+    held_was_generic := p.last_type_was_generic
+    held_saw_param := p.saw_type_param
     p.type_param_off = gfn.tparam_off
     p.type_param_len = gfn.tparam_len
     p.type_binding = arg
@@ -2907,6 +2911,8 @@ declared_bundle_type :: fn(
     p.type_param_len = held_param_len
     p.type_binding = held_binding
     p.binding_active = held_active
+    p.last_type_was_generic = held_was_generic
+    p.saw_type_param = held_saw_param
     p.ti = held_ti
     declared
 }
@@ -4983,7 +4989,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         && str_range_eq(p.src, cur_off(p), 3, "var")
         && peek_kind(p, 1) == TokenKind::Ident
         && (peek_kind(p, 2) == TokenKind::Coloneq
-            || peek_kind(p, 2) == TokenKind::Colon)) {
+            || peek_kind(p, 2) == TokenKind::Colon
+            || peek_kind(p, 2) == TokenKind::Comma)) {
         report_where(p.modules, p.src, cur_off(p))
         report("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries")
         frost_rt_recover_escape()

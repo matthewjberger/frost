@@ -1427,7 +1427,7 @@ impl<'a> Parser<'a> {
                     && matches!(self.peek_nth(1), Token::Identifier(_))
                     && matches!(
                         self.peek_nth(2),
-                        Token::ColonAssign | Token::Colon
+                        Token::ColonAssign | Token::Colon | Token::Comma
                     ) =>
             {
                 return Err(self.here("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries".to_string()));
@@ -1802,7 +1802,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    // `quotient, remainder := divide(a, b)`, and `var` in front of any name
+    // `quotient, remainder := divide(a, b)`, and `mut` in front of any name
     // that the body goes on to write. The list is names, not patterns, since
     // what it takes apart is a return type list rather than a value.
     fn parse_multiple_declaration(&mut self) -> Result<StmtId> {

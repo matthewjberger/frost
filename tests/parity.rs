@@ -87,6 +87,23 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a local that is reassigned is declared with `mut`, the word a \
          parameter that writes the caller's value carries",
     ),
+    // The same word at the head of a binding list, which reaches the refusal by
+    // a different road: the list is entered on the name before the comma, so a
+    // leading one is read where the names are and an interior one where the
+    // statement head is.
+    (
+        "a_reassigned_name_in_a_list_is_declared_with_mut",
+        "divide :: fn(a: i64, b: i64) -> (q: i64, r: i64) {\n\
+         \x20   return a / b, a % b\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   var quotient, remainder := divide(7, 2)\n\
+         \x20   quotient = quotient + 1\n\
+         \x20   quotient + remainder\n\
+         }\n",
+        "a local that is reassigned is declared with `mut`, the word a \
+         parameter that writes the caller's value carries",
+    ),
     // An arena answers `Allocation<A>` and no `Resizing<A>`, so nothing can ask
     // one to hand back a bigger run: it has nowhere to grow into, and the run it
     // copied from would stay out until the next reset. Refused against the

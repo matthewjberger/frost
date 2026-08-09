@@ -568,7 +568,7 @@ const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
     if (kind == TokenKind::Lbrace) {
         return const_block(p, at)
     }
-    // `mut name : T = expr` and `name := expr` both bind. A `var` written
+    // `mut name : T = expr` and `name := expr` both bind. A `mut` written
     // without a type is the same binding with a word in front of it.
     if (kind == TokenKind::KwMut) {
         advance(p)

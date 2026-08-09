@@ -15,9 +15,10 @@
 // `fixed.frost` over an arena run safe rather than a convention.
 //
 // `arena_take` and `arena_give` are the byte-level pair under the carve, and
-// they are what `Allocation<Arena>` is made of. There is no third: growing a run
-// is `Resizing<A>`, which an arena declares none of, because it has nowhere to
-// grow into and the run it copied from would stay out until the next reset.
+// they are what `Allocation<Arena>` is made of. Growing a run is a bundle of its
+// own, `Resizing<A>`, and the heap is what declares one: a bump allocator would
+// answer by carving a second run and copying, and the run it copied from stays
+// out until the next reset.
 
 import "mem.frost"
 import "allocation.frost"

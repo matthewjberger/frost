@@ -18,9 +18,10 @@
 // writes through a bounds-checked slice. `carve`, `carve_grow` and `carve_give`
 // are the typed face over them, and they hold the one reinterpret each way.
 //
-// A source is a pair: the bundle, which is the three functions, and a value the
-// three are given, which is whatever state the source keeps. An arena keeps its
-// backing and its offset; the heap keeps nothing, and its state holds no fields.
+// A source is a pair: the bundle, whose fields are the functions, and a value
+// those functions are given, which is whatever state the source keeps. An arena
+// keeps its backing and its offset; the heap keeps nothing, and its state holds
+// no fields.
 //
 // What a run carved out of a source may outlive is the region check's question
 // and not this file's. A call site handing an arena in gets the same answer it

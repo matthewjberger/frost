@@ -42,9 +42,9 @@ Slot :: enum { Empty, Used, Gone }
 // bounds-checked and this file has no `unsafe` of its own. What is unchecked is
 // the allocation, and that lives in mem.frost.
 //
-// `ops` is a parameter and no field. A capability a value has to be used with
-// the same way every time belongs in that value's type: two bundles over one
-// table would put a key where the other one would never look for it.
+// `ops` sits in the type and takes no storage. A capability a value has to be
+// used with the same way every time belongs in that value's type: two bundles
+// over one table would put a key where the other one would look elsewhere.
 Map :: linear struct($K: Type, $V: Type, $ops: Hashing<K>) {
     keys: []K,
     values: []V,
