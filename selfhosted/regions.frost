@@ -1009,35 +1009,76 @@ check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
 // stands for whatever the instance binds, and a template's own parse reaches
 // here before any instance has said what that is.
 check_indexable :: fn(mut p: Parser, base: i64, ty: i64) {
-    if (is_array_ty(ty) || is_raw_pointer(ty) || is_pointer(ty)) {
+    // A distinct type is its own type, so a run it is represented by is not a
+    // run it holds: `Row :: distinct [4]i64` is a Row, and reading an element
+    // out of one reaches past what declaring it asked for. Asked before the
+    // rest, since every predicate below answers about the representation, which
+    // is what everything that is not this question wants.
+    if (is_distinct(ty) == false) {
+        if (is_array_ty(ty) || is_raw_pointer(ty)) {
+            return
+        }
+        if (is_struct_ty(ty) && (is_columns_ty(p, ty) || is_slab_ty(p, ty))) {
+            return
+        }
+    }
+    // What this walk cannot name it says nothing about. A template's own parse
+    // reaches here with its parameter standing for whatever an instance binds,
+    // and refusing on that would refuse every generic that indexes.
+    if (ty < 0 || ty == TY_PARAM || ty == TY_VOID) {
         return
     }
     // A name nothing declares reads as an i64 here, since that is what the
     // local table hands back for a name it has never seen. The walk that
     // resolves names says what is wrong with it, and one fault is one report.
     node := arena_at(p.arena, base)
-    pos := node.pos
     if (node.kind == NodeKind::Var
         && name_is_known(p, node.val, node.c) == false) {
         return
     }
-    if (is_struct_ty(ty) && is_columns_ty(p, ty) == false
-        && is_slab_ty(p, ty) == false) {
-        report_where(p.modules, p.src, pos)
-        report("indexing reads an element out of a run, and this is a ")
-        report_type_name(p, ty)
-        frost_rt_recover_note()
+    report_where(p.modules, p.src, node.pos)
+    report("indexing reads an element out of a run, and this is a ")
+    report_type_name(p, ty)
+    frost_rt_recover_escape()
+}
+
+// What a cast converts: one number into another. A struct and a run are held by
+// address and reading one as a number is reading whatever its first word was,
+// which no reader asked for. This compiler emitted the conversion and left the
+// backend to make of it what it would.
+//
+// A distinct type over a number counts, the way every other reading of one
+// does. What this walk cannot name it says nothing about.
+check_cast_converts_numbers :: fn(
+    mut p: Parser,
+    value: i64,
+    target: i64,
+    pos: i64
+) {
+    from := type_of(p, value)
+    if (numberlike(p, from) && numberlike(p, target)) {
         return
     }
-    if (ty == TY_I64 || ty == TY_I8 || ty == TY_I16 || ty == TY_I32
-        || ty == TY_U8 || ty == TY_U16 || ty == TY_U32 || ty == TY_U64
-        || ty == TY_ISIZE || ty == TY_USIZE || ty == TY_F32 || ty == TY_F64
-        || ty == TY_BOOL) {
-        report_where(p.modules, p.src, pos)
-        report("indexing reads an element out of a run, and this is a ")
-        report_type_name(p, ty)
-        frost_rt_recover_note()
+    if (unnameable(from) || unnameable(target)) {
+        return
     }
+    report_where(p.modules, p.src, pos)
+    report("cast converts between numbers, and this is asked to turn a ")
+    report_type_name(p, from)
+    report(" into a ")
+    report_type_name(p, target)
+    // Ends this declaration, the way the bootstrap ends it. What the value
+    // turned out to be is what the rest of the body was read against, so
+    // carrying on reports faults that follow from this one.
+    frost_rt_recover_escape()
+}
+
+numberlike :: fn(mut p: Parser, ty: i64) -> bool {
+    (is_integer(ty) || is_float(ty) || distinct_repr(ty) == TY_BOOL)
+}
+
+unnameable :: fn(ty: i64) -> bool {
+    (ty < 0 || ty == TY_PARAM || ty == TY_VOID)
 }
 
 // The declared name a misspelling was probably meant to be, where one name is
@@ -1214,6 +1255,9 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             eid = next_element
         }
         return
+    }
+    if (kind == NodeKind::Cast) {
+        check_cast_converts_numbers(p, node.a, node.val, node.pos)
     }
     if (kind == NodeKind::Bin || kind == NodeKind::Index
         || kind == NodeKind::SliceFrom) {

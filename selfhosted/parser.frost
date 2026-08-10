@@ -5594,6 +5594,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         advance(p)
         value := parse_expr(p)
+        refuse_unbound_variant(p, value)
         // What the name binds is recorded for the rest of this parse, so an
         // argument at a call below it can be typed where it is written. It is
         // read the way the emitters read the same binding: the two tables name
@@ -7400,6 +7401,25 @@ expected_variant_enum :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         return p.expected_alt
     }
     -1
+}
+
+// A `.Variant` bound to a name that says no type. Everywhere else one is
+// written there is something to read the enum off: an annotation, a parameter,
+// a field, the place an assignment lands in. A `:=` has none of those, and the
+// literal reached the tables with no enum, where a later pass indexed the -1 it
+// was carrying.
+refuse_unbound_variant :: fn(mut p: Parser, value: i64) {
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::StructLit || node.val != (-1) || node.c == 0) {
+        return
+    }
+    report_where(p.modules, p.src, node.pos)
+    report("`.")
+    report_src(p.src, node.b, node.c)
+    report("` takes its enum from what the context expects, and this binding has no type to take it from; annotate it or write `Enum::")
+    report_src(p.src, node.b, node.c)
+    report("`")
+    frost_rt_recover_escape()
 }
 
 // `.Variant` and `.Variant { field = value }`, the construction counterpart of

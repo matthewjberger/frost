@@ -472,6 +472,64 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A distinct type is its own type, so a run it is represented by is not a
+    // run it holds. Every predicate in the self-hosted compiler answers about
+    // the representation, which is what everything that is not this question
+    // wants, so asking one of them let a `Row` index as the array behind it.
+    (
+        "a_distinct_type_is_not_the_run_behind_it",
+        "import \"io.frost\"
+         Row :: distinct [4]i64
+         take :: fn(r: Row) -> i64 { r[2] }
+         main :: fn() -> i64 { 0 }
+",
+        "indexing reads an element out of a run, and this is a Row",
+    ),
+    // A `.Variant` takes its enum from what is around it, and a `:=` says
+    // nothing. The self-hosted compiler carried the -1 that stood for "not
+    // decided" into the tables, and a later pass indexed an arena with it.
+    (
+        "a_variant_bound_with_no_type_says_so",
+        "import \"io.frost\"
+         Colour :: enum { Red, Green }
+         main :: fn() -> i64 {
+             c := .Red
+             0
+         }
+",
+        "`.Red` takes its enum from what the context expects, and this binding \
+         has no type to take it from; annotate it or write `Enum::Red`",
+    ),
+    // A cast converts one number into another. A struct is held by address, so
+    // reading one as a number reads whatever its first word was. The
+    // self-hosted compiler had no such check and emitted the conversion.
+    (
+        "a_cast_converts_between_numbers",
+        "import \"io.frost\"
+         P :: struct { a: i64 }
+         main :: fn() -> i64 {
+             p := P { a = 1 }
+             n := cast($i64, p)
+             print(\"{}\n\", n)
+             0
+         }
+",
+        "cast converts between numbers, and this is asked to turn a P into a i64",
+    ),
+    // How many a fixed array holds is half of what its type is, and the
+    // self-hosted compiler spelled `[4]i64` and `[]i64` alike.
+    (
+        "an_array_type_says_how_many_it_holds",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             v := [1, 2, 3]
+             n := cast($i64, v)
+             print(\"{}\n\", n)
+             0
+         }
+",
+        "cast converts between numbers, and this is asked to turn a [3]i64 into a i64",
+    ),
     // A name that is not there, wherever it stands. The bootstrap said it at
     // the statement and the self-hosted compiler at the name, and the two had
     // three sentences between them for one fault: an assignment and an address

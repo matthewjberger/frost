@@ -1112,7 +1112,14 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
         return
     }
     if (is_array_ty(held)) {
-        report("[]")
+        // A fixed array says how many it holds, which is half of what its type
+        // is: `[4]i64` and `[]i64` are two types and were spelled alike here.
+        length := array_length(p, held)
+        report("[")
+        if (length >= 0) {
+            report_int(length)
+        }
+        report("]")
         report_type_name(p, array_element(p, held))
         return
     }
