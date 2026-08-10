@@ -3366,18 +3366,6 @@ fn spoken(report: &str) -> Vec<String> {
         .collect()
 }
 
-// The file each report comes from, by its own name, in the order the reports
-// were made. Each compiler spells a path its own way, and what is being
-// compared is which file and in what order rather than how it is written.
-fn named_file_stems(report: &str) -> Vec<String> {
-    named_files(report)
-        .into_iter()
-        .map(|held| {
-            held.rsplit(['/', '\\']).next().unwrap_or(&held).to_string()
-        })
-        .collect()
-}
-
 #[test]
 fn both_compilers_report_a_programs_files_in_one_order() {
     let Some(compiler) = build_self_hosted_compiler("filesboth") else {
@@ -3409,10 +3397,10 @@ fn both_compilers_report_a_programs_files_in_one_order() {
 {bootstrap}
 {hosted}"
         );
-        let order = named_file_stems(&bootstrap);
+        let order = named_files(&bootstrap);
         assert_eq!(
             order,
-            named_file_stems(&hosted),
+            named_files(&hosted),
             "the two named the files of {name} in different orders:
 {bootstrap}
 {hosted}"

@@ -670,7 +670,7 @@ fn lint_paths(arguments: &[String]) -> Result<bool> {
         let source = fs::read_to_string(file)
             .with_context(|| format!("reading {}", file.display()))?;
         let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
-        let entry = register_entry_file(file, &base);
+        let entry = register_entry_file(file);
         let mut lexer = Lexer::new(&source);
         let Ok(tokens) = lexer.tokenize() else {
             continue;
@@ -1019,7 +1019,7 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         .unwrap_or_default();
     // The entry file is a file like any other, so a diagnostic from it should
     // name one rather than a bare line number.
-    let entry = register_entry_file(Path::new(&cli.file), &base_dir);
+    let entry = register_entry_file(Path::new(&cli.file));
     let positions: Vec<Position> = lexer
         .positions()
         .iter()

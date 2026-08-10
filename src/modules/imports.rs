@@ -619,13 +619,27 @@ pub struct ModulePlan {
 
 // The file named on the command line, registered so a diagnostic from it names
 // a file like every other one does rather than a bare line number.
-pub fn register_entry_file(path: &Path, base_dir: &Path) -> u32 {
-    let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
+//
+// Named from where the build was started: a file under that directory is named
+// relative to it, and one outside it by its file name. That is what the reader
+// typed for every ordinary invocation, and it is what the self-hosted compiler
+// answers. Reading it off the file's own parent instead had nothing to strip
+// for a bare `frost x.frost`, whose parent is the empty path, so the fallback
+// rendered the whole canonical path and a Windows verbatim prefix came out as
+// `\?\C:/\/Users/...`.
+pub fn register_entry_file(path: &Path) -> u32 {
     let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    crate::source_map::register_at(
-        &relative_module_name(&key, &root),
-        &key.to_string_lossy(),
-    )
+    let here = std::env::current_dir()
+        .and_then(|held| held.canonicalize())
+        .unwrap_or_default();
+    let named = match key.strip_prefix(&here) {
+        Ok(under) => relative_module_name(under, Path::new("")),
+        Err(_) => key
+            .file_name()
+            .map(|held| held.to_string_lossy().into_owned())
+            .unwrap_or_else(|| key.to_string_lossy().into_owned()),
+    };
+    crate::source_map::register_at(&named, &key.to_string_lossy())
 }
 
 pub fn resolve_imports(
