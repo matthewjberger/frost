@@ -1285,6 +1285,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         }
         if (kind == NodeKind::Bin) {
             check_flags_operator(p, node.val, node.a, node.b, node.pos)
+            check_distinct_comparison(p, node.val, node.a, node.b, node.pos)
         }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
@@ -1486,6 +1487,66 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
 // to say that the number is not what this is. Reading one as its representation
 // is still allowed, so a program that means the arithmetic writes the
 // conversion and gets it.
+// A comparison reads both sides, and a distinct type read as its representation
+// is the thing its declaration says it is not. The rule is asked of a binding,
+// a return, an argument and an assignment; this was the site it was missing
+// from, so `n == Key::Left` with `n` an `i64` was a question anyone could ask
+// and nothing answered it.
+//
+// A written number is exempt for the reason it is exempt everywhere: it takes
+// the other side's type before the two are compared, so by here they agree. A
+// flags type says this in its own words and has already spoken.
+check_distinct_comparison :: fn(
+    mut p: Parser,
+    op: i64,
+    left: i64,
+    right: i64,
+    at: i64
+) {
+    if (op_answers_truth(op) == false) {
+        return
+    }
+    // A number written down, or a constant that stands for one, takes the
+    // other side's type before the two are compared. The bootstrap types it
+    // that way as it lowers; here the question is asked of what was written.
+    if (untyped_literal(p, left) || untyped_literal(p, right)) {
+        return
+    }
+    left_ty := through_borrow_ty(p, type_of(p, left))
+    right_ty := through_borrow_ty(p, type_of(p, right))
+    if (left_ty == right_ty) {
+        return
+    }
+    mut named := left_ty
+    if (is_distinct(named) == false) {
+        named = right_ty
+    }
+    if (is_distinct(named) == false || is_flags_type(p, named)) {
+        return
+    }
+    if (unnameable(left_ty) || unnameable(right_ty)) {
+        return
+    }
+    report_where(p.modules, p.src, at)
+    report("'")
+    report_type_name(p, named)
+    report("' is compared only with itself, and this is a '")
+    report_type_name(p, left_ty)
+    report("' against a '")
+    report_type_name(p, right_ty)
+    report("'")
+    frost_rt_recover_escape()
+}
+
+// A borrow of a value put beside that value is the two of them, which is what
+// a comparison is about, so the question is asked of what a borrow names.
+through_borrow_ty :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_borrow(ty)) {
+        return pointee(p, ty)
+    }
+    ty
+}
+
 check_flags_operator :: fn(
     mut p: Parser,
     op: i64,

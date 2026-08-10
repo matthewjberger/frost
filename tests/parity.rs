@@ -472,6 +472,24 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A comparison reads both sides, and reading a distinct type as the number
+    // behind it is what its declaration says it is not. The rule was asked of a
+    // binding, a return, an argument and an assignment and not of this, so the
+    // one question a named ordinal set exists to answer went unanswered.
+    (
+        "a_distinct_type_is_compared_only_with_itself",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   n := 80\n\
+         \x20   if (n == Key::Left) { print(\"wrong\\n\") }\n\
+         \x20   0\n\
+         }\n",
+        "'Key' is compared only with itself, and this is a 'i64' against a \
+         'Key'",
+    ),
     // Two ordinal sets over one representation, which is what a scancode and a
     // mouse button are. Naming the values under each type is what makes handing
     // one to the other a question the compiler answers. The bootstrap had a
@@ -3959,6 +3977,26 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // The other half of the comparison rule: a number written down, or a
+    // constant standing for one, takes the type it is compared against, so a
+    // set's own bound reads without a cast. The two compilers reach that by
+    // different roads and have to answer alike.
+    (
+        "a_number_compared_with_a_distinct_type_takes_it",
+        "import \"io.frost\"\n\
+         COUNT :: 512\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   key := cast($Key, 80)\n\
+         \x20   if (key < COUNT && key == Key::Left && key > 0) {\n\
+         \x20       print(\"in\\n\")\n\
+         \x20   }\n\
+         \x20   0\n\
+         }\n",
+        "in\n",
+    ),
     // A bit is declared the way every value named under a type is. Only the
     // spelling of the declaration moved, so the operators a set answers and
     // the number each bit stands for are what they were.

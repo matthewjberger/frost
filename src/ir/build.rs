@@ -7121,6 +7121,7 @@ impl<'a> FunctionLowering<'a> {
                 (left, &left_type),
                 (right, &right_type),
             )?;
+            self.check_distinct_comparison(&left_type, &right_type)?;
             // Two enum values are compared by their tags, which for an enum
             // whose variants carry nothing is the whole value. A variant with
             // fields makes the question ambiguous, since `.Some { value = 1 }`
@@ -7439,6 +7440,40 @@ impl<'a> FunctionLowering<'a> {
             Type::Ref(inner) | Type::RefMut(inner) => self.flags_name_of(inner),
             _ => None,
         }
+    }
+
+    // A comparison reads both sides, and a distinct type read as its
+    // representation is the thing its declaration says it is not. The rule is
+    // asked of a binding, a return, an argument and an assignment; this was the
+    // site it was missing from, so `n == Key::Left` with `n` an `i64` was a
+    // question anyone could ask and nothing answered it.
+    //
+    // A written number is exempt for the reason it is exempt everywhere: it
+    // takes the other side's type before the two are compared, so by here they
+    // agree. A flags type says this in its own words and has already spoken.
+    fn check_distinct_comparison(
+        &self,
+        left: &Type,
+        right: &Type,
+    ) -> Result<()> {
+        let left = through_borrow(left);
+        let right = through_borrow(right);
+        if left == right {
+            return Ok(());
+        }
+        let named = match (left, right) {
+            (Type::Distinct(name, _), _) | (_, Type::Distinct(name, _)) => name,
+            _ => return Ok(()),
+        };
+        if self.builder.flags.contains_key(named) {
+            return Ok(());
+        }
+        let readable = crate::modules::imports::demangle_private_names(named);
+        bail!(
+            "'{readable}' is compared only with itself, and this is a '{}' against a '{}'",
+            spelled(left),
+            spelled(right)
+        )
     }
 
     // A set of bits answers to union, intersection and whether it is the same

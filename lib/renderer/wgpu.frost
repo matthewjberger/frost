@@ -1788,7 +1788,7 @@ command_encoder_finish :: fn(
     descriptor: ^CommandBufferDescriptor
 ) -> CommandBuffer {
     held := unsafe { wgpuCommandEncoderFinish(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_command_buffer()) {
         unsafe { frost_rt_error("wgpu: command_encoder_finish answered with nothing\n") }
         frost_rt_die()
     }
@@ -1803,7 +1803,7 @@ command_encoder_begin_compute_pass :: fn(
     descriptor: ^ComputePassDescriptor
 ) -> ComputePassEncoder {
     held := unsafe { wgpuCommandEncoderBeginComputePass(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_compute_pass_encoder()) {
         unsafe { frost_rt_error("wgpu: command_encoder_begin_compute_pass answered with nothing\n") }
         frost_rt_die()
     }
@@ -1818,7 +1818,7 @@ command_encoder_begin_render_pass :: fn(
     descriptor: ^RenderPassDescriptor
 ) -> RenderPassEncoder {
     held := unsafe { wgpuCommandEncoderBeginRenderPass(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_render_pass_encoder()) {
         unsafe { frost_rt_error("wgpu: command_encoder_begin_render_pass answered with nothing\n") }
         frost_rt_die()
     }
@@ -2075,7 +2075,7 @@ compute_pipeline_get_bind_group_layout :: fn(
     group_index: u32
 ) -> BindGroupLayout {
     held := unsafe { wgpuComputePipelineGetBindGroupLayout(handle, group_index) }
-    if (held == null_handle()) {
+    if (held == no_bind_group_layout()) {
         unsafe { frost_rt_error("wgpu: compute_pipeline_get_bind_group_layout answered with nothing\n") }
         frost_rt_die()
     }
@@ -2100,7 +2100,7 @@ device_create_bind_group :: fn(
     descriptor: ^BindGroupDescriptor
 ) -> BindGroup {
     held := unsafe { wgpuDeviceCreateBindGroup(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_bind_group()) {
         unsafe { frost_rt_error("wgpu: device_create_bind_group answered with nothing\n") }
         frost_rt_die()
     }
@@ -2115,7 +2115,7 @@ device_create_bind_group_layout :: fn(
     descriptor: ^BindGroupLayoutDescriptor
 ) -> BindGroupLayout {
     held := unsafe { wgpuDeviceCreateBindGroupLayout(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_bind_group_layout()) {
         unsafe { frost_rt_error("wgpu: device_create_bind_group_layout answered with nothing\n") }
         frost_rt_die()
     }
@@ -2130,7 +2130,7 @@ device_create_buffer :: fn(
     descriptor: ^BufferDescriptor
 ) -> Buffer {
     held := unsafe { wgpuDeviceCreateBuffer(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_buffer()) {
         unsafe { frost_rt_error("wgpu: device_create_buffer answered with nothing\n") }
         frost_rt_die()
     }
@@ -2145,7 +2145,7 @@ device_create_command_encoder :: fn(
     descriptor: ^CommandEncoderDescriptor
 ) -> CommandEncoder {
     held := unsafe { wgpuDeviceCreateCommandEncoder(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_command_encoder()) {
         unsafe { frost_rt_error("wgpu: device_create_command_encoder answered with nothing\n") }
         frost_rt_die()
     }
@@ -2160,7 +2160,7 @@ device_create_compute_pipeline :: fn(
     descriptor: ^ComputePipelineDescriptor
 ) -> ComputePipeline {
     held := unsafe { wgpuDeviceCreateComputePipeline(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_compute_pipeline()) {
         unsafe { frost_rt_error("wgpu: device_create_compute_pipeline answered with nothing\n") }
         frost_rt_die()
     }
@@ -2187,7 +2187,7 @@ device_create_pipeline_layout :: fn(
     descriptor: ^PipelineLayoutDescriptor
 ) -> PipelineLayout {
     held := unsafe { wgpuDeviceCreatePipelineLayout(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_pipeline_layout()) {
         unsafe { frost_rt_error("wgpu: device_create_pipeline_layout answered with nothing\n") }
         frost_rt_die()
     }
@@ -2202,7 +2202,7 @@ device_create_query_set :: fn(
     descriptor: ^QuerySetDescriptor
 ) -> QuerySet {
     held := unsafe { wgpuDeviceCreateQuerySet(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_query_set()) {
         unsafe { frost_rt_error("wgpu: device_create_query_set answered with nothing\n") }
         frost_rt_die()
     }
@@ -2229,7 +2229,7 @@ device_create_render_bundle_encoder :: fn(
     descriptor: ^RenderBundleEncoderDescriptor
 ) -> RenderBundleEncoder {
     held := unsafe { wgpuDeviceCreateRenderBundleEncoder(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_render_bundle_encoder()) {
         unsafe { frost_rt_error("wgpu: device_create_render_bundle_encoder answered with nothing\n") }
         frost_rt_die()
     }
@@ -2244,7 +2244,7 @@ device_create_render_pipeline :: fn(
     descriptor: ^RenderPipelineDescriptor
 ) -> RenderPipeline {
     held := unsafe { wgpuDeviceCreateRenderPipeline(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_render_pipeline()) {
         unsafe { frost_rt_error("wgpu: device_create_render_pipeline answered with nothing\n") }
         frost_rt_die()
     }
@@ -2259,7 +2259,7 @@ device_create_sampler :: fn(
     descriptor: ^SamplerDescriptor
 ) -> Sampler {
     held := unsafe { wgpuDeviceCreateSampler(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_sampler()) {
         unsafe { frost_rt_error("wgpu: device_create_sampler answered with nothing\n") }
         frost_rt_die()
     }
@@ -2274,7 +2274,7 @@ device_create_shader_module :: fn(
     descriptor: ^ShaderModuleDescriptor
 ) -> ShaderModule {
     held := unsafe { wgpuDeviceCreateShaderModule(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_shader_module()) {
         unsafe { frost_rt_error("wgpu: device_create_shader_module answered with nothing\n") }
         frost_rt_die()
     }
@@ -2289,7 +2289,7 @@ device_create_texture :: fn(
     descriptor: ^TextureDescriptor
 ) -> Texture {
     held := unsafe { wgpuDeviceCreateTexture(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_texture()) {
         unsafe { frost_rt_error("wgpu: device_create_texture answered with nothing\n") }
         frost_rt_die()
     }
@@ -2328,7 +2328,7 @@ device_get_adapter_info :: fn(
 wgpuDeviceGetQueue :: extern fn(handle: Device) -> Queue
 device_get_queue :: fn(handle: Device) -> Queue {
     held := unsafe { wgpuDeviceGetQueue(handle) }
-    if (held == null_handle()) {
+    if (held == no_queue()) {
         unsafe { frost_rt_error("wgpu: device_get_queue answered with nothing\n") }
         frost_rt_die()
     }
@@ -2365,7 +2365,7 @@ instance_create_surface :: fn(
     descriptor: ^SurfaceDescriptor
 ) -> Surface {
     held := unsafe { wgpuInstanceCreateSurface(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_surface()) {
         unsafe { frost_rt_error("wgpu: instance_create_surface answered with nothing\n") }
         frost_rt_die()
     }
@@ -2671,7 +2671,7 @@ render_bundle_encoder_finish :: fn(
     descriptor: ^RenderBundleDescriptor
 ) -> RenderBundle {
     held := unsafe { wgpuRenderBundleEncoderFinish(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_render_bundle()) {
         unsafe { frost_rt_error("wgpu: render_bundle_encoder_finish answered with nothing\n") }
         frost_rt_die()
     }
@@ -2946,7 +2946,7 @@ render_pipeline_get_bind_group_layout :: fn(
     group_index: u32
 ) -> BindGroupLayout {
     held := unsafe { wgpuRenderPipelineGetBindGroupLayout(handle, group_index) }
-    if (held == null_handle()) {
+    if (held == no_bind_group_layout()) {
         unsafe { frost_rt_error("wgpu: render_pipeline_get_bind_group_layout answered with nothing\n") }
         frost_rt_die()
     }
@@ -3033,7 +3033,7 @@ texture_create_view :: fn(
     descriptor: ^TextureViewDescriptor
 ) -> TextureView {
     held := unsafe { wgpuTextureCreateView(handle, descriptor) }
-    if (held == null_handle()) {
+    if (held == no_texture_view()) {
         unsafe { frost_rt_error("wgpu: texture_create_view answered with nothing\n") }
         frost_rt_die()
     }

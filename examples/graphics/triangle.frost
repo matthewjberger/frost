@@ -190,7 +190,7 @@ main :: fn() -> i64 {
     }
     if (adapter_slot.ready == 0) { return 11 }
     adapter := adapter_slot.handle
-    if (adapter == null_handle()) { return 24 }
+    if (adapter == no_adapter()) { return 24 }
 
     // The device.
     mut device_slot: DeviceSlot =
@@ -208,7 +208,7 @@ main :: fn() -> i64 {
     }
     if (device_slot.ready == 0) { return 12 }
     device := device_slot.handle
-    if (device == null_handle()) { return 25 }
+    if (device == no_device()) { return 25 }
     queue := device_get_queue(device)
 
     // The swapchain. The format comes from the surface rather than from a

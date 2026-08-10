@@ -11,7 +11,7 @@
 
 import "mem.frost"
 
-export Window, is_no_window, Event, event_new, event_kind, event_number,
+export Window, no_window, is_no_window, Event, event_new, event_kind, event_number,
     event_u32_at, event_f32_at, event_scancode, event_key_repeat,
     event_mouse_x, event_mouse_y, event_mouse_dx, event_mouse_dy,
     event_button, event_wheel_x, event_wheel_y,
@@ -179,9 +179,16 @@ event_window_height :: fn(e: Event) -> i64 { event_u32_at(e, 24) }
 // creation answers with. SDL says why in `sdl_error`. This asks the question
 // rather than handing out such a window, so nothing here builds a `Window` out
 // of an address: the only ones a program holds are the ones SDL made.
-is_no_window :: fn(w: Window) -> bool {
+// The window that names nothing, which is what a failed creation answers with.
+// It carries the type, so asking whether a window is it is a question about two
+// windows rather than about a window and an address.
+no_window :: fn() -> Window {
     zero := 0
-    w == unsafe { ptr_cast($u8, zero) }
+    unsafe { ptr_cast($u8, zero) }
+}
+
+is_no_window :: fn(w: Window) -> bool {
+    w == no_window()
 }
 
 // A NUL-terminated copy of a string, for the calls below. C reads one until a
