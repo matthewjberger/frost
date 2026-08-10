@@ -279,6 +279,29 @@ fn answer_targets(tokens: &mut [Token]) {
     }
 }
 
+// What a module is called, without the directories above it.
+fn file_name_of(module: &str) -> &str {
+    module.rsplit(['/', '\\']).next().unwrap_or(module)
+}
+
+// Where a name is first written in a file, for a report about the name rather
+// than about a declaration. Expressions are numbered as they are made, so the
+// first one holding it is the first one written.
+fn locate_use(ast: &Ast, name: &str, message: String) -> anyhow::Error {
+    for index in 0..ast.expressions.len() {
+        let held = ExprId(index as u32);
+        if let Expression::Identifier(written) = ast.expr(held)
+            && ast.name(*written) == name
+        {
+            return anyhow::Error::new(crate::diagnostic::LocatedError {
+                position: ast.position_of(ast.expr_span(held)),
+                message,
+            });
+        }
+    }
+    anyhow::anyhow!("{message}")
+}
+
 /// A compile-time conditional, decided while the tokens are still tokens.
 ///
 /// The branch that is not taken is removed from the stream, so nothing after
@@ -1190,9 +1213,21 @@ impl Walk<'_> {
             let used = FileNames::of(module, &source.ast, &body, &[]);
             for name in &used.used {
                 if let Some((first, second)) = ambiguous.get(name) {
-                    bail!(
-                        "'{name}' is exported by two modules {module} imports, {first} and {second}; read one of them under another name with `import \"...\" ({name} as ...)`"
-                    );
+                    // By file name. What each compiler calls a module
+                    // otherwise depends on where the build was started from,
+                    // and this sentence is compared word for word.
+                    let first = file_name_of(first);
+                    let second = file_name_of(second);
+                    // Where the name is written, which is where there is no
+                    // answer to give. The file is what the caret names, so the
+                    // sentence says "this file" rather than naming it again.
+                    return Err(locate_use(
+                        &source.ast,
+                        name,
+                        format!(
+                            "'{name}' is exported by two modules this file imports, {first} and {second}; read one of them under another name with `import \"...\" ({name} as ...)`"
+                        ),
+                    ));
                 }
             }
         }

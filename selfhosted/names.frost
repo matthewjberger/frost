@@ -226,11 +226,14 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
                 report("'")
                 report_src(p.src, offset, length)
                 report("' is exported by two modules this file imports, ")
+                // By file name. What either compiler calls a module otherwise
+                // depends on where the build was started from, and this
+                // sentence is compared word for word.
                 first := arena_at(p.modules, module_at(p.modules, held.off))
-                report_cstr(first.path)
+                report_cstr(file_name(first.name))
                 report(" and ")
                 second := arena_at(p.modules, module_at(p.modules, entry.off))
-                report_cstr(second.path)
+                report_cstr(file_name(second.name))
                 report("; read one of them under another name with `import \"...\" (")
                 report_src(p.src, offset, length)
                 report(" as ...)`")

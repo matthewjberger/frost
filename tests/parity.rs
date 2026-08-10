@@ -3270,6 +3270,90 @@ fn named_files(report: &str) -> Vec<String> {
         .collect()
 }
 
+// Programs of several files, refused by both. The single-file table above
+// cannot reach what these are for: which file a report comes from, and the
+// order the files are reported in. A program is one source laid out with what
+// a file imports before the file, so that is the order both compilers say
+// things in, and the bootstrap reported the entry file first for a while.
+//
+// The first entry is the file to compile; the rest are beside it.
+// One program of several files: what it is called, the files beside it, and the
+// files its reports name in the order they are named.
+type AcrossFiles = (
+    &'static str,
+    &'static [(&'static str, &'static str)],
+    &'static [&'static str],
+);
+
+const REFUSED_ACROSS_FILES: &[AcrossFiles] = &[
+    (
+        "a_program_of_three_files_reports_them_in_reading_order",
+        &[
+            (
+                "entry.frost",
+                "import \"alpha.frost\"
+                 import \"io.frost\"
+                 alignof :: 3
+                 main :: fn() -> i64 {
+                     print(\"{}\n\", aval())
+                     0
+                 }
+",
+            ),
+            (
+                "alpha.frost",
+                "import \"gamma.frost\"
+                 export aval
+                 aval :: fn() -> i64 { gval() }
+                 typename :: 2
+",
+            ),
+            (
+                "gamma.frost",
+                "export gval
+                 gval :: fn() -> i64 { 3 }
+                 sizeof :: 1
+",
+            ),
+        ],
+        &["gamma.frost", "alpha.frost", "entry.frost"],
+    ),
+    // Two modules offering one name, and a file that imports both and writes
+    // it. There is no answer to give, and the reader is told where the name
+    // stands. The bootstrap said it without a place at all, and the two named
+    // the modules differently: one echoed the import and the other spelled
+    // where the file is, which is what the build was started from.
+    (
+        "a_name_two_imports_offer_is_reported_where_it_is_written",
+        &[
+            (
+                "entry.frost",
+                "import \"one.frost\"
+                 import \"two.frost\"
+                 import \"io.frost\"
+                 main :: fn() -> i64 {
+                     print(\"{}\n\", shared())
+                     0
+                 }
+",
+            ),
+            (
+                "one.frost",
+                "export shared
+                 shared :: fn() -> i64 { 1 }
+",
+            ),
+            (
+                "two.frost",
+                "export shared
+                 shared :: fn() -> i64 { 2 }
+",
+            ),
+        ],
+        &["entry.frost"],
+    ),
+];
+
 // What a compiler said, apart from where it said it. A diagnostic is a header
 // naming the position, the line it is about, and a caret with the words after
 // it. The words are the claim; the rest is the place, which the two count from
@@ -3280,6 +3364,70 @@ fn spoken(report: &str) -> Vec<String> {
         .filter_map(|line| line.split_once("^ "))
         .map(|(_, said)| said.trim_end().to_string())
         .collect()
+}
+
+// The file each report comes from, by its own name, in the order the reports
+// were made. Each compiler spells a path its own way, and what is being
+// compared is which file and in what order rather than how it is written.
+fn named_file_stems(report: &str) -> Vec<String> {
+    named_files(report)
+        .into_iter()
+        .map(|held| {
+            held.rsplit(['/', '\\']).next().unwrap_or(&held).to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn both_compilers_report_a_programs_files_in_one_order() {
+    let Some(compiler) = build_self_hosted_compiler("filesboth") else {
+        return;
+    };
+    for (name, files, wanted) in REFUSED_ACROSS_FILES {
+        let directory = std::env::temp_dir().join(support::unique(name));
+        std::fs::create_dir_all(&directory).unwrap();
+        for (held, source) in *files {
+            std::fs::write(directory.join(held), source).unwrap();
+        }
+        let entry = directory.join(files[0].0);
+        let (built, bootstrap) = bootstrap_report_at(name, &entry);
+        assert!(!built, "the bootstrap accepted {name}, which it refuses");
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &entry)
+            .output()
+            .unwrap();
+        let hosted = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !run.status.success(),
+            "the self-hosted compiler built {name}, which the bootstrap refuses"
+        );
+        let said = spoken(&bootstrap);
+        let hosted_said = spoken(&hosted);
+        assert_eq!(
+            said, hosted_said,
+            "the two said different things about {name}:
+{bootstrap}
+{hosted}"
+        );
+        let order = named_file_stems(&bootstrap);
+        assert_eq!(
+            order,
+            named_file_stems(&hosted),
+            "the two named the files of {name} in different orders:
+{bootstrap}
+{hosted}"
+        );
+        assert_eq!(
+            order,
+            wanted
+                .iter()
+                .map(|held| held.to_string())
+                .collect::<Vec<_>>(),
+            "{name} was not reported in reading order:
+{bootstrap}"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }
 
 // Where the range ends is one answer, and two things have to give it: the fold

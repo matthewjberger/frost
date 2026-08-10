@@ -5,6 +5,7 @@ import "json.frost"
 import "lexer.frost"
 
 export json_reports, SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
+    file_name,
     joined_path, join_path, module_at, report_where, line_of, column_of, file_of,
     resolve_imports, search_roots_from, manifest_roots, source_with_room,
     manifest_above
