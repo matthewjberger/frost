@@ -2859,11 +2859,21 @@ field_sigil_at :: fn(mut p: Parser, start: i64) -> i64 {
         if (kind == TokenKind::Dollar) {
             return ahead
         }
-        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) {
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
+            || kind == TokenKind::Lt) {
             depth = depth + 1
         }
-        if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) {
+        if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+            || kind == TokenKind::Gt) {
             depth = depth - 1
+        }
+        // The comma between two fields is optional, so what ends this field is
+        // the start of the next one as much as it is a comma or the brace. A
+        // type never holds a name followed by a colon: a function type writes
+        // what it takes and not what those are called.
+        if (depth <= 0 && ahead > start && kind == TokenKind::Ident
+            && peek_kind(p, ahead + 1) == TokenKind::Colon) {
+            return -1
         }
         if (depth <= 0
             && (kind == TokenKind::Comma || kind == TokenKind::Rbrace)) {

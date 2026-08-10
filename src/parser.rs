@@ -2460,6 +2460,11 @@ impl<'a> Parser<'a> {
         // The whole of the type, not only what opens it. `f: fn($T) -> $T`
         // carries the sigil twice inside a function type, and it is the same
         // second spelling there as it is on a bare name.
+        //
+        // The comma between two fields is optional, so what ends this field is
+        // the start of the next one as much as it is a comma or the brace. A
+        // type never holds a name followed by a colon: a function type writes
+        // what it takes and not what those are called.
         let mut ahead = 0usize;
         let mut depth = 0usize;
         loop {
@@ -2472,9 +2477,18 @@ impl<'a> Parser<'a> {
                         ),
                     ));
                 }
-                Token::LeftParentheses | Token::LeftBracket => depth += 1,
-                Token::RightParentheses | Token::RightBracket => {
-                    depth = depth.saturating_sub(1)
+                Token::LeftParentheses
+                | Token::LeftBracket
+                | Token::LessThan => depth += 1,
+                Token::RightParentheses
+                | Token::RightBracket
+                | Token::GreaterThan => depth = depth.saturating_sub(1),
+                Token::Identifier(_)
+                    if depth == 0
+                        && ahead > 0
+                        && matches!(self.peek_nth(ahead + 1), Token::Colon) =>
+                {
+                    return Ok(());
                 }
                 Token::Comma | Token::RightBrace if depth == 0 => {
                     return Ok(());

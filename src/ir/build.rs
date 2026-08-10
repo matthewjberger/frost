@@ -6539,7 +6539,12 @@ impl<'a> FunctionLowering<'a> {
                 {
                     return self.lower_expression(value, expected);
                 }
-                bail!("unknown variable '{name}'");
+                // Where the name is written, not where the statement is. A
+                // statement may name two things that are not there.
+                locate(
+                    Err(anyhow::anyhow!("unknown variable '{name}'")),
+                    self.at_expression(expression),
+                )?
             }
             Expression::Function(parameters, return_sig, body)
             | Expression::Proc(parameters, return_sig, body) => {
@@ -7755,6 +7760,18 @@ impl<'a> FunctionLowering<'a> {
         }
         if let Some(target) = self.bundle_field_function(callee) {
             return self.lower_direct_call(&target, &arguments);
+        }
+        // A bare name in callee position that is neither a variable nor a
+        // function is a call to something that is not there, and saying it is
+        // an unknown variable describes a reading of the line nobody wrote.
+        if let Some(name) = &callee_name
+            && self.resolve_variable(name).is_none()
+            && !self.builder.constants.contains_key(name)
+        {
+            return locate(
+                Err(anyhow::anyhow!("call to undefined function '{name}'")),
+                self.at_expression(callee),
+            );
         }
         self.lower_indirect_call(callee, &arguments)
     }
@@ -9113,7 +9130,12 @@ impl<'a> FunctionLowering<'a> {
         if let Expression::Identifier(name) = self.ast.expr(target) {
             let name = self.ast.name(*name).to_string();
             let Some(local) = self.resolve_variable(&name) else {
-                bail!("assignment to unknown variable '{name}'");
+                // One sentence for one fault, wherever the name stands. What
+                // the reader was doing with it is on the line the caret is on.
+                return locate(
+                    Err(anyhow::anyhow!("unknown variable '{name}'")),
+                    self.at_expression(target),
+                );
             };
             let target_type = self.type_of_local(local);
             // A name holding a borrow of a scalar names the storage it borrows,
@@ -10084,7 +10106,10 @@ impl<'a> FunctionLowering<'a> {
                         let address = self.address_of_local(held, &ty);
                         return Ok((address, ty));
                     }
-                    bail!("address of unknown variable '{name}'");
+                    return locate(
+                        Err(anyhow::anyhow!("unknown variable '{name}'")),
+                        self.at_expression(place),
+                    );
                 };
                 self.mark_in_memory(local);
                 let pointee = self.type_of_local(local);
@@ -10698,7 +10723,10 @@ impl<'a> FunctionLowering<'a> {
             Expression::Identifier(name) => {
                 let name = self.ast.name(name).to_string();
                 let Some(local) = self.resolve_variable(&name) else {
-                    bail!("unknown variable '{name}'");
+                    return locate(
+                        Err(anyhow::anyhow!("unknown variable '{name}'")),
+                        self.at_expression(base),
+                    );
                 };
                 match self.type_of_local(local) {
                     Type::Array(element, count) => {
@@ -10885,7 +10913,10 @@ impl<'a> FunctionLowering<'a> {
                     {
                         return self.struct_place(value);
                     }
-                    bail!("unknown variable '{name}'");
+                    return locate(
+                        Err(anyhow::anyhow!("unknown variable '{name}'")),
+                        self.at_expression(base),
+                    );
                 };
                 match self.type_of_local(local) {
                     Type::Struct(struct_name) => {

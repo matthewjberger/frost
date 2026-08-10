@@ -250,9 +250,12 @@ fn past_when(tokens: &[Token], at: usize) -> usize {
 // `when` as well as inside one.
 //
 // After the conditionals, since a condition is read as the names it was written
-// with. A name being declared or naming a field is left alone: the declaration
-// is refused by name further on, and telling the reader that beats a parse that
-// fails on a `true` they did not write.
+// with. Only where a value is read: a name reached through a `.` or a `::` is a
+// field or a variant of something else, one followed by a `:` or an `=` names a
+// field where it is declared or where a literal fills it in, and one followed
+// by a `::` is a declaration. The declaration is refused by name further on,
+// and telling the reader that beats a parse that fails on a `true` they did not
+// write.
 fn answer_targets(tokens: &mut [Token]) {
     for index in 0..tokens.len() {
         let Token::Identifier(name) = &tokens[index] else {
@@ -261,12 +264,14 @@ fn answer_targets(tokens: &mut [Token]) {
         let Some(holds) = target_constant(name) else {
             continue;
         };
-        if index > 0 && matches!(tokens[index - 1], Token::Dot) {
+        if index > 0
+            && matches!(tokens[index - 1], Token::Dot | Token::DoubleColon)
+        {
             continue;
         }
         if matches!(
             tokens.get(index + 1),
-            Some(Token::Colon | Token::DoubleColon)
+            Some(Token::Colon | Token::DoubleColon | Token::Assign)
         ) {
             continue;
         }

@@ -383,6 +383,67 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'Ops' is declared twice here, and a name means one thing wherever it \
          is written; rename one of them",
     ),
+    // A name that is not there, wherever it stands. The bootstrap said it at
+    // the statement and the self-hosted compiler at the name, and the two had
+    // three sentences between them for one fault: an assignment and an address
+    // each named what the reader was doing with the name, and an index reached
+    // the rule about a base whose type is not known and told the reader to wrap
+    // a name that does not exist in an `unsafe` block.
+    (
+        "an_unknown_name_reads_the_same_wherever_it_stands",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             x := 1 + missing
+             0
+         }
+",
+        "unknown variable 'missing' (did you mean 'main'?)",
+    ),
+    (
+        "an_unknown_name_indexed_is_still_an_unknown_name",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             x := missing[2]
+             0
+         }
+",
+        "unknown variable 'missing' (did you mean 'main'?)",
+    ),
+    (
+        "an_unknown_name_assigned_to_is_still_an_unknown_name",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             missing = 4
+             0
+         }
+",
+        "unknown variable 'missing' (did you mean 'main'?)",
+    ),
+    // A name in callee position that is neither a variable nor a function is a
+    // call to something that is not there. One compiler called it an unknown
+    // variable, which describes a reading of the line nobody wrote.
+    (
+        "a_call_to_a_name_that_is_not_there_says_so",
+        "import \"io.frost\"
+         compute :: fn(n: i64) -> i64 { n }
+         main :: fn() -> i64 { computf(3) }
+",
+        "call to undefined function 'computf' (did you mean 'compute'?)",
+    ),
+    // The name suggested is any the file declares. The self-hosted compiler
+    // looked in the symbol table, which holds functions, so a misspelt constant
+    // or type got no suggestion where the bootstrap gave one.
+    (
+        "a_misspelt_type_is_suggested_like_any_other_name",
+        "import \"io.frost\"
+         Widget :: struct { n: i64 }
+         main :: fn() -> i64 {
+             x := Widgex
+             0
+         }
+",
+        "unknown variable 'Widgex' (did you mean 'Widget'?)",
+    ),
     // A generic struct is written `Pair<i64>` and the shape reads as the same
     // thing for a call, which is what other languages do with it. Frost writes a
     // call's compile-time argument among its arguments with a `$` on it, so what

@@ -44,15 +44,18 @@ lint_program :: fn(mut p: Parser) -> i64 {
 // near enough or two are equally near. A guess a reader takes without checking
 // is worse than no suggestion, so an ambiguous one is withheld.
 //
-// Answers the index into the symbol table, since the name itself is a range in
-// the source.
+// Answers the index into the table of declared names, since the name itself is
+// a range in the source. That table rather than the symbol table: a misspelling
+// is as likely to be of a constant or a type as of a function, and a name
+// interns at its first mention, so the symbol table holds calls as well as
+// declarations.
 nearest_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut best: i64 = -1
     mut best_distance: i64 = 0
     mut ties: i64 = 0
     mut index: i64 = 0
-    while (index < p.fns.count) {
-        sym := arena_at(p.fns, index)
+    while (index < p.declared.count) {
+        sym := arena_at(p.declared, index)
         if (sym.len > 0 && bytes_equal(p.src, sym.off, off, len) == false) {
             held := name_distance(p.src, sym.off, sym.len, off, len)
             // Near enough to be a misspelling rather than a different word.

@@ -999,14 +999,20 @@ check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
     report("unknown variable '")
     report_src(p.src, off, len)
     report("'")
+    report_nearest_name(p, off, len)
+    frost_rt_recover_escape()
+}
+
+// The declared name a misspelling was probably meant to be, where one name is
+// near enough and no other is as near.
+report_nearest_name :: fn(mut p: Parser, off: i64, len: i64) {
     near := nearest_name(p, off, len)
     if (near >= 0) {
-        sym := arena_at(p.fns, near)
+        sym := arena_at(p.declared, near)
         report(" (did you mean '")
         report_src(p.src, sym.off, sym.len)
         report("'?)")
     }
-    frost_rt_recover_escape()
 }
 
 // What `slice_len` and `str_len` were handed. A length is read off a run, so the
@@ -7606,6 +7612,7 @@ check_calls :: fn(mut p: Parser) {
                 report("call to undefined function '")
                 report_src(p.src, name_off, name_len)
                 report("'")
+                report_nearest_name(p, name_off, name_len)
                 frost_rt_recover_note()
                 // Nothing declares the callee, so nothing says how many
                 // arguments it takes. Counting them against the zero a symbol

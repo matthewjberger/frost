@@ -848,11 +848,21 @@ impl Checker<'_> {
             // recognize rather than what a program can reach. Refusing here is
             // what makes the list of blocks the whole list.
             Expression::Index(base, index) => {
+                // A bare name no scope binds is a name that is not there, and
+                // the walk that resolves names says so. Telling the reader to
+                // wrap it in an `unsafe` block describes a program in which it
+                // exists.
+                let missing = matches!(
+                    ast.expr(*base),
+                    Expression::Identifier(name)
+                        if self.lookup(ast.name(*name)).is_none()
+                );
                 match self.type_of(*base).map(without_borrow) {
                     Some(Type::Ptr(_)) => {
                         self.refuse("indexing a raw pointer", at);
                     }
                     Some(_) => {}
+                    None if missing => {}
                     None => self.refuse(
                         "indexing a value whose type is not known here",
                         at,
