@@ -370,6 +370,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'A' is declared twice here, and a name means one thing wherever it is \
          written; rename one of them",
     ),
+    // A pair the reader has to be pointed at the second of, whichever kind each
+    // is. A value constant is recorded by a pass that runs before the parse, so
+    // the self-hosted compiler was reading a name from further down the file
+    // while a declaration above it was being read, and named that one.
+    (
+        "a_name_declared_twice_names_the_second_of_the_two",
+        "import \"io.frost\"\n\
+         Ops :: struct { n: i64 }\n\
+         Ops :: Ops { n = 1 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'Ops' is declared twice here, and a name means one thing wherever it \
+         is written; rename one of them",
+    ),
     // A generic struct is written `Pair<i64>` and the shape reads as the same
     // thing for a call, which is what other languages do with it. Frost writes a
     // call's compile-time argument among its arguments with a `$` on it, so what

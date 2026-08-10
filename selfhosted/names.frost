@@ -598,6 +598,11 @@ check_name_is_not_declared_twice :: fn(
     // An entry at this very offset is this declaration seen again, which is
     // what a generic function is: its body is parsed once where it is written
     // and once more for every instance a call asks for.
+    //
+    // Only what stands earlier in the file is a report, so the pair is named
+    // once and at the second of the two. Some declarations are recorded by a
+    // pass that runs before the parse, so the table holds names from further
+    // down by the time one above them is read.
     mut seen: i64 = 0
     mut i: i64 = 0
     while (i < p.declared.count) {
@@ -606,7 +611,7 @@ check_name_is_not_declared_twice :: fn(
             && bytes_equal(p.src, entry.off, off, len)) {
             if (entry.off == off) {
                 seen = 1
-            } else {
+            } else if (entry.off < off) {
                 report_declared_twice(p, off, len)
             }
         }
