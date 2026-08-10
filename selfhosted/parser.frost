@@ -851,13 +851,20 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // comparison of a name against a type, and both compilers found that out
     // somewhere further on and reported wherever they got to.
     if (cur(p) == TokenKind::Lt && generic_index_for(p, offset, length) < 0) {
-        first := angled_call_argument(p)
-        if (first >= 0) {
+        closed := angled_call_argument(p)
+        if (closed >= 0) {
             report_where(p.modules, p.src, cur_off(p))
             report("a call writes a compile-time argument among its arguments, so this is written '")
             report_src(p.src, offset, length)
             report("($")
-            report_src(p.src, peek_off(p, first), peek_len(p, first))
+            // The type as it was written, token by token. Read off the tokens
+            // rather than the source so that what the two compilers say does
+            // not depend on where the reader put a space.
+            mut at: i64 = 1
+            while (at < closed) {
+                report_src(p.src, peek_off(p, at), peek_len(p, at))
+                at = at + 1
+            }
             report(", ...)'")
             frost_rt_recover_escape()
         }
@@ -5857,21 +5864,21 @@ column_at :: fn(src: str, off: i64) -> i64 {
 // a number, which no program this would refuse could have done anyway.
 angled_call_argument :: fn(mut p: Parser) -> i64 {
     mut ahead: i64 = 1
-    mut first: i64 = -1
+    mut named: i64 = 0
     while (true) {
         kind := peek_kind(p, ahead)
         if (kind == TokenKind::Ident) {
-            if (first >= 0) {
+            if (named == 1) {
                 return -1
             }
-            first = ahead
+            named = 1
         } else if (kind == TokenKind::Gt) {
-            if (peek_kind(p, ahead + 1) == TokenKind::Lparen) {
-                return first
+            if (peek_kind(p, ahead + 1) == TokenKind::Lparen && named == 1) {
+                return ahead
             }
             return -1
         } else if (kind != TokenKind::Caret && kind != TokenKind::Lbracket
-            && kind != TokenKind::Rbracket) {
+            && kind != TokenKind::Rbracket && kind != TokenKind::Int) {
             return -1
         }
         ahead = ahead + 1

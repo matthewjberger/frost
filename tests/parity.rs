@@ -528,6 +528,22 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "unknown variable 'Widgex' (did you mean 'Widget'?)",
     ),
+    // The type as it was written, whatever shape it is. A length inside the
+    // brackets stopped the reading, so the two compilers fell through to
+    // whatever each made of the rest of the line and said different things.
+    // Rendered from the tokens rather than sliced out of the source, so where
+    // the reader put a space does not reach what either one says.
+    (
+        "a_written_type_argument_is_shown_as_it_was_written",
+        "import \"io.frost\"\n\
+         take :: fn($T: Type, v: [4]i64) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   v := [1, 2, 3, 4]\n\
+         \x20   take< [ 4 ] i64 >(v)\n\
+         }\n",
+        "a call writes a compile-time argument among its arguments, so this is \
+         written 'take($[4]i64, ...)'",
+    ),
     // A generic struct is written `Pair<i64>` and the shape reads as the same
     // thing for a call, which is what other languages do with it. Frost writes a
     // call's compile-time argument among its arguments with a `$` on it, so what

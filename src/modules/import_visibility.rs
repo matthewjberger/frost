@@ -20,7 +20,7 @@
 // valid program, which a check like this may never do.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ast::{
     Ast, ExprId, Expression, Pattern, PatternId, Range32, Statement, StmtId,
@@ -43,6 +43,10 @@ pub struct FileNames {
     pub renamed: HashSet<String>,
     // Each name this file declares more than once, at the second declaration.
     pub twice: Vec<(String, crate::lexer::Position)>,
+    // Where this file is, so the reports of a program made of several can be
+    // put in the order the source is laid out. Empty for the entry file, which
+    // is what everything else is reached from.
+    pub path: PathBuf,
 }
 
 impl FileNames {
@@ -94,6 +98,7 @@ impl FileNames {
             used,
             renamed,
             twice,
+            path: PathBuf::new(),
         }
     }
 }
@@ -135,7 +140,7 @@ pub fn shadowed_imports(
     exports: &HashMap<PathBuf, (String, HashSet<String>)>,
 ) -> Vec<String> {
     let mut reports = Vec::new();
-    for file in files {
+    for (at, file) in files.iter().enumerate() {
         let visible: HashSet<&str> = file
             .imports
             .iter()
@@ -159,6 +164,7 @@ pub fn shadowed_imports(
                 .copied()
                 .unwrap_or_default();
             reports.push((
+                at,
                 position,
                 format!(
                     "at {}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
@@ -167,7 +173,7 @@ pub fn shadowed_imports(
             ));
         }
     }
-    in_source_order(reports)
+    in_source_order(files, reports)
 }
 
 // The reports a walk over a set gathered, in the order the declarations are
@@ -175,12 +181,60 @@ pub fn shadowed_imports(
 // sorting the sentences would put line 10 above line 9: what that compares is
 // text.
 fn in_source_order(
-    mut reports: Vec<(crate::lexer::Position, String)>,
+    files: &[FileNames],
+    mut reports: Vec<(usize, crate::lexer::Position, String)>,
 ) -> Vec<String> {
-    reports.sort_by_key(|(position, _)| {
-        (position.file, position.line, position.column)
+    let order = reading_order(files);
+    let mut rank = vec![0usize; files.len()];
+    for (place, index) in order.iter().enumerate() {
+        rank[*index] = place;
+    }
+    reports.sort_by_key(|(file, position, _)| {
+        (rank[*file], position.line, position.column)
     });
-    reports.into_iter().map(|(_, held)| held).collect()
+    reports.into_iter().map(|(_, _, held)| held).collect()
+}
+
+// The files of a program in the order their source is laid out: what a file
+// imports comes before the file, and the entry file is last. That is the order
+// the self-hosted compiler reads them in, since it lays each module's source
+// down as it reaches it. The entry is `files[0]`, which is where this starts.
+fn reading_order(files: &[FileNames]) -> Vec<usize> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let mut by_path: HashMap<&Path, usize> = HashMap::new();
+    for (index, file) in files.iter().enumerate() {
+        if !file.path.as_os_str().is_empty() {
+            by_path.entry(file.path.as_path()).or_insert(index);
+        }
+    }
+    let mut order = Vec::new();
+    let mut seen = vec![false; files.len()];
+    seen[0] = true;
+    let mut stack = vec![(0usize, 0usize)];
+    while let Some((index, taken)) = stack.pop() {
+        match files[index].imports.get(taken) {
+            Some(import) => {
+                stack.push((index, taken + 1));
+                if let Some(next) = by_path.get(import.as_path()).copied()
+                    && !seen[next]
+                {
+                    seen[next] = true;
+                    stack.push((next, 0));
+                }
+            }
+            None => order.push(index),
+        }
+    }
+    // A file nothing reaches still has its say, after everything that was
+    // reached, in the order the walk recorded it.
+    for (index, reached) in seen.iter().enumerate() {
+        if !reached {
+            order.push(index);
+        }
+    }
+    order
 }
 
 // Every name a file declares that the compiler already owns.
@@ -193,7 +247,7 @@ fn in_source_order(
 // choice a reader made, so the declaration is refused where it is written.
 pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
     let mut reports = Vec::new();
-    for file in files {
+    for (at, file) in files.iter().enumerate() {
         let mut said = HashSet::new();
         for name in &file.declared {
             if !crate::ir::build::COMPILER_NAMES.contains(&name.as_str())
@@ -207,6 +261,7 @@ pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
                 .copied()
                 .unwrap_or_default();
             reports.push((
+                at,
                 position,
                 format!(
                     "at {}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
@@ -215,7 +270,7 @@ pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
             ));
         }
     }
-    in_source_order(reports)
+    in_source_order(files, reports)
 }
 
 // Every name each file used that belongs to a module it did not import, as the

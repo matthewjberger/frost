@@ -1230,7 +1230,7 @@ impl Walk<'_> {
 
         let child_dir =
             full.parent().map(Path::to_path_buf).unwrap_or_default();
-        self.files.push(FileNames::of(
+        let mut named = FileNames::of(
             module,
             &imported.ast,
             &imported.roots,
@@ -1241,7 +1241,11 @@ impl Walk<'_> {
                 self.layers,
                 self.root,
             ),
-        ));
+        );
+        // Where this module is, so a report about it can be put in the order
+        // the source is laid out rather than in the order the walk reached it.
+        named.path = key.to_path_buf();
+        self.files.push(named);
         self.module_exports
             .insert(key.to_path_buf(), (module.to_string(), exports.clone()));
         let renames = module_renames(&imported, &tag);

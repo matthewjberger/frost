@@ -1270,24 +1270,33 @@ impl<'a> Parser<'a> {
     // have done anyway.
     fn angled_call_argument(&self) -> Option<String> {
         let mut ahead = 2usize;
-        let mut first = None;
+        let mut named = 0usize;
+        let mut written = String::new();
         loop {
-            match self.peek_nth(ahead) {
-                Token::Identifier(name) => {
-                    if first.is_some() {
+            let held = self.peek_nth(ahead);
+            match held {
+                Token::Identifier(_) => {
+                    if named == 1 {
                         return None;
                     }
-                    first = Some(name.to_string());
+                    named += 1;
                 }
-                Token::Caret | Token::LeftBracket | Token::RightBracket => {}
+                Token::Caret
+                | Token::LeftBracket
+                | Token::RightBracket
+                | Token::Integer(_) => {}
                 Token::GreaterThan => {
                     return match self.peek_nth(ahead + 1) {
-                        Token::LeftParentheses => first,
+                        Token::LeftParentheses if named == 1 => Some(written),
                         _ => None,
                     };
                 }
                 _ => return None,
             }
+            // The type as it was written, spelling by spelling. Read off the
+            // tokens rather than the source so that what the two compilers say
+            // does not depend on where the reader put a space.
+            written.push_str(&held.to_string());
             ahead += 1;
         }
     }
