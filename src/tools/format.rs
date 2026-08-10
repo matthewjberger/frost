@@ -1068,6 +1068,56 @@ impl Layout<'_> {
         None
     }
 
+    /// Whether one element of a run is a plain number, which is what says the
+    /// run is a block of them rather than a list worth a line each. A leading
+    /// minus is part of the number, and the comma that ends the element is not
+    /// part of what is being asked about.
+    fn is_scalar(&self, element: std::ops::Range<usize>) -> bool {
+        let mut held = element;
+        if matches!(self.tokens.get(held.end - 1), Some(Token::Comma)) {
+            held.end -= 1;
+        }
+        matches!(
+            &self.tokens[held.clone()],
+            [Token::Integer(_) | Token::Float(_) | Token::Float32(_)]
+                | [
+                    Token::Minus,
+                    Token::Integer(_) | Token::Float(_) | Token::Float32(_),
+                ]
+        )
+    }
+
+    /// A run of numbers written out at `indent`, as many to a line as fit.
+    fn fill(
+        &self,
+        parts: &[std::ops::Range<usize>],
+        indent: usize,
+        out: &mut String,
+    ) {
+        let mut line = String::new();
+        for element in parts {
+            let piece = self.flat(element.clone());
+            let width = piece.chars().count();
+            if !line.is_empty()
+                && indent + line.chars().count() + 1 + width > WIDTH
+            {
+                out.push_str(&" ".repeat(indent));
+                out.push_str(&line);
+                out.push('\n');
+                line.clear();
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(&piece);
+        }
+        if !line.is_empty() {
+            out.push_str(&" ".repeat(indent));
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
     /// This run written out at `indent`, over as many lines as it takes.
     ///
     /// One line when it fits. Otherwise the outermost bracket is opened at the
@@ -1101,7 +1151,19 @@ impl Layout<'_> {
         out.push_str(&" ".repeat(indent));
         out.push_str(&self.flat(range.start..open + 1));
         out.push('\n');
-        for element in elements_of(self.tokens, open, close) {
+        let parts = elements_of(self.tokens, open, close);
+        // A run of plain numbers is filled to the width rather than given a
+        // line per element. A line per element says something about a list
+        // whose elements are worth reading one at a time; sixteen floats are a
+        // block, and a column of them says nothing the block does not.
+        if parts.len() > 1
+            && parts.iter().all(|element| self.is_scalar(element.clone()))
+        {
+            self.fill(&parts, indent + 4, out);
+            self.write(close..range.end, indent, out);
+            return;
+        }
+        for element in parts {
             self.write(element, indent + 4, out);
         }
         // What follows the bracket is asked the same question, so a call

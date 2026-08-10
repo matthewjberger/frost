@@ -68,26 +68,7 @@ builder_uint :: fn(mut b: Builder, value: i64) {
         return
     }
     mut digits: [20]u8 = [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     ]
     mut count: i64 = 0
     mut left := value
