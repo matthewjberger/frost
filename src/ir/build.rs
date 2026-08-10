@@ -1485,6 +1485,7 @@ impl IrBuilder {
                 if matches!(return_type, Type::Void) {
                     function.set_terminator(IrTerminator::Return(None));
                 } else {
+                    function.check_answer(&value_type, &return_type)?;
                     let operand =
                         function.coerce(value, &value_type, &return_type)?;
                     function
@@ -5553,6 +5554,36 @@ impl<'a> FunctionLowering<'a> {
         Ok(result)
     }
 
+    // A body's last expression is its answer, so it is held to what a `return`
+    // is held to. Left out, a function could answer with a distinct type by
+    // writing its representation and dropping the word `return`, which is how
+    // the null of every handle type in the bindings was written.
+    //
+    // The value itself is not in hand here, so a written number cannot be told
+    // from a name. It does not need to be: a literal has taken the answer type
+    // by now, and the two agree.
+    fn check_answer(
+        &self,
+        value_type: &Type,
+        return_type: &Type,
+    ) -> Result<()> {
+        if value_type == return_type {
+            return Ok(());
+        }
+        let Type::Distinct(name, _) = return_type else {
+            return Ok(());
+        };
+        let note = if self.builder.flags.contains_key(name) {
+            "a set of bits is built only from the names declared under it"
+        } else {
+            "a distinct type is not its representation"
+        };
+        bail!(
+            "this returns a '{}' and the function answers with a '{return_type}'; {note}",
+            spelled(value_type)
+        )
+    }
+
     fn lower_body_with_defers(
         &mut self,
         body: Range32,
@@ -5594,6 +5625,10 @@ impl<'a> FunctionLowering<'a> {
                 Statement::Expression(expression) if is_last => {
                     let (value, value_type) = locate(
                         self.lower_expression(expression, Some(return_type)),
+                        position,
+                    )?;
+                    locate(
+                        self.check_answer(&value_type, return_type),
                         position,
                     )?;
                     if !self.current_is_terminated() {
@@ -10271,9 +10306,11 @@ impl<'a> FunctionLowering<'a> {
         };
         let target = target.clone();
         let (value, from) = self.lower_expression(arguments[1], None)?;
-        if !is_numeric(&from) || !is_numeric(&target) {
+        if !(is_numeric(&from) && is_numeric(&target))
+            && !names_a_distinct(&from, &target)
+        {
             bail!(
-                "cast converts between numbers, and this is asked to turn a {from} into a {target}"
+                "cast converts between numbers, or names a distinct type for a value of its representation, and this is asked to turn a {from} into a {target}"
             );
         }
         if from == target {
@@ -12515,6 +12552,21 @@ fn zero_operand(ty: &Type) -> IrOperand {
 // error rather than a wrong answer.
 fn is_castable_integer(ty: &Type) -> bool {
     ty.is_integer() || matches!(ty, Type::Bool)
+}
+
+// `cast($Adapter, p)` where `Adapter` is a distinct type over `^u8` and `p` is
+// one: the value takes the name its declaration gives that representation.
+//
+// A distinct type over a number is reached this way already, since both sides
+// are numbers and the gate above lets them through. One over anything else had
+// no spelling at all, so the only such value a program could hold was one an
+// extern was declared to answer with, and a function writing the null of such a
+// type leaned on the answer position not being checked.
+fn names_a_distinct(from: &Type, target: &Type) -> bool {
+    let Type::Distinct(_, repr) = target else {
+        return false;
+    };
+    from == repr.as_ref()
 }
 
 fn is_numeric(ty: &Type) -> bool {

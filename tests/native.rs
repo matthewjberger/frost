@@ -4856,7 +4856,7 @@ fn both_self_hosted_backends_refuse_the_same_programs() {
             "P :: struct { x: i64 }\n\
           bad :: fn() -> i64 { p := P { x = 1 }  return p }\n\
           main :: fn() -> i64 { bad() }\n",
-            "wrong type",
+            "and the function answers with a",
         ),
         // A binding that said what it is.
         (
@@ -5951,7 +5951,7 @@ fn self_hosted_rejects_returning_the_wrong_type() {
         return;
     };
     assert!(
-        message.contains("wrong type"),
+        message.contains("and the function answers with a"),
         "expected a return-type error, got:\n{message}"
     );
 }

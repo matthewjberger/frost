@@ -250,6 +250,13 @@ fn check_rvalue(
         }
         IrRvalue::Cast(operand, target) => {
             check_operand(function, operand)?;
+            // A cast naming a distinct type for a value of its representation
+            // moves no bits, so what it converts between is whatever that
+            // representation is rather than a number.
+            let from = operand_type(function, operand);
+            if names_a_distinct(&from, target) {
+                return Ok(());
+            }
             require_numeric(function, operand)?;
             if !is_numeric(target) {
                 bail!(
@@ -729,6 +736,15 @@ fn require_pointer(
 
 fn is_pointer(ty: &Type) -> bool {
     matches!(ty, Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_))
+}
+
+/// Whether the cast names a distinct type for a value that already has its
+/// representation, which is the one conversion that is not between numbers.
+fn names_a_distinct(from: &Type, target: &Type) -> bool {
+    let Type::Distinct(_, repr) = target else {
+        return false;
+    };
+    from == repr.as_ref()
 }
 
 fn is_numeric(ty: &Type) -> bool {

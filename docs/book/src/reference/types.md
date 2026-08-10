@@ -47,8 +47,16 @@ is an `i32`, and `1.5` where an `f32` is wanted is an `f32`, so neither is a
 narrowing and neither needs a cast. A literal too large for the type it is
 written at is a compile error.
 
-`cast` is for scalars. Reinterpreting a pointer is `ptr_cast`, which lives
-inside `unsafe` (6.8).
+`cast($T, value)` also names a distinct type for a value that already has its
+representation, which is the one conversion it makes that is not between
+numbers: `cast($Key, sdl_scancode())` where `Key` is `distinct i64`, and
+`cast($Adapter, p)` where `Adapter` is `distinct ^u8` and `p` is one. No bits
+move; the value takes the name its declaration gives that representation. This
+is the boundary a foreign number or handle crosses at, and it is written once
+where the value arrives (3.6a).
+
+`cast` is otherwise for scalars. Reinterpreting a pointer as a pointer to
+something else is `ptr_cast`, which lives inside `unsafe` (6.8).
 
 A `^T` and an integer convert to each other in either direction, since a pointer
 is an address and an address is a whole number. A call into C hands the address
@@ -255,9 +263,14 @@ add_meters(m, f)          // error, where f is a Feet
 
 Reading one as its representation is allowed, and a call into C reads it that
 way: a `Meters` is an `i64` in memory. So `printf("%lld\n", m)` works, and
-`n : i64 = m` works. The other direction is checked: a bare number, or a value
-that means something else, cannot become a `Meters`. There is no cast form for a
-distinct type.
+`n : i64 = m` works. The other direction is checked, wherever it is written: a
+binding, a return, an argument, an assignment and a comparison all ask it, and a
+bare number or a value that means something else cannot become a `Meters`. A
+body's last expression is its answer and is asked the same question, so leaving
+the word `return` off does not skip it.
+
+`cast($Meters, n)` is how a number is meant to become one, and it is the only
+way (3.1).
 
 A literal is exempt: it has no type of its own until the context gives it one,
 so `m : Meters = 3` holds.

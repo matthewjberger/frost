@@ -472,6 +472,32 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A body's last expression is its answer, so the nominal rule is asked of it
+    // the way it is asked of a `return`. Both compilers checked the `return`
+    // and neither checked this, so a function could answer with a distinct type
+    // by writing its representation and leaving the word off.
+    (
+        "a_bodys_last_expression_answers_at_the_declared_type",
+        "import \"io.frost\"
+         Meters :: distinct i64
+         take :: fn(n: i64) -> Meters { n }
+         main :: fn() -> i64 { 0 }
+",
+        "this returns a 'i64' and the function answers with a 'Meters'; a distinct type is not its representation",
+    ),
+    // The same rule over a distinct type whose representation is a pointer,
+    // which is what every handle in the bindings is, and where the hole was
+    // being leaned on.
+    (
+        "a_pointer_answers_at_the_handle_type_it_is_declared_as",
+        "import \"io.frost\"
+         Adapter :: distinct ^u8
+         nothing :: fn() -> ^u8 { zero := 0  unsafe { ptr_cast($u8, zero) } }
+         no_adapter :: fn() -> Adapter { nothing() }
+         main :: fn() -> i64 { 0 }
+",
+        "this returns a '^u8' and the function answers with a 'Adapter'; a distinct type is not its representation",
+    ),
     // A comparison reads both sides, and reading a distinct type as the number
     // behind it is what its declaration says it is not. The rule was asked of a
     // binding, a return, an argument and an assignment and not of this, so the
@@ -775,7 +801,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              0
          }
 ",
-        "cast converts between numbers, and this is asked to turn a P into a i64",
+        "cast converts between numbers, or names a distinct type for a value of its representation, and this is asked to turn a P into a i64",
     ),
     // How many a fixed array holds is half of what its type is, and the
     // self-hosted compiler spelled `[4]i64` and `[]i64` alike.
@@ -789,7 +815,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              0
          }
 ",
-        "cast converts between numbers, and this is asked to turn a [3]i64 into a i64",
+        "cast converts between numbers, or names a distinct type for a value of its representation, and this is asked to turn a [3]i64 into a i64",
     ),
     // A name that is not there, wherever it stands. The bootstrap said it at
     // the statement and the self-hosted compiler at the name, and the two had
@@ -3997,6 +4023,23 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n",
         "in\n",
     ),
+    // The construction the rule above needs. A distinct type over a number is
+    // named by a cast already, since both sides are numbers; one over anything
+    // else had no spelling, so the only such value a program could hold came
+    // from an extern declared to answer with it.
+    (
+        "a_cast_names_a_distinct_type_for_its_representation",
+        "import \"io.frost\"\n\
+         Adapter :: distinct ^u8\n\
+         nothing :: fn() -> ^u8 { zero := 0  unsafe { ptr_cast($u8, zero) } }\n\
+         no_adapter :: fn() -> Adapter { cast($Adapter, nothing()) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := no_adapter()\n\
+         \x20   if (held == no_adapter()) { print(\"nothing\\n\") }\n\
+         \x20   0\n\
+         }\n",
+        "nothing\n",
+    ),
     // A bit is declared the way every value named under a type is. Only the
     // spelling of the declaration moved, so the operators a set answers and
     // the number each bit stands for are what they were.
@@ -6103,7 +6146,7 @@ main :: fn() -> i64 {
         "import \"io.frost\"\nGrip :: distinct ^u8\n\
          no_grip :: fn() -> Grip {\n\
          \x20   zero := 0\n\
-         \x20   unsafe { ptr_cast($u8, zero) }\n}\n\
+         \x20   cast($Grip, unsafe { ptr_cast($u8, zero) })\n}\n\
          same :: fn(p: ^Grip) -> i64 {\n\
          \x20   held : Grip = unsafe { p^ }\n\
          \x20   if (held == no_grip()) {\n\

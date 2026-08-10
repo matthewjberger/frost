@@ -1422,6 +1422,24 @@ lower_flags_has :: fn(mut p: Parser, set: i64, wanted: i64) -> i64 {
 
 // A body's last expression is its answer, so in a fallible function that value
 // is the ok side of the failure set just as an explicit `return` is.
+// Mark a body's last statement as the value the function answers with, so the
+// type walk asks of it what it asks of a `return`.
+mark_trailing_answer :: fn(mut p: Parser, body: i64) {
+    if (body == (-1)) {
+        return
+    }
+    mut id := body
+    mut last := body
+    while (id != (-1)) {
+        last = id
+        id = node_next(p, id)
+    }
+    mut node := arena_at(p.arena, last)
+    if (node.kind == NodeKind::ExprStmt) {
+        node.b = 1
+    }
+}
+
 wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
     if (body == (-1)) {
         return
@@ -6961,6 +6979,11 @@ parse_function :: fn(mut p: Parser) -> i64 {
     if (p.result_ty != (-1)) {
         wrap_trailing_ok(p, body)
     }
+    // A body's last expression is its answer, so it is marked as one and held
+    // to what a written `return` is held to. Without the mark the type walk
+    // sees a statement like any other, and a function could answer with a
+    // distinct type by writing its representation and leaving `return` off.
+    mark_trailing_answer(p, body)
     // The branches of an answering `if` become returns first, so each carries
     // what was deferred the way a written `return` does. Afterwards there is
     // nothing left for the trailing walk to put copies in front of.

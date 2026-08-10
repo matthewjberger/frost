@@ -120,7 +120,7 @@ WIDE :: 0.5\n\
 COUNT :: 7\n\
 no_grip :: fn() -> Grip {\n\
 \x20   zero := 0\n\
-\x20   unsafe { ptr_cast($u8, zero) }\n\
+\x20   cast($Grip, unsafe { ptr_cast($u8, zero) })\n\
 }\n\
 through :: fn(p: ^Meters) -> i64 {\n\
 \x20   held : Meters = unsafe { p^ }\n\

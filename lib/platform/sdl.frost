@@ -184,7 +184,7 @@ event_window_height :: fn(e: Event) -> i64 { event_u32_at(e, 24) }
 // windows rather than about a window and an address.
 no_window :: fn() -> Window {
     zero := 0
-    unsafe { ptr_cast($u8, zero) }
+    cast($Window, unsafe { ptr_cast($u8, zero) })
 }
 
 is_no_window :: fn(w: Window) -> bool {

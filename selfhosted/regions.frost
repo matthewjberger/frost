@@ -900,17 +900,26 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         want_single(p, value, p.current_ret)
         value_ty := type_of(p, value)
         if (value_fits(p, value, value_ty, p.current_ret) == false) {
-            report_where(p.modules, p.src, node.pos)
-            report("'")
-            report_src(p.src, p.current_fn_off, p.current_fn_len)
-            report("' returns a value of the wrong type")
-            report_distinct_note(p, value, value_ty, p.current_ret)
-            frost_rt_recover_escape()
+            report_answer_mismatch(p, value, value_ty, node.pos)
         }
         return
     }
     if (kind == NodeKind::ExprStmt) {
         check_types_expr(p, node.a)
+        // The last statement of a body is the value the function answers with,
+        // and the nominal question is asked of it the way it is asked of a
+        // `return`. The parse marked it, since a walk over statements cannot
+        // tell a body's tail from a block's.
+        //
+        // Only that question. What a widening or a narrowing costs is settled
+        // where the value is written, and asking it again here would report a
+        // conversion the answer position never made.
+        if (node.b == 1 && is_distinct(p.current_ret)) {
+            answered := type_of(p, node.a)
+            if (answered != p.current_ret) {
+                report_answer_mismatch(p, node.a, answered, node.pos)
+            }
+        }
         // A call that can fail answers with which of the two happened, and a
         // statement reads neither. Left alone it is a failure the program
         // stepped over, which is the one thing a failure set exists to stop.
@@ -1049,6 +1058,25 @@ check_indexable :: fn(mut p: Parser, base: i64, ty: i64) {
 //
 // A distinct type over a number counts, the way every other reading of one
 // does. What this walk cannot name it says nothing about.
+// What a function answering with the wrong type is told, wherever the value was
+// written: a `return`, or the last expression of the body. One sentence, so the
+// two roads to the same mistake read the same.
+report_answer_mismatch :: fn(
+    mut p: Parser,
+    value: i64,
+    value_ty: i64,
+    at: i64
+) {
+    report_where(p.modules, p.src, at)
+    report("this returns a '")
+    report_type_name(p, value_ty)
+    report("' and the function answers with a '")
+    report_type_name(p, p.current_ret)
+    report("'")
+    report_distinct_note(p, value, value_ty, p.current_ret)
+    frost_rt_recover_escape()
+}
+
 check_cast_converts_numbers :: fn(
     mut p: Parser,
     value: i64,
@@ -1059,11 +1087,18 @@ check_cast_converts_numbers :: fn(
     if (numberlike(p, from) && numberlike(p, target)) {
         return
     }
+    // `cast($Adapter, p)` where `Adapter` is a distinct type over `^u8` and `p`
+    // is one: the value takes the name its declaration gives that
+    // representation. One over a number is reached by the test above, since
+    // both sides are numbers; one over anything else has no other spelling.
+    if (is_distinct(target) && distinct_repr(target) == from) {
+        return
+    }
     if (unnameable(from) || unnameable(target)) {
         return
     }
     report_where(p.modules, p.src, pos)
-    report("cast converts between numbers, and this is asked to turn a ")
+    report("cast converts between numbers, or names a distinct type for a value of its representation, and this is asked to turn a ")
     report_type_name(p, from)
     report(" into a ")
     report_type_name(p, target)

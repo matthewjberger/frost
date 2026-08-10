@@ -21,7 +21,7 @@ surface_format_at :: fn(held: SurfaceCapabilities, index: i64) -> u32 {
 
 Adapter :: distinct ^u8
 no_adapter :: fn() -> Adapter {
-    null_handle()
+    cast($Adapter, null_handle())
 }
 wgpuAdapterRelease :: extern fn(handle: Adapter)
 adapter_release :: fn(handle: Adapter) {
@@ -32,7 +32,7 @@ adapter_release :: fn(handle: Adapter) {
 }
 BindGroup :: distinct ^u8
 no_bind_group :: fn() -> BindGroup {
-    null_handle()
+    cast($BindGroup, null_handle())
 }
 wgpuBindGroupRelease :: extern fn(handle: BindGroup)
 bind_group_release :: fn(handle: BindGroup) {
@@ -43,7 +43,7 @@ bind_group_release :: fn(handle: BindGroup) {
 }
 BindGroupLayout :: distinct ^u8
 no_bind_group_layout :: fn() -> BindGroupLayout {
-    null_handle()
+    cast($BindGroupLayout, null_handle())
 }
 wgpuBindGroupLayoutRelease :: extern fn(handle: BindGroupLayout)
 bind_group_layout_release :: fn(handle: BindGroupLayout) {
@@ -54,7 +54,7 @@ bind_group_layout_release :: fn(handle: BindGroupLayout) {
 }
 Buffer :: distinct ^u8
 no_buffer :: fn() -> Buffer {
-    null_handle()
+    cast($Buffer, null_handle())
 }
 wgpuBufferRelease :: extern fn(handle: Buffer)
 buffer_release :: fn(handle: Buffer) {
@@ -65,7 +65,7 @@ buffer_release :: fn(handle: Buffer) {
 }
 CommandBuffer :: distinct ^u8
 no_command_buffer :: fn() -> CommandBuffer {
-    null_handle()
+    cast($CommandBuffer, null_handle())
 }
 wgpuCommandBufferRelease :: extern fn(handle: CommandBuffer)
 command_buffer_release :: fn(handle: CommandBuffer) {
@@ -76,7 +76,7 @@ command_buffer_release :: fn(handle: CommandBuffer) {
 }
 CommandEncoder :: distinct ^u8
 no_command_encoder :: fn() -> CommandEncoder {
-    null_handle()
+    cast($CommandEncoder, null_handle())
 }
 wgpuCommandEncoderRelease :: extern fn(handle: CommandEncoder)
 command_encoder_release :: fn(handle: CommandEncoder) {
@@ -87,7 +87,7 @@ command_encoder_release :: fn(handle: CommandEncoder) {
 }
 ComputePassEncoder :: distinct ^u8
 no_compute_pass_encoder :: fn() -> ComputePassEncoder {
-    null_handle()
+    cast($ComputePassEncoder, null_handle())
 }
 wgpuComputePassEncoderRelease :: extern fn(handle: ComputePassEncoder)
 compute_pass_encoder_release :: fn(handle: ComputePassEncoder) {
@@ -98,7 +98,7 @@ compute_pass_encoder_release :: fn(handle: ComputePassEncoder) {
 }
 ComputePipeline :: distinct ^u8
 no_compute_pipeline :: fn() -> ComputePipeline {
-    null_handle()
+    cast($ComputePipeline, null_handle())
 }
 wgpuComputePipelineRelease :: extern fn(handle: ComputePipeline)
 compute_pipeline_release :: fn(handle: ComputePipeline) {
@@ -109,7 +109,7 @@ compute_pipeline_release :: fn(handle: ComputePipeline) {
 }
 Device :: distinct ^u8
 no_device :: fn() -> Device {
-    null_handle()
+    cast($Device, null_handle())
 }
 wgpuDeviceRelease :: extern fn(handle: Device)
 device_release :: fn(handle: Device) {
@@ -120,7 +120,7 @@ device_release :: fn(handle: Device) {
 }
 ExternalTexture :: distinct ^u8
 no_external_texture :: fn() -> ExternalTexture {
-    null_handle()
+    cast($ExternalTexture, null_handle())
 }
 wgpuExternalTextureRelease :: extern fn(handle: ExternalTexture)
 external_texture_release :: fn(handle: ExternalTexture) {
@@ -131,7 +131,7 @@ external_texture_release :: fn(handle: ExternalTexture) {
 }
 Instance :: distinct ^u8
 no_instance :: fn() -> Instance {
-    null_handle()
+    cast($Instance, null_handle())
 }
 wgpuInstanceRelease :: extern fn(handle: Instance)
 instance_release :: fn(handle: Instance) {
@@ -142,7 +142,7 @@ instance_release :: fn(handle: Instance) {
 }
 PipelineLayout :: distinct ^u8
 no_pipeline_layout :: fn() -> PipelineLayout {
-    null_handle()
+    cast($PipelineLayout, null_handle())
 }
 wgpuPipelineLayoutRelease :: extern fn(handle: PipelineLayout)
 pipeline_layout_release :: fn(handle: PipelineLayout) {
@@ -153,7 +153,7 @@ pipeline_layout_release :: fn(handle: PipelineLayout) {
 }
 QuerySet :: distinct ^u8
 no_query_set :: fn() -> QuerySet {
-    null_handle()
+    cast($QuerySet, null_handle())
 }
 wgpuQuerySetRelease :: extern fn(handle: QuerySet)
 query_set_release :: fn(handle: QuerySet) {
@@ -164,7 +164,7 @@ query_set_release :: fn(handle: QuerySet) {
 }
 Queue :: distinct ^u8
 no_queue :: fn() -> Queue {
-    null_handle()
+    cast($Queue, null_handle())
 }
 wgpuQueueRelease :: extern fn(handle: Queue)
 queue_release :: fn(handle: Queue) {
@@ -175,7 +175,7 @@ queue_release :: fn(handle: Queue) {
 }
 RenderBundle :: distinct ^u8
 no_render_bundle :: fn() -> RenderBundle {
-    null_handle()
+    cast($RenderBundle, null_handle())
 }
 wgpuRenderBundleRelease :: extern fn(handle: RenderBundle)
 render_bundle_release :: fn(handle: RenderBundle) {
@@ -186,7 +186,7 @@ render_bundle_release :: fn(handle: RenderBundle) {
 }
 RenderBundleEncoder :: distinct ^u8
 no_render_bundle_encoder :: fn() -> RenderBundleEncoder {
-    null_handle()
+    cast($RenderBundleEncoder, null_handle())
 }
 wgpuRenderBundleEncoderRelease :: extern fn(handle: RenderBundleEncoder)
 render_bundle_encoder_release :: fn(handle: RenderBundleEncoder) {
@@ -197,7 +197,7 @@ render_bundle_encoder_release :: fn(handle: RenderBundleEncoder) {
 }
 RenderPassEncoder :: distinct ^u8
 no_render_pass_encoder :: fn() -> RenderPassEncoder {
-    null_handle()
+    cast($RenderPassEncoder, null_handle())
 }
 wgpuRenderPassEncoderRelease :: extern fn(handle: RenderPassEncoder)
 render_pass_encoder_release :: fn(handle: RenderPassEncoder) {
@@ -208,7 +208,7 @@ render_pass_encoder_release :: fn(handle: RenderPassEncoder) {
 }
 RenderPipeline :: distinct ^u8
 no_render_pipeline :: fn() -> RenderPipeline {
-    null_handle()
+    cast($RenderPipeline, null_handle())
 }
 wgpuRenderPipelineRelease :: extern fn(handle: RenderPipeline)
 render_pipeline_release :: fn(handle: RenderPipeline) {
@@ -219,7 +219,7 @@ render_pipeline_release :: fn(handle: RenderPipeline) {
 }
 Sampler :: distinct ^u8
 no_sampler :: fn() -> Sampler {
-    null_handle()
+    cast($Sampler, null_handle())
 }
 wgpuSamplerRelease :: extern fn(handle: Sampler)
 sampler_release :: fn(handle: Sampler) {
@@ -230,7 +230,7 @@ sampler_release :: fn(handle: Sampler) {
 }
 ShaderModule :: distinct ^u8
 no_shader_module :: fn() -> ShaderModule {
-    null_handle()
+    cast($ShaderModule, null_handle())
 }
 wgpuShaderModuleRelease :: extern fn(handle: ShaderModule)
 shader_module_release :: fn(handle: ShaderModule) {
@@ -241,7 +241,7 @@ shader_module_release :: fn(handle: ShaderModule) {
 }
 Surface :: distinct ^u8
 no_surface :: fn() -> Surface {
-    null_handle()
+    cast($Surface, null_handle())
 }
 wgpuSurfaceRelease :: extern fn(handle: Surface)
 surface_release :: fn(handle: Surface) {
@@ -252,7 +252,7 @@ surface_release :: fn(handle: Surface) {
 }
 Texture :: distinct ^u8
 no_texture :: fn() -> Texture {
-    null_handle()
+    cast($Texture, null_handle())
 }
 wgpuTextureRelease :: extern fn(handle: Texture)
 texture_release :: fn(handle: Texture) {
@@ -263,7 +263,7 @@ texture_release :: fn(handle: Texture) {
 }
 TextureView :: distinct ^u8
 no_texture_view :: fn() -> TextureView {
-    null_handle()
+    cast($TextureView, null_handle())
 }
 wgpuTextureViewRelease :: extern fn(handle: TextureView)
 texture_view_release :: fn(handle: TextureView) {
