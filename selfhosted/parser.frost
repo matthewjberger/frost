@@ -2867,6 +2867,11 @@ field_sigil_at :: fn(mut p: Parser, start: i64) -> i64 {
             || kind == TokenKind::Gt) {
             depth = depth - 1
         }
+        // `Vec<Vec<i64>>` closes two at once: the lexer reads `>>` as the shift
+        // it also spells.
+        if (kind == TokenKind::Shr) {
+            depth = depth - 2
+        }
         // The comma between two fields is optional, so what ends this field is
         // the start of the next one as much as it is a comma or the brace. A
         // type never holds a name followed by a colon: a function type writes
@@ -5842,24 +5847,30 @@ column_at :: fn(src: str, off: i64) -> i64 {
     first - start + 1
 }
 
-// The lookahead of the first type in `name<T, U>(...)`, or -1 where what
-// stands here is something else. The cursor is on the `<`.
+// The lookahead of the type in `name<T>(...)`, or -1 where what stands here is
+// something else. The cursor is on the `<`.
+//
+// One type and no comma. `f(a < b, c > (d))` is two arguments, each an ordinary
+// comparison, and reading the comma as a separator between type arguments is
+// what makes this shape ambiguous in the languages that do take it. Without a
+// comma there is nothing to lose: `(a < b) > (c)` weighs a truth value against
+// a number, which no program this would refuse could have done anyway.
 angled_call_argument :: fn(mut p: Parser) -> i64 {
     mut ahead: i64 = 1
     mut first: i64 = -1
     while (true) {
         kind := peek_kind(p, ahead)
         if (kind == TokenKind::Ident) {
-            if (first < 0) {
-                first = ahead
+            if (first >= 0) {
+                return -1
             }
+            first = ahead
         } else if (kind == TokenKind::Gt) {
             if (peek_kind(p, ahead + 1) == TokenKind::Lparen) {
                 return first
             }
             return -1
-        } else if (kind != TokenKind::Comma && kind != TokenKind::Caret
-            && kind != TokenKind::Lbracket
+        } else if (kind != TokenKind::Caret && kind != TokenKind::Lbracket
             && kind != TokenKind::Rbracket) {
             return -1
         }

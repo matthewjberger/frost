@@ -300,6 +300,23 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a field names a type parameter by its name, and '$' is what declares \
          one, so 'held' is written without it",
     ),
+    // The field named is the one carrying the sigil. What ends a field's type
+    // is the next field as much as it is a comma, since the comma between two
+    // is optional, and `Vec<Vec<i64>>` closes two brackets with the one token
+    // the lexer also reads as a shift. Missing either ran the scan into the
+    // field below and named the field above it.
+    (
+        "a_field_sigil_names_the_field_that_carries_it",
+        "import \"io.frost\"\n\
+         Vec :: struct($T: Type) { n: T }\n\
+         Holder :: struct($T: Type) {\n\
+         \x20   a: Vec<Vec<i64>>\n\
+         \x20   held: $T\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a field names a type parameter by its name, and '$' is what declares \
+         one, so 'held' is written without it",
+    ),
     // The same rule anywhere in the type, not only where it opens. A function
     // type in a field carries the sigil past a `(`, and both compilers took it
     // there for a while: the reader looked at the one token after the colon.
@@ -370,6 +387,35 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'A' is declared twice here, and a name means one thing wherever it is \
          written; rename one of them",
     ),
+    // A file naming two of them is told about both. The self-hosted compiler
+    // ended the compile at the first, and the bootstrap sorted its reports as
+    // sentences, which puts line 10 above line 9.
+    (
+        "every_name_declared_twice_is_reported",
+        "import \"io.frost\"\n\
+         Aa :: 1\n\
+         Bb :: 2\n\
+         Aa :: 3\n\
+         Bb :: 4\n\
+         Cc :: 5\n\
+         Dd :: 6\n\
+         Ee :: 7\n\
+         Ff :: 8\n\
+         Gg :: 9\n\
+         Cc :: 10\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'Cc' is declared twice here, and a name means one thing wherever it \
+         is written; rename one of them",
+    ),
+    (
+        "every_compiler_name_taken_is_reported",
+        "import \"io.frost\"\n\
+         sizeof :: 1\n\
+         typename :: 2\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'typename' is the compiler's own, and a name means one thing wherever \
+         it is written; call it something else",
+    ),
     // A pair the reader has to be pointed at the second of, whichever kind each
     // is. A value constant is recorded by a pass that runs before the parse, so
     // the self-hosted compiler was reading a name from further down the file
@@ -391,32 +437,29 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // a name that does not exist in an `unsafe` block.
     (
         "an_unknown_name_reads_the_same_wherever_it_stands",
-        "import \"io.frost\"
-         main :: fn() -> i64 {
-             x := 1 + missing
-             0
-         }
-",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   x := 1 + missing\n\
+         \x20   0\n\
+         }\n",
         "unknown variable 'missing' (did you mean 'main'?)",
     ),
     (
         "an_unknown_name_indexed_is_still_an_unknown_name",
-        "import \"io.frost\"
-         main :: fn() -> i64 {
-             x := missing[2]
-             0
-         }
-",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   x := missing[2]\n\
+         \x20   0\n\
+         }\n",
         "unknown variable 'missing' (did you mean 'main'?)",
     ),
     (
         "an_unknown_name_assigned_to_is_still_an_unknown_name",
-        "import \"io.frost\"
-         main :: fn() -> i64 {
-             missing = 4
-             0
-         }
-",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   missing = 4\n\
+         \x20   0\n\
+         }\n",
         "unknown variable 'missing' (did you mean 'main'?)",
     ),
     // A name in callee position that is neither a variable nor a function is a
@@ -424,10 +467,9 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // variable, which describes a reading of the line nobody wrote.
     (
         "a_call_to_a_name_that_is_not_there_says_so",
-        "import \"io.frost\"
-         compute :: fn(n: i64) -> i64 { n }
-         main :: fn() -> i64 { computf(3) }
-",
+        "import \"io.frost\"\n\
+         compute :: fn(n: i64) -> i64 { n }\n\
+         main :: fn() -> i64 { computf(3) }\n",
         "call to undefined function 'computf' (did you mean 'compute'?)",
     ),
     // The name suggested is any the file declares. The self-hosted compiler
@@ -435,13 +477,12 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // or type got no suggestion where the bootstrap gave one.
     (
         "a_misspelt_type_is_suggested_like_any_other_name",
-        "import \"io.frost\"
-         Widget :: struct { n: i64 }
-         main :: fn() -> i64 {
-             x := Widgex
-             0
-         }
-",
+        "import \"io.frost\"\n\
+         Widget :: struct { n: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   x := Widgex\n\
+         \x20   0\n\
+         }\n",
         "unknown variable 'Widgex' (did you mean 'Widget'?)",
     ),
     // A generic struct is written `Pair<i64>` and the shape reads as the same
@@ -3429,6 +3470,22 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   held := [1, 2, 3]\n\
          \x20   print(\"{}\\n\", caller(held))\n\
+         \x20   0\n\
+         }\n",
+        "0\n",
+    ),
+    // A comparison, not a call writing its type argument. Reading the comma as
+    // a separator between type arguments is what makes the shape ambiguous in
+    // the languages that take it, and it refused this program for a while.
+    (
+        "a_comparison_either_side_of_a_comma_is_a_comparison",
+        "import \"io.frost\"\n\
+         pick :: fn(a: bool, b: bool) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   x := 1\n\
+         \x20   y := 2\n\
+         \x20   z := 3\n\
+         \x20   print(\"{}\\n\", pick(x < y, z > (1)))\n\
          \x20   0\n\
          }\n",
         "0\n",

@@ -1252,26 +1252,34 @@ impl<'a> Parser<'a> {
     // The first type in `name<T, U>(...)` written after a name that is not a
     // generic type, or nothing where the shape is something else.
     //
+    // The type in `name<T>(...)` written after a name that is not a generic
+    // type, or nothing where the shape is something else.
+    //
     // A generic struct is written `Pair<i64>`, and the shape reads as the same
     // thing for a call, which is what other languages do with it. Frost writes a
     // call's compile-time argument among its arguments with a `$` on it, so this
-    // is a comparison chain of a name against a type, and both compilers found
-    // that out somewhere further on and said something about wherever they got
-    // to rather than about what was written.
+    // is a comparison of a name against a type, and both compilers found that
+    // out somewhere further on and said something about wherever they got to
+    // rather than about what was written.
+    //
+    // One type and no comma. `f(a < b, c > (d))` is two arguments, each an
+    // ordinary comparison, and reading the comma as a separator between type
+    // arguments is what makes this shape ambiguous in the languages that do
+    // take it. Without a comma there is nothing to lose: `(a < b) > (c)` weighs
+    // a truth value against a number, which no program this would refuse could
+    // have done anyway.
     fn angled_call_argument(&self) -> Option<String> {
         let mut ahead = 2usize;
         let mut first = None;
         loop {
             match self.peek_nth(ahead) {
                 Token::Identifier(name) => {
-                    if first.is_none() {
-                        first = Some(name.to_string());
+                    if first.is_some() {
+                        return None;
                     }
+                    first = Some(name.to_string());
                 }
-                Token::Comma
-                | Token::Caret
-                | Token::LeftBracket
-                | Token::RightBracket => {}
+                Token::Caret | Token::LeftBracket | Token::RightBracket => {}
                 Token::GreaterThan => {
                     return match self.peek_nth(ahead + 1) {
                         Token::LeftParentheses => first,
@@ -2483,6 +2491,9 @@ impl<'a> Parser<'a> {
                 Token::RightParentheses
                 | Token::RightBracket
                 | Token::GreaterThan => depth = depth.saturating_sub(1),
+                // `Vec<Vec<i64>>` closes two at once: the lexer reads `>>` as
+                // the shift it also spells.
+                Token::ShiftRight => depth = depth.saturating_sub(2),
                 Token::Identifier(_)
                     if depth == 0
                         && ahead > 0

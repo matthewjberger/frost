@@ -107,6 +107,9 @@ impl FileNames {
 // under one symbol, which whichever assembler read the output caught in one and
 // let through in the other.
 pub fn declared_twice(files: &[FileNames]) -> Vec<String> {
+    // In the order the declarations are written, which is the order this holds
+    // them in. Sorting the sentences would put line 10 above line 9, since what
+    // that compares is text.
     let mut reports = Vec::new();
     for file in files {
         for (name, position) in &file.twice {
@@ -116,7 +119,6 @@ pub fn declared_twice(files: &[FileNames]) -> Vec<String> {
             ));
         }
     }
-    reports.sort();
     reports
 }
 
@@ -156,14 +158,29 @@ pub fn shadowed_imports(
                 .get(name.as_str())
                 .copied()
                 .unwrap_or_default();
-            reports.push(format!(
-                "at {}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
-                position.describe()
+            reports.push((
+                position,
+                format!(
+                    "at {}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
+                    position.describe()
+                ),
             ));
         }
     }
-    reports.sort();
-    reports
+    in_source_order(reports)
+}
+
+// The reports a walk over a set gathered, in the order the declarations are
+// written. The set has no order of its own, so something has to fix one, and
+// sorting the sentences would put line 10 above line 9: what that compares is
+// text.
+fn in_source_order(
+    mut reports: Vec<(crate::lexer::Position, String)>,
+) -> Vec<String> {
+    reports.sort_by_key(|(position, _)| {
+        (position.file, position.line, position.column)
+    });
+    reports.into_iter().map(|(_, held)| held).collect()
 }
 
 // Every name a file declares that the compiler already owns.
@@ -189,14 +206,16 @@ pub fn declared_compiler_names(files: &[FileNames]) -> Vec<String> {
                 .get(name.as_str())
                 .copied()
                 .unwrap_or_default();
-            reports.push(format!(
-                "at {}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
-                position.describe()
+            reports.push((
+                position,
+                format!(
+                    "at {}: '{name}' is the compiler's own, and a name means one thing wherever it is written; call it something else",
+                    position.describe()
+                ),
             ));
         }
     }
-    reports.sort();
-    reports
+    in_source_order(reports)
 }
 
 // Every name each file used that belongs to a module it did not import, as the
