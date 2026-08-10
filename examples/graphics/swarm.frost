@@ -306,20 +306,20 @@ turn_the_swarm :: fn(mut world: World) {
 // The three keys that change the world while it runs.
 watch_the_keys :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
-    if (input_key_pressed(held, KEY_SPACE)) {
+    if (input_key_pressed(held, Key::Space)) {
         if (world_state(world) == RUNNING) {
             world_state_request(world, PAUSED)
         } else {
             world_state_request(world, RUNNING)
         }
     }
-    if (input_key_pressed(held, KEY_X)) {
+    if (input_key_pressed(held, Key::X)) {
         thin_the_swarm(world)
     }
-    if (input_key_pressed(held, KEY_C)) {
+    if (input_key_pressed(held, Key::C)) {
         grow_the_swarm(world)
     }
-    if (input_key_pressed(held, KEY_R)) {
+    if (input_key_pressed(held, Key::R)) {
         mut kit := ecs_resource($Swarm, world, resource_of($Swarm, world))
         kit.sphere_wanted = kit.sphere_wanted == false
         ecs_resource_set(world, resource_of($Swarm, world), kit)

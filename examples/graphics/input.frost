@@ -39,18 +39,18 @@ main :: fn() -> i64 {
 
     print("running. escape or close the window to finish.\n")
     while (platform_poll(p)) {
-        if (key_pressed(p, KEY_ESCAPE)) {
+        if (key_pressed(p, Key::Escape)) {
             break
         }
         // Counting edges rather than states is what says the two are different:
         // a held key adds one, not one per frame.
-        mut code: i64 = 0
+        mut code: Key = 0
         while (code < KEY_COUNT) {
             if (key_pressed(p, code)) { key_downs = key_downs + 1 }
             if (key_released(p, code)) { key_ups = key_ups + 1 }
             code = code + 1
         }
-        mut held: i64 = 0
+        mut held: Button = 0
         while (held < BUTTON_COUNT) {
             if (button_pressed(p, held)) { clicks = clicks + 1 }
             held = held + 1

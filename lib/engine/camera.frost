@@ -99,10 +99,10 @@ camera_view_projection :: fn(c: Camera, w: i64, h: i64) -> Mat4 {
 camera_advance :: fn(mut c: Camera, held: Input, step: f32) {
     mut turn: f32 = 0.0
     mut tilt: f32 = 0.0
-    if (input_key_down(held, KEY_LEFT)) { turn = turn + 1.0 }
-    if (input_key_down(held, KEY_RIGHT)) { turn = turn - 1.0 }
-    if (input_key_down(held, KEY_UP)) { tilt = tilt + 1.0 }
-    if (input_key_down(held, KEY_DOWN)) { tilt = tilt - 1.0 }
+    if (input_key_down(held, Key::Left)) { turn = turn + 1.0 }
+    if (input_key_down(held, Key::Right)) { turn = turn - 1.0 }
+    if (input_key_down(held, Key::Up)) { tilt = tilt + 1.0 }
+    if (input_key_down(held, Key::Down)) { tilt = tilt - 1.0 }
     c.yaw = c.yaw + turn * c.look_speed * step
     c.pitch = clamp_pitch(c.pitch + tilt * c.look_speed * step)
 
@@ -111,12 +111,12 @@ camera_advance :: fn(mut c: Camera, held: Input, step: f32) {
     forward := camera_forward(c)
     right := vec3_normalize(vec3_cross(forward, vec3(0.0, 1.0, 0.0)))
     mut motion := vec3(0.0, 0.0, 0.0)
-    if (input_key_down(held, KEY_W)) { motion = vec3_add(motion, forward) }
-    if (input_key_down(held, KEY_S)) { motion = vec3_sub(motion, forward) }
-    if (input_key_down(held, KEY_D)) { motion = vec3_add(motion, right) }
-    if (input_key_down(held, KEY_A)) { motion = vec3_sub(motion, right) }
-    if (input_key_down(held, KEY_E)) { motion = vec3_add(motion, vec3(0.0, 1.0, 0.0)) }
-    if (input_key_down(held, KEY_Q)) { motion = vec3_sub(motion, vec3(0.0, 1.0, 0.0)) }
+    if (input_key_down(held, Key::W)) { motion = vec3_add(motion, forward) }
+    if (input_key_down(held, Key::S)) { motion = vec3_sub(motion, forward) }
+    if (input_key_down(held, Key::D)) { motion = vec3_add(motion, right) }
+    if (input_key_down(held, Key::A)) { motion = vec3_sub(motion, right) }
+    if (input_key_down(held, Key::E)) { motion = vec3_add(motion, vec3(0.0, 1.0, 0.0)) }
+    if (input_key_down(held, Key::Q)) { motion = vec3_sub(motion, vec3(0.0, 1.0, 0.0)) }
 
     // Normalised, so holding two keys is not faster than holding one, and
     // skipped when nothing is held, since normalising zero is a division by it.

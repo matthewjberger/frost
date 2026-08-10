@@ -421,8 +421,8 @@ the frame took rides along in the `Input`, so the clock has one reading and
 everything paced by it reads the same one: `turn_things` takes its step from
 there too.
 
-Every accessor comes in two forms, `key_down(p, KEY_W)` and
-`input_key_down(held, KEY_W)`, because a main loop has the window in hand and a
+Every accessor comes in two forms, `key_down(p, Key::W)` and
+`input_key_down(held, Key::W)`, because a main loop has the window in hand and a
 system has only what it was given. The first is a one-line call to the second.
 
 The camera lives in the world for the same reason: `world_camera_set` puts it

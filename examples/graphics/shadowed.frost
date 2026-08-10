@@ -601,15 +601,11 @@ Built :: struct {
 // and nothing else.
 ShowInset :: struct { on: bool }
 
-// SDL's scancode for B, which the platform layer does not name because a
-// program that wants a key past the handful it lists writes the number.
-KEY_B :: 5
-
 // Hold B and the corner goes. Held rather than toggled, so there is no edge to
 // remember and the picture says which way round it is.
 watch_inset :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
-    on := input_key_pressed(held, KEY_B) == false
+    on := input_key_pressed(held, Key::B) == false
     ecs_resource_set(
         world,
         resource_of($ShowInset, world),

@@ -3,7 +3,7 @@
 //
 //   mut p := platform_open("Title", 960, 540)
 //   while (platform_poll(p)) {
-//       if (key_pressed(p, KEY_ESCAPE)) { break }
+//       if (key_pressed(p, Key::Escape)) { break }
 //       move(step * delta_seconds(p))
 //   }
 //   platform_close(p)
@@ -30,11 +30,7 @@ import "sdl.frost"
 export Platform, platform_open, platform_close, platform_poll, platform_window,
     platform_ok, platform_error, platform_input,
     Input,
-    KEY_COUNT, BUTTON_COUNT,
-    KEY_A, KEY_C, KEY_D, KEY_S, KEY_W, KEY_Q, KEY_E, KEY_R, KEY_X,
-    KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
-    KEY_SPACE, KEY_ESCAPE, KEY_LSHIFT,
-    BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT,
+    KEY_COUNT, BUTTON_COUNT, Key, Button,
     key_down, key_pressed, key_released,
     button_down, button_pressed, button_released,
     pointer_x, pointer_y, pointer_dx, pointer_dy, wheel,
@@ -53,28 +49,38 @@ KEY_COUNT :: 512
 // SDL numbers buttons from one, and five is as many as a mouse reports.
 BUTTON_COUNT :: 8
 
-// The few scancodes a program is likely to name. The rest are SDL's numbers and
-// a program that wants one writes it.
-KEY_A :: 4
-KEY_C :: 6
-KEY_D :: 7
-KEY_E :: 8
-KEY_Q :: 20
-KEY_R :: 21
-KEY_S :: 22
-KEY_W :: 26
-KEY_X :: 27
-KEY_RIGHT :: 79
-KEY_LEFT :: 80
-KEY_DOWN :: 81
-KEY_UP :: 82
-KEY_SPACE :: 44
-KEY_ESCAPE :: 41
-KEY_LSHIFT :: 225
+// A scancode, under a type of its own, so a number that means something else
+// cannot be asked about as though it were a key. The few a program is likely to
+// name are here; the rest are SDL's numbers, and one nobody named still arrives
+// as a `Key`, which is what a set an ordinal table fixes has to allow.
+Key :: distinct i64 {
+    A :: 4
+    B :: 5
+    C :: 6
+    D :: 7
+    E :: 8
+    Q :: 20
+    R :: 21
+    S :: 22
+    W :: 26
+    X :: 27
+    Right :: 79
+    Left :: 80
+    Down :: 81
+    Up :: 82
+    Space :: 44
+    Escape :: 41
+    LShift :: 225
+}
 
-BUTTON_LEFT :: 1
-BUTTON_MIDDLE :: 2
-BUTTON_RIGHT :: 3
+// A mouse button, under its own type for the reason a key has one: the two are
+// numbers from different tables, and neither answers a question about the
+// other.
+Button :: distinct i64 {
+    Left :: 1
+    Middle :: 2
+    Right :: 3
+}
 
 // What one frame of the machine came to: which keys and buttons are down, which
 // were down last frame, where the pointer is and how far it moved, how big the
@@ -210,13 +216,13 @@ platform_poll :: fn(mut p: Platform) -> bool {
         // A repeat is the system saying the key is still down, which the state
         // already says, so only the first press moves anything.
         if (kind == EventKind::KeyDown && event_key_repeat(event) == false) {
-            code := event_scancode(event)
+            code := cast($Key, event_scancode(event))
             if (code >= 0 && code < KEY_COUNT) {
                 p.state.keys[code] = true
             }
         }
         if (kind == EventKind::KeyUp) {
-            code := event_scancode(event)
+            code := cast($Key, event_scancode(event))
             if (code >= 0 && code < KEY_COUNT) {
                 p.state.keys[code] = false
             }
@@ -228,13 +234,13 @@ platform_poll :: fn(mut p: Platform) -> bool {
             p.state.moved_y = p.state.moved_y + event_mouse_dy(event)
         }
         if (kind == EventKind::MouseButtonDown) {
-            held := event_button(event)
+            held := cast($Button, event_button(event))
             if (held >= 0 && held < BUTTON_COUNT) {
                 p.state.buttons[held] = true
             }
         }
         if (kind == EventKind::MouseButtonUp) {
-            held := event_button(event)
+            held := cast($Button, event_button(event))
             if (held >= 0 && held < BUTTON_COUNT) {
                 p.state.buttons[held] = false
             }
@@ -265,34 +271,34 @@ elapsed_between :: fn(from: u64, to: u64) -> f32 {
 // the window in hand and a system has only what it was given.
 
 // The state now.
-input_key_down :: fn(held: Input, code: i64) -> bool {
+input_key_down :: fn(held: Input, code: Key) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
     held.keys[code]
 }
 
 // The frame it went down, and the frame it came up. True for exactly one frame
 // each, which is what a program means by "pressed" rather than "held".
-input_key_pressed :: fn(held: Input, code: i64) -> bool {
+input_key_pressed :: fn(held: Input, code: Key) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
     held.keys[code] && held.keys_before[code] == false
 }
 
-input_key_released :: fn(held: Input, code: i64) -> bool {
+input_key_released :: fn(held: Input, code: Key) -> bool {
     if (code < 0 || code >= KEY_COUNT) { return false }
     held.keys[code] == false && held.keys_before[code]
 }
 
-input_button_down :: fn(held: Input, which: i64) -> bool {
+input_button_down :: fn(held: Input, which: Button) -> bool {
     if (which < 0 || which >= BUTTON_COUNT) { return false }
     held.buttons[which]
 }
 
-input_button_pressed :: fn(held: Input, which: i64) -> bool {
+input_button_pressed :: fn(held: Input, which: Button) -> bool {
     if (which < 0 || which >= BUTTON_COUNT) { return false }
     held.buttons[which] && held.buttons_before[which] == false
 }
 
-input_button_released :: fn(held: Input, which: i64) -> bool {
+input_button_released :: fn(held: Input, which: Button) -> bool {
     if (which < 0 || which >= BUTTON_COUNT) { return false }
     held.buttons[which] == false && held.buttons_before[which]
 }
@@ -322,27 +328,27 @@ input_elapsed_seconds :: fn(held: Input) -> f32 { held.since_start }
 
 input_frame_index :: fn(held: Input) -> i64 { held.frames }
 
-key_down :: fn(p: Platform, code: i64) -> bool {
+key_down :: fn(p: Platform, code: Key) -> bool {
     input_key_down(p.state, code)
 }
 
-key_pressed :: fn(p: Platform, code: i64) -> bool {
+key_pressed :: fn(p: Platform, code: Key) -> bool {
     input_key_pressed(p.state, code)
 }
 
-key_released :: fn(p: Platform, code: i64) -> bool {
+key_released :: fn(p: Platform, code: Key) -> bool {
     input_key_released(p.state, code)
 }
 
-button_down :: fn(p: Platform, which: i64) -> bool {
+button_down :: fn(p: Platform, which: Button) -> bool {
     input_button_down(p.state, which)
 }
 
-button_pressed :: fn(p: Platform, which: i64) -> bool {
+button_pressed :: fn(p: Platform, which: Button) -> bool {
     input_button_pressed(p.state, which)
 }
 
-button_released :: fn(p: Platform, which: i64) -> bool {
+button_released :: fn(p: Platform, which: Button) -> bool {
     input_button_released(p.state, which)
 }
 

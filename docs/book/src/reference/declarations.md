@@ -423,7 +423,7 @@ main :: fn() -> i64 {
 ```
 
 `Key::Left` is a `Key`. That is what the block is for. A constant beside the
-declaration, `KEY_LEFT :: 80`, is a number, and a number goes wherever a number
+declaration, `Key::Left :: 80`, is a number, and a number goes wherever a number
 goes; the value named under the type carries the type, so the two halves of the
 declaration hold together.
 

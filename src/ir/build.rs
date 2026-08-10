@@ -8867,8 +8867,12 @@ impl<'a> FunctionLowering<'a> {
                     target,
                     &self.builder.flags,
                 );
+                // The sentence every argument mismatch is reported in, with
+                // the rule that was broken after it. Naming the callee instead
+                // read one way here and another at every other argument, and
+                // the two compilers said different things about one program.
                 bail!(
-                    "'{name}' takes a '{}' here and this argument is {described}; {note}",
+                    "this argument is {described} and a '{}' is what is wanted here; {note}",
                     spelled(target)
                 );
             }

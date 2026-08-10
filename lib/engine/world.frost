@@ -205,7 +205,7 @@ world_exit_wanted :: fn(world: World) -> bool {
 // wants the key for something else leaves this one out.
 exit_on_escape :: fn(mut world: World) {
     held := ecs_resource($Input, world, resource_of($Input, world))
-    if (input_key_pressed(held, KEY_ESCAPE)) {
+    if (input_key_pressed(held, Key::Escape)) {
         world_exit(world)
     }
 }
@@ -364,7 +364,7 @@ test "the engine finds its resources wherever they landed" {
     ecs_resource_register($Bystander, world)
     world_prepare(world)
     mut held := ecs_resource($Input, world, resource_of($Input, world))
-    held.keys[KEY_W] = true
+    held.keys[Key::W] = true
     held.step = 0.5
     world_input(world, held)
 
@@ -389,7 +389,7 @@ test "the camera moves by what the world was told was held" {
     // A resource starts zeroed, so this is a frame in which nothing was held,
     // with one key and the clock written into it.
     mut held := ecs_resource($Input, world, resource_of($Input, world))
-    held.keys[KEY_W] = true
+    held.keys[Key::W] = true
     held.step = 0.5
     world_input(world, held)
 
@@ -410,7 +410,7 @@ test "the camera turns by what the world was told was held" {
     mut world := ecs_new()
     world_prepare(world)
     mut held := ecs_resource($Input, world, resource_of($Input, world))
-    held.keys[KEY_LEFT] = true
+    held.keys[Key::Left] = true
     held.step = 0.5
     world_input(world, held)
 

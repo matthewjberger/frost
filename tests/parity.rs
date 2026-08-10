@@ -472,6 +472,28 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // Two ordinal sets over one representation, which is what a scancode and a
+    // mouse button are. Naming the values under each type is what makes handing
+    // one to the other a question the compiler answers. The bootstrap had a
+    // sentence of its own for this and the self-hosted compiler used the one
+    // every other argument mismatch is reported in, and nothing compared them.
+    (
+        "a_value_of_one_ordinal_set_is_not_a_value_of_another",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Escape :: 41\n\
+         }\n\
+         Button :: distinct i64 {\n\
+         \x20   Left :: 1\n\
+         }\n\
+         key_pressed :: fn(code: Key) -> bool { code == Key::Escape }\n\
+         main :: fn() -> i64 {\n\
+         \x20   if (key_pressed(Button::Left)) { print(\"wrong\\n\") }\n\
+         \x20   0\n\
+         }\n",
+        "this argument is a 'Button' and a 'Key' is what is wanted here; a \
+         distinct type is not its representation",
+    ),
     // The migration's own diagnostic, and the one a reader of older code
     // meets. It says what to write rather than only what is wrong.
     (
