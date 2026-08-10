@@ -9,6 +9,7 @@ import "const_eval.frost"
 import "types.frost"
 
 import "layout.frost"
+import "lint.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
     check_discarded_resources,
@@ -1771,8 +1772,12 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             entry := arena_at(p.fns, callee)
             params := entry.params
             mut declared := nth_param_type(p, params, index)
-            if (declared >= BORROW_FLAG) {
-                declared = declared - BORROW_FLAG
+            // Asked rather than read off the number. A distinct type's code
+            // sits above the borrow flag, so a `Key` parameter answered a bare
+            // comparison as a borrow and the subtraction left a code standing
+            // for nothing.
+            if (is_borrow(declared)) {
+                declared = pointee(p, declared)
             }
             p.expected_type = declared
             p.expected_alt = -1
@@ -2341,38 +2346,57 @@ parse_bitor :: fn(mut p: Parser) -> i64 {
     left
 }
 
+// The right side of a comparison, read at the type the left side has where it
+// is written as a leading dot. `key == .Left` names a value under whatever
+// `key` is, and nothing but the other side says what that is. The bootstrap
+// reads the two the same way round.
+//
+// Asked only of a leading dot, since deriving the type of an expression is
+// what instantiates a generic it names, and every other operand says what it
+// is on its own.
+parse_cmp_right :: fn(mut p: Parser, left: i64) -> i64 {
+    if (cur(p) != TokenKind::Dot) {
+        return parse_bitor(p)
+    }
+    saved := p.expected_type
+    p.expected_type = parse_time_type(p, left)
+    right := parse_bitor(p)
+    p.expected_type = saved
+    right
+}
+
 parse_cmp :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     left := parse_bitor(p)
     kind := cur(p)
     if (kind == TokenKind::Lt) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_LT, start)
     }
     if (kind == TokenKind::Le) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_LE, start)
     }
     if (kind == TokenKind::Gt) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_GT, start)
     }
     if (kind == TokenKind::Ge) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_GE, start)
     }
     if (kind == TokenKind::Eqeq) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_EQ, start)
     }
     if (kind == TokenKind::Ne) {
         advance(p)
-        right := parse_bitor(p)
+        right := parse_cmp_right(p, left)
         return new_arith(p, left, right, OP_NE, start)
     }
     left
@@ -6988,6 +7012,7 @@ parse_struct :: fn(mut p: Parser) {
                 is_packed = packed_flag
             }
         )
+        refuse_generic_values_block(p, name_offset, name_length)
     } else {
         refuse_field_sigils(p)
         head := parse_struct_fields(p, packed_flag)
@@ -7015,7 +7040,23 @@ parse_struct :: fn(mut p: Parser) {
                 is_packed = packed_flag
             }
         )
+        read_values_block(
+            p,
+            STRUCT_BASE + struct_index_for(p, entry_index),
+            name_offset,
+            name_length,
+            -1
+        )
     }
+}
+
+// Where in the struct table the declaration just recorded sits: the slot it was
+// predeclared into, or the one it was appended to.
+struct_index_for :: fn(mut p: Parser, entry_index: i64) -> i64 {
+    if (entry_index >= 0) {
+        return entry_index
+    }
+    p.structs.count - 1
 }
 
 // Whether a struct has to be consumed: it was written `linear`, or it holds a
@@ -7231,6 +7272,7 @@ parse_enum :: fn(mut p: Parser) {
                 is_packed = 0
             }
         )
+        refuse_generic_values_block(p, name_offset, name_length)
         return
     }
     // The enum's own index is known before its body is, since a variant has to
@@ -7266,6 +7308,7 @@ parse_enum :: fn(mut p: Parser) {
             is_packed = 0
         }
     )
+    read_values_block(p, enum_ty, name_offset, name_length, enum_ty)
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -7292,7 +7335,93 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
         }
         return new_node(p, NodeKind::Num, 0, enum_ty + 1, value)
     }
+    // `Key::Left` and `Vec3::ZERO`, a value the type names under itself. The
+    // value is its expression wherever it is written, read at the type the
+    // declaration gives it, so a number written under a distinct type comes
+    // out as that type and not as the number.
+    index := type_value_index(p, enum_ty, variant_off, variant_len)
+    if (index >= 0) {
+        if (cur(p) == TokenKind::Lbrace) {
+            report_where(p.modules, p.src, variant_off)
+            report("'")
+            report_src(p.src, enum_off, enum_len)
+            report("::")
+            report_src(p.src, variant_off, variant_len)
+            report("' is a value named under a type, so it carries nothing")
+            frost_rt_recover_escape()
+        }
+        return type_value_node(p, index, variant_off)
+    }
+    // A name under a type that names values, where no variant answers to it
+    // either. The type's own values are the set a near name is looked for in.
+    // Asked of an enum by whether it is one, since here an enum is a struct
+    // type and a struct is where this rule has something to say.
+    if (names_values(p, enum_ty) && names_an_enum(p, enum_ty) == false) {
+        report_where(p.modules, p.src, variant_off)
+        report("'")
+        report_src(p.src, enum_off, enum_len)
+        report("' names no value called '")
+        report_src(p.src, variant_off, variant_len)
+        report("'")
+        report_nearest_value(p, enum_ty, variant_off, variant_len)
+        frost_rt_recover_escape()
+    }
     parse_variant_body(p, enum_ty, enum_off, enum_len, variant_off, variant_len)
+}
+
+// Whether a type code names an enum. Every enum is laid out as a struct here,
+// so the code alone does not say, and the declaration's own flag is what does.
+names_an_enum :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    arena_at(p.structs, struct_index_of(ty)).is_enum == 1
+}
+
+// The value name a misspelling was probably meant to be, out of the ones this
+// type names, chosen the way an unknown variable's near name is and said in
+// the same words. An ambiguous suggestion is withheld for the reason it is
+// there: a guess a reader takes without checking is worse than none.
+report_nearest_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) {
+    mut best: i64 = -1
+    mut best_distance: i64 = 0
+    mut ties: i64 = 0
+    mut i: i64 = 0
+    while (i < p.type_values.count) {
+        entry := arena_at(p.type_values, i)
+        // The name itself is the one suggestion that helps nobody. Both halves
+        // of the comparison are needed: `bytes_equal` reads `len` bytes, so a
+        // value whose name merely opens with what was written reads as equal
+        // to it and would be passed over.
+        same := (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len))
+        if (entry.ty == ty && same == false) {
+            held := name_distance(
+                p.src,
+                entry.name_off,
+                entry.name_len,
+                off,
+                len
+            )
+            if (held * 3 <= len * 2) {
+                if (best < 0 || held < best_distance) {
+                    best = i
+                    best_distance = held
+                    ties = 1
+                } else if (held == best_distance) {
+                    ties = ties + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    if (ties != 1) {
+        return
+    }
+    entry := arena_at(p.type_values, best)
+    report(" (did you mean '")
+    report_src(p.src, entry.name_off, entry.name_len)
+    report("'?)")
 }
 
 // The `{ field = value }` of a variant literal and the literal itself, with the
@@ -7403,6 +7532,18 @@ expected_variant_enum :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     -1
 }
 
+// The value a `.Name` elides, where the type the context expects names one.
+// The two places a variant is looked for are the two looked in here, and for
+// the same reason: a return in a fallible function has an answer type and an
+// error type, and either may be what was meant.
+expected_named_value :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    held := type_value_index(p, p.expected_type, off, len)
+    if (held >= 0) {
+        return held
+    }
+    type_value_index(p, p.expected_alt, off, len)
+}
+
 // A `.Variant` bound to a name that says no type. Everywhere else one is
 // written there is something to read the enum off: an annotation, a parameter,
 // a field, the place an assignment lands in. A `:=` has none of those, and the
@@ -7416,7 +7557,7 @@ refuse_unbound_variant :: fn(mut p: Parser, value: i64) {
     report_where(p.modules, p.src, node.pos)
     report("`.")
     report_src(p.src, node.b, node.c)
-    report("` takes its enum from what the context expects, and this binding has no type to take it from; annotate it or write `Enum::")
+    report("` takes its type from what the context expects, and this binding has no type to take it from; annotate it or write `Type::")
     report_src(p.src, node.b, node.c)
     report("`")
     frost_rt_recover_escape()
@@ -7430,6 +7571,13 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
+    // A value named under a type elides the same way a variant does, and a
+    // distinct type is one of the types this may name: `key == .Left` where a
+    // `Key` is expected is `Key::Left`.
+    named := expected_named_value(p, variant_off, variant_len)
+    if (named >= 0) {
+        return type_value_node(p, named, variant_off)
+    }
     enum_ty := expected_variant_enum(p, variant_off, variant_len)
     parse_variant_body(
         p,
@@ -7451,12 +7599,36 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
         return
     }
     mut struct_ty := wanted
-    if (struct_ty >= BORROW_FLAG) {
-        struct_ty = struct_ty - BORROW_FLAG
+    // The same question the argument list asks, and for the same reason: a
+    // distinct type is not a borrow, whatever its code compares as.
+    if (is_borrow(struct_ty)) {
+        struct_ty = pointee(p, struct_ty)
     }
     name_off := node.b
     name_len := node.c
     position := node.pos
+    // A `.Name` the context turns out to name a value of rather than a variant
+    // of. The value stands where the dot was written, so the node becomes the
+    // one the declaration parsed, which is what a value named under a type is
+    // wherever it is written.
+    if (name_len != 0) {
+        named := type_value_index(p, struct_ty, name_off, name_len)
+        if (named >= 0) {
+            value := arena_at(p.arena, type_value_node(p, named, position))
+            kind := value.kind
+            a := value.a
+            b := value.b
+            c := value.c
+            val := value.val
+            mut held := arena_at(p.arena, node_id)
+            held.kind = kind
+            held.a = a
+            held.b = b
+            held.c = c
+            held.val = val
+            return
+        }
+    }
     if (is_struct_ty(struct_ty) == false) {
         report_where(p.modules, p.src, position)
         report("this literal takes its type from what the context expects, and there is no struct or enum type there")
@@ -8119,16 +8291,238 @@ parse_distinct :: fn(mut p: Parser) {
     advance(p)
     advance(p)
     inner := parse_type(p)
+    ty := distinct_type(inner, p.type_aliases.count)
     arena_push(
         p.type_aliases,
         ConstDef {
             name_off = name_offset,
             name_len = name_length,
-            value = distinct_type(inner, p.type_aliases.count),
+            value = ty,
             kind = CONST_INT,
             count = 0
         },
     )
+    read_values_block(p, ty, name_offset, name_length, -1)
+}
+
+// Whether a brace here opens the block of values a type names under itself.
+// What follows the brace is a declaration, and a struct literal written with
+// no name sets its fields with `=`, so the `::` is what tells the two apart.
+at_values_block :: fn(mut p: Parser) -> bool {
+    (cur(p) == TokenKind::Lbrace && peek_kind(p, 1) == TokenKind::Ident
+        && peek_kind(p, 2) == TokenKind::Coloncolon)
+}
+
+// `Key :: distinct i64 { Left :: 80 }`: the values a type names under itself.
+// Each is reached as `Key::Left`, which is where a variant and a bit of a set
+// are already reached, and elides to `.Left` where the context names the type.
+//
+// The names are taken here and each value is read the first time it is named.
+// A value may name a type declared further down the file, and no type below
+// this one has been read yet, so reading a value now would read it against
+// types that are not there.
+//
+// `variants_of` is the enum a name may already be a variant of, or -1 where the
+// declaration has no variants.
+// A generic declaration is one type for each set of arguments given to it, so
+// there is no single type for a value to be a value of, and nothing to write
+// `Box::EMPTY` at.
+refuse_generic_values_block :: fn(mut p: Parser, type_off: i64, type_len: i64) {
+    if (at_values_block(p) == false) {
+        return
+    }
+    report_where(p.modules, p.src, cur_off(p))
+    report("a type names values of itself, and a generic declaration is one type for each set of arguments given to it, so '")
+    report_src(p.src, type_off, type_len)
+    report("' names none")
+    frost_rt_recover_escape()
+}
+
+read_values_block :: fn(
+    mut p: Parser,
+    ty: i64,
+    type_off: i64,
+    type_len: i64,
+    variants_of: i64
+) {
+    if (at_values_block(p) == false) {
+        return
+    }
+    advance(p)
+    while (cur(p) != TokenKind::Rbrace) {
+        if (cur(p) == TokenKind::Eof) {
+            report_where(p.modules, p.src, type_off)
+            report("the values '")
+            report_src(p.src, type_off, type_len)
+            report("' names are written inside braces, and this block is not closed")
+            frost_rt_recover_escape()
+        }
+        if (cur(p) != TokenKind::Ident) {
+            report_where(p.modules, p.src, cur_off(p))
+            report(
+                "a type names each of its values with a name, and this is not one"
+            )
+            frost_rt_recover_escape()
+        }
+        value_off := cur_off(p)
+        value_len := cur_len(p)
+        if (peek_kind(p, 1) != TokenKind::Coloncolon) {
+            report_where(p.modules, p.src, value_off)
+            report("'")
+            report_src(p.src, value_off, value_len)
+            report("' is a value named under '")
+            report_src(p.src, type_off, type_len)
+            report("', so it is written as '")
+            report_src(p.src, value_off, value_len)
+            report(" :: <value>'")
+            frost_rt_recover_escape()
+        }
+        if (type_value_index(p, ty, value_off, value_len) >= 0) {
+            report_where(p.modules, p.src, value_off)
+            report("a type names each of its values once, and '")
+            report_src(p.src, type_off, type_len)
+            report("' names '")
+            report_src(p.src, value_off, value_len)
+            report("' twice")
+            frost_rt_recover_escape()
+        }
+        if (variants_of != (-1)
+            && find_variant(p, variants_of, value_off, value_len) >= 0) {
+            report_where(p.modules, p.src, value_off)
+            report("a type names each of its values once, and '")
+            report_src(p.src, type_off, type_len)
+            report("' names '")
+            report_src(p.src, value_off, value_len)
+            report("' as a variant and as a value")
+            frost_rt_recover_escape()
+        }
+        advance(p)
+        advance(p)
+        // The value stands on the line its `::` is on. Without this a name
+        // with nothing after it took the entry below for its value, and the
+        // block came out one value short with nothing said about it.
+        if (cur(p) == TokenKind::Rbrace || on_same_line(p) == false) {
+            report_where(p.modules, p.src, value_off)
+            report("'")
+            report_src(p.src, value_off, value_len)
+            report("' is a value named under '")
+            report_src(p.src, type_off, type_len)
+            report("', and it is written after its '::'")
+            frost_rt_recover_escape()
+        }
+        record_type_value(p, ty, value_off, value_len, p.ti)
+        skip_value_expression(p)
+    }
+    advance(p)
+}
+
+// Past one value's expression, to the name that opens the next or to the brace
+// that closes the block. A value may be written with braces of its own, so the
+// end is found at the depth the entries are written at.
+//
+// A value ends where a line does, which is where every other statement in the
+// language ends. Reading the end off the next `Name ::` instead cut a value
+// short at `Key::Left`, whose two tokens are the two an entry opens with.
+//
+// A break inside brackets says nothing, which `joins_line` answers, so a value
+// written over several lines inside braces is one value.
+skip_value_expression :: fn(mut p: Parser) {
+    // Braces are counted here and the round and square ones by `advance`, which
+    // is what `joins_line` reads. A literal written over several lines is
+    // inside one of the three, so between them every break that says nothing is
+    // accounted for.
+    mut depth: i64 = 0
+    mut started: i64 = 0
+    mut previous := TokenKind::Eof
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Rbrace && depth == 0) {
+            return
+        }
+        if (started == 1 && depth == 0 && joins_line(p) == false) {
+            return
+        }
+        // A second value opening on this one's line. `Key::Left` is the same
+        // two tokens, and what tells them apart is what comes before: a value
+        // is finished where a name begins the next, and an operator or a `::`
+        // leaves one unfinished.
+        if (started == 1 && depth == 0 && kind == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Coloncolon
+            && token_ends_a_value(previous)) {
+            report_where(p.modules, p.src, cur_off(p))
+            report(
+                "a type names each of its values on a line of its own, and this one follows another"
+            )
+            frost_rt_recover_escape()
+        }
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        }
+        started = 1
+        previous = kind
+        advance(p)
+    }
+}
+
+// Whether a token can end a value, which is what says the name after it opens
+// something new rather than continuing what is being read.
+token_ends_a_value :: fn(kind: TokenKind) -> bool {
+    (kind == TokenKind::Ident || kind == TokenKind::Int
+        || kind == TokenKind::Float || kind == TokenKind::Str
+        || kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+        || kind == TokenKind::Rbrace)
+}
+
+// The node a value named under a type stands for, read the first time the
+// value is named and remembered after.
+//
+// Read where it is named rather than where it is declared, for the reason a
+// constant is: the declaration is in the tables long before the types a value
+// may be written in terms of are, and a value nobody names asks nothing of the
+// program. `at` is where the reader wrote the name, so what the value turns out
+// to be is complained about there.
+type_value_node :: fn(mut p: Parser, index: i64, at: i64) -> i64 {
+    entry := arena_at(p.type_values, index)
+    if (entry.node != (-1)) {
+        return entry.node
+    }
+    ty := entry.ty
+    name_off := entry.name_off
+    name_len := entry.name_len
+    saved := p.ti
+    saved_expected := p.expected_type
+    p.ti = entry.token
+    p.expected_type = ty
+    node := parse_expr(p)
+    p.ti = saved
+    p.expected_type = saved_expected
+    // A number has no type of its own until something gives it one, and this
+    // is what gives it one: the type it is declared under rides on the node,
+    // the way a bit of a set carries the set it is a bit of. Without it
+    // `Key::Left` would be the number 80 wherever it was written.
+    mut written_num := arena_at(p.arena, node)
+    if (written_num.kind == NodeKind::Num && written_num.b == 0
+        && is_integer(ty)) {
+        written_num.b = ty + 1
+    }
+    held := type_of(p, node)
+    if (held != ty) {
+        report_where(p.modules, p.src, at)
+        report("a value named under a type is a value of that type, so '")
+        report_type_name(p, ty)
+        report("::")
+        report_src(p.src, name_off, name_len)
+        report("' is a ")
+        report_type_name(p, ty)
+        report(" and this is a ")
+        report_type_name(p, held)
+        frost_rt_recover_escape()
+    }
+    mut written := arena_at(p.type_values, index)
+    written.node = node
+    node
 }
 
 // `InitFlags :: flags u32 { Video = 32, Audio = 16 }`, a named set of bits with

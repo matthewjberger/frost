@@ -1183,7 +1183,7 @@ fn a_variant_takes_its_enum_from_the_context() {
     assert_eq!(output, "48\n25\n2\n30\n12\n1\n3\n3\n6\n10\n-1\n");
 }
 
-// A dot with nothing to take its enum from says so, rather than failing later
+// A dot with nothing to take its type from says so, rather than failing later
 // as a nameless enum.
 #[test]
 fn a_variant_without_a_context_is_rejected() {
@@ -1194,7 +1194,7 @@ fn a_variant_without_a_context_is_rejected() {
          }\n";
     let message = compile_error("dotvariantbad", source);
     assert!(
-        message.contains("takes its enum from what the context expects"),
+        message.contains("takes its type from what the context expects"),
         "expected the inference diagnostic in:\n{message}"
     );
 }

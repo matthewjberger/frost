@@ -472,6 +472,161 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A value named under a type is a value of that type, so what is written
+    // for it has to be one. A number under a struct is the plain case.
+    (
+        "a_value_named_under_a_type_is_a_value_of_it",
+        "import \"io.frost\"\n\
+         Vec3 :: struct { x: f32 } {\n\
+         \x20   ZERO :: 5\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   z := Vec3::ZERO\n\
+         \x20   print(\"{}\\n\", z.x)\n\
+         \x20   0\n\
+         }\n",
+        "a value named under a type is a value of that type, so 'Vec3::ZERO' \
+         is a Vec3 and this is a i64",
+    ),
+    // One name, one value. Two of a name under one type leaves nothing to say
+    // which of them `Key::Left` is.
+    (
+        "a_type_names_each_of_its_values_once",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         \x20   Left :: 79\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a type names each of its values once, and 'Key' names 'Left' twice",
+    ),
+    // A variant and a value are both reached as `Type::Name`, so a type
+    // carrying one of each under a single name has two answers for it.
+    (
+        "a_named_value_may_not_share_a_name_with_a_variant",
+        "import \"io.frost\"\n\
+         Colour :: enum { Red, Green } {\n\
+         \x20   Red :: 1\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a type names each of its values once, and 'Colour' names 'Red' as a \
+         variant and as a value",
+    ),
+    // A name the type does not name, with the near one offered out of the
+    // type's own values, the way an unknown variable is answered out of the
+    // names in scope.
+    (
+        "a_named_value_that_is_not_there_offers_a_near_one",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         \x20   Right :: 79\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   k := Key::Lef\n\
+         \x20   print(\"{}\\n\", cast($i64, k))\n\
+         \x20   0\n\
+         }\n",
+        "'Key' names no value called 'Lef' (did you mean 'Left'?)",
+    ),
+    // What the whole feature is for. A constant beside the declaration is a
+    // number and goes anywhere a number goes; a value named under the type is
+    // that type, and this is where the difference shows.
+    (
+        "a_named_value_carries_the_type_it_is_declared_under",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         }\n\
+         Feet :: distinct i64\n\
+         main :: fn() -> i64 {\n\
+         \x20   f : Feet = Key::Left\n\
+         \x20   print(\"{}\\n\", cast($i64, f))\n\
+         \x20   0\n\
+         }\n",
+        "this binding is a 'Feet' and the value is a 'Key'; a distinct type is \
+         not its representation",
+    ),
+    // A generic declaration is a type for each set of arguments given to it, so
+    // there is no one type for a value to be a value of. The bootstrap read the
+    // block on one path for both, and the self-hosted compiler read it on
+    // neither, which left the block standing as top-level tokens.
+    (
+        "a_generic_type_names_no_values_of_itself",
+        "import \"io.frost\"\n\
+         Box :: struct($T: Type) { held: T } {\n\
+         \x20   EMPTY :: 0\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a type names values of itself, and a generic declaration is one type \
+         for each set of arguments given to it, so 'Box' names none",
+    ),
+    // A value carries nothing, where a variant of the same spelling may carry
+    // fields. The self-hosted compiler answered with the value and left the
+    // braces for whatever read next.
+    (
+        "a_named_value_carries_nothing",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   k := Key::Left { x = 1 }\n\
+         \x20   0\n\
+         }\n",
+        "'Key::Left' is a value named under a type, so it carries nothing",
+    ),
+    // Which line a value is on is what separates it from the next, since
+    // `Key::Left` written as a value is the two tokens an entry opens with and
+    // nothing else tells the two apart.
+    (
+        "a_named_value_opens_a_line_of_its_own",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80 Right :: 79\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a type names each of its values on a line of its own, and this one \
+         follows another",
+    ),
+    // A name with nothing after it. Left alone the entry below was read as
+    // this one's value, and the block came out one value short with nothing
+    // said about it.
+    (
+        "a_named_value_is_written_after_its_colons",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left ::\n\
+         \x20   Right :: 79\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'Left' is a value named under 'Key', and it is written after its '::'",
+    ),
+    // A block that never closes. The self-hosted compiler ran its loop to the
+    // end of the file and took what it had.
+    (
+        "a_block_of_values_is_closed",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n",
+        "the values 'Key' names are written inside braces, and this block is \
+         not closed",
+    ),
+    // The near name out of a struct's values. An enum is a struct type in the
+    // self-hosted compiler, so asking whether this was one sent every struct
+    // down the path that reports a missing variant.
+    (
+        "a_structs_named_value_that_is_not_there_offers_a_near_one",
+        "import \"io.frost\"\n\
+         Vec3 :: struct { x: f32 } {\n\
+         \x20   ZERO :: Vec3 { x = 0.0 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   z := Vec3::ZERE\n\
+         \x20   0\n\
+         }\n",
+        "'Vec3' names no value called 'ZERE' (did you mean 'ZERO'?)",
+    ),
     // A distinct type is its own type, so a run it is represented by is not a
     // run it holds. Every predicate in the self-hosted compiler answers about
     // the representation, which is what everything that is not this question
@@ -497,8 +652,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              0
          }
 ",
-        "`.Red` takes its enum from what the context expects, and this binding \
-         has no type to take it from; annotate it or write `Enum::Red`",
+        "`.Red` takes its type from what the context expects, and this binding \
+         has no type to take it from; annotate it or write `Type::Red`",
     ),
     // A cast converts one number into another. A struct is held by address, so
     // reading one as a number reads whatever its first word was. The
@@ -3711,6 +3866,100 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A type may name values of itself, reached through the type the way a
+    // variant and a bit of a set already are. The value is the type it is
+    // declared under, which is the whole point: a constant beside the
+    // declaration would be a number, and a number is what the declaration
+    // exists to say this is not.
+    (
+        "a_type_names_values_under_itself",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         \x20   Right :: 79\n\
+         }\n\
+         take :: fn(k: Key) -> i64 { cast($i64, k) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   key := cast($Key, 80)\n\
+         \x20   if (key == Key::Left) { print(\"long\\n\") }\n\
+         \x20   if (key == .Left) { print(\"short\\n\") }\n\
+         \x20   print(\"{}\\n\", take(Key::Right))\n\
+         \x20   0\n\
+         }\n",
+        "long\nshort\n79\n",
+    ),
+    // The same rule on a struct, which is what makes it worth having: a
+    // constant of the type, under the type, rather than a prefixed global
+    // beside it.
+    (
+        "a_struct_names_a_value_of_itself",
+        "import \"io.frost\"\n\
+         Vec3 :: struct { x: f32, y: f32, z: f32 } {\n\
+         \x20   ZERO :: Vec3 { x = 1.5, y = 2.5, z = 3.5 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   z := Vec3::ZERO\n\
+         \x20   print(\"{} {} {}\\n\", z.x, z.y, z.z)\n\
+         \x20   0\n\
+         }\n",
+        "1.5 2.5 3.5\n",
+    ),
+    // `Enum::Variant` is the long form a `.Variant` elides, so the two name the
+    // same value and a program may write either.
+    (
+        "an_enum_variant_reads_the_same_written_long",
+        "import \"io.frost\"\n\
+         Colour :: enum { Red, Green }\n\
+         rank :: fn(c: Colour) -> i64 {\n\
+         \x20   match (c) {\n\
+         \x20       case .Red: 1\n\
+         \x20       case .Green: 2\n\
+         \x20   }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", rank(Colour::Red))\n\
+         \x20   print(\"{}\\n\", rank(.Green))\n\
+         \x20   0\n\
+         }\n",
+        "1\n2\n",
+    ),
+    // A value written as another value under a type. `Key::Left` is the two
+    // tokens an entry opens with, so the self-hosted compiler read the end of
+    // one value off the next `Name ::` and cut this one short at `Key`.
+    (
+        "a_named_value_may_be_written_as_another",
+        "import \"io.frost\"\n\
+         Key :: distinct i64 {\n\
+         \x20   Left :: 80\n\
+         \x20   Fallback :: Key::Left\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, Key::Fallback))\n\
+         \x20   0\n\
+         }\n",
+        "80\n",
+    ),
+    // A value written over several lines. A break inside brackets says nothing,
+    // which is what keeps the literal one value and the entry after it a
+    // second.
+    (
+        "a_named_value_may_be_written_over_several_lines",
+        "import \"io.frost\"\n\
+         Vec3 :: struct { x: f32, y: f32 } {\n\
+         \x20   ZERO :: Vec3 {\n\
+         \x20       x = 1.5,\n\
+         \x20       y = 2.5\n\
+         \x20   }\n\
+         \x20   ONE :: Vec3 { x = 1.0, y = 1.0 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   z := Vec3::ZERO\n\
+         \x20   o := Vec3::ONE\n\
+         \x20   print(\"{} {}\\n\", z.x, o.y)\n\
+         \x20   0\n\
+         }\n",
+        "1.5 1\n",
+    ),
     // A generic function's body is parsed again for every instance a call asks
     // for, and a call written ahead of the declaration interns the name where
     // the call is, so neither reading of the tables says which entries are

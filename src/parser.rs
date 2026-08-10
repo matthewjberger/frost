@@ -2,7 +2,7 @@ use crate::ast::{
     Ast, EnumVariant, ExprId, Expression, FlagBit, ImportRename, Literal,
     Module, MultiBinding, NamedExpr, Parameter, Pattern, PatternBinding,
     PatternId, Range32, ReturnKind, ReturnSignature, ReturnValue, Statement,
-    StmtId, StructField, SwitchCase, Symbol, TokenSpan,
+    StmtId, StructField, SwitchCase, Symbol, TokenSpan, TypeValue,
 };
 use crate::{
     lexer::Position,
@@ -2150,6 +2150,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.read_token();
+            self.parse_values_under(&identifier, &[], !type_params.is_empty())?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
@@ -2217,6 +2218,15 @@ impl<'a> Parser<'a> {
                 }
             }
             self.read_token();
+            let variant_names: Vec<String> = variants
+                .iter()
+                .map(|variant| self.ast.name(variant.name).to_string())
+                .collect();
+            self.parse_values_under(
+                &identifier,
+                &variant_names,
+                !type_params.is_empty(),
+            )?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
@@ -2273,6 +2283,7 @@ impl<'a> Parser<'a> {
             ))
         } else if matches!(self.peek_nth(0), Token::Distinct) {
             let typ = self.parse_type()?;
+            self.parse_values_under(&identifier, &[], false)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
@@ -4865,6 +4876,128 @@ impl<'a> Parser<'a> {
                 self.peek_nth(offset + 1),
                 Token::Identifier(name) if is_scalar_type_name(name)
             )
+    }
+
+    // A brace after a type declaration opens the block of values it names,
+    // where what follows the brace is a declaration. A struct literal written
+    // with no name sets its fields with `=`, so the `::` is what tells the two
+    // apart and no expression is ever read as this block.
+    fn at_values_block(&self) -> bool {
+        matches!(self.peek_nth(0), Token::LeftBrace)
+            && matches!(self.peek_nth(1), Token::Identifier(_))
+            && matches!(self.peek_nth(2), Token::DoubleColon)
+    }
+
+    // Past a `{ ... }` and everything nested in it, so a declaration refused
+    // before its block is read leaves the cursor where the next one begins.
+    fn skip_braced_block(&mut self) {
+        let mut depth = 0i32;
+        while !matches!(self.peek_nth(0), Token::EndOfFile) {
+            match self.read_token() {
+                Token::LeftBrace => depth += 1,
+                Token::RightBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // `Key :: distinct i64 { Left :: 80 }`: the values a type names under
+    // itself. Each is reached as `Key::Left`, which is where a variant and a
+    // bit of a set are already reached, and elides to `.Left` where the
+    // context names the type.
+    //
+    // What each value is worth is settled where it is named rather than here:
+    // the types have not been resolved at this point, so a literal has nothing
+    // yet to take its type from.
+    //
+    // Each value opens a line of its own. `Key::Left` written as a value is the
+    // same two tokens an entry is, so where one entry ends and the next begins
+    // is the line, which is what separates one declaration from the next
+    // everywhere else in the language.
+    fn parse_values_under(
+        &mut self,
+        type_name: &str,
+        variants: &[String],
+        generic: bool,
+    ) -> Result<()> {
+        if !self.at_values_block() {
+            return Ok(());
+        }
+        // A generic declaration is one type for each set of arguments given to
+        // it, so there is no single type for a value to be a value of, and
+        // nothing to write `Box::EMPTY` at.
+        //
+        // The block is read past before the fault is raised, so what follows it
+        // is where reading resumes. Left in place, the recovery took the
+        // block's closing brace for a declaration head and said so, and one
+        // mistake was reported as two.
+        if generic {
+            self.skip_braced_block();
+            bail!(
+                "a type names values of itself, and a generic declaration is one type for each set of arguments given to it, so '{type_name}' names none"
+            );
+        }
+        self.read_token();
+        let mut named: Vec<String> = Vec::new();
+        while self.peek_nth(0) != &Token::RightBrace {
+            if matches!(self.peek_nth(0), Token::EndOfFile) {
+                bail!(
+                    "the values '{type_name}' names are written inside braces, and this block is not closed"
+                );
+            }
+            if !named.is_empty() && self.on_the_same_line() {
+                bail!(
+                    "a type names each of its values on a line of its own, and this one follows another"
+                );
+            }
+            let name = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!(
+                    "a type names each of its values with a name, and this is not one"
+                ),
+            };
+            if !matches!(self.read_token(), Token::DoubleColon) {
+                bail!(
+                    "'{name}' is a value named under '{type_name}', so it is written as '{name} :: <value>'"
+                );
+            }
+            // The value stands on the line its `::` is on. Without this a name
+            // with nothing after it read the entry below as its value, and the
+            // block came out one value short.
+            if matches!(self.peek_nth(0), Token::RightBrace)
+                || !self.on_the_same_line()
+            {
+                bail!(
+                    "'{name}' is a value named under '{type_name}', and it is written after its '::'"
+                );
+            }
+            if named.iter().any(|held| held == &name) {
+                bail!(
+                    "a type names each of its values once, and '{type_name}' names '{name}' twice"
+                );
+            }
+            if variants.iter().any(|held| held == &name) {
+                bail!(
+                    "a type names each of its values once, and '{type_name}' names '{name}' as a variant and as a value"
+                );
+            }
+            let value = self.parse_expression(Precedence::Lowest)?;
+            let type_symbol = self.ast.intern(type_name);
+            let name_symbol = self.ast.intern(&name);
+            named.push(name);
+            self.ast.type_values.push(TypeValue {
+                type_name: type_symbol,
+                name: name_symbol,
+                value,
+            });
+        }
+        self.read_token();
+        Ok(())
     }
 
     fn parse_unsafe_expression(&mut self) -> Result<ExprId> {

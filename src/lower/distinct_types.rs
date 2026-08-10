@@ -59,6 +59,14 @@ pub fn resolve_distinct_types(ast: &mut Ast, roots: &[StmtId]) {
     for statement in roots {
         walk_statement(ast, *statement, &resolved);
     }
+    // The values a type names under itself hang off the declaration rather
+    // than off a statement, so the walk over the roots never reaches them and
+    // a `Meters` written inside one would stay the struct the parser guessed.
+    let values: Vec<ExprId> =
+        ast.type_values.iter().map(|held| held.value).collect();
+    for value in values {
+        walk_expression(ast, value, &resolved);
+    }
 }
 
 fn substitute(ty: &mut Type, declared: &HashMap<String, Type>) {

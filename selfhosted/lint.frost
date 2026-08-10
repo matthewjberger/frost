@@ -9,7 +9,7 @@ import "imports.frost"
 import "lexer.frost"
 import "names.frost"
 
-export lint_program, nearest_name
+export lint_program, nearest_name, name_distance
 
 // A function nothing reaches.
 //

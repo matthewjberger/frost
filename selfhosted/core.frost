@@ -11,7 +11,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, Alias, ConstDef, Export,
     CH_LOWER_B, CH_LOWER_E, CH_LOWER_F, CH_LOWER_X, CH_UPPER_B, CH_UPPER_E,
     CH_UPPER_F, CH_UPPER_X,
-    Cap, Provider, FlagBit, Indirect,
+    Cap, Provider, FlagBit, TypeValue, Indirect,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     PendingTuple,
     LocalVar, Module, ToldMove,
@@ -629,6 +629,21 @@ FlagBit :: struct {
     name_off: i64,
     name_len: i64,
     value: i64,
+}
+
+// One value a type declaration names under itself: which type names it, the
+// name as a range of the source, the token its value begins at, and the node
+// that value was parsed to.
+//
+// The token is kept because the names are read where the declaration is and
+// the values are read a pass later. A value may name a type declared further
+// down the file, so nothing is parsed until every type declaration is in.
+TypeValue :: struct {
+    ty: i64,
+    name_off: i64,
+    name_len: i64,
+    token: i64,
+    node: i64,
 }
 
 Node :: struct {
@@ -1978,6 +1993,10 @@ Parser :: struct {
     // to. A flags type is otherwise an ordinary distinct type, so this table is
     // the whole of what tells one apart.
     flag_bits: Arena<FlagBit>,
+    // The values every type names under itself, each carrying which type names
+    // it. `Key::Left` and `Vec3::ZERO` are read out of here, and so is the
+    // `.Left` that elides one.
+    type_values: Arena<TypeValue>,
     arrays: Arena<ArrayDef>,
     indirects: Arena<Indirect>,
     tests: Arena<TestCase>,

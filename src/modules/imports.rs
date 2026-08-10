@@ -1784,6 +1784,35 @@ impl Renamer {
         }
     }
 
+    // The values a type names under itself, whose expressions hang off the
+    // declaration rather than off a statement. The name each is reached under
+    // is the type's, which is mangled here alongside every other use of it, so
+    // the record moves with the name it is keyed by.
+    fn values_under(
+        &self,
+        ast: &mut Ast,
+        name: crate::ast::Symbol,
+        scope: &mut Scope,
+    ) {
+        let held: Vec<crate::ast::TypeValue> = ast
+            .type_values
+            .iter()
+            .filter(|entry| entry.type_name == name)
+            .copied()
+            .collect();
+        for entry in &held {
+            self.expression(ast, entry.value, scope);
+        }
+        let Some(mangled) = self.plain(ast, name) else {
+            return;
+        };
+        for entry in ast.type_values.iter_mut() {
+            if entry.type_name == name {
+                entry.type_name = mangled;
+            }
+        }
+    }
+
     fn statement(&self, ast: &mut Ast, id: StmtId, scope: &mut Scope) {
         match ast.stmt(id).clone() {
             Statement::Constant(name, value) => {
@@ -1798,6 +1827,7 @@ impl Renamer {
                 self.expression(ast, value, scope);
             }
             Statement::Struct(name, _, fields) => {
+                self.values_under(ast, name, scope);
                 if let Some(mangled) = self.plain(ast, name) {
                     // Packing is recorded against the name, so the record has
                     // to move with it. Left behind, a `packed struct` from a
@@ -1818,6 +1848,7 @@ impl Renamer {
                 }
             }
             Statement::Enum(name, _, variants) => {
+                self.values_under(ast, name, scope);
                 if let Some(mangled) = self.plain(ast, name) {
                     let Statement::Enum(held, _, _) =
                         &mut ast.statements[id.0 as usize]
@@ -1837,6 +1868,7 @@ impl Renamer {
                 }
             }
             Statement::TypeAlias(name, _) | Statement::Flags(name, _, _) => {
+                self.values_under(ast, name, scope);
                 if let Some(mangled) = self.plain(ast, name) {
                     let (Statement::TypeAlias(held, _)
                     | Statement::Flags(held, _, _)) =

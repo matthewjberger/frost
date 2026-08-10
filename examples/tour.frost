@@ -108,16 +108,16 @@ damage_of :: fn(e: Entity) -> i64 {
 main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
-    mut hero: Entity = { hp = 90, kind =.Hero }
+    mut hero: Entity = { hp = 90, kind = .Hero }
     heal(hero, 10) // hero is borrowed and changed
     print("{}\n", hero.hp) // 100
     print("{}\n", attack(hero)) // 10
 
     print("{}\n", damage_of(hero)) // 20
 
-    party: [3]Entity = [ { hp = 100, kind =.Hero },
-        { hp = 40, kind =.Monster { damage = 12 } },
-        { hp = 25, kind =.Monster { damage = 30 } },
+    party: [3]Entity = [ { hp = 100, kind = .Hero },
+        { hp = 40, kind = .Monster { damage = 12 } },
+        { hp = 25, kind = .Monster { damage = 30 } },
     ]
     total, strongest := tally(party)
     print("{}\n", total) // 52

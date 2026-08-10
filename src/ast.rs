@@ -262,6 +262,11 @@ pub struct Ast {
     pub struct_fields: Vec<StructField>,
     pub enum_variants: Vec<EnumVariant>,
     pub flag_bits: Vec<FlagBit>,
+    // The values each type declaration names under itself, reached as
+    // `Type::Name`. Held here rather than on the declaration for the reason
+    // packing is: a walk that only passes a struct or an alias through learns
+    // nothing new from it.
+    pub type_values: Vec<TypeValue>,
     pub renames: Vec<ImportRename>,
     pub cases: Vec<SwitchCase>,
     pub patterns: Vec<Pattern>,
@@ -370,6 +375,19 @@ pub struct EnumVariant {
 pub struct FlagBit {
     pub name: Symbol,
     pub value: i64,
+}
+
+// One value a type declaration names under itself: which type names it, the
+// name, and the expression it stands for. Recorded where the declaration is
+// read rather than carried on the statement, so the three declaration forms
+// that may carry a block stay the shapes they were.
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq,
+)]
+pub struct TypeValue {
+    pub type_name: Symbol,
+    pub name: Symbol,
+    pub value: ExprId,
 }
 
 #[derive(
@@ -1030,6 +1048,34 @@ impl<'a> Splicer<'a> {
         self.signature(dest, id, &mut |name| name.to_string())
     }
 
+    // The values a type names under itself cross with the declaration that
+    // names them. Left behind, `Vec3::ZERO` read out of an import names a
+    // value the program was never told about.
+    fn type_values(
+        &self,
+        dest: &mut Ast,
+        name: Symbol,
+        copied: Symbol,
+        rename: &mut impl FnMut(&str) -> String,
+    ) {
+        let held: Vec<TypeValue> = self
+            .source
+            .type_values
+            .iter()
+            .filter(|entry| entry.type_name == name)
+            .copied()
+            .collect();
+        for entry in held {
+            let value = self.expression(dest, entry.value, rename);
+            let entry_name = self.symbol(dest, entry.name, rename);
+            dest.type_values.push(TypeValue {
+                type_name: copied,
+                name: entry_name,
+                value,
+            });
+        }
+    }
+
     fn symbol(
         &self,
         dest: &mut Ast,
@@ -1104,6 +1150,7 @@ impl<'a> Splicer<'a> {
                 {
                     dest.packed_structs.push(copied);
                 }
+                self.type_values(dest, name, copied, rename);
                 Statement::Struct(
                     copied,
                     self.symbols(dest, type_params, rename),
@@ -1111,7 +1158,9 @@ impl<'a> Splicer<'a> {
                 )
             }
             Statement::Enum(name, type_params, variants) => {
-                let name = self.symbol(dest, name, rename);
+                let copied = self.symbol(dest, name, rename);
+                self.type_values(dest, name, copied, rename);
+                let name = copied;
                 let type_params = self.symbols(dest, type_params, rename);
                 let copied: Vec<EnumVariant> = self
                     .source
@@ -1146,7 +1195,9 @@ impl<'a> Splicer<'a> {
                 Statement::Flags(name, repr, dest.add_flag_bits(&copied))
             }
             Statement::TypeAlias(name, ty) => {
-                Statement::TypeAlias(self.symbol(dest, name, rename), ty)
+                let copied = self.symbol(dest, name, rename);
+                self.type_values(dest, name, copied, rename);
+                Statement::TypeAlias(copied, ty)
             }
             Statement::Defer(inner) => {
                 Statement::Defer(self.statement(dest, inner, rename))

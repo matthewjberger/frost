@@ -329,11 +329,15 @@ spaced :: fn(
     if (left == TokenKind::KwCase) {
         return true
     }
-    if (left == TokenKind::Dot || right == TokenKind::Dot) {
+    if (left == TokenKind::Dot || left == TokenKind::Dollar) {
         return false
     }
-    if (left == TokenKind::Dollar) {
-        return false
+    if (right == TokenKind::Dot) {
+        // A dot that opens a value rather than reaching into one takes its
+        // space in front, the way it does after `case`. What is on its left is
+        // what tells them apart: `key == .Left` names a value and `z.x` reaches
+        // into one, and an operator does not end a value.
+        return ends_a_value(left) == false
     }
     if (left == TokenKind::Lbrace && right == TokenKind::Rbrace) {
         return false
@@ -955,6 +959,59 @@ role_at :: fn(mut roles: Arena<LocalVar>, index: i64) -> i64 {
     arena_at(roles, index).name_off
 }
 
+// Whether the brace this token sits directly inside opens the values a type
+// names under itself, which is where a `::` declares rather than reaching into
+// a type.
+//
+// The block is recognized by what opens it, the way both compilers recognize
+// it: a name and a `::`. A body reaching a name that way writes `Enum::Variant`
+// at the head of a line, which is why the enclosing brace is asked about rather
+// than the line.
+inside_values_block :: fn(
+    mut tokens: Arena<Token>,
+    mut opens: Arena<LocalVar>,
+    index: i64
+) -> bool {
+    if (arena_at(opens, index).name_len != 1) {
+        return false
+    }
+    mut open := index - 1
+    while (open >= 0) {
+        held := arena_at(opens, open)
+        if (kind_at(tokens, open) == TokenKind::Lbrace && held.name_len == 0) {
+            if (kind_at(tokens, open + 1) != TokenKind::Ident
+                || kind_at(tokens, open + 2) != TokenKind::Coloncolon) {
+                return false
+            }
+            return heads_a_type_declaration(tokens, opens, open)
+        }
+        open = open - 1
+    }
+    false
+}
+
+// Which declaration the brace belongs to. Only a type declaration may name
+// values under itself, and a function body opening with a constant is the same
+// two tokens, so the word after the declaration's `::` is what tells the two
+// apart.
+heads_a_type_declaration :: fn(
+    mut tokens: Arena<Token>,
+    mut opens: Arena<LocalVar>,
+    open: i64
+) -> bool {
+    mut head := open - 1
+    while (head >= 0) {
+        held := arena_at(opens, head)
+        if (held.name_len == 0 && held.name_off == 1
+            && kind_at(tokens, head) == TokenKind::Ident
+            && kind_at(tokens, head + 1) == TokenKind::Coloncolon) {
+            return kind_at(tokens, head + 2) != TokenKind::KwFn
+        }
+        head = head - 1
+    }
+    false
+}
+
 // The job each token is doing.
 settle_roles :: fn(mut tokens: Arena<Token>, mut opens: Arena<LocalVar>)
     -> Arena<LocalVar> {
@@ -973,8 +1030,9 @@ settle_roles :: fn(mut tokens: Arena<Token>, mut opens: Arena<LocalVar>)
         previous := kind_at(tokens, index - 1)
         if (kind == TokenKind::Coloncolon && index >= 1
             && arena_at(opens, index - 1).name_off == 1
-            && arena_at(opens, index).name_len == 0
-            && previous == TokenKind::Ident) {
+            && previous == TokenKind::Ident
+            && (arena_at(opens, index).name_len == 0
+                || inside_values_block(tokens, opens, index))) {
             set_role(roles, index, ROLE_DECLARES)
         } else if (kind == TokenKind::Lt && previous == TokenKind::Ident) {
             close := type_arguments_close(tokens, index)

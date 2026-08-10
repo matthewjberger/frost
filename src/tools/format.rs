@@ -220,6 +220,48 @@ fn begins_a_type(token: Option<&Token>) -> bool {
     )
 }
 
+/// Whether the brace this token sits directly inside opens the values a type
+/// names under itself, which is where a `::` declares rather than reaching into
+/// a type.
+///
+/// The block is recognized by what opens it, the way both compilers recognize
+/// it: a name and a `::`. A body reaching a name that way writes `Enum::Variant`
+/// at the head of a line, which is why the enclosing brace is asked about rather
+/// than the line.
+fn inside_values_block(
+    tokens: &[Token],
+    opens_line: &[bool],
+    brace_depth: &[i32],
+    index: usize,
+) -> bool {
+    if brace_depth[index] != 1 {
+        return false;
+    }
+    let Some(open) = (0..index).rev().find(|held| {
+        matches!(tokens[*held], Token::LeftBrace) && brace_depth[*held] == 0
+    }) else {
+        return false;
+    };
+    if !matches!(tokens.get(open + 1), Some(Token::Identifier(_)))
+        || !matches!(tokens.get(open + 2), Some(Token::DoubleColon))
+    {
+        return false;
+    }
+    // Which declaration the brace belongs to. Only a type declaration may name
+    // values under itself, and a function body opening with a constant is the
+    // same two tokens, so the word after the declaration's `::` is what tells
+    // the two apart.
+    let Some(head) = (0..open).rev().find(|held| {
+        brace_depth[*held] == 0
+            && opens_line[*held]
+            && matches!(tokens[*held], Token::Identifier(_))
+            && matches!(tokens.get(held + 1), Some(Token::DoubleColon))
+    }) else {
+        return false;
+    };
+    !matches!(tokens.get(head + 2), Some(Token::Function))
+}
+
 /// The job each token is doing.
 fn roles(
     tokens: &[Token],
@@ -237,9 +279,15 @@ fn roles(
             // `TokenKind::Ident` standing alone as a function's answer is one.
             Token::DoubleColon
                 if index >= 1
-                    && brace_depth[index] == 0
                     && opens_line[index - 1]
-                    && matches!(tokens[index - 1], Token::Identifier(_)) =>
+                    && matches!(tokens[index - 1], Token::Identifier(_))
+                    && (brace_depth[index] == 0
+                        || inside_values_block(
+                            tokens,
+                            opens_line,
+                            brace_depth,
+                            index,
+                        )) =>
             {
                 held[index] = Role::Declares;
             }
@@ -437,11 +485,15 @@ fn spaced(
     if matches!(left, Token::Case) {
         return true;
     }
-    if matches!(left, Token::Dot) || matches!(right, Token::Dot) {
+    if matches!(left, Token::Dot) || matches!(left, Token::Dollar) {
         return false;
     }
-    if matches!(left, Token::Dollar) {
-        return false;
+    if matches!(right, Token::Dot) {
+        // A dot that opens a value rather than reaching into one takes its
+        // space in front, the way it does after `case`. What is on its left is
+        // what tells them apart: `key == .Left` names a value and `z.x` reaches
+        // into one, and an operator does not end a value.
+        return !ends_a_value(Some(left));
     }
     // `{}` with nothing in it, against `{ field = 1 }` with something.
     if matches!(left, Token::LeftBrace) && matches!(right, Token::RightBrace) {

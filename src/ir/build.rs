@@ -92,6 +92,11 @@ pub struct IrBuilder {
     // from any other distinct type, and only two questions need to: what
     // `InitFlags::Video` is, and which operators a bit set answers to.
     flags: HashMap<String, FlagsLayout>,
+    // The values each type names under itself, by type name. A named value is
+    // its expression wherever it is written, read at the type its declaration
+    // gives it, which is what makes `Key::Left` a `Key` and not the number the
+    // declaration wrote.
+    type_values: HashMap<String, TypeValues>,
     constants: HashMap<String, ExprId>,
     // A function a `where` bound may name, by the one expression its body is.
     // A bound holds a type to what it is, and the vocabulary answers that of a
@@ -117,6 +122,14 @@ pub struct IrBuilder {
 struct FlagsLayout {
     repr: Type,
     bits: HashMap<String, i64>,
+}
+
+// The values one type names under itself: the type each of them is, and the
+// names in the order the declaration wrote them, so a near name suggested for
+// one that is not there is chosen over a stable set.
+struct TypeValues {
+    declared: Type,
+    values: Vec<(String, ExprId)>,
 }
 
 // An arm nothing reaches, whatever it was that took its values first.
@@ -584,6 +597,42 @@ fn build_module_inner(
         }
     }
 
+    // The type each name declares, for the declarations that may name values
+    // under themselves. A distinct type carries the code it was resolved to,
+    // so `Key::Left` reads at the `Key` a use of the name reads at.
+    let mut declared_types: HashMap<String, Type> = HashMap::new();
+    for statement in roots {
+        match ast.stmt(*statement) {
+            Statement::TypeAlias(name, ty) => {
+                declared_types.insert(ast.name(*name).to_string(), ty.clone());
+            }
+            Statement::Struct(name, ..) => {
+                let name = ast.name(*name).to_string();
+                declared_types.insert(name.clone(), Type::Struct(name));
+            }
+            Statement::Enum(name, ..) => {
+                let name = ast.name(*name).to_string();
+                declared_types.insert(name.clone(), Type::Enum(name));
+            }
+            _ => {}
+        }
+    }
+    let mut type_values: HashMap<String, TypeValues> = HashMap::new();
+    for entry in &ast.type_values {
+        let type_name = ast.name(entry.type_name).to_string();
+        let Some(declared) = declared_types.get(&type_name) else {
+            continue;
+        };
+        type_values
+            .entry(type_name)
+            .or_insert_with(|| TypeValues {
+                declared: declared.clone(),
+                values: Vec::new(),
+            })
+            .values
+            .push((ast.name(entry.name).to_string(), entry.value));
+    }
+
     // The concrete types beside the written ones, so a place reached through an
     // instantiation has a type. `Vec<File>` is where `storage` is a run of
     // resources; `Vec` alone says only that it is a run of whatever `T` stands
@@ -599,6 +648,7 @@ fn build_module_inner(
         structs,
         enums,
         flags,
+        type_values,
         constants,
         bound_functions,
         generic_functions,
@@ -1628,6 +1678,15 @@ impl IrBuilder {
         self.enums.get(name)
     }
 
+    // Whether a type names this value under itself. Asked at `Type::Name`
+    // before the reading that makes one a variant, so a type carrying both
+    // answers for each name with the thing it declared under it.
+    fn names_a_value(&self, type_name: &str, value_name: &str) -> bool {
+        self.type_values.get(type_name).is_some_and(|held| {
+            held.values.iter().any(|(name, _)| name == value_name)
+        })
+    }
+
     fn byte_size(&self, ty: &Type) -> usize {
         size_and_align(ty, &self.structs, &self.enums)
             .map(|(size, _)| size)
@@ -2268,9 +2327,12 @@ fn sanitize_identifier(name: &str) -> String {
         .collect()
 }
 
-// The enum an inferred `.Variant` belongs to, taken from what the context
+// The type an inferred `.Name` belongs to, taken from what the context
 // expects. Without one there is nothing to infer from, which is what the
-// message says rather than leaving a nameless enum to fail later.
+// message says rather than leaving a nameless type to fail later.
+//
+// A distinct type is one of these, since a value named under one is reached
+// the way a variant is and elides the same way.
 fn name_inferred_variant(
     ast: &mut Ast,
     expression: ExprId,
@@ -2278,9 +2340,11 @@ fn name_inferred_variant(
     fields: Range32,
     expected: Option<&Type>,
 ) -> Result<ExprId> {
-    let Some(Type::Enum(name) | Type::Struct(name)) = expected else {
+    let Some(Type::Enum(name) | Type::Struct(name) | Type::Distinct(name, _)) =
+        expected
+    else {
         bail!(
-            "`.{variant}` takes its enum from what the context expects, and here there is nothing to take it from; write `Enum::{variant}`",
+            "`.{variant}` takes its type from what the context expects, and here there is nothing to take it from; write `Type::{variant}`",
             variant = ast.name(variant)
         );
     };
@@ -5671,6 +5735,14 @@ impl<'a> FunctionLowering<'a> {
                     variant_name,
                     field_inits,
                 ) = self.ast.expr(value).clone()
+                    // A value a type names under itself reads as a variant and
+                    // is a value, so it is bound the way every other value is
+                    // rather than by building a tagged one here.
+                    && !self.binds_a_named_value(
+                        type_annotation.as_ref(),
+                        self.ast.name(enum_name),
+                        self.ast.name(variant_name),
+                    )
                 {
                     let enum_name = self.ast.name(enum_name).to_string();
                     let variant_name = self.ast.name(variant_name).to_string();
@@ -5697,7 +5769,7 @@ impl<'a> FunctionLowering<'a> {
                     };
                     if layout_name.is_empty() {
                         bail!(
-                            "`.{variant_name}` takes its enum from what the context expects, and this binding has no type to take it from; annotate it or write `Enum::{variant_name}`"
+                            "`.{variant_name}` takes its type from what the context expects, and this binding has no type to take it from; annotate it or write `Type::{variant_name}`"
                         );
                     }
                     let ty = Type::Enum(layout_name.clone());
@@ -6730,6 +6802,68 @@ impl<'a> FunctionLowering<'a> {
                     IrOperand::Constant(IrConstant::Integer(value, ty.clone())),
                     ty,
                 ))
+            }
+            // `Key::Left` where `Key` names values under itself. The value is
+            // its expression, read at the type the declaration gives it, so a
+            // number written under a distinct type comes out as that type
+            // rather than as the number.
+            Expression::EnumVariantInit(type_name, value_name, fields)
+                if self.builder.names_a_value(
+                    self.ast.name(type_name),
+                    self.ast.name(value_name),
+                ) =>
+            {
+                let type_name = self.ast.name(type_name).to_string();
+                let value_name = self.ast.name(value_name).to_string();
+                if !fields.is_empty() {
+                    bail!(
+                        "'{type_name}::{value_name}' is a value named under a type, so it carries nothing"
+                    );
+                }
+                let held = &self.builder.type_values[&type_name];
+                let declared = held.declared.clone();
+                let value = held
+                    .values
+                    .iter()
+                    .find(|(name, _)| name == &value_name)
+                    .map(|(_, value)| *value)
+                    .expect("a value the type names");
+                let (operand, actual) =
+                    self.lower_expression(value, Some(&declared))?;
+                if actual != declared {
+                    bail!(
+                        "a value named under a type is a value of that type, so '{type_name}::{value_name}' is a {declared} and this is a {actual}"
+                    );
+                }
+                Ok((operand, declared))
+            }
+            // A name under a type that names values, where no value and no
+            // variant answers to it. The type's own values are the set a near
+            // name is looked for in, the way a name that is not a variable is
+            // looked for among the names in scope.
+            Expression::EnumVariantInit(type_name, value_name, _)
+                if self
+                    .builder
+                    .type_values
+                    .contains_key(self.ast.name(type_name))
+                    && self
+                        .builder
+                        .enum_layout(self.ast.name(type_name))
+                        .is_none() =>
+            {
+                let type_name = self.ast.name(type_name).to_string();
+                let value_name = self.ast.name(value_name).to_string();
+                let held = &self.builder.type_values[&type_name];
+                let names: Vec<&str> =
+                    held.values.iter().map(|(name, _)| name.as_str()).collect();
+                let suggestion =
+                    match crate::tools::api::nearest(&value_name, &names) {
+                        Some(near) => format!(" (did you mean '{near}'?)"),
+                        None => String::new(),
+                    };
+                bail!(
+                    "'{type_name}' names no value called '{value_name}'{suggestion}"
+                )
             }
             Expression::EnumVariantInit(enum_name, _, _) => {
                 let enum_name = self.ast.name(enum_name).to_string();
@@ -7774,6 +7908,40 @@ impl<'a> FunctionLowering<'a> {
             );
         }
         self.lower_indirect_call(callee, &arguments)
+    }
+
+    // Whether `Type::Name`, or a `.Name` an annotation names the type of,
+    // belongs to the values a type names under itself rather than to its
+    // variants. A binding of one holds that value, at the type its declaration
+    // gives it, so it is bound the way every other value is.
+    //
+    // A name a type with such a block does not name answers here too, wherever
+    // the type has no variants for it to be one of. What it is is settled
+    // where every other name under a type is, which is what puts the near name
+    // in the reader's hands instead of a complaint about an enum.
+    fn binds_a_named_value(
+        &self,
+        annotation: Option<&Type>,
+        type_name: &str,
+        value_name: &str,
+    ) -> bool {
+        let named = if type_name.is_empty() {
+            match annotation {
+                Some(
+                    Type::Enum(named)
+                    | Type::Struct(named)
+                    | Type::Distinct(named, _),
+                ) => named.as_str(),
+                _ => return false,
+            }
+        } else {
+            type_name
+        };
+        if self.builder.names_a_value(named, value_name) {
+            return true;
+        }
+        self.builder.type_values.contains_key(named)
+            && self.builder.enum_layout(named).is_none()
     }
 
     // The function a bundle's field names, for a bundle that is a constant.

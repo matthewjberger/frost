@@ -15,6 +15,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
     is_distinct, distinct_repr, distinct_id, distinct_type,
     is_flags_type, flag_bit_value, record_flag_bit,
+    type_value_index, names_values, record_type_value,
     report_type_name, report_distinct_note, written_number,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
@@ -1047,6 +1048,55 @@ record_flag_bit :: fn(mut p: Parser, ty: i64, off: i64, len: i64, value: i64) {
     arena_push(
         p.flag_bits,
         FlagBit { ty = ty, name_off = off, name_len = len, value = value }
+    )
+}
+
+// Where in the table the value `ty` names by (off, len) sits, or -1 when the
+// type names no such value. The index rather than the entry, since the pass
+// that reads the values writes the node back into it.
+type_value_index :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.type_values.count) {
+        entry := arena_at(p.type_values, i)
+        if (entry.ty == ty && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Whether a type names any values under itself, which is what says a name it
+// does not name is a value that is missing rather than a variant.
+names_values :: fn(mut p: Parser, ty: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.type_values.count) {
+        entry := arena_at(p.type_values, i)
+        if (entry.ty == ty) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+record_type_value :: fn(
+    mut p: Parser,
+    ty: i64,
+    off: i64,
+    len: i64,
+    token: i64
+) {
+    arena_push(
+        p.type_values,
+        TypeValue {
+            ty = ty,
+            name_off = off,
+            name_len = len,
+            token = token,
+            node = -1
+        }
     )
 }
 

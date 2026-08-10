@@ -402,6 +402,226 @@ is later than the declaration the call is written in. The caller-side form hands
 the rounded number in: `Grid<pow2(300)>`. Arithmetic over a size parameter keeps
 working, and `[(N + 63) / 64]i64` is how a length over one is written (3.2).
 
+## 5.2d Values named under a type
+
+A type declaration may name values of itself. They go in a brace block on the
+declaration and are reached through the type:
+
+```frost
+Key :: distinct i64 {
+    Left :: 80
+    Right :: 79
+}
+
+main :: fn() -> i64 {
+    key := cast($Key, 79)
+    if (key == Key::Right) {
+        return 0
+    }
+    1
+}
+```
+
+`Key::Left` is a `Key`. That is what the block is for. A constant beside the
+declaration, `KEY_LEFT :: 80`, is a number, and a number goes wherever a number
+goes; the value named under the type carries the type, so the two halves of the
+declaration hold together.
+
+A `struct` and an `enum` take the same block, which is where it earns its keep:
+
+```frost
+Vec3 :: struct { x: f32, y: f32, z: f32 } {
+    ZERO :: Vec3 { x = 0.0, y = 0.0, z = 0.0 }
+}
+
+main :: fn() -> i64 {
+    origin := Vec3::ZERO
+    if (origin.x == 0.0) {
+        return 0
+    }
+    1
+}
+```
+
+The value is its expression wherever it is named, read at the type the
+declaration gives it, the way a constant is its expression wherever it is named.
+A number written under a distinct type over an integer takes that type, since a
+literal has no type of its own until the context gives it one (3.6a).
+
+`Type::Name` is where an enum's variants and a flags type's bits are already
+reached, so a value named under a type is reached the same way and needs no
+spelling of its own. `.Name` elides the type wherever the context names it, so
+`key == .Right` and `key == Key::Right` are one thing written two ways, and
+`Colour::Red` and `.Red` are too.
+
+```frost
+Colour :: enum { Red, Green }
+
+rank :: fn(c: Colour) -> i64 {
+    match (c) {
+        case .Red: 0
+        case .Green: 1
+    }
+}
+
+main :: fn() -> i64 {
+    rank(Colour::Red)
+}
+```
+
+A name that no type is around to fill in is refused where it is written, rather
+than left to fail as a nameless type further along:
+
+```frost,refused
+Colour :: enum { Red, Green }
+
+main :: fn() -> i64 {
+    c := .Red
+    0
+}
+```
+
+> `.Red` takes its type from what the context expects, and this binding has no
+> type to take it from; annotate it or write `Type::Red`
+
+### The set stays open
+
+A type naming values of itself makes no claim to be naming all of them. A
+`Key` that no line of the declaration names still arrives from C and is still a
+`Key`, and a `match` over one needs a catch-all exactly as a `match` over an
+`i64` does. That is what makes the block right for an ordinal set a foreign
+header fixed: SDL will hand over scancode 137 whether or not anybody wrote it
+down.
+
+An `enum` is the other promise. Its variants are all the values there are, and
+that is what a `match` with an arm per variant is checked against, so an enum
+carries no foreign numbers and there is no discriminant to write on a variant.
+A program that wants both writes the distinct type for the foreign set and the
+enum for the closed one.
+
+There is no conversion function and no refusal of a number nobody named. One
+`cast` where the number arrives is the whole of it (3.1).
+
+### What the block holds
+
+Each entry is `Name :: <value>`, and the value has to be a value of the type:
+
+```frost,refused
+Vec3 :: struct { x: f32 } {
+    ZERO :: 5
+}
+
+main :: fn() -> i64 {
+    origin := Vec3::ZERO
+    0
+}
+```
+
+> a value named under a type is a value of that type, so 'Vec3::ZERO' is a Vec3
+> and this is a i64
+
+That question is asked where the value is named, which is where a constant's is
+asked as well: a value nobody names asks nothing of the program, and the type it
+would be read at is the one the name is written against.
+
+A name is named once. Two entries of one name leave nothing to say which of them
+`Key::Left` is:
+
+```frost,refused
+Key :: distinct i64 {
+    Left :: 80
+    Left :: 79
+}
+
+main :: fn() -> i64 { 0 }
+```
+
+> a type names each of its values once, and 'Key' names 'Left' twice
+
+A variant and a value are reached the same way, so an enum may not name one of
+each under a single name:
+
+```frost,refused
+Colour :: enum { Red, Green } {
+    Red :: 1
+}
+
+main :: fn() -> i64 { 0 }
+```
+
+> a type names each of its values once, and 'Colour' names 'Red' as a variant
+> and as a value
+
+A name the type does not name is answered out of the type's own values, the way
+an unknown variable is answered out of the names in scope:
+
+```frost,refused
+Key :: distinct i64 {
+    Left :: 80
+    Right :: 79
+}
+
+main :: fn() -> i64 {
+    k := Key::Lef
+    0
+}
+```
+
+> 'Key' names no value called 'Lef' (did you mean 'Left'?)
+
+Each value opens a line of its own. `Key::Left` written as a value is the two
+tokens an entry opens with, so which line a value is on is what says where one
+ends and the next begins, exactly as it does between two declarations:
+
+```frost,refused
+Key :: distinct i64 {
+    Left :: 80 Right :: 79
+}
+
+main :: fn() -> i64 { 0 }
+```
+
+> a type names each of its values on a line of its own, and this one follows
+> another
+
+A value written over several lines is one value, since a break inside brackets
+says nothing:
+
+```frost
+Vec3 :: struct { x: f32, y: f32 } {
+    ZERO :: Vec3 {
+        x = 0.0,
+        y = 0.0
+    }
+    UP :: Vec3 { x = 0.0, y = 1.0 }
+}
+
+main :: fn() -> i64 {
+    if (Vec3::UP.y == 1.0) {
+        return 0
+    }
+    1
+}
+```
+
+A generic declaration is a type for each set of arguments given to it, so there
+is no one type for a value to be a value of:
+
+```frost,refused
+Box :: struct($T: Type) { held: T } {
+    EMPTY :: 0
+}
+
+main :: fn() -> i64 { 0 }
+```
+
+> a type names values of itself, and a generic declaration is one type for each
+> set of arguments given to it, so 'Box' names none
+
+A `flags` declaration writes its bits the same way for the same reason, and
+differs in what a bit is: a number a C header fixed, written `Video = 32`, where
+a value named under a type is an expression of that type (3.6b).
+
 ## 5.3 Externs and imports
 
 ```
