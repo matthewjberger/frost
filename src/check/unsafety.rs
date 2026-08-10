@@ -71,10 +71,23 @@ fn walk_unsafety(ast: &Ast, roots: &[StmtId], audit: bool) -> Vec<Diagnostic> {
         audit,
         vouched: Vec::new(),
         scope: Vec::new(),
+        declared: HashSet::new(),
         diagnostics: Vec::new(),
     };
     let mut top_level: HashMap<String, Type> = HashMap::new();
     for statement in roots {
+        match ast.stmt(*statement) {
+            Statement::Constant(name, _)
+            | Statement::Struct(name, _, _)
+            | Statement::Enum(name, _, _)
+            | Statement::Flags(name, _, _)
+            | Statement::TypeAlias(name, _)
+            | Statement::Extern { name, .. }
+            | Statement::Declared { name, .. } => {
+                checker.declared.insert(ast.name(*name).to_string());
+            }
+            _ => {}
+        }
         // What each function answers with. The index rule below refuses a base
         // whose type it cannot name, and a binding is most often given its type
         // by the call that produced it, so without this the rule would fall to
@@ -182,6 +195,14 @@ fn constant_type(ast: &Ast, value: ExprId) -> Option<Type> {
             Some(Type::Array(Box::new(Type::Unknown), 0))
         }
         Expression::Literal(Literal::String(_)) => Some(Type::Str),
+        // A number is a type this walk can name, and the index rule refuses a
+        // base it cannot. `N :: 4` then `N[0]` is indexing a number, which is
+        // what the reader wants to be told rather than that the type is not
+        // known and the line belongs in an `unsafe` block.
+        Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
+        Expression::Literal(Literal::Float(_)) => Some(Type::F64),
+        Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
+        Expression::Literal(Literal::Boolean(_)) => Some(Type::Bool),
         _ => None,
     }
 }
@@ -380,6 +401,11 @@ struct Checker<'walk> {
     // One entry per open `unsafe` block: whether anything inside it needed one.
     vouched: Vec<bool>,
     scope: Vec<HashMap<String, Type>>,
+    // Every name a declaration binds at the top level, whether or not this pass
+    // can say what type it holds. `scope` holds the ones it can, which is a
+    // smaller set, and the index rule below has to tell a name that is not
+    // there from one whose type it merely cannot work out.
+    declared: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -856,6 +882,7 @@ impl Checker<'_> {
                     ast.expr(*base),
                     Expression::Identifier(name)
                         if self.lookup(ast.name(*name)).is_none()
+                            && !self.declared.contains(ast.name(*name))
                 );
                 match self.type_of(*base).map(without_borrow) {
                     Some(Type::Ptr(_)) => {

@@ -10163,7 +10163,23 @@ impl<'a> FunctionLowering<'a> {
             if self.resolve_variable(&name).is_none()
                 && let Some(value) = self.builder.constants.get(&name).copied()
             {
-                return self.element_address(value, index);
+                // The value stands where the name is written, so a refusal
+                // about it points there rather than at the declaration it was
+                // read from, which is a line the reader did not index.
+                let written = self.at_expression(base);
+                return self.element_address(value, index).map_err(|error| {
+                    match error
+                        .downcast_ref::<crate::diagnostic::LocatedError>()
+                    {
+                        Some(held) => anyhow::Error::new(
+                            crate::diagnostic::LocatedError {
+                                position: written,
+                                message: held.message.clone(),
+                            },
+                        ),
+                        None => error,
+                    }
+                });
             }
         }
         let (index_operand, index_type) = self.lower_expression(index, None)?;
@@ -10214,10 +10230,7 @@ impl<'a> FunctionLowering<'a> {
             if !is_place_expression(self.ast, base) {
                 let (value, value_type) = self.lower_expression(base, None)?;
                 let IrOperand::Local(local) = value else {
-                    bail!(
-                        "cannot index into: {}",
-                        display_expr(self.ast, base)
-                    );
+                    return Err(self.not_a_run(base, &value_type));
                 };
                 match value_type {
                     Type::Slice(element) => {
@@ -10249,10 +10262,7 @@ impl<'a> FunctionLowering<'a> {
                         ));
                         (IrOperand::Local(result), *element, Some(count))
                     }
-                    _ => bail!(
-                        "cannot index into: {}",
-                        display_expr(self.ast, base)
-                    ),
+                    other => return Err(self.not_a_run(base, &other)),
                 }
             } else {
                 self.array_base_pointer(base)?
@@ -10715,6 +10725,18 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(local), ty))
     }
 
+    // What indexing asks of its base, said the same way wherever it is asked.
+    // The caret is on the base, so naming what it turned out to be is what the
+    // reader has not got.
+    fn not_a_run(&self, base: ExprId, ty: &Type) -> anyhow::Error {
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position: self.at_expression(base),
+            message: format!(
+                "indexing reads an element out of a run, and this is a {ty}"
+            ),
+        })
+    }
+
     fn array_base_pointer(
         &mut self,
         base: ExprId,
@@ -10751,7 +10773,7 @@ impl<'a> FunctionLowering<'a> {
                         };
                         Ok((IrOperand::Local(local), *element, Some(count)))
                     }
-                    other => bail!("'{name}' is not an array (found {other})"),
+                    other => Err(self.not_a_run(base, &other)),
                 }
             }
             Expression::FieldAccess(inner, field) => {
@@ -10776,31 +10798,28 @@ impl<'a> FunctionLowering<'a> {
                 let (operand, pointer_type) =
                     self.lower_expression(pointer, None)?;
                 let (Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner)) =
-                    pointer_type
+                    pointer_type.clone()
                 else {
-                    bail!(
-                        "cannot index into: {}",
-                        display_expr(self.ast, base)
-                    );
+                    return Err(self.not_a_run(base, &pointer_type));
                 };
+                let held = (*inner).clone();
                 let Type::Array(element, count) = *inner else {
-                    bail!(
-                        "cannot index into: {}",
-                        display_expr(self.ast, base)
-                    );
+                    return Err(self.not_a_run(base, &held));
                 };
                 Ok((operand, *element, Some(count)))
             }
             Expression::Index(inner, index) => {
                 let (address, element_type) =
                     self.element_address(inner, index)?;
+                let held = element_type.clone();
                 let Type::Array(element, count) = element_type else {
-                    bail!("indexed value is not an array");
+                    return Err(self.not_a_run(base, &held));
                 };
                 Ok((address, *element, Some(count)))
             }
             _ => {
-                bail!("cannot index into: {}", display_expr(self.ast, base))
+                let held = self.answer_type(base).unwrap_or(Type::Unknown);
+                Err(self.not_a_run(base, &held))
             }
         }
     }

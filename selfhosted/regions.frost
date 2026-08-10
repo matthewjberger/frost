@@ -982,17 +982,14 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
 // backend dies with after the checks have all answered. The chain is the one
 // emission accepts: a local, a constant, a function's address, or a struct
 // constant.
+name_is_known :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    (local_exists(p, off, len) || is_const(p, off, len)
+        || fn_index_of(p, off, len) >= 0
+        || value_const_node(p, off, len) >= 0)
+}
+
 check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
-    if (local_exists(p, off, len)) {
-        return
-    }
-    if (is_const(p, off, len)) {
-        return
-    }
-    if (fn_index_of(p, off, len) >= 0) {
-        return
-    }
-    if (value_const_node(p, off, len) >= 0) {
+    if (name_is_known(p, off, len)) {
         return
     }
     report_where(p.modules, p.src, off)
@@ -1001,6 +998,46 @@ check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
     report("'")
     report_nearest_name(p, off, len)
     frost_rt_recover_escape()
+}
+
+// What indexing asks of its base: a run to read an element out of. A number
+// and a struct each hold one value, so there is no element to name, and this
+// compiler emitted the subscript anyway and left whichever backend read it to
+// notice. The C compiler said so; the assembler wrote it.
+//
+// Asked only of the types this walk can name for certain. An unbound parameter
+// stands for whatever the instance binds, and a template's own parse reaches
+// here before any instance has said what that is.
+check_indexable :: fn(mut p: Parser, base: i64, ty: i64) {
+    if (is_array_ty(ty) || is_raw_pointer(ty) || is_pointer(ty)) {
+        return
+    }
+    // A name nothing declares reads as an i64 here, since that is what the
+    // local table hands back for a name it has never seen. The walk that
+    // resolves names says what is wrong with it, and one fault is one report.
+    node := arena_at(p.arena, base)
+    pos := node.pos
+    if (node.kind == NodeKind::Var
+        && name_is_known(p, node.val, node.c) == false) {
+        return
+    }
+    if (is_struct_ty(ty) && is_columns_ty(p, ty) == false
+        && is_slab_ty(p, ty) == false) {
+        report_where(p.modules, p.src, pos)
+        report("indexing reads an element out of a run, and this is a ")
+        report_type_name(p, ty)
+        frost_rt_recover_note()
+        return
+    }
+    if (ty == TY_I64 || ty == TY_I8 || ty == TY_I16 || ty == TY_I32
+        || ty == TY_U8 || ty == TY_U16 || ty == TY_U32 || ty == TY_U64
+        || ty == TY_ISIZE || ty == TY_USIZE || ty == TY_F32 || ty == TY_F64
+        || ty == TY_BOOL) {
+        report_where(p.modules, p.src, pos)
+        report("indexing reads an element out of a run, and this is a ")
+        report_type_name(p, ty)
+        frost_rt_recover_note()
+    }
 }
 
 // The declared name a misspelling was probably meant to be, where one name is
@@ -1200,6 +1237,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 mut held := arena_at(p.arena, id)
                 held.c = 1
             }
+            check_indexable(p, node.a, base_ty)
         }
         if (kind == NodeKind::Bin) {
             check_flags_operator(p, node.val, node.a, node.b, node.pos)

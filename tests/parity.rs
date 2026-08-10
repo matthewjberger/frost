@@ -429,6 +429,49 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "'Ops' is declared twice here, and a name means one thing wherever it \
          is written; rename one of them",
     ),
+    // Indexing reads an element out of a run, and a number holds one value, so
+    // there is no element to name. The self-hosted compiler emitted the
+    // subscript anyway and left whichever backend read it to notice: the C
+    // compiler said so and the assembler wrote it. The bootstrap had three
+    // sentences for the one fault and reached the `unsafe` gate first, telling
+    // the reader that a number's type was not known.
+    (
+        "indexing_a_number_says_what_a_number_is",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   n := 7\n\
+         \x20   x := n[0]\n\
+         \x20   print(\"{}\\n\", x)\n\
+         \x20   0\n\
+         }\n",
+        "indexing reads an element out of a run, and this is a i64",
+    ),
+    (
+        "indexing_a_struct_says_what_the_struct_is",
+        "import \"io.frost\"\n\
+         P :: struct { a: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := P { a = 1 }\n\
+         \x20   x := p[0]\n\
+         \x20   print(\"{}\\n\", x)\n\
+         \x20   0\n\
+         }\n",
+        "indexing reads an element out of a run, and this is a P",
+    ),
+    // The name is where the reader wrote it, not where the constant it stands
+    // for was declared. The value goes in ahead of every question the index
+    // asks, and the walk kept the place it came from.
+    (
+        "indexing_a_constant_points_at_the_name",
+        "import \"io.frost\"\n\
+         N :: 4\n\
+         main :: fn() -> i64 {\n\
+         \x20   x := N[0]\n\
+         \x20   print(\"{}\\n\", x)\n\
+         \x20   0\n\
+         }\n",
+        "indexing reads an element out of a run, and this is a i64",
+    ),
     // A name that is not there, wherever it stands. The bootstrap said it at
     // the statement and the self-hosted compiler at the name, and the two had
     // three sentences between them for one fault: an assignment and an address
@@ -6395,33 +6438,38 @@ Bad :: enum { Nope }
     // What the taken branch holds stands where the `when` stood, so it chooses
     // between declarations as well as between statements, and between values.
     (
+        // What the program prints holds on every machine, since the suite runs
+        // on all three and a build is for the one it runs on. Exactly one of
+        // the targets is the target, which is the property `when` rests on, and
+        // both branches of the other two answer alike so the reading is the
+        // same wherever this is built.
         "a_when_chooses_on_the_target",
-        "import \"io.frost\"
-         when (TARGET_WINDOWS) {
-             NAME :: \"windows\"
-             width :: fn() -> i64 { 64 }
-         } else {
-             NAME :: \"other\"
-             width :: fn() -> i64 { 32 }
-         }
-         main :: fn() -> i64 {
-             print(\"{}\\n\", NAME)
-             print(\"{}\\n\", width())
-             when (TARGET_WINDOWS || TARGET_LINUX) {
-                 print(\"desktop\\n\")
-             } else {
-                 print(\"other\\n\")
-             }
-             held := when (!TARGET_MACOS) { 7 } else { 9 }
-             print(\"{}\\n\", held)
-             0
-         }
-",
-        "windows
-64
-desktop
-7
-",
+        "import \"io.frost\"\n\
+         when (TARGET_WINDOWS) {\n\
+         \x20   NAME :: \"one\"\n\
+         \x20   width :: fn() -> i64 { 64 }\n\
+         } else {\n\
+         \x20   NAME :: \"one\"\n\
+         \x20   width :: fn() -> i64 { 64 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut n := 0\n\
+         \x20   when (TARGET_WINDOWS) { n = n + 1 }\n\
+         \x20   when (TARGET_LINUX) { n = n + 1 }\n\
+         \x20   when (TARGET_MACOS) { n = n + 1 }\n\
+         \x20   print(\"{}\\n\", n)\n\
+         \x20   print(\"{}\\n\", NAME)\n\
+         \x20   print(\"{}\\n\", width())\n\
+         \x20   when (TARGET_WINDOWS || TARGET_LINUX || TARGET_MACOS) {\n\
+         \x20       print(\"one of the three\\n\")\n\
+         \x20   } else {\n\
+         \x20       print(\"none of them\\n\")\n\
+         \x20   }\n\
+         \x20   held := when (TARGET_WINDOWS) { 7 } else { 7 }\n\
+         \x20   print(\"{}\\n\", held)\n\
+         \x20   0\n\
+         }\n",
+        "1\none\n64\none of the three\n7\n",
     ),
     // A constant may ask a type what it measures. A layout is what the types
     // answer once they have been read, and a constant is settled before they
