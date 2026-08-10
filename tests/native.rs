@@ -1431,13 +1431,13 @@ fn self_hosted_arithmetic_on_a_distinct_type_answers_with_it() {
 // names are the type's, and a combination of two of them is still that type, so
 // it goes into a call with nothing written down to say what it is.
 const FLAGS: &str = "import \"io.frost\"\nInitFlags :: flags u32 {
-         Audio   = 16,
-         Video   = 32,
-         Events  = 16384,
+         Audio :: 16
+         Video :: 32
+         Events :: 16384
      }
      WindowFlags :: flags u64 {
-         Fullscreen = 1,
-         Resizable  = 32,
+         Fullscreen :: 1
+         Resizable :: 32
      }
      started :: fn(f: InitFlags) -> u32 { f }
      opened :: fn(f: WindowFlags) -> u64 { f }
@@ -1497,7 +1497,10 @@ fn self_hosted_compiles_a_flags_type() {
 // still compiles. `window_create` takes a parameter called `flags`.
 #[test]
 fn flags_is_still_a_name() {
-    let source = "import \"io.frost\"\nMask :: flags u32 { One = 1, Two = 2 }
+    let source = "import \"io.frost\"\nMask :: flags u32 {
+         One :: 1
+         Two :: 2
+     }
          take :: fn(flags: Mask) -> u32 { flags }
          Holder :: struct { flags: i64 }
          main :: fn() -> i64 {
@@ -1523,8 +1526,13 @@ fn flags_is_still_a_name() {
 // compiler's.
 #[test]
 fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
-    let prelude = "InitFlags :: flags u32 { Audio = 16, Video = 32 }
-         WindowFlags :: flags u64 { Resizable = 32 }
+    let prelude = "InitFlags :: flags u32 {
+         Audio :: 16
+         Video :: 32
+     }
+     WindowFlags :: flags u64 {
+         Resizable :: 32
+     }
          started :: fn(f: InitFlags) -> u32 { f }
 ";
     let cases = [

@@ -287,11 +287,10 @@ impl Lowerer {
             _ => return false,
         };
         match ast.expr(expression) {
-            // `return .Denied`: the dot names no enum, so it is the failure
-            // when the error type is an enum with that variant. A value type
-            // that happens to share the name is not a case that can arise,
-            // since the two are different enums and the reader wrote the one
-            // the error declares.
+            // `return .Denied`: the dot names no enum, and is refused once the
+            // types are read. Which side it was meant for is still worked out
+            // here, because that decides the type the refusal names, and a
+            // reader told to write `Fault::Denied` is told the useful half.
             Expression::EnumVariantInit(name, variant, _)
                 if ast.name(*name).is_empty() =>
             {

@@ -66,18 +66,18 @@ Window :: distinct ^u8
 // is how two are asked for. The combination is a WindowFlags because both
 // operands are, so nothing has to say so.
 InitFlags :: flags u32 {
-    Audio = 16,
-    Video = 32,
-    Gamepad = 8192,
-    Events = 16384,
+    Audio :: 16
+    Video :: 32
+    Gamepad :: 8192
+    Events :: 16384
 }
 
 WindowFlags :: flags u64 {
-    Fullscreen = 1,
-    Hidden = 8,
-    Borderless = 16,
-    Resizable = 32,
-    HighPixelDensity = 8192,
+    Fullscreen :: 1
+    Hidden :: 8
+    Borderless :: 16
+    Resizable :: 32
+    HighPixelDensity :: 8192
 }
 
 // SDL_Event is a union of every event kind. Frost has no unions and does not

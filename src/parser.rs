@@ -2247,29 +2247,35 @@ impl<'a> Parser<'a> {
             }
             self.read_token();
             let mut bits = Vec::new();
+            // A bit is declared the way every value named under a type is,
+            // with `::`, and separated from the next by the line it is on.
+            // What a bit may hold is the difference between the two blocks:
+            // a number a C header fixed, rather than an expression.
             while self.peek_nth(0) != &Token::RightBrace {
+                if matches!(self.peek_nth(0), Token::EndOfFile) {
+                    bail!(
+                        "the bits '{identifier}' names are written inside braces, and this block is not closed"
+                    );
+                }
                 let name = match self.read_token() {
                     Token::Identifier(name) => name.to_string(),
-                    other => bail!(
-                        "a flags declaration names its bits, and '{other}' is not a name"
+                    _ => bail!(
+                        "a set of bits names each of them with a name, and this is not one"
                     ),
                 };
-                if !matches!(self.read_token(), Token::Assign) {
+                if !matches!(self.read_token(), Token::DoubleColon) {
                     bail!(
-                        "'{name}' needs the number it stands for, written as '{name} = 32'"
+                        "a bit of a set is declared the way every value named under a type is, so '{name}' is written as '{name} :: 32'"
                     );
                 }
                 let value = match self.read_token() {
                     Token::Integer(value) => *value,
-                    other => bail!(
-                        "a bit of '{identifier}' is a number a C header wrote down, and '{other}' is not one"
+                    _ => bail!(
+                        "a bit of '{identifier}' is a number a C header wrote down, and this is not one"
                     ),
                 };
                 let name = self.ast.intern(&name);
                 bits.push(FlagBit { name, value });
-                if matches!(self.peek_nth(0), Token::Comma) {
-                    self.read_token();
-                }
             }
             self.read_token();
             if matches!(self.peek_nth(0), Token::Semicolon) {

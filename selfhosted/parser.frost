@@ -8582,7 +8582,7 @@ type_value_node :: fn(mut p: Parser, index: i64, at: i64) -> i64 {
     node
 }
 
-// `InitFlags :: flags u32 { Video = 32, Audio = 16 }`, a named set of bits with
+// `InitFlags :: flags u32 { Video :: 32 }`, a named set of bits with
 // a type of its own. The type is a distinct one over the written integer, so
 // everything that already knows what a distinct type is needs no change, and
 // the names go in the bit table under it. The word is not a keyword, so what
@@ -8613,23 +8613,47 @@ parse_flags :: fn(mut p: Parser) {
         },
     )
     advance(p)
-    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
+    // A bit is declared the way every value named under a type is, with `::`,
+    // and separated from the next by the line it is on. What a bit may hold is
+    // the difference between the two blocks: a number a C header fixed, rather
+    // than an expression.
+    while (cur(p) != TokenKind::Rbrace) {
+        if (cur(p) == TokenKind::Eof) {
+            report_where(p.modules, p.src, name_offset)
+            report("the bits '")
+            report_src(p.src, name_offset, name_length)
+            report("' names are written inside braces, and this block is not closed")
+            frost_rt_recover_escape()
+        }
+        if (cur(p) != TokenKind::Ident) {
+            report_where(p.modules, p.src, cur_off(p))
+            report(
+                "a set of bits names each of them with a name, and this is not one"
+            )
+            frost_rt_recover_escape()
+        }
         bit_off := cur_off(p)
         bit_len := cur_len(p)
         advance(p)
+        if (cur(p) != TokenKind::Coloncolon) {
+            report_where(p.modules, p.src, bit_off)
+            report("a bit of a set is declared the way every value named under a type is, so '")
+            report_src(p.src, bit_off, bit_len)
+            report("' is written as '")
+            report_src(p.src, bit_off, bit_len)
+            report(" :: 32'")
+            frost_rt_recover_escape()
+        }
         advance(p)
         if (cur(p) != TokenKind::Int) {
             report_where(p.modules, p.src, cur_off(p))
             report("a bit of '")
             report_src(p.src, name_offset, name_length)
-            report("' is a number a C header wrote down, written as 'Video = 32'")
+            report("' is a number a C header wrote down, and this is not one")
             frost_rt_recover_escape()
         }
         record_flag_bit(p, ty, bit_off, bit_len, cur_val(p))
         advance(p)
-        if (cur(p) == TokenKind::Comma) {
-            advance(p)
-        }
     }
     advance(p)
 }

@@ -747,40 +747,49 @@ WGSL_LANGUAGE_FEATURE_NAME_TEXTURE_FORMATS_TIER1 :: 9
 WGSL_LANGUAGE_FEATURE_NAME_LINEAR_INDEXING :: 10
 
 BufferUsage :: flags u64 {
-    None = 0,
-    MapRead = 1,
-    MapWrite = 2,
-    CopySrc = 4,
-    CopyDst = 8,
-    Index = 16,
-    Vertex = 32,
-    Uniform = 64,
-    Storage = 128,
-    Indirect = 256,
-    QueryResolve = 512,
+    None :: 0
+    MapRead :: 1
+    MapWrite :: 2
+    CopySrc :: 4
+    CopyDst :: 8
+    Index :: 16
+    Vertex :: 32
+    Uniform :: 64
+    Storage :: 128
+    Indirect :: 256
+    QueryResolve :: 512
 }
 
 ColorWriteMask :: flags u64 {
-    None = 0,
-    Red = 1,
-    Green = 2,
-    Blue = 4,
-    Alpha = 8,
-    All = 15,
+    None :: 0
+    Red :: 1
+    Green :: 2
+    Blue :: 4
+    Alpha :: 8
+    All :: 15
 }
 
-MapMode :: flags u64 { None = 0, Read = 1, Write = 2, }
+MapMode :: flags u64 {
+    None :: 0
+    Read :: 1
+    Write :: 2
+}
 
-ShaderStage :: flags u64 { None = 0, Vertex = 1, Fragment = 2, Compute = 4, }
+ShaderStage :: flags u64 {
+    None :: 0
+    Vertex :: 1
+    Fragment :: 2
+    Compute :: 4
+}
 
 TextureUsage :: flags u64 {
-    None = 0,
-    CopySrc = 1,
-    CopyDst = 2,
-    TextureBinding = 4,
-    StorageBinding = 8,
-    RenderAttachment = 16,
-    TransientAttachment = 32,
+    None :: 0
+    CopySrc :: 1
+    CopyDst :: 2
+    TextureBinding :: 4
+    StorageBinding :: 8
+    RenderAttachment :: 16
+    TransientAttachment :: 32
 }
 
 AdapterInfo :: struct {

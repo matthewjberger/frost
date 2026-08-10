@@ -732,9 +732,9 @@ emit_bitflags :: fn(
             entry_name := json_member(document, value, "name")
             builder_str_value(out, "    ")
             append_pascal(out, document, entry_name)
-            builder_str_value(out, " = ")
+            builder_str_value(out, " :: ")
             builder_int(out, bitflag_value(document, entries, entry))
-            builder_str_value(out, ",
+            builder_str_value(out, "
 ")
             entry = entry + 1
         }

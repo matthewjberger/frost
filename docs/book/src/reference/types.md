@@ -269,20 +269,20 @@ travels in, and how it crosses to C.
 
 ## 3.6b Flags
 
-`InitFlags :: flags u32 { Video = 32, Audio = 16 }` declares a named set of
-bits.
+`InitFlags :: flags u32 { ... }` declares a named set of bits, each written
+`Name :: number` on a line of its own.
 
 ```
 InitFlags :: flags u32 {
-    Audio   = 16,
-    Video   = 32,
-    Events  = 16384,
-    Gamepad = 8192,
+    Audio :: 16
+    Video :: 32
+    Events :: 16384
+    Gamepad :: 8192
 }
 
 WindowFlags :: flags u64 {
-    Resizable        = 32,
-    HighPixelDensity = 8192,
+    Resizable :: 32
+    HighPixelDensity :: 8192
 }
 
 chosen := InitFlags::Video | InitFlags::Events
@@ -295,6 +295,11 @@ if (flags_has(chosen, InitFlags::Video)) { ... }
 
 The representation is written, and is an integer type. Each bit's number is
 written out as well, so a set states the numbers a C header fixed.
+
+A bit is declared with `::`, the way every value named under a type is (5.2d),
+and one bit goes on a line. What a bit may hold is where the two blocks differ:
+a number a C header fixed, where a value named under a type is an expression of
+that type.
 
 Each bit is named under the type: `InitFlags::Video`. There is no prefix
 convention and no loose constants beside the declaration.

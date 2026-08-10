@@ -90,9 +90,9 @@ here. An enum holds exactly one alternative, and this holds several.
 
 ```frost,sketch
 InitFlags :: flags u32 {
-    Audio  = 16,
-    Video  = 32,
-    Events = 16384,
+    Audio :: 16
+    Video :: 32
+    Events :: 16384
 }
 
 sdl_init(InitFlags::Video | InitFlags::Audio)

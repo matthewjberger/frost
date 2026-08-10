@@ -472,6 +472,41 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // The migration's own diagnostic, and the one a reader of older code
+    // meets. It says what to write rather than only what is wrong.
+    (
+        "a_flags_bit_written_with_equals_says_what_to_write",
+        "import \"io.frost\"\n\
+         InitFlags :: flags u32 {\n\
+         \x20   Audio = 16\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a bit of a set is declared the way every value named under a type is, \
+         so 'Audio' is written as 'Audio :: 32'",
+    ),
+    // A bit is the number a C header fixed, which is the whole of what a set
+    // is built from, so an expression is not one.
+    (
+        "a_flags_bit_is_a_number",
+        "import \"io.frost\"\n\
+         InitFlags :: flags u32 {\n\
+         \x20   Audio :: \"x\"\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a bit of 'InitFlags' is a number a C header wrote down, and this is \
+         not one",
+    ),
+    // A bit is named, and the self-hosted compiler read whatever token was
+    // sitting there as the name without asking.
+    (
+        "a_flags_bit_is_named_with_a_name",
+        "import \"io.frost\"\n\
+         InitFlags :: flags u32 {\n\
+         \x20   16 :: 16\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a set of bits names each of them with a name, and this is not one",
+    ),
     // A value named under a type is a value of that type, so what is written
     // for it has to be one. A number under a struct is the plain case.
     (
@@ -1641,7 +1676,12 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     ),
     (
         "flags_through_a_field",
-        "import \"io.frost\"\nUsage :: flags u64 { None = 0, Read = 1, Write = 2 }\n\
+        "import \"io.frost\"\n\
+         Usage :: flags u64 {\n\
+         \x20   None :: 0\n\
+         \x20   Read :: 1\n\
+         \x20   Write :: 2\n\
+         }\n\
          Holder :: struct { usage: Usage }\n\
          main :: fn() -> i64 {\n\
          \x20   plain : u32 = 2\n\
@@ -3897,6 +3937,26 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A bit is declared the way every value named under a type is. Only the
+    // spelling of the declaration moved, so the operators a set answers and
+    // the number each bit stands for are what they were.
+    (
+        "a_flags_bit_is_declared_with_colons",
+        "import \"io.frost\"\n\
+         InitFlags :: flags u32 {\n\
+         \x20   Audio :: 16\n\
+         \x20   Video :: 32\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   chosen := InitFlags::Video | InitFlags::Audio\n\
+         \x20   if (flags_has(chosen, InitFlags::Video)) { print(\"has\\n\") }\n\
+         \x20   if (chosen == (InitFlags::Video | InitFlags::Audio)) { print(\"same\\n\") }\n\
+         \x20   if ((chosen & InitFlags::Video) == InitFlags::Video) { print(\"narrow\\n\") }\n\
+         \x20   print(\"{}\\n\", cast($i64, chosen))\n\
+         \x20   0\n\
+         }\n",
+        "has\nsame\nnarrow\n48\n",
+    ),
     // A type may name values of itself, reached through the type the way a
     // variant and a bit of a set already are. The value is the type it is
     // declared under, which is the whole point: a constant beside the
