@@ -60,9 +60,9 @@ stage_order :: fn(s: Stage) -> i64 {
 // stage is a compile error here rather than a system that runs in the wrong one.
 stage_order :: fn(s: Stage) -> i64 {
     match s {
-        case .First: 0
-        case .Update: 1
-        case .Last: 2
+        case Stage::First: 0
+        case Stage::Update: 1
+        case Stage::Last: 2
     }
 }
 ```
@@ -358,7 +358,7 @@ to one argument per element.
 Four shapes read differently than they look, and the report you get points
 somewhere else. Write the plain form.
 
-- Write a match as `match value { case .Variant: ... }`. The scrutinee takes no
+- Write a match as `match value { case Enum::Variant: ... }`. The scrutinee takes no
   parentheses, and the error you get from the other form names a later line.
 - Do not write through a read parameter. `into[at] = x` where `into: str` is a
   read borrow lowered differently by each backend. Bind `mut destination :=

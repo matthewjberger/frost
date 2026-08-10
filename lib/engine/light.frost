@@ -198,8 +198,8 @@ facing_of :: fn(placed: Mat4) -> Vec4 {
 
 kind_of :: fn(held: LightType) -> u32 {
     match held {
-        case .Directional: LIGHT_DIRECTIONAL
-        case .Point: LIGHT_POINT
-        case .Spot: LIGHT_SPOT
+        case LightType::Directional: LIGHT_DIRECTIONAL
+        case LightType::Point: LIGHT_POINT
+        case LightType::Spot: LIGHT_SPOT
     }
 }

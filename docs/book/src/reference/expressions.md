@@ -62,43 +62,58 @@ both are available.
 Point { x = 1, y = 2 }                // struct literal (fields use =)
 Shape::Circle { radius = 5 }          // enum variant with payload
 Shape::Player                         // unit variant
-.Circle { radius = 5 }                // the enum comes from the context
-.Player                               // the same, with no payload
+Shape::Circle { radius = 5 }          // a variant, with its enum
+Kind::Player                          // the same, with no payload
 { x = 1, y = 2 }                      // the struct comes from the context
 ```
 
 Struct and enum-variant construction are recognized only when the operand to the
 left of `{` or `::` is a bare identifier.
 
-`.Variant` names a variant without naming its enum, and takes the enum from the
-type the surrounding code expects. It is the construction counterpart of the
-`case .Variant` a pattern writes (6.7).
+A variant is named with its enum, `Shape::Circle`, wherever it is written: at a
+call, in an annotation, in a field, in a `return`, and in the `case
+Shape::Circle` a pattern writes (6.7). There is one spelling and the enum is
+part of it, so one search over a program finds every mention of a variant.
 
-The enum comes from a context that states the type:
+A leading dot names a variant without its enum, and is refused. The report names
+the type the context expects, which is the edit:
 
-| Context | What supplies the enum |
-| --- | --- |
-| `c : Color = .Red` | the annotation |
-| `paint(.Red)` | the parameter's declared type |
-| `Theme { primary = .Red }` | the field's declared type |
-| `return .Circle { radius = r }` | the function's declared return type |
-| `c = .Blue` | the type of the place assigned to |
-| `wheel : [3]Color = [.Red, .Green, .Blue]` | the array's element type |
+```frost,refused
+Colour :: enum { Red, Green }
 
-In a function with a failure set the return is two types, so `.Denied` names a
-variant of the failure set when it has one and a variant of the value type
-otherwise. That is how `return .Denied` fails and `return .Some { value = 3 }`
-succeeds in the same function.
+main :: fn() -> i64 {
+    c : Colour = .Red
+    0
+}
+```
 
-A dot with nothing to take its enum from is an error naming the variant.
-`c := .Red` has no annotation and no context, so it is rejected and the fix is
-`c : Color = .Red` or `c := Color::Red`.
+> a value named under a type is written with the type in front of it, so this
+> one is written `Colour::Red`
+
+Where nothing around it states a type there is none to name, and the report says
+so instead:
+
+```frost,refused
+Colour :: enum { Red, Green }
+
+main :: fn() -> i64 {
+    c := .Red
+    0
+}
+```
+
+> a value named under a type is written with the type in front of it, and there
+> is no type here to name
+
+A failure set is the one exception, and it is not an elision: the enum a `-> T !
+E` signature becomes is named by the compiler and a program may not write that
+name, so `.Ok` and `.Err` are the only spelling their two variants have (5.2b).
 
 `{ x = 1, y = 2 }` is a struct literal that leaves out a type name the context
-already carries. It reads from the same contexts the leading dot does, and the
-two nest: a literal's field supplies the type of a literal written inside it, so
-`{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` and
-`{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
+already carries. That is a different elision and it stays: a literal has no
+other spelling, where a variant does. Literals nest, so a literal's field
+supplies the type of a literal written inside it and
+`{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` resolves all the way down.
 
 Every field is still named. There is no positional literal, here or anywhere
 else in the language. A field's name says where the value lands, and showing the
@@ -150,7 +165,7 @@ colon opens a block, so an arm that answers with an unnamed struct literal names
 its type. There is no separator between arms. An arm ends where the next `case`
 or the closing `}` begins. Patterns:
 
-- Variant, shorthand, `.Variant` or `.Variant { field, field }`, binding each
+- Variant, `Enum::Variant` or `Enum::Variant { field, field }`, binding each
   named field to a same-named local.
 - Variant, qualified, `Enum::Variant` with the same optional field list.
 - Value, a whole number or a boolean (`case 90:`, `case true:`), or a name a
@@ -174,8 +189,8 @@ Step :: enum { Left, Right, Up, Down }
 
 sideways :: fn(k: Step) -> i64 {
     match k {
-        case .Left | .Right: 1
-        case .Up: 2
+        case Step::Left | Step::Right: 1
+        case Step::Up: 2
         case _: 0
     }
 }

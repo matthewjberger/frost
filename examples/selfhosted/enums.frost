@@ -11,9 +11,9 @@ Shape :: enum {
 
 area :: fn(s: Shape) -> i64 {
     match s {
-        case .Circle { radius }: 3 * radius * radius
-        case .Rectangle { width, height }: width * height
-        case .Point: 0
+        case Shape::Circle { radius }: 3 * radius * radius
+        case Shape::Rectangle { width, height }: width * height
+        case Shape::Point: 0
     }
 }
 

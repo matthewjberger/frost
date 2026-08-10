@@ -24,8 +24,8 @@ option_none :: fn($T: Type) -> Option<T> {
 // at the declaration rather than leaving a body that will not instantiate.
 option_is_some :: fn($T: Type, o: Option<T>) -> bool where !is_linear(T) {
     match o {
-        case .None: false
-        case .Some { value }: true
+        case Option::None: false
+        case Option::Some { value }: true
     }
 }
 
@@ -38,7 +38,7 @@ option_is_some :: fn($T: Type, o: Option<T>) -> bool where !is_linear(T) {
 option_unwrap_or :: fn($T: Type, o: Option<T>, move fallback: $T) -> $T
     where !is_linear(T) {
     match o {
-        case .None: fallback
-        case .Some { value }: value
+        case Option::None: fallback
+        case Option::Some { value }: value
     }
 }

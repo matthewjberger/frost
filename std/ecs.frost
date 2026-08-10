@@ -2301,15 +2301,15 @@ Stage :: enum {
 // rather than a system that quietly runs in the wrong one.
 stage_order :: fn(s: Stage) -> i64 {
     match s {
-        case .Startup: 0
-        case .First: 1
-        case .Update: 2
-        case .LateUpdate: 3
-        case .FrameStart: 4
-        case .FrameUpdate: 5
-        case .FramePostUpdate: 6
-        case .Render: 7
-        case .Last: 8
+        case Stage::Startup: 0
+        case Stage::First: 1
+        case Stage::Update: 2
+        case Stage::LateUpdate: 3
+        case Stage::FrameStart: 4
+        case Stage::FrameUpdate: 5
+        case Stage::FramePostUpdate: 6
+        case Stage::Render: 7
+        case Stage::Last: 8
     }
 }
 

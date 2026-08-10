@@ -450,17 +450,17 @@ literal has no type of its own until the context gives it one (3.6a).
 
 `Type::Name` is where an enum's variants and a flags type's bits are already
 reached, so a value named under a type is reached the same way and needs no
-spelling of its own. `.Name` elides the type wherever the context names it, so
-`key == .Right` and `key == Key::Right` are one thing written two ways, and
-`Colour::Red` and `.Red` are too.
+spelling of its own. It is the only spelling: the type is part of naming the
+value, in an arm as much as anywhere else, so one search over a program finds
+every mention of one.
 
 ```frost
 Colour :: enum { Red, Green }
 
 rank :: fn(c: Colour) -> i64 {
     match (c) {
-        case .Red: 0
-        case .Green: 1
+        case Colour::Red: 0
+        case Colour::Green: 1
     }
 }
 
@@ -469,8 +469,23 @@ main :: fn() -> i64 {
 }
 ```
 
-A name that no type is around to fill in is refused where it is written, rather
-than left to fail as a nameless type further along:
+A leading dot leaves the type out and is refused. The report names the type the
+context expects, which is the edit:
+
+```frost,refused
+Colour :: enum { Red, Green }
+
+main :: fn() -> i64 {
+    c : Colour = .Red
+    0
+}
+```
+
+> a value named under a type is written with the type in front of it, so this
+> one is written `Colour::Red`
+
+Where nothing around it states a type there is none to name, and the report says
+so instead:
 
 ```frost,refused
 Colour :: enum { Red, Green }
@@ -481,8 +496,12 @@ main :: fn() -> i64 {
 }
 ```
 
-> `.Red` takes its type from what the context expects, and this binding has no
-> type to take it from; annotate it or write `Type::Red`
+> a value named under a type is written with the type in front of it, and there
+> is no type here to name
+
+The enum a failure set becomes is the one exception, and it is not an elision:
+that enum is named by the compiler and a program may not write the name, so
+`.Ok` and `.Err` are the only spelling their two variants have (5.2b).
 
 ### The set stays open
 

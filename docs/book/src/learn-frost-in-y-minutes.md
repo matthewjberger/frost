@@ -229,9 +229,9 @@ Shape :: enum {
 area :: fn(s: Shape) -> i64 {
     match s {
         // The payload's fields bind to names of their own.
-        case .Circle { radius }: 3 * radius * radius
-        case .Rect { width, height }: width * height
-        case .Point: 0
+        case Shape::Circle { radius }: 3 * radius * radius
+        case Shape::Rect { width, height }: width * height
+        case Shape::Point: 0
     }
 }
 
@@ -290,7 +290,7 @@ main :: fn() -> i64 {
 
     // A variant may leave its enum out where the type is already known, and a
     // struct literal may leave its name out the same way.
-    c : Colour = .Green
+    c : Colour = Colour::Green
     q : Point = { x = 1, y = 2 }
     print("{}\n", q.x)
     0
@@ -443,8 +443,8 @@ import "io.frost"
 Fault :: enum { Negative, TooLarge }
 
 checked :: fn(n: i64) -> i64 ! Fault {
-    if (n < 0) { return .Negative }
-    if (n > 100) { return .TooLarge }
+    if (n < 0) { return Fault::Negative }
+    if (n > 100) { return Fault::TooLarge }
     n * 2
 }
 

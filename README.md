@@ -92,19 +92,19 @@ main :: fn() -> i64 {
         { name = "a wight", hp = 20, bite = 7 },
     ]
 
-    // A literal leaves out a type the context already carries, and a variant
-    // leaves out its enum.
-    plan: [8]Move = [ .Look, .Go { to = 1 }, .Swing, .Swing,
-        .Go { to = 9 }, .Go { to = 2 }, .Swing, .Rest ]
+    // A literal leaves out a type the context already carries. A variant is
+    // named with its enum wherever it is written.
+    plan: [8]Move = [ Move::Look, Move::Go { to = 1 }, Move::Swing, Move::Swing,
+        Move::Go { to = 9 }, Move::Go { to = 2 }, Move::Swing, Move::Rest ]
 
     // `for` walks an array or a slice with no iterator to implement, and
     // `match` covers every variant and binds the payload of the one it took.
     for step in plan {
         match step {
-            case .Look: {
+            case Move::Look: {
                 print("you are in room {} with {}\n", hero.room, here[hero.room].name)
             }
-            case .Go { to }: {
+            case Move::Go { to }: {
                 match walk(hero, to) {
                     case .Ok { value }: {
                         print("you walk into room {}\n", value)
@@ -114,11 +114,11 @@ main :: fn() -> i64 {
                     }
                 }
             }
-            case .Swing: {
+            case Move::Swing: {
                 dealt, taken := trade(hero, here[hero.room])
                 report(here[hero.room], dealt, taken)
             }
-            case .Rest: {
+            case Move::Rest: {
                 hero.hp = hero.hp + 4
                 print("you rest, and are back to {}\n", hero.hp)
             }

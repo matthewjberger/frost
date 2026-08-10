@@ -114,8 +114,8 @@ Shape :: enum {
 
 area :: fn(s: Shape) -> i64 {
     match s {
-        case .Circle { radius }: 3 * radius * radius
-        case .Rect { width, height }: width * height
+        case Shape::Circle { radius }: 3 * radius * radius
+        case Shape::Rect { width, height }: width * height
     }
 }
 
@@ -130,11 +130,11 @@ main :: fn() -> i64 {
 Structs pass and return by value, and `match` binds payload fields.
 
 Wherever the type is already stated, a variant can leave its enum name out, the
-same shorthand a `case .Circle` arm uses:
+same shorthand a `case Shape::Circle` arm uses:
 
 ```frost,sketch
-s : Shape = .Circle { radius = 4 }                    // the annotation says which
-print("{}\n", area(.Rect { width = 4, height = 5 })) // the parameter does
+s : Shape = Shape::Circle { radius = 4 }                    // the annotation says which
+print("{}\n", area(Shape::Rect { width = 4, height = 5 })) // the parameter does
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return
 ```
 
@@ -145,10 +145,10 @@ literal taking its type from the field it fills:
 p : Point = { x = 3, y = 4 }
 ```
 
-Where there is nothing to read the type from, as in a bare `c := .Red` or
-`p := { x = 1, y = 2 }`, the compiler reports what it could not resolve. The
-field names always stay. Frost has no positional literal, so the name says
-where a value lands.
+A literal with nothing around it to state the type, as in `p := { x = 1, y = 2 }`,
+is refused and the compiler reports what it could not resolve. The field names
+always stay. Frost has no positional literal, so the name says where a value
+lands.
 
 ## Borrowing is a parameter mode
 
@@ -654,8 +654,8 @@ Entity :: struct { hp: i64, kind: Kind }
 
 delta :: fn(e: Entity) -> i64 {
     match e.kind {
-        case .Player: 0
-        case .Enemy { damage }: 0 - damage
+        case Kind::Player: 0
+        case Kind::Enemy { damage }: 0 - damage
     }
 }
 
@@ -664,9 +664,9 @@ main :: fn() -> i64 {
     slab_reset(world)
 
     player := slab_insert(world,
-        Entity { hp = 100, kind = .Player })
+        Entity { hp = 100, kind = Kind::Player })
     goblin := slab_insert(world,
-        Entity { hp = 30, kind = .Enemy { damage = 15 } })
+        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
 
     world[player].hp = world[player].hp + delta(world[goblin])
     print("hp {}\n", world[player].hp)                 // 85

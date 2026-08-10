@@ -42,8 +42,8 @@ a cache), Frost reaches for a generational handle into a slab.
 | `struct Point { x: i64, y: i64 }` | `Point :: struct { x: i64, y: i64 }` |
 | `enum Shape { Circle { r: i64 }, .. }` | `Shape :: enum { Circle { r: i64 }, .. }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }` |
-| `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
-| `A \| B => ..` and `1..=9 => ..` | `case .A \| .B:` and `case 1..=9:` |
+| `match s { Shape::Circle { r } => .. }` | `match s { case Shape::Circle { r }: .. }` |
+| `A \| B => ..` and `1..=9 => ..` | `case Shape::A \| Shape::B:` and `case 1..=9:` |
 | `n if n > 5 => ..` | `case _: if (x > 5) { .. }` |
 | `n => ..` (bind the value) | `case _:` and read the matched name |
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
@@ -270,9 +270,9 @@ a dot and binds fields by name:
 ```frost,sketch
 delta :: fn(k: Kind) -> i64 {
     match k {
-        case .Player: 0
-        case .Enemy { damage }: 0 - damage
-        case .Pickup { amount }: amount
+        case Kind::Player: 0
+        case Kind::Enemy { damage }: 0 - damage
+        case Kind::Pickup { amount }: amount
     }
 }
 ```
@@ -299,7 +299,7 @@ fizz :: fn(i: i64) -> i64 {
 }
 ```
 
-Or-patterns and range patterns carry over as they read in Rust: `case .Left |
+Or-patterns and range patterns carry over as they read in Rust: `case Step::Left |
 .Right:` runs one body for either variant, and `case 1..10:` or `case 'a'..='z'`
 written out as numbers covers a span. There are no guards. An `if` inside the
 arm is the spelling, and 13 of [syntax.md](design/syntax.md) covers the
@@ -851,11 +851,11 @@ only. See [modules.md](impl/modules.md).
   constant is declared with `::`.
 - Struct fields are set with `=`, as in `Point { x = 1, y = 2 }`, where Rust
   uses `:`.
-- Match arms are `case <pattern>: <expr>`, and variant patterns lead with a dot,
-  as in `case .Circle { radius }:`.
-- A variant can leave its enum out where the type is already stated, as in
-  `paint(.Red)` or `c : Color = .Red`. Rust has this only in a `use`. Here it
-  reads from the context the way the `case .Red` of a match does.
+- Match arms are `case <pattern>: <expr>`, and a variant pattern names its enum,
+  as in `case Shape::Circle { radius }:`.
+- A variant is named with its enum wherever it is written, as in `paint(Color::Red)`
+  and `c : Color = Color::Red`. Rust lets a `use` drop the enum; here there is one
+  spelling, so one search finds every mention of a variant.
 - A struct literal can leave its name out the same way, as in
   `p : Point = { x = 1, y = 2 }`. The field names stay: there is no tuple struct
   and no positional literal, so a value never lands in a field by counting.
@@ -891,9 +891,9 @@ Entity :: struct { hp: i64, kind: Kind }
 
 delta :: fn(e: Entity) -> i64 {
     match e.kind {
-        case .Player: 0
-        case .Enemy { damage }: 0 - damage
-        case .Pickup { amount }: amount
+        case Kind::Player: 0
+        case Kind::Enemy { damage }: 0 - damage
+        case Kind::Pickup { amount }: amount
     }
 }
 
@@ -902,9 +902,9 @@ main :: fn() -> i64 {
     slab_reset(world)
 
     player := slab_insert(world,
-        Entity { hp = 100, kind = .Player })
+        Entity { hp = 100, kind = Kind::Player })
     goblin := slab_insert(world,
-        Entity { hp = 30, kind = .Enemy { damage = 15 } })
+        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
 
     // The player takes the goblin's damage, written straight into the slot.
     world[player].hp = world[player].hp + delta(world[goblin])

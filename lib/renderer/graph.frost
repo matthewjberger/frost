@@ -646,10 +646,10 @@ graph_takes :: fn(
 
 is_sub :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .SubGraph: true
-        case .Render: false
-        case .Compute: false
-        case .Node: false
+        case PassKind::SubGraph: true
+        case PassKind::Render: false
+        case PassKind::Compute: false
+        case PassKind::Node: false
     }
 }
 
@@ -962,10 +962,10 @@ same_kind :: fn(a: ResourceKind, b: ResourceKind) -> bool {
 
 kind_order :: fn(k: ResourceKind) -> i64 {
     match k {
-        case .Color: 0
-        case .Depth: 1
-        case .Buffer: 2
-        case .Backbuffer: 3
+        case ResourceKind::Color: 0
+        case ResourceKind::Depth: 1
+        case ResourceKind::Buffer: 2
+        case ResourceKind::Backbuffer: 3
     }
 }
 
@@ -1049,19 +1049,19 @@ rebuilds :: fn(one: GraphPass) -> bool {
 
 is_backbuffer :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Backbuffer: true
-        case .Color: false
-        case .Depth: false
-        case .Buffer: false
+        case ResourceKind::Backbuffer: true
+        case ResourceKind::Color: false
+        case ResourceKind::Depth: false
+        case ResourceKind::Buffer: false
     }
 }
 
 is_color :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Color: true
-        case .Backbuffer: false
-        case .Depth: false
-        case .Buffer: false
+        case ResourceKind::Color: true
+        case ResourceKind::Backbuffer: false
+        case ResourceKind::Depth: false
+        case ResourceKind::Buffer: false
     }
 }
 
@@ -1070,10 +1070,10 @@ is_color :: fn(one: Resource) -> bool {
 // what a compute step needs from a graph.
 is_buffer :: fn(one: Resource) -> bool {
     match one.kind {
-        case .Buffer: true
-        case .Color: false
-        case .Depth: false
-        case .Backbuffer: false
+        case ResourceKind::Buffer: true
+        case ResourceKind::Color: false
+        case ResourceKind::Depth: false
+        case ResourceKind::Backbuffer: false
     }
 }
 
@@ -1171,10 +1171,20 @@ make_pool_one :: fn(
     h: i64
 ) -> Texture2D {
     match slot.kind {
-        case .Depth: texture_depth_target(device, w, h, slot.format)
-        case .Color: texture_render_target(device, w, h, slot.format)
-        case .Buffer: no_texture2d()
-        case .Backbuffer: no_texture2d()
+        case ResourceKind::Depth: texture_depth_target(
+            device,
+            w,
+            h,
+            slot.format
+        )
+        case ResourceKind::Color: texture_render_target(
+            device,
+            w,
+            h,
+            slot.format
+        )
+        case ResourceKind::Buffer: no_texture2d()
+        case ResourceKind::Backbuffer: no_texture2d()
     }
 }
 
@@ -1192,10 +1202,15 @@ sized :: fn(declared: i64, window: i64) -> i64 {
 
 make_one :: fn(device: Device, one: Resource, w: i64, h: i64) -> Texture2D {
     match one.kind {
-        case .Depth: texture_depth_target(device, w, h, one.format)
-        case .Color: texture_render_target(device, w, h, one.format)
-        case .Buffer: no_texture2d()
-        case .Backbuffer: no_texture2d()
+        case ResourceKind::Depth: texture_depth_target(device, w, h, one.format)
+        case ResourceKind::Color: texture_render_target(
+            device,
+            w,
+            h,
+            one.format
+        )
+        case ResourceKind::Buffer: no_texture2d()
+        case ResourceKind::Backbuffer: no_texture2d()
     }
 }
 
@@ -1514,19 +1529,19 @@ graph_phase_of :: fn(g: Graph, p: PassId) -> i64 {
 
 is_compute :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .Compute: true
-        case .Render: false
-        case .Node: false
-        case .SubGraph: false
+        case PassKind::Compute: true
+        case PassKind::Render: false
+        case PassKind::Node: false
+        case PassKind::SubGraph: false
     }
 }
 
 is_node :: fn(one: GraphPass) -> bool {
     match one.kind {
-        case .Node: true
-        case .Compute: false
-        case .Render: false
-        case .SubGraph: false
+        case PassKind::Node: true
+        case PassKind::Compute: false
+        case PassKind::Render: false
+        case PassKind::SubGraph: false
     }
 }
 

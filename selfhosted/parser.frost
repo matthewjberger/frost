@@ -3604,10 +3604,40 @@ subject_enum_of :: fn(mut p: Parser, scrutinee: i64) -> i64 {
     ty
 }
 
-// Whether a case pattern `offset` tokens along names a variant. Both spellings
-// name the same one: `.Name` reads the enum off what is being matched, and
-// `Enum::Name` writes that enum out. Which enum a match is over is settled by
-// its subject either way, so the two mean the same thing everywhere.
+// Whether a type code names the enum a failure set was lowered to. That enum
+// is named by the compiler and a program may not write the name, so `.Ok` and
+// `.Err` are the only spelling there is for its two variants.
+names_a_failure_set :: fn(mut p: Parser, ty: i64) -> bool {
+    if (ty < 0 || is_struct_ty(ty) == false) {
+        return false
+    }
+    arena_at(p.structs, struct_index_of(ty)).is_result == 1
+}
+
+// A value named under a type, written with the type left out. There is one
+// spelling and the type is part of it, so this says what to write rather than
+// filling it in. The type is named where the context gives one, which is what
+// turns the report into the edit.
+refuse_dot_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) {
+    if (names_a_failure_set(p, ty)) {
+        return
+    }
+    report_where(p.modules, p.src, off)
+    if (ty < 0) {
+        report("a value named under a type is written with the type in front of it, and there is no type here to name")
+        frost_rt_recover_escape()
+    }
+    report("a value named under a type is written with the type in front of it, so this one is written `")
+    report_type_name(p, ty)
+    report("::")
+    report_src(p.src, off, len)
+    report("`")
+    frost_rt_recover_escape()
+}
+
+// Whether a case pattern `offset` tokens along names a variant. The dot form
+// is recognized so the arm is read and refused where it is written, rather
+// than falling through to whatever a bare `.` parses as.
 at_variant_case :: fn(mut p: Parser, offset: i64) -> bool {
     if (peek_kind(p, offset) == TokenKind::Dot) {
         return true
@@ -4352,6 +4382,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
             reading = false
             mut alt: i64 = -1
             if (at_variant_case(p, 0)) {
+                dotted := cur(p) == TokenKind::Dot
                 skip_variant_qualifier(p)
                 // The enum an earlier arm settled on, so arms after the
                 // first are read within it and a name two enums share is
@@ -4359,6 +4390,34 @@ parse_match :: fn(mut p: Parser) -> i64 {
                 mut within := subject_enum
                 if (within == (-1)) {
                     within = match_enum
+                }
+                if (dotted) {
+                    // The enum a first arm is read against is not known from
+                    // the subject here, which is why the variant is looked up
+                    // by name at all. The one it names is what the report
+                    // calls the type, so the reader is told what to write.
+                    mut named := within
+                    if (named < 0) {
+                        held := find_variant(
+                            p,
+                            -1,
+                            cur_off(p),
+                            cur_len(p)
+                        )
+                        if (held >= 0) {
+                            named = arena_at(p.variants, held).enum_ty
+                        }
+                    }
+                    // Past the arms before reporting, for the reason the
+                    // refusal below does it: the cursor sits among patterns,
+                    // and a resync from there reads the rest of the match as
+                    // statements and turns one refusal into four.
+                    if (names_a_failure_set(p, named) == false) {
+                        off := cur_off(p)
+                        len := cur_len(p)
+                        skip_past_match(p)
+                        refuse_dot_value(p, named, off, len)
+                    }
                 }
                 tag := parse_variant_pattern(p, subject, within)
                 index := p.case_variant
@@ -7544,22 +7603,16 @@ expected_named_value :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     type_value_index(p, p.expected_alt, off, len)
 }
 
-// A `.Variant` bound to a name that says no type. Everywhere else one is
-// written there is something to read the enum off: an annotation, a parameter,
-// a field, the place an assignment lands in. A `:=` has none of those, and the
-// literal reached the tables with no enum, where a later pass indexed the -1 it
-// was carrying.
+// A `.Name` bound to a name that says no type. Everywhere else one is written
+// there is a type to name in the report; a `:=` has none, so this is where the
+// message says there is nothing to name rather than naming it.
 refuse_unbound_variant :: fn(mut p: Parser, value: i64) {
     node := arena_at(p.arena, value)
     if (node.kind != NodeKind::StructLit || node.val != (-1) || node.c == 0) {
         return
     }
     report_where(p.modules, p.src, node.pos)
-    report("`.")
-    report_src(p.src, node.b, node.c)
-    report("` takes its type from what the context expects, and this binding has no type to take it from; annotate it or write `Type::")
-    report_src(p.src, node.b, node.c)
-    report("`")
+    report("a value named under a type is written with the type in front of it, and there is no type here to name")
     frost_rt_recover_escape()
 }
 
@@ -7571,14 +7624,19 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
-    // A value named under a type elides the same way a variant does, and a
-    // distinct type is one of the types this may name: `key == .Left` where a
-    // `Key` is expected is `Key::Left`.
+    // A value named under a type, written with the type left out. Refused
+    // where the context names the type, so the report carries the edit; a
+    // context that names none leaves the node for the fixup pass, which
+    // refuses it once the type it lands in is known.
     named := expected_named_value(p, variant_off, variant_len)
     if (named >= 0) {
-        return type_value_node(p, named, variant_off)
+        entry := arena_at(p.type_values, named)
+        refuse_dot_value(p, entry.ty, variant_off, variant_len)
     }
     enum_ty := expected_variant_enum(p, variant_off, variant_len)
+    if (enum_ty >= 0) {
+        refuse_dot_value(p, enum_ty, variant_off, variant_len)
+    }
     parse_variant_body(
         p,
         enum_ty,
@@ -7607,11 +7665,10 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     name_off := node.b
     name_len := node.c
     position := node.pos
-    // A `.Name` the context turns out to name a value of rather than a variant
-    // of. The value stands where the dot was written, so the node becomes the
-    // one the declaration parsed, which is what a value named under a type is
-    // wherever it is written.
+    // A `.Name` whose type is known only now that the place it lands in is.
+    // The type is named in the report, which is the edit the reader makes.
     if (name_len != 0) {
+        refuse_dot_value(p, struct_ty, name_off, name_len)
         named := type_value_index(p, struct_ty, name_off, name_len)
         if (named >= 0) {
             value := arena_at(p.arena, type_value_node(p, named, position))

@@ -324,8 +324,8 @@ compile error:
 
 ```frost,sketch
 match found {
-    case .None: 0
-    case .Some { value }: value * 2
+    case Option::None: 0
+    case Option::Some { value }: value * 2
 }
 ```
 

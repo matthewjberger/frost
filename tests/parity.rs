@@ -640,11 +640,10 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "indexing reads an element out of a run, and this is a Row",
     ),
-    // A `.Variant` takes its enum from what is around it, and a `:=` says
-    // nothing. The self-hosted compiler carried the -1 that stood for "not
-    // decided" into the tables, and a later pass indexed an arena with it.
+    // A value named under a type is written with the type, and a `:=` gives
+    // nothing to name it by, so the message says that rather than naming one.
     (
-        "a_variant_bound_with_no_type_says_so",
+        "a_dotted_value_with_no_type_around_it_says_so",
         "import \"io.frost\"
          Colour :: enum { Red, Green }
          main :: fn() -> i64 {
@@ -652,8 +651,40 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              0
          }
 ",
-        "`.Red` takes its type from what the context expects, and this binding \
-         has no type to take it from; annotate it or write `Type::Red`",
+        "a value named under a type is written with the type in front of it, \
+         and there is no type here to name",
+    ),
+    // The same rule where the context does name a type. The report carries the
+    // spelling to write, which is the whole of the edit.
+    (
+        "a_dotted_value_names_the_type_it_belongs_to",
+        "import \"io.frost\"
+         Colour :: enum { Red, Green }
+         main :: fn() -> i64 {
+             c : Colour = .Red
+             0
+         }
+",
+        "a value named under a type is written with the type in front of it, \
+         so this one is written `Colour::Red`",
+    ),
+    // An arm reaches the rule by its own road, since a pattern is parsed and
+    // lowered apart from an expression. The enum the subject settled on is
+    // what the report names.
+    (
+        "a_dotted_value_in_a_case_names_its_enum",
+        "import \"io.frost\"
+         Colour :: enum { Red, Green }
+         rank :: fn(c: Colour) -> i64 {
+             match (c) {
+                 case .Red: 1
+                 case Colour::Green: 2
+             }
+         }
+         main :: fn() -> i64 { rank(Colour::Red) }
+",
+        "a value named under a type is written with the type in front of it, \
+         so this one is written `Colour::Red`",
     ),
     // A cast converts one number into another. A struct is held by address, so
     // reading one as a number reads whatever its first word was. The
@@ -2665,7 +2696,7 @@ Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {
              s := Side::Left { a = 1 }
              match s {
-                 case .Left { a } | .Right: a
+                 case Side::Left { a } | Side::Right: a
                  case _: 0
              }
          }
@@ -2694,7 +2725,7 @@ Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {
              s := Side::Left
              match s {
-                 case .Left | .Left: 0
+                 case Side::Left | Side::Left: 0
                  case _: 1
              }
          }
@@ -2910,8 +2941,8 @@ Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {
              s := Side::Left
              match s {
-                 case .Left | .Right: 0
-                 case .Left: 2
+                 case Side::Left | Side::Right: 0
+                 case Side::Left: 2
              }
          }
 ",
@@ -2927,7 +2958,7 @@ Holder :: struct { a: i64, b: i64 }
          main :: fn() -> i64 {
              s := Side::Left
              match s {
-                 case .Left | .Right: 0
+                 case Side::Left | Side::Right: 0
              }
          }
 ",
@@ -3881,12 +3912,11 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          take :: fn(k: Key) -> i64 { cast($i64, k) }\n\
          main :: fn() -> i64 {\n\
          \x20   key := cast($Key, 80)\n\
-         \x20   if (key == Key::Left) { print(\"long\\n\") }\n\
-         \x20   if (key == .Left) { print(\"short\\n\") }\n\
+         \x20   if (key == Key::Left) { print(\"left\\n\") }\n\
          \x20   print(\"{}\\n\", take(Key::Right))\n\
          \x20   0\n\
          }\n",
-        "long\nshort\n79\n",
+        "left\n79\n",
     ),
     // The same rule on a struct, which is what makes it worth having: a
     // constant of the type, under the type, rather than a prefixed global
@@ -3904,21 +3934,21 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n",
         "1.5 2.5 3.5\n",
     ),
-    // `Enum::Variant` is the long form a `.Variant` elides, so the two name the
-    // same value and a program may write either.
+    // `Enum::Variant` is how a variant is named, in an arm and at a call
+    // alike, so one grep over a program finds every mention of one.
     (
-        "an_enum_variant_reads_the_same_written_long",
+        "an_enum_variant_is_named_with_its_enum",
         "import \"io.frost\"\n\
          Colour :: enum { Red, Green }\n\
          rank :: fn(c: Colour) -> i64 {\n\
          \x20   match (c) {\n\
-         \x20       case .Red: 1\n\
-         \x20       case .Green: 2\n\
+         \x20       case Colour::Red: 1\n\
+         \x20       case Colour::Green: 2\n\
          \x20   }\n\
          }\n\
          main :: fn() -> i64 {\n\
          \x20   print(\"{}\\n\", rank(Colour::Red))\n\
-         \x20   print(\"{}\\n\", rank(.Green))\n\
+         \x20   print(\"{}\\n\", rank(Colour::Green))\n\
          \x20   0\n\
          }\n",
         "1\n2\n",
@@ -4954,8 +4984,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "import \"io.frost\"\nRotation :: enum { PerSession, Never }
          name :: fn(held: Rotation) {
              match held {
-                 case .PerSession: { print(\"{}\\n\", 1) }
-                 case .Never: { }
+                 case Rotation::PerSession: { print(\"{}\\n\", 1) }
+                 case Rotation::Never: { }
              }
          }
          main :: fn() -> i64 {
@@ -5716,8 +5746,8 @@ branchy :: fn(c: i64) -> i64 {
 matchy :: fn(k: Kind) -> i64 {
     defer trace(2)
     match k {
-        case .One: 30
-        case .Two: 40
+        case Kind::One: 30
+        case Kind::Two: 40
     }
 }
 
@@ -6487,8 +6517,8 @@ main :: fn() -> i64 {
          CH_9 :: 57
          sideways :: fn(k: Step) -> i64 {
              match k {
-                 case .Left | .Right: 1
-                 case .Up: 2
+                 case Step::Left | Step::Right: 1
+                 case Step::Up: 2
                  case _: 3
              }
          }
@@ -6565,20 +6595,20 @@ main :: fn() -> i64 {
          Phase :: enum { Opening, Streaming { sent: i64 }, Draining }
          Holder :: struct { phase: Phase, mark: i64 }
          Point :: struct { x: i64, y: i64 }
-         begin :: fn(mut h: Holder) { h.phase = .Streaming { sent = 4 } }
+         begin :: fn(mut h: Holder) { h.phase = Phase::Streaming { sent = 4 } }
          reading :: fn(p: Phase) -> i64 {
              match p {
-                 case .Opening: 0
-                 case .Streaming { sent }: sent
-                 case .Draining: 9
+                 case Phase::Opening: 0
+                 case Phase::Streaming { sent }: sent
+                 case Phase::Draining: 9
              }
          }
          main :: fn() -> i64 {
-             mut loose: Phase = .Opening
-             loose = .Draining
+             mut loose: Phase = Phase::Opening
+             loose = Phase::Draining
              print(\"{}\\n\", reading(loose))
-             mut h: Holder = { phase = .Opening, mark = 1 }
-             h.phase = .Draining
+             mut h: Holder = { phase = Phase::Opening, mark = 1 }
+             h.phase = Phase::Draining
              print(\"{}\\n\", reading(h.phase))
              begin(h)
              print(\"{}\\n\", reading(h.phase))
@@ -6743,7 +6773,7 @@ main :: fn() -> i64 {
 Fault :: enum { Bad }
          risky :: fn(n: i64) -> i64 ! Fault {
              if (n < 0) {
-                 return .Bad
+                 return Fault::Bad
              }
              n
 }
@@ -6778,7 +6808,7 @@ Fault :: enum { Bad }
 Bad :: enum { Nope }
          risky :: fn(n: i64) -> i64 ! Bad {
              if (n < 0) {
-                 return .Nope
+                 return Bad::Nope
              }
              n
 }

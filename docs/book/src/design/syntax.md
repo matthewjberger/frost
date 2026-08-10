@@ -293,7 +293,7 @@ There are no guards. `case n if n > 5:` puts an expression in pattern position,
 and a guarded arm covers nothing the compiler can count, so exhaustiveness would
 need a second rule for arms it has to ignore. Write the `if` inside the arm.
 
-Patterns do not nest either. `case .Line { start: .Point { x } }` binds through
+Patterns do not nest either. `case Shape::Line { start: Shape::Point { x } }` binds through
 two levels. A second `match`, or a `.` on the bound field, says the same thing
 and leaves every field access where a grep for the field name finds it.
 

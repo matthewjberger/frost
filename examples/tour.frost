@@ -18,8 +18,8 @@ heal :: fn(mut e: Entity, amount: i64) {
 // payload of the variant it took, and has to cover every one.
 attack :: fn(e: Entity) -> i64 {
     match e.kind {
-        case .Hero: 10
-        case .Monster { damage }: damage
+        case Kind::Hero: 10
+        case Kind::Monster { damage }: damage
     }
 }
 
@@ -108,16 +108,16 @@ damage_of :: fn(e: Entity) -> i64 {
 main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
-    mut hero: Entity = { hp = 90, kind = .Hero }
+    mut hero: Entity = { hp = 90, kind = Kind::Hero }
     heal(hero, 10) // hero is borrowed and changed
     print("{}\n", hero.hp) // 100
     print("{}\n", attack(hero)) // 10
 
     print("{}\n", damage_of(hero)) // 20
 
-    party: [3]Entity = [ { hp = 100, kind = .Hero },
-        { hp = 40, kind = .Monster { damage = 12 } },
-        { hp = 25, kind = .Monster { damage = 30 } },
+    party: [3]Entity = [ { hp = 100, kind = Kind::Hero },
+        { hp = 40, kind = Kind::Monster { damage = 12 } },
+        { hp = 25, kind = Kind::Monster { damage = 30 } },
     ]
     total, strongest := tally(party)
     print("{}\n", total) // 52

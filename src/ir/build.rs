@@ -2327,31 +2327,30 @@ fn sanitize_identifier(name: &str) -> String {
         .collect()
 }
 
-// The type an inferred `.Name` belongs to, taken from what the context
-// expects. Without one there is nothing to infer from, which is what the
-// message says rather than leaving a nameless type to fail later.
+// A `.Name` written where the type is left out. There is one spelling for a
+// value named under a type and the type is part of it, so this says what to
+// write rather than filling it in.
 //
-// A distinct type is one of these, since a value named under one is reached
-// the way a variant is and elides the same way.
-fn name_inferred_variant(
-    ast: &mut Ast,
-    expression: ExprId,
+// The type the context expects is named where there is one, which is what
+// turns the report into the edit. Where there is none there is nothing to
+// name, and the message says that instead.
+fn refuse_inferred_variant(
+    ast: &Ast,
     variant: Symbol,
-    fields: Range32,
     expected: Option<&Type>,
-) -> Result<ExprId> {
+) -> anyhow::Error {
+    let variant = ast.name(variant);
     let Some(Type::Enum(name) | Type::Struct(name) | Type::Distinct(name, _)) =
         expected
     else {
-        bail!(
-            "`.{variant}` takes its type from what the context expects, and here there is nothing to take it from; write `Type::{variant}`",
-            variant = ast.name(variant)
+        return anyhow::anyhow!(
+            "a value named under a type is written with the type in front of it, and there is no type here to name"
         );
     };
-    let name = name.clone();
-    let span = ast.expr_span(expression);
-    let name = ast.intern(&name);
-    Ok(ast.push_expr(Expression::EnumVariantInit(name, variant, fields), span))
+    let name = crate::modules::imports::demangle_private_names(name);
+    anyhow::anyhow!(
+        "a value named under a type is written with the type in front of it, so this one is written `{name}::{variant}`"
+    )
 }
 
 // The struct a `{ x = 1 }` builds, taken from what the context expects.
@@ -5746,17 +5745,23 @@ impl<'a> FunctionLowering<'a> {
                 {
                     let enum_name = self.ast.name(enum_name).to_string();
                     let variant_name = self.ast.name(variant_name).to_string();
+                    // A binding is the one place a `.Name` never reached the
+                    // walk that refuses one, since the enum is built here
+                    // rather than lowered as an expression. It is refused here
+                    // in the same words, naming the annotation's type.
+                    if enum_name.is_empty() {
+                        let held = self.ast.intern(&variant_name);
+                        return Err(refuse_inferred_variant(
+                            self.ast,
+                            held,
+                            type_annotation.as_ref(),
+                        ));
+                    }
                     // `o : Option<i64> = Option::Some { value = 3 }`: the
                     // annotation says which instance, the literal does not
                     // carry arguments, so the annotation is what names the
                     // layout. Same rule as a generic struct literal above.
                     let layout_name = match &type_annotation {
-                        // `c : Color = .Red`: the annotation is the only place
-                        // the enum is named, which is the whole point of the
-                        // leading dot.
-                        Some(
-                            Type::Enum(annotated) | Type::Struct(annotated),
-                        ) if enum_name.is_empty() => annotated.clone(),
                         Some(
                             Type::Enum(annotated) | Type::Struct(annotated),
                         ) if is_generic_instance(annotated)
@@ -5767,11 +5772,6 @@ impl<'a> FunctionLowering<'a> {
                         }
                         _ => enum_name.clone(),
                     };
-                    if layout_name.is_empty() {
-                        bail!(
-                            "`.{variant_name}` takes its type from what the context expects, and this binding has no type to take it from; annotate it or write `Type::{variant_name}`"
-                        );
-                    }
                     let ty = Type::Enum(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_enum(
@@ -6537,17 +6537,22 @@ impl<'a> FunctionLowering<'a> {
         expression: ExprId,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
-        // `.Circle { radius = 5 }` and `{ x = 1, y = 2 }` name their type
-        // nowhere, so the type the context expects is what says what they are.
-        // Filling it in here covers every position that carries one: an
-        // argument, a field, a return, an assignment and an element.
+        // `{ x = 1, y = 2 }` names its type nowhere, so the type the context
+        // expects is what says what it is. Filling it in here covers every
+        // position that carries one: an argument, a field, a return, an
+        // assignment and an element.
+        //
+        // A value named under a type is not one of these. It has one spelling
+        // and the type is part of it, so a `.Name` is refused here with the
+        // type the context expects named, which is the edit the reader makes.
         let expression = match self.ast.expr(expression).clone() {
-            Expression::EnumVariantInit(name, variant, fields)
+            Expression::EnumVariantInit(name, variant, _)
                 if self.ast.name(name).is_empty() =>
             {
-                name_inferred_variant(
-                    self.ast, expression, variant, fields, expected,
-                )?
+                return locate(
+                    Err(refuse_inferred_variant(self.ast, variant, expected)),
+                    self.at_expression(expression),
+                );
             }
             Expression::StructInit(name, fields)
                 if self.ast.name(name).is_empty() =>
@@ -9263,8 +9268,7 @@ impl<'a> FunctionLowering<'a> {
                 let name = self.ast.name(name).to_string();
                 let variant = self.ast.name(variant).to_string();
                 // The local's type already names the instance when the context
-                // resolved one, and that is the layout to write into. It is also
-                // what names the enum of a `.Variant`, which names none itself.
+                // resolved one, and that is the layout to write into.
                 let layout_name = match self.type_of_local(local) {
                     Type::Enum(instance) | Type::Struct(instance)
                         if name.is_empty()
@@ -9274,6 +9278,20 @@ impl<'a> FunctionLowering<'a> {
                     }
                     _ => name.clone(),
                 };
+                // An argument and an element reach a `.Name` here rather than
+                // through the walk that refuses one, since what they build is
+                // written straight into the place that holds it. The local's
+                // type is what names the enum, and the report carries it.
+                if name.is_empty() && !self.ast.is_failure_result(&layout_name)
+                {
+                    let held = self.type_of_local(local);
+                    let variant = self.ast.intern(&variant);
+                    return Err(refuse_inferred_variant(
+                        self.ast,
+                        variant,
+                        Some(&held),
+                    ));
+                }
                 self.init_enum(local, &layout_name, &variant, fields)
             }
             Expression::Literal(Literal::Array(elements)) => {
@@ -11663,12 +11681,32 @@ impl<'a> FunctionLowering<'a> {
                     else_block: failure,
                 });
             }
-            Pattern::EnumVariant { variant_name, .. } => {
+            Pattern::EnumVariant {
+                enum_name: written,
+                variant_name,
+                ..
+            } => {
                 let variant_name = self.ast.name(variant_name).to_string();
                 let Some(tag) = tag_operand else {
                     bail!("enum variant pattern requires an enum match value");
                 };
                 let enum_name = enum_name.unwrap();
+                // An arm is a value named under a type the way every other
+                // mention of one is, and the type is part of the spelling. The
+                // enum the subject settled on is named here, which is the edit.
+                //
+                // A failure set's enum is named by the compiler and a program
+                // may not write that name, so `.Ok` and `.Err` are the only
+                // spelling there is and nothing is being left out of them.
+                if written.is_none() && !self.ast.is_failure_result(enum_name) {
+                    let readable =
+                        crate::modules::imports::demangle_private_names(
+                            enum_name,
+                        );
+                    bail!(
+                        "a value named under a type is written with the type in front of it, so this one is written `{readable}::{variant_name}`"
+                    );
+                }
                 let variant_tag = self
                     .builder
                     .enum_layout(enum_name)

@@ -730,11 +730,11 @@ app_insert_resource :: fn($T: Type, mut app: App, move value: $T) {
 app_failed :: fn(held: AppError) -> i64 {
     print("{}\n", held.said)
     match held.why {
-        case .NoWindow: {
+        case AppFault::NoWindow: {
             print("no window\n")
             1
         }
-        case .NoDevice: {
+        case AppFault::NoDevice: {
             print("no device\n")
             2
         }

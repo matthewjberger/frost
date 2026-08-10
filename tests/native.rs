@@ -1089,7 +1089,7 @@ fn a_return_type_list_is_held_to_its_shape() {
 }
 
 // `.Circle { radius = 5 }` where the type is already known, the construction
-// counterpart of the `case .Circle` a pattern writes. The enum comes from what
+// counterpart of the `case Shape::Circle` a pattern writes. The enum comes from what
 // the context expects: an annotation, a call's parameter, a struct field, a
 // return, an assignment, or an element of an array.
 const INFERRED_VARIANTS: &str = r#"
@@ -1102,55 +1102,55 @@ Fault :: enum { Missing, Denied }
 
 area :: fn(s: Shape) -> i64 {
     match s {
-        case .Circle { radius }: radius * radius * 3
-        case .Square { side }: side * side
+        case Shape::Circle { radius }: radius * radius * 3
+        case Shape::Square { side }: side * side
     }
 }
 
 paint :: fn(c: Color) -> i64 {
     match c {
-        case .Red: 1
-        case .Green: 2
-        case .Blue: 3
+        case Color::Red: 1
+        case Color::Green: 2
+        case Color::Blue: 3
     }
 }
 
 // The return type is what the dot takes its enum from.
 round :: fn(r: i64) -> Shape {
-    return .Circle { radius = r }
+    return Shape::Circle { radius = r }
 }
 
 // A failure set: the dot names a variant of the error, and the compiler tells
 // it apart from the value the function answers with.
 pick :: fn(want: i64) -> i64 ! Fault {
     if (want == 0) {
-        return .Missing
+        return Fault::Missing
     }
     want * 2
 }
 
 main :: fn() -> i64 {
-    s : Shape = .Circle { radius = 4 }
+    s : Shape = Shape::Circle { radius = 4 }
     unsafe { printf("%lld\n", area(s)) }
 
     // A call's parameter, including one whose function is written later.
-    unsafe { printf("%lld\n", area(.Square { side = 5 })) }
-    unsafe { printf("%lld\n", paint(.Green)) }
-    unsafe { printf("%lld\n", later(.Blue)) }
+    unsafe { printf("%lld\n", area(Shape::Square { side = 5 })) }
+    unsafe { printf("%lld\n", paint(Color::Green)) }
+    unsafe { printf("%lld\n", later(Color::Blue)) }
     unsafe { printf("%lld\n", area(round(2))) }
 
     // A struct field.
-    t := Theme { primary = .Red, accent = .Blue }
+    t := Theme { primary = Color::Red, accent = Color::Blue }
     unsafe { printf("%lld\n", paint(t.primary)) }
     unsafe { printf("%lld\n", paint(t.accent)) }
 
     // An assignment to a place whose type is known.
-    mut c : Color = .Red
-    c = .Blue
+    mut c : Color = Color::Red
+    c = Color::Blue
     unsafe { printf("%lld\n", paint(c)) }
 
     // An element of an array, whose type the annotation gives.
-    mut wheel : [3]Color = [.Red, .Green, .Blue]
+    mut wheel : [3]Color = [Color::Red, Color::Green, Color::Blue]
     mut sum : i64 = 0
     for held in wheel {
         sum = sum + paint(held)
@@ -1183,8 +1183,8 @@ fn a_variant_takes_its_enum_from_the_context() {
     assert_eq!(output, "48\n25\n2\n30\n12\n1\n3\n3\n6\n10\n-1\n");
 }
 
-// A dot with nothing to take its type from says so, rather than failing later
-// as a nameless enum.
+// A value named under a type is written with the type, and a dot leaves it
+// out. There is nothing to name it by here, which is what the message says.
 #[test]
 fn a_variant_without_a_context_is_rejected() {
     let source = "Color :: enum { Red, Green }\n\
@@ -1194,7 +1194,7 @@ fn a_variant_without_a_context_is_rejected() {
          }\n";
     let message = compile_error("dotvariantbad", source);
     assert!(
-        message.contains("takes its type from what the context expects"),
+        message.contains("there is no type here to name"),
         "expected the inference diagnostic in:\n{message}"
     );
 }
@@ -2260,9 +2260,9 @@ origin :: fn() -> Point { return { x = 0, y = 0 } }
 
 paint :: fn(m: Marked) -> i64 {
     base := match m.colour {
-        case .Red: 1
-        case .Green: 2
-        case .Blue: 3
+        case Color::Red: 1
+        case Color::Green: 2
+        case Color::Blue: 3
     }
     base * 100 + m.at.x
 }
@@ -2282,7 +2282,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum(origin())) }
 
     // A variant inside an inferred literal, taking its enum from the field.
-    unsafe { printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = .Green })) }
+    unsafe { printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = Color::Green })) }
 
     // An assignment to a place whose type is known.
     mut q : Point = { x = 1, y = 1 }
@@ -3062,15 +3062,15 @@ const SHARED_VARIANT_NAME: &str = "import \"io.frost\"\nStage :: enum { First, R
      Pass :: enum { Render, Compute }\n\
      stage_at :: fn(s: Stage) -> i64 {\n\
      \x20   match s {\n\
-     \x20       case .First: 0\n\
-     \x20       case .Render: 1\n\
-     \x20       case .Last: 2\n\
+     \x20       case Stage::First: 0\n\
+     \x20       case Pass::Render: 1\n\
+     \x20       case Stage::Last: 2\n\
      \x20   }\n\
      }\n\
      pass_at :: fn(k: Pass) -> i64 {\n\
      \x20   match k {\n\
-     \x20       case .Compute: 10\n\
-     \x20       case .Render: 11\n\
+     \x20       case Pass::Compute: 10\n\
+     \x20       case Pass::Render: 11\n\
      \x20   }\n\
      }\n\
      main :: fn() -> i64 {\n\
@@ -5450,28 +5450,28 @@ const SELF_HOSTED_INFERRED_VARIANTS: &str =
      Theme :: struct { primary: Color, accent: Color }
      area :: fn(s: Shape) -> i64 {
          match s {
-             case .Circle { radius }: radius * radius * 3
-             case .Square { side }: side * side
+             case Shape::Circle { radius }: radius * radius * 3
+             case Shape::Square { side }: side * side
          }
      }
      paint :: fn(c: Color) -> i64 {
          match c {
-             case .Red: 1
-             case .Green: 2
-             case .Blue: 3
+             case Color::Red: 1
+             case Color::Green: 2
+             case Color::Blue: 3
          }
      }
      round :: fn(r: i64) -> Shape {
-         return .Circle { radius = r }
+         return Shape::Circle { radius = r }
      }
      main :: fn() -> i64 {
-         s : Shape = .Circle { radius = 4 }
+         s : Shape = Shape::Circle { radius = 4 }
          print(\"{}\\n\", area(s))
-         print(\"{}\\n\", area(.Square { side = 5 }))
-         print(\"{}\\n\", paint(.Green))
-         print(\"{}\\n\", later(.Blue))
+         print(\"{}\\n\", area(Shape::Square { side = 5 }))
+         print(\"{}\\n\", paint(Color::Green))
+         print(\"{}\\n\", later(Color::Blue))
          print(\"{}\\n\", area(round(2)))
-         t := Theme { primary = .Red, accent = .Blue }
+         t := Theme { primary = Color::Red, accent = Color::Blue }
          print(\"{}\\n\", paint(t.primary))
          print(\"{}\\n\", paint(t.accent))
          0
@@ -5526,9 +5526,9 @@ const SELF_HOSTED_INFERRED_LITERALS: &str = "import \"io.frost\"\nPoint :: struc
      origin :: fn() -> Point { return { x = 0, y = 0 } }\n\
      paint :: fn(m: Marked) -> i64 {\n\
      \x20   base := match m.colour {\n\
-     \x20       case .Red: 1\n\
-     \x20       case .Green: 2\n\
-     \x20       case .Blue: 3\n\
+     \x20       case Color::Red: 1\n\
+     \x20       case Color::Green: 2\n\
+     \x20       case Color::Blue: 3\n\
      \x20   }\n\
      \x20   base * 100 + m.at.x\n\
      }\n\
@@ -5538,7 +5538,7 @@ const SELF_HOSTED_INFERRED_LITERALS: &str = "import \"io.frost\"\nPoint :: struc
      \x20   print(\"{}\\n\", sum({ x = 10, y = 20 }))\n\
      \x20   print(\"{}\\n\", length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }))\n\
      \x20   print(\"{}\\n\", sum(origin()))\n\
-     \x20   print(\"{}\\n\", paint({ at = { x = 7, y = 0 }, colour = .Green }))\n\
+     \x20   print(\"{}\\n\", paint({ at = { x = 7, y = 0 }, colour = Color::Green }))\n\
      \x20   print(\"{}\\n\", later({ x = 2, y = 3 }))\n\
      \x20   0\n\
      }\n\
@@ -7772,8 +7772,8 @@ fn a_program_built_from_interfaces_is_the_same_program() {
          never_used :: fn() -> i64 { 999 }\n\
          area :: fn(s: Shape) -> i64 {\n\
          \x20   match s {\n\
-         \x20       case .Circle { r }: scale(3 * r * r)\n\
-         \x20       case .Rect { w, h }: w * h\n\
+         \x20       case Shape::Circle { r }: scale(3 * r * r)\n\
+         \x20       case Shape::Rect { w, h }: w * h\n\
          \x20   }\n\
          }\n\
          describe :: fn(s: Shape) -> Report { Report { value = area(s), kind = 1 } }\n\
@@ -8374,9 +8374,9 @@ const SELF_HOSTED_ENUMS: &str = "import \"io.frost\"\nShape :: enum {\n\
      \x20   Point,\n}\n\
      area :: fn(s: Shape) -> i64 {\n\
      \x20   match s {\n\
-     \x20       case .Circle { radius }: 3 * radius * radius\n\
-     \x20       case .Rectangle { width, height }: width * height\n\
-     \x20       case .Point: 0\n    }\n}\n\
+     \x20       case Shape::Circle { radius }: 3 * radius * radius\n\
+     \x20       case Shape::Rectangle { width, height }: width * height\n\
+     \x20       case Shape::Point: 0\n    }\n}\n\
      main :: fn() -> i64 {\n\
      \x20   c := Shape::Circle { radius = 5 }\n\
      \x20   r := Shape::Rectangle { width = 4, height = 6 }\n\
@@ -8431,14 +8431,14 @@ fn an_enum_is_the_same_width_under_both_compilers() {
          \x20   s := Shape::Rectangle { width = 4, height = 6 }\n\
          \x20   print(\"{}\\n\",
     match s {\n\
-         \x20       case .Circle { radius }: radius\n\
-         \x20       case .Rectangle { width, height }: width * height\n\
-         \x20       case .Point: 0\n    })\n\
+         \x20       case Shape::Circle { radius }: radius\n\
+         \x20       case Shape::Rectangle { width, height }: width * height\n\
+         \x20       case Shape::Point: 0\n    })\n\
          \x20   t := Small::Two { b = 7, c = 9 }\n\
          \x20   print(\"{}\\n\",
     match t {\n\
-         \x20       case .One { a }: a\n\
-         \x20       case .Two { b, c }: b + c\n    })\n\
+         \x20       case Small::One { a }: a\n\
+         \x20       case Small::Two { b, c }: b + c\n    })\n\
          \x20   0\n}\n";
     let Some(bootstrap) = bootstrap_output("enumwidth", source) else {
         return;
@@ -8969,8 +8969,8 @@ fn self_hosted_backends_agree() {
          wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
          unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
          sum_kind :: fn(k: Kind) -> i64 {\n\
-         \x20   match k {\n        case .None: 0\n\
-         \x20       case .One { x }: x\n        case .Two { x, y }: x + y\n    }\n}\n\
+         \x20   match k {\n        case Kind::None: 0\n\
+         \x20       case Kind::One { x }: x\n        case Kind::Two { x, y }: x + y\n    }\n}\n\
          bump :: fn(mut o: Outer) -> i64 {\n\
          \x20   o.mid.b = o.mid.b + 1\n    o.mid.b\n}\n\
          main :: fn() -> i64 {\n\
@@ -9763,8 +9763,8 @@ const SELFHOSTED_GENERIC_ENUM: &str = concat!(
     "Option :: enum($T: Type) { None, Some { value: T } }\n",
     "unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {\n",
     "    match m {\n",
-    "        case .Some { value }: value\n",
-    "        case .None: fallback\n",
+    "        case Option::Some { value }: value\n",
+    "        case Option::None: fallback\n",
     "    }\n",
     "}\n",
     "main :: fn() -> i64 {\n",
@@ -10968,8 +10968,8 @@ Result :: enum {
 
 unwrap_or_neg :: fn(r: Result) -> i64 {
     match r {
-        case .Ok { value }: value
-        case .Err { code }: 0 - code
+        case Result::Ok { value }: value
+        case Result::Err { code }: 0 - code
     }
 }
 
@@ -11075,17 +11075,17 @@ Task :: struct { id: i64, state: State }
 
 describe :: fn(t: Task) -> i64 {
     match t.state {
-        case .Idle: 0
-        case .Running { pid }: pid
-        case .Done { code }: 0 - code
+        case State::Idle: 0
+        case State::Running { pid }: pid
+        case State::Done { code }: 0 - code
     }
 }
 
 first :: fn(states: [2]State, i: i64) -> i64 {
     match states[i] {
-        case .Running { pid }: pid
-        case .Done { code }: code
-        case .Idle: -1
+        case State::Running { pid }: pid
+        case State::Done { code }: code
+        case State::Idle: -1
     }
 }
 
@@ -11343,11 +11343,11 @@ State :: enum { Running { pid: i64 }, Idle }
 
 pid_of :: fn(s: State) -> i64 {
     match s {
-        case .Running { pid }: match pid {
+        case State::Running { pid }: match pid {
             case 0: -1
             case _: pid
         }
-        case .Idle: 0
+        case State::Idle: 0
     }
 }
 
@@ -11548,8 +11548,8 @@ main :: fn() -> i64 {
 
     w := Tagged::Some { p = Pair { first = 5, second = 6 } }
     r := match w {
-        case .Some { p }: p.first + p.second
-        case .None: 0
+        case Tagged::Some { p }: p.first + p.second
+        case Tagged::None: 0
     }
     unsafe { printf("%lld\n", r) }
     0
@@ -11956,8 +11956,8 @@ Shape :: enum { Round { type: i64, id: i64 }, Flat { id: i64 } }
 
 kind_of :: fn(shape: Shape) -> i64 {
     match shape {
-        case .Round { id }: id
-        case .Flat { id }: id
+        case Shape::Round { id }: id
+        case Shape::Flat { id }: id
     }
 }
 
@@ -12121,8 +12121,8 @@ Shape :: enum {
 
 area :: fn(s: Shape) -> i64 {
     match s {
-        case .Circle { radius }: 3 * radius * radius
-        case .Box { side }: side * side
+        case Shape::Circle { radius }: 3 * radius * radius
+        case Shape::Box { side }: side * side
     }
 }
 
@@ -12308,8 +12308,8 @@ Node :: enum {
 
 describe :: fn(n: Node) -> i64 {
     match n {
-        case .Leaf { value }: value
-        case .Pair { location, weight }: location.x + location.y + weight
+        case Node::Leaf { value }: value
+        case Node::Pair { location, weight }: location.x + location.y + weight
     }
 }
 
@@ -12357,8 +12357,8 @@ find_first_even :: fn(a: [6]i64) -> Option {
 
 unwrap_or :: fn(o: Option, fallback: i64) -> i64 {
     match o {
-        case .Some { value }: value
-        case .None: fallback
+        case Option::Some { value }: value
+        case Option::None: fallback
     }
 }
 
@@ -12577,8 +12577,8 @@ choose :: fn(t: i64) -> Opt {
 
 unwrap :: fn(o: Opt) -> i64 {
     match o {
-        case .Some { v }: v
-        case .None: -1
+        case Opt::Some { v }: v
+        case Opt::None: -1
     }
 }
 
@@ -13016,7 +13016,7 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
             "Pick :: enum { One, Two }\n\
              leak :: fn(p: Pick) -> ^i64 {\n\
              \x20   mut x : i64 = 42\n\
-             \x20   unsafe { match p { case .One: ptr_to(x) case .Two: ptr_to(x) } }\n}\n\
+             \x20   unsafe { match p { case Pick::One: ptr_to(x) case Pick::Two: ptr_to(x) } }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
         (
@@ -13111,8 +13111,8 @@ fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
              leak :: fn(p: Pick, fallback: ^i64) -> ^i64 {\n\
              \x20   mut x : i64 = 42\n\
              \x20   match p {\n\
-             \x20       case .One: { return ptr_to(x) }\n\
-             \x20       case .Two: { x = x + 1 }\n\
+             \x20       case Pick::One: { return ptr_to(x) }\n\
+             \x20       case Pick::Two: { x = x + 1 }\n\
              \x20   }\n\
              \x20   fallback\n}\n\
              main :: fn() -> i64 { 0 }\n",
@@ -13332,8 +13332,8 @@ fn a_match_missing_a_variant_is_refused() {
         "{EXHAUSTIVE_SHAPE}\
          area :: fn(s: Shape) -> i64 {{\n\
          \x20   match s {{\n\
-         \x20       case .Circle {{ r }}: r * r * 3\n\
-         \x20       case .Rect {{ w, h }}: w * h\n\
+         \x20       case Shape::Circle {{ r }}: r * r * 3\n\
+         \x20       case Shape::Rect {{ w, h }}: w * h\n\
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ area(Shape::Point {{}}) }}\n"
     );
@@ -13350,9 +13350,9 @@ fn a_match_naming_every_variant_is_allowed() {
         "import \"io.frost\"\n{EXHAUSTIVE_SHAPE}\
          area :: fn(s: Shape) -> i64 {{\n\
          \x20   match s {{\n\
-         \x20       case .Circle {{ r }}: r * r * 3\n\
-         \x20       case .Rect {{ w, h }}: w * h\n\
-         \x20       case .Point: 0\n\
+         \x20       case Shape::Circle {{ r }}: r * r * 3\n\
+         \x20       case Shape::Rect {{ w, h }}: w * h\n\
+         \x20       case Shape::Point: 0\n\
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ print(\"{{}}\\n\", area(Shape::Rect {{ w = 3, h = 4 }}))\n0 }}\n"
     );
@@ -13369,7 +13369,7 @@ fn a_match_with_a_wildcard_need_not_name_every_variant() {
         "import \"io.frost\"\n{EXHAUSTIVE_SHAPE}\
          area :: fn(s: Shape) -> i64 {{\n\
          \x20   match s {{\n\
-         \x20       case .Circle {{ r }}: r * r * 3\n\
+         \x20       case Shape::Circle {{ r }}: r * r * 3\n\
          \x20       case _: 0\n\
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ print(\"{{}}\\n\", area(Shape::Point {{}}))\n0 }}\n"
@@ -13389,8 +13389,8 @@ fn self_hosted_refuses_a_match_missing_a_variant() {
         "{EXHAUSTIVE_SHAPE}\
          area :: fn(s: Shape) -> i64 {{\n\
          \x20   match s {{\n\
-         \x20       case .Circle {{ r }}: r * r * 3\n\
-         \x20       case .Rect {{ w, h }}: w * h\n\
+         \x20       case Shape::Circle {{ r }}: r * r * 3\n\
+         \x20       case Shape::Rect {{ w, h }}: w * h\n\
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ area(Shape::Point {{}}) }}\n"
     );
@@ -14181,8 +14181,8 @@ Kind :: enum { One, Two { n: i64 } }
 main :: fn() -> i64 {
     held := Kind::Two { n = 7 }
     match held {
-        case .One: { print("{}\n", 1) }
-        case .Two { n }: { print("{}\n", n)  print("{}\n", n + 1) }
+        case Kind::One: { print("{}\n", 1) }
+        case Kind::Two { n }: { print("{}\n", n)  print("{}\n", n + 1) }
     }
     0
 }
@@ -14284,8 +14284,8 @@ close :: fn(move f: File) -> i64 { f.fd }
 
 take :: fn(a: Answer) -> i64 {
     match a {
-        case .None: 0
-        case .Some { file }: close(file)
+        case Answer::None: 0
+        case Answer::Some { file }: close(file)
     }
 }
 
@@ -16264,8 +16264,8 @@ fn an_enum_returned_from_c_comes_back_correctly() {
          main :: fn() -> i64 {\n\
          \x20   s := unsafe { mk() }\n\
          \x20   match s {\n\
-         \x20       case .Empty: unsafe { printf(\"%lld\n\", 0) }\n\
-         \x20       case .Full { v }: unsafe { printf(\"%lld\n\", v) }\n\
+         \x20       case Shape::Empty: unsafe { printf(\"%lld\n\", 0) }\n\
+         \x20       case Shape::Full { v }: unsafe { printf(\"%lld\n\", v) }\n\
          \x20   }\n\
          \x20   0\n\
          }\n",
@@ -16410,7 +16410,7 @@ fn an_aggregate_literal_must_write_every_field() {
         "Shape :: enum { Rect { w: i64, h: i64 } }\n\
          main :: fn() -> i64 {\n\
          \x20   s := Shape::Rect { w = 3 }\n\
-         \x20   match s { case .Rect { w, h }: h }\n\
+         \x20   match s { case Shape::Rect { w, h }: h }\n\
          }\n",
     );
     assert!(
@@ -16476,8 +16476,8 @@ Either :: enum($L: Type, $R: Type) { Left { value: L }, Right { value: R } }
 
 unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {
     match m {
-        case .None: fallback
-        case .Some { value }: value
+        case Option::None: fallback
+        case Option::Some { value }: value
     }
 }
 
@@ -16489,22 +16489,22 @@ main :: fn() -> i64 {
 
     p : Option<Point> = Option::Some { value = Point { x = 3, y = 4 } }
     match p {
-        case .None: unsafe { printf("%lld\n", 0) }
-        case .Some { value }: unsafe { printf("%lld\n", value.x + value.y) }
+        case Option::None: unsafe { printf("%lld\n", 0) }
+        case Option::Some { value }: unsafe { printf("%lld\n", value.x + value.y) }
     }
 
     e : Either<i64, Point> = Either::Right { value = Point { x = 5, y = 6 } }
     match e {
-        case .Left { value }: unsafe { printf("%lld\n", value) }
-        case .Right { value }: unsafe { printf("%lld\n", value.y) }
+        case Either::Left { value }: unsafe { printf("%lld\n", value) }
+        case Either::Right { value }: unsafe { printf("%lld\n", value.y) }
     }
 
     nested : Option<Option<i64>> = Option::Some { value = Option::Some { value = 8 } }
     match nested {
-        case .None: unsafe { printf("%lld\n", 0) }
-        case .Some { value }: match value {
-            case .None: unsafe { printf("%lld\n", 0) }
-            case .Some { value }: unsafe { printf("%lld\n", value) }
+        case Option::None: unsafe { printf("%lld\n", 0) }
+        case Option::Some { value }: match value {
+            case Option::None: unsafe { printf("%lld\n", 0) }
+            case Option::Some { value }: unsafe { printf("%lld\n", value) }
         }
     }
     0
