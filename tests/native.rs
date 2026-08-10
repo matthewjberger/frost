@@ -9967,7 +9967,7 @@ const SELFHOSTED_STD_MATH: &str = concat!(
     "    print(\"{}\\n\", n.x)\n",
     "    p := mat4_transform_point(mat4_translation(vec3(1.0, 2.0, 3.0)), vec3(10.0, 20.0, 30.0))\n",
     "    print(\"{}\\n\", p.x)\n",
-    "    id := mat4_mul(mat4_identity(), mat4_identity())\n",
+    "    id := mat4_mul(Mat4::IDENTITY, Mat4::IDENTITY)\n",
     "    print(\"{}\\n\", id.m[0])\n",
     "    rotated := mat4_transform_dir(mat4_rotation_z(radians(90.0)), vec3(3.0, 4.0, 0.0))\n",
     "    print(\"{}\\n\", vec3_length(rotated))\n",

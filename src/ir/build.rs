@@ -9268,6 +9268,23 @@ impl<'a> FunctionLowering<'a> {
                 };
                 self.init_struct(local, &layout_name, fields)
             }
+            // A value a type names under itself reads as a variant and is a
+            // value, so it is lowered and stored rather than built here. Left
+            // to the arm below, `Mat4::IDENTITY` written into a field asked the
+            // enum table for a struct and was told there is no such enum.
+            Expression::EnumVariantInit(name, variant, _)
+                if self.builder.names_a_value(
+                    self.ast.name(name),
+                    self.ast.name(variant),
+                ) =>
+            {
+                let held = self.type_of_local(local);
+                let (operand, value_type) =
+                    self.lower_expression(expression, Some(&held))?;
+                let coerced = self.coerce(operand, &value_type, &held)?;
+                self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
+                Ok(())
+            }
             Expression::EnumVariantInit(name, variant, fields) => {
                 let name = self.ast.name(name).to_string();
                 let variant = self.ast.name(variant).to_string();

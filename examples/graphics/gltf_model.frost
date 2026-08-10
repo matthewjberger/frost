@@ -384,7 +384,7 @@ run :: fn(move app: App) -> i64 {
             app.world,
             root,
             spin,
-            spinning(vec3(0.0, 1.0, 0.0), 0.4, quat_identity())
+            spinning(vec3(0.0, 1.0, 0.0), 0.4, Quat::IDENTITY)
         )
     }
 

@@ -1470,7 +1470,7 @@ run :: fn(move app: App) -> i64 {
         local,
         LocalTransform {
             translation = vec3(0.0, FLOOR_Y, 0.0),
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = vec3(9.0, FLOOR_THICKNESS, 9.0)
         }
     )
@@ -1478,7 +1478,7 @@ run :: fn(move app: App) -> i64 {
         app.world,
         floor,
         spin,
-        spinning(vec3(0.0, 1.0, 0.0), 0.0, quat_identity())
+        spinning(vec3(0.0, 1.0, 0.0), 0.0, Quat::IDENTITY)
     )
     ecs_set(
         app.world,
@@ -1509,7 +1509,7 @@ run :: fn(move app: App) -> i64 {
                     lowest + up * ROW_RISE,
                     (up - half) * ROW_DEPTH
                 ),
-                rotation = quat_identity(),
+                rotation = Quat::IDENTITY,
                 scale = vec3(1.0, 1.0, 1.0)
             }
         )
@@ -1522,7 +1522,7 @@ run :: fn(move app: App) -> i64 {
             app.world,
             entity,
             spin,
-            spinning(turning, speed, quat_identity())
+            spinning(turning, speed, Quat::IDENTITY)
         )
 
         mut shape := cube
@@ -1557,7 +1557,7 @@ run :: fn(move app: App) -> i64 {
         local,
         LocalTransform {
             translation = vec3(0.0, 0.0, 0.0),
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = vec3(1.0, 1.0, 1.0)
         }
     )
@@ -1565,7 +1565,7 @@ run :: fn(move app: App) -> i64 {
         app.world,
         root,
         spin,
-        spinning(vec3(0.0, 1.0, 0.0), 0.25, quat_identity())
+        spinning(vec3(0.0, 1.0, 0.0), 0.25, Quat::IDENTITY)
     )
     // Hung off the root before the root is put in the table, since putting it
     // there is handing it over and the name does not hold it afterwards.

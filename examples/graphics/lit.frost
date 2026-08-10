@@ -229,7 +229,7 @@ app_place :: fn(
         ids.local_transform,
         LocalTransform {
             translation = at,
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = size
         }
     )
@@ -237,7 +237,7 @@ app_place :: fn(
         app.world,
         held,
         spin,
-        spinning(vec3(0.3, 1.0, 0.2), rate, quat_identity())
+        spinning(vec3(0.3, 1.0, 0.2), rate, Quat::IDENTITY)
     )
 }
 

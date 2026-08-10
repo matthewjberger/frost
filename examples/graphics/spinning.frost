@@ -436,7 +436,7 @@ run :: fn(move app: App) -> i64 {
                     (up - half) * 1.8,
                     0.0
                 ),
-                rotation = quat_identity(),
+                rotation = Quat::IDENTITY,
                 scale = vec3(1.0, 1.0, 1.0)
             }
         )
@@ -449,7 +449,7 @@ run :: fn(move app: App) -> i64 {
             app.world,
             entity,
             spin,
-            spinning(turning, speed, quat_identity())
+            spinning(turning, speed, Quat::IDENTITY)
         )
 
         mut shape := cube

@@ -168,7 +168,7 @@ run :: fn(move app: App) -> i64 {
         ids.local_transform,
         LocalTransform {
             translation = vec3(0.0, -1.0, 0.0),
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = vec3(6.0, 0.2, 6.0)
         }
     )
@@ -186,7 +186,7 @@ run :: fn(move app: App) -> i64 {
         ids.local_transform,
         LocalTransform {
             translation = vec3(0.0, 0.2, 0.0),
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = vec3(0.8, 0.8, 0.8)
         }
     )
@@ -228,7 +228,7 @@ run :: fn(move app: App) -> i64 {
         ids.local_transform,
         LocalTransform {
             translation = vec3(-1.8, 0.6, 1.8),
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = vec3(1.0, 1.0, 1.0)
         }
     )

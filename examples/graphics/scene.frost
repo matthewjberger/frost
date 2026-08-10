@@ -436,7 +436,7 @@ run :: fn(move app: App) -> i64 {
             ids.local_transform,
             LocalTransform {
                 translation = vec3(spread[made], 0.0, depths[made]),
-                rotation = quat_identity(),
+                rotation = Quat::IDENTITY,
                 scale = vec3(0.6, 0.6, 0.6)
             }
         )
@@ -444,7 +444,7 @@ run :: fn(move app: App) -> i64 {
             app.world,
             held,
             spin,
-            spinning(vec3(0.0, 1.0, 0.0), rates[made], quat_identity())
+            spinning(vec3(0.0, 1.0, 0.0), rates[made], Quat::IDENTITY)
         )
         mut shape := cube
         if (layers[made] == FAR) {

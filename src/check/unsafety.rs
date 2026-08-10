@@ -203,6 +203,15 @@ fn constant_type(ast: &Ast, value: ExprId) -> Option<Type> {
         Expression::Literal(Literal::Float(_)) => Some(Type::F64),
         Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
         Expression::Literal(Literal::Boolean(_)) => Some(Type::Bool),
+        // A constant whose value is a struct, which is what a capability
+        // bundle and a `Mat4 { m = [...] }` are. Without it a local bound from
+        // one had no type, so reaching a field's run through the local met the
+        // rule about a base that cannot be named and was told to go inside an
+        // `unsafe` block. The self-hosted compiler asked the literal and
+        // allowed it, which is where the two parted.
+        Expression::StructInit(name, _) => {
+            Some(Type::Struct(ast.name(*name).to_string()))
+        }
         _ => None,
     }
 }
@@ -639,8 +648,21 @@ impl Checker<'_> {
             Expression::StructInit(name, _) => {
                 Some(Type::Struct(ast.name(*name).to_string()))
             }
-            Expression::EnumVariantInit(name, _, _) => {
-                Some(Type::Enum(ast.name(*name).to_string()))
+            // `Enum::Variant`, and `Struct::NAME` where a struct names a value
+            // of itself. The two are the same spelling, so which type it is
+            // comes from what the name was declared under: answering `Enum`
+            // for a value named under a struct left every field reached
+            // through one unnameable, and the rule below refused an ordinary
+            // `held.m[0]`.
+            Expression::EnumVariantInit(name, held, _) => {
+                let named = ast.name(*name).to_string();
+                let under = ast.type_values.iter().any(|entry| {
+                    entry.name == *held && ast.name(entry.type_name) == named
+                });
+                if under && self.fields.contains_key(&named) {
+                    return Some(Type::Struct(named));
+                }
+                Some(Type::Enum(named))
             }
             // A written-out array. Its length is how many elements it holds, and
             // its element type is whatever the first one is, which is the whole

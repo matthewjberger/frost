@@ -445,7 +445,7 @@ place :: fn(mut app: App, held: Entity, ids: WorldIds, at: Vec3, size: Vec3) {
         ids.local_transform,
         LocalTransform {
             translation = at,
-            rotation = quat_identity(),
+            rotation = Quat::IDENTITY,
             scale = size
         }
     )

@@ -2,7 +2,7 @@
 //
 //     app_install(app, spin_plugin)
 //     ecs_set($Spin, app.world, held, component_of($Spin, app.world),
-//         spinning(vec3(0.0, 1.0, 0.0), 1.2, quat_identity()))
+//         spinning(vec3(0.0, 1.0, 0.0), 1.2, Quat::IDENTITY))
 //
 // This is above the engine layer on purpose. The engine knows where a thing is
 // and what draws it; whether it turns is what a program decided, and nightshade

@@ -4035,6 +4035,45 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }\n",
         "1\n2\n",
     ),
+    // A struct constant bound to a name and then written through. The walk that
+    // gates unchecked operations names a constant by its value, and it named
+    // every kind of literal except a struct one, so the local had no type and
+    // reaching a field's run through it met the rule about a base that cannot
+    // be named. The self-hosted compiler asked the literal and allowed it.
+    (
+        "a_local_bound_from_a_struct_constant_keeps_its_type",
+        "import \"io.frost\"\n\
+         Mat4 :: struct { m: [4]f32 } {\n\
+         \x20   IDENTITY :: Mat4 { m = [1.0, 0.0, 0.0, 1.0,] }\n\
+         }\n\
+         ORIGIN :: Mat4 { m = [9.0, 0.0, 0.0, 9.0,] }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut a := Mat4::IDENTITY\n\
+         \x20   a.m[0] = 5.0\n\
+         \x20   mut b := ORIGIN\n\
+         \x20   b.m[0] = 7.0\n\
+         \x20   print(\"{} {} {}\\n\", a.m[0], b.m[0], Mat4::IDENTITY.m[0])\n\
+         \x20   0\n\
+         }\n",
+        "5 7 1\n",
+    ),
+    // A value named under a type written into a field. It is a value, so it is
+    // lowered and stored; taken for a variant it asked the enum table for a
+    // struct and the build stopped on an enum nobody declared.
+    (
+        "a_named_value_goes_into_a_field",
+        "import \"io.frost\"\n\
+         Mat4 :: struct { m: [4]f32 } {\n\
+         \x20   IDENTITY :: Mat4 { m = [1.0, 0.0, 0.0, 1.0,] }\n\
+         }\n\
+         Holder :: struct { held: Mat4, ok: bool }\n\
+         main :: fn() -> i64 {\n\
+         \x20   h : Holder = { held = Mat4::IDENTITY, ok = true }\n\
+         \x20   print(\"{}\\n\", h.held.m[3])\n\
+         \x20   0\n\
+         }\n",
+        "1\n",
+    ),
     // A value written as another value under a type. `Key::Left` is the two
     // tokens an entry opens with, so the self-hosted compiler read the end of
     // one value off the next `Name ::` and cut this one short at `Key`.

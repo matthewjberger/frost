@@ -261,7 +261,7 @@ cluster_write :: fn(
     inverse, ok := mat4_inverse(projection)
     mut undone: Mat4 = inverse
     if (ok == false) {
-        undone = mat4_identity()
+        undone = Mat4::IDENTITY
     }
     queue_write_buffer(queue, held.uniforms, 0, ptr_to(undone.m[0]), 64)
 

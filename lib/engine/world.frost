@@ -53,7 +53,7 @@ GlobalTransform :: struct { matrix: Mat4 }
 local_at :: fn(translation: Vec3) -> LocalTransform {
     LocalTransform {
         translation = translation,
-        rotation = quat_identity(),
+        rotation = Quat::IDENTITY,
         scale = vec3(1.0, 1.0, 1.0)
     }
 }
@@ -240,7 +240,7 @@ place_things :: fn(mut world: World) {
                     ids.local_transform,
                     ids.global_transform,
                     entity,
-                    mat4_identity()
+                    Mat4::IDENTITY
                 )
             }
             row = row + 1
@@ -471,7 +471,7 @@ test "a thing is placed against whatever it hangs off, however deep" {
             ids.local_transform,
             LocalTransform {
                 translation = vec3(1.0, 0.0, 0.0),
-                rotation = quat_identity(),
+                rotation = Quat::IDENTITY,
                 scale = vec3(1.0, 1.0, 1.0)
             }
         )
