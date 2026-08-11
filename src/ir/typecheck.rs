@@ -379,10 +379,15 @@ fn check_terminator(
                 {
                     let given = operand_type(function, operand);
                     if !fits(&given, &function.return_type) {
+                        // The sentence every answer of the wrong type is
+                        // reported in, whether the fault is nominal or a
+                        // conversion. Naming the function instead read one way
+                        // here and another where the nominal rule speaks, and
+                        // the two compilers said different things about one
+                        // program.
                         bail!(
-                            "{}'{}' answers with a {}, and this returns a {given}",
+                            "{}this returns a '{given}' and the function answers with a '{}'",
                             at(function, operand),
-                            function.name,
                             function.return_type
                         );
                     }
@@ -846,7 +851,11 @@ mod tests {
         );
         let reports = check_module_recovering(&module);
         assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].message.contains("answers with a bool"));
+        assert!(
+            reports[0]
+                .message
+                .contains("the function answers with a 'bool'")
+        );
     }
 
     #[test]

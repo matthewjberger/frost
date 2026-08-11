@@ -1641,6 +1641,29 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
+            // A type is declared where every other declaration is. Inside a
+            // body it reached the lowering as a statement nothing handles, and
+            // the reader was told the statement was unsupported rather than
+            // where the declaration belongs.
+            Token::Identifier(name)
+                if self.block_depth > 0
+                    && matches!(self.peek_nth(1), Token::DoubleColon)
+                    && (matches!(
+                        self.peek_nth(2),
+                        Token::Struct | Token::Enum | Token::Distinct
+                    ) || self.at_packed_struct(2)
+                        || self.at_flags_declaration(2)
+                        || (matches!(self.peek_nth(2), Token::Linear)
+                            && matches!(
+                                self.peek_nth(3),
+                                Token::Struct | Token::Enum
+                            ))) =>
+            {
+                let name = name.clone();
+                return Err(self.here(format!(
+                    "a type is declared where a file's other declarations are, and '{name}' is declared inside a body"
+                )));
+            }
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::DoubleColon)
                     && matches!(

@@ -1862,32 +1862,6 @@ is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
     is_array_ty(generations) && is_array_ty(free_list) && storage == (-1)
 }
 
-// Every field of the element struct `element` has a matching `[N]field` column
-// array in `candidate`, so `candidate` is the columns container for `element`.
-columns_fields_match :: fn(
-    mut p: Parser,
-    candidate: i64,
-    element: i64
-) -> bool {
-    if (is_struct_ty(element) == false) {
-        return false
-    }
-    def := arena_at(p.structs, struct_index_of(element))
-    mut fid := def.field_head
-    while (fid != (-1)) {
-        field := arena_at(p.fields, fid)
-        col := field_type_by_range(p, candidate, field.name_off, field.name_len)
-        if (is_array_ty(col) == false) {
-            return false
-        }
-        if (array_element(p, col) != field.ty) {
-            return false
-        }
-        fid = field.next
-    }
-    true
-}
-
 // `columns_new()` is a compiler builtin, not a real function. It stands for a
 // zeroed container of the type the context wants, recognized by name at the
 // call node so neither backend emits a real call to it.

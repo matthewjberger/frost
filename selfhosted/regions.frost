@@ -834,9 +834,8 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 report_where(p.modules, p.src, node.pos)
                 report("this binding is a '")
                 report_type_name(p, annotation)
-                report("' and the value is a '")
-                report_type_name(p, value_ty)
-                report("'")
+                report("' and the value is ")
+                report_described(p, value, value_ty, annotation)
                 report_distinct_note(p, value, value_ty, annotation)
                 frost_rt_recover_escape()
             }
@@ -882,10 +881,10 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         if (fits == false) {
             report_where(p.modules, p.src, node.pos)
             report_fmt(
-                "this place is a '{}' and the value is a '{}'",
-                type_text(p, place_ty),
-                type_text(p, value_ty)
+                "this place is a '{}' and the value is ",
+                type_text(p, place_ty)
             )
+            report_described(p, value, value_ty, place_ty)
             report_distinct_note(p, value, value_ty, place_ty)
             frost_rt_recover_escape()
         }
@@ -914,7 +913,12 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         // Only that question. What a widening or a narrowing costs is settled
         // where the value is written, and asking it again here would report a
         // conversion the answer position never made.
-        if (node.b == 1 && is_distinct(p.current_ret)) {
+        // What a widening or a narrowing costs is settled where the value is
+        // written, and this walk types a trailing `match` by its arms rather
+        // than by the answer they are read at, so two numbers are left alone
+        // here. A value that is not a number at all, or one whose type is named
+        // and differs, is a different mistake and is reported.
+        if (node.b == 1 && answer_is_asked(p, node.a)) {
             answered := type_of(p, node.a)
             if (answered != p.current_ret) {
                 report_answer_mismatch(p, node.a, answered, node.pos)
@@ -1068,13 +1072,49 @@ report_answer_mismatch :: fn(
     at: i64
 ) {
     report_where(p.modules, p.src, at)
-    report("this returns a '")
-    report_type_name(p, value_ty)
-    report("' and the function answers with a '")
+    report("this returns ")
+    report_described(p, value, value_ty, p.current_ret)
+    report(" and the function answers with a '")
     report_type_name(p, p.current_ret)
     report("'")
     report_distinct_note(p, value, value_ty, p.current_ret)
     frost_rt_recover_escape()
+}
+
+// Whether a body's last expression is one this walk can hold to the answer
+// type. Only the nominal question: a number written down takes that type
+// wherever it is written, and what this walk knows of a trailing `match`, a
+// `ref` answer or a handle is the shape it was built from rather than the type
+// it is read at, so a wider question here reports conversions nobody made.
+answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
+    (is_distinct(p.current_ret) && untyped_literal(p, value) == false)
+}
+
+// What was written, as the report names it. A number written where a set of
+// bits belongs has taken the flags type by the time the two are compared, so
+// naming the type would name the same one twice and explain nothing; what the
+// reader wrote is a number, and that is what this says.
+//
+// Text written down is a run of bytes, and what it carries is the address of
+// those bytes. That is how it travels rather than what the reader wrote, so a
+// literal is named `str` here and not `^i8`.
+report_described :: fn(mut p: Parser, value: i64, value_ty: i64, to: i64) {
+    if (is_flags_type(p, to) && written_number(p, value)) {
+        report("a number")
+        return
+    }
+    report("a '")
+    report_written_type(p, value, value_ty)
+    report("'")
+}
+
+// The type a value is named by in a report.
+report_written_type :: fn(mut p: Parser, value: i64, value_ty: i64) {
+    mut written := value_ty
+    if (is_str_literal(p, value)) {
+        written = array_of(p, TY_U8, -1)
+    }
+    report_type_name(p, written)
 }
 
 check_cast_converts_numbers :: fn(
@@ -1099,7 +1139,7 @@ check_cast_converts_numbers :: fn(
     }
     report_where(p.modules, p.src, pos)
     report("cast converts between numbers, or names a distinct type for a value of its representation, and this is asked to turn a ")
-    report_type_name(p, from)
+    report_written_type(p, value, from)
     report(" into a ")
     report_type_name(p, target)
     // Ends this declaration, the way the bootstrap ends it. What the value
@@ -1496,14 +1536,11 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
                     // and not what the reader wrote, so a literal handed to a
                     // number was named a '^i8' by one compiler and a 'str' by
                     // the other about one program.
-                    mut written := arg_ty
-                    if (is_str_literal(p, value)) {
-                        written = array_of(p, TY_U8, -1)
-                    }
                     report_where(p.modules, p.src, vnode.pos)
+                    report("this argument is ")
+                    report_described(p, value, arg_ty, expected)
                     report_fmt(
-                        "this argument is a '{}' and a '{}' is what is wanted here",
-                        type_text(p, written),
+                        " and a '{}' is what is wanted here",
                         type_text(p, expected)
                     )
                     report_distinct_note(p, value, arg_ty, expected)

@@ -8015,6 +8015,13 @@ impl<'a> FunctionLowering<'a> {
         if self.builder.names_a_value(named, value_name) {
             return true;
         }
+        // A bit of a set reads as a variant and is a number carrying its type,
+        // so it is bound the way every other value is. Built here instead, it
+        // asked the enum table for a flags type and the build stopped on an
+        // enum nobody declared, which is what `f := InitFlags::Video` did.
+        if self.builder.flags.contains_key(named) {
+            return true;
+        }
         self.builder.type_values.contains_key(named)
             && self.builder.enum_layout(named).is_none()
     }
@@ -9448,8 +9455,12 @@ impl<'a> FunctionLowering<'a> {
                     &target_type,
                     &self.builder.flags,
                 );
+                // The sentence an assignment to a field or an element is
+                // reported in. Naming the local instead read one way here and
+                // another two lines down, and the two compilers said different
+                // things about one program.
                 bail!(
-                    "'{name}' is a '{target_type}' and the value is {described}; {note}"
+                    "this place is a '{target_type}' and the value is {described}; {note}"
                 );
             }
             let coerced = self.coerce(operand, &value_type, &target_type)?;

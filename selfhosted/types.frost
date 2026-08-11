@@ -2713,20 +2713,6 @@ instance_arg_at :: fn(mut p: Parser, struct_index: i64, at: i64) -> i64 {
     -1
 }
 
-// The argument a generic struct's instance was made with, or -1 for a struct
-// that is no instance of one.
-instance_arg_of :: fn(mut p: Parser, struct_index: i64) -> i64 {
-    mut i: i64 = 0
-    while (i < p.instances.count) {
-        inst := arena_at(p.instances, i)
-        if (inst.struct_index == struct_index) {
-            return inst.arg
-        }
-        i = i + 1
-    }
-    -1
-}
-
 // The tuple a call to a generic names through its arguments alone, read while
 // the declaration around it is being parsed. A generic over a plain type names
 // that type only in the local table, and this is where that table is in scope.

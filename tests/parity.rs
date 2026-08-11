@@ -472,6 +472,87 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A number written where a set of bits belongs is described as a number
+    // rather than by its type, since the type it would be named by is the one
+    // it is being refused for. The self-hosted compiler named the type, at the
+    // binding, the return and the argument alike.
+    (
+        "a_number_written_where_a_set_of_bits_belongs_is_a_number",
+        "import \"io.frost\"\n\
+         F :: flags u32 {\n\
+         \x20   A :: 1\n\
+         }\n\
+         main :: fn() -> i64 { f : F = 1  0 }\n",
+        "this binding is a 'F' and the value is a number; a set of bits is \
+         built from the names declared under it, and a number is not one of them",
+    ),
+    (
+        "a_number_returned_where_a_set_of_bits_belongs_is_a_number",
+        "import \"io.frost\"\n\
+         F :: flags u32 {\n\
+         \x20   A :: 1\n\
+         }\n\
+         g :: fn() -> F { return 1 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "this returns a number and the function answers with a 'F'; a set of \
+         bits is built from the names declared under it, and a number is not \
+         one of them",
+    ),
+    (
+        "a_number_handed_where_a_set_of_bits_belongs_is_a_number",
+        "import \"io.frost\"\n\
+         F :: flags u32 {\n\
+         \x20   A :: 1\n\
+         }\n\
+         t :: fn(f: F) -> i64 { 0 }\n\
+         main :: fn() -> i64 { t(1)  0 }\n",
+        "this argument is a number and a 'F' is what is wanted here; a set of \
+         bits is built from the names declared under it, and a number is not \
+         one of them",
+    ),
+    // Text written down is a run of bytes, and what it carries is the address
+    // of those bytes. That is how it travels rather than what the reader wrote,
+    // so the report names it `str`; the self-hosted compiler named the pointer.
+    (
+        "a_text_literal_is_named_str_wherever_it_is_refused",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 { n := cast($i64, \"x\")  print(\"{}\\n\", n)  0 }\n",
+        "cast converts between numbers, or names a distinct type for a value \
+         of its representation, and this is asked to turn a str into a i64",
+    ),
+    // An assignment to a name is reported in the sentence one to a field or an
+    // element is. The bootstrap named the local, so one program was described
+    // two ways depending on which compiler read it.
+    (
+        "an_assignment_to_a_name_reads_as_one_to_a_place",
+        "import \"io.frost\"\n\
+         M :: distinct i64\n\
+         main :: fn() -> i64 { n := 3  mut m : M = 1  m = n  0 }\n",
+        "this place is a 'M' and the value is a 'i64'; a distinct type is not \
+         its representation",
+    ),
+    // An answer of the wrong type reads the same whether the fault is nominal
+    // or a conversion. The bootstrap had a sentence of its own for the second.
+    (
+        "an_answer_of_the_wrong_type_reads_one_way",
+        "import \"io.frost\"\n\
+         g :: fn() -> i64 { return \"x\" }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "this returns a 'str' and the function answers with a 'i64'",
+    ),
+    // A type is declared where a file's other declarations are. Written in a
+    // body it reached the bootstrap's lowering as a statement nothing handles,
+    // and the self-hosted compiler read it as a name reaching into a type.
+    (
+        "a_type_is_declared_where_declarations_are",
+        "import \"io.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   P :: struct { x: i64 }\n\
+         \x20   0\n\
+         }\n",
+        "a type is declared where a file's other declarations are, and 'P' is \
+         declared inside a body",
+    ),
     // A body's last expression is its answer, so the nominal rule is asked of it
     // the way it is asked of a `return`. Both compilers checked the `return`
     // and neither checked this, so a function could answer with a distinct type
@@ -4022,6 +4103,40 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "in\n",
+    ),
+    // A bit of a set bound straight to a name. The bootstrap read it as a
+    // variant and asked the enum table for a flags type, so `f := InitFlags::A`
+    // stopped the build on an enum nobody declared; only an expression built
+    // from two bits ever reached the arm that answers correctly.
+    (
+        "a_bit_of_a_set_binds_to_a_name",
+        "import \"io.frost\"\n\
+         F :: flags u32 {\n\
+         \x20   A :: 1\n\
+         \x20   B :: 2\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   f := F::A\n\
+         \x20   both := f | F::B\n\
+         \x20   if (flags_has(both, F::A)) { print(\"has\\n\") }\n\
+         \x20   print(\"{}\\n\", cast($i64, both))\n\
+         \x20   0\n\
+         }\n",
+        "has\n3\n",
+    ),
+    // A literal is exempt at the answer position the way it is everywhere: it
+    // has no type of its own until the context gives it one. The self-hosted
+    // compiler asked the literal what it was and refused the answer.
+    (
+        "a_literal_answers_at_the_declared_type",
+        "import \"io.frost\"\n\
+         M :: distinct i64\n\
+         g :: fn() -> M { 3 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, g()))\n\
+         \x20   0\n\
+         }\n",
+        "3\n",
     ),
     // The construction the rule above needs. A distinct type over a number is
     // named by a cast already, since both sides are numbers; one over anything

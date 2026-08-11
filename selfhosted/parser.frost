@@ -1435,7 +1435,7 @@ mark_trailing_answer :: fn(mut p: Parser, body: i64) {
         id = node_next(p, id)
     }
     mut node := arena_at(p.arena, last)
-    if (node.kind == NodeKind::ExprStmt) {
+    if (node.kind == NodeKind::ExprStmt && node.b == 0) {
         node.b = 1
     }
 }
@@ -3637,6 +3637,22 @@ names_a_failure_set :: fn(mut p: Parser, ty: i64) -> bool {
 // filling it in. The type is named where the context gives one, which is what
 // turns the report into the edit.
 refuse_dot_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) {
+    refuse_dot_value_at(p, ty, off, len, 0)
+}
+
+// The same refusal, noted rather than escaped with while the statement holding
+// the dot is still being read. Unwinding from mid-expression leaves the cursor
+// there, and a resync reads the rest of the line as a declaration, so one fault
+// is reported as two. The node is built either way and the program is refused
+// once the file has had its say. A walk that runs after the parse passes 0 and
+// leaves through the escape.
+refuse_dot_value_at :: fn(
+    mut p: Parser,
+    ty: i64,
+    off: i64,
+    len: i64,
+    parsing: i64
+) {
     if (names_a_failure_set(p, ty)) {
         return
     }
@@ -3650,6 +3666,10 @@ refuse_dot_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) {
     report("::")
     report_src(p.src, off, len)
     report("`")
+    if (parsing == 1) {
+        frost_rt_recover_note()
+        return
+    }
     frost_rt_recover_escape()
 }
 
@@ -5162,6 +5182,18 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // the statement after it.
     start := cur_off(p)
 
+    // A type is declared where every other declaration is. Written in a body it
+    // reads as a name reaching into a type for one of its values, and the
+    // reader was told the type has no variant called `struct`.
+    if (at_type_declaration(p)) {
+        report_where(p.modules, p.src, start)
+        report("a type is declared where a file's other declarations are, and '")
+        report_src(p.src, start, cur_len(p))
+        report("' is declared inside a body")
+        skip_declaration(p)
+        frost_rt_recover_escape()
+    }
+
     // `ref x := place` binds a borrow of a place: an address that types as a
     // borrow, so reading a field through it needs no `unsafe` block, unlike a
     // raw pointer. It is how an arena element is reached without ptr_to.
@@ -6289,9 +6321,16 @@ unroll_fields :: fn(
 // A statement that does nothing, for a compile-time branch that was not taken
 // or a list that had no elements. Something has to stand where a statement was
 // written, and this is what costs nothing to emit.
+// A statement standing for nothing, which is what a compile-time walk over no
+// fields leaves behind. Marked as the compiler's own, so the walk that reads a
+// body's last statement as the value the function answers with passes over it:
+// it stands where the reader wrote nothing.
 nothing_statement :: fn(mut p: Parser) -> i64 {
     zero := new_node(p, NodeKind::Num, 0, 0, 0)
-    new_unary(p, NodeKind::ExprStmt, zero)
+    made := new_unary(p, NodeKind::ExprStmt, zero)
+    mut node := arena_at(p.arena, made)
+    node.b = 2
+    made
 }
 
 // Whether this function binds this name past `from`. Locals are recorded in
@@ -7654,11 +7693,11 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
     named := expected_named_value(p, variant_off, variant_len)
     if (named >= 0) {
         entry := arena_at(p.type_values, named)
-        refuse_dot_value(p, entry.ty, variant_off, variant_len)
+        refuse_dot_value_at(p, entry.ty, variant_off, variant_len, 1)
     }
     enum_ty := expected_variant_enum(p, variant_off, variant_len)
     if (enum_ty >= 0) {
-        refuse_dot_value(p, enum_ty, variant_off, variant_len)
+        refuse_dot_value_at(p, enum_ty, variant_off, variant_len, 1)
     }
     parse_variant_body(
         p,
