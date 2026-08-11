@@ -1496,8 +1496,10 @@ impl IrBuilder {
                         function.check_answer(&value_type, &return_type),
                         answer_position,
                     )?;
-                    let operand =
-                        function.coerce(value, &value_type, &return_type)?;
+                    let operand = locate(
+                        function.coerce(value, &value_type, &return_type),
+                        answer_position,
+                    )?;
                     function
                         .set_terminator(IrTerminator::Return(Some(operand)));
                 }
