@@ -713,6 +713,7 @@ check_types_in :: fn(
 ) {
     sym := arena_at(p.fns, fn_index)
     p.current_ret = ret
+    p.current_fn_index = fn_index
     p.current_fn_off = sym.off
     p.current_fn_len = sym.len
     p.locals.count = 0
@@ -1082,13 +1083,36 @@ report_answer_mismatch :: fn(
 }
 
 // Whether a body's last expression is one this walk can hold to the answer
-// type. Only the nominal question, which is the one a type of its own exists to
-// ask. A wider one needs the answer type to reach the expression as it is read:
-// what this walk knows of a trailing `match`, of a call into a generic and of a
-// `ref` answer is the shape each was built from rather than the type it is read
-// at, so asking here reports conversions nobody made.
+// type, which is what a `return` is held to.
+//
+// A number written down is exempt, the way it is everywhere. Two shapes are
+// passed over because what this walk names for them is not the type they are
+// read at: a call a template's own parse produced answers with a stand-in until
+// the instance is read, and a function answering `ref T` answers with a place,
+// whose type is what the place holds and whose escape is the frame walk's
+// question.
 answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
-    (is_distinct(p.current_ret) && untyped_literal(p, value) == false)
+    if (p.current_ret == TY_VOID || untyped_literal(p, value)) {
+        return false
+    }
+    // A template's body is read again once per instance, with its parameters
+    // bound, and that reading is where a call inside it answers with a type
+    // rather than with a stand-in for one.
+    if (generic_fn_of(p, p.current_fn_index) >= 0) {
+        return false
+    }
+    held := arena_at(p.arena, value)
+    if (held.kind == NodeKind::Call && held.b == 1) {
+        return false
+    }
+    answered := type_of(p, value)
+    if (unnameable(answered) || unnameable(p.current_ret)) {
+        return false
+    }
+    if (is_borrow(p.current_ret) || is_borrow(answered)) {
+        return false
+    }
+    value_fits(p, value, answered, p.current_ret) == false
 }
 
 // What was written, as the report names it. A number written where a set of

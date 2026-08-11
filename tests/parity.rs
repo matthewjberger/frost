@@ -472,6 +472,18 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "indexing reads an element out of a run, and this is a i64",
     ),
+    // A body's last expression is its answer whatever the fault is, not only a
+    // nominal one. The self-hosted compiler asked only the nominal question
+    // here, because what it named for a trailing `match` was the type its arms
+    // were built from; the arms are now read at the answer, so the wider
+    // question has something sound to ask.
+    (
+        "a_bodys_last_expression_answers_at_the_declared_type_at_all",
+        "import \"io.frost\"\n\
+         g :: fn() -> i64 { \"x\" }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "this returns a 'str' and the function answers with a 'i64'",
+    ),
     // A number written where a set of bits belongs is described as a number
     // rather than by its type, since the type it would be named by is the one
     // it is being refused for. The self-hosted compiler named the type, at the
@@ -4103,6 +4115,27 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "in\n",
+    ),
+    // A `match` standing where a body's answer goes: its arms are read at the
+    // answer, the way a number written there is. Read at what its arms folded
+    // to instead, a `-> u32` body of `i64` constants was a narrowing.
+    (
+        "the_arms_of_an_answering_match_are_read_at_the_answer",
+        "import \"io.frost\"\n\
+         K :: enum { A, B }\n\
+         LOW :: 0\n\
+         HIGH :: 1\n\
+         kind_of :: fn(k: K) -> u32 {\n\
+         \x20   match k {\n\
+         \x20       case K::A: LOW\n\
+         \x20       case K::B: HIGH\n\
+         \x20   }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, kind_of(K::B)))\n\
+         \x20   0\n\
+         }\n",
+        "1\n",
     ),
     // A bit of a set bound straight to a name. The bootstrap read it as a
     // variant and asked the enum table for a flags type, so `f := InitFlags::A`

@@ -2002,6 +2002,9 @@ Parser :: struct {
     // bootstrap reports every fault at: past the first, what a body says is
     // read against a value that is not there.
     dot_noted: i64,
+    // Which function the type walk is inside, so a question that only an
+    // instance can answer is not asked of the template it is read from.
+    current_fn_index: i64,
     arrays: Arena<ArrayDef>,
     indirects: Arena<Indirect>,
     tests: Arena<TestCase>,

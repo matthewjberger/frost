@@ -793,6 +793,7 @@ main :: fn() -> i64 {
         flag_bits = arena_make($FlagBit, 4096),
         type_values = arena_make($TypeValue, 4096),
         dot_noted = 0,
+        current_fn_index = -1,
         arrays = arena_make($ArrayDef, 4096),
         indirects = arena_make($Indirect, 4096),
         tests = arena_make($TestCase, 4096),

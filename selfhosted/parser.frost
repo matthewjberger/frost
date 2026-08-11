@@ -1424,7 +1424,7 @@ lower_flags_has :: fn(mut p: Parser, set: i64, wanted: i64) -> i64 {
 // is the ok side of the failure set just as an explicit `return` is.
 // Mark a body's last statement as the value the function answers with, so the
 // type walk asks of it what it asks of a `return`.
-mark_trailing_answer :: fn(mut p: Parser, body: i64) {
+mark_trailing_answer :: fn(mut p: Parser, body: i64, ret: i64) {
     if (body == (-1)) {
         return
     }
@@ -1437,7 +1437,46 @@ mark_trailing_answer :: fn(mut p: Parser, body: i64) {
     mut node := arena_at(p.arena, last)
     if (node.kind == NodeKind::ExprStmt && node.b == 0) {
         node.b = 1
+        retype_answer_binding(p, body, node.a, ret)
     }
+}
+
+// A `match` or an `if` standing where a body's answer goes binds a name its
+// arms assign to, and that name took its type from the first arm. The arms are
+// read at the answer the same as a number written there is, so where each
+// handed back a plain number and the answer is one, the name takes the answer's
+// type. Without this the arms of `-> u32 { match k { case A: LOW ... } }` are
+// the `i64` their constants fold to and the answer reads as a narrowing.
+retype_answer_binding :: fn(mut p: Parser, body: i64, value: i64, ret: i64) {
+    if (plain_number(ret) == false) {
+        return
+    }
+    held := arena_at(p.arena, value)
+    if (held.kind != NodeKind::Var) {
+        return
+    }
+    name_off := held.val
+    name_len := held.c
+    mut id := body
+    while (id != (-1)) {
+        mut stmt := arena_at(p.arena, id)
+        if (stmt.kind == NodeKind::Let && stmt.c == name_len
+            && bytes_equal(p.src, stmt.val, name_off, name_len)
+            && plain_number(stmt.b)) {
+            stmt.b = ret
+            return
+        }
+        id = node_next(p, id)
+    }
+}
+
+// A number with no name of its own: the kind a literal is, and the kind the
+// context gets to type.
+plain_number :: fn(ty: i64) -> bool {
+    if (is_distinct(ty)) {
+        return false
+    }
+    (is_integer(ty) || is_float(ty))
 }
 
 wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
@@ -7032,7 +7071,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // to what a written `return` is held to. Without the mark the type walk
     // sees a statement like any other, and a function could answer with a
     // distinct type by writing its representation and leaving `return` off.
-    mark_trailing_answer(p, body)
+    mark_trailing_answer(p, body, ret)
     // The branches of an answering `if` become returns first, so each carries
     // what was deferred the way a written `return` does. Afterwards there is
     // nothing left for the trailing walk to put copies in front of.
