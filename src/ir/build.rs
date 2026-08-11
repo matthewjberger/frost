@@ -6579,7 +6579,25 @@ impl<'a> FunctionLowering<'a> {
         self.ast.position_of(self.ast.expr_span(expression))
     }
 
+    // A fault raised while an expression is lowered is about that expression,
+    // so it is shown there. Without this the nearest place a fault carried was
+    // the statement's, and a reader was sent to the front of the line rather
+    // than to the part of it that is wrong: `k := K::Lft` pointed at `k`.
+    //
+    // The innermost expression wins, since `locate` leaves a fault that already
+    // has a place alone and the walk works inward. What the statement carries
+    // stays as the answer for a fault raised between expressions rather than in
+    // one.
     fn lower_expression(
+        &mut self,
+        expression: ExprId,
+        expected: Option<&Type>,
+    ) -> Result<(IrOperand, Type)> {
+        let position = self.at_expression(expression);
+        locate(self.lower_expression_here(expression, expected), position)
+    }
+
+    fn lower_expression_here(
         &mut self,
         expression: ExprId,
         expected: Option<&Type>,

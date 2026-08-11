@@ -7012,7 +7012,10 @@ fn the_bootstrap_shows_the_line_a_failure_is_about() {
     let _ = std::fs::remove_file(&exe);
     assert!(!built.status.success());
     let complaint = String::from_utf8_lossy(&built.stderr);
-    assert!(complaint.contains(":3:5:"), "no position in:\n{complaint}");
+    // Column 14, where `300` is written. The complaint is about the number, not
+    // about the binding it was written into, and the caret goes under the part
+    // of the line the reader changes.
+    assert!(complaint.contains(":3:14:"), "no position in:\n{complaint}");
     assert!(
         complaint.contains("    a : u8 = 300"),
         "the line at fault was not shown:\n{complaint}"

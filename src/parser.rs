@@ -2844,8 +2844,9 @@ impl<'a> Parser<'a> {
             // lowering fills it in. Every field is still named: there is no
             // positional form of this literal or of any other.
             Token::LeftBrace => {
+                let start = self.mark();
                 let empty = self.ast.intern("");
-                self.parse_struct_init(empty)?
+                self.parse_struct_init(empty, start)?
             }
             Token::LeftBracket => self.parse_array_literal()?,
             Token::LeftParentheses => self.parse_grouped_expressions()?,
@@ -2959,7 +2960,8 @@ impl<'a> Parser<'a> {
                         self.ast.expr(expression)
                     {
                         let name = *name;
-                        expression = self.parse_struct_init(name)?;
+                        let start = self.ast.expr_span(expression).first;
+                        expression = self.parse_struct_init(name, start)?;
                     } else {
                         return Ok(expression);
                     }
@@ -3047,8 +3049,9 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::LeftBrace)
             && !self.no_struct_literal
         {
+            let start = self.mark();
             let empty = self.ast.intern("");
-            let literal = self.parse_struct_init(empty)?;
+            let literal = self.parse_struct_init(empty, start)?;
             let Expression::StructInit(_, parsed) = self.ast.expr(literal)
             else {
                 bail!("Expected the fields of a variant literal");
@@ -3286,8 +3289,16 @@ impl<'a> Parser<'a> {
         Ok(format!("{base}<{}>", rendered.join(", ")))
     }
 
-    fn parse_struct_init(&mut self, struct_name: Symbol) -> Result<ExprId> {
-        let start = self.mark();
+    // `start` is the token the whole literal begins at, which is the type's
+    // name where one is written. This function is entered at the `{`, so the
+    // name is already read and only the caller still knows where it was: a
+    // complaint about `Absent { a = 1 }` names `Absent`, and a span beginning
+    // at the brace sent the reader past the word that is wrong.
+    fn parse_struct_init(
+        &mut self,
+        struct_name: Symbol,
+        start: u32,
+    ) -> Result<ExprId> {
         self.read_token();
         let mut fields = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
