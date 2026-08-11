@@ -12477,7 +12477,7 @@ impl<'a> FunctionLowering<'a> {
             _ if needs_cast(from, to) => {
                 if is_narrowing(from, to) {
                     bail!(
-                        "this is a {from} and a {to} is wanted, which cannot hold all of one; write cast(${to}, ...) to say the loss is meant"
+                        "this is a '{from}' and a '{to}' is wanted, which cannot hold all of one; write cast(${to}, ...) to say the loss is meant"
                     );
                 }
                 let result = self.fresh_local(to.clone(), None);

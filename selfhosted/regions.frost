@@ -584,6 +584,10 @@ TypeTurn :: struct {
     params: i64,
     fn_index: i64,
     ret: i64,
+    // Whether this turn reads an instance rather than the template it came
+    // from. It travels with the turn rather than being set around the call,
+    // because the call it would be set around is one a fault leaves through.
+    instance: i64,
 }
 
 check_types_guarded :: fn(raw: ^u8) {
@@ -595,7 +599,8 @@ check_types_guarded :: fn(raw: ^u8) {
             turn^.body,
             turn^.params,
             turn^.fn_index,
-            turn^.ret
+            turn^.ret,
+            turn^.instance
         )
     }
 }
@@ -607,14 +612,16 @@ check_types_one :: fn(
     body: i64,
     params: i64,
     fn_index: i64,
-    ret: i64
+    ret: i64,
+    instance: i64
 ) -> i64 {
     mut turn := TypeTurn {
         parser = unsafe { ptr_cast($u8, ptr_to(p)) },
         body = body,
         params = params,
         fn_index = fn_index,
-        ret = ret
+        ret = ret,
+        instance = instance
     }
     unsafe {
         frost_rt_recover_run(check_types_guarded, ptr_cast($u8, ptr_to(turn)))
@@ -678,19 +685,15 @@ check_types :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
-            faulted := check_types_one(
-                p,
-                node.a,
-                node.b,
-                node.val,
-                sym.ret_type
-            )
+            check_types_one(p, node.a, node.b, node.val, sym.ret_type, 0)
         }
         id = next_id
     }
     // An instance exists because a call asked for it, so a program that already
-    // has something wrong with it has no instance worth reading: what a call
-    // asked for is worth reading once the call itself says something.
+    // has something wrong with it anywhere has no instance worth reading: this
+    // is the last of the checks, so whatever any of them found is a thing to fix
+    // before a body nobody wrote is read on top of it. What a call asked for is
+    // read once the program the call is in says something.
     if (frost_rt_recover_failures() > 0) {
         return
     }
@@ -715,9 +718,14 @@ check_types :: fn(mut p: Parser, head: i64) {
                 // own still names its parameters.
                 ret := p.last_return_type
                 fnode := arena_at(p.arena, instance)
-                p.reading_instance = 1
-                faulted := check_types_one(p, fnode.a, fnode.b, fnode.val, ret)
-                p.reading_instance = 0
+                faulted := check_types_one(
+                    p,
+                    fnode.a,
+                    fnode.b,
+                    fnode.val,
+                    ret,
+                    1
+                )
                 if (faulted != 0) {
                     return
                 }
@@ -733,11 +741,13 @@ check_types_in :: fn(
     body: i64,
     params: i64,
     fn_index: i64,
-    ret: i64
+    ret: i64,
+    instance: i64
 ) {
     sym := arena_at(p.fns, fn_index)
     p.current_ret = ret
     p.current_fn_index = fn_index
+    p.reading_instance = instance
     p.current_fn_off = sym.off
     p.current_fn_len = sym.len
     p.locals.count = 0
@@ -7866,12 +7876,22 @@ enclosing_fn :: fn(mut p: Parser, off: i64) -> i64 {
 // A reader is handed one call to fix per declaration: past the first, what the
 // body says is read against a signature that is not the one it will have, and
 // a second report describes a program the reader is about to stop having.
+//
+// The answer is kept on the function rather than in one slot beside the walk,
+// which would hold only the last body to say something. The walk reads the
+// whole arena and a body's calls do not all sit together in it: a generic's is
+// read again per instance, and those nodes land after every function a reader
+// wrote, so a slot is right again as soon as two generics both have one.
 call_fault_is_a_repeat :: fn(mut p: Parser, off: i64) -> bool {
     owner := enclosing_fn(p, off)
-    if (owner >= 0 && owner == p.call_fault_fn) {
+    if (owner < 0) {
+        return false
+    }
+    mut sym := arena_at(p.fns, owner)
+    if (sym.call_faulted != 0) {
         return true
     }
-    p.call_fault_fn = owner
+    sym.call_faulted = 1
     false
 }
 
@@ -8033,17 +8053,18 @@ check_calls :: fn(mut p: Parser) {
             // callee's name was declared, so a report using it sent the reader
             // to the function that is right and away from the call that is
             // wrong.
-            if (expected != got && is_supplied == false
-                && call_fault_is_a_repeat(p, node.pos) == false) {
-                report_where(p.modules, p.src, node.pos)
-                report("function '")
-                report_src(p.src, name_off, name_len)
-                report("' expects ")
-                frost_rt_error_int(expected)
-                report(" argument(s) but ")
-                frost_rt_error_int(got)
-                report(" were given")
-                frost_rt_recover_note()
+            if (expected != got && is_supplied == false) {
+                if (call_fault_is_a_repeat(p, node.pos) == false) {
+                    report_where(p.modules, p.src, node.pos)
+                    report("function '")
+                    report_src(p.src, name_off, name_len)
+                    report("' expects ")
+                    frost_rt_error_int(expected)
+                    report(" argument(s) but ")
+                    frost_rt_error_int(got)
+                    report(" were given")
+                    frost_rt_recover_note()
+                }
             }
         }
         i = i + 1

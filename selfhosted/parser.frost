@@ -1457,6 +1457,15 @@ retype_answer_binding :: fn(mut p: Parser, body: i64, value: i64, ret: i64) {
     }
     name_off := held.val
     name_len := held.c
+    // Only the name this parse made for a `match` or an `if` used as a value.
+    // A name a reader wrote is a binding they gave a type to, and reading it at
+    // the answer would take that type off them: `x := n` followed by `x` is an
+    // `i64` handed to whatever the function answers with, and what that costs is
+    // the answer position's question rather than something to settle by writing
+    // a different type onto the binding.
+    if (starts_with_name(p.src, name_off, name_len, "__value") == false) {
+        return
+    }
     mut id := body
     while (id != (-1)) {
         mut stmt := arena_at(p.arena, id)

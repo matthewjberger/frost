@@ -258,6 +258,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             ret_type = TY_I64,
             params = -1,
             defined = 0,
+            call_faulted = 0,
             cap_start = 0,
             cap_count = 0
         },

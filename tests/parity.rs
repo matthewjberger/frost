@@ -531,6 +531,42 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }\n",
         "function 'takes' expects 2 argument(s) but 1 were given",
     ),
+    // One wrong call in each of two generic bodies. Which declaration a call
+    // sits inside is what says whether a second report is a second thing to
+    // fix, and the walk that finds wrong calls reads the whole arena, where a
+    // generic's body appears again per instance after every function a reader
+    // wrote. Held in one slot beside the walk, the answer was right again as
+    // soon as a third body came between the first two.
+    (
+        "a_wrong_call_in_each_of_two_generic_bodies_is_two_reports",
+        "import \"io.frost\"\n\
+         takes :: fn(a: i64, b: i64) -> i64 { a + b }\n\
+         ga :: fn($T: Type, s: $T) -> i64 { takes(1) }\n\
+         gb :: fn($T: Type, s: $T) -> i64 { takes(2) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a := ga(1)\n\
+         \x20   b := gb(2.0)\n\
+         \x20   c := ga(3.0)\n\
+         \x20   0\n\
+         }\n",
+        "function 'takes' expects 2 argument(s) but 1 were given",
+    ),
+    // A binding a reader wrote keeps the type they gave it. The name a `match`
+    // in answer position binds is read at the answer, the way a number written
+    // there is, and that reading looked for the name alone: an ordinary binding
+    // standing as a body's last expression took the answer's type off the
+    // reader, and what a widening or a narrowing costs stopped being asked.
+    (
+        "a_binding_a_reader_wrote_is_not_retyped_by_the_answer",
+        "import \"io.frost\"\n\
+         f :: fn(n: i64) -> u32 {\n\
+         \x20   x := n\n\
+         \x20   x\n\
+         }\n\
+         main :: fn() -> i64 { cast($i64, f(3)) }\n",
+        "this is a 'i64' and a 'u32' is wanted, which cannot hold all of one; \
+         write cast($u32, ...) to say the loss is meant",
+    ),
     // A number written where a set of bits belongs is described as a number
     // rather than by its type, since the type it would be named by is the one
     // it is being refused for. The self-hosted compiler named the type, at the

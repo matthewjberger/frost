@@ -307,7 +307,7 @@ query_local :: fn(mut p: Parser, program: i64, question: ^i8) {
         if (node.kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
             if (word_names(question, fn_at, p.src, sym.off, sym.len)) {
-                check_types_in(p, node.a, node.b, node.val, sym.ret_type)
+                check_types_in(p, node.a, node.b, node.val, sym.ret_type, 0)
                 mut li: i64 = 0
                 while (li < p.locals.count) {
                     held := arena_at(p.locals, li)
