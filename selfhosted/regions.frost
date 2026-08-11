@@ -600,13 +600,15 @@ check_types_guarded :: fn(raw: ^u8) {
     }
 }
 
+// Answers whether the walk left through a fault, which is what lets the caller
+// reading instances stop at the first one that has something to say.
 check_types_one :: fn(
     mut p: Parser,
     body: i64,
     params: i64,
     fn_index: i64,
     ret: i64
-) {
+) -> i64 {
     mut turn := TypeTurn {
         parser = unsafe { ptr_cast($u8, ptr_to(p)) },
         body = body,
@@ -676,10 +678,27 @@ check_types :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
-            check_types_one(p, node.a, node.b, node.val, sym.ret_type)
+            faulted := check_types_one(
+                p,
+                node.a,
+                node.b,
+                node.val,
+                sym.ret_type
+            )
         }
         id = next_id
     }
+    // An instance exists because a call asked for it, so a program that already
+    // has something wrong with it has no instance worth reading: what a call
+    // asked for is worth reading once the call itself says something.
+    if (frost_rt_recover_failures() > 0) {
+        return
+    }
+    // A generic's instances are read after the functions a reader wrote, and the
+    // first one with something to say ends the reading. They are all the one
+    // body, so a fault the body has is a fault every instance has, and reporting
+    // it once per instantiation would put the same line in front of a reader as
+    // many times as the program happens to call it.
     mut gi: i64 = 0
     while (gi < p.generic_fns.count) {
         mut ii: i64 = 0
@@ -697,8 +716,11 @@ check_types :: fn(mut p: Parser, head: i64) {
                 ret := p.last_return_type
                 fnode := arena_at(p.arena, instance)
                 p.reading_instance = 1
-                check_types_one(p, fnode.a, fnode.b, fnode.val, ret)
+                faulted := check_types_one(p, fnode.a, fnode.b, fnode.val, ret)
                 p.reading_instance = 0
+                if (faulted != 0) {
+                    return
+                }
             }
             ii = ii + 1
         }
@@ -7822,6 +7844,37 @@ names_cfn_param :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     false
 }
 
+// The declaration a place falls inside: the function declared latest at or
+// before it. What this tells apart is two wrong calls in one body from one wrong
+// call in each of two bodies, which are a different number of things to fix.
+enclosing_fn :: fn(mut p: Parser, off: i64) -> i64 {
+    mut found: i64 = -1
+    mut found_off: i64 = -1
+    mut i: i64 = 0
+    while (i < p.fns.count) {
+        sym := arena_at(p.fns, i)
+        if (sym.defined != 0 && sym.off <= off && sym.off > found_off) {
+            found_off = sym.off
+            found = i
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Whether the body holding this place has already had a wrong call reported.
+// A reader is handed one call to fix per declaration: past the first, what the
+// body says is read against a signature that is not the one it will have, and
+// a second report describes a program the reader is about to stop having.
+call_fault_is_a_repeat :: fn(mut p: Parser, off: i64) -> bool {
+    owner := enclosing_fn(p, off)
+    if (owner >= 0 && owner == p.call_fault_fn) {
+        return true
+    }
+    p.call_fault_fn = owner
+    false
+}
+
 check_calls :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.arena.count) {
@@ -7869,16 +7922,20 @@ check_calls :: fn(mut p: Parser) {
                 }
             }
             // A call is checked against the signature it names and nothing is
-            // carried to the next call, so a wrong one is reported and the walk
-            // goes on. One run names every call it found wrong.
+            // carried to the next call, so the walk goes on past a wrong one.
+            // One per declaration reaches the reader: what a body says after
+            // its first wrong call is read against a signature that is not the
+            // one it will have.
             if (defined == 0 && callee_proc < 0 && is_columns_new == false
                 && is_supplied == false) {
-                report_where(p.modules, p.src, node.pos)
-                report("call to undefined function '")
-                report_src(p.src, name_off, name_len)
-                report("'")
-                report_nearest_name(p, name_off, name_len)
-                frost_rt_recover_note()
+                if (call_fault_is_a_repeat(p, node.pos) == false) {
+                    report_where(p.modules, p.src, node.pos)
+                    report("call to undefined function '")
+                    report_src(p.src, name_off, name_len)
+                    report("'")
+                    report_nearest_name(p, name_off, name_len)
+                    frost_rt_recover_note()
+                }
                 // Nothing declares the callee, so nothing says how many
                 // arguments it takes. Counting them against the zero a symbol
                 // that was never declared carries would say every such call is
@@ -7917,19 +7974,25 @@ check_calls :: fn(mut p: Parser) {
                     // the count, since what is wrong is which arguments were
                     // written rather than how many.
                     if (written > declared && first_settled_gparam(p, gi)) {
-                        report_where(p.modules, p.src, node.pos)
-                        report("'")
-                        report_src(p.src, p.gparam_name_off, p.gparam_name_len)
-                        report("' of '")
-                        report_src(p.src, name_off, name_len)
-                        report("' is settled by the type of '")
-                        report_src(
-                            p.src,
-                            p.gparam_settler_off,
-                            p.gparam_settler_len
-                        )
-                        report("', so it is not written at the call")
-                        frost_rt_recover_note()
+                        if (call_fault_is_a_repeat(p, node.pos) == false) {
+                            report_where(p.modules, p.src, node.pos)
+                            report("'")
+                            report_src(
+                                p.src,
+                                p.gparam_name_off,
+                                p.gparam_name_len
+                            )
+                            report("' of '")
+                            report_src(p.src, name_off, name_len)
+                            report("' is settled by the type of '")
+                            report_src(
+                                p.src,
+                                p.gparam_settler_off,
+                                p.gparam_settler_len
+                            )
+                            report("', so it is not written at the call")
+                            frost_rt_recover_note()
+                        }
                         i = i + 1
                         continue
                     }
@@ -7946,15 +8009,17 @@ check_calls :: fn(mut p: Parser) {
                 }
             }
             if (generic && expected != got && is_supplied == false) {
-                report_where(p.modules, p.src, node.pos)
-                report("generic function '")
-                report_src(p.src, name_off, name_len)
-                report("' expects ")
-                frost_rt_error_int(expected)
-                report(" argument(s) but ")
-                frost_rt_error_int(got)
-                report(" were given")
-                frost_rt_recover_note()
+                if (call_fault_is_a_repeat(p, node.pos) == false) {
+                    report_where(p.modules, p.src, node.pos)
+                    report("generic function '")
+                    report_src(p.src, name_off, name_len)
+                    report("' expects ")
+                    frost_rt_error_int(expected)
+                    report(" argument(s) but ")
+                    frost_rt_error_int(got)
+                    report(" were given")
+                    frost_rt_recover_note()
+                }
                 i = i + 1
                 continue
             }
@@ -7968,7 +8033,8 @@ check_calls :: fn(mut p: Parser) {
             // callee's name was declared, so a report using it sent the reader
             // to the function that is right and away from the call that is
             // wrong.
-            if (expected != got && is_supplied == false) {
+            if (expected != got && is_supplied == false
+                && call_fault_is_a_repeat(p, node.pos) == false) {
                 report_where(p.modules, p.src, node.pos)
                 report("function '")
                 report_src(p.src, name_off, name_len)

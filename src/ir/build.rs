@@ -1485,7 +1485,17 @@ impl IrBuilder {
                 if matches!(return_type, Type::Void) {
                     function.set_terminator(IrTerminator::Return(None));
                 } else {
-                    function.check_answer(&value_type, &return_type)?;
+                    let answer_position = function
+                        .ast
+                        .stmts_in(body)
+                        .last()
+                        .copied()
+                        .map(|last| function.ast.stmt_position(last))
+                        .unwrap_or_default();
+                    locate(
+                        function.check_answer(&value_type, &return_type),
+                        answer_position,
+                    )?;
                     let operand =
                         function.coerce(value, &value_type, &return_type)?;
                     function

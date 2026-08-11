@@ -499,6 +499,38 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "this returns a 'i64' and the function answers with a 'Meters'; a \
          distinct type is not its representation",
     ),
+    // The same body, instantiated twice. It is one body, so what is wrong with
+    // it is one thing to fix, and the reading stops at the first instance that
+    // says so. The self-hosted compiler read every instance and put the same
+    // line in front of the reader once per call the program happened to make.
+    (
+        "a_fault_in_a_generic_body_is_one_fault_however_often_it_is_called",
+        "import \"io.frost\"\n\
+         Meters :: distinct i64\n\
+         first :: fn($T: Type, seed: $T, n: i64) -> Meters { n }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a := first(1, 1)\n\
+         \x20   b := first(2.0, 2)\n\
+         \x20   0\n\
+         }\n",
+        "this returns a 'i64' and the function answers with a 'Meters'; a \
+         distinct type is not its representation",
+    ),
+    // Two wrong calls in one body. A reader is handed the first: past it, what
+    // the body says is read against a signature it is about to stop having. The
+    // self-hosted compiler named every call it found wrong in one run, which is
+    // one report per call rather than one per declaration.
+    (
+        "two_wrong_calls_in_one_body_are_one_report",
+        "import \"io.frost\"\n\
+         takes :: fn(a: i64, b: i64) -> i64 { a + b }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a := takes(1)\n\
+         \x20   b := takes(2)\n\
+         \x20   0\n\
+         }\n",
+        "function 'takes' expects 2 argument(s) but 1 were given",
+    ),
     // A number written where a set of bits belongs is described as a number
     // rather than by its type, since the type it would be named by is the one
     // it is being refused for. The self-hosted compiler named the type, at the

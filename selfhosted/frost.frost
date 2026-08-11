@@ -794,6 +794,7 @@ main :: fn() -> i64 {
         type_values = arena_make($TypeValue, 4096),
         dot_noted = 0,
         current_fn_index = -1,
+        call_fault_fn = -1,
         reading_instance = 0,
         arrays = arena_make($ArrayDef, 4096),
         indirects = arena_make($Indirect, 4096),
