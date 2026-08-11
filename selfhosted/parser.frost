@@ -3656,6 +3656,16 @@ refuse_dot_value_at :: fn(
     if (names_a_failure_set(p, ty)) {
         return
     }
+    // One per declaration. The parse carries on past this so the statement is
+    // read whole, and every dot after the first in the same declaration is a
+    // consequence of the same mistake.
+    if (parsing == 1) {
+        if (p.dot_noted == 1) {
+            frost_rt_recover_note()
+            return
+        }
+        p.dot_noted = 1
+    }
     report_where(p.modules, p.src, off)
     if (ty < 0) {
         report("a value named under a type is written with the type in front of it, and there is no type here to name")
@@ -9594,6 +9604,7 @@ RecoverTurn :: struct {
 parse_declaration_guarded :: fn(raw: ^u8) {
     turn := unsafe { ptr_cast($RecoverTurn, raw) }
     parser := unsafe { ptr_cast($Parser, turn^.parser) }
+    unsafe { parser^.dot_noted = 0 }
     item := unsafe { parse_one_declaration(parser^) }
     unsafe { turn^.item = item }
 }

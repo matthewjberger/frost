@@ -1997,6 +1997,11 @@ Parser :: struct {
     // it. `Key::Left` and `Vec3::ZERO` are read out of here, and so is the
     // `.Left` that elides one.
     type_values: Arena<TypeValue>,
+    // Whether a leading dot has already been reported in the declaration being
+    // read. One is reported per declaration, which is the granularity the
+    // bootstrap reports every fault at: past the first, what a body says is
+    // read against a value that is not there.
+    dot_noted: i64,
     arrays: Arena<ArrayDef>,
     indirects: Arena<Indirect>,
     tests: Arena<TestCase>,

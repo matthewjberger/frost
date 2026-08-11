@@ -1082,10 +1082,11 @@ report_answer_mismatch :: fn(
 }
 
 // Whether a body's last expression is one this walk can hold to the answer
-// type. Only the nominal question: a number written down takes that type
-// wherever it is written, and what this walk knows of a trailing `match`, a
-// `ref` answer or a handle is the shape it was built from rather than the type
-// it is read at, so a wider question here reports conversions nobody made.
+// type. Only the nominal question, which is the one a type of its own exists to
+// ask. A wider one needs the answer type to reach the expression as it is read:
+// what this walk knows of a trailing `match`, of a call into a generic and of a
+// `ref` answer is the shape each was built from rather than the type it is read
+// at, so asking here reports conversions nobody made.
 answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
     (is_distinct(p.current_ret) && untyped_literal(p, value) == false)
 }
