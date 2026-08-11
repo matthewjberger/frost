@@ -696,7 +696,9 @@ check_types :: fn(mut p: Parser, head: i64) {
                 // own still names its parameters.
                 ret := p.last_return_type
                 fnode := arena_at(p.arena, instance)
+                p.reading_instance = 1
                 check_types_one(p, fnode.a, fnode.b, fnode.val, ret)
+                p.reading_instance = 0
             }
             ii = ii + 1
         }
@@ -1087,22 +1089,27 @@ report_answer_mismatch :: fn(
 //
 // A number written down is exempt, the way it is everywhere. Two shapes are
 // passed over because what this walk names for them is not the type they are
-// read at: a call a template's own parse produced answers with a stand-in until
-// the instance is read, and a function answering `ref T` answers with a place,
-// whose type is what the place holds and whose escape is the frame walk's
-// question.
+// read at: a template's own body names parameters nothing has bound, and a
+// function answering `ref T` answers with a place, whose type is what the place
+// holds and whose escape is the frame walk's question.
 answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
     if (p.current_ret == TY_VOID || untyped_literal(p, value)) {
         return false
     }
     // A template's body is read again once per instance, with its parameters
     // bound, and that reading is where a call inside it answers with a type
-    // rather than with a stand-in for one.
-    if (generic_fn_of(p, p.current_fn_index) >= 0) {
+    // rather than with a stand-in for one. So the template's own turn passes,
+    // and the instance's asks.
+    if (p.reading_instance == 0 && generic_fn_of(p, p.current_fn_index) >= 0) {
         return false
     }
+    // A call answers with a type this walk can name only when there is a
+    // declaration to read it off. One a template's own parse produced names an
+    // instantiation of elements that do not exist, and one naming a function
+    // nothing declared carries the type a missing symbol defaults to. Neither
+    // is a type the program wrote down.
     held := arena_at(p.arena, value)
-    if (held.kind == NodeKind::Call && held.b == 1) {
+    if (held.kind == NodeKind::Call && call_answer_is_a_stand_in(p, held.b, held.val)) {
         return false
     }
     answered := type_of(p, value)
@@ -1113,6 +1120,24 @@ answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
         return false
     }
     value_fits(p, value, answered, p.current_ret) == false
+}
+
+// Whether what a call was named to answer with is a stand-in rather than a type
+// the program wrote: either its arguments came from a compile-time list nothing
+// has bound, or the name it calls was never declared and the symbol it found is
+// the empty one a missing name leaves behind.
+call_answer_is_a_stand_in :: fn(
+    mut p: Parser,
+    unbound: i64,
+    callee: i64
+) -> bool {
+    if (unbound == 1) {
+        return true
+    }
+    if (callee < 0 || callee >= p.fns.count) {
+        return true
+    }
+    arena_at(p.fns, callee).defined == 0
 }
 
 // What was written, as the report names it. A number written where a set of

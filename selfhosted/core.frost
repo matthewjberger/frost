@@ -2005,6 +2005,10 @@ Parser :: struct {
     // Which function the type walk is inside, so a question that only an
     // instance can answer is not asked of the template it is read from.
     current_fn_index: i64,
+    // Whether the type walk is reading an instance rather than the template it
+    // came from. An instance was handed its arguments, so every type in it is
+    // the one the program has; a template's still name what nothing has bound.
+    reading_instance: i64,
     arrays: Arena<ArrayDef>,
     indirects: Arena<Indirect>,
     tests: Arena<TestCase>,

@@ -484,6 +484,21 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }\n",
         "this returns a 'str' and the function answers with a 'i64'",
     ),
+    // A generic's body is read once per instance, with its compile-time
+    // parameters bound, and the answer question is asked of that reading. The
+    // self-hosted compiler passed over every function the generic table names,
+    // which is the template and its instances alike, so a fault in a body that
+    // was instantiated went unreported where a `return` in the same body was
+    // caught.
+    (
+        "a_generic_instance_answers_at_the_type_the_instance_has",
+        "import \"io.frost\"\n\
+         Meters :: distinct i64\n\
+         first :: fn($T: Type, n: i64) -> Meters { n }\n\
+         main :: fn() -> i64 { m := first($i64, 3)  0 }\n",
+        "this returns a 'i64' and the function answers with a 'Meters'; a \
+         distinct type is not its representation",
+    ),
     // A number written where a set of bits belongs is described as a number
     // rather than by its type, since the type it would be named by is the one
     // it is being refused for. The self-hosted compiler named the type, at the
@@ -4136,6 +4151,21 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "1\n",
+    ),
+    // A generic template on its own is never read as a program. Its body names
+    // parameters nothing has bound, so a call inside it answers with a stand-in
+    // for a type rather than with one, and holding that stand-in to the answer
+    // reports a fault against code no one wrote. Only an instance is read.
+    (
+        "a_generic_that_is_never_called_is_never_read",
+        "import \"io.frost\"\n\
+         Meters :: distinct i64\n\
+         held :: fn($T: Type, n: i64) -> Meters { n }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"none\\n\")\n\
+         \x20   0\n\
+         }\n",
+        "none\n",
     ),
     // A bit of a set bound straight to a name. The bootstrap read it as a
     // variant and asked the enum table for a flags type, so `f := InitFlags::A`
