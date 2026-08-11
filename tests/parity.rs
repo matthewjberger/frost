@@ -567,6 +567,21 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "this is a 'i64' and a 'u32' is wanted, which cannot hold all of one; \
          write cast($u32, ...) to say the loss is meant",
     ),
+    // The same, for a reader who writes the name the compiler makes up. Which
+    // names this parse invented is settled by where they sit rather than by how
+    // they are spelled: they are written past the source's terminator, and
+    // nothing a reader writes is.
+    (
+        "a_reader_may_write_the_name_the_compiler_makes_up",
+        "import \"io.frost\"\n\
+         f :: fn(n: i64) -> u32 {\n\
+         \x20   __value0 := n\n\
+         \x20   __value0\n\
+         }\n\
+         main :: fn() -> i64 { cast($i64, f(3)) }\n",
+        "this is a 'i64' and a 'u32' is wanted, which cannot hold all of one; \
+         write cast($u32, ...) to say the loss is meant",
+    ),
     // A number written where a set of bits belongs is described as a number
     // rather than by its type, since the type it would be named by is the one
     // it is being refused for. The self-hosted compiler named the type, at the

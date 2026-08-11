@@ -1988,6 +1988,10 @@ Parser :: struct {
     name_ok_value: i64,
     name_err_error: i64,
     synth_next: i64,
+    // The first byte past the text a reader wrote. Every name this parse makes
+    // up lives at or after it, so an offset is what says whether a name came
+    // from the program or from the compiler, whatever the name spells.
+    synth_start: i64,
     prov_kind: i64,
     prov_off: i64,
     prov_len: i64,

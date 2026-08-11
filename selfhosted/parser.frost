@@ -1463,7 +1463,13 @@ retype_answer_binding :: fn(mut p: Parser, body: i64, value: i64, ret: i64) {
     // `i64` handed to whatever the function answers with, and what that costs is
     // the answer position's question rather than something to settle by writing
     // a different type onto the binding.
-    if (starts_with_name(p.src, name_off, name_len, "__value") == false) {
+    //
+    // Where the name sits says which it is. Every name this parse makes up is
+    // written past the source's terminator, so an offset tells them apart even
+    // for a reader who writes `__value0` themselves; the spelling then says
+    // which made-up name it is.
+    if (name_off < p.synth_start
+        || starts_with_name(p.src, name_off, name_len, "__value") == false) {
         return
     }
     mut id := body

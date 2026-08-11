@@ -1124,6 +1124,14 @@ report_answer_mismatch :: fn(
 // read at: a template's own body names parameters nothing has bound, and a
 // function answering `ref T` answers with a place, whose type is what the place
 // holds and whose escape is the frame walk's question.
+//
+// Asking can answer by reporting. `value_fits` says what a conversion costs
+// where the cost is the whole complaint, and a narrowing or a literal outside
+// its range leaves through that rather than coming back here. What comes back
+// is what is left: a type that is wrong rather than merely lossy, which is the
+// complaint this position names. The two never overlap, since the width
+// complaint fires only between plain types and a named answer is what brings
+// the reader here.
 answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
     if (p.current_ret == TY_VOID || untyped_literal(p, value)) {
         return false

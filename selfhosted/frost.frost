@@ -786,6 +786,7 @@ main :: fn() -> i64 {
         name_ok_value = 0,
         name_err_error = 0,
         synth_next = 0,
+        synth_start = 0,
         prov_kind = 0,
         prov_off = 0,
         prov_len = 0,
@@ -812,6 +813,7 @@ main :: fn() -> i64 {
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
     parser.synth_next = source_end(source) + 1
+    parser.synth_start = parser.synth_next
     // The two names of each rename move into the source, so every lookup
     // compares bytes in one buffer the way it always has.
     place_renames(parser, export_names)
