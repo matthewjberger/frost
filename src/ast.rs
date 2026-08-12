@@ -270,6 +270,10 @@ pub struct Ast {
     pub renames: Vec<ImportRename>,
     pub cases: Vec<SwitchCase>,
     pub patterns: Vec<Pattern>,
+    /// Where each pattern is written. A complaint about `case .R` is about the
+    /// arm, and the statement holding the whole `match` is the wrong place to
+    /// send a reader who has to change one of its arms.
+    pub pattern_spans: Vec<TokenSpan>,
     pub pattern_list: Vec<PatternId>,
     pub pattern_bindings: Vec<PatternBinding>,
     pub signatures: Vec<ReturnSignature>,
@@ -688,10 +692,19 @@ impl Ast {
         }
     }
 
-    pub fn push_pattern(&mut self, pattern: Pattern) -> PatternId {
+    pub fn push_pattern(
+        &mut self,
+        pattern: Pattern,
+        span: TokenSpan,
+    ) -> PatternId {
         let id = PatternId(self.patterns.len() as u32);
         self.patterns.push(pattern);
+        self.pattern_spans.push(span);
         id
+    }
+
+    pub fn pattern_position(&self, id: PatternId) -> Position {
+        self.position_of(self.pattern_spans[id.0 as usize])
     }
 
     pub fn pattern(&self, id: PatternId) -> &Pattern {
@@ -1467,7 +1480,12 @@ impl<'a> Splicer<'a> {
                 inclusive,
             },
         };
-        dest.push_pattern(node)
+        // A copied pattern keeps where it was written, so a complaint about an
+        // arm of a specialization names the template's arm. Shifted the way
+        // every other copied span is: an index into the source's positions
+        // means a different line in the destination's.
+        let span = shift(self.source.pattern_spans[id.0 as usize], self.offset);
+        dest.push_pattern(node, span)
     }
 
     fn literal(

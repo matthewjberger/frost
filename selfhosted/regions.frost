@@ -956,7 +956,11 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         if (node.b == 1 && answer_is_asked(p, node.a)) {
             answered := type_of(p, node.a)
             if (answered != p.current_ret) {
-                report_answer_mismatch(p, node.a, answered, node.pos)
+                // At the value, not at the statement holding it. The two are
+                // the same place for a bare name and are not for a literal,
+                // whose statement begins at whatever opens the line.
+                held := arena_at(p.arena, node.a)
+                report_answer_mismatch(p, node.a, answered, held.pos)
             }
         }
         // A call that can fail answers with which of the two happened, and a

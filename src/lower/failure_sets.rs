@@ -528,11 +528,15 @@ impl Lowerer {
             field: value_field,
             binding: value_binding_symbol,
         }]);
-        let ok_pattern = ast.push_pattern(Pattern::EnumVariant {
-            enum_name: Some(callee_result_symbol),
-            variant_name: ok_variant,
-            bindings: ok_bindings,
-        });
+        // The `?` wrote these two arms, so they stand where it does.
+        let ok_pattern = ast.push_pattern(
+            Pattern::EnumVariant {
+                enum_name: Some(callee_result_symbol),
+                variant_name: ok_variant,
+                bindings: ok_bindings,
+            },
+            span,
+        );
         let ok_value =
             ast.push_expr(Expression::Identifier(value_binding_symbol), span);
         let ok_statement = ast.push_stmt(Statement::Expression(ok_value), span);
@@ -542,11 +546,14 @@ impl Lowerer {
             field: error_field,
             binding: error_binding_symbol,
         }]);
-        let err_pattern = ast.push_pattern(Pattern::EnumVariant {
-            enum_name: Some(callee_result_symbol),
-            variant_name: err_variant,
-            bindings: err_bindings,
-        });
+        let err_pattern = ast.push_pattern(
+            Pattern::EnumVariant {
+                enum_name: Some(callee_result_symbol),
+                variant_name: err_variant,
+                bindings: err_bindings,
+            },
+            span,
+        );
         let carried =
             ast.push_expr(Expression::Identifier(error_binding_symbol), span);
         let err_fields = ast.add_named_exprs(&[NamedExpr {

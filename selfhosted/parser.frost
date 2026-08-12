@@ -305,7 +305,17 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        return new_named_node(p, NodeKind::StrLit, 0, offset, length)
+        // At the quote that opens it. The cursor has read the whole literal by
+        // now and sits on what follows, so a complaint about the text was
+        // landing on whatever came after it.
+        return new_named_node_at(
+            p,
+            NodeKind::StrLit,
+            0,
+            offset,
+            length,
+            offset - 1
+        )
     }
     if (kind == TokenKind::Dollar) {
         advance(p)
@@ -691,7 +701,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             expr := parse_expr(p)
             advance(p)
-            return new_type_node(p, NodeKind::Cast, expr, ty)
+            return new_type_node_at(p, NodeKind::Cast, expr, ty, offset)
         }
         if (str_range_eq(p.src, offset, length, "ptr_cast")) {
             advance(p)
@@ -702,7 +712,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             expr := parse_expr(p)
             advance(p)
-            return new_type_node(p, NodeKind::PtrCast, expr, ty)
+            return new_type_node_at(p, NodeKind::PtrCast, expr, ty, offset)
         }
         if (str_range_eq(p.src, offset, length, "slice_from")) {
             advance(p)
@@ -3690,8 +3700,11 @@ names_a_failure_set :: fn(mut p: Parser, ty: i64) -> bool {
 // spelling and the type is part of it, so this says what to write rather than
 // filling it in. The type is named where the context gives one, which is what
 // turns the report into the edit.
-refuse_dot_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) {
-    refuse_dot_value_at(p, ty, off, len, 0)
+// `at` is the dot the value was written with, which is where the whole of what
+// is wrong begins. `off` and `len` are the name after it, which the report
+// spells back with the type in front.
+refuse_dot_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64, at: i64) {
+    refuse_dot_value_at(p, ty, off, len, at, 0)
 }
 
 // The same refusal, noted rather than escaped with while the statement holding
@@ -3705,6 +3718,7 @@ refuse_dot_value_at :: fn(
     ty: i64,
     off: i64,
     len: i64,
+    at: i64,
     parsing: i64
 ) {
     if (names_a_failure_set(p, ty)) {
@@ -3720,7 +3734,7 @@ refuse_dot_value_at :: fn(
         }
         p.dot_noted = 1
     }
-    report_where(p.modules, p.src, off)
+    report_where(p.modules, p.src, at)
     if (ty < 0) {
         report("a value named under a type is written with the type in front of it, and there is no type here to name")
         frost_rt_recover_escape()
@@ -4485,6 +4499,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
             mut alt: i64 = -1
             if (at_variant_case(p, 0)) {
                 dotted := cur(p) == TokenKind::Dot
+                dot_off := cur_off(p)
                 skip_variant_qualifier(p)
                 // The enum an earlier arm settled on, so arms after the
                 // first are read within it and a name two enums share is
@@ -4518,7 +4533,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
                         off := cur_off(p)
                         len := cur_len(p)
                         skip_past_match(p)
-                        refuse_dot_value(p, named, off, len)
+                        refuse_dot_value(p, named, off, len, dot_off)
                     }
                 }
                 tag := parse_variant_pattern(p, subject, within)
@@ -7527,7 +7542,10 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     index := type_value_index(p, enum_ty, variant_off, variant_len)
     if (index >= 0) {
         if (cur(p) == TokenKind::Lbrace) {
-            report_where(p.modules, p.src, variant_off)
+            // At the type, which is where `Type::Name` begins. The complaint
+            // names the whole of it, so pointing at the half after the `::`
+            // underlines less than it is about.
+            report_where(p.modules, p.src, enum_off)
             report("'")
             report_src(p.src, enum_off, enum_len)
             report("::")
@@ -7542,7 +7560,7 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     // Asked of an enum by whether it is one, since here an enum is a struct
     // type and a struct is where this rule has something to say.
     if (names_values(p, enum_ty) && names_an_enum(p, enum_ty) == false) {
-        report_where(p.modules, p.src, variant_off)
+        report_where(p.modules, p.src, enum_off)
         report("'")
         report_src(p.src, enum_off, enum_len)
         report("' names no value called '")
@@ -7746,6 +7764,7 @@ refuse_unbound_variant :: fn(mut p: Parser, value: i64) {
 // the `case .Variant` a match arm writes. The enum is whatever the context
 // expects rather than something the reader repeats.
 parse_inferred_variant :: fn(mut p: Parser) -> i64 {
+    dot_off := cur_off(p)
     advance(p)
     variant_off := cur_off(p)
     variant_len := cur_len(p)
@@ -7757,13 +7776,13 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
     named := expected_named_value(p, variant_off, variant_len)
     if (named >= 0) {
         entry := arena_at(p.type_values, named)
-        refuse_dot_value_at(p, entry.ty, variant_off, variant_len, 1)
+        refuse_dot_value_at(p, entry.ty, variant_off, variant_len, dot_off, 1)
     }
     enum_ty := expected_variant_enum(p, variant_off, variant_len)
     if (enum_ty >= 0) {
-        refuse_dot_value_at(p, enum_ty, variant_off, variant_len, 1)
+        refuse_dot_value_at(p, enum_ty, variant_off, variant_len, dot_off, 1)
     }
-    parse_variant_body(
+    lit := parse_variant_body(
         p,
         enum_ty,
         variant_off,
@@ -7771,6 +7790,12 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
         variant_off,
         variant_len
     )
+    // The dot, rather than wherever the reading of the literal ended. A walk
+    // that runs after the parse reports off this, and a `.Name` nothing gave a
+    // type to was being reported at the token after the whole of it.
+    mut node := arena_at(p.arena, lit)
+    node.pos = dot_off
+    lit
 }
 
 // One literal that named no type, now that the type it is written into is
@@ -7794,7 +7819,7 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     // A `.Name` whose type is known only now that the place it lands in is.
     // The type is named in the report, which is the edit the reader makes.
     if (name_len != 0) {
-        refuse_dot_value(p, struct_ty, name_off, name_len)
+        refuse_dot_value(p, struct_ty, name_off, name_len, position)
         named := type_value_index(p, struct_ty, name_off, name_len)
         if (named >= 0) {
             value := arena_at(p.arena, type_value_node(p, named, position))

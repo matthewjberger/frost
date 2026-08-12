@@ -34,7 +34,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     new_field_node,
     new_func_node, new_index, new_let_node, new_named_node,
     new_named_node_at, new_node, new_node_at,
-    new_struct_lit, new_type_node, new_unary, new_unary_at, node_next,
+    new_struct_lit, new_type_node, new_type_node_at, new_unary, new_unary_at,
+    node_next,
     pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
@@ -2252,6 +2253,32 @@ new_index :: fn(mut p: Parser, base: i64, index: i64, at: i64) -> i64 {
 
 // A node carrying a type code in `val` (ptr_cast target, sizeof operand) and an
 // optional expression in `a`.
+//
+// `at` is where the word that opens it is written. The cursor by the time one of
+// these is built has read the whole of it and sits on what comes after, so a
+// complaint about `cast($i64, "x")` pointed past the closing parenthesis at
+// whatever the next statement began with.
+new_type_node_at :: fn(
+    mut p: Parser,
+    kind: NodeKind,
+    expr: i64,
+    ty: i64,
+    at: i64
+) -> i64 {
+    arena_push(
+        p.arena,
+        Node {
+            kind = kind,
+            a = expr,
+            b = 0,
+            c = 0,
+            val = ty,
+            next = -1,
+            pos = at
+        },
+    )
+}
+
 new_type_node :: fn(mut p: Parser, kind: NodeKind, expr: i64, ty: i64) -> i64 {
     arena_push(
         p.arena,

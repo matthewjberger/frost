@@ -1316,6 +1316,22 @@ impl<'a> Parser<'a> {
     }
 
     // The same, for a site that has already consumed the offending token.
+    // A fault about something already read, shown where that thing began. The
+    // block of values a type names is read entry by entry, so by the time one
+    // is found wrong the cursor is past it and `here` would name whatever comes
+    // next.
+    fn at_mark(&self, start: u32, message: String) -> anyhow::Error {
+        let position = self
+            .positions
+            .get(start as usize)
+            .copied()
+            .unwrap_or_default();
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position,
+            message,
+        })
+    }
+
     fn at_consumed(&self, message: String) -> anyhow::Error {
         let position = if self.positions.is_empty() || self.consumed == 0 {
             Position::default()
@@ -3733,6 +3749,7 @@ impl<'a> Parser<'a> {
     /// two shapes, and a name reading a field would mean one thing in one
     /// alternative and another in the next.
     fn parse_pattern(&mut self) -> Result<PatternId> {
+        let start = self.mark();
         let first = self.parse_pattern_alternative()?;
         if !matches!(self.peek_nth(0), Token::Pipe) {
             return Ok(first);
@@ -3765,7 +3782,8 @@ impl<'a> Parser<'a> {
             }
         }
         let list = self.ast.add_pattern_list(&alternatives);
-        Ok(self.ast.push_pattern(Pattern::Or(list)))
+        let span = self.span_from(start);
+        Ok(self.ast.push_pattern(Pattern::Or(list), span))
     }
 
     /// One alternative of a pattern. A range is read here rather than beside
@@ -3777,6 +3795,7 @@ impl<'a> Parser<'a> {
     /// arms mean opposite things and made `case CH_0:` a comparison that
     /// silently was not one. `_` is the arm that covers the rest.
     fn parse_pattern_alternative(&mut self) -> Result<PatternId> {
+        let start = self.mark();
         let pattern = match self.peek_nth(0) {
             Token::Underscore => {
                 self.read_token();
@@ -3875,7 +3894,8 @@ impl<'a> Parser<'a> {
                 )));
             }
         };
-        Ok(self.ast.push_pattern(pattern))
+        let span = self.span_from(start);
+        Ok(self.ast.push_pattern(pattern, span))
     }
 
     /// Whether what the cursor is on opens a whole number: one written out,
@@ -4977,10 +4997,12 @@ impl<'a> Parser<'a> {
         // block's closing brace for a declaration head and said so, and one
         // mistake was reported as two.
         if generic {
+            let block = self.mark();
             self.skip_braced_block();
-            bail!(
-                "a type names values of itself, and a generic declaration is one type for each set of arguments given to it, so '{type_name}' names none"
-            );
+            return Err(self.at_mark(
+                block,
+                format!("a type names values of itself, and a generic declaration is one type for each set of arguments given to it, so '{type_name}' names none"),
+            ));
         }
         self.read_token();
         let mut named: Vec<String> = Vec::new();
@@ -4995,16 +5017,21 @@ impl<'a> Parser<'a> {
                     "a type names each of its values on a line of its own, and this one follows another"
                 );
             }
+            let entry = self.mark();
             let name = match self.read_token() {
                 Token::Identifier(name) => name.to_string(),
-                _ => bail!(
-                    "a type names each of its values with a name, and this is not one"
-                ),
+                _ => {
+                    return Err(self.at_mark(
+                        entry,
+                        "a type names each of its values with a name, and this is not one".to_string(),
+                    ));
+                }
             };
             if !matches!(self.read_token(), Token::DoubleColon) {
-                bail!(
-                    "'{name}' is a value named under '{type_name}', so it is written as '{name} :: <value>'"
-                );
+                return Err(self.at_mark(
+                    entry,
+                    format!("'{name}' is a value named under '{type_name}', so it is written as '{name} :: <value>'"),
+                ));
             }
             // The value stands on the line its `::` is on. Without this a name
             // with nothing after it read the entry below as its value, and the
@@ -5012,19 +5039,22 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::RightBrace)
                 || !self.on_the_same_line()
             {
-                bail!(
-                    "'{name}' is a value named under '{type_name}', and it is written after its '::'"
-                );
+                return Err(self.at_mark(
+                    entry,
+                    format!("'{name}' is a value named under '{type_name}', and it is written after its '::'"),
+                ));
             }
             if named.iter().any(|held| held == &name) {
-                bail!(
-                    "a type names each of its values once, and '{type_name}' names '{name}' twice"
-                );
+                return Err(self.at_mark(
+                    entry,
+                    format!("a type names each of its values once, and '{type_name}' names '{name}' twice"),
+                ));
             }
             if variants.iter().any(|held| held == &name) {
-                bail!(
-                    "a type names each of its values once, and '{type_name}' names '{name}' as a variant and as a value"
-                );
+                return Err(self.at_mark(
+                    entry,
+                    format!("a type names each of its values once, and '{type_name}' names '{name}' as a variant and as a value"),
+                ));
             }
             let value = self.parse_expression(Precedence::Lowest)?;
             let type_symbol = self.ast.intern(type_name);

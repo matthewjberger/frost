@@ -5798,11 +5798,19 @@ impl<'a> FunctionLowering<'a> {
                     // in the same words, naming the annotation's type.
                     if enum_name.is_empty() {
                         let held = self.ast.intern(&variant_name);
-                        return Err(refuse_inferred_variant(
-                            self.ast,
-                            held,
-                            type_annotation.as_ref(),
-                        ));
+                        // At the `.Name`, which is what a reader rewrites. A
+                        // binding builds its enum here rather than lowering one
+                        // as an expression, so nothing has put the literal's
+                        // own place on the fault and the statement's would send
+                        // the caret to the name being bound.
+                        return locate(
+                            Err(refuse_inferred_variant(
+                                self.ast,
+                                held,
+                                type_annotation.as_ref(),
+                            )),
+                            self.at_expression(value),
+                        );
                     }
                     // `o : Option<i64> = Option::Some { value = 3 }`: the
                     // annotation says which instance, the literal does not
@@ -8978,9 +8986,15 @@ impl<'a> FunctionLowering<'a> {
                 // the rule that was broken after it. Naming the callee instead
                 // read one way here and another at every other argument, and
                 // the two compilers said different things about one program.
-                bail!(
-                    "this argument is {described} and a '{}' is what is wanted here; {note}",
-                    spelled(target)
+                //
+                // At the argument, which is the one of several a call carries
+                // that the reader rewrites.
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "this argument is {described} and a '{}' is what is wanted here; {note}",
+                        spelled(target)
+                    )),
+                    self.at_expression(*argument),
                 );
             }
             let coerced = match expected {
@@ -9414,11 +9428,14 @@ impl<'a> FunctionLowering<'a> {
                 {
                     let held = self.type_of_local(local);
                     let variant = self.ast.intern(&variant);
-                    return Err(refuse_inferred_variant(
-                        self.ast,
-                        variant,
-                        Some(&held),
-                    ));
+                    return locate(
+                        Err(refuse_inferred_variant(
+                            self.ast,
+                            variant,
+                            Some(&held),
+                        )),
+                        self.at_expression(expression),
+                    );
                 }
                 self.init_enum(local, &layout_name, &variant, fields)
             }
@@ -11837,8 +11854,14 @@ impl<'a> FunctionLowering<'a> {
                         crate::modules::imports::demangle_private_names(
                             enum_name,
                         );
-                    bail!(
-                        "a value named under a type is written with the type in front of it, so this one is written `{readable}::{variant_name}`"
+                    // At the arm. A `match` is one statement and its arms are
+                    // several places, so the statement's own is no answer to
+                    // which arm a reader rewrites.
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "a value named under a type is written with the type in front of it, so this one is written `{readable}::{variant_name}`"
+                        )),
+                        self.ast.pattern_position(pattern),
                     );
                 }
                 let variant_tag = self
