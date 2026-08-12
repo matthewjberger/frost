@@ -3745,6 +3745,11 @@ run_behind_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
         || kind == NodeKind::Field) {
         return run_behind_nth(p, node.a, n)
     }
+    // A view held under a name, indexed here. What the borrow reaches is
+    // whatever that name views, which the walk recorded when it was bound.
+    if (kind == NodeKind::Var) {
+        return run_viewed_by_name(p, node.val, node.c, n)
+    }
     if (kind == NodeKind::Call) {
         return run_call_place(p, node.a, node.val, n)
     }
@@ -4131,6 +4136,28 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 ptype = call_type_args(p, args, generic_fn_of(p, fn_index))
                 if (ptype < 0 || ptype == TY_PARAM) {
                     ptype = TY_VOID
+                }
+            }
+            // A borrow into a container's run reaches an element the container
+            // still holds, so giving that element away leaves the container to
+            // free the same storage a second time. Which element the borrow
+            // found is worked out while the program runs, so the place that
+            // went is one no summary can name and no later rule can weigh
+            // against. Asked ahead of the two branches below, since a resource
+            // handed over by name goes through the first of them.
+            if (pnode.a != 1 && is_linear_type(p, ptype)
+                && is_place_expr(p, arg)) {
+                held_root := strip_place(p, arg, place_depth(p, arg))
+                hnode := arena_at(p.arena, held_root)
+                held_off := hnode.val
+                held_len := hnode.c
+                if (borrows_into_run(p, held_off, held_len)) {
+                    report_where(p.modules, p.src, held_off)
+                    report_fmt(
+                        "'{}' borrows into a container's run, and handing away what it reaches leaves the container holding storage it will free again. Which element the borrow found is worked out while the program runs, so the place that went is one no rule can name. Discharge the elements in place with `vec_drain`, which brings the length down before each one.",
+                        source_text(p.src, held_off, held_len)
+                    )
+                    frost_rt_recover_escape()
                 }
             }
             if (pnode.a != 1 && anode.kind == NodeKind::Var
@@ -4966,6 +4993,45 @@ note_binding_move :: fn(mut p: Parser, value: i64, ty: i64) {
             slot = value
         }
     )
+}
+
+// The nth run a name is recorded as viewing, or -1 once they run out. A view
+// bound to a name and then indexed is a borrow into whatever that name views,
+// which is how `mut s := vec_slice(v)` followed by `ref e := s[i]` reaches
+// `v.storage`.
+run_viewed_by_name :: fn(mut p: Parser, off: i64, len: i64, n: i64) -> i64 {
+    mut left := n
+    mut i: i64 = 0
+    while (i < p.view_runs.count) {
+        entry := arena_at(p.view_runs, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            if (left == 0) {
+                return entry.slot
+            }
+            left = left - 1
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Whether a name is a borrow taken into a container's run, which is what
+// `ref e := vec_slice(v)[i]` binds. What the run holds stays the container's,
+// and which element the borrow reached is worked out while the program runs, so
+// a resource given away through one is storage no rule can name and nothing
+// stops a second borrow reaching the same element.
+borrows_into_run :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.view_runs.count) {
+        entry := arena_at(p.view_runs, i)
+        if (entry.ty == 1 && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 // Whether a move fault at this position has already been said, recording it

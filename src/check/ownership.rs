@@ -1610,6 +1610,14 @@ impl MoveChecker<'_> {
             | Expression::BorrowMut(inner)
             | Expression::Index(inner, _)
             | Expression::FieldAccess(inner, _) => self.run_behind(*inner),
+            // A view held under a name, indexed here. What the borrow reaches
+            // is whatever that name views, which the walk recorded when it was
+            // bound.
+            Expression::Identifier(name) => self
+                .view_runs
+                .get(ast.name(*name))
+                .cloned()
+                .unwrap_or_default(),
             Expression::Call(callee, arguments) => {
                 let Expression::Identifier(name) = ast.expr(*callee) else {
                     return Vec::new();
@@ -2629,6 +2637,30 @@ impl MoveChecker<'_> {
                         declared,
                         Some(Type::Ref(_) | Type::RefMut(_))
                     );
+                    // A borrow into a container's run reaches an element the
+                    // container still holds, so giving that element away leaves
+                    // the container to free the same storage a second time.
+                    // Which element the borrow found is worked out while the
+                    // program runs, so the place that went is one no rule can
+                    // name and nothing stops a second borrow reaching it.
+                    //
+                    // Asked here rather than where the name is read, because
+                    // what says a resource was handed over is the declaration:
+                    // a `ref` binding is a borrow, so neither its own type nor
+                    // `is_linear_variable` answers for the element it reaches.
+                    if !borrows
+                        && declared.is_some_and(|ty| {
+                            ty.is_linear_with(self.linear)
+                        })
+                        && let Expression::Identifier(held) =
+                            ast.expr(*argument)
+                        && self.view_borrows.contains(ast.name(*held))
+                    {
+                        let held = ast.name(*held);
+                        bail!(
+                            "'{held}' borrows into a container's run, and handing away what it reaches leaves the container holding storage it will free again. Which element the borrow found is worked out while the program runs, so the place that went is one no rule can name. Discharge the elements in place with `vec_drain`, which brings the length down before each one."
+                        );
+                    }
                     self.visit(*argument, known && !borrows)?;
                     // What the callee says it takes, rather than what the
                     // argument's own type works out to. A place behind a `mut`

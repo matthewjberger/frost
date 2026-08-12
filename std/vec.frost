@@ -18,8 +18,8 @@
 
 import "mem.frost"
 
-export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
-    vec_clear, vec_truncate
+export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_drain,
+    vec_get, vec_set, vec_clear, vec_truncate
 
 Vec :: linear struct($T: Type) {
     // The whole block, whose length is the capacity. The live prefix is `len`.
@@ -54,6 +54,32 @@ vec_free :: fn($T: Type, move v: Vec<T>) {
 
 vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
     v.len
+}
+
+// Every element handed to `release`, back to front, leaving the vector empty.
+// This is how a container of resources is discharged.
+//
+// A `ref` into the run reaches an element the container still holds, so giving
+// that element away leaves the container to free the same storage again, and
+// which element a borrow found is worked out while the program runs, which is a
+// place no rule can name. Here the length comes down before each element
+// leaves, so what the container still holds is the shorter prefix and nothing
+// reaches the same element twice.
+//
+// `release` borrows the element and discharges it in place, which is what a
+// resource inside a container has to do: moving one out would take the whole
+// container with it as far as any rule can tell. The length coming down first
+// is what makes it safe, since the element it just let go of is the one being
+// released and no later turn reaches it.
+//
+// The storage stays, so a vector drained this way can be filled again or freed
+// with `vec_free`.
+vec_drain :: fn($T: Type, $release: fn(mut $T), mut v: Vec<T>) {
+    while (v.len > 0) {
+        v.len = v.len - 1
+        mut held := v.storage
+        release(held[v.len])
+    }
 }
 
 // The live elements as a bounds-checked slice. This is how everything above the

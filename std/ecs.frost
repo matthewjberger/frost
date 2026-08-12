@@ -558,18 +558,8 @@ ecs_new :: fn() -> World {
 // what a program calls; this one is what a group calls, because a member is
 // reached through the group's storage and cannot be moved out of it.
 world_release :: fn(mut world: World) {
-    mut t: i64 = 0
-    while (t < vec_len(world.tables)) {
-        ref table := vec_slice(world.tables)[t]
-        table_release(table)
-        t = t + 1
-    }
-    mut r: i64 = 0
-    while (r < vec_len(world.resources)) {
-        ref resource := vec_slice(world.resources)[r]
-        column_free(resource)
-        r = r + 1
-    }
+    vec_drain($table_release, world.tables)
+    vec_drain($column_free, world.resources)
     vec_free(world.resources)
     vec_free(world.resource_types)
     vec_free(world.log)
@@ -1985,13 +1975,13 @@ rebuild_lookup :: fn(mut world: World) {
 
 // Everything one table allocated. `world_release` frees them all in a loop; a
 // compaction frees only the ones it drops.
+// A table's storage, released. The columns go first, each discharged in place
+// by the drain: a resource inside a container cannot be moved out to be
+// consumed, and reaching one through a bare `ref` into the run would leave the
+// container able to hand the same element out again. `vec_drain` brings the
+// length down before each release, so no turn reaches an element twice.
 table_release :: fn(mut held: Table) {
-    mut c: i64 = 0
-    while (c < vec_len(held.columns)) {
-        ref column := vec_slice(held.columns)[c]
-        column_free(column)
-        c = c + 1
-    }
+    vec_drain($column_free, held.columns)
     vec_free(held.columns)
     vec_free(held.entities)
 }
@@ -2612,19 +2602,7 @@ ecs_has_bundle :: fn(world: World, entity: Entity, types: $...) -> bool {
 // Everything a world holds except what it registered, released. The registry
 // stays, because it is the schema a snapshot is read against.
 world_clear :: fn(mut world: World) {
-    mut index: i64 = 0
-    while (index < vec_len(world.tables)) {
-        ref table := vec_slice(world.tables)[index]
-        mut held: i64 = 0
-        while (held < vec_len(table.columns)) {
-            ref column := vec_slice(table.columns)[held]
-            column_free(column)
-            held = held + 1
-        }
-        vec_free(table.columns)
-        vec_free(table.entities)
-        index = index + 1
-    }
+    vec_drain($table_release, world.tables)
     world.tables.len = 0
     world.slots.len = 0
     world.free_ids.len = 0

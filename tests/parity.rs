@@ -57,6 +57,29 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A resource reached through a `ref` into a container's run, given away.
+    // The container still holds the element, so it frees the same storage
+    // again, and which element the borrow found is worked out while the program
+    // runs, so the place that went is one no rule can name. This built under
+    // both compilers and ended in heap corruption. `vec_drain` is the way to
+    // discharge a container of resources: it brings the length down before each
+    // element is released, so nothing reaches the same one twice.
+    (
+        "a_resource_given_away_through_a_borrow_into_a_run",
+        "import \"vec.frost\"\nimport \"mem.frost\"\n\
+         Res :: linear struct { block: []i64 }\n\
+         res_new :: fn() -> Res { Res { block = heap_slice($i64, 4) } }\n\
+         res_close :: fn(move r: Res) { heap_release_slice(r.block) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($Res, 2)\n\
+         \x20   vec_push(v, res_new())\n\
+         \x20   ref a := vec_slice(v)[0]\n\
+         \x20   res_close(a)\n\
+         \x20   vec_free(v)\n\
+         \x20   0\n\
+         }\n",
+        "borrows into a container's run",
+    ),
     // A name bound to a resource takes it, the way handing one to a `move`
     // parameter does. Nothing recorded that, so a resource could be bound under
     // a second name and both of them consumed, which is one block released
