@@ -1850,6 +1850,10 @@ Parser :: struct {
     // function's, since a generic's template and every body an instance was
     // substituted into hold the same text at the same offsets.
     move_faults: Arena<LocalVar>,
+    // What each name in the body being walked was bound to. Neither the parse's
+    // table nor the emitters' holds anything by the time the move walk runs, so
+    // it keeps its own and fills it as it reads the bindings.
+    move_locals: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list

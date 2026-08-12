@@ -4621,6 +4621,20 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
         if (kind == NodeKind::Let) {
             note_view(p, node.val, node.c, moves_viewed_container(p, node.a))
             note_view_runs(p, node.val, node.c, node.a)
+            // What this name holds, and whether binding it took a resource off
+            // the name it came from. A `ref` binding is a borrow, so it is
+            // recorded as what it views and takes nothing.
+            mut bound_ty := node.b
+            if (bound_ty == (-1)) {
+                bound_ty = move_value_type(p, node.a)
+            }
+            // Storage a branch fills in has no value here, so there is nothing
+            // to have taken from anywhere.
+            if (node.a != (-1)
+                && arena_at(p.arena, node.a).kind != NodeKind::Ref) {
+                note_binding_move(p, node.a, bound_ty)
+            }
+            note_move_local(p, node.val, node.c, bound_ty)
         }
         if (kind == NodeKind::Return) {
             note_handed_out(p, node.a)
@@ -4875,6 +4889,85 @@ check_moves_guarded :: fn(raw: ^u8) {
     }
 }
 
+// What a name in this body was bound to, or -1 where nothing here says. The
+// parse clears its own table when a declaration is done and the emitters have
+// not filled theirs yet, so `type_of` answers nothing for a bare name here and
+// the walk keeps what it read.
+move_local_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i: i64 = p.move_locals.count
+    while (i > 0) {
+        i = i - 1
+        entry := arena_at(p.move_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.ty
+        }
+    }
+    -1
+}
+
+// What a name holds, written over whatever it held before. One entry per name
+// rather than one per binding read: a branch is walked from the state before it
+// and a loop body twice, so a name would be filed again on every pass and a
+// long function ran the table out.
+note_move_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
+    mut i: i64 = p.move_locals.count
+    while (i > 0) {
+        i = i - 1
+        mut entry := arena_at(p.move_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            entry.ty = ty
+            return
+        }
+    }
+    arena_push(
+        p.move_locals,
+        LocalVar { name_off = off, name_len = len, ty = ty, slot = 0 }
+    )
+}
+
+// The type a bound value has, read off the name it came from where the value is
+// one. A literal or a call answers for itself.
+move_value_type :: fn(mut p: Parser, value: i64) -> i64 {
+    if (value == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, value)
+    if (node.kind == NodeKind::Var) {
+        return move_local_type(p, node.val, node.c)
+    }
+    type_of(p, value)
+}
+
+// A name bound to a resource takes it, the way handing one to a `move`
+// parameter does: `g := h` leaves `h` given away. Without this a resource could
+// be bound under a second name and both consumed, which is one block released
+// twice with no `unsafe` written anywhere.
+//
+// A `ref` binding is a borrow and takes nothing, which is what lets a container
+// release its elements in place.
+note_binding_move :: fn(mut p: Parser, value: i64, ty: i64) {
+    if (value == (-1) || is_linear_type(p, ty) == false) {
+        return
+    }
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Var) {
+        return
+    }
+    name_off := node.val
+    name_len := node.c
+    arena_push(
+        p.moved,
+        LocalVar {
+            name_off = name_off,
+            name_len = name_len,
+            ty = 0,
+            slot = value
+        }
+    )
+}
+
 // Whether a move fault at this position has already been said, recording it
 // where it has not.
 //
@@ -4921,6 +5014,7 @@ check_moves :: fn(mut p: Parser) {
             // written in two functions is two places, and a fault about each is
             // a fault of its own.
             p.told_moves.count = 0
+            p.move_locals.count = 0
             p.move_views.count = 0
             p.view_runs.count = 0
             p.stale_views.count = 0

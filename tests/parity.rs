@@ -57,6 +57,24 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A name bound to a resource takes it, the way handing one to a `move`
+    // parameter does. Nothing recorded that, so a resource could be bound under
+    // a second name and both of them consumed, which is one block released
+    // twice with no `unsafe` written anywhere. Deciding it needs the type the
+    // name holds, and neither the parse's table nor the emitters' holds
+    // anything by the time the move walk runs, so the walk keeps its own and
+    // fills it as it reads the bindings.
+    (
+        "a_name_bound_to_a_resource_takes_it",
+        "Res :: linear struct { n: i64 }\n\
+         eat :: fn(move r: Res) -> i64 { r.n }\n\
+         main :: fn() -> i64 {\n\
+         \x20   h := Res { n = 7 }\n\
+         \x20   g := h\n\
+         \x20   eat(h) + eat(g)\n\
+         }\n",
+        "use of moved value 'h'",
+    ),
     // A generic is walked as the template it was written as and again for each
     // body an instance was substituted into, because a list unrolls and a
     // parameter binds only there. A fault in the text itself is in every one of
