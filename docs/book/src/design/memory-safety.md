@@ -506,12 +506,12 @@ nobody has to find out by reading the passes.
   function that answers with a resource named by an element rather than by a
   field is refused where it is written.
 
-  The borrow that the release pattern rests on is what stays open. Two `ref`
-  bindings taken through `vec_slice` to the same element, each handed to
-  something that consumes it, free the same storage twice, and the run ends in
-  heap corruption with no `unsafe` written anywhere. Closing it needs the
-  provenance of a returned view, which is the question the frame check answers
-  for borrows and does not yet answer for resources.
+  The third is closed too. Handing a resource reached through a `ref` into a run
+  to something that consumes it is refused, because the container still holds
+  that element and would free the same storage again. A container of resources
+  is discharged with `vec_drain`, which brings the length down before each
+  element is released and hands it over as a borrow, so what the container still
+  holds is the shorter prefix and nothing reaches the same element twice.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
