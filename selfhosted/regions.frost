@@ -2660,7 +2660,11 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     // the room past it, so the line a reader was shown for a fault about
     // `items__0` was ` items__0 items__0 `.
     root_at := strip_place(p, id, place_depth(p, id))
-    report_where(p.modules, p.src, arena_at(p.arena, root_at).pos)
+    at := arena_at(p.arena, root_at).pos
+    if (move_fault_told(p, at)) {
+        return
+    }
+    report_where(p.modules, p.src, at)
     report_fmt("use of moved value '{}'", said)
     // Where the value went, said the way the fault itself is said, so the
     // reader sees the move and the use as two placed lines of one story. The
@@ -4140,6 +4144,32 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                         slot = arg
                     }
                 )
+            } else if (pnode.a == 2 && ptype == TY_VOID
+                && anode.kind == NodeKind::Var
+                && generic_fn_of(p, p.moves_fn) >= 0) {
+                // Inside a template the call's type argument is the parameter
+                // an instance binds, so whether the value leaves anything
+                // behind is not answerable here. A `move` takes it whatever it
+                // turns out to be, which is how the reference compiler reads
+                // one, and without this a value handed to a generic twice from
+                // inside another generic went unsaid.
+                //
+                // Held to a template's own body, because `TY_VOID` here means
+                // the type argument did not resolve, and outside a template
+                // that happens for calls whose argument is a field: it read
+                // `arena_push(p.const_faults, at)` as moving a number and the
+                // compiler stopped building itself. Held to a whole name as
+                // well, since an element handed over says nothing about what
+                // holds it.
+                arena_push(
+                    p.moved,
+                    LocalVar {
+                        name_off = anode.val,
+                        name_len = anode.c,
+                        ty = 0,
+                        slot = arg
+                    }
+                )
             } else if (pnode.a != 1 && is_linear_type(p, ptype)
                 && is_place_expr(p, arg)) {
                 // A resource reached through a field or an element is a place of
@@ -4609,7 +4639,11 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 root := strip_place(p, container, place_depth(p, container))
                 rnode := arena_at(p.arena, root)
                 said := source_text(p.src, rnode.val, rnode.c)
-                report_where(p.modules, p.src, rnode.val)
+                at := rnode.val
+                if (move_fault_told(p, at)) {
+                    return
+                }
+                report_where(p.modules, p.src, at)
                 report_fmt("use of moved value '{}'", said)
                 // Where it went, on its own line, the way every other move
                 // fault says it.
@@ -4827,6 +4861,8 @@ check_moves_guarded :: fn(raw: ^u8) {
         answers = true
     }
     unsafe {
+        held_fn := parser^.moves_fn
+        parser^.moves_fn = turn^.fn_index
         check_linear_locals(parser^, turn^.body, answers)
         walk_moves_body(parser^, turn^.body, turn^.params, answers)
         report_unnameable(
@@ -4835,7 +4871,34 @@ check_moves_guarded :: fn(raw: ^u8) {
             turn^.fn_index,
             turn^.func_node
         )
+        parser^.moves_fn = held_fn
     }
+}
+
+// Whether a move fault at this position has already been said, recording it
+// where it has not.
+//
+// A generic is walked as the template it was written as and again for each body
+// an instance was substituted into, because a list unrolls and a parameter binds
+// only there, and faults that exist only in one of those have to be reachable.
+// A fault in the text itself is in every one of those bodies at the same offset,
+// and the reader wants to hear about it once. The table is the program's rather
+// than the function's for that reason: the same offset in two walks is one place
+// in one file.
+move_fault_told :: fn(mut p: Parser, off: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.move_faults.count) {
+        entry := arena_at(p.move_faults, i)
+        if (entry.name_off == off) {
+            return true
+        }
+        i = i + 1
+    }
+    arena_push(
+        p.move_faults,
+        LocalVar { name_off = off, name_len = 0, ty = 0, slot = 0 }
+    )
+    false
 }
 
 check_moves :: fn(mut p: Parser) {

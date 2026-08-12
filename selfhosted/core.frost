@@ -1843,6 +1843,13 @@ Parser :: struct {
     // The parameter list of the function being walked, so a place rooted in one
     // can be typed from the declaration.
     moves_params: i64,
+    // The function whose body the move walk is reading, so a rule deep in it
+    // can ask whether it is inside a template.
+    moves_fn: i64,
+    // Where a move fault has already been said. The program's rather than the
+    // function's, since a generic's template and every body an instance was
+    // substituted into hold the same text at the same offsets.
+    move_faults: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list

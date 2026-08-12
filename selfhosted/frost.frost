@@ -669,6 +669,8 @@ main :: fn() -> i64 {
         moves_quiet = 0,
         moves_answers = 0,
         moves_params = -1,
+        moves_fn = -1,
+        move_faults = arena_make($LocalVar, 256),
         gbindings = arena_make($GBinding, 4096),
         type_param_off = 0,
         type_param_len = 0,

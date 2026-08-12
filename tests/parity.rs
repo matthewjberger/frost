@@ -57,6 +57,45 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A generic is walked as the template it was written as and again for each
+    // body an instance was substituted into, because a list unrolls and a
+    // parameter binds only there. A fault in the text itself is in every one of
+    // those bodies at the same offset, and instantiating this said it twice.
+    // The table of what has been said is the program's rather than the
+    // function's, so the same place in one file is one fault.
+    (
+        "a_fault_in_a_generic_body_is_said_once",
+        "Res :: linear struct { n: i64 }\n\
+         eat :: fn(move r: Res) -> i64 { r.n }\n\
+         once :: fn($T: Type, move v: Res) -> i64 {\n\
+         \x20   a := eat(v)\n\
+         \x20   b := eat(v)\n\
+         \x20   a + b\n\
+         }\n\
+         main :: fn() -> i64 { once($i64, Res { n = 1 }) }\n",
+        "use of moved value 'v'",
+    ),
+    // A value handed twice to a generic that takes it by `move`, from inside
+    // another generic. The callee's parameter is written `$T`, so the call's
+    // own type argument stands in its place, and inside a template that
+    // argument is the parameter an instance binds and resolves to nothing. A
+    // `move` takes the value whatever it turns out to be, so it is read as
+    // taken, and this built and ran with nothing said.
+    (
+        "a_move_inside_a_template_takes_the_value",
+        "Res :: linear struct { n: i64 }\n\
+         Two :: linear struct { m: i64 }\n\
+         eat :: fn($T: Type, move r: $T) -> i64 { 1 }\n\
+         twice :: fn($T: Type, move v: $T) -> i64 {\n\
+         \x20   a := eat(v)\n\
+         \x20   b := eat(v)\n\
+         \x20   a + b\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   twice(Res { n = 1 }) + twice(Two { m = 2 })\n\
+         }\n",
+        "use of moved value 'v'",
+    ),
     // A view put into a struct field left the table the growth rule reads,
     // which is keyed by binding, so a read through it after a reallocation
     // named the block the allocator had taken back. It built, ran, and printed
