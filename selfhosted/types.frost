@@ -254,6 +254,20 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
 // handed out a borrow on purpose, and `ref x := place` asks for one, so both
 // keep what they were given.
 binding_type :: fn(mut p: Parser, value: i64) -> i64 {
+    // An address, a field or an element written over a name, read the way an
+    // argument is. The walks' table is empty while a declaration is being read,
+    // so `type_of` answers off a root it reads as `i64`, and a name bound to one
+    // carried that into every call it was handed to: `one := held[i]` followed
+    // by `print(fmt, one.name, ...)` filed a list holding a number where it
+    // holds text.
+    bound_kind := arena_at(p.arena, value).kind
+    if (bound_kind == NodeKind::AddrOf || bound_kind == NodeKind::Field
+        || bound_kind == NodeKind::Index) {
+        held := argument_type(p, value)
+        if (held >= 0) {
+            return held
+        }
+    }
     ty := type_of(p, value)
     node := arena_at(p.arena, value)
     // A string literal is a pointer where a `^i8` is asked for and a `str`
@@ -1560,6 +1574,12 @@ pending_ret_type :: fn(mut p: Parser, pending: i64) -> i64 {
     arg := held.arg
     xarg_start := held.xarg_start
     xarg_count := held.xarg_count
+    // A plain function waited on because its signature came later. What it
+    // answers with is the signature itself, with no tuple to pick an instance
+    // out of.
+    if (generic_fn_of(p, fn_index) < 0) {
+        return arena_at(p.fns, fn_index).ret_type
+    }
     mono_ret_type(p, fn_index, arg, xarg_start, xarg_count)
 }
 
@@ -2106,28 +2126,42 @@ pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
     }
     args := node.a
     fn_index := node.val
-    if (generic_fn_of(p, fn_index) < 0) {
-        return -1
-    }
     sym := arena_at(p.fns, fn_index)
     sym_off := sym.off
     sym_len := sym.len
+    sym_defined := sym.defined
     // A call through a local of function-pointer type is indirect and answers
     // with that signature's return type, which is known already.
     if (local_exists(p, sym_off, sym_len)) {
         return -1
     }
-    // A tuple worked out from the types of the arguments is not one to wait on.
-    // Those types are read from tables the parse has not filled, so the tuple
-    // named here can name a monomorphization nothing has, and the answer read
-    // back from it belongs to some other one. A tuple the call writes out is the
-    // same however often it is read, so only those are waited on.
-    if (call_writes_its_types(p, args) == false) {
-        return -1
+    mut arg: i64 = -1
+    mut xarg_start: i64 = 0
+    mut xarg_count: i64 = 0
+    if (generic_fn_of(p, fn_index) < 0) {
+        // A function written after the call that names it has no signature
+        // here, so the element stood for whatever the parse guessed. Read again
+        // once every signature is known: `print(fmt, one.name, resource_name(g,
+        // wanted))` in `lib/renderer/graph.frost` names a function declared a
+        // hundred lines below it, so the list was filed holding a number where
+        // it holds text and the instance the call emitted was one nobody made.
+        if (sym_defined == 1) {
+            return -1
+        }
+    } else {
+        // A tuple worked out from the types of the arguments is not one to wait
+        // on. Those types are read from tables the parse has not filled, so the
+        // tuple named here can name a monomorphization nothing has, and the
+        // answer read back from it belongs to some other one. A tuple the call
+        // writes out is the same however often it is read, so only those are
+        // waited on.
+        if (call_writes_its_types(p, args) == false) {
+            return -1
+        }
+        arg = call_args_for(p, args, fn_index)
+        xarg_start = p.call_xarg_start
+        xarg_count = p.call_xarg_count
     }
-    arg := call_args_for(p, args, fn_index)
-    xarg_start := p.call_xarg_start
-    xarg_count := p.call_xarg_count
     // The same call is read more than once, since the checks and the emitters
     // work the tuple out again where it was written. One entry per
     // monomorphization keeps this table the size of what the program
@@ -2437,10 +2471,20 @@ gparam_position :: fn(
             advance(p)
             continue
         }
-        // Anywhere inside a value parameter's declared type. A shape this reads
-        // through was taken when the type opened; this is the wider question of
-        // whether the type names the parameter at all.
+        // Anywhere inside a value parameter's declared type, at the type's own
+        // depth. A shape this reads through was taken when the type opened;
+        // this is the wider question of whether the type names the parameter at
+        // all.
+        //
+        // Held to depth zero because the settled type is read off the argument
+        // and then read through: that reaches `C`, `^C`, `[]C` and `Bump<C>`,
+        // and reaches nothing inside a `fn(mut C, i64)`, whose argument is a
+        // function pointer. A typed callback names its context in both the hook
+        // and the state beside it, so taking the first left `$Ctx` bound to the
+        // hook's own type and the instance the call emitted was one nobody
+        // filed.
         if (in_type == 1 && compile_time == 0 && p.gparam_settled == 0
+            && depth == 0
             && word_is_gparam(p, 0, name_off, name_len)) {
             p.gparam_settled = 1
             p.gparam_settler_off = param_off
@@ -2603,6 +2647,19 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
             return held
         }
         return -1
+    }
+    // `ptr_to(x)` is the address of whatever `x` is, and the same table is
+    // empty here, so `type_of` read the root as `i64` and answered `^i64`. The
+    // address is built over what the parse's own table says instead. A generic
+    // whose compile-time parameter a `^C` parameter settles reads its tuple off
+    // this, and a wrong answer here filed no tuple at all while the call
+    // emitted the name of the instance nobody had made.
+    if (node.kind == NodeKind::AddrOf) {
+        held := argument_type(p, node.a)
+        if (held < 0) {
+            return -1
+        }
+        return pointer_to(p, held)
     }
     // A chain of fields and elements written over a name. The walks' table is
     // empty while a declaration is being read, so `type_of` answers `i64` for

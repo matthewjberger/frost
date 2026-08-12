@@ -181,6 +181,19 @@ asked of the places rather than of the types, so `b.room = fresh` replaces the
 run, `b.len = count` is apart from it at the first step, and `b.room[0] = value`
 sits below it and leaves it alone. No type table is needed.
 
+A view that lands in a struct field is followed through it. The table is keyed
+by binding, and the fields of a literal are walked as one is built, so
+`Holder { view = vec_slice(v) }` records `h` as viewing `v.storage` and a read
+through `h.view` after a growth is refused. A function answering with a struct
+that carries a view is summarized the same way, since a type holding a view
+answers with one as far as its caller is concerned, and the view survives the
+call it was carried out of.
+
+Nothing else in the language reallocates. An arena is a single fixed allocation
+that aborts rather than growing, a `Slab` and a `columns` are `[N]T`, and a
+`ref` into any of them can never go stale. `Vec` is the one container that moves
+its block, and it is the only place this question arises.
+
 All of this covers a view held by a *binding*. A view put into a struct field is
 not one, and that case is open: see "where the checks stop".
 
@@ -488,38 +501,17 @@ nobody has to find out by reading the passes.
   one at a time: `world_release` in `std/ecs.frost` walks `world.tables` binding
   each element by `ref` and releasing it in place, because a resource inside a
   container cannot be moved out to be consumed.
-  Reaching a resource through an element and giving it away twice is therefore
-  not caught, and a `Vec` of resources is the shape where that shows: `vec_get`
-  answers with the element by value, and the summary records nothing because the
-  element is reached through a call rather than a field. Closing it needs the
+  Two ways of taking an element out are closed. `vec_get` carries
+  `where !is_linear(T)`, so a resource element has no copying accessor, and a
+  function that answers with a resource named by an element rather than by a
+  field is refused where it is written.
+
+  The borrow that the release pattern rests on is what stays open. Two `ref`
+  bindings taken through `vec_slice` to the same element, each handed to
+  something that consumes it, free the same storage twice, and the run ends in
+  heap corruption with no `unsafe` written anywhere. Closing it needs the
   provenance of a returned view, which is the question the frame check answers
   for borrows and does not yet answer for resources.
-
-- A view of a growable container, once it is stored. The growth rule tracks what
-  each *binding* views, which is a per-frame table. A view put into a struct
-  field is not a binding, and a struct holding one can leave the frame entirely:
-
-  ```frost
-  Holder :: struct { view: []i64 }
-  hold :: fn(mut v: Vec<i64>) -> Holder { Holder { view = vec_slice(v) } }
-
-  h := hold(v)
-  vec_push(v, 1)           // may grow, which frees the old block
-  print("{}\n", h.view[0])      // reads it anyway, not refused
-  ```
-
-  Both shapes are open: the view stored in a local struct and read after a
-  growth in the same frame, and the view carried out of a call inside a returned
-  struct. The first needs the view table keyed by place rather than by name. The
-  second cannot be answered per frame at all. It needs to know that `.storage`
-  of a `Vec` is a field some function replaces, while `.storage` of a `Slab` is
-  not, and that is a question about a type rather than about a place.
-
-  Nothing else in the language reallocates, which keeps the rest of it safe
-  here. An arena is a single fixed allocation that aborts rather than growing, a
-  `Slab` and a `columns` are `[N]T`, and a `ref` into any of them can never go
-  stale. `Vec` is the one container that moves its block, and it is the only
-  place this question arises.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,

@@ -57,6 +57,48 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A view put into a struct field left the table the growth rule reads,
+    // which is keyed by binding, so a read through it after a reallocation
+    // named the block the allocator had taken back. It built, ran, and printed
+    // a heap pointer where the value had been. The fields of a literal are
+    // walked now, so the binding views whatever they do.
+    (
+        "a_view_in_a_struct_field_goes_stale_with_its_run",
+        "import \"io.frost\"\n\
+         import \"vec.frost\"\n\
+         Holder :: struct { view: []i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push(v, 5)\n\
+         \x20   h := Holder { view = vec_slice(v) }\n\
+         \x20   vec_push(v, 6)\n\
+         \x20   print(\"{}\n\", h.view[0])\n\
+         \x20   vec_free(v)\n\
+         \x20   0\n\
+         }\n",
+        "views a run that 'v.storage' has since replaced",
+    ),
+    // The same view carried out of a call inside the struct it was put in. The
+    // summary was worked out only for a function whose answer is itself a view,
+    // so a struct carrying one out was filed as answering with nothing. A type
+    // that holds a view answers with one as far as its caller is concerned.
+    (
+        "a_view_answered_inside_a_struct_goes_stale_with_its_run",
+        "import \"io.frost\"\n\
+         import \"vec.frost\"\n\
+         Holder :: struct { view: []i64 }\n\
+         hold :: fn(v: Vec<i64>) -> Holder { Holder { view = vec_slice(v) } }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 1)\n\
+         \x20   vec_push(v, 5)\n\
+         \x20   h := hold(v)\n\
+         \x20   vec_push(v, 6)\n\
+         \x20   print(\"{}\n\", h.view[0])\n\
+         \x20   vec_free(v)\n\
+         \x20   0\n\
+         }\n",
+        "views a run that 'v.storage' has since replaced",
+    ),
     // A call writing a compile-time argument the signature settles says twice
     // what the argument says once. Which of them a call writes is a property of
     // the signature, so taking this as well would be two spellings for every
@@ -7371,6 +7413,108 @@ Bad :: enum { Nope }
 ",
         "41
 ",
+    ),
+    // A struct literal standing as a body's answer names no type, the way one
+    // written after `return` names none. A `return` sets the type it takes
+    // while its value is read and a body's last expression was read with
+    // nothing set, so the fields landed in a layout nobody had named: two came
+    // back swapped, three read past the frame, and one field hid it entirely.
+    // The branches of an answering `if` are answers too and take it the same
+    // way. Written to check the values rather than the build, since a literal
+    // that lands wrong compiles and runs.
+    (
+        "a_literal_at_the_answer_takes_what_the_function_answers_with",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         Tri :: struct { a: i64, b: i64, c: i64 }
+         make :: fn(n: i64) -> Point { { x = n, y = 2 } }
+         reordered :: fn(n: i64) -> Point { { y = 2, x = n } }
+         three :: fn() -> Tri { { a = 1, b = 2, c = 3 } }
+         chosen :: fn(n: i64) -> Point {
+             if (n > 0) { { x = n, y = 2 } } else { { x = 0, y = 9 } }
+         }
+         main :: fn() -> i64 {
+             p := make(1)
+             q := reordered(1)
+             t := three()
+             c := chosen(1)
+             print(\"{} {}\\n\", p.x, p.y)
+             print(\"{} {}\\n\", q.x, q.y)
+             print(\"{} {} {}\\n\", t.a, t.b, t.c)
+             print(\"{} {}\\n\", c.x, c.y)
+             0
+         }
+",
+        "1 2
+1 2
+1 2 3
+1 2
+",
+    ),
+    // A compile-time parameter a `^C` parameter settles is read off the type of
+    // the argument, and the walks' table is empty while a declaration is being
+    // read, so the address of a name came out as `^i64` and the tuple that
+    // named the instance was filed for a type nobody passed. The call emitted
+    // the name of the instance it meant and the link found nothing there. This
+    // is the shape a typed callback takes: a hook beside the context it reads.
+    (
+        "a_context_settles_its_type_through_the_pointer_that_carries_it",
+        "import \"io.frost\"
+         Ctx :: struct { n: i64 }
+         configure :: fn($C: Type, hook: fn(mut C, i64), state: ^C) -> i64 {
+             unsafe { hook(state^, 5) }
+             0
+         }
+         bump :: fn(mut c: Ctx, by: i64) { c.n = c.n + by }
+         main :: fn() -> i64 {
+             mut c := Ctx { n = 0 }
+             configure(bump, ptr_to(c))
+             print(\"{}\\n\", c.n)
+             0
+         }
+",
+        "5\n",
+    ),
+    // A compile-time list holds the types of the arguments it was given, and
+    // both of these were read before anything could say what they are: a name
+    // bound from an element, whose type the parse reads off its own table, and
+    // a call to a function written below the one that names it, whose signature
+    // arrives later. The list was filed holding a number where it holds text.
+    (
+        "a_list_holds_what_its_arguments_turn_out_to_be",
+        "import \"io.frost\"
+         Named :: struct { name: str }
+         main :: fn() -> i64 {
+             mut all: [1]Named = [Named { name = \"one\" }]
+             one := all[0]
+             print(\"{} {}\\n\", one.name, tail_of(one))
+             0
+         }
+         tail_of :: fn(n: Named) -> str { n.name }
+",
+        "one one\n",
+    ),
+    // The allocator a `uses` clause draws is an implicit parameter, and its name
+    // was left out of the table the parse keeps, so a generic whose compile-time
+    // parameter that argument settles filed a tuple with the settled one
+    // missing while the call emitted the whole of it.
+    (
+        "a_capability_names_the_type_it_was_drawn_at",
+        "import \"io.frost\"
+         Bump :: struct($N: usize) { data: [N]u8, offset: i64 }
+         carve :: fn($T: Type, $N: usize, mut b: Bump<N>, count: i64) -> i64 {
+             sizeof(T) * count + b.offset
+         }
+         gather :: fn(n: i64) -> i64 uses Bump<1024> { carve($i64, bump, n) }
+         main :: fn() -> i64 {
+             mut scratch: Bump<1024> = Bump { data = [0; 1024], offset = 0 }
+             with scratch {
+                 print(\"{}\\n\", gather(3))
+             }
+             0
+         }
+",
+        "24\n",
     ),
     // A bound holds a type to what it is, and the vocabulary answers that of a
     // type directly. A program that wants to ask several things at once, or to

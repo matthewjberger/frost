@@ -745,9 +745,13 @@ fn settle_runs(ast: &Ast, roots: &[StmtId], fields: &FieldTypes) -> Runs {
             else {
                 continue;
             };
+            // A struct carrying a view out is answering with one as far as its
+            // caller is concerned, so the summary is worked out for it too.
             let answers_view = ast
                 .signature_to_type(ast.signature(*signature))
-                .is_some_and(|result| is_view_type(&result));
+                .is_some_and(|result| {
+                    is_view_type(&result) || holds_run(&result, fields)
+                });
             let mut walk = RunWalk {
                 ast,
                 parameters: crate::ir::build::argument_names(
@@ -1057,6 +1061,16 @@ impl RunWalk<'_> {
             Expression::Unsafe(body) => block_tail(ast, *body)
                 .map(|value| self.run_places(value))
                 .unwrap_or_default(),
+            // A literal standing where the answer goes hands the caller
+            // whatever its fields view, so the runs behind those fields are
+            // what the summary names. Without this a view carried out inside a
+            // struct left the callee with nothing filed and the caller with
+            // nothing to go stale.
+            Expression::StructInit(_, fields) => ast
+                .named_in(*fields)
+                .iter()
+                .flat_map(|field| self.run_places(field.value))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -1572,6 +1586,17 @@ impl MoveChecker<'_> {
                 self.run_behind(*inner)
             }
             Expression::Call(..) => self.run_behind(value),
+            // A literal holding a view puts the run inside the binding it
+            // makes, so the binding views whatever its fields do. Reached
+            // through the fields rather than recorded per field: what a read
+            // names is the binding, and a growth takes the whole block back
+            // however many fields point into it.
+            Expression::StructInit(_, fields) => self
+                .ast
+                .named_in(*fields)
+                .iter()
+                .flat_map(|field| self.viewed_runs(field.value))
+                .collect(),
             _ => Vec::new(),
         }
     }

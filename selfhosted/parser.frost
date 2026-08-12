@@ -1451,6 +1451,44 @@ mark_trailing_answer :: fn(mut p: Parser, body: i64, ret: i64) {
     }
 }
 
+// A struct literal standing as a body's answer names no type, the same way one
+// written after `return` names none. A `return` sets the type it takes while
+// its value is read, and a body's last expression is read with nothing set, so
+// the literal reached `new_struct_lit` with no type and its fields landed in a
+// layout nobody had named: two of them came back swapped and three read past
+// the frame. One field hid it, which is why it went unseen.
+//
+// Settled against what the function answers with, before a failure set wraps
+// the answer, so `-> T ! E` types the literal as the T rather than as the pair.
+settle_trailing_literal :: fn(mut p: Parser, body: i64, answer: i64) {
+    if (body == (-1)) {
+        return
+    }
+    mut id := body
+    mut last := body
+    while (id != (-1)) {
+        last = id
+        id = node_next(p, id)
+    }
+    node := arena_at(p.arena, last)
+    kind := node.kind
+    value := node.a
+    then_head := node.b
+    else_head := node.val
+    if (kind == NodeKind::ExprStmt) {
+        resolve_untyped_literal(p, value, answer)
+        return
+    }
+    // An `if` standing at the end of a body answers from each of its branches,
+    // and `return_trailing_branches` makes a return of each branch's own last
+    // expression. A literal written in one is read at the answer, so it takes
+    // the type there the same way, however far the branches nest.
+    if (kind == NodeKind::If) {
+        settle_trailing_literal(p, then_head, answer)
+        settle_trailing_literal(p, else_head, answer)
+    }
+}
+
 // A `match` or an `if` standing where a body's answer goes binds a name its
 // arms assign to, and that name took its type from the first arm. The arms are
 // read at the answer the same as a number written there is, so where each
@@ -7052,18 +7090,27 @@ parse_function :: fn(mut p: Parser) -> i64 {
             cap_name_len := cur_len(p)
             cap_ty := parse_type(p)
             binding := synth_capability_name(p, cap_name_off, cap_name_len)
+            held_ty := borrow_of(p, cap_ty)
             capability := arena_push(
                 p.arena,
                 Node {
                     kind = NodeKind::Param,
                     a = 1,
-                    b = borrow_of(p, cap_ty),
+                    b = held_ty,
                     c = cap_name_len,
                     val = binding,
                     next = -1,
                     pos = cur_off(p)
                 },
             )
+            // What the name binds is recorded for the parse, the way an
+            // ordinary parameter's is. A generic one of whose compile-time
+            // parameters a value parameter settles reads its tuple off the
+            // types of its arguments, and only the parse holds them: without
+            // this, `bump_carve($i64, bump, n)` under `uses Bump<1024>` filed a
+            // tuple with the settled `N` missing while the call emitted the
+            // whole one, so the instance was called and never defined.
+            record_parse_local(p, binding, cap_name_len, held_ty, -1)
             params = append_node(p, params, capability)
             set_params(p, fn_index, params)
             set_uses(p, fn_index, cap_ty, binding, cap_name_len)
@@ -7092,8 +7139,13 @@ parse_function :: fn(mut p: Parser) -> i64 {
     saved_defer_depth := p.defer_depth
     p.defer_base = p.defers.count
     p.defer_depth = p.block_depth + 1
+    // What the function answers with, held across the body: a function literal
+    // written inside this one reads a signature of its own and leaves `ok_ty`
+    // naming that one.
+    answer_ty := p.ok_ty
     mut body := parse_block(p)
     check_defer_shadowing(p)
+    settle_trailing_literal(p, body, answer_ty)
     if (p.result_ty != (-1)) {
         wrap_trailing_ok(p, body)
     }

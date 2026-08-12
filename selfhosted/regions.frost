@@ -3282,10 +3282,40 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
         }
         return run_place_nth(p, node.b, n)
     }
+    // A literal standing where the answer goes hands the caller whatever its
+    // fields view, so the runs behind those fields are what the summary names.
+    // Without this a view carried out inside a struct left the callee with
+    // nothing filed and the caller with nothing to go stale.
+    if (kind == NodeKind::StructLit) {
+        return run_place_in_fields_nth(p, node.a, n)
+    }
     if (kind != NodeKind::Call) {
         return -1
     }
     run_call_place(p, node.a, node.val, n)
+}
+
+// The places a literal's fields name, counted across the fields in order.
+run_place_in_fields_nth :: fn(mut p: Parser, head: i64, n: i64) -> i64 {
+    mut left := n
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        mut k: i64 = 0
+        mut place := run_place_nth(p, value, k)
+        while (place >= 0) {
+            if (left == 0) {
+                return place
+            }
+            left = left - 1
+            k = k + 1
+            place = run_place_nth(p, value, k)
+        }
+        id = next_id
+    }
+    -1
 }
 
 run_place_of :: fn(mut p: Parser, id: i64) -> i64 {
@@ -3624,7 +3654,8 @@ settle_runs :: fn(mut p: Parser) {
                 mut answers_view: bool = false
                 if (fn_index >= 0 && fn_index < p.fns.count) {
                     sym := arena_at(p.fns, fn_index)
-                    answers_view = type_is_direct_view(p, sym.ret_type)
+                    answers_view =
+                    type_carries_view(p, sym.ret_type, FRAME_TYPE_DEPTH)
                 }
                 walk_runs_body(p, body, params, fn_index, answers_view)
             }
@@ -3663,6 +3694,37 @@ viewed_run_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     }
     if (kind == NodeKind::Call) {
         return run_call_place(p, node.a, node.val, n)
+    }
+    // A literal holding a view puts the run inside the binding it makes, so the
+    // binding views whatever its fields do. Reached through the fields rather
+    // than recorded per field: what a read names is the binding, and a growth
+    // takes the whole block back however many fields point into it.
+    if (kind == NodeKind::StructLit) {
+        return run_in_fields_nth(p, node.a, n)
+    }
+    -1
+}
+
+// The runs a literal's fields view, counted across the fields in order, so one
+// literal holding two views answers for both.
+run_in_fields_nth :: fn(mut p: Parser, head: i64, n: i64) -> i64 {
+    mut left := n
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        mut k: i64 = 0
+        mut place := viewed_run_nth(p, value, k)
+        while (place >= 0) {
+            if (left == 0) {
+                return place
+            }
+            left = left - 1
+            k = k + 1
+            place = viewed_run_nth(p, value, k)
+        }
+        id = next_id
     }
     -1
 }
@@ -4088,11 +4150,13 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 // language has always taken.
                 root := strip_place(p, arg, place_depth(p, arg))
                 rnode := arena_at(p.arena, root)
+                root_off := rnode.val
+                root_len := rnode.c
                 arena_push(
                     p.moved,
                     LocalVar {
-                        name_off = rnode.val,
-                        name_len = rnode.c,
+                        name_off = root_off,
+                        name_len = root_len,
                         ty = 0,
                         slot = arg
                     }
@@ -5306,6 +5370,42 @@ type_is_direct_view :: fn(mut p: Parser, ty: i64) -> bool {
         return true
     }
     is_array_ty(ty) && is_slice_ty(p, ty)
+}
+
+// Whether a type carries a view, either by being one or by holding one in a
+// field. A function answering with a struct that holds a slice hands its caller
+// a view of whatever that slice looked at, so the run behind it is the caller's
+// to be told about the same way a bare slice is. Without this the summary was
+// worked out only for a function whose answer is itself a view, and a view
+// carried out inside a struct reached the caller with nothing recorded.
+type_carries_view :: fn(mut p: Parser, ty: i64, depth: i64) -> bool {
+    if (ty < 0 || depth <= 0) {
+        return false
+    }
+    if (type_is_direct_view(p, ty)) {
+        return true
+    }
+    if (is_array_ty(ty)) {
+        return type_carries_view(p, array_element(p, ty), depth - 1)
+    }
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    index := struct_index_of(ty)
+    if (index < 0 || index >= p.structs.count) {
+        return false
+    }
+    def := arena_at(p.structs, index)
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        held := field.ty
+        fid = field.next
+        if (type_carries_view(p, held, depth - 1)) {
+            return true
+        }
+    }
+    false
 }
 
 // Whether a value of type `held` holds an `element` inline.
