@@ -1696,6 +1696,9 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     if (node.kind != NodeKind::Call) {
         return value
     }
+    // Where the call is written, read before anything pushes to the arena and
+    // may move it.
+    at := node.pos
     callee := arena_at(p.fns, node.val)
     if (is_aggregate(callee.ret_type) == false) {
         return value
@@ -1712,7 +1715,10 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     // same as one written as a name given the call.
     settle_call_answer(p, value)
     record_parse_local(p, name_off, name_len, binding_type(p, value), value)
-    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, name_off)
+    // At the call this name stands for. Given the name's own offset, every
+    // report about the argument landed in the room past the source, on the
+    // names the compiler interns rather than on anything written down.
+    new_named_node_at(p, NodeKind::Var, 0, name_off, name_len, at)
 }
 
 // The arguments of a call, with the callee's index when there is one. Each
