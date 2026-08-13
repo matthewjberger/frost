@@ -54,10 +54,15 @@ SHT_SYMTAB :: 2
 SHT_STRTAB :: 3
 SHT_RELA :: 4
 
-// Section flags: writable, taking space at run time, holding instructions.
-SHF_WRITE :: 1
-SHF_ALLOC :: 2
-SHF_EXECINSTR :: 4
+// Section flags: writable, taking space at run time, holding instructions. A
+// section states several at once, so they are a set rather than a list of
+// codes, and `None` is the section that asks for none of them.
+SectionFlags :: flags i64 {
+    None :: 0
+    Write :: 1
+    Alloc :: 2
+    ExecInstr :: 4
+}
 
 // Symbol bindings and kinds, as they are packed into one byte together.
 STB_LOCAL :: 0
@@ -151,7 +156,7 @@ elf_section_header :: fn(
     mut object: Blob,
     name: i64,
     kind: i64,
-    flags: i64,
+    flags: SectionFlags,
     offset: i64,
     size: i64,
     link: i64,
@@ -456,12 +461,12 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     }
     blob_zeros(object, headers_at - object.count)
 
-    elf_section_header(object, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    elf_section_header(object, 0, 0, SectionFlags::None, 0, 0, 0, 0, 0, 0)
     elf_section_header(
         object,
         elf_section_name_at(elf_section(ELF_SEC_TEXT, debug), debug),
         SHT_PROGBITS,
-        SHF_ALLOC | SHF_EXECINSTR,
+        SectionFlags::Alloc | SectionFlags::ExecInstr,
         text_at,
         text_count,
         0,
@@ -474,7 +479,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         object,
         elf_section_name_at(elf_section(ELF_SEC_RELA, debug), debug),
         SHT_RELA,
-        0,
+        SectionFlags::None,
         rela_at,
         reloc_count * ELF_RELA_SIZE,
         elf_section(ELF_SEC_SYMTAB, debug),
@@ -486,7 +491,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         object,
         elf_section_name_at(elf_section(ELF_SEC_DATA, debug), debug),
         SHT_PROGBITS,
-        SHF_ALLOC | SHF_WRITE,
+        SectionFlags::Alloc | SectionFlags::Write,
         data_at,
         data_count,
         0,
@@ -501,7 +506,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             object,
             elf_section_name_at(ELF_SEC_LINE, debug),
             SHT_PROGBITS,
-            0,
+            SectionFlags::None,
             line_at,
             line_size,
             0,
@@ -513,7 +518,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             object,
             elf_section_name_at(ELF_SEC_RELA_LINE, debug),
             SHT_RELA,
-            0,
+            SectionFlags::None,
             rela_line_at,
             line_relocs * ELF_RELA_SIZE,
             ELF_SEC_SYMTAB,
@@ -525,7 +530,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             object,
             elf_section_name_at(ELF_SEC_ABBREV, debug),
             SHT_PROGBITS,
-            0,
+            SectionFlags::None,
             abbrev_at,
             abbrev_size,
             0,
@@ -537,7 +542,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             object,
             elf_section_name_at(ELF_SEC_INFO, debug),
             SHT_PROGBITS,
-            0,
+            SectionFlags::None,
             info_at,
             info_size,
             0,
@@ -549,7 +554,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             object,
             elf_section_name_at(ELF_SEC_RELA_INFO, debug),
             SHT_RELA,
-            0,
+            SectionFlags::None,
             rela_info_at,
             info_relocs * ELF_RELA_SIZE,
             ELF_SEC_SYMTAB,
@@ -564,7 +569,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         object,
         elf_section_name_at(elf_section(ELF_SEC_SYMTAB, debug), debug),
         SHT_SYMTAB,
-        0,
+        SectionFlags::None,
         symtab_at,
         symbol_count * ELF_SYMBOL_SIZE,
         elf_section(ELF_SEC_STRTAB, debug),
@@ -576,7 +581,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         object,
         elf_section_name_at(elf_section(ELF_SEC_STRTAB, debug), debug),
         SHT_STRTAB,
-        0,
+        SectionFlags::None,
         strtab_at,
         names_size,
         0,
@@ -588,7 +593,7 @@ write_elf_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         object,
         elf_section_name_at(elf_section(ELF_SEC_SHSTRTAB, debug), debug),
         SHT_STRTAB,
-        0,
+        SectionFlags::None,
         shstrtab_at,
         elf_section_names_size(debug),
         0,

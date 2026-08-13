@@ -24,7 +24,7 @@ import "mem.frost"
 
 export Material, Materials, MATERIAL_BYTES,
     ALPHA_OPAQUE, ALPHA_MASK, ALPHA_BLEND,
-    FLAG_TRANSPARENT, FLAG_MASK, FLAG_DOUBLE_SIDED,
+    MaterialFlags,
     materials_new, materials_add, materials_at, materials_free,
     materials_count,
     material_default, material_of,
@@ -47,9 +47,16 @@ ALPHA_BLEND :: 2
 // What the batch tables read a material as, one bit each. The compute pass that
 // sorts things into draw classes reads nothing else about a material, so this is
 // the whole of what a material says about how it is drawn.
-FLAG_TRANSPARENT :: 1
-FLAG_MASK :: 2
-FLAG_DOUBLE_SIDED :: 4
+//
+// The numbers are the shader's. `render_world.frost` and `lit.wgsl` declare the
+// same three for the compute pass and the fragment shader to read, and WGSL has
+// no set of bits for them to share.
+MaterialFlags :: flags u32 {
+    None :: 0
+    Transparent :: 1
+    Mask :: 2
+    DoubleSided :: 4
+}
 
 Material :: struct {
     base_color: Vec4,
@@ -157,22 +164,22 @@ material_surface :: fn(held: Material) -> Vec4 {
 // What the batch tables read, as the bits the compute pass tests. Worked out
 // from the two fields above rather than stored beside them, so a material
 // cannot say one thing in its mode and another in its flags.
-material_flags :: fn(held: Material) -> u32 {
-    mut bits: u32 = 0
+material_flags :: fn(held: Material) -> MaterialFlags {
+    mut bits := MaterialFlags::None
     if (held.alpha_mode == ALPHA_BLEND) {
-        bits = bits | FLAG_TRANSPARENT
+        bits = bits | MaterialFlags::Transparent
     }
     if (held.alpha_mode == ALPHA_MASK) {
-        bits = bits | FLAG_MASK
+        bits = bits | MaterialFlags::Mask
     }
     if (held.double_sided) {
-        bits = bits | FLAG_DOUBLE_SIDED
+        bits = bits | MaterialFlags::DoubleSided
     }
     bits
 }
 
 test "a plain material asks for nothing of the draw" {
-    assert(material_flags(material_default()) == 0)
+    assert(material_flags(material_default()) == MaterialFlags::None)
 }
 
 test "how a surface handles alpha decides which draw it lands in" {
@@ -180,11 +187,12 @@ test "how a surface handles alpha decides which draw it lands in" {
     // the class: a cut-out surface still writes depth and still draws with the
     // opaque pipeline, which is the whole reason the two are separate modes.
     assert(material_flags(material_blended(material_default()))
-        == FLAG_TRANSPARENT)
+        == MaterialFlags::Transparent)
     assert(material_flags(material_cut_out(material_default(), 0.5))
-        == FLAG_MASK)
+        == MaterialFlags::Mask)
     both := material_two_sided(material_blended(material_default()))
-    assert(material_flags(both) == FLAG_TRANSPARENT | FLAG_DOUBLE_SIDED)
+    assert(material_flags(both)
+        == MaterialFlags::Transparent | MaterialFlags::DoubleSided)
 }
 
 test "a cutoff travels with the material that reads it" {
