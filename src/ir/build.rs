@@ -5933,7 +5933,8 @@ impl<'a> FunctionLowering<'a> {
                     (None, Some(inner)) => inner.clone(),
                     (None, None) => value_type.clone(),
                 };
-                let coerced = self.coerce(operand, &value_type, &declared)?;
+                let coerced =
+                    self.coerce_value(operand, &value_type, &declared, value)?;
                 let local =
                     self.fresh_local(declared.clone(), Some(name.clone()));
                 self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
@@ -6002,8 +6003,12 @@ impl<'a> FunctionLowering<'a> {
                             spelled(&value_type)
                         );
                     }
-                    let coerced =
-                        self.coerce(operand, &value_type, &return_type)?;
+                    let coerced = self.coerce_value(
+                        operand,
+                        &value_type,
+                        &return_type,
+                        expression,
+                    )?;
                     if returns_a_failure(self.ast, expression) {
                         self.emit_failure_return(Some(coerced))?;
                     } else {
@@ -9026,7 +9031,9 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             let coerced = match expected {
-                Some(target) => self.coerce(operand, &value_type, target)?,
+                Some(target) => {
+                    self.coerce_value(operand, &value_type, target, *argument)?
+                }
                 None => operand,
             };
             lowered.push(coerced);
@@ -9204,7 +9211,9 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             let coerced = match expected {
-                Some(target) => self.coerce(operand, &value_type, target)?,
+                Some(target) => {
+                    self.coerce_value(operand, &value_type, target, *argument)?
+                }
                 None => operand,
             };
             lowered.push(coerced);
@@ -9576,7 +9585,8 @@ impl<'a> FunctionLowering<'a> {
                     spelled(&value_type)
                 );
             }
-            let coerced = self.coerce(operand, &value_type, &target_type)?;
+            let coerced =
+                self.coerce_value(operand, &value_type, &target_type, value)?;
             self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
             return Ok(());
         }
@@ -9656,7 +9666,8 @@ impl<'a> FunctionLowering<'a> {
             });
             return Ok(());
         }
-        let coerced = self.coerce(operand, &value_type, &pointee)?;
+        let coerced =
+            self.coerce_value(operand, &value_type, &pointee, value)?;
         self.emit(IrStatement::Store {
             address,
             value: coerced,
@@ -11275,8 +11286,12 @@ impl<'a> FunctionLowering<'a> {
                     *element,
                     AggregateSite::Element,
                 )?;
-                let coerced =
-                    self.coerce(operand, &value_type, element_type)?;
+                let coerced = self.coerce_value(
+                    operand,
+                    &value_type,
+                    element_type,
+                    *element,
+                )?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -11553,7 +11568,12 @@ impl<'a> FunctionLowering<'a> {
                     given.value,
                     AggregateSite::Field,
                 )?;
-                let coerced = self.coerce(operand, &value_type, field_type)?;
+                let coerced = self.coerce_value(
+                    operand,
+                    &value_type,
+                    field_type,
+                    given.value,
+                )?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -11713,7 +11733,12 @@ impl<'a> FunctionLowering<'a> {
                     given.value,
                     AggregateSite::Field,
                 )?;
-                let coerced = self.coerce(operand, &value_type, field_type)?;
+                let coerced = self.coerce_value(
+                    operand,
+                    &value_type,
+                    field_type,
+                    given.value,
+                )?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -12644,6 +12669,25 @@ impl<'a> FunctionLowering<'a> {
     /// check needs, and nothing used to look at it, so `a : u8 = 300` was
     /// quietly 44 and `b : i8 = 200` was quietly -56. Both compilers agreed
     /// about it, which is exactly why the differential oracle could not see it.
+    /// The coercion, with what it refuses reported at the value rather than at
+    /// the statement holding it.
+    ///
+    /// `coerce` has the operand and not the expression, so a fault it raises
+    /// carries no place and the enclosing statement supplies one. That reads as
+    /// the whole line being wrong when what the reader rewrites is one value in
+    /// it, and it put every such report in one column while the self-hosted
+    /// compiler pointed at the value.
+    fn coerce_value(
+        &mut self,
+        operand: IrOperand,
+        from: &Type,
+        to: &Type,
+        value: ExprId,
+    ) -> Result<IrOperand> {
+        let at = self.at_expression(value);
+        locate(self.coerce(operand, from, to), at)
+    }
+
     fn coerce(
         &mut self,
         operand: IrOperand,

@@ -1689,7 +1689,16 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
                     // and not what the reader wrote, so a literal handed to a
                     // number was named a '^i8' by one compiler and a 'str' by
                     // the other about one program.
-                    report_where(p.modules, p.src, vnode.pos)
+                    // An aggregate travels by address, so the walk that settles
+                    // parameter modes wraps one in a borrow it made up, and a
+                    // made-up node carries a position in the room past the
+                    // source. Reported there, the caret landed on the names the
+                    // compiler interns rather than on the argument.
+                    // Read again here rather than using the entry taken at the
+                    // top of the loop: asking whether the value fits can make
+                    // up a name, which pushes and may move the arena.
+                    held := arena_at(p.arena, value)
+                    report_where(p.modules, p.src, held.pos)
                     report("this argument is ")
                     report_described(p, value, arg_ty, expected)
                     report_fmt(

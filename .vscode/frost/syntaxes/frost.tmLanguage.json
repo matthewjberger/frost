@@ -162,7 +162,7 @@
       "patterns": [
         {
           "name": "keyword.control.frost",
-          "match": "\\b(if|else|match|case|while|for|in|break|continue|return|defer|errdefer|with)\\b"
+          "match": "\\b(if|else|match|case|when|while|for|in|break|continue|return|defer|errdefer|with)\\b"
         },
         {
           "name": "keyword.control.import.frost",
