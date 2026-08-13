@@ -13,6 +13,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     CH_UPPER_F, CH_UPPER_X,
     Cap, Provider, FlagBit, TypeValue, Indirect,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
+    ResultEnum,
     PendingTuple,
     LocalVar, Module, ToldMove,
     Rename,
@@ -810,6 +811,17 @@ Instance :: struct {
     struct_index: i64,
 }
 
+// The enum one `-> T ! E` was lowered to, and the pair it was made for. The two
+// types decide the enum and nothing else does, so a second signature answering
+// the same way answers with this same type rather than a second one of the same
+// name. Held as the pair it was made for, so finding it asks the question it is
+// keyed on rather than reading a shape back out of the fields.
+ResultEnum :: struct {
+    ok: i64,
+    bad: i64,
+    ty: i64,
+}
+
 // A generic function template: its interned name index, its first type parameter
 // name, the run of any further parameter names in the `gparams` arena, and the
 // token index of its name, so it can be re-parsed and emitted once per concrete
@@ -1566,6 +1578,9 @@ Parser :: struct {
     // node the literal parsed to, written out again at each use.
     value_consts: Arena<ConstDef>,
     instances: Arena<Instance>,
+    // One entry per `(T, E)` a failure set was made for, so the lookup that
+    // keeps them one type reads the pairs rather than every struct declared.
+    results: Arena<ResultEnum>,
     // Where each constant fault was reported, and whether the one being
     // reported now is a repeat. A generic's fields are read again for every
     // mention of an instance and an instance is recorded only once its fields

@@ -8059,15 +8059,10 @@ result_is_linear :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
 // two structs, which the C it is emitted as writes out twice.
 find_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     mut index: i64 = 0
-    while (index < p.structs.count) {
-        def := arena_at(p.structs, index)
-        if (def.is_result == 1) {
-            tag := arena_at(p.fields, def.field_head)
-            value := arena_at(p.fields, tag.next)
-            error := arena_at(p.fields, value.next)
-            if (value.ty == ok && error.ty == bad) {
-                return STRUCT_BASE + index
-            }
+    while (index < p.results.count) {
+        held := arena_at(p.results, index)
+        if (held.ok == ok && held.bad == bad) {
+            return held.ty
         }
         index = index + 1
     }
@@ -8145,6 +8140,9 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         },
     )
     result_ty := STRUCT_BASE + index
+    // Recorded under the pair it was made for, which is what the next
+    // signature answering the same way finds instead of making a second one.
+    arena_push(p.results, ResultEnum { ok = ok, bad = bad, ty = result_ty })
     arena_push(
         p.variants,
         Variant {

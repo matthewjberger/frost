@@ -1117,113 +1117,22 @@ distinct_type :: fn(repr: i64, index: i64) -> i64 {
     DISTINCT_BASE + distinct_repr(repr) * DISTINCT_STRIDE + index
 }
 
-// Write a type the way the source writes it, for a diagnostic. A distinct type
-// is named, since the name is the whole of what is being complained about.
+// Say a type the way the source writes it, for a diagnostic. One walk decides
+// what a type is called and `write_type_name` is it; this says what that walk
+// wrote. A second walk that reported as it went is what let the two drift about
+// whether an array carries its length.
 report_type_name :: fn(mut p: Parser, ty: i64) {
-    if (is_distinct(ty)) {
-        mut a: i64 = 0
-        while (a < p.type_aliases.count) {
-            entry := arena_at(p.type_aliases, a)
-            if (entry.value == ty) {
-                report_src(p.src, entry.name_off, entry.name_len)
-                return
-            }
-            a = a + 1
-        }
-    }
-    held := distinct_repr(ty)
-    if (held == TY_I64) { report("i64") return }
-    if (held == TY_I32) { report("i32") return }
-    if (held == TY_I16) { report("i16") return }
-    if (held == TY_I8) { report("i8") return }
-    if (held == TY_ISIZE) { report("isize") return }
-    if (held == TY_U64) { report("u64") return }
-    if (held == TY_U32) { report("u32") return }
-    if (held == TY_U16) { report("u16") return }
-    if (held == TY_U8) { report("u8") return }
-    if (held == TY_USIZE) { report("usize") return }
-    if (held == TY_F64) { report("f64") return }
-    if (held == TY_F32) { report("f32") return }
-    if (held == TY_BOOL) { report("bool") return }
-    if (held == TY_VOID) { report("nothing") return }
-    if (held == TY_HANDLE) { report("Handle") return }
-    // A borrow is written `ref T`, which is what a reader can write. `^T` is a
-    // raw pointer, a different thing that reads the same.
-    if (is_borrow(held)) {
-        report("ref ")
-        report_type_name(p, pointee(p, held))
-        return
-    }
-    if (is_pointer(held)) {
-        report("^")
-        report_type_name(p, pointee(p, held))
-        return
-    }
-    if (is_array_ty(held) && array_element(p, held) == TY_U8
-        && array_length(p, held) < 0) {
-        report("str")
-        return
-    }
-    if (is_array_ty(held)) {
-        // A fixed array says how many it holds, which is half of what its type
-        // is: `[4]i64` and `[]i64` are two types and were spelled alike here.
-        length := array_length(p, held)
-        report("[")
-        if (length >= 0) {
-            report_int(length)
-        }
-        report("]")
-        report_type_name(p, array_element(p, held))
-        return
-    }
-    // A function type is written `fn(params) -> ret`, and a parameter of one is
-    // written by the mode it was declared with: a write borrow is `mut T`
-    // there, and a read borrow is the type itself, which is what an unmarked
-    // aggregate parameter is. A function answering nothing is written with no
-    // arrow at all.
-    if (is_proc(held)) {
-        report("fn(")
-        count := proc_param_count(p, held)
-        mut k: i64 = 0
-        while (k < count) {
-            if (k > 0) {
-                report(", ")
-            }
-            param := proc_param_at(p, held, k)
-            if (is_borrow(param)) {
-                report("mut ")
-                report_type_name(p, pointee(p, param))
-            } else {
-                report_type_name(p, param)
-            }
-            k = k + 1
-        }
-        report(")")
-        answer := proc_ret(p, held)
-        if (answer != TY_VOID) {
-            report(" -> ")
-            report_type_name(p, answer)
-        }
-        return
-    }
-    // A generic struct is named the way the reader wrote it, arguments and
-    // all. `Arena` and `Arena<256>` are one template and one of its instances,
-    // and a report naming the template says the rule of every instance
-    // including the ones that are fine.
-    if (is_struct_ty(held)) {
-        // Bound first. A `str` crosses a call by address, and the C backend
-        // writes the address of what it was handed, so handing it a call's
-        // answer directly emits `&f(..)`, which C has no lvalue for.
-        text := instance_text(p, held)
-        report(text)
-        return
-    }
-    report("a value")
+    start := p.synth_next
+    off, len := synth_type_name(p, ty)
+    report_src(p.src, off, len)
+    // The name was wanted only to say it. Winding back keeps a run of reports
+    // from eating the room the compiler makes up names in.
+    p.synth_next = start
 }
 
 // A type's name as text in the room past the source, which is what `typename`
-// answers with. The same walk `report_type_name` does, writing bytes instead of
-// reporting them, so the two cannot drift about what a type is called.
+// answers with, and what a report says. One walk writes it, so nothing can
+// drift about what a type is called.
 synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
     start := p.synth_next
     write_type_name(p, ty)
@@ -1258,12 +1167,16 @@ synth_result_name :: fn(
 // expects, the way `Option::Some` reaches an `Option<i64>`. Naming the instance
 // would spell out an edit that does not parse.
 report_base_type_name :: fn(mut p: Parser, ty: i64) {
+    start := p.synth_next
     off, len := synth_type_name(p, ty)
     mut cut: i64 = 0
     while (cut < len && cast($i64, p.src[off + cut]) != CH_LT) {
         cut = cut + 1
     }
     report_src(p.src, off, cut)
+    // Wound back for the reason `report_type_name` winds back: the name was
+    // wanted only to say it.
+    p.synth_next = start
 }
 
 // The same name as text, so a message naming a type puts it in a hole like any
@@ -1458,7 +1371,7 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_F64) { synth_bytes(p, "f64") return }
     if (held == TY_F32) { synth_bytes(p, "f32") return }
     if (held == TY_BOOL) { synth_bytes(p, "bool") return }
-    if (held == TY_VOID) { synth_bytes(p, "void") return }
+    if (held == TY_VOID) { synth_bytes(p, "nothing") return }
     if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
     if (is_borrow(held)) {
         synth_bytes(p, "ref ")
@@ -1478,7 +1391,14 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
         return
     }
     if (is_array_ty(held)) {
-        synth_bytes(p, "[]")
+        // A fixed array says how many it holds, which is half of what its type
+        // is: `[4]i64` and `[]i64` are two types and were spelled alike here.
+        length := array_length(p, held)
+        synth_bytes(p, "[")
+        if (length >= 0) {
+            synth_digits(p, length)
+        }
+        synth_bytes(p, "]")
         write_type_name(p, array_element(p, held))
         return
     }
