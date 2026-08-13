@@ -3724,16 +3724,6 @@ subject_enum_of :: fn(mut p: Parser, scrutinee: i64) -> i64 {
     ty
 }
 
-// Whether a type code names the enum a failure set was lowered to. That enum
-// is named by the compiler and a program may not write the name, so `.Ok` and
-// `.Err` are the only spelling there is for its two variants.
-names_a_failure_set :: fn(mut p: Parser, ty: i64) -> bool {
-    if (ty < 0 || is_struct_ty(ty) == false) {
-        return false
-    }
-    arena_at(p.structs, struct_index_of(ty)).is_result == 1
-}
-
 // A value named under a type, written with the type left out. There is one
 // spelling and the type is part of it, so this says what to write rather than
 // filling it in. The type is named where the context gives one, which is what
@@ -3759,9 +3749,6 @@ refuse_dot_value_at :: fn(
     at: i64,
     parsing: i64
 ) {
-    if (names_a_failure_set(p, ty)) {
-        return
-    }
     // One per declaration. The parse carries on past this so the statement is
     // read whole, and every dot after the first in the same declaration is a
     // consequence of the same mistake.
@@ -3778,7 +3765,7 @@ refuse_dot_value_at :: fn(
         frost_rt_recover_escape()
     }
     report("a value named under a type is written with the type in front of it, so this one is written `")
-    report_type_name(p, ty)
+    report_base_type_name(p, ty)
     report("::")
     report_src(p.src, off, len)
     report("`")
@@ -4567,12 +4554,10 @@ parse_match :: fn(mut p: Parser) -> i64 {
                     // refusal below does it: the cursor sits among patterns,
                     // and a resync from there reads the rest of the match as
                     // statements and turns one refusal into four.
-                    if (names_a_failure_set(p, named) == false) {
-                        off := cur_off(p)
-                        len := cur_len(p)
-                        skip_past_match(p)
-                        refuse_dot_value(p, named, off, len, dot_off)
-                    }
+                    off := cur_off(p)
+                    len := cur_len(p)
+                    skip_past_match(p)
+                    refuse_dot_value(p, named, off, len, dot_off)
                 }
                 tag := parse_variant_pattern(p, subject, within)
                 index := p.case_variant
@@ -8068,7 +8053,32 @@ result_is_linear :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     0
 }
 
+// The enum an earlier `-> T ! E` already made for this pair, or -1. The two
+// types decide the enum and nothing else does, so two signatures that answer
+// the same way answer with one type. Made twice, it is one name standing for
+// two structs, which the C it is emitted as writes out twice.
+find_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
+    mut index: i64 = 0
+    while (index < p.structs.count) {
+        def := arena_at(p.structs, index)
+        if (def.is_result == 1) {
+            tag := arena_at(p.fields, def.field_head)
+            value := arena_at(p.fields, tag.next)
+            error := arena_at(p.fields, value.next)
+            if (value.ty == ok && error.ty == bad) {
+                return STRUCT_BASE + index
+            }
+        }
+        index = index + 1
+    }
+    -1
+}
+
 synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
+    held := find_result_struct(p, ok, bad)
+    if (held >= 0) {
+        return held
+    }
     result_field_names(p)
     tag := arena_push(
         p.fields,
@@ -8105,12 +8115,17 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     )
     set_next_field(p, tag, value)
     set_next_field(p, value, bad_field)
-    name := synth_numbered(p, "__Result", p.structs.count)
+    // The name a program writes to reach the two variants. One enum per
+    // `(T, E)` with the same shape every time, so it is named the way any
+    // generic's instance is, and the values under a failure set need no
+    // spelling of their own. The arguments are part of the name, which is what
+    // keeps two failure sets in one program two types.
+    name, name_length := synth_result_name(p, ok, bad)
     index := arena_push(
         p.structs,
         StructDef {
             name_off = name,
-            name_len = 8 + digits_in(p.structs.count),
+            name_len = name_length,
             field_head = tag,
             is_generic = 0,
             tparam_off = 0,

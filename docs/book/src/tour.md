@@ -273,8 +273,8 @@ which is where the names come from at the match:
 
 ```frost,sketch
 match number(text) {
-    case .Ok { value }: { print("{}\n", value) }
-    case .Err { error }: { print("{}\n", error.at) }
+    case Result::Ok { value }: { print("{}\n", value) }
+    case Result::Err { error }: { print("{}\n", error.at) }
 }
 ```
 

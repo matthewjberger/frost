@@ -274,8 +274,8 @@ The caller matches, and a match on an enum covers every variant (6.7):
 
 ```frost,sketch
 match number(text) {
-    case .Ok { value }: { print("{}\n", value) }
-    case .Err { error }: { print("{}\n", error.at) }
+    case Result::Ok { value }: { print("{}\n", value) }
+    case Result::Err { error }: { print("{}\n", error.at) }
 }
 ```
 
@@ -288,8 +288,8 @@ open :: fn(n: i64) -> File ! Denied { ... }
 
 use_it :: fn(n: i64) -> i64 {
     match open(n) {
-        case .Ok { value }: close(value)     // consumes the File
-        case .Err { error }: error.code
+        case Result::Ok { value }: close(value)     // consumes the File
+        case Result::Err { error }: error.code
     }
 }
 ```
@@ -499,9 +499,9 @@ main :: fn() -> i64 {
 > a value named under a type is written with the type in front of it, and there
 > is no type here to name
 
-The enum a failure set becomes is the one exception, and it is not an elision:
-that enum is named by the compiler and a program may not write the name, so
-`.Ok` and `.Err` are the only spelling their two variants have (5.2b).
+The enum a failure set becomes is no exception. A `-> T ! E` signature makes one
+enum per `(T, E)`, named `Result`, so its two variants are written `Result::Ok`
+and `Result::Err`, the way every other value under a type is (5.2b).
 
 ### The set stays open
 

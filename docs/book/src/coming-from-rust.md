@@ -476,8 +476,8 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse { .. }
 d := digit(text, index)?
 
 match number(text) {
-    case .Ok { value }: { print("{}\n", value) }
-    case .Err { error }: { print("{}\n", error.at) }
+    case Result::Ok { value }: { print("{}\n", value) }
+    case Result::Err { error }: { print("{}\n", error.at) }
 }
 ```
 

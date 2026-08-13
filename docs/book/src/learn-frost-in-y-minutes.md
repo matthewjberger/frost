@@ -459,8 +459,8 @@ main :: fn() -> i64 {
     // The signature becomes one enum with `Ok { value }` and `Err { error }`,
     // so reading the answer means saying what happens when there is not one.
     match twice(5) {
-        case .Ok { value }: print("{}\n", value)
-        case .Err { error }: print("failed\n")
+        case Result::Ok { value }: print("{}\n", value)
+        case Result::Err { error }: print("failed\n")
     }
     0
 }

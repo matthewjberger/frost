@@ -42,6 +42,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, synth_bytes, type_text, place_text, instance_text,
+    synth_result_name, report_base_type_name,
     type_code_for
 
 // Whether there is room for `wanted` more bytes past the source, said here
@@ -1230,6 +1231,39 @@ synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
     p.src[p.synth_next] = 0
     p.synth_next = p.synth_next + 1
     return start, length
+}
+
+// The name of the enum a `-> T ! E` signature makes: one per `(T, E)`, named
+// the way any generic's instance is. Distinct pairs get distinct names, which
+// is what keeps two failure sets in one program two types.
+synth_result_name :: fn(
+    mut p: Parser,
+    ok: i64,
+    bad: i64
+) -> (off: i64, len: i64) {
+    start := p.synth_next
+    synth_bytes(p, "Result<")
+    write_type_name(p, ok)
+    synth_bytes(p, ", ")
+    write_type_name(p, bad)
+    synth_bytes(p, ">")
+    length := p.synth_next - start
+    p.src[p.synth_next] = 0
+    p.synth_next = p.synth_next + 1
+    return start, length
+}
+
+// The name a reader writes to reach a value under a type. A generic enum is
+// reached by its base name, with the arguments coming from what the context
+// expects, the way `Option::Some` reaches an `Option<i64>`. Naming the instance
+// would spell out an edit that does not parse.
+report_base_type_name :: fn(mut p: Parser, ty: i64) {
+    off, len := synth_type_name(p, ty)
+    mut cut: i64 = 0
+    while (cut < len && cast($i64, p.src[off + cut]) != CH_LT) {
+        cut = cut + 1
+    }
+    report_src(p.src, off, cut)
 }
 
 // The same name as text, so a message naming a type puts it in a hole like any

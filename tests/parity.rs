@@ -1100,6 +1100,29 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a value named under a type is written with the type in front of it, \
          so this one is written `Colour::Red`",
     ),
+    // The rule reaches a failure set's variants, which were the last two
+    // written with a leading dot. The enum is named now, so the report names
+    // it, and the spelling it carries is one that parses.
+    (
+        "a_dotted_value_in_a_failure_set_case_names_result",
+        "import \"io.frost\"
+         Bad :: struct { at: i64 }
+         digit :: fn(c: i64) -> i64 ! Bad {
+             if (c < 48) {
+                 return Bad { at = c }
+             }
+             c - 48
+         }
+         main :: fn() -> i64 {
+             match digit(53) {
+                 case .Ok { value }: value
+                 case Result::Err { error }: 0
+             }
+         }
+",
+        "a value named under a type is written with the type in front of it, \
+         so this one is written `Result::Ok`",
+    ),
     // A cast converts one number into another. A struct is held by address, so
     // reading one as a number reads whatever its first word was. The
     // self-hosted compiler had no such check and emitted the conversion.
@@ -4330,6 +4353,29 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A failure set's enum is one per `(T, E)` and is named `Result`, so its
+    // two variants are reached the way every other value under a type is. It
+    // was the one type a program could not name, which is why its variants
+    // used to carry a spelling of their own.
+    (
+        "a_failure_set_names_its_variants_under_result",
+        "import \"io.frost\"\n\
+         Bad :: struct { at: i64 }\n\
+         digit :: fn(c: i64) -> i64 ! Bad {\n\
+         \x20   if (c < 48) {\n\
+         \x20       return Bad { at = c }\n\
+         \x20   }\n\
+         \x20   c - 48\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   match digit(53) {\n\
+         \x20       case Result::Ok { value }: print(\"{}\\n\", value)\n\
+         \x20       case Result::Err { error }: print(\"{}\\n\", error.at)\n\
+         \x20   }\n\
+         \x20   0\n\
+         }\n",
+        "5\n",
+    ),
     // The other half of the comparison rule: a number written down, or a
     // constant standing for one, takes the type it is compared against, so a
     // set's own bound reads without a cast. The two compilers reach that by
@@ -5141,12 +5187,12 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
          main :: fn() -> i64 {
              match (work(false)) {
-                 case .Ok { value }: print(\"{}\\n\", value)
-                 case .Err { error }: print(\"{}\\n\", -1)
+                 case Result::Ok { value }: print(\"{}\\n\", value)
+                 case Result::Err { error }: print(\"{}\\n\", -1)
              }
              match (work(true)) {
-                 case .Ok { value }: print(\"{}\\n\", value)
-                 case .Err { error }: print(\"{}\\n\", -2)
+                 case Result::Ok { value }: print(\"{}\\n\", value)
+                 case Result::Err { error }: print(\"{}\\n\", -2)
              }
              0
          }
@@ -6309,8 +6355,8 @@ two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
 
 side :: fn(high: i64, low: i64) -> i64 {
     match two_digits(high, low) {
-        case .Ok { value }: 0
-        case .Err { error }: 1
+        case Result::Ok { value }: 0
+        case Result::Err { error }: 1
     }
 }
 

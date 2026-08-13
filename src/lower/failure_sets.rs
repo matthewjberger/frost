@@ -220,8 +220,12 @@ impl Lowerer {
         if let Some(name) = self.results.get(&key) {
             return name.clone();
         }
-        let name = format!("__Result_{}", self.counter);
-        self.counter += 1;
+        // Named as the instance of a generic enum it is: one per `(T, E)`, the
+        // same shape every time. The name is what a program writes to reach the
+        // two variants, so `Result::Ok` reads here the way `Option::Some` reads
+        // against an `Option<i64>`, and the values under a failure set need no
+        // spelling of their own.
+        let name = format!("Result<{value}, {error}>");
         let recorded = ast.intern(&name);
         ast.failure_results.push(recorded);
         let value_field = ast.intern("value");

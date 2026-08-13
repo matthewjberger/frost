@@ -23,16 +23,16 @@ two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
 // Which side came back: 0 for a value, 1 for a failure.
 side :: fn(high: i64, low: i64) -> i64 {
     match two_digits(high, low) {
-        case .Ok { value }: 0
-        case .Err { error }: 1
+        case Result::Ok { value }: 0
+        case Result::Err { error }: 1
     }
 }
 
 // The number when it parsed, or the byte that stopped it when it did not.
 payload :: fn(high: i64, low: i64) -> i64 {
     match two_digits(high, low) {
-        case .Ok { value }: value
-        case .Err { error }: error.at
+        case Result::Ok { value }: value
+        case Result::Err { error }: error.at
     }
 }
 

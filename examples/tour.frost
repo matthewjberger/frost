@@ -100,8 +100,8 @@ round :: fn(e: Entity) -> i64 ! Blocked {
 // The value it answered with, or the health that stopped it.
 damage_of :: fn(e: Entity) -> i64 {
     match round(e) {
-        case .Ok { value }: value
-        case .Err { error }: error.at
+        case Result::Ok { value }: value
+        case Result::Err { error }: error.at
     }
 }
 

@@ -106,10 +106,10 @@ main :: fn() -> i64 {
             }
             case Move::Go { to }: {
                 match walk(hero, to) {
-                    case .Ok { value }: {
+                    case Result::Ok { value }: {
                         print("you walk into room {}\n", value)
                     }
-                    case .Err { error }: {
+                    case Result::Err { error }: {
                         print("no way out of room {}\n", error.from)
                     }
                 }

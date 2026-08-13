@@ -3530,8 +3530,8 @@ mod tests {
             caller :: fn() -> i64 {\n\
                 result := run_step()\n\
                 match result {\n\
-                    case .Ok { value }: value\n\
-                    case .Err { code }: 0 - code\n\
+                    case Result::Ok { value }: value\n\
+                    case Result::Err { code }: 0 - code\n\
                 }\n\
             }";
         assert!(check(source).is_ok());

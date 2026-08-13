@@ -938,8 +938,8 @@ use_it :: fn(ok: i64) -> i64 ! FileError {
 
 report :: fn(ok: i64) -> i64 {
     match use_it(ok) {
-        case .Ok { value }: value
-        case .Err { error }: -1
+        case Result::Ok { value }: value
+        case Result::Err { error }: -1
     }
 }
 
@@ -1158,13 +1158,13 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum) }
 
     good := match pick(5) {
-        case .Ok { value }: value
-        case .Err { error }: 0
+        case Result::Ok { value }: value
+        case Result::Err { error }: 0
     }
     unsafe { printf("%lld\n", good) }
     bad := match pick(0) {
-        case .Ok { value }: value
-        case .Err { error }: -1
+        case Result::Ok { value }: value
+        case Result::Err { error }: -1
     }
     unsafe { printf("%lld\n", bad) }
     0
@@ -2665,8 +2665,8 @@ twice :: fn(hp: i64) -> i64 ! Blocked {
 // works if the error really is the error.
 report :: fn(hp: i64) -> i64 {
     match twice(hp) {
-        case .Ok { value }: value
-        case .Err { error }: error.at * 100 + error.why
+        case Result::Ok { value }: value
+        case Result::Err { error }: error.at * 100 + error.why
     }
 }
 
@@ -8325,9 +8325,9 @@ const SELF_HOSTED_FAILURE_SETS: &str = "import \"io.frost\"\nOpenError :: struct
      twice :: fn(n: i64) -> i64 ! OpenError {\n\
      \x20   a := halve(n)?\n    b := halve(a)?\n    a + b\n}\n\
      side :: fn(n: i64) -> i64 {\n\
-     \x20   match twice(n) { case .Ok { value }: 0 case .Err { error }: 1 }\n}\n\
+     \x20   match twice(n) { case Result::Ok { value }: 0 case Result::Err { error }: 1 }\n}\n\
      payload :: fn(n: i64) -> i64 {\n\
-     \x20   match twice(n) { case .Ok { value }: value case .Err { error }: error.code }\n}\n\
+     \x20   match twice(n) { case Result::Ok { value }: value case Result::Err { error }: error.code }\n}\n\
      main :: fn() -> i64 {\n\
      \x20   print(\"{}\\n\", side(8))\n    print(\"{}\\n\", payload(8))\n\
      \x20   print(\"{}\\n\", side(6))\n    print(\"{}\\n\", payload(6))\n\
@@ -8515,7 +8515,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   \x20   while (step(n)? < 3) { n = n + 1 }\n\
                   \x20   n\n}\n\
                   got :: fn() -> i64 {\n\
-                  \x20   match run() { case .Ok { value }: value case .Err { error }: -1 }\n}\n\
+                  \x20   match run() { case Result::Ok { value }: value case Result::Err { error }: -1 }\n}\n\
                   main :: fn() -> i64 {\n\
                   \x20   print(\"{}\\n\", got())\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("trywhile", source) else {
@@ -13429,8 +13429,8 @@ read_size :: fn(ok: i64) -> i64 ! FileError {
 const TRY_TAIL: &str = r#"
 report :: fn(ok: i64) -> i64 {
     match use_it(ok) {
-        case .Ok { value }: value
-        case .Err { error }: -1
+        case Result::Ok { value }: value
+        case Result::Err { error }: -1
     }
 }
 
@@ -14035,7 +14035,7 @@ fn a_program_declares_its_own_ordering_for_its_own_type() {
 // A failure set end to end: a function that answers with a value or a failure,
 // `?` handing one up, and a caller reading which it got. The failure type is a
 // type the program declares, so `error.at` is a field of it, and `error` is the
-// name the `.Err` case binds.
+// name the `Result::Err` case binds.
 const FAILURE_SET_PARSE: &str = r#"import "io.frost"
 
 Parse :: struct { at: i64, code: i64 }
@@ -14061,8 +14061,8 @@ number :: fn(text: str) -> i64 ! Parse {
 
 report :: fn(text: str) {
     match number(text) {
-        case .Ok { value }: { print("{}\n", value) }
-        case .Err { error }: { print("{}\n", 0 - error.at) }
+        case Result::Ok { value }: { print("{}\n", value) }
+        case Result::Err { error }: { print("{}\n", 0 - error.at) }
     }
 }
 
@@ -14123,16 +14123,16 @@ close :: fn(move f: File) -> i64 { f.fd }
 
 use_it :: fn(n: i64) -> i64 {
     match open(n) {
-        case .Ok { value }: close(value)
-        case .Err { error }: error.code
+        case Result::Ok { value }: close(value)
+        case Result::Err { error }: error.code
     }
 }
 
 held :: fn(n: i64) -> i64 {
     result := open(n)
     match result {
-        case .Ok { value }: close(value)
-        case .Err { error }: error.code
+        case Result::Ok { value }: close(value)
+        case Result::Err { error }: error.code
     }
 }
 

@@ -1322,8 +1322,8 @@ main :: fn() -> i64 {
     config.indices = INDEX_ROOM
     config.drawn = MAX_DRAWN
     match app_open(config) {
-        case .Ok { value }: run(value)
-        case .Err { error }: app_failed(error)
+        case Result::Ok { value }: run(value)
+        case Result::Err { error }: app_failed(error)
     }
 }
 

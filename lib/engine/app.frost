@@ -3,8 +3,8 @@
 //
 //     main :: fn() -> i64 {
 //         match app_open(app_config("Frost", WIDTH, HEIGHT)) {
-//             case .Ok { value }: run(value)
-//             case .Err { error }: app_failed(error)
+//             case Result::Ok { value }: run(value)
+//             case Result::Err { error }: app_failed(error)
 //         }
 //     }
 //

@@ -2360,10 +2360,22 @@ fn refuse_inferred_variant(
             "a value named under a type is written with the type in front of it, and there is no type here to name"
         );
     };
-    let name = crate::modules::imports::demangle_private_names(name);
+    let name = readable_type_name(name);
     anyhow::anyhow!(
         "a value named under a type is written with the type in front of it, so this one is written `{name}::{variant}`"
     )
+}
+
+// The name a reader writes to reach a value under a type. A generic enum is
+// reached by its base name, with the arguments coming from what the context
+// expects, the way `Option::Some` reaches an `Option<i64>`. Naming the instance
+// would spell out an edit that does not parse.
+fn readable_type_name(name: &str) -> String {
+    let readable = crate::modules::imports::demangle_private_names(name);
+    match split_instance(&readable) {
+        Some((base, _)) => base,
+        None => readable,
+    }
 }
 
 // The struct a `{ x = 1 }` builds, taken from what the context expects.
@@ -9424,8 +9436,7 @@ impl<'a> FunctionLowering<'a> {
                 // through the walk that refuses one, since what they build is
                 // written straight into the place that holds it. The local's
                 // type is what names the enum, and the report carries it.
-                if name.is_empty() && !self.ast.is_failure_result(&layout_name)
-                {
+                if name.is_empty() {
                     let held = self.type_of_local(local);
                     let variant = self.ast.intern(&variant);
                     return locate(
@@ -11845,15 +11856,8 @@ impl<'a> FunctionLowering<'a> {
                 // An arm is a value named under a type the way every other
                 // mention of one is, and the type is part of the spelling. The
                 // enum the subject settled on is named here, which is the edit.
-                //
-                // A failure set's enum is named by the compiler and a program
-                // may not write that name, so `.Ok` and `.Err` are the only
-                // spelling there is and nothing is being left out of them.
-                if written.is_none() && !self.ast.is_failure_result(enum_name) {
-                    let readable =
-                        crate::modules::imports::demangle_private_names(
-                            enum_name,
-                        );
+                if written.is_none() {
+                    let readable = readable_type_name(enum_name);
                     // At the arm. A `match` is one statement and its arms are
                     // several places, so the statement's own is no answer to
                     // which arm a reader rewrites.

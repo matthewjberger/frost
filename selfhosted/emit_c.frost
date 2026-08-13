@@ -266,12 +266,33 @@ emit_local_name :: fn(mut p: Parser, off: i64, len: i64) {
     emit_source(p.src, off, len)
 }
 
+// A name as C can spell it. A name carrying the arguments it was made for has
+// `<` and `,` in it, and C has none, so every byte that is not a letter, a
+// digit, or an underscore is written as one. A name already made of those
+// comes out as it went in.
+emit_c_name :: fn(mut p: Parser, off: i64, len: i64) {
+    mut k: i64 = 0
+    while (k < len) {
+        byte := cast($i64, p.src[off + k])
+        spellable := ((byte >= CH_0 && byte <= CH_9)
+            || (byte >= CH_UPPER_A && byte <= CH_UPPER_Z)
+            || (byte >= CH_LOWER_A && byte <= CH_LOWER_Z)
+            || byte == CH_UNDERSCORE)
+        if (spellable) {
+            emit_source(p.src, off + k, 1)
+        } else {
+            emit_text("_")
+        }
+        k = k + 1
+    }
+}
+
 emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     def := arena_at(p.structs, struct_index)
     name_off := def.name_off
     name_len := def.name_len
     instance_id := def.instance_id
-    emit_source(p.src, name_off, name_len)
+    emit_c_name(p, name_off, name_len)
     owner := module_at(p.modules, name_off)
     if (owner > 0) {
         emit_text("_m")

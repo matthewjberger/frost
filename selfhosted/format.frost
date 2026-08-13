@@ -321,11 +321,10 @@ spaced :: fn(
         && ends_a_value(before) == false) {
         return false
     }
-    // A dot binds to what is either side of it, so `a.b` and the `.Variant` that
-    // takes its enum from the context are both written tight. After `case` it is
-    // a pattern rather than a value, and the word and the pattern are two
-    // things: `case .Circle { radius }:` is how the book writes one and how a
-    // reader reads one.
+    // A dot binds to what is either side of it, so `a.b` is written tight. A
+    // value under a type carries the type, so a leading `.` is refused; the
+    // formatter still lays out a program the compiler will go on to refuse, and
+    // after `case` the word and what follows it are two things.
     if (left == TokenKind::KwCase) {
         return true
     }
@@ -335,8 +334,9 @@ spaced :: fn(
     if (right == TokenKind::Dot) {
         // A dot that opens a value rather than reaching into one takes its
         // space in front, the way it does after `case`. What is on its left is
-        // what tells them apart: `key == .Left` names a value and `z.x` reaches
-        // into one, and an operator does not end a value.
+        // what tells them apart: in `key == .Left` the dot opens a value, which
+        // is refused, and `z.x` reaches into one; an operator does not end a
+        // value.
         return ends_a_value(left) == false
     }
     if (left == TokenKind::Lbrace && right == TokenKind::Rbrace) {

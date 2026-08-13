@@ -105,9 +105,9 @@ main :: fn() -> i64 {
 > a value named under a type is written with the type in front of it, and there
 > is no type here to name
 
-A failure set is the one exception, and it is not an elision: the enum a `-> T !
-E` signature becomes is named by the compiler and a program may not write that
-name, so `.Ok` and `.Err` are the only spelling their two variants have (5.2b).
+A failure set is no exception. The enum a `-> T ! E` signature becomes is one
+per `(T, E)` and is named `Result`, so its two variants are written `Result::Ok`
+and `Result::Err` (5.2b).
 
 `{ x = 1, y = 2 }` is a struct literal that leaves out a type name the context
 already carries. That is a different elision and it stays: a literal has no
