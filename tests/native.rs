@@ -14177,7 +14177,7 @@ fn an_ignored_fallible_call_that_holds_a_resource_is_refused() {
                   main :: fn() -> i64 { _ := open(3)  0 }\n";
     let message = compile_error("linfaildrop", source);
     assert!(
-        message.contains("linear"),
+        message.contains("drops a 'Result<File, Denied>'"),
         "expected the dropped resource to be named, got: {message}"
     );
 }

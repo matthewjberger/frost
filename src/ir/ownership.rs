@@ -248,7 +248,20 @@ fn report_block(
             if pooled.contains(&function.locals[local].ty.to_string()) {
                 continue;
             }
-            if function.locals[local].name.is_some() {
+            if let Some(held) = &function.locals[local].name {
+                // The storage a `_` was given. Naming it points the reader at a
+                // word nothing in the program spells, so the complaint is the
+                // one the `_` earns: it took a resource and let it go.
+                if held.starts_with("__discard") {
+                    return Err(located(
+                        function,
+                        local,
+                        format!(
+                            "this `_` drops a '{}', which is consumed exactly once; bind it to a name and consume it",
+                            function.locals[local].ty
+                        ),
+                    ));
+                }
                 let name = local_name(function, local);
                 return Err(located(
                     function,

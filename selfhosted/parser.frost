@@ -5365,6 +5365,34 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return body
     }
 
+    // `_ := call()` names one value rather than a list of them. The answer is
+    // read and bound under a name no source can spell, so a resource is still
+    // taken and still owed to a consumer. Taken apart as a list it asked the
+    // callee for a field of a return type list it never declared, and said so
+    // at the top of the file.
+    if (cur(p) == TokenKind::Underscore
+        && peek_kind(p, 1) == TokenKind::Coloneq) {
+        at := cur_off(p)
+        advance(p)
+        advance(p)
+        value := parse_expr(p)
+        unique := p.arena.count
+        name_off := synth_numbered(p, "__discard", unique)
+        name_len := 9 + digits_in(unique)
+        // The whole answer rather than a field of one, which is what the -1
+        // says to the walk that refuses a dropped resource.
+        arena_push(
+            p.multi_discards,
+            LocalVar {
+                name_off = call_target(p, value),
+                name_len = -1,
+                ty = at,
+                slot = 0
+            }
+        )
+        return new_let_node(p, value, name_off, name_len, -1)
+    }
+
     // `quotient, remainder := divide(a, b)`, and `mut` in front of any name the
     // body goes on to write. The names are walked twice: once to reach the
     // `:=`, so the call is bound to a temporary first, and once to bind each
@@ -7972,16 +8000,23 @@ check_discarded_resources :: fn(mut p: Parser) {
         at := entry.ty
         if (callee >= 0) {
             sym := arena_at(p.fns, callee)
-            fid := nth_field(p, sym.ret_type, index)
-            if (fid >= 0) {
-                field := arena_at(p.fields, fid)
-                if (is_linear_type(p, field.ty)) {
-                    report_where(p.modules, p.src, at)
-                    report("this `_` drops a '")
-                    report_type_name(p, field.ty)
-                    report("', which is consumed exactly once; bind it to a name and consume it")
-                    frost_rt_recover_escape()
+            // An index names one value of a return type list, and -1 names the
+            // whole answer, which is what a lone `_` takes.
+            mut dropped: i64 = -1
+            if (index == (-1)) {
+                dropped = sym.ret_type
+            } else {
+                fid := nth_field(p, sym.ret_type, index)
+                if (fid >= 0) {
+                    dropped = arena_at(p.fields, fid).ty
                 }
+            }
+            if (dropped >= 0 && is_linear_type(p, dropped)) {
+                report_where(p.modules, p.src, at)
+                report("this `_` drops a '")
+                report_type_name(p, dropped)
+                report("', which is consumed exactly once; bind it to a name and consume it")
+                frost_rt_recover_escape()
             }
         }
         i = i + 1

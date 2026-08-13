@@ -2066,6 +2066,23 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this `_` drops a 'File', which is consumed exactly once",
     ),
+    // The same, where the `_` stands on its own rather than in a list. The
+    // self-hosted read it as a list of one and asked the callee for a field of
+    // a return type list it never declared; the bootstrap left it to the
+    // linearity walk, which named the storage the discard was given.
+    (
+        "a_lone_underscore_dropping_a_resource",
+        "import \"io.frost\"
+         File :: linear struct { handle: i64 }
+         open :: fn(n: i64) -> File { File { handle = n } }
+         close :: fn(move f: File) { print(\"{}\\n\", f.handle) }
+         main :: fn() -> i64 {
+             _ := open(3)
+             0
+         }
+",
+        "this `_` drops a 'File', which is consumed exactly once",
+    ),
     // `_` as an ordinary binding. It is the wildcard token of 2.3 and never a
     // name, so this has nowhere to parse. The self-hosted lexer had no token
     // for it at all: `_` fell into the identifier rule, so `_ := 5` bound a
@@ -4497,6 +4514,21 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `_ := call()` runs the call and names nothing. The self-hosted read the
+    // lone `_` as a list of one and asked the callee for a field of a return
+    // type list it never declared, reporting it at the top of the file.
+    (
+        "a_lone_underscore_reads_a_value_and_names_nothing",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 7 }
+         main :: fn() -> i64 {
+             _ := give()
+             print(\"ok\\n\")
+             0
+         }
+",
+        "ok\n",
+    ),
     // A value where nothing is wanted is a value dropped, which is what a call
     // written as a statement is. The rule that a nothing reaches no value is
     // one way only, and refusing both directions refused this: the compiler's
