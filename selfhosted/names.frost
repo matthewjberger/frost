@@ -1371,7 +1371,10 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_F64) { synth_bytes(p, "f64") return }
     if (held == TY_F32) { synth_bytes(p, "f32") return }
     if (held == TY_BOOL) { synth_bytes(p, "bool") return }
-    if (held == TY_VOID) { synth_bytes(p, "nothing") return }
+    // The word the bootstrap says, which is the one a reader has seen: it
+    // reports `the value is a 'void'` where a call answering nothing is bound.
+    // One walk says this now, so the two compilers cannot answer differently.
+    if (held == TY_VOID) { synth_bytes(p, "void") return }
     if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
     if (is_borrow(held)) {
         synth_bytes(p, "ref ")
