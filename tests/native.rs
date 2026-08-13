@@ -1432,12 +1432,14 @@ fn self_hosted_arithmetic_on_a_distinct_type_answers_with_it() {
 // it goes into a call with nothing written down to say what it is.
 const FLAGS: &str = "import \"io.frost\"\nInitFlags :: flags u32 {
          Audio :: 16
-         Video :: 32
+         Video
          Events :: 16384
      }
      WindowFlags :: flags u64 {
-         Fullscreen :: 1
-         Resizable :: 32
+         Fullscreen
+         Hidden :: 8
+         Borderless
+         Resizable
      }
      started :: fn(f: InitFlags) -> u32 { f }
      opened :: fn(f: WindowFlags) -> u64 { f }

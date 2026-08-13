@@ -886,6 +886,73 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }\n",
         "a set of bits names each of them with a name, and this is not one",
     ),
+    // Elision makes two bits holding one number easy to write: bare names
+    // counting up to a number a later bit states again. Both are named.
+    (
+        "two_bits_of_a_set_may_not_hold_one_number",
+        "import \"io.frost\"\n\
+         ShaderStage :: flags u32 {\n\
+         \x20   Vertex\n\
+         \x20   Fragment\n\
+         \x20   Again :: 1\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "each bit of a set holds a number of its own, and 'Again' holds the \
+         same one as 'Vertex'",
+    ),
+    // A set holds as many bits as the type it is written over, and bare names
+    // counting on can walk past the last of them.
+    (
+        "a_bit_past_the_width_of_a_set_is_refused",
+        "import \"io.frost\"\n\
+         Wide :: flags u8 {\n\
+         \x20   A\n\
+         \x20   B\n\
+         \x20   C\n\
+         \x20   D\n\
+         \x20   E\n\
+         \x20   F\n\
+         \x20   G\n\
+         \x20   H\n\
+         \x20   I\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a set over 'u8' holds 8 bits, and 'I' is the 9th",
+    ),
+    // A stated number reaches past the width the same way a counted one does.
+    (
+        "a_stated_number_past_the_width_of_a_set_is_refused",
+        "import \"io.frost\"\n\
+         Wide :: flags u32 {\n\
+         \x20   Big :: 4294967296\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a set over 'u32' holds 32 bits, and 'Big' is the 33rd",
+    ),
+    // A bare name has no `::` to end it, so the line is what separates one bit
+    // from the next, the way it separates every other declaration.
+    (
+        "two_bits_of_a_set_may_not_share_a_line",
+        "import \"io.frost\"\n\
+         ShaderStage :: flags u32 {\n\
+         \x20   Vertex Fragment\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a set of bits names each of them on a line of its own, and this one \
+         follows another",
+    ),
+    // A set is written over an integer, and the refusal names the type that is
+    // not one. The self-hosted compiler named only the set.
+    (
+        "a_set_of_bits_is_written_over_an_integer",
+        "import \"io.frost\"\n\
+         Odd :: flags f32 {\n\
+         \x20   A :: 1\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "'Odd' is a set of bits, so it is written over an integer type; 'f32' \
+         is not one",
+    ),
     // A value named under a type is a value of that type, so what is written
     // for it has to be one. A number under a struct is the plain case.
     (
@@ -4860,6 +4927,72 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "has\nsame\nnarrow\n48\n",
+    ),
+    // A bit that states no number takes the next one, counting from 1 and
+    // doubling. Three bare names are 1, 2 and 4, and everything a set answers
+    // is what it was.
+    (
+        "a_flags_bit_takes_the_number_its_place_gives_it",
+        "import \"io.frost\"\n\
+         ShaderStage :: flags u32 {\n\
+         \x20   Vertex\n\
+         \x20   Fragment\n\
+         \x20   Compute\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, ShaderStage::Vertex))\n\
+         \x20   print(\"{}\\n\", cast($i64, ShaderStage::Fragment))\n\
+         \x20   print(\"{}\\n\", cast($i64, ShaderStage::Compute))\n\
+         \x20   both := ShaderStage::Vertex | ShaderStage::Compute\n\
+         \x20   if (flags_has(both, ShaderStage::Vertex)) { print(\"has\\n\") }\n\
+         \x20   if ((both & ShaderStage::Compute) == ShaderStage::Compute) { print(\"narrow\\n\") }\n\
+         \x20   print(\"{}\\n\", cast($i64, both))\n\
+         \x20   0\n\
+         }\n",
+        "1\n2\n4\nhas\nnarrow\n5\n",
+    ),
+    // A set that skips states the number it skips to, and the bits after it
+    // count on from there. These are SDL's, which skip twice.
+    (
+        "a_stated_number_moves_the_counter_a_set_reads_from",
+        "import \"io.frost\"\n\
+         InitFlags :: flags u32 {\n\
+         \x20   Audio :: 16\n\
+         \x20   Video\n\
+         \x20   Gamepad :: 8192\n\
+         \x20   Events\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, InitFlags::Audio))\n\
+         \x20   print(\"{}\\n\", cast($i64, InitFlags::Video))\n\
+         \x20   print(\"{}\\n\", cast($i64, InitFlags::Gamepad))\n\
+         \x20   print(\"{}\\n\", cast($i64, InitFlags::Events))\n\
+         \x20   0\n\
+         }\n",
+        "16\n32\n8192\n16384\n",
+    ),
+    // A number that is not one bit leaves the counter where it stood, which is
+    // what lets `None :: 0` open a set and `All :: 15` close one. The first
+    // bare name after the zero is 1 rather than 0 doubled.
+    (
+        "a_number_that_is_not_one_bit_leaves_the_counter_alone",
+        "import \"io.frost\"\n\
+         ColorWriteMask :: flags u64 {\n\
+         \x20   None :: 0\n\
+         \x20   Red\n\
+         \x20   Green\n\
+         \x20   Blue\n\
+         \x20   Alpha\n\
+         \x20   All :: 15\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", cast($i64, ColorWriteMask::None))\n\
+         \x20   print(\"{}\\n\", cast($i64, ColorWriteMask::Red))\n\
+         \x20   print(\"{}\\n\", cast($i64, ColorWriteMask::Alpha))\n\
+         \x20   print(\"{}\\n\", cast($i64, ColorWriteMask::All))\n\
+         \x20   0\n\
+         }\n",
+        "0\n1\n8\n15\n",
     ),
     // A type may name values of itself, reached through the type the way a
     // variant and a bit of a set already are. The value is the type it is

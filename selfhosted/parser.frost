@@ -8862,12 +8862,15 @@ parse_flags :: fn(mut p: Parser) {
     advance(p)
     advance(p)
     advance(p)
+    repr_offset := cur_off(p)
     repr := parse_type(p)
     if (is_integer(repr) == false) {
-        report_where(p.modules, p.src, name_offset)
+        report_where(p.modules, p.src, repr_offset)
         report("'")
         report_src(p.src, name_offset, name_length)
-        report("' is a set of bits, so it is written over an integer type")
+        report("' is a set of bits, so it is written over an integer type; '")
+        report_type_name(p, repr)
+        report("' is not one")
         frost_rt_recover_escape()
     }
     ty := distinct_type(repr, p.type_aliases.count)
@@ -8882,16 +8885,35 @@ parse_flags :: fn(mut p: Parser) {
         },
     )
     advance(p)
+    // What a bit takes when it states no number. The first is 1 and each bit
+    // that is one bit doubles it, so a run of bare names is 1, 2, 4, 8. A
+    // number that is not one bit (`None :: 0`, an `All :: 15` closing a set)
+    // leaves it where it stood, which is what lets those open and close a
+    // block of bare names.
+    mut counter: i64 = 1
+    width := integer_bits(repr)
+    mut count: i64 = 0
     // A bit is declared the way every value named under a type is, with `::`,
     // and separated from the next by the line it is on. What a bit may hold is
     // the difference between the two blocks: a number a C header fixed, rather
-    // than an expression.
+    // than an expression, and a bit may hold nothing at all and take the
+    // number its place gives it.
     while (cur(p) != TokenKind::Rbrace) {
         if (cur(p) == TokenKind::Eof) {
             report_where(p.modules, p.src, name_offset)
             report("the bits '")
             report_src(p.src, name_offset, name_length)
             report("' names are written inside braces, and this block is not closed")
+            frost_rt_recover_escape()
+        }
+        // A bare name has no `::` to end it, so where one bit stops and the
+        // next starts is the line, which is what separates one declaration
+        // from the next everywhere else in the language.
+        if (count > 0 && on_same_line(p)) {
+            report_where(p.modules, p.src, cur_off(p))
+            report(
+                "a set of bits names each of them on a line of its own, and this one follows another"
+            )
             frost_rt_recover_escape()
         }
         if (cur(p) != TokenKind::Ident) {
@@ -8904,7 +8926,20 @@ parse_flags :: fn(mut p: Parser) {
         bit_off := cur_off(p)
         bit_len := cur_len(p)
         advance(p)
-        if (cur(p) != TokenKind::Coloncolon) {
+        mut value: i64 = counter
+        if (cur(p) == TokenKind::Coloncolon && on_same_line(p)) {
+            advance(p)
+            if (cur(p) != TokenKind::Int) {
+                report_where(p.modules, p.src, bit_off)
+                report("a bit of '")
+                report_src(p.src, name_offset, name_length)
+                report("' is a number a C header wrote down, and this is not one")
+                frost_rt_recover_escape()
+            }
+            value = cur_val(p)
+            advance(p)
+        } else if (on_same_line(p) && cur(p) != TokenKind::Rbrace
+            && cur(p) != TokenKind::Ident) {
             report_where(p.modules, p.src, bit_off)
             report("a bit of a set is declared the way every value named under a type is, so '")
             report_src(p.src, bit_off, bit_len)
@@ -8913,16 +8948,34 @@ parse_flags :: fn(mut p: Parser) {
             report(" :: 32'")
             frost_rt_recover_escape()
         }
-        advance(p)
-        if (cur(p) != TokenKind::Int) {
-            report_where(p.modules, p.src, cur_off(p))
-            report("a bit of '")
-            report_src(p.src, name_offset, name_length)
-            report("' is a number a C header wrote down, and this is not one")
+        if (bit_ordinal(value) > width) {
+            report_where(p.modules, p.src, bit_off)
+            report("a set over '")
+            report_type_name(p, repr)
+            report("' holds ")
+            report_int(width)
+            report(" bits, and '")
+            report_src(p.src, bit_off, bit_len)
+            report("' is the ")
+            report_ordinal(bit_ordinal(value))
             frost_rt_recover_escape()
         }
-        record_flag_bit(p, ty, bit_off, bit_len, cur_val(p))
-        advance(p)
+        held := flag_bit_holding(p, ty, value)
+        if (held >= 0) {
+            entry := arena_at(p.flag_bits, held)
+            report_where(p.modules, p.src, bit_off)
+            report("each bit of a set holds a number of its own, and '")
+            report_src(p.src, bit_off, bit_len)
+            report("' holds the same one as '")
+            report_src(p.src, entry.name_off, entry.name_len)
+            report("'")
+            frost_rt_recover_escape()
+        }
+        if (value > 0 && one_bit(value)) {
+            counter = value * 2
+        }
+        record_flag_bit(p, ty, bit_off, bit_len, value)
+        count = count + 1
     }
     advance(p)
 }

@@ -634,9 +634,10 @@ main :: fn() -> i64 { 0 }
 > a type names values of itself, and a generic declaration is one type for each
 > set of arguments given to it, so 'Box' names none
 
-A `flags` declaration writes its bits the same way, one `Name :: number` to a
-line, and differs only in what a bit may hold: a number a C header fixed, where
-a value named under a type is an expression of that type (3.6b).
+A `flags` declaration writes its bits the same way, one to a line, and differs
+in two things: what a bit may hold, a number a C header fixed rather than an
+expression of the type, and that a bit may write nothing at all and take the
+number its place in the block gives it (3.6b).
 
 ## 5.3 Externs and imports
 

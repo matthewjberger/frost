@@ -118,6 +118,34 @@ fn is_scalar_type_name(name: &str) -> bool {
     )
 }
 
+// Which bit of a set a number reaches, counting the lowest as the first. A set
+// over `u32` holds thirty-two, so anything reaching past that is refused, and
+// the answer is what the refusal names. Zero reaches no bit and fits anywhere,
+// which is what lets `None :: 0` open a set of any width.
+fn bit_ordinal(value: i64) -> u32 {
+    if value <= 0 {
+        return 0;
+    }
+    64 - (value as u64).leading_zeros()
+}
+
+// A count written the way it is spoken. Only the widths of the integer types
+// reach this, so the numbers are small, but the rule is the English one so the
+// two compilers have the same one to write.
+fn ordinal(count: u32) -> String {
+    let suffix = if count % 100 / 10 == 1 {
+        "th"
+    } else {
+        match count % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    };
+    format!("{count}{suffix}")
+}
+
 // The integer operators a constant expression may combine names with. Their
 // presence after `Name :: OtherName` is what marks the whole thing a constant
 // declaration rather than `Enum::Variant` access at statement position.
@@ -2278,41 +2306,105 @@ impl<'a> Parser<'a> {
             ))
         } else if self.at_flags_declaration(0) {
             self.read_token();
+            let written_repr = self.mark();
             let repr = self.parse_type()?;
             if !repr.is_integer() {
-                bail!(
-                    "'{identifier}' is a set of bits, so it is written over an integer type; '{repr}' is not one"
-                );
+                // The block is read past before the fault is raised, so what
+                // follows it is where reading resumes. Left in place, the
+                // recovery took the block's closing brace for a declaration
+                // head and said so, and one mistake was reported as two.
+                self.skip_braced_block();
+                return Err(self.at_mark(
+                    written_repr,
+                    format!("'{identifier}' is a set of bits, so it is written over an integer type; '{repr}' is not one"),
+                ));
             }
             self.read_token();
-            let mut bits = Vec::new();
+            let mut bits: Vec<FlagBit> = Vec::new();
+            let mut written: Vec<(String, i64)> = Vec::new();
+            // What a bit takes when it states no number. The first is 1 and
+            // each bit that is one bit doubles it, so a run of bare names is
+            // 1, 2, 4, 8. A number that is not one bit (`None :: 0`, an
+            // `All :: 15` closing a set) leaves it where it stood, which is
+            // what lets those open and close a block of bare names.
+            let mut counter: i64 = 1;
+            let width = (repr.size_of() * 8) as u32;
             // A bit is declared the way every value named under a type is,
             // with `::`, and separated from the next by the line it is on.
             // What a bit may hold is the difference between the two blocks:
-            // a number a C header fixed, rather than an expression.
+            // a number a C header fixed, rather than an expression, and a bit
+            // may hold nothing at all and take the number its place gives it.
             while self.peek_nth(0) != &Token::RightBrace {
                 if matches!(self.peek_nth(0), Token::EndOfFile) {
-                    bail!(
-                        "the bits '{identifier}' names are written inside braces, and this block is not closed"
-                    );
+                    return Err(self.at_mark(
+                        start,
+                        format!("the bits '{identifier}' names are written inside braces, and this block is not closed"),
+                    ));
                 }
+                // A bare name has no `::` to end it, so where one bit stops
+                // and the next starts is the line, which is what separates one
+                // declaration from the next everywhere else in the language.
+                if !bits.is_empty() && self.on_the_same_line() {
+                    return Err(self.at_mark(
+                        self.mark(),
+                        "a set of bits names each of them on a line of its own, and this one follows another".to_string(),
+                    ));
+                }
+                let entry = self.mark();
                 let name = match self.read_token() {
                     Token::Identifier(name) => name.to_string(),
-                    _ => bail!(
-                        "a set of bits names each of them with a name, and this is not one"
-                    ),
+                    _ => {
+                        return Err(self.at_mark(
+                            entry,
+                            "a set of bits names each of them with a name, and this is not one".to_string(),
+                        ));
+                    }
                 };
-                if !matches!(self.read_token(), Token::DoubleColon) {
-                    bail!(
-                        "a bit of a set is declared the way every value named under a type is, so '{name}' is written as '{name} :: 32'"
-                    );
+                let value = if matches!(self.peek_nth(0), Token::DoubleColon)
+                    && self.on_the_same_line()
+                {
+                    self.read_token();
+                    match self.read_token() {
+                        Token::Integer(value) => *value,
+                        _ => {
+                            return Err(self.at_mark(
+                                entry,
+                                format!("a bit of '{identifier}' is a number a C header wrote down, and this is not one"),
+                            ));
+                        }
+                    }
+                } else if self.on_the_same_line()
+                    && !matches!(
+                        self.peek_nth(0),
+                        Token::RightBrace | Token::Identifier(_)
+                    )
+                {
+                    return Err(self.at_mark(
+                        entry,
+                        format!("a bit of a set is declared the way every value named under a type is, so '{name}' is written as '{name} :: 32'"),
+                    ));
+                } else {
+                    counter
+                };
+                if bit_ordinal(value) > width {
+                    let asked = ordinal(bit_ordinal(value));
+                    return Err(self.at_mark(
+                        entry,
+                        format!("a set over '{repr}' holds {width} bits, and '{name}' is the {asked}"),
+                    ));
                 }
-                let value = match self.read_token() {
-                    Token::Integer(value) => *value,
-                    _ => bail!(
-                        "a bit of '{identifier}' is a number a C header wrote down, and this is not one"
-                    ),
-                };
+                if let Some((held, _)) =
+                    written.iter().find(|(_, held)| *held == value)
+                {
+                    return Err(self.at_mark(
+                        entry,
+                        format!("each bit of a set holds a number of its own, and '{name}' holds the same one as '{held}'"),
+                    ));
+                }
+                if value > 0 && value.count_ones() == 1 {
+                    counter = value * 2;
+                }
+                written.push((name.clone(), value));
                 let name = self.ast.intern(&name);
                 bits.push(FlagBit { name, value });
             }

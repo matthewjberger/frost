@@ -59,9 +59,9 @@ SHT_RELA :: 4
 // codes, and `None` is the section that asks for none of them.
 SectionFlags :: flags i64 {
     None :: 0
-    Write :: 1
-    Alloc :: 2
-    ExecInstr :: 4
+    Write
+    Alloc
+    ExecInstr
 }
 
 // Symbol bindings and kinds, as they are packed into one byte together.

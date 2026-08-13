@@ -242,11 +242,6 @@ fn inside_values_block(
     }) else {
         return false;
     };
-    if !matches!(tokens.get(open + 1), Some(Token::Identifier(_)))
-        || !matches!(tokens.get(open + 2), Some(Token::DoubleColon))
-    {
-        return false;
-    }
     // Which declaration the brace belongs to. Only a type declaration may name
     // values under itself, and a function body opening with a constant is the
     // same two tokens, so the word after the declaration's `::` is what tells
@@ -259,7 +254,21 @@ fn inside_values_block(
     }) else {
         return false;
     };
-    !matches!(tokens.get(head + 2), Some(Token::Function))
+    if matches!(tokens.get(head + 2), Some(Token::Function)) {
+        return false;
+    }
+    // A set of bits may open with a bare name, which has no `::` after it to
+    // find, so what the block holds is settled by the declaration rather than
+    // by its first entry. `flags` is a word, so the shape is what says this is
+    // one: the word, a scalar type, and then the brace.
+    if open == head + 4
+        && matches!(tokens.get(head + 2), Some(Token::Identifier(_)))
+        && matches!(tokens.get(head + 3), Some(Token::Identifier(_)))
+    {
+        return true;
+    }
+    matches!(tokens.get(open + 1), Some(Token::Identifier(_)))
+        && matches!(tokens.get(open + 2), Some(Token::DoubleColon))
 }
 
 /// The job each token is doing.

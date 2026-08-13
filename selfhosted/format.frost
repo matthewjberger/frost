@@ -1065,13 +1065,42 @@ inside_values_block :: fn(
     while (open >= 0) {
         held := arena_at(opens, open)
         if (kind_at(tokens, open) == TokenKind::Lbrace && held.name_len == 0) {
-            if (kind_at(tokens, open + 1) != TokenKind::Ident
-                || kind_at(tokens, open + 2) != TokenKind::Coloncolon) {
+            if (heads_a_type_declaration(tokens, opens, open) == false) {
                 return false
             }
-            return heads_a_type_declaration(tokens, opens, open)
+            // A set of bits may open with a bare name, which has no `::` after
+            // it to find, so what the block holds is settled by the
+            // declaration rather than by its first entry. `flags` is a word,
+            // so the shape is what says this is one: the word, a scalar type,
+            // and then the brace.
+            if (heads_a_set_of_bits(tokens, opens, open)) {
+                return true
+            }
+            return (kind_at(tokens, open + 1) == TokenKind::Ident
+                && kind_at(tokens, open + 2) == TokenKind::Coloncolon)
         }
         open = open - 1
+    }
+    false
+}
+
+// Whether the brace at `open` is the one a `flags` declaration opens.
+heads_a_set_of_bits :: fn(
+    mut tokens: Arena<Token>,
+    mut opens: Arena<LocalVar>,
+    open: i64
+) -> bool {
+    mut head := open - 1
+    while (head >= 0) {
+        held := arena_at(opens, head)
+        if (held.name_len == 0 && held.name_off == 1
+            && kind_at(tokens, head) == TokenKind::Ident
+            && kind_at(tokens, head + 1) == TokenKind::Coloncolon) {
+            return (open == head + 4
+                && kind_at(tokens, head + 2) == TokenKind::Ident
+                && kind_at(tokens, head + 3) == TokenKind::Ident)
+        }
+        head = head - 1
     }
     false
 }

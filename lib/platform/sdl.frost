@@ -67,16 +67,16 @@ Window :: distinct ^u8
 // operands are, so nothing has to say so.
 InitFlags :: flags u32 {
     Audio :: 16
-    Video :: 32
+    Video
     Gamepad :: 8192
-    Events :: 16384
+    Events
 }
 
 WindowFlags :: flags u64 {
-    Fullscreen :: 1
+    Fullscreen
     Hidden :: 8
-    Borderless :: 16
-    Resizable :: 32
+    Borderless
+    Resizable
     HighPixelDensity :: 8192
 }
 

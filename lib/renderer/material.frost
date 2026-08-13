@@ -53,9 +53,9 @@ ALPHA_BLEND :: 2
 // no set of bits for them to share.
 MaterialFlags :: flags u32 {
     None :: 0
-    Transparent :: 1
-    Mask :: 2
-    DoubleSided :: 4
+    Transparent
+    Mask
+    DoubleSided
 }
 
 Material :: struct {

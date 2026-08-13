@@ -282,37 +282,59 @@ travels in, and how it crosses to C.
 
 ## 3.6b Flags
 
-`InitFlags :: flags u32 { ... }` declares a named set of bits, each written
-`Name :: number` on a line of its own.
+`ShaderStage :: flags u32 { ... }` declares a named set of bits, one to a line.
+A bit that states no number takes the next one.
+
+```
+ShaderStage :: flags u32 {
+    Vertex
+    Fragment
+    Compute
+}
+
+chosen := ShaderStage::Vertex | ShaderStage::Fragment
+if (flags_has(chosen, ShaderStage::Vertex)) { ... }
+```
+
+`Vertex` is 1, `Fragment` is 2 and `Compute` is 4.
+
+The representation is written, and is an integer type. A set over `u32` holds
+thirty-two bits, and a bit reaching past the last of them is refused.
+
+Each block counts from 1 on its own. What a bit takes, and what the counter
+becomes, is decided by what the bit writes:
+
+| What the bit writes | What it takes | What the counter becomes |
+|---|---|---|
+| a bare name | the counter | the counter doubled |
+| `:: N`, where N is one bit | N | N doubled |
+| `:: N`, anything else | N | unchanged |
+
+The last row is what lets `None :: 0` open a block and `All :: 15` close one.
+
+A number is written where a set skips. SDL's numbers skip twice, so two of its
+four bits state one and the other two count on from there:
 
 ```
 InitFlags :: flags u32 {
     Audio :: 16
-    Video :: 32
-    Events :: 16384
+    Video
     Gamepad :: 8192
+    Events
 }
 
-WindowFlags :: flags u64 {
-    Resizable :: 32
-    HighPixelDensity :: 8192
-}
-
-chosen := InitFlags::Video | InitFlags::Events
-sdl_init(chosen)
-window_create("Frost", 960, 540,
-    WindowFlags::Resizable | WindowFlags::HighPixelDensity)
-
-if (flags_has(chosen, InitFlags::Video)) { ... }
+sdl_init(InitFlags::Video | InitFlags::Events)
 ```
 
-The representation is written, and is an integer type. Each bit's number is
-written out as well, so a set states the numbers a C header fixed.
+`Video` is 32 and `Events` is 16384.
 
 A bit is declared with `::`, the way every value named under a type is (5.2d),
-and one bit goes on a line. What a bit may hold is where the two blocks differ:
-a number a C header fixed, where a value named under a type is an expression of
-that type.
+and one bit goes on a line. Two things separate the two blocks: what a bit may
+hold, a number a C header fixed rather than an expression of the type, and that
+a bit may hold nothing at all and take the number its place gives it.
+
+Two bits of a set may not hold the same number, which elision makes easy to
+write by counting up to a number a later bit states again.
 
 Each bit is named under the type: `InitFlags::Video`. There is no prefix
 convention and no loose constants beside the declaration.

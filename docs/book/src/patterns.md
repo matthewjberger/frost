@@ -91,7 +91,7 @@ here. An enum holds exactly one alternative, and this holds several.
 ```frost,sketch
 InitFlags :: flags u32 {
     Audio :: 16
-    Video :: 32
+    Video
     Events :: 16384
 }
 
@@ -99,8 +99,8 @@ sdl_init(InitFlags::Video | InitFlags::Audio)
 if (flags_has(chosen, InitFlags::Video)) { ... }
 ```
 
-The numbers are still C's, written down, because they have to be. The bits are
-named under a type. Two flags types are not interchangeable, a bare number is
+The numbers are still C's where C's skip, written down because they have to be,
+and `Video` counts on from `Audio` to 32. The bits are named under a type. Two flags types are not interchangeable, a bare number is
 refused, and `|` over two of one still answers with one, so a combination goes
 straight into a call with no annotation.
 

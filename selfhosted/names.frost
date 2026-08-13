@@ -14,14 +14,14 @@ export append_node, array_element, array_index_of, array_length, array_of,
     generic_index_for,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
     is_distinct, distinct_repr, distinct_id, distinct_type,
-    is_flags_type, flag_bit_value, record_flag_bit,
+    is_flags_type, flag_bit_value, flag_bit_holding, record_flag_bit,
     type_value_index, names_values, record_type_value,
     report_type_name, report_distinct_note, written_number,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_indirect, pointer_to, borrow_of,
-    is_integer,
+    is_integer, integer_bits, one_bit, bit_ordinal, report_ordinal,
     is_columns_ty, columns_lookup, columns_made_for, record_columns,
     is_columns_new_call, field_type_by_range,
     is_columns_bookkeeping,
@@ -1047,6 +1047,21 @@ flag_bit_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
     -1
 }
 
+// Where in the table the bit of `ty` holding `value` sits, or -1 when the type
+// names no bit holding it. A set names each of its bits a number of its own,
+// and this is what a declaration asks to find out.
+flag_bit_holding :: fn(mut p: Parser, ty: i64, value: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.flag_bits.count) {
+        entry := arena_at(p.flag_bits, i)
+        if (entry.ty == ty && entry.value == value) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
 record_flag_bit :: fn(mut p: Parser, ty: i64, off: i64, len: i64, value: i64) {
     arena_push(
         p.flag_bits,
@@ -1680,6 +1695,60 @@ is_integer :: fn(ty: i64) -> bool {
     (held == TY_I8 || held == TY_I16 || held == TY_I32 || held == TY_I64
         || held == TY_ISIZE || held == TY_U8 || held == TY_U16
         || held == TY_U32 || held == TY_U64 || held == TY_USIZE)
+}
+
+// How many bits an integer type holds, which is how many bits a set written
+// over it has to name.
+integer_bits :: fn(ty: i64) -> i64 {
+    held := distinct_repr(ty)
+    if (held == TY_I8 || held == TY_U8) { return 8 }
+    if (held == TY_I16 || held == TY_U16) { return 16 }
+    if (held == TY_I32 || held == TY_U32) { return 32 }
+    64
+}
+
+// Whether a number is one bit, which is what makes a bit of a set move the
+// counter the next bare name reads.
+one_bit :: fn(value: i64) -> bool {
+    value > 0 && (value & (value - 1)) == 0
+}
+
+// Which bit of a set a number reaches, counting the lowest as the first. A set
+// over `u32` holds thirty-two, so anything reaching past that is refused, and
+// the answer is what the refusal names. Zero reaches no bit and fits anywhere,
+// which is what lets `None :: 0` open a set of any width.
+bit_ordinal :: fn(value: i64) -> i64 {
+    if (value <= 0) {
+        return 0
+    }
+    mut held := value
+    mut count: i64 = 0
+    while (held != 0) {
+        count = count + 1
+        held = cast($i64, cast($u64, held) >> 1)
+    }
+    count
+}
+
+// A count written the way it is spoken. Only the widths of the integer types
+// reach this, so the numbers are small, but the rule is the English one so the
+// two compilers have the same one to write.
+report_ordinal :: fn(count: i64) {
+    report_int(count)
+    if (count % 100 / 10 == 1) {
+        report("th")
+        return
+    }
+    ones := count % 10
+    if (ones == 1) {
+        report("st")
+    } else if (ones == 2) {
+        report("nd")
+    } else if (ones == 3) {
+        report("rd")
+    } else {
+        report("th")
+    }
 }
 
 is_float :: fn(ty: i64) -> bool {
