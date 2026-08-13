@@ -4572,6 +4572,31 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A `?` written inside a run. The walk that finds one and the walk that
+    // rewrites it both listed the forms they descend into and then caught a
+    // run under the wildcard, so the `?` was never seen and never rewritten.
+    (
+        "a_question_mark_inside_a_run_hands_the_failure_up",
+        "import \"io.frost\"
+         Bad :: struct { c: i64 }
+         risky :: fn(n: i64) -> i64 ! Bad {
+             if (n < 0) { return Bad { c = n } }
+             n * 2
+         }
+         outer :: fn(n: i64) -> i64 ! Bad {
+             run := [risky(n)?, 1]
+             run[0] + run[1]
+         }
+         main :: fn() -> i64 {
+             match outer(5) {
+                 case Result::Ok { value }: print(\"ok {}\\n\", value)
+                 case Result::Err { error }: print(\"err {}\\n\", error.c)
+             }
+             0
+         }
+",
+        "ok 11\n",
+    ),
     // A `cast` naming a distinct type, written inside a run. The walk that
     // resolves a written name to the type it stands for stopped at every
     // literal, so the cast was asked to reach a type nothing declared.

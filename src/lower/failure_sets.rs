@@ -192,7 +192,10 @@ fn expression_has_try(ast: &Ast, expression: ExprId) -> bool {
                     .any(|case| block_has_try(ast, case.body))
         }
         Expression::Unsafe(body) => block_has_try(ast, *body),
-        Expression::Tuple(items) => ast
+        // A run and a written tuple both hold expressions. The run was caught
+        // by the wildcard below, which is the one the note swears by.
+        Expression::Tuple(items)
+        | Expression::Literal(crate::ast::Literal::Array(items)) => ast
             .exprs_in(*items)
             .iter()
             .any(|item| expression_has_try(ast, *item)),
@@ -473,7 +476,8 @@ impl Lowerer {
                     self.rewrite_inner_block(ast, body, result, error);
                 }
             }
-            Expression::Tuple(items) => {
+            Expression::Tuple(items)
+            | Expression::Literal(crate::ast::Literal::Array(items)) => {
                 for index in items.indices() {
                     let item = ast.expr_list[index];
                     self.rewrite_expression(ast, item, result, error);

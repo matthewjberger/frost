@@ -209,6 +209,13 @@ pub(crate) fn names_in_expression(
         Expression::ArrayRepeat(value, _) => {
             names_in_expression(ast, *value, out)
         }
+        // A run written out holds expressions, so a name written inside one is
+        // a name this declaration reaches.
+        Expression::Literal(crate::ast::Literal::Array(elements)) => {
+            for element in ast.exprs_in(*elements) {
+                names_in_expression(ast, *element, out);
+            }
+        }
         Expression::Literal(_) | Expression::Boolean(_) => {}
     }
 }

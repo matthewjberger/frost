@@ -711,6 +711,13 @@ fn walk_expression(
                 walk_expression(ast, field.value, found, at);
             }
         }
+        // A run written out holds expressions, and one of them may name an
+        // instance of a generic that holds a resource.
+        Expression::Literal(crate::ast::Literal::Array(elements)) => {
+            for element in ast.exprs_in(*elements) {
+                walk_expression(ast, *element, found, at);
+            }
+        }
         Expression::Identifier(_)
         | Expression::Literal(_)
         | Expression::Boolean(_) => {}
