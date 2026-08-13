@@ -1410,11 +1410,22 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 want_single(p, value, wanted)
                 // A field holds what its declaration says, the way a binding
                 // does. Nothing asked here, so a narrower field took a wider
-                // value and said nothing about the loss. Asked for what it
-                // reports rather than for what it answers: a value that does
-                // not fit says so itself, and the answer is the argument
-                // list's question rather than this one's.
-                if (value_fits(p, value, type_of(p, value), wanted)) {}
+                // value and said nothing about the loss, and a field of one
+                // type took a value of another. What a conversion costs is
+                // reported by the asking, which leaves only the values that
+                // stand for nothing the field can hold.
+                value_ty := type_of(p, value)
+                if (value_fits(p, value, value_ty, wanted) == false) {
+                    vnode := arena_at(p.arena, value)
+                    report_where(p.modules, p.src, vnode.pos)
+                    report_fmt(
+                        "this field is a '{}' and the value is ",
+                        type_text(p, wanted)
+                    )
+                    report_described(p, value, value_ty, wanted)
+                    report_distinct_note(p, value, value_ty, wanted)
+                    frost_rt_recover_escape()
+                }
             }
             fid = next_field
         }

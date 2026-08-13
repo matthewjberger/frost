@@ -5873,29 +5873,14 @@ impl<'a> FunctionLowering<'a> {
                         spelled(annotated)
                     );
                 }
-                // A value written into a declared type it does not fit. The
-                // same question the IR typechecker asks, asked here while both
-                // types are still spelled the way the reader wrote them: an
-                // aggregate travels by address, so the coercion below takes one
-                // and every check after it agrees about a pointer, and the
-                // complaint lands naming the lowered local rather than the
-                // binding.
-                //
-                // Two bridges the coercion builds and `fits` does not carry: an
-                // array reaching a slice becomes a view of the whole of itself,
-                // and a bare number takes the width the binding declares, which
-                // is what `held : f64 = 0` means.
-                // A number takes the width and the kind the binding declares,
-                // which is what `held : f64 = mantissa` means and what the
-                // coercion below builds.
-                let numeric = |ty: &Type| ty.is_integer() || ty.is_float();
+                // A value written into a declared type it does not fit, asked
+                // while both types are still spelled the way the reader wrote
+                // them. An aggregate travels by address, so the coercion below
+                // takes one and every check after it agrees about a pointer,
+                // and the complaint lands naming the lowered local rather than
+                // the binding.
                 if let Some(annotated) = &type_annotation
-                    && !(numeric(&value_type) && numeric(annotated))
-                    && !slice_element_wanted(annotated).is_some_and(|element| {
-                        matches!(&value_type, Type::Array(held, _)
-                            if **held == element)
-                    })
-                    && !crate::ir::typecheck::fits(&value_type, annotated)
+                    && !value_stands_for(&value_type, annotated)
                 {
                     bail!(
                         "this binding is a '{}' and the value is a '{}'",
@@ -9217,6 +9202,21 @@ impl<'a> FunctionLowering<'a> {
         target: &Type,
         consume: bool,
     ) -> Result<IrOperand> {
+        self.aggregate_address_for(
+            argument,
+            target,
+            consume,
+            AggregateSite::Argument,
+        )
+    }
+
+    fn aggregate_address_for(
+        &mut self,
+        argument: ExprId,
+        target: &Type,
+        consume: bool,
+        site: AggregateSite,
+    ) -> Result<IrOperand> {
         // An aggregate travels by address, and an address is a machine word:
         // once this has taken one, nothing downstream can tell a pointer to one
         // struct from a pointer to another. So the two are compared here, which
@@ -9233,9 +9233,8 @@ impl<'a> FunctionLowering<'a> {
         {
             return locate(
                 Err(anyhow::anyhow!(
-                    "this argument is a '{}' and a '{}' is what is wanted here",
-                    spelled(&given),
-                    spelled(target)
+                    "{}",
+                    mismatch_sentence(site, &given, target)
                 )),
                 self.at_expression(argument),
             );
@@ -9252,9 +9251,8 @@ impl<'a> FunctionLowering<'a> {
         {
             return locate(
                 Err(anyhow::anyhow!(
-                    "this argument is a '{}' and a '{}' is what is wanted here",
-                    spelled(&given),
-                    spelled(target)
+                    "{}",
+                    mismatch_sentence(site, &given, target)
                 )),
                 self.at_expression(argument),
             );
@@ -9342,8 +9340,28 @@ impl<'a> FunctionLowering<'a> {
                 Ok(self.address_of_local(temp, target))
             }
             _ => {
-                let (operand, _) =
+                let (operand, given) =
                     self.lower_expression(argument, Some(target))?;
+                // A value of a type the place cannot hold. Below this the value
+                // is put in memory and pointed at, and a pointer carries no
+                // sign of what it came from, so the fault surfaced in the
+                // verifier as a lowered local assigned the wrong thing.
+                match site {
+                    AggregateSite::Field => {
+                        self.field_holds(&given, target, argument)?;
+                    }
+                    AggregateSite::Argument => {
+                        if !value_stands_for(&given, target) {
+                            return locate(
+                                Err(anyhow::anyhow!(
+                                    "{}",
+                                    mismatch_sentence(site, &given, target)
+                                )),
+                                self.at_expression(argument),
+                            );
+                        }
+                    }
+                }
                 let IrOperand::Local(local) = operand else {
                     bail!("cannot pass this value as an aggregate argument");
                 };
@@ -11467,6 +11485,10 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(given.value, Some(field_type))?;
+                // A field holds what its declaration says, the way a binding
+                // does. Nothing asked it here, so the store went to the
+                // verifier and came back named as one through a pointer.
+                self.field_holds(&value_type, field_type, given.value)?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -11510,7 +11532,12 @@ impl<'a> FunctionLowering<'a> {
                 }
                 // A value written into a field is moved there, so a linear one
                 // is consumed by the literal that holds it.
-                self.aggregate_argument_address(expression, field_type, true)
+                self.aggregate_address_for(
+                    expression,
+                    field_type,
+                    true,
+                    AggregateSite::Field,
+                )
             }
         }
     }
@@ -11617,6 +11644,7 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(given.value, Some(field_type))?;
+                self.field_holds(&value_type, field_type, given.value)?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -11625,6 +11653,50 @@ impl<'a> FunctionLowering<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The rule a field of a struct or of an enum variant is held to, which is
+    /// the one an annotated binding is held to: a distinct type is not its
+    /// representation, and what is left has to be something the field holds.
+    fn field_holds(
+        &self,
+        value_type: &Type,
+        field_type: &Type,
+        value: ExprId,
+    ) -> Result<()> {
+        if distinct_mismatch(
+            self.ast,
+            value,
+            value_type,
+            field_type,
+            &self.builder.flags,
+        ) {
+            let (described, note) = nominal_words(
+                self.ast,
+                value,
+                value_type,
+                field_type,
+                &self.builder.flags,
+            );
+            return locate(
+                Err(anyhow::anyhow!(
+                    "this field is a '{}' and the value is {described}; {note}",
+                    spelled(field_type)
+                )),
+                self.at_expression(value),
+            );
+        }
+        if value_stands_for(value_type, field_type) {
+            return Ok(());
+        }
+        locate(
+            Err(anyhow::anyhow!(
+                "this field is a '{}' and the value is a '{}'",
+                spelled(field_type),
+                spelled(value_type)
+            )),
+            self.at_expression(value),
+        )
     }
 
     /// Every variant of the matched enum has to be covered, or a `case _`
@@ -12635,6 +12707,61 @@ fn names_a_distinct(from: &Type, target: &Type) -> bool {
         return false;
     };
     from == repr.as_ref()
+}
+
+/// Where a value that travels by address was written, which is what the report
+/// about it names. One walk takes an aggregate's address for a call and for a
+/// literal's field alike, and it used to call both of them arguments.
+#[derive(Clone, Copy)]
+enum AggregateSite {
+    Argument,
+    Field,
+}
+
+fn mismatch_sentence(
+    site: AggregateSite,
+    given: &Type,
+    wanted: &Type,
+) -> String {
+    match site {
+        AggregateSite::Argument => format!(
+            "this argument is a '{}' and a '{}' is what is wanted here",
+            spelled(given),
+            spelled(wanted)
+        ),
+        AggregateSite::Field => format!(
+            "this field is a '{}' and the value is a '{}'",
+            spelled(wanted),
+            spelled(given)
+        ),
+    }
+}
+
+/// Whether a value of one type may stand where another is wanted.
+///
+/// The rule an annotated binding is held to, asked everywhere a value lands.
+/// Every position used to ask its own partial question and leave the rest to
+/// the coercion, which passes anything it has no conversion for straight
+/// through; the fault then surfaced in the verifier, whose sentences name a
+/// lowered local and a pointer because its reader is this compiler rather than
+/// the one who wrote the program.
+///
+/// Two bridges the coercion builds that `fits` does not carry: an array
+/// reaching a slice becomes a view of the whole of itself, and a number takes
+/// the width and the kind the place declares, which is what `held : f64 = 0`
+/// means. What that widening costs is settled in the coercion, which refuses
+/// the narrowing half of it.
+fn value_stands_for(from: &Type, to: &Type) -> bool {
+    let numeric = |ty: &Type| ty.is_integer() || ty.is_float();
+    if numeric(from) && numeric(to) {
+        return true;
+    }
+    if slice_element_wanted(to).is_some_and(
+        |element| matches!(from, Type::Array(held, _) if **held == element),
+    ) {
+        return true;
+    }
+    crate::ir::typecheck::fits(from, to)
 }
 
 fn is_numeric(ty: &Type) -> bool {

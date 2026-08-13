@@ -3143,7 +3143,7 @@ bind_group_descriptor_init :: fn() -> BindGroupDescriptor {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0
         },
-        layout = unsafe { ptr_cast($u8, zero) },
+        layout = cast($BindGroupLayout, unsafe { ptr_cast($u8, zero) }),
         entries_count = 0,
         entries = unsafe { ptr_cast($u8, zero) },
     }
@@ -3154,11 +3154,11 @@ bind_group_entry_init :: fn() -> BindGroupEntry {
     BindGroupEntry {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
         binding = 0,
-        buffer = unsafe { ptr_cast($u8, zero) },
+        buffer = cast($Buffer, unsafe { ptr_cast($u8, zero) }),
         offset = 0,
         size = WHOLE_SIZE,
-        sampler = unsafe { ptr_cast($u8, zero) },
-        texture_view = unsafe { ptr_cast($u8, zero) },
+        sampler = cast($Sampler, unsafe { ptr_cast($u8, zero) }),
+        texture_view = cast($TextureView, unsafe { ptr_cast($u8, zero) }),
     }
 }
 
@@ -3317,7 +3317,7 @@ compute_pipeline_descriptor_init :: fn() -> ComputePipelineDescriptor {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0
         },
-        layout = unsafe { ptr_cast($u8, zero) },
+        layout = cast($PipelineLayout, unsafe { ptr_cast($u8, zero) }),
         compute = compute_state_init(),
     }
 }
@@ -3326,7 +3326,7 @@ compute_state_init :: fn() -> ComputeState {
     zero := 0
     ComputeState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        module = unsafe { ptr_cast($u8, zero) },
+        module = cast($ShaderModule, unsafe { ptr_cast($u8, zero) }),
         entry_point = StringView {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0
@@ -3388,7 +3388,10 @@ external_texture_binding_entry_init :: fn() -> ExternalTextureBindingEntry {
     zero := 0
     ExternalTextureBindingEntry {
         chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },
-        external_texture = unsafe { ptr_cast($u8, zero) },
+        external_texture = cast(
+            $ExternalTexture,
+            unsafe { ptr_cast($u8, zero) }
+        ),
     }
 }
 
@@ -3403,7 +3406,7 @@ fragment_state_init :: fn() -> FragmentState {
     zero := 0
     FragmentState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        module = unsafe { ptr_cast($u8, zero) },
+        module = cast($ShaderModule, unsafe { ptr_cast($u8, zero) }),
         entry_point = StringView {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0
@@ -3506,7 +3509,7 @@ pass_timestamp_writes_init :: fn() -> PassTimestampWrites {
     zero := 0
     PassTimestampWrites {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        query_set = unsafe { ptr_cast($u8, zero) },
+        query_set = cast($QuerySet, unsafe { ptr_cast($u8, zero) }),
         beginning_of_pass_write_index = QUERY_SET_INDEX_UNDEFINED,
         end_of_pass_write_index = QUERY_SET_INDEX_UNDEFINED,
     }
@@ -3594,9 +3597,9 @@ render_pass_color_attachment_init :: fn() -> RenderPassColorAttachment {
     zero := 0
     RenderPassColorAttachment {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        view = unsafe { ptr_cast($u8, zero) },
+        view = cast($TextureView, unsafe { ptr_cast($u8, zero) }),
         depth_slice = DEPTH_SLICE_UNDEFINED,
-        resolve_target = unsafe { ptr_cast($u8, zero) },
+        resolve_target = cast($TextureView, unsafe { ptr_cast($u8, zero) }),
         load_op = 0,
         store_op = 0,
         clear_value = color_init(),
@@ -3607,7 +3610,7 @@ render_pass_depth_stencil_attachment_init :: fn() -> RenderPassDepthStencilAttac
     zero := 0
     RenderPassDepthStencilAttachment {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        view = unsafe { ptr_cast($u8, zero) },
+        view = cast($TextureView, unsafe { ptr_cast($u8, zero) }),
         depth_load_op = 0,
         depth_store_op = 0,
         depth_clear_value = DEPTH_CLEAR_VALUE_UNDEFINED,
@@ -3630,7 +3633,7 @@ render_pass_descriptor_init :: fn() -> RenderPassDescriptor {
         color_attachments_count = 0,
         color_attachments = unsafe { ptr_cast($u8, zero) },
         depth_stencil_attachment = unsafe { ptr_cast($u8, zero) },
-        occlusion_query_set = unsafe { ptr_cast($u8, zero) },
+        occlusion_query_set = cast($QuerySet, unsafe { ptr_cast($u8, zero) }),
         timestamp_writes = unsafe { ptr_cast($u8, zero) },
     }
 }
@@ -3651,7 +3654,7 @@ render_pipeline_descriptor_init :: fn() -> RenderPipelineDescriptor {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0
         },
-        layout = unsafe { ptr_cast($u8, zero) },
+        layout = cast($PipelineLayout, unsafe { ptr_cast($u8, zero) }),
         vertex = vertex_state_init(),
         primitive = primitive_state_init(),
         depth_stencil = unsafe { ptr_cast($u8, zero) },
@@ -3668,7 +3671,7 @@ request_adapter_options_init :: fn() -> RequestAdapterOptions {
         power_preference = 0,
         force_fallback_adapter = 0,
         backend_type = 0,
-        compatible_surface = unsafe { ptr_cast($u8, zero) },
+        compatible_surface = cast($Surface, unsafe { ptr_cast($u8, zero) }),
     }
 }
 
@@ -3785,7 +3788,7 @@ surface_capabilities_init :: fn() -> SurfaceCapabilities {
     zero := 0
     SurfaceCapabilities {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        usages = 0,
+        usages = cast($TextureUsage, 0),
         formats_count = 0,
         formats = unsafe { ptr_cast($u8, zero) },
         present_modes_count = 0,
@@ -3808,7 +3811,7 @@ surface_configuration_init :: fn() -> SurfaceConfiguration {
     zero := 0
     SurfaceConfiguration {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        device = unsafe { ptr_cast($u8, zero) },
+        device = cast($Device, unsafe { ptr_cast($u8, zero) }),
         format = 0,
         usage = TextureUsage::RenderAttachment,
         width = 0,
@@ -3887,7 +3890,7 @@ surface_texture_init :: fn() -> SurfaceTexture {
     zero := 0
     SurfaceTexture {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        texture = unsafe { ptr_cast($u8, zero) },
+        texture = cast($Texture, unsafe { ptr_cast($u8, zero) }),
         status = 0,
     }
 }
@@ -3896,7 +3899,7 @@ texel_copy_buffer_info_init :: fn() -> TexelCopyBufferInfo {
     zero := 0
     TexelCopyBufferInfo {
         layout = texel_copy_buffer_layout_init(),
-        buffer = unsafe { ptr_cast($u8, zero) },
+        buffer = cast($Buffer, unsafe { ptr_cast($u8, zero) }),
     }
 }
 
@@ -3912,7 +3915,7 @@ texel_copy_buffer_layout_init :: fn() -> TexelCopyBufferLayout {
 texel_copy_texture_info_init :: fn() -> TexelCopyTextureInfo {
     zero := 0
     TexelCopyTextureInfo {
-        texture = unsafe { ptr_cast($u8, zero) },
+        texture = cast($Texture, unsafe { ptr_cast($u8, zero) }),
         mip_level = 0,
         origin = origin_3D_init(),
         aspect = 0,
@@ -4013,7 +4016,7 @@ vertex_state_init :: fn() -> VertexState {
     zero := 0
     VertexState {
         next_in_chain = unsafe { ptr_cast($u8, zero) },
-        module = unsafe { ptr_cast($u8, zero) },
+        module = cast($ShaderModule, unsafe { ptr_cast($u8, zero) }),
         entry_point = StringView {
             data = unsafe { ptr_cast($i8, zero) },
             length = 0

@@ -1154,6 +1154,36 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this binding is a 'bool' and the value is a 'i64'",
     ),
+    // A field holds what its declaration says. Neither compiler asked, so the
+    // value went into the store unchecked and the bootstrap's report came from
+    // the verifier, which names a lowered local and a pointer.
+    (
+        "a_struct_field_holds_only_what_it_declares",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 0 }
+         Box :: struct { f: str }
+         main :: fn() -> i64 {
+             b := Box { f = give() }
+             0
+         }
+",
+        "this field is a 'str' and the value is a 'i64'",
+    ),
+    // The rule a binding is held to about a distinct type, asked of a field:
+    // writing the representation straight in takes the name off the value.
+    (
+        "a_field_of_a_distinct_type_is_not_its_representation",
+        "import \"io.frost\"
+         Tag :: distinct i64
+         Box :: struct { f: Tag }
+         give :: fn() -> i64 { 0 }
+         main :: fn() -> i64 {
+             b := Box { f = give() }
+             0
+         }
+",
+        "this field is a 'Tag' and the value is a 'i64'; a distinct type is not its representation",
+    ),
     (
         "a_call_answering_nothing_fills_no_annotated_binding",
         "import \"io.frost\"
