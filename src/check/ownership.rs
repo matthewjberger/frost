@@ -2649,9 +2649,8 @@ impl MoveChecker<'_> {
                     // a `ref` binding is a borrow, so neither its own type nor
                     // `is_linear_variable` answers for the element it reaches.
                     if !borrows
-                        && declared.is_some_and(|ty| {
-                            ty.is_linear_with(self.linear)
-                        })
+                        && declared
+                            .is_some_and(|ty| ty.is_linear_with(self.linear))
                         && let Expression::Identifier(held) =
                             ast.expr(*argument)
                         && self.view_borrows.contains(ast.name(*held))
