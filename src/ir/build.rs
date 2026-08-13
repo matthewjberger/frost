@@ -12703,6 +12703,17 @@ impl<'a> FunctionLowering<'a> {
             {
                 IrOperand::Constant(IrConstant::Float(*value, to.clone()))
             }
+            // A whole number written where a float is wanted. A literal has no
+            // type of its own until the context gives it one, so it is the
+            // float it is read at rather than a conversion that loses anything.
+            IrOperand::Constant(IrConstant::Integer(value, _))
+                if matches!(to, Type::F32 | Type::F64) =>
+            {
+                IrOperand::Constant(IrConstant::Float(
+                    *value as f64,
+                    to.clone(),
+                ))
+            }
             _ if needs_cast(from, to) => {
                 if is_narrowing(from, to) {
                     bail!(
@@ -12911,11 +12922,25 @@ fn is_narrowing(from: &Type, to: &Type) -> bool {
         return true;
     }
     if is_castable_integer(from) && is_castable_integer(to) {
-        return to.size_of() < from.size_of();
+        // Not the width alone. An i8 of -1 read at a u8 is 255, and the two are
+        // one byte each, so a width comparison had nothing to say about the one
+        // conversion between them that changes the value. What settles it is
+        // whether every value the source holds is one the destination holds.
+        let Some(((low, high), (floor, ceiling))) =
+            range_of(from).zip(range_of(to))
+        else {
+            return to.size_of() < from.size_of();
+        };
+        return low < floor || high > ceiling;
     }
     if from.is_float() && to.is_float() {
         return to.size_of() < from.size_of();
     }
+    // A whole number reaching a float is left alone on purpose, though an i64
+    // past 2^53 does come back out of an f64 as a different number. Mixed
+    // arithmetic rests on it: `held : f32 = 0.25 + count` is written that way
+    // throughout, and a rule against it is a change to the language rather
+    // than a defect in this one.
     false
 }
 

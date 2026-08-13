@@ -1183,6 +1183,20 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this is a 'Tag' and a 'i32' is wanted, which cannot hold all of one; write cast($i32, ...) to say the loss is meant",
     ),
+    // A sign change at the same width. An i8 of -1 read at a u8 is 255, and
+    // both are one byte, so the width comparison the rule rested on had nothing
+    // to say about the one conversion between them that changes the value.
+    (
+        "a_sign_change_loses_the_value_and_needs_a_cast",
+        "import \"io.frost\"
+         give :: fn() -> i8 { -1 }
+         main :: fn() -> i64 {
+             b : u8 = give()
+             0
+         }
+",
+        "this is a 'i8' and a 'u8' is wanted, which cannot hold all of one",
+    ),
     // An unchecked operation written inside a run. Every walk that listed the
     // expression forms it descends into caught a run under the wildcard in
     // `Literal(_)`, so what a run held was never reached and `ptr_cast` needed

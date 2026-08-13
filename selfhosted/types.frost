@@ -379,11 +379,20 @@ is_narrowing :: fn(from: i64, to: i64) -> bool {
         return true
     }
     if (is_integer(held_from) && is_integer(held_to)) {
-        return scalar_size(held_to) < scalar_size(held_from)
+        // Not the width alone. An i8 of -1 read at a u8 is 255, and the two are
+        // one byte each, so a width comparison had nothing to say about the one
+        // conversion between them that changes the value. What settles it is
+        // whether every value the source holds is one the destination holds.
+        return (integer_low(held_from) < integer_low(held_to)
+            || integer_high(held_from) > integer_high(held_to))
     }
     if (is_float(held_from) && is_float(held_to)) {
         return scalar_size(held_to) < scalar_size(held_from)
     }
+    // A whole number reaching a float is left alone on purpose, though an i64
+    // past 2^53 does come back out of an f64 as a different number. Mixed
+    // arithmetic rests on it, and a rule against it is a change to the
+    // language rather than a defect in this one.
     false
 }
 
