@@ -613,7 +613,9 @@ mod tests {
         assert!(before.contains("Fallible"), "parsed sig: {before}");
         lower_failure_sets(&mut program, &mut HashSet::new()).unwrap();
         let after = format!("{:?}", program);
-        assert!(after.contains("__Result_0"), "after: {after}");
+        // Named for the pair it was made for, which is the name a program
+        // writes to reach `Result::Ok` and `Result::Err`.
+        assert!(after.contains("Result<i64, FileError>"), "after: {after}");
         assert!(!after.contains("Fallible"), "after still fallible: {after}");
     }
 
