@@ -195,8 +195,8 @@ runtime through the same `extern fn` mechanism:
 
 ```frost
 frost_rt_bounds_check :: extern fn(index: i64, length: i64)
-frost_rt_assert       :: extern fn(cond: bool)
-frost_rt_read_file    :: extern fn(path: ^i8) -> ^i8
+frost_rt_assert :: extern fn(cond: bool)
+frost_rt_read_file :: extern fn(path: ^i8) -> ^i8
 ```
 
 Its interface is scalar-only. Nothing is passed or returned by aggregate value,

@@ -106,8 +106,8 @@ because it is an ordinary struct:
 
 ```frost
 Allocator :: struct {
-    take:  fn(^u8, i64) -> ^u8,   // state, size
-    state: ^u8,                   // the allocator's own state
+    take: fn(^u8, i64) -> ^u8, // state, size
+    state: ^u8, // the allocator's own state
 }
 ```
 

@@ -305,7 +305,7 @@ shaped this way.
 ## `std/option.frost`, a value that may be absent
 
 ```frost
-Option :: enum($T: Type) { None, Some { value: T } }
+Option :: enum ($T: Type) { None, Some { value: T } }
 ```
 
 An ordinary generic enum, written in Frost like the rest of the library. Frost

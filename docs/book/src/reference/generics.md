@@ -6,8 +6,8 @@ A type parameter is written `$T`. It may appear on a function's parameters and o
 a struct or enum declaration:
 
 ```frost
-Pair  :: struct($T: Type) { first: T, second: T }
-Option :: enum($T: Type) { None, Some { value: T } }
+Pair :: struct($T: Type) { first: T, second: T }
+Option :: enum ($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
@@ -392,7 +392,7 @@ for it:
 ```frost
 import "io.frost"
 
-Heap :: struct { }
+Heap :: struct {}
 Bump :: struct { room: i64, mark: i64 }
 
 room_of :: fn($A: Type = Heap, $slack: usize = 2, count: i64) -> i64 {
@@ -419,13 +419,13 @@ writer cares about while the declaration says the rest:
 ```frost
 import "io.frost"
 
-Heap :: struct { }
+Heap :: struct {}
 Bump :: struct { room: i64 }
 
 Holder :: struct($T: Type, $A: Type = Heap) { value: T, where_from: A }
 
 main :: fn() -> i64 {
-    mut plain := Holder<i64> { value = 7, where_from = Heap { } }
+    mut plain := Holder<i64> { value = 7, where_from = Heap {} }
     mut named: Holder<i64, Heap> = plain
     print("{}
 ", named.value)
@@ -553,7 +553,7 @@ An implementation is a constant of it, and a constant is its value wherever it
 is named:
 
 ```frost
-i64_less  :: fn(a: i64, b: i64) -> bool { a < b }
+i64_less :: fn(a: i64, b: i64) -> bool { a < b }
 i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
 
 i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }

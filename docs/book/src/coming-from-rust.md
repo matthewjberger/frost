@@ -182,7 +182,7 @@ Rust's newtype is a tuple struct you wrap and unwrap: `Meters(3)` going in and
 
 ```frost
 Meters :: distinct i64
-Feet   :: distinct i64
+Feet :: distinct i64
 ```
 
 The representation is the inner type, so arithmetic, layout and the C ABI are
@@ -423,14 +423,14 @@ once) into a linear rule (use *exactly* once):
 ```frost
 import "io.frost"
 File :: linear struct { fd: i64 }
-open  :: fn(n: i64) -> File { File { fd = n } }
-close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
+open :: fn(n: i64) -> File { File { fd = n } }
+close :: fn(move f: File) -> i64 { f.fd } // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print("{}\n", close(f))   // consumes f exactly once
-    // close(f)         // error: use of moved value
-}                       // f still live here: linear value never consumed
+    print("{}\n", close(f)) // consumes f exactly once
+// close(f)         // error: use of moved value
+} // f still live here: linear value never consumed
 ```
 
 A `linear` value that reaches the end of its scope without being consumed is a
@@ -453,8 +453,8 @@ at the top level of a body, and `break` and `continue` do not run one:
 ```frost
 import "io.frost"
 work :: fn() {
-    defer print("cleanup\n")   // runs on the way out
-    // ... body ...
+    defer print("cleanup\n") // runs on the way out
+// ... body ...
 }
 ```
 
@@ -529,14 +529,14 @@ import "slab.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
 
-    print("{}\n", world[hero].hp)        // 100
-    world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print("{}\n", world[hero].hp)        // 75
+    print("{}\n", world[hero].hp) // 100
+    world[hero].hp = world[hero].hp - 25 // the subscript is a place to write
+    print("{}\n", world[hero].hp) // 75
     0
 }
 ```
@@ -886,7 +886,7 @@ and are mutated in place through the slab.
 import "io.frost"
 import "slab.frost"
 
-Kind   :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
+Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
 delta :: fn(e: Entity) -> i64 {
@@ -898,20 +898,19 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
-    player := slab_insert(world,
-        Entity { hp = 100, kind = Kind::Player })
+    player := slab_insert(world, Entity { hp = 100, kind = Kind::Player })
     goblin := slab_insert(world,
         Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
 
     // The player takes the goblin's damage, written straight into the slot.
     world[player].hp = world[player].hp + delta(world[goblin])
-    print("hp {}\n", world[player].hp)                 // 85
+    print("hp {}\n", world[player].hp) // 85
 
     slab_release(world, goblin)
-    print("{}\n", slab_alive(world, goblin))   // 0, the handle is stale
+    print("{}\n", slab_alive(world, goblin)) // 0, the handle is stale
     0
 }
 ```

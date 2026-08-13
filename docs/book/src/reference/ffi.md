@@ -178,7 +178,7 @@ signature is a callback registration:
 ```frost
 Ctx :: struct { hits: i64 }
 
-on_event         :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
+on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 register_handler :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 

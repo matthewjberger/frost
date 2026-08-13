@@ -30,10 +30,10 @@ main :: fn() -> i64 {
     count := 7
 
     // `:` states the type instead of inferring it.
-    total : i64 = 0
+    total: i64 = 0
 
     // `mut` makes a binding assignable. A binding without it is fixed.
-    mut running : i64 = 0
+    mut running: i64 = 0
     running = running + count
 
     // A block is an expression whose value is its trailing expression, so a
@@ -50,34 +50,34 @@ plain structs.
 ```frost
 main :: fn() -> i64 {
     // Signed and unsigned integers, by width.
-    a : i8 = -1
-    b : i16 = -2
-    c : i32 = -3
-    d : i64 = -4
-    e : u8 = 1
-    f : u16 = 2
-    g : u32 = 3
-    h : u64 = 4
+    a: i8 = -1
+    b: i16 = -2
+    c: i32 = -3
+    d: i64 = -4
+    e: u8 = 1
+    f: u16 = 2
+    g: u32 = 3
+    h: u64 = 4
 
     // Pointer-width integers.
-    i : isize = -5
-    j : usize = 5
+    i: isize = -5
+    j: usize = 5
 
     // Floats and truth values.
-    k : f32 = 1.5
-    l : f64 = 2.5
-    m : bool = true
-    n : bool = false
+    k: f32 = 1.5
+    l: f64 = 2.5
+    m: bool = true
+    n: bool = false
 
     // Text is a byte slice: an address and a length.
-    o : str = "text"
+    o: str = "text"
 
     // A fixed array, and a slice of one.
-    p : [3]i64 = [1, 2, 3]
-    q : []i64 = p
+    p: [3]i64 = [1, 2, 3]
+    q: []i64 = p
 
     // The repeat form, for a large or zeroed buffer.
-    r : [8]i64 = [0; 8]
+    r: [8]i64 = [0; 8]
     0
 }
 ```
@@ -89,7 +89,7 @@ Arithmetic traps on overflow on every backend. Use `wrap_add`, `wrap_sub` and
 import "io.frost"
 
 main :: fn() -> i64 {
-    mut hash : u64 = 1469598103934665603
+    mut hash: u64 = 1469598103934665603
     hash = wrap_mul(hash, 1099511628211)
     print("{}\n", hash)
     0
@@ -106,8 +106,8 @@ Meters :: distinct i64
 Feet :: distinct i64
 
 main :: fn() -> i64 {
-    d : Meters = 10
-    print("{}\n", d + d)   // still Meters
+    d: Meters = 10
+    print("{}\n", d + d) // still Meters
     0
 }
 ```
@@ -130,14 +130,14 @@ main :: fn() -> i64 {
     print("{}\n", a + b)
     print("{}\n", a - b)
     print("{}\n", a * b)
-    print("{}\n", a / b)      // 3, integer division
-    print("{}\n", a % b)      // 1
+    print("{}\n", a / b) // 3, integer division
+    print("{}\n", a % b) // 1
 
     print("{}\n", a < b)
     print("{}\n", a == b)
     print("{}\n", a != b)
 
-    print("{}\n", a & b)      // bitwise
+    print("{}\n", a & b) // bitwise
     print("{}\n", a | b)
     print("{}\n", a << 2)
     print("{}\n", a >> 1)
@@ -145,7 +145,7 @@ main :: fn() -> i64 {
     print("{}\n", ready(a) && ready(b))
     print("{}\n", ready(a) || ready(b))
     print("{}\n", !ready(a))
-    print("{}\n", ready(a) == false)   // the same thing, said the other way
+    print("{}\n", ready(a) == false) // the same thing, said the other way
     0
 }
 ```
@@ -169,7 +169,7 @@ main :: fn() -> i64 {
     print("{}\n", classify(-5))
 
     // As a statement, an arm may end in a statement and answer with nothing.
-    mut total : i64 = 0
+    mut total: i64 = 0
     if (total == 0) {
         total = 10
     } else {
@@ -177,22 +177,22 @@ main :: fn() -> i64 {
     }
 
     // `while`.
-    mut index : i64 = 0
+    mut index: i64 = 0
     while (index < 3) {
         index = index + 1
     }
 
     // `for` over a range. `..` is half-open, `..=` includes the end.
-    for step in 0..3 {
+    for step in 0 .. 3 {
         total = total + step
     }
-    for step in 0..=3 {
+    for step in 0 ..= 3 {
         total = total + step
     }
 
     // `for` over a sequence. This is the index-and-bound loop written out:
     // no iterator, nothing to implement, nothing called per element.
-    numbers : [4]i64 = [10, 20, 30, 40]
+    numbers: [4]i64 = [10, 20, 30, 40]
     for value in numbers {
         total = total + value
     }
@@ -238,8 +238,8 @@ area :: fn(s: Shape) -> i64 {
 kind_of :: fn(byte: i64) -> i64 {
     match byte {
         // A range arm, and several patterns for one arm.
-        case 97..=122 | 65..=90: 1
-        case 48..=57: 2
+        case 97 ..= 122 | 65 ..= 90: 1
+        case 48 ..= 57: 2
         // A match over whole numbers is not countable, so it needs `_`.
         case _: 0
     }
@@ -263,7 +263,7 @@ CH_9 :: 57
 
 digit :: fn(byte: i64) -> bool {
     match byte {
-        case CH_0..=CH_9: true
+        case CH_0 ..= CH_9: true
         case _: false
     }
 }
@@ -290,8 +290,8 @@ main :: fn() -> i64 {
 
     // A variant may leave its enum out where the type is already known, and a
     // struct literal may leave its name out the same way.
-    c : Colour = Colour::Green
-    q : Point = { x = 1, y = 2 }
+    c: Colour = Colour::Green
+    q: Point = { x = 1, y = 2 }
     print("{}\n", q.x)
     0
 }
@@ -316,8 +316,8 @@ Header :: packed struct { tag: u8, length: u32 }
 Uniform :: struct { time: f32, offset: i64 align(16) }
 
 main :: fn() -> i64 {
-    print("{}\n", sizeof(Header))    // 5: one byte and four, end to end
-    print("{}\n", sizeof(Uniform))   // 32: the align(16) gives the struct one
+    print("{}\n", sizeof(Header)) // 5: one byte and four, end to end
+    print("{}\n", sizeof(Uniform)) // 32: the align(16) gives the struct one
     0
 }
 ```
@@ -348,7 +348,7 @@ scale :: fn(mut p: Point, by: i64) {
 main :: fn() -> i64 {
     mut p := Point { x = 3, y = 4 }
     print("{}\n", length_squared(p))
-    scale(p, 2)                        // no sigil at the call
+    scale(p, 2) // no sigil at the call
     print("{}\n", p.x)
     0
 }
@@ -412,10 +412,10 @@ close :: fn(move f: File) -> i64 { f.handle }
 
 main :: fn() -> i64 {
     f := open(3)
-    print("{}\n", close(f))   // consumed exactly once
+    print("{}\n", close(f)) // consumed exactly once
     // close(f)               // refused: 'f' was already consumed
     0
-}                             // leaving without consuming it is refused too
+} // leaving without consuming it is refused too
 ```
 
 `defer` runs a statement where the function leaves, last written first.
@@ -451,8 +451,8 @@ checked :: fn(n: i64) -> i64 ! Fault {
 // `?` hands a failure up. The two failure types have to be the same one:
 // there is no conversion to write and no `From` to implement.
 twice :: fn(n: i64) -> i64 ! Fault {
-    first := checked(n)?
-    checked(first)?
+    first := checked(n) ?
+    checked(first) ?
 }
 
 main :: fn() -> i64 {
@@ -492,13 +492,13 @@ at :: fn(values: []i64, index: i64) -> ref i64 {
 }
 
 main :: fn() -> i64 {
-    mut storage : [3]i64 = [1, 2, 3]
+    mut storage: [3]i64 = [1, 2, 3]
     ref second := storage[1]
-    second = 20                     // written through the borrow
+    second = 20 // written through the borrow
     print("{}\n", storage[1])
 
     held := at(storage, 2)
-    print("{}\n", held)             // reading a borrow reads what it borrows
+    print("{}\n", held) // reading a borrow reads what it borrows
     0
 }
 ```
@@ -519,7 +519,7 @@ import "io.frost"
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
-swap :: fn(mut a: $T, mut b: $T) { held := a  a = b  b = held }
+swap :: fn(mut a: $T, mut b: $T) { held := a a = b b = held }
 
 // A value parameter is a compile-time integer, which is what sizes an array.
 Buffer :: struct($T: Type, $N: usize) { data: [N]T, used: i64 }
@@ -528,8 +528,8 @@ main :: fn() -> i64 {
     p := make_pair(3, 4)
     print("{}\n", p.first + p.second)
 
-    mut x : i64 = 1
-    mut y : i64 = 2
+    mut x: i64 = 1
+    mut y: i64 = 2
     swap(x, y)
     print("{}\n", x)
     0
@@ -576,7 +576,12 @@ import "io.frost"
 
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
-smaller :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
+smaller :: fn(
+    $T: Type,
+    $before: fn(T, T) -> bool,
+    move x: $T,
+    move y: $T
+) -> $T {
     mut held := x
     if (before(y, held)) { held = y }
     held
@@ -671,7 +676,7 @@ import "io.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -682,7 +687,7 @@ main :: fn() -> i64 {
     print("{}\n", world[hero].hp)
 
     slab_release(world, hero)
-    print("{}\n", slab_alive(world, hero))   // 0
+    print("{}\n", slab_alive(world, hero)) // 0
     0
 }
 ```
@@ -698,7 +703,7 @@ import "io.frost"
 Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    mut world : columns<Particle, 8> = columns_new()
+    mut world: columns<Particle, 8> = columns_new()
     columns_reset(world)
     h := columns_insert(world, Particle { x = 10, y = 1 })
 
@@ -736,7 +741,7 @@ make_two :: fn() -> i64 uses Arena<256> {
 }
 
 main :: fn() -> i64 {
-    mut scratch : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut scratch: Arena<256> = Arena { data = [0; 256], offset = 0 }
     with scratch {
         print("{}\n", make_two())
     }
@@ -758,7 +763,7 @@ is not marked `safe`. Everything else in the language is checked.
 import "io.frost"
 
 main :: fn() -> i64 {
-    mut value : i64 = 41
+    mut value: i64 = 41
 
     // Taking an address is safe. Reading through one is not.
     p := ptr_to(value)
@@ -779,7 +784,7 @@ It needs no block, since the result is defined for every input.
 import "io.frost"
 
 main :: fn() -> i64 {
-    wide : i64 = 300
+    wide: i64 = 300
     narrow := cast($u8, wide)
     print("{}\n", narrow)
     0
@@ -838,8 +843,8 @@ unrelated to this.)
 import "io.frost"
 
 main :: fn() -> i64 {
-    a : [4]f32 = [1.0, 2.0, 3.0, 4.0]
-    b : [4]f32 = [10.0, 20.0, 30.0, 40.0]
+    a: [4]f32 = [1.0, 2.0, 3.0, 4.0]
+    b: [4]f32 = [10.0, 20.0, 30.0, 40.0]
     c := a + b
     print("{}\n", c[0])
     0
@@ -877,11 +882,11 @@ import "strings.frost"
 
 main :: fn() -> i64 {
     name := "frost.frost"
-    print("{}\n", str_len(name))                  // 11
-    print("{}\n", str_ends_with(name, ".frost"))  // 1
-    print("{}\n", str_index_of(name, "."))        // 5
-    print("{}\n", str_slice(name, 0, 5))          // frost
-    print("{}\n", str_to_i64("42"))               // 42
+    print("{}\n", str_len(name)) // 11
+    print("{}\n", str_ends_with(name, ".frost")) // 1
+    print("{}\n", str_index_of(name, ".")) // 5
+    print("{}\n", str_slice(name, 0, 5)) // frost
+    print("{}\n", str_to_i64("42")) // 42
     0
 }
 ```
@@ -901,11 +906,11 @@ main :: fn() -> i64 {
     vec_push(scores, 30)
     vec_push(scores, 20)
 
-    mut total : i64 = 0
+    mut total: i64 = 0
     for value in vec_slice(scores) {
         total = total + value
     }
-    print("{} in {}\n", total, vec_len(scores))   // 60 in 3
+    print("{} in {}\n", total, vec_len(scores)) // 60 in 3
 
     vec_free(scores)
     0
@@ -957,8 +962,8 @@ lookup :: fn(key: i64) -> Option<i64> {
 main :: fn() -> i64 {
     hit := lookup(1)
     miss := lookup(2)
-    print("{}\n", option_unwrap_or(hit, 0))     // 100
-    print("{}\n", option_unwrap_or(miss, 0))    // 0
+    print("{}\n", option_unwrap_or(hit, 0)) // 100
+    print("{}\n", option_unwrap_or(miss, 0)) // 0
     0
 }
 ```
@@ -974,11 +979,11 @@ import "ordering.frost"
 import "sort.frost"
 
 main :: fn() -> i64 {
-    mut numbers : [5]i64 = [4, 1, 5, 3, 2]
-    view : []i64 = numbers
+    mut numbers: [5]i64 = [4, 1, 5, 3, 2]
+    view: []i64 = numbers
     sort($i64_ascending, view)
     for value in view {
-        print("{} ", value)      // 1 2 3 4 5
+        print("{} ", value) // 1 2 3 4 5
     }
     print("\n")
     0
@@ -1002,7 +1007,7 @@ main :: fn() -> i64 {
     builder_str_value(line, "hp ")
     builder_int(line, 75)
     builder_str_value(line, "/100")
-    print("{}\n", builder_str(line))   // hp 75/100
+    print("{}\n", builder_str(line)) // hp 75/100
     builder_free(line)
     0
 }
@@ -1025,7 +1030,7 @@ main :: fn() -> i64 {
     mut document := json_parse(result.text)
     root := json_root(document)
     hp := json_member(document, root, "hp")
-    print("{}\n", json_number(document, hp))   // 75
+    print("{}\n", json_number(document, hp)) // 75
 
     json_free(document)
     fs_free(result)
@@ -1048,7 +1053,7 @@ main :: fn() -> i64 {
     over := vec3(1.0, 0.0, 0.0)
     turn := quat_from_axis_angle(up, radians(90.0))
     spun := quat_rotate_vec3(turn, over)
-    print("{}\n", spun.z * 1000.0)   // -1000, +X turned onto -Z
+    print("{}\n", spun.z * 1000.0) // -1000, +X turned onto -Z
     0
 }
 ```
@@ -1073,7 +1078,7 @@ main :: fn() -> i64 {
     ecs_set(world, hero, health, Health { points = 75 })
 
     held := ecs_get($Health, world, hero, health)
-    print("{}\n", held.points)   // 75
+    print("{}\n", held.points) // 75
 
     ecs_free(world)
     0
@@ -1096,7 +1101,7 @@ Counter :: struct { total: i64 }
 
 bump :: fn(context: ^u8) {
     counter := unsafe { ptr_cast($Counter, context) }
-    mut index : i64 = 0
+    mut index: i64 = 0
     while (index < 1000) {
         unsafe { atomic_add(ptr_to(counter^.total), 1) }
         index = index + 1
@@ -1108,7 +1113,7 @@ main :: fn() -> i64 {
     handle := unsafe { spawn(bump, ptr_cast($u8, ptr_to(counter))) }
     bump(unsafe { ptr_cast($u8, ptr_to(counter)) })
     join(handle)
-    print("{}\n", counter.total)   // 2000
+    print("{}\n", counter.total) // 2000
     0
 }
 ```

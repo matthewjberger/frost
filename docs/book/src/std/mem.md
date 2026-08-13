@@ -94,7 +94,7 @@ Every allocating module in `std/` has a test of this shape:
 test "a vector gives back every block it took, however far it grew" {
     before := heap_live()
     mut v := vec_new($i64, 1)
-    mut i : i64 = 0
+    mut i: i64 = 0
     while (i < 500) {
         vec_push(v, i)
         i = i + 1

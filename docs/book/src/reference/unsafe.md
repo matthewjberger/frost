@@ -69,7 +69,7 @@ to standard output. `sqrtf` takes a float and answers with a float.
 
 ```frost
 sqrtf :: safe extern fn(x: f32) -> f32
-sinf  :: safe extern fn(x: f32) -> f32
+sinf :: safe extern fn(x: f32) -> f32
 
 frost_rt_emit_int :: safe extern fn(value: i64)
 ```

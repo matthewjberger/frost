@@ -33,7 +33,7 @@ main :: fn() -> i64 {
     while (query_next(world, q)) {
         mut p := query_column($Position, world, q, position)
         v := query_column($Velocity, world, q, velocity)
-        mut i : i64 = 0
+        mut i: i64 = 0
         while (i < q.count) {
             p[i].x = p[i].x + v[i].x
             p[i].y = p[i].y + v[i].y

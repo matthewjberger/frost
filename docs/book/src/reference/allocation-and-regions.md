@@ -180,10 +180,10 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
-    mut escaped : ^i64 = ptr_to(arena.offset)
+    mut arena: Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut escaped: ^i64 = ptr_to(arena.offset)
     with arena {
-        escaped = alloc_int(arena)     // error: escapes its region
+        escaped = alloc_int(arena) // error: escapes its region
     }
     unsafe { escaped^ }
 }
@@ -209,7 +209,7 @@ alloc_int :: fn($N: usize, mut a: Arena<N>) -> ^i64 {
 }
 
 stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
-    r.ptr = alloc_int(arena)      // error: escapes its region
+    r.ptr = alloc_int(arena) // error: escapes its region
     0
 }
 ```

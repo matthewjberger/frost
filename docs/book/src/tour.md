@@ -27,12 +27,12 @@ import "io.frost"
 square :: fn(x: i64) -> i64 { x * x }
 
 main :: fn() -> i64 {
-    n := 6                 // inferred i64
-    mut total : i64 = 0    // explicit, mutable
-    for i in 0..n {
+    n := 6 // inferred i64
+    mut total: i64 = 0 // explicit, mutable
+    for i in 0 .. n {
         total = total + square(i)
     }
-    print("{}\n", total)  // 55
+    print("{}\n", total) // 55
     0
 }
 ```
@@ -121,8 +121,8 @@ area :: fn(s: Shape) -> i64 {
 
 main :: fn() -> i64 {
     p := Point { x = 3, y = 4 }
-    print("{}\n", p.x + p.y)                                     // 7
-    print("{}\n", area(Shape::Rect { width = 4, height = 5 }))   // 20
+    print("{}\n", p.x + p.y) // 7
+    print("{}\n", area(Shape::Rect { width = 4, height = 5 })) // 20
     0
 }
 ```
@@ -226,14 +226,14 @@ how Frost replaces destructors:
 ```frost
 import "io.frost"
 File :: linear struct { fd: i64 }
-open  :: fn(n: i64) -> File { File { fd = n } }
-close :: fn(move f: File) -> i64 { f.fd }   // terminal consumer
+open :: fn(n: i64) -> File { File { fd = n } }
+close :: fn(move f: File) -> i64 { f.fd } // terminal consumer
 
 run :: fn() {
     f := open(3)
-    print("{}\n", close(f))   // consumes f exactly once
-    // close(f)                // error: use of moved value 'f'
-}                              // dropping f without consuming would also be an error
+    print("{}\n", close(f)) // consumes f exactly once
+// close(f)                // error: use of moved value 'f'
+} // dropping f without consuming would also be an error
 ```
 
 Chapter 9 of [linear.md](reference/linear.md) has the consume rules, including
@@ -255,10 +255,10 @@ digit :: fn(text: str, index: i64) -> i64 ! Parse {
 }
 
 number :: fn(text: str) -> i64 ! Parse {
-    mut total : i64 = 0
-    mut index : i64 = 0
+    mut total: i64 = 0
+    mut index: i64 = 0
     while (index < str_len(text)) {
-        total = total * 10 + digit(text, index)?
+        total = total * 10 + digit(text, index) ?
         index = index + 1
     }
     total
@@ -309,17 +309,17 @@ import "io.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
 
-    print("{}\n", world[hero].hp)        // 100
-    world[hero].hp = world[hero].hp - 25  // the subscript is a place to write
-    print("{}\n", world[hero].hp)        // 75
+    print("{}\n", world[hero].hp) // 100
+    world[hero].hp = world[hero].hp - 25 // the subscript is a place to write
+    print("{}\n", world[hero].hp) // 75
 
     slab_release(world, hero)
-    print("{}\n", slab_alive(world, hero))   // 0, the generation moved on
+    print("{}\n", slab_alive(world, hero)) // 0, the generation moved on
     0
 }
 ```
@@ -346,12 +346,12 @@ import "io.frost"
 Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    mut world : columns<Particle, 8> = columns_new()
+    mut world: columns<Particle, 8> = columns_new()
     columns_reset(world)
     h := columns_insert(world, Particle { x = 10, y = 1 })
 
-    print("{}\n", world[h].x)     // 10, checked at the handle's slot
-    world[h].x = 100               // scatter a field back to the slot
+    print("{}\n", world[h].x) // 10, checked at the handle's slot
+    world[h].x = 100 // scatter a field back to the slot
     // world.x is the whole [8]i64 column, and coerces to a []i64 slice
     0
 }
@@ -372,16 +372,16 @@ import "io.frost"
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
-swap      :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
+swap :: fn(mut a: $T, mut b: $T) { t := a a = b b = t }
 
 main :: fn() -> i64 {
-    p := make_pair(3, 4)               // Pair<i64> inferred
+    p := make_pair(3, 4) // Pair<i64> inferred
     print("{}\n", p.first + p.second) // 7
 
-    mut x : i64 = 1
-    mut y : i64 = 2
+    mut x: i64 = 1
+    mut y: i64 = 2
     swap(x, y)
-    print("{}\n", x)                  // 2
+    print("{}\n", x) // 2
     0
 }
 ```
@@ -433,7 +433,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    print("{}\n", best($ascending, 7, 3))   // 3
+    print("{}\n", best($ascending, 7, 3)) // 3
     0
 }
 ```
@@ -478,7 +478,7 @@ apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
 main :: fn() -> i64 {
-    print("{}\n", apply(double, 21))   // 42
+    print("{}\n", apply(double, 21)) // 42
     0
 }
 ```
@@ -561,7 +561,7 @@ import "io.frost"
 
 main :: fn() -> i64 {
     arr := [10, 20, 30]
-    print("{}\n", arr[2])   // 30
+    print("{}\n", arr[2]) // 30
     // arr[5]                // aborts: index 5 out of bounds for length 3
     0
 }
@@ -649,7 +649,7 @@ handle that stays checkable after the slot it names is reused.
 import "slab.frost"
 import "io.frost"
 
-Kind   :: enum { Player, Enemy { damage: i64 } }
+Kind :: enum { Player, Enemy { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
 delta :: fn(e: Entity) -> i64 {
@@ -660,19 +660,18 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_new()
     slab_reset(world)
 
-    player := slab_insert(world,
-        Entity { hp = 100, kind = Kind::Player })
+    player := slab_insert(world, Entity { hp = 100, kind = Kind::Player })
     goblin := slab_insert(world,
         Entity { hp = 30, kind = Kind::Enemy { damage = 15 } })
 
     world[player].hp = world[player].hp + delta(world[goblin])
-    print("hp {}\n", world[player].hp)                 // 85
+    print("hp {}\n", world[player].hp) // 85
 
     slab_release(world, goblin)
-    print("{}\n", slab_alive(world, goblin))   // 0
+    print("{}\n", slab_alive(world, goblin)) // 0
     0
 }
 ```

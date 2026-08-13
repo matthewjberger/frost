@@ -271,8 +271,8 @@ exactly once:
 
 ```frost
 File :: linear struct { handle: i64 }
-open  :: fn() -> File { File { handle = 1 } }
-close :: extern fn(f: File)              // terminal consumer, across the FFI boundary
+open :: fn() -> File { File { handle = 1 } }
+close :: extern fn(f: File) // terminal consumer, across the FFI boundary
 ```
 
 - At most once comes from the move checker (section 2). Consuming a linear

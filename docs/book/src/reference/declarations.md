@@ -317,7 +317,7 @@ next_power_of_two :: fn(n: i64) -> i64 {
     held
 }
 
-LANES :: round_up(300, 64)                       // 320
+LANES :: round_up(300, 64) // 320
 Table :: struct { slots: [next_power_of_two(300)]i64 }
 ```
 
@@ -337,14 +337,14 @@ a lookup table can be settled before the program runs:
 ```frost
 Point :: struct { x: i64, y: i64 }
 
-TABLE  :: [1, 2, 4, 8]
+TABLE :: [1, 2, 4, 8]
 ORIGIN :: Point { x = 3, y = 4 }
-NAME   :: "hello"
+NAME :: "hello"
 
-SLOTS  :: TABLE[2]        // 4
-DOWN   :: ORIGIN.y        // 4
-LETTER :: NAME[1]         // 101, the byte
-WIDTH  :: str_len(NAME)   // 5
+SLOTS :: TABLE[2] // 4
+DOWN :: ORIGIN.y // 4
+LETTER :: NAME[1] // 101, the byte
+WIDTH :: str_len(NAME) // 5
 
 Sized :: struct { bytes: [TABLE[3]]u8 }
 ```
@@ -476,7 +476,7 @@ context expects, which is the edit:
 Colour :: enum { Red, Green }
 
 main :: fn() -> i64 {
-    c : Colour = .Red
+    c: Colour = .Red
     0
 }
 ```
@@ -594,7 +594,7 @@ ends and the next begins, exactly as it does between two declarations:
 
 ```frost,refused
 Key :: distinct i64 {
-    Left :: 80 Right :: 79
+    Left :: 80 Right::79
 }
 
 main :: fn() -> i64 { 0 }
@@ -608,10 +608,7 @@ says nothing:
 
 ```frost
 Vec3 :: struct { x: f32, y: f32 } {
-    ZERO :: Vec3 {
-        x = 0.0,
-        y = 0.0
-    }
+    ZERO :: Vec3 { x = 0.0, y = 0.0 }
     UP :: Vec3 { x = 0.0, y = 1.0 }
 }
 
@@ -658,12 +655,12 @@ is laid out, and the emitted program cannot depend on it having been there. That
 is what lets one branch name something the other machine has not got.
 
 ```frost
-when (TARGET_WINDOWS) {
-    NAME :: "windows"
-    width :: fn() -> i64 { 64 }
+    when(TARGET_WINDOWS) {
+    NAME::"windows"
+    width::fn() -> i64 { 64 }
 } else {
-    NAME :: "other"
-    width :: fn() -> i64 { 32 }
+    NAME::"other"
+    width::fn() -> i64 { 32 }
 }
 ```
 
