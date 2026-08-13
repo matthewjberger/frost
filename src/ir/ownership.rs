@@ -252,7 +252,7 @@ fn report_block(
                 // The storage a `_` was given. Naming it points the reader at a
                 // word nothing in the program spells, so the complaint is the
                 // one the `_` earns: it took a resource and let it go.
-                if held.starts_with("__discard") {
+                if names_a_discard(held) {
                     return Err(located(
                         function,
                         local,
@@ -322,6 +322,16 @@ fn successors(terminator: &IrTerminator) -> Vec<BlockId> {
         } => vec![*then_block, *else_block],
         IrTerminator::Return(_) | IrTerminator::Unreachable => Vec::new(),
     }
+}
+
+/// Whether this local is the storage a `_` was given.
+///
+/// Told by the name, because that is the whole of what the lowering leaves
+/// behind: the parser writes `__discard0` for a discard and a program cannot
+/// spell the prefix, which is reserved. A flag on the local would say it
+/// outright, and the name is what crosses from the parser to here.
+fn names_a_discard(name: &str) -> bool {
+    name.starts_with("__discard")
 }
 
 #[cfg(test)]

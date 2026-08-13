@@ -1604,6 +1604,15 @@ impl MoveChecker<'_> {
                 .iter()
                 .flat_map(|field| self.viewed_runs(field.value))
                 .collect(),
+            // A run written out holds its views the same way, so the binding it
+            // makes views them too. The sibling walk `run_places` says the same
+            // about a run, and the two answer for one question between them.
+            Expression::Literal(Literal::Array(elements)) => self
+                .ast
+                .exprs_in(*elements)
+                .iter()
+                .flat_map(|element| self.viewed_runs(*element))
+                .collect(),
             _ => Vec::new(),
         }
     }

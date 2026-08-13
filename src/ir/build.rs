@@ -9268,10 +9268,7 @@ impl<'a> FunctionLowering<'a> {
             && from != into
         {
             return locate(
-                Err(anyhow::anyhow!(
-                    "{}",
-                    mismatch_sentence(site, &given, target)
-                )),
+                Err(self.site_mismatch(site, argument, &given, target)),
                 self.at_expression(argument),
             );
         }
@@ -9286,10 +9283,7 @@ impl<'a> FunctionLowering<'a> {
             && matches!(given, Type::Ptr(_))
         {
             return locate(
-                Err(anyhow::anyhow!(
-                    "{}",
-                    mismatch_sentence(site, &given, target)
-                )),
+                Err(self.site_mismatch(site, argument, &given, target)),
                 self.at_expression(argument),
             );
         }
@@ -9389,9 +9383,8 @@ impl<'a> FunctionLowering<'a> {
                     AggregateSite::Argument => {
                         if !value_stands_for(&given, target) {
                             return locate(
-                                Err(anyhow::anyhow!(
-                                    "{}",
-                                    mismatch_sentence(site, &given, target)
+                                Err(self.site_mismatch(
+                                    site, argument, &given, target,
                                 )),
                                 self.at_expression(argument),
                             );
@@ -11748,6 +11741,28 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
+    /// The report for a value that does not fit where it was written, in the
+    /// sentence that place reads in. An argument carries the rule it broke and
+    /// reads the other way round from a field or an element, and this is where
+    /// the two part company.
+    fn site_mismatch(
+        &self,
+        site: AggregateSite,
+        value: ExprId,
+        given: &Type,
+        wanted: &Type,
+    ) -> anyhow::Error {
+        match site {
+            AggregateSite::Argument => {
+                self.argument_mismatch(value, given, wanted)
+            }
+            _ => anyhow::anyhow!(
+                "{}",
+                place_mismatch_sentence(site, given, wanted)
+            ),
+        }
+    }
+
     /// The sentence an argument that does not fit is reported in, with the rule
     /// it broke after it where the type wanted is a named one. A binding asks
     /// the nominal question first and the plain one after; asked the other way
@@ -11795,11 +11810,6 @@ impl<'a> FunctionLowering<'a> {
         value: ExprId,
         site: AggregateSite,
     ) -> Result<()> {
-        let called = if site == AggregateSite::Element {
-            "element"
-        } else {
-            "field"
-        };
         if distinct_mismatch(
             self.ast,
             value,
@@ -11816,7 +11826,8 @@ impl<'a> FunctionLowering<'a> {
             );
             return locate(
                 Err(anyhow::anyhow!(
-                    "this {called} is a '{}' and the value is {described}; {note}",
+                    "this {} is a '{}' and the value is {described}; {note}",
+                    site.called(),
                     spelled(field_type)
                 )),
                 self.at_expression(value),
@@ -11828,7 +11839,7 @@ impl<'a> FunctionLowering<'a> {
         locate(
             Err(anyhow::anyhow!(
                 "{}",
-                mismatch_sentence(site, value_type, field_type)
+                place_mismatch_sentence(site, value_type, field_type)
             )),
             self.at_expression(value),
         )
@@ -12750,6 +12761,13 @@ impl<'a> FunctionLowering<'a> {
             // A whole number written where a float is wanted. A literal has no
             // type of its own until the context gives it one, so it is the
             // float it is read at rather than a conversion that loses anything.
+            //
+            // No range check, unlike the arm above it. An integer type either
+            // holds a value or it does not, and `a : u8 = 300` is refused on
+            // that. A float is inexact by construction: `x : f32 = 0.1` is not
+            // 0.1 either and nobody expects a word about it, so refusing
+            // `x : f32 = 16777217` for the same reason would hold two literals
+            // of one kind to two standards.
             IrOperand::Constant(IrConstant::Integer(value, _))
                 if matches!(to, Type::F32 | Type::F64) =>
             {
@@ -12884,28 +12902,36 @@ enum AggregateSite {
     Element,
 }
 
-fn mismatch_sentence(
+impl AggregateSite {
+    /// What the report calls this place. Named once, so a site added later has
+    /// one line to change rather than one per sentence that mentions it.
+    fn called(self) -> &'static str {
+        match self {
+            AggregateSite::Argument => "argument",
+            AggregateSite::Field => "field",
+            AggregateSite::Element => "element",
+        }
+    }
+}
+
+/// The sentence a value that does not fit is reported in, where the place it is
+/// going holds one value: a field of a literal and an element of a run read the
+/// same way, naming what the place is and then what was written.
+///
+/// An argument is not one of these. It reads the other way round and carries
+/// the rule that was broken after it, so `argument_mismatch` writes that one
+/// and it is the only spelling of it.
+fn place_mismatch_sentence(
     site: AggregateSite,
     given: &Type,
     wanted: &Type,
 ) -> String {
-    match site {
-        AggregateSite::Argument => format!(
-            "this argument is a '{}' and a '{}' is what is wanted here",
-            spelled(given),
-            spelled(wanted)
-        ),
-        AggregateSite::Field => format!(
-            "this field is a '{}' and the value is a '{}'",
-            spelled(wanted),
-            spelled(given)
-        ),
-        AggregateSite::Element => format!(
-            "this element is a '{}' and the value is a '{}'",
-            spelled(wanted),
-            spelled(given)
-        ),
-    }
+    format!(
+        "this {} is a '{}' and the value is a '{}'",
+        site.called(),
+        spelled(wanted),
+        spelled(given)
+    )
 }
 
 /// Whether a value of one type may stand where another is wanted.
