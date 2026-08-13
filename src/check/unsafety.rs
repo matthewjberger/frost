@@ -923,17 +923,21 @@ impl Checker<'_> {
             Expression::Call(callee, arguments) => {
                 if let Expression::Identifier(name) = ast.expr(*callee) {
                     let name = ast.name(*name);
+                    // At the call, not at the statement holding it. One
+                    // statement may hold several, and a run written out holds
+                    // as many as it has elements.
+                    let here = ast.expr_position(value);
                     if name == "ptr_cast" {
-                        self.refuse("ptr_cast", at);
+                        self.refuse("ptr_cast", here);
                     } else if name == "slice_from" {
-                        self.refuse("forming a slice from a raw pointer", at);
+                        self.refuse("forming a slice from a raw pointer", here);
                     } else if self.externs.contains(name) {
                         let what = format!("calling the C function '{name}'");
-                        self.refuse(&what, at);
+                        self.refuse(&what, here);
                     } else if self.unsafe_fns.contains(name) {
                         let what =
                             format!("calling the unsafe function '{name}'");
-                        self.refuse(&what, at);
+                        self.refuse(&what, here);
                     }
                 }
                 self.expression(*callee, at);
@@ -1009,6 +1013,14 @@ impl Checker<'_> {
             | Expression::EnumVariantInit(_, _, initializers) => {
                 for initializer in ast.named_in(*initializers) {
                     self.expression(initializer.value, at);
+                }
+            }
+            // A run written out holds expressions. Caught by the wildcard
+            // inside `Literal(_)`, the walk stopped at the run and an unchecked
+            // operation written in one needed no `unsafe` around it.
+            Expression::Literal(crate::ast::Literal::Array(elements)) => {
+                for element in ast.exprs_in(*elements) {
+                    self.expression(*element, at);
                 }
             }
             // Listed rather than caught by `_`, so a new expression form is a

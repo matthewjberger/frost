@@ -1183,6 +1183,48 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this is a 'Tag' and a 'i32' is wanted, which cannot hold all of one; write cast($i32, ...) to say the loss is meant",
     ),
+    // An unchecked operation written inside a run. Every walk that listed the
+    // expression forms it descends into caught a run under the wildcard in
+    // `Literal(_)`, so what a run held was never reached and `ptr_cast` needed
+    // no `unsafe` around it.
+    (
+        "an_unchecked_operation_inside_a_run_needs_unsafe",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             zero : usize = 0
+             run := [ptr_cast($u8, zero)]
+             0
+         }
+",
+        "ptr_cast is unchecked, so it belongs in an `unsafe` block",
+    ),
+    // The same blindness, where the run holds a call answering a list. Left
+    // unreached, the call was lowered and the reader was told an element held
+    // the struct a return type list becomes, a type nothing can write.
+    (
+        "a_call_answering_a_list_inside_a_run_is_refused",
+        "import \"io.frost\"
+         pair :: fn() -> (a: i64, b: i64) { return { a = 1, b = 2 } }
+         main :: fn() -> i64 {
+             run := [pair()]
+             0
+         }
+",
+        "'pair' returns 2 values, so its call is bound by a list of names",
+    ),
+    // An element of a run holds what the run declares, the way a field holds
+    // what a struct declares. Neither compiler asked.
+    (
+        "a_run_holds_only_what_it_declares",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 0 }
+         main :: fn() -> i64 {
+             run : [2]str = [give(), \"x\"]
+             0
+         }
+",
+        "this element is a 'str' and the value is a 'i64'",
+    ),
     // A list of names against a call that answers one value. The self-hosted
     // read a field index as a source offset and put the report on the first
     // line of the first file; the bootstrap skipped the walk that rejects it
@@ -4530,6 +4572,21 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A `cast` naming a distinct type, written inside a run. The walk that
+    // resolves a written name to the type it stands for stopped at every
+    // literal, so the cast was asked to reach a type nothing declared.
+    (
+        "a_cast_inside_a_run_names_the_type_it_is_given",
+        "import \"io.frost\"
+         Tag :: distinct i64
+         main :: fn() -> i64 {
+             run : [2]Tag = [cast($Tag, 1), cast($Tag, 2)]
+             print(\"ok\\n\")
+             0
+         }
+",
+        "ok\n",
+    ),
     // `_ := call()` runs the call and names nothing. The self-hosted read the
     // lone `_` as a list of one and asked the callee for a field of a return
     // type list it never declared, reporting it at the top of the file.

@@ -314,6 +314,16 @@ fn walk_expression(
                 walk_expression(ast, held, declared);
             }
         }
+        // A run written out holds expressions, so the walk goes on through it.
+        // Left as a leaf with every other literal, a `cast($T, ...)` written
+        // inside one kept the name it was given rather than the type that name
+        // stands for, and the cast was asked to reach a type nothing declared.
+        Expression::Literal(crate::ast::Literal::Array(elements)) => {
+            for index in elements.indices() {
+                let held = ast.expr_list[index];
+                walk_expression(ast, held, declared);
+            }
+        }
         Expression::Identifier(_)
         | Expression::Literal(_)
         | Expression::Boolean(_) => {}

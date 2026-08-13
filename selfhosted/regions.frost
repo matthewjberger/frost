@@ -1459,8 +1459,27 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         while (eid != (-1)) {
             enode := arena_at(p.arena, eid)
             next_element := enode.next
-            check_types_expr(p, enode.a)
-            want_single(p, enode.a, element)
+            value := enode.a
+            check_types_expr(p, value)
+            want_single(p, value, element)
+            // A run holds what it was declared to hold, the way a field does.
+            // Nothing asked here, so a run of one type took values of another.
+            // Only where the run says what it holds: a literal with no declared
+            // type takes its element from what was written in it.
+            if (element >= 0) {
+                value_ty := type_of(p, value)
+                if (value_fits(p, value, value_ty, element) == false) {
+                    vnode := arena_at(p.arena, value)
+                    report_where(p.modules, p.src, vnode.pos)
+                    report_fmt(
+                        "this element is a '{}' and the value is ",
+                        type_text(p, element)
+                    )
+                    report_described(p, value, value_ty, element)
+                    report_distinct_note(p, value, value_ty, element)
+                    frost_rt_recover_escape()
+                }
+            }
             eid = next_element
         }
         return

@@ -12,8 +12,8 @@
 // name is derived from the types.
 
 use crate::ast::{
-    Ast, ExprId, Expression, NamedExpr, Range32, ReturnKind, Statement, StmtId,
-    StructField, TokenSpan,
+    Ast, ExprId, Expression, Literal, NamedExpr, Range32, ReturnKind,
+    Statement, StmtId, StructField, TokenSpan,
 };
 use crate::types::Type;
 use anyhow::{Result, bail};
@@ -448,10 +448,16 @@ impl Lowering {
                     && let Some(types) =
                         self.signatures.get(ast.name(*name)).copied()
                 {
+                    // At the call. One statement may hold several, and a run
+                    // written out holds as many as it has elements.
                     let name = ast.name(*name);
-                    bail!(
-                        "'{name}' returns {} values, so its call is bound by a list of names",
-                        types.len()
+                    let here = ast.expr_position(expression);
+                    return crate::source_map::locate(
+                        Err(anyhow::anyhow!(
+                            "'{name}' returns {} values, so its call is bound by a list of names",
+                            types.len()
+                        )),
+                        here,
                     );
                 }
                 self.check_expression(ast, callee, returns)?;
@@ -553,6 +559,16 @@ impl Lowering {
             }
             Expression::ArrayRepeat(value, _) => {
                 self.check_expression(ast, value, returns)
+            }
+            // A run written out holds expressions, and one of them may be a
+            // call answering a list. Left as a leaf beside the other literals,
+            // the call reached the lowering and the reader was told an element
+            // held the struct the list becomes, a type nothing can write.
+            Expression::Literal(Literal::Array(elements)) => {
+                for element in ast.exprs_in(elements).to_vec() {
+                    self.check_expression(ast, element, returns)?;
+                }
+                Ok(())
             }
             Expression::Identifier(_)
             | Expression::Literal(_)

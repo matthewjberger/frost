@@ -9374,8 +9374,8 @@ impl<'a> FunctionLowering<'a> {
                 // sign of what it came from, so the fault surfaced in the
                 // verifier as a lowered local assigned the wrong thing.
                 match site {
-                    AggregateSite::Field => {
-                        self.field_holds(&given, target, argument)?;
+                    AggregateSite::Field | AggregateSite::Element => {
+                        self.field_holds(&given, target, argument, site)?;
                     }
                     AggregateSite::Argument => {
                         if !value_stands_for(&given, target) {
@@ -11253,8 +11253,11 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(element_type) {
-                let source =
-                    self.aggregate_field_source(*element, element_type)?;
+                let source = self.aggregate_field_source(
+                    *element,
+                    element_type,
+                    AggregateSite::Element,
+                )?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -11263,6 +11266,15 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(*element, Some(element_type))?;
+                // A run holds what it was declared to hold, the way a field
+                // does. Nothing asked it, so the store reached the verifier and
+                // came back named as one through a pointer.
+                self.field_holds(
+                    &value_type,
+                    element_type,
+                    *element,
+                    AggregateSite::Element,
+                )?;
                 let coerced =
                     self.coerce(operand, &value_type, element_type)?;
                 self.emit(IrStatement::Store {
@@ -11519,8 +11531,11 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(field_type) {
-                let source =
-                    self.aggregate_field_source(given.value, field_type)?;
+                let source = self.aggregate_field_source(
+                    given.value,
+                    field_type,
+                    AggregateSite::Field,
+                )?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -11532,7 +11547,12 @@ impl<'a> FunctionLowering<'a> {
                 // A field holds what its declaration says, the way a binding
                 // does. Nothing asked it here, so the store went to the
                 // verifier and came back named as one through a pointer.
-                self.field_holds(&value_type, field_type, given.value)?;
+                self.field_holds(
+                    &value_type,
+                    field_type,
+                    given.value,
+                    AggregateSite::Field,
+                )?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -11552,6 +11572,7 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         expression: ExprId,
         field_type: &Type,
+        site: AggregateSite,
     ) -> Result<IrOperand> {
         match self.ast.expr(expression) {
             Expression::StructInit(..)
@@ -11576,12 +11597,7 @@ impl<'a> FunctionLowering<'a> {
                 }
                 // A value written into a field is moved there, so a linear one
                 // is consumed by the literal that holds it.
-                self.aggregate_address_for(
-                    expression,
-                    field_type,
-                    true,
-                    AggregateSite::Field,
-                )
+                self.aggregate_address_for(expression, field_type, true, site)
             }
         }
     }
@@ -11678,8 +11694,11 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(field_type) {
-                let source =
-                    self.aggregate_field_source(given.value, field_type)?;
+                let source = self.aggregate_field_source(
+                    given.value,
+                    field_type,
+                    AggregateSite::Field,
+                )?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -11688,7 +11707,12 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(given.value, Some(field_type))?;
-                self.field_holds(&value_type, field_type, given.value)?;
+                self.field_holds(
+                    &value_type,
+                    field_type,
+                    given.value,
+                    AggregateSite::Field,
+                )?;
                 let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
@@ -11744,7 +11768,13 @@ impl<'a> FunctionLowering<'a> {
         value_type: &Type,
         field_type: &Type,
         value: ExprId,
+        site: AggregateSite,
     ) -> Result<()> {
+        let called = if site == AggregateSite::Element {
+            "element"
+        } else {
+            "field"
+        };
         if distinct_mismatch(
             self.ast,
             value,
@@ -11761,7 +11791,7 @@ impl<'a> FunctionLowering<'a> {
             );
             return locate(
                 Err(anyhow::anyhow!(
-                    "this field is a '{}' and the value is {described}; {note}",
+                    "this {called} is a '{}' and the value is {described}; {note}",
                     spelled(field_type)
                 )),
                 self.at_expression(value),
@@ -11772,9 +11802,8 @@ impl<'a> FunctionLowering<'a> {
         }
         locate(
             Err(anyhow::anyhow!(
-                "this field is a '{}' and the value is a '{}'",
-                spelled(field_type),
-                spelled(value_type)
+                "{}",
+                mismatch_sentence(site, value_type, field_type)
             )),
             self.at_expression(value),
         )
@@ -12793,10 +12822,11 @@ fn names_a_distinct(from: &Type, target: &Type) -> bool {
 /// Where a value that travels by address was written, which is what the report
 /// about it names. One walk takes an aggregate's address for a call and for a
 /// literal's field alike, and it used to call both of them arguments.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum AggregateSite {
     Argument,
     Field,
+    Element,
 }
 
 fn mismatch_sentence(
@@ -12812,6 +12842,11 @@ fn mismatch_sentence(
         ),
         AggregateSite::Field => format!(
             "this field is a '{}' and the value is a '{}'",
+            spelled(wanted),
+            spelled(given)
+        ),
+        AggregateSite::Element => format!(
+            "this element is a '{}' and the value is a '{}'",
             spelled(wanted),
             spelled(given)
         ),
