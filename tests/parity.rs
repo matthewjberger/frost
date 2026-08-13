@@ -1154,6 +1154,35 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this binding is a 'bool' and the value is a 'i64'",
     ),
+    // A value written after `return` where the signature answers nothing. The
+    // bootstrap dropped it without lowering it, so a call written there was
+    // never made and the program ran on with the effect missing.
+    (
+        "a_function_answering_nothing_returns_no_value",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 7 }
+         answer :: fn() { return give() }
+         main :: fn() -> i64 {
+             answer()
+             0
+         }
+",
+        "this returns a 'i64' and the function answers with a 'void'",
+    ),
+    // A distinct type over an i64 read at an i32 loses the same half a bare
+    // i64 does. The width question was skipped whenever either side was named.
+    (
+        "a_distinct_type_narrows_the_way_what_it_stands_for_does",
+        "import \"io.frost\"
+         Tag :: distinct i64
+         give :: fn() -> Tag { cast($Tag, 0) }
+         main :: fn() -> i64 {
+             y : i32 = give()
+             0
+         }
+",
+        "this is a 'Tag' and a 'i32' is wanted, which cannot hold all of one; write cast($i32, ...) to say the loss is meant",
+    ),
     // A truth value is not a one-byte number. Nothing was lost either way, so
     // the width comparison the coercion makes had no complaint and built the
     // conversion in silence.

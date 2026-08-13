@@ -5955,6 +5955,25 @@ impl<'a> FunctionLowering<'a> {
             Statement::Return(expression) => {
                 let return_type = self.return_type.clone();
                 if matches!(return_type, Type::Void) {
+                    // A bare `return` writes an empty tuple, and anything else
+                    // after the word is a value the signature has nowhere to
+                    // put. It was dropped without being lowered at all, so a
+                    // call written there was never made.
+                    let bare = matches!(
+                        self.ast.expr(expression),
+                        Expression::Tuple(values)
+                            if self.ast.exprs_in(*values).is_empty()
+                    );
+                    if !bare {
+                        let (_, value_type) =
+                            self.lower_expression(expression, None)?;
+                        if !matches!(value_type, Type::Void) {
+                            bail!(
+                                "this returns a '{}' and the function answers with a 'void'",
+                                spelled(&value_type)
+                            );
+                        }
+                    }
                     self.emit_return(None)?;
                 } else {
                     let (operand, value_type) =
@@ -8910,14 +8929,10 @@ impl<'a> FunctionLowering<'a> {
                 };
                 if self.type_is_settled(&given)
                     && self.type_is_settled(wanted)
-                    && !crate::ir::typecheck::fits(&given, wanted)
+                    && !value_stands_for(&given, wanted)
                 {
                     return locate(
-                        Err(anyhow::anyhow!(
-                            "this argument is a '{}' and a '{}' is what is wanted here",
-                            spelled(&given),
-                            spelled(wanted)
-                        )),
+                        Err(self.argument_mismatch(*argument, &given, wanted)),
                         self.at_expression(*argument),
                     );
                 }
@@ -9123,14 +9138,10 @@ impl<'a> FunctionLowering<'a> {
                 };
                 if self.type_is_settled(&given)
                     && self.type_is_settled(wanted)
-                    && !crate::ir::typecheck::fits(&given, wanted)
+                    && !value_stands_for(&given, wanted)
                 {
                     return locate(
-                        Err(anyhow::anyhow!(
-                            "this argument is a '{}' and a '{}' is what is wanted here",
-                            spelled(&given),
-                            spelled(wanted)
-                        )),
+                        Err(self.argument_mismatch(*argument, &given, wanted)),
                         self.at_expression(*argument),
                     );
                 }
@@ -11686,6 +11697,43 @@ impl<'a> FunctionLowering<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The sentence an argument that does not fit is reported in, with the rule
+    /// it broke after it where the type wanted is a named one. A binding asks
+    /// the nominal question first and the plain one after; asked the other way
+    /// round here, the plain complaint answered for both and a value written
+    /// where a distinct type belongs was never told which rule it broke.
+    fn argument_mismatch(
+        &self,
+        argument: ExprId,
+        given: &Type,
+        wanted: &Type,
+    ) -> anyhow::Error {
+        if distinct_mismatch(
+            self.ast,
+            argument,
+            given,
+            wanted,
+            &self.builder.flags,
+        ) {
+            let (described, note) = nominal_words(
+                self.ast,
+                argument,
+                given,
+                wanted,
+                &self.builder.flags,
+            );
+            return anyhow::anyhow!(
+                "this argument is {described} and a '{}' is what is wanted here; {note}",
+                spelled(wanted)
+            );
+        }
+        anyhow::anyhow!(
+            "this argument is a '{}' and a '{}' is what is wanted here",
+            spelled(given),
+            spelled(wanted)
+        )
     }
 
     /// The rule a field of a struct or of an enum variant is held to, which is

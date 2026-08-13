@@ -390,11 +390,14 @@ is_narrowing :: fn(from: i64, to: i64) -> bool {
 value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
     // A conversion that can lose the value is the reader's to ask for: an i64
     // of 300 read at a u8 is 44. A literal is exempt, since one is checked
-    // against the range it is written at instead. Two different named types are
-    // a different complaint, and the one that names them says more than a width
-    // does, so this fires only between the same type and between plain ones.
-    named := is_distinct(from) || is_distinct(to)
-    if (from == to || named == false) {
+    // against the range it is written at instead.
+    //
+    // Where the type wanted is a named one, taking its representation for it is
+    // the complaint, and that one says more than a width does. Where the type
+    // wanted is plain there is no such complaint to make, so the widths are
+    // compared through whatever the two stand for: a distinct type over an i64
+    // read at an i32 loses the same half a bare i64 does.
+    if (from == to || is_distinct(to) == false) {
         if (is_narrowing(from, to) && untyped_literal(p, value) == false) {
             report_where(p.modules, p.src, arena_at(p.arena, value).pos)
             report("this is a '")

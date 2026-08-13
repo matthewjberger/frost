@@ -943,6 +943,12 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         check_types_expr(p, value)
         want_single(p, value, p.current_ret)
         value_ty := type_of(p, value)
+        // A value written after `return` where the signature answers nothing.
+        // A bare `return` names no value and has already left above, so what is
+        // here is one the function has nowhere to put.
+        if (p.current_ret == TY_VOID && value_ty != TY_VOID) {
+            report_answer_mismatch(p, value, value_ty, node.pos)
+        }
         if (value_fits(p, value, value_ty, p.current_ret) == false) {
             report_answer_mismatch(p, value, value_ty, node.pos)
         }

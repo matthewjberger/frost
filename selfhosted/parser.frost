@@ -4177,8 +4177,12 @@ block_returns :: fn(mut p: Parser, head: i64) -> bool {
 // A body ending in an `if` answers with whichever branch ran, so each branch's
 // trailing expression becomes a return. A branch producing nothing is left
 // alone, and a missing else falls through to the plain answer below.
-return_trailing_branches :: fn(mut p: Parser, body: i64) {
-    if (body == (-1)) {
+return_trailing_branches :: fn(mut p: Parser, body: i64, ret: i64) {
+    // A function that answers nothing has no answer for a branch to carry. Its
+    // trailing `if` is a statement, and what each branch ends with is a
+    // statement too, so turning one into a `return` said the function was
+    // handing back a value it has nowhere to put.
+    if (body == (-1) || ret == TY_VOID) {
         return
     }
     mut last := body
@@ -7142,7 +7146,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // The branches of an answering `if` become returns first, so each carries
     // what was deferred the way a written `return` does. Afterwards there is
     // nothing left for the trailing walk to put copies in front of.
-    return_trailing_branches(p, body)
+    return_trailing_branches(p, body, ret)
     body = defer_trailing(p, body, ret)
     p.defers.count = p.defer_base
     p.defer_base = saved_defer_base
