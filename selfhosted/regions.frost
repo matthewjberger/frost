@@ -1406,11 +1406,15 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             field_len := fnode.c
             check_types_expr(p, value)
             if (is_struct_ty(struct_ty)) {
-                want_single(
-                    p,
-                    value,
-                    field_type(p, struct_ty, field_off, field_len)
-                )
+                wanted := field_type(p, struct_ty, field_off, field_len)
+                want_single(p, value, wanted)
+                // A field holds what its declaration says, the way a binding
+                // does. Nothing asked here, so a narrower field took a wider
+                // value and said nothing about the loss. Asked for what it
+                // reports rather than for what it answers: a value that does
+                // not fit says so itself, and the answer is the argument
+                // list's question rather than this one's.
+                if (value_fits(p, value, type_of(p, value), wanted)) {}
             }
             fid = next_field
         }
