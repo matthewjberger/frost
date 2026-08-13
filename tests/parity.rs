@@ -1139,6 +1139,21 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "cannot bind 'x' to a void value; this expression produces no value",
     ),
+    // A number is not a truth value. `types_compatible` ended in `true`, so
+    // every scalar reached every other and an i64 filled a `bool`. Found by
+    // `tools/type_grid.py`, which asks the two compilers about every ordered
+    // pair of types in every position one value reaches another.
+    (
+        "a_number_does_not_fill_a_truth_value",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 0 }
+         main :: fn() -> i64 {
+             y : bool = give()
+             0
+         }
+",
+        "this binding is a 'bool' and the value is a 'i64'",
+    ),
     (
         "a_call_answering_nothing_fills_no_annotated_binding",
         "import \"io.frost\"

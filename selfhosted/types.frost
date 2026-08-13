@@ -583,8 +583,31 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
         if (is_float(held) || held == TY_BOOL) {
             return false
         }
+        // An address is a whole number, which is the one crossing left here.
+        return true
     }
-    true
+    // A number, a truth value and an address are three kinds of thing, and one
+    // does not become another without a cast saying so. Two numbers reach each
+    // other, whole or not: how wide they are is the narrowing rule's question
+    // rather than this one's, and the bootstrap reads a number into a number
+    // the same way.
+    //
+    // This chain ended in `true`, so every scalar reached every other: an i64
+    // filled a `bool` and nothing said a word.
+    // A value where nothing is wanted is a value dropped, which is what a call
+    // written as a statement is.
+    if (to == TY_VOID) {
+        return true
+    }
+    // A handle is a whole number under a name of its own, and the containers
+    // hand one back where a number is held.
+    holds_a_number(from) && holds_a_number(to)
+}
+
+// Whether a type carries a number: whole, fractional, or a handle, which is a
+// whole one under a name of its own. A truth value is not one of them.
+holds_a_number :: fn(ty: i64) -> bool {
+    is_integer(ty) || is_float(ty) || ty == TY_HANDLE
 }
 
 local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
@@ -929,8 +952,12 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         return TY_I64
     }
     if (kind == NodeKind::Bin) {
+        // A comparison answers a truth value, not the number it compared. It
+        // said `i64` here, which nothing caught while every scalar reached
+        // every other, and `-> bool` bodies answering `a == b` were checked
+        // against the wrong type.
         if (op_answers_truth(node.val)) {
-            return TY_I64
+            return TY_BOOL
         }
         left := operand_type(p, node.a)
         right := operand_type(p, node.b)
