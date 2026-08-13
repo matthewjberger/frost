@@ -5385,18 +5385,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         unique := p.arena.count
         name_off := synth_numbered(p, "__discard", unique)
         name_len := 9 + digits_in(unique)
-        // The whole answer rather than a field of one, which is what the -1
-        // says to the walk that refuses a dropped resource.
-        arena_push(
-            p.multi_discards,
-            LocalVar {
-                name_off = call_target(p, value),
-                name_len = -1,
-                ty = at,
-                slot = 0
-            }
-        )
-        return new_let_node(p, value, name_off, name_len, -1)
+        bind := new_let_node(p, value, name_off, name_len, -1)
+        // At the `_`. The binding carries the name the compiler made up, whose
+        // offset is in the room past the source, and the walk that refuses a
+        // dropped resource reports where the reader wrote it.
+        mut spot := arena_at(p.arena, bind)
+        spot.pos = at
+        return bind
     }
 
     // `quotient, remainder := divide(a, b)`, and `mut` in front of any name the
@@ -5500,6 +5495,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 )
             }
             bind := new_let_node(p, access, name_off, name_len, -1)
+            mut bound := arena_at(p.arena, bind)
+            bound.pos = at
             set_next(p, tail, bind)
             tail = bind
             index = index + 1

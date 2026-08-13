@@ -2158,6 +2158,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this `_` drops a 'File', which is consumed exactly once",
     ),
+    // A resource moved under a second name. The self-hosted move walk runs
+    // after the type walk has let its table of locals go, so `type_of` read a
+    // bare name as a number and the block this owns was never released.
+    (
+        "a_resource_bound_to_a_second_name_is_still_owed",
+        "import \"io.frost\"
+         File :: linear struct { h: i64 }
+         open :: fn(n: i64) -> File { File { h = n } }
+         close :: fn(move f: File) { print(\"{}\\n\", f.h) }
+         main :: fn() -> i64 {
+             f := open(3)
+             g := f
+             0
+         }
+",
+        "linear value 'g' is not consumed on every path before return",
+    ),
+    // A `_` taking a name rather than a call. The walk that refuses a dropped
+    // resource read the type off the callee, and there is none here.
+    (
+        "a_lone_underscore_dropping_a_resource_held_by_a_name",
+        "import \"io.frost\"
+         File :: linear struct { h: i64 }
+         open :: fn(n: i64) -> File { File { h = n } }
+         close :: fn(move f: File) { print(\"{}\\n\", f.h) }
+         main :: fn() -> i64 {
+             f := open(3)
+             _ := f
+             0
+         }
+",
+        "this `_` drops a 'File', which is consumed exactly once",
+    ),
     // The same, where the `_` stands on its own rather than in a list. The
     // self-hosted read it as a list of one and asked the callee for a field of
     // a return type list it never declared; the bootstrap left it to the

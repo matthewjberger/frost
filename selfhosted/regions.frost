@@ -2309,6 +2309,54 @@ branch_exits_without :: fn(
 // enclosing function hands back, which is true only when that function's own
 // return type holds a resource. A trailing expression is the return value, so a
 // call in that position is consumed by the caller rather than dropped here.
+// The type a name was bound to in this list of statements, or -1 where the list
+// does not bind it.
+//
+// The type walk fills a table of locals and lets it go when the declaration is
+// read, and this walk runs after that, so `type_of` answers `i64` for a bare
+// name. What bound the name is still in the list, and reading it there needs no
+// table. A chain of names is followed, with a bound on how far, since a name
+// bound to itself would otherwise be walked forever.
+bound_type_of :: fn(
+    mut p: Parser,
+    head: i64,
+    off: i64,
+    len: i64,
+    depth: i64
+) -> i64 {
+    if (depth > 8) {
+        return -1
+    }
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (node.kind == NodeKind::Let && node.c == len
+            && bytes_equal(p.src, node.val, off, len)) {
+            mut ty := node.b
+            if (ty == (-1)) {
+                ty = type_of(p, node.a)
+                held := arena_at(p.arena, node.a)
+                if (held.kind == NodeKind::Var) {
+                    found := bound_type_of(p, head, held.val, held.c, depth + 1)
+                    if (found >= 0) {
+                        ty = found
+                    }
+                }
+            }
+            return ty
+        }
+        id = next_id
+    }
+    -1
+}
+
+// Whether a binding's name is the storage a `_` was given. A program cannot
+// spell the prefix, which is reserved.
+names_a_discard :: fn(p: Parser, off: i64, len: i64) -> bool {
+    len > 9 && str_range_eq(p.src, off, 9, "__discard")
+}
+
 check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
     mut id := head
     while (id != (-1)) {
@@ -2338,9 +2386,31 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
             mut ty := node.b
             if (ty == (-1)) {
                 ty = type_of(p, node.a)
+                // A name bound to another name takes what that one holds. This
+                // walk runs after the type walk has let its table of locals go,
+                // so `type_of` reads a bare name as a number, and a resource
+                // moved under a second name was watched by nothing. What bound
+                // the first name is still here to read.
+                held := arena_at(p.arena, node.a)
+                if (held.kind == NodeKind::Var) {
+                    found := bound_type_of(p, head, held.val, held.c, 0)
+                    if (found >= 0) {
+                        ty = found
+                    }
+                }
             }
             if (is_linear_type(p, ty) && is_refused_pool(p, ty) == false
                 && consumes_value(p, node.next, node.val, node.c) == false) {
+                // A `_` is a binding under a name no source can spell, so the
+                // complaint is the one the `_` earns rather than one naming
+                // storage the reader cannot find.
+                if (names_a_discard(p, node.val, node.c)) {
+                    report_where(p.modules, p.src, node.pos)
+                    report("this `_` drops a '")
+                    report_type_name(p, ty)
+                    report("', which is consumed exactly once; bind it to a name and consume it")
+                    frost_rt_recover_escape()
+                }
                 report_where(p.modules, p.src, node.val)
                 report("linear value '")
                 report_src(p.src, node.val, node.c)
