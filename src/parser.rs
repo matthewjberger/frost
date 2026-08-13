@@ -1607,7 +1607,7 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
-            // `InitFlags :: flags u32 { Video = 32 }`. The word is not a
+            // `InitFlags :: flags u32 { Video :: 32 }`. The word is not a
             // keyword, so the shape after it is what says this is a
             // declaration rather than an expression that starts with a name.
             Token::Identifier(_)
