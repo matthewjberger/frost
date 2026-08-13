@@ -31,11 +31,10 @@ pub fn lower_multiple_returns(
         linear: linear.clone(),
     };
     lowering.collect_signatures(ast, roots)?;
-    if lowering.signatures.is_empty() {
-        // Nothing declares a return type list, so there is nothing to rewrite
-        // and no call to reject.
-        return Ok(());
-    }
+    // The walk runs even where nothing declares a return type list. There is
+    // nothing to rewrite then, but a list binding is still written, and left
+    // here it reached the lowering as a statement nothing knows how to lower
+    // and was reported as an unsupported one.
     let rewritten = lowering.rewrite_statements(ast, roots, None)?;
     *roots = rewritten;
 
@@ -136,9 +135,11 @@ impl Lowering {
             match ast.stmt(*statement) {
                 Statement::LetMultiple(bindings, value) => {
                     let (bindings, value) = (*bindings, *value);
-                    rewritten.extend(
-                        self.expand_binding(ast, *statement, bindings, value)?,
-                    );
+                    let position = ast.stmt_position(*statement);
+                    rewritten.extend(crate::source_map::locate(
+                        self.expand_binding(ast, *statement, bindings, value),
+                        position,
+                    )?);
                 }
                 _ => {
                     // Located here rather than inside, because this is where
@@ -344,7 +345,7 @@ impl Lowering {
     ) -> Result<Vec<StmtId>> {
         let Some(types) = self.called_signature(ast, value) else {
             bail!(
-                "a list of names binds the values of a call to a function whose return signature is a type list"
+                "this binding names the values of a call whose signature is not a return type list"
             );
         };
         if bindings.len() != types.len() {

@@ -5468,10 +5468,17 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             } else {
                 refuse_literal_name(p, name_off, name_len)
             }
+            at := cur_off(p)
             advance(p)
             base := new_named_node(p, NodeKind::Var, 0, temp_off, temp_len)
             field := synth_numbered(p, "value", index)
             access := new_field_node(p, base, field, 5 + digits_in(index))
+            // At the name this value is bound to. The node reads a field of a
+            // temporary the compiler made, whose position is in the room past
+            // the source, and a report about the binding belongs where the
+            // binding is written.
+            mut spot := arena_at(p.arena, access)
+            spot.pos = at
             // The field is called whatever the signature called that value. A
             // callee written later in the program has no signature yet, so the
             // name is patched once every one is parsed.
@@ -8041,7 +8048,11 @@ resolve_variant_fixups :: fn(mut p: Parser) {
         kind := fixup.kind
         if (kind == FixupKind::MultiField) {
             if (resolve_multi_field(p, lit_id, target, argument) == false) {
-                report_where(p.modules, p.src, argument)
+                // At the binding. `argument` counts which value of the list
+                // this one names, and reading a count as an offset put every
+                // such report on the first line of the first file.
+                held := arena_at(p.arena, lit_id)
+                report_where(p.modules, p.src, held.pos)
                 report("this binding names the values of a call whose signature is not a return type list")
                 frost_rt_recover_escape()
             }

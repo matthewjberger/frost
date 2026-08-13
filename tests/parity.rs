@@ -1183,6 +1183,22 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this is a 'Tag' and a 'i32' is wanted, which cannot hold all of one; write cast($i32, ...) to say the loss is meant",
     ),
+    // A list of names against a call that answers one value. The self-hosted
+    // read a field index as a source offset and put the report on the first
+    // line of the first file; the bootstrap skipped the walk that rejects it
+    // whenever no function anywhere declared a return type list, and the
+    // statement reached the lowering as one nothing knew how to lower.
+    (
+        "a_list_of_names_needs_a_call_that_answers_a_list",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 7 }
+         main :: fn() -> i64 {
+             a, b := give()
+             a + b
+         }
+",
+        "this binding names the values of a call whose signature is not a return type list",
+    ),
     // A truth value is not a one-byte number. Nothing was lost either way, so
     // the width comparison the coercion makes had no complaint and built the
     // conversion in silence.
