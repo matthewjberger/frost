@@ -3358,7 +3358,9 @@ run_place_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     // fields view, so the runs behind those fields are what the summary names.
     // Without this a view carried out inside a struct left the callee with
     // nothing filed and the caller with nothing to go stale.
-    if (kind == NodeKind::StructLit) {
+    // A run written out carries what it holds the same way, and its elements
+    // are a list of the same shape, so one walk answers for both.
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         return run_place_in_fields_nth(p, node.a, n)
     }
     if (kind != NodeKind::Call) {
@@ -3771,7 +3773,7 @@ viewed_run_nth :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     // binding views whatever its fields do. Reached through the fields rather
     // than recorded per field: what a read names is the binding, and a growth
     // takes the whole block back however many fields point into it.
-    if (kind == NodeKind::StructLit) {
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
         return run_in_fields_nth(p, node.a, n)
     }
     -1

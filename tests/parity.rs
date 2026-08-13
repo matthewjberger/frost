@@ -1183,6 +1183,26 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this is a 'Tag' and a 'i32' is wanted, which cannot hold all of one; write cast($i32, ...) to say the loss is meant",
     ),
+    // A view handed back inside a run. The same view inside a struct was
+    // followed and this one was not, so the storage a grown container gave
+    // back was read with nothing said, in safe code.
+    (
+        "a_view_handed_back_inside_a_run_goes_stale_too",
+        "import \"io.frost\"
+         import \"vec.frost\"
+         make :: fn(mut v: Vec<i64>) -> [1][]i64 { [vec_slice(v)] }
+         main :: fn() -> i64 {
+             mut v := vec_new($i64, 2)
+             vec_push(v, 1)
+             h := make(v)
+             vec_push(v, 2)
+             print(\"{}\\n\", h[0][0])
+             vec_free(v)
+             0
+         }
+",
+        "views a run that 'v.storage' has since replaced",
+    ),
     // A sign change at the same width. An i8 of -1 read at a u8 is 255, and
     // both are one byte, so the width comparison the rule rested on had nothing
     // to say about the one conversion between them that changes the value.

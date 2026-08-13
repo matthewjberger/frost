@@ -1071,6 +1071,13 @@ impl RunWalk<'_> {
                 .iter()
                 .flat_map(|field| self.run_places(field.value))
                 .collect(),
+            // A run written out carries what it holds the same way a struct
+            // does, so a view handed back inside one is filed too.
+            Expression::Literal(Literal::Array(elements)) => ast
+                .exprs_in(*elements)
+                .iter()
+                .flat_map(|element| self.run_places(*element))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -2993,6 +3000,13 @@ fn holds_run(ty: &Type, fields: &FieldTypes) -> bool {
             })
         }
         Type::Distinct(_, inner) => holds_run(inner, fields),
+        // A run of views carries them out the way a struct holding one does,
+        // so its summary is worked out too. Left out, a view handed back
+        // inside a run was filed nowhere and nothing went stale when the
+        // container it names grew.
+        Type::Array(element, _) | Type::Slice(element) => {
+            is_view_type(element) || holds_run(element, fields)
+        }
         _ => false,
     }
 }
