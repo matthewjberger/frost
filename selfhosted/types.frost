@@ -479,6 +479,17 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     if (from == to) {
         return true
     }
+    // Nothing is not a value. A call that answers nothing has none to hand
+    // over, so it reaches no place that holds one. Asked here because what is
+    // left at the end of this chain answers `true`, and a void fell through
+    // every question on the way down and reached every type there is.
+    //
+    // One way only. A value where nothing is wanted is a value dropped, which
+    // is what a call written as a statement is, and the bootstrap reads it that
+    // way; a nothing where a value is wanted has nothing to read.
+    if (from == TY_VOID) {
+        return false
+    }
     if (from == TY_PARAM || to == TY_PARAM) {
         return true
     }

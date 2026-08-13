@@ -1123,6 +1123,33 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "a value named under a type is written with the type in front of it, \
          so this one is written `Result::Ok`",
     ),
+    // Nothing is not a value. The self-hosted compiler took both of these: its
+    // `types_compatible` answered `true` at the end of its chain, and a void
+    // fell through every question on the way down and reached every type there
+    // is. With no type written there is no mismatch to report, so the two say
+    // different things and both are pinned.
+    (
+        "a_call_answering_nothing_binds_to_no_name",
+        "import \"io.frost\"
+         noop :: fn() { }
+         main :: fn() -> i64 {
+             x := noop()
+             0
+         }
+",
+        "cannot bind 'x' to a void value; this expression produces no value",
+    ),
+    (
+        "a_call_answering_nothing_fills_no_annotated_binding",
+        "import \"io.frost\"
+         noop :: fn() { }
+         main :: fn() -> i64 {
+             y : i64 = noop()
+             y
+         }
+",
+        "this binding is a 'i64' and the value is a 'void'",
+    ),
     // A cast converts one number into another. A struct is held by address, so
     // reading one as a number reads whatever its first word was. The
     // self-hosted compiler had no such check and emitted the conversion.

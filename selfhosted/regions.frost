@@ -857,6 +857,16 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         check_types_expr(p, value)
         mut ty := annotation
         if (annotation == (-1)) {
+            // Nothing is not a value, and with no type written there is no
+            // mismatch to report: the name would stand for whatever sat where
+            // a value would have been.
+            if (type_of(p, value) == TY_VOID) {
+                report_where(p.modules, p.src, node.pos)
+                report("cannot bind '")
+                report_src(p.src, off, len)
+                report("' to a void value; this expression produces no value")
+                frost_rt_recover_escape()
+            }
             ty = binding_type(p, value)
         } else if (is_columns_new_call(p, value)) {
             // `columns_new()` stands for a zeroed container rather than a call,
