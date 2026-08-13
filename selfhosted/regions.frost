@@ -1166,6 +1166,15 @@ answer_is_asked :: fn(mut p: Parser, value: i64) -> bool {
     if (held.kind == NodeKind::Call && call_answer_is_a_stand_in(p, held.b, held.val)) {
         return false
     }
+    // A call to a function declared to answer nothing, standing where the
+    // body's value goes. Void is unnameable in that a program cannot write it
+    // down, and that is what excused it, but here it is the whole of what went
+    // wrong. Read off the declaration rather than off `type_of`, which answers
+    // void both for a call that gives nothing and for a node it cannot type.
+    if (held.kind == NodeKind::Call && held.val >= 0 && held.val < p.fns.count
+        && arena_at(p.fns, held.val).ret_type == TY_VOID) {
+        return true
+    }
     answered := type_of(p, value)
     if (unnameable(answered) || unnameable(p.current_ret)) {
         return false

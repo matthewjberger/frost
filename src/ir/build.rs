@@ -5594,18 +5594,28 @@ impl<'a> FunctionLowering<'a> {
         if value_type == return_type {
             return Ok(());
         }
-        let Type::Distinct(name, _) = return_type else {
-            return Ok(());
-        };
-        let note = if self.builder.flags.contains_key(name) {
-            "a set of bits is built only from the names declared under it"
-        } else {
-            "a distinct type is not its representation"
-        };
-        bail!(
-            "this returns a '{}' and the function answers with a '{return_type}'; {note}",
-            spelled(value_type)
-        )
+        if let Type::Distinct(name, _) = return_type {
+            let note = if self.builder.flags.contains_key(name) {
+                "a set of bits is built only from the names declared under it"
+            } else {
+                "a distinct type is not its representation"
+            };
+            bail!(
+                "this returns a '{}' and the function answers with a '{return_type}'; {note}",
+                spelled(value_type)
+            );
+        }
+        // The answer holds what the signature says, the way a binding does. A
+        // truth value is the one this catches that a width comparison cannot:
+        // a `bool` and an `i8` are both one byte, so nothing was lost and the
+        // coercion built the conversion without a word.
+        if !value_stands_for(value_type, return_type) {
+            bail!(
+                "this returns a '{}' and the function answers with a '{return_type}'",
+                spelled(value_type)
+            );
+        }
+        Ok(())
     }
 
     fn lower_body_with_defers(
@@ -5965,6 +5975,12 @@ impl<'a> FunctionLowering<'a> {
                         );
                         bail!(
                             "this returns {described} and the function answers with a '{return_type}'; {note}"
+                        );
+                    }
+                    if !value_stands_for(&value_type, &return_type) {
+                        bail!(
+                            "this returns a '{}' and the function answers with a '{return_type}'",
+                            spelled(&value_type)
                         );
                     }
                     let coerced =
@@ -9539,6 +9555,16 @@ impl<'a> FunctionLowering<'a> {
                     "this place is a '{target_type}' and the value is {described}; {note}"
                 );
             }
+            // What the place holds, asked the way a binding asks it. Left to
+            // the coercion, a value it has no conversion for went through
+            // untouched and the verifier named the lowered local.
+            if !value_stands_for(&value_type, &target_type) {
+                bail!(
+                    "this place is a '{}' and the value is a '{}'",
+                    spelled(&target_type),
+                    spelled(&value_type)
+                );
+            }
             let coerced = self.coerce(operand, &value_type, &target_type)?;
             self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
             return Ok(());
@@ -9587,6 +9613,13 @@ impl<'a> FunctionLowering<'a> {
             );
             bail!(
                 "this place is a '{pointee}' and the value is {described}; {note}"
+            );
+        }
+        if !value_stands_for(&value_type, &pointee) {
+            bail!(
+                "this place is a '{}' and the value is a '{}'",
+                spelled(&pointee),
+                spelled(&value_type)
             );
         }
         if needs_memory(&pointee) {

@@ -572,6 +572,7 @@ main :: fn() -> i64 {
             print_int_line(ANSWER)
             h := Holder { item = box_make(77) }
             print_int_line(box_get(h.item))
+            0
         }
     "
     }

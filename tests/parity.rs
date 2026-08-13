@@ -1154,6 +1154,49 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "this binding is a 'bool' and the value is a 'i64'",
     ),
+    // A truth value is not a one-byte number. Nothing was lost either way, so
+    // the width comparison the coercion makes had no complaint and built the
+    // conversion in silence.
+    (
+        "a_one_byte_number_is_not_a_truth_value",
+        "import \"io.frost\"
+         give :: fn() -> i8 { 0 }
+         answer :: fn() -> bool { give() }
+         main :: fn() -> i64 {
+             answer()
+             0
+         }
+",
+        "this returns a 'i8' and the function answers with a 'bool'",
+    ),
+    // The value a body answers with is held to the signature, and a call that
+    // gives nothing answers with nothing.
+    (
+        "a_body_does_not_answer_with_a_call_that_gives_nothing",
+        "import \"io.frost\"
+         noop :: fn() { }
+         answer :: fn() -> i64 { noop() }
+         main :: fn() -> i64 {
+             answer()
+         }
+",
+        "this returns a 'void' and the function answers with a 'i64'",
+    ),
+    // A place holds what it was declared to hold. The bootstrap left this to
+    // the coercion, which passes a value it has no conversion for straight
+    // through, and the verifier named the lowered local.
+    (
+        "a_place_holds_only_what_it_declares",
+        "import \"io.frost\"
+         give :: fn() -> i64 { 0 }
+         main :: fn() -> i64 {
+             mut y : str = \"x\"
+             y = give()
+             0
+         }
+",
+        "this place is a 'str' and the value is a 'i64'",
+    ),
     // A field holds what its declaration says. Neither compiler asked, so the
     // value went into the store unchecked and the bootstrap's report came from
     // the verifier, which names a lowered local and a pointer.
