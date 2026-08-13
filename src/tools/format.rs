@@ -269,6 +269,7 @@ fn roles(
     brace_depth: &[i32],
 ) -> Vec<Role> {
     let mut held = vec![Role::Plain; tokens.len()];
+    let opened_by_when = when_braces(tokens);
     for index in 0..tokens.len() {
         match &tokens[index] {
             // A declaration is a name at the head of its line followed by `::`.
@@ -286,6 +287,12 @@ fn roles(
                             tokens,
                             opens_line,
                             brace_depth,
+                            index,
+                        )
+                        || inside_when_block(
+                            tokens,
+                            brace_depth,
+                            &opened_by_when,
                             index,
                         )) =>
             {
@@ -327,6 +334,59 @@ fn roles(
         }
     }
     held
+}
+
+/// The braces a `when` opens, including the one after its `else`.
+///
+/// A `when` chooses between two runs of declarations on the target, so what
+/// stands inside one is top-level: a name at the head of its line followed by
+/// `::` declares there exactly as it would outside, and is spaced the same.
+fn when_braces(tokens: &[Token]) -> Vec<bool> {
+    let mut held = vec![false; tokens.len()];
+    for index in 0..tokens.len() {
+        if !matches!(tokens[index], Token::When)
+            || !matches!(tokens.get(index + 1), Some(Token::LeftParentheses))
+        {
+            continue;
+        }
+        let Some(close) = matching(tokens, index + 1) else {
+            continue;
+        };
+        let mut at = close + 1;
+        while matches!(tokens.get(at), Some(Token::LeftBrace)) {
+            held[at] = true;
+            let Some(end) = matching(tokens, at) else {
+                break;
+            };
+            // `} else {` carries the same run of declarations on.
+            if matches!(tokens.get(end + 1), Some(Token::Else))
+                && matches!(tokens.get(end + 2), Some(Token::LeftBrace))
+            {
+                at = end + 2;
+                continue;
+            }
+            break;
+        }
+    }
+    held
+}
+
+/// Whether the brace holding `index` is one a `when` opened.
+fn inside_when_block(
+    tokens: &[Token],
+    brace_depth: &[i32],
+    opened_by_when: &[bool],
+    index: usize,
+) -> bool {
+    if brace_depth[index] != 1 {
+        return false;
+    }
+    (0..index)
+        .rev()
+        .find(|held| {
+            matches!(tokens[*held], Token::LeftBrace) && brace_depth[*held] == 0
+        })
+        .is_some_and(|open| opened_by_when[open])
 }
 
 /// Where the bracket opened at `open` closes.
@@ -509,6 +569,12 @@ fn opens_a_declaration(token: &Token, next: Option<&Token>) -> bool {
     // `export` and `test` are words rather than keywords, so they are read as
     // the names they are.
     if matches!(token, Token::Import) {
+        return true;
+    }
+    // A `when` opens a run of declarations chosen on the target. It stands at
+    // the head of its own line the way a declaration does, and without this it
+    // read as a line running on and was written one level in.
+    if matches!(token, Token::When) {
         return true;
     }
     if let Token::Identifier(name) = token

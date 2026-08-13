@@ -479,6 +479,12 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     if (from == to) {
         return true
     }
+    // A type parameter stands for a type not yet known, so nothing is decided
+    // against it. Asked before the question below, because a type nobody has
+    // bound yet is not a type to judge a value against.
+    if (from == TY_PARAM || to == TY_PARAM) {
+        return true
+    }
     // Nothing is not a value. A call that answers nothing has none to hand
     // over, so it reaches no place that holds one. Asked here because what is
     // left at the end of this chain answers `true`, and a void fell through
@@ -489,9 +495,6 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     // way; a nothing where a value is wanted has nothing to read.
     if (from == TY_VOID) {
         return false
-    }
-    if (from == TY_PARAM || to == TY_PARAM) {
-        return true
     }
     // A distinct type is built only from itself, so neither its representation
     // nor another distinct type over the same representation will do. What the

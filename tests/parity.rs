@@ -4380,6 +4380,23 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A value where nothing is wanted is a value dropped, which is what a call
+    // written as a statement is. The rule that a nothing reaches no value is
+    // one way only, and refusing both directions refused this: the compiler's
+    // own source ends a void function with `arena_push(...)`.
+    (
+        "a_call_answering_a_value_may_end_a_void_function",
+        "import \"io.frost\"
+         bump :: fn(n: i64) -> i64 { n + 1 }
+         note :: fn() { bump(1) }
+         main :: fn() -> i64 {
+             note()
+             print(\"ok\\n\")
+             0
+         }
+",
+        "ok\n",
+    ),
     // A failure set's enum is one per `(T, E)` and is named `Result`, so its
     // two variants are reached the way every other value under a type is. It
     // was the one type a program could not name, which is why its variants

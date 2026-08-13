@@ -497,6 +497,10 @@ TokenKind :: enum {
     Float,
     KwFn,
     KwIf,
+    // A choice made on the target rather than at run time. A word rather than
+    // a name, so the formatter reads `when (X) {` as the block it is instead
+    // of as a call to something named `when`.
+    KwWhen,
     KwElse,
     KwWhile,
     KwBreak,

@@ -137,6 +137,9 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         if (str_range_eq(src, off, len, "test")) {
             return TokenKind::KwTest
         }
+        if (str_range_eq(src, off, len, "when")) {
+            return TokenKind::KwWhen
+        }
         if (str_range_eq(src, off, len, "uses")) {
             return TokenKind::KwUses
         }

@@ -181,12 +181,11 @@ pub type WhenResolved =
     (Vec<Token>, Vec<crate::lexer::Position>, Vec<(usize, usize)>);
 
 fn is_when(token: &Token) -> bool {
-    matches!(token, Token::Identifier(name) if name == "when")
+    matches!(token, Token::When)
 }
 
-// Where a `when` opens one, or nothing for a word that is only a name. The
-// shape is what tells them apart: `when` is not reserved, so a program may
-// still call a function by that name, and a call is not followed by a block.
+// Where a `when` opens one. The word is reserved, so nothing else wears it and
+// the condition after it is the whole of the test.
 fn opens_when(tokens: &[Token], at: usize) -> bool {
     is_when(&tokens[at])
         && matches!(tokens.get(at + 1), Some(Token::LeftParentheses))

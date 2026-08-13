@@ -594,7 +594,7 @@ ends and the next begins, exactly as it does between two declarations:
 
 ```frost,refused
 Key :: distinct i64 {
-    Left :: 80 Right::79
+    Left :: 80 Right :: 79
 }
 
 main :: fn() -> i64 { 0 }
@@ -655,12 +655,12 @@ is laid out, and the emitted program cannot depend on it having been there. That
 is what lets one branch name something the other machine has not got.
 
 ```frost
-    when(TARGET_WINDOWS) {
-    NAME::"windows"
-    width::fn() -> i64 { 64 }
+when (TARGET_WINDOWS) {
+    NAME :: "windows"
+    width :: fn() -> i64 { 64 }
 } else {
-    NAME::"other"
-    width::fn() -> i64 { 32 }
+    NAME :: "other"
+    width :: fn() -> i64 { 32 }
 }
 ```
 

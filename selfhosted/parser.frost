@@ -9900,10 +9900,7 @@ opens_when :: fn(mut p: Parser, at: i64) -> bool {
         return false
     }
     token := arena_at(p.tokens, at)
-    if (token.kind != TokenKind::Ident) {
-        return false
-    }
-    if (str_range_eq(p.src, token.off, token.len, "when") == false) {
+    if (token.kind != TokenKind::KwWhen) {
         return false
     }
     arena_at(p.tokens, at + 1).kind == TokenKind::Lparen

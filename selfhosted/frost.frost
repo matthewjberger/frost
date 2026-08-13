@@ -619,7 +619,7 @@ main :: fn() -> i64 {
         const_failed = 0,
         value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
-        results = arena_make($ResultEnum, 64),
+        results = arena_make($ResultEnum, 4096),
         const_faults = arena_make($i64, 256),
         const_repeat = 0,
         refused_pools = arena_make($i64, 64),

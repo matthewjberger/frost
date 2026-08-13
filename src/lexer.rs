@@ -40,6 +40,10 @@ pub enum Token {
     GreaterThanOrEqual,
     Identifier(String),
     If,
+    // A choice made on the target rather than at run time. A word rather than
+    // a name, so the formatter reads `when (X) {` as the block it is instead of
+    // as a call to something named `when`.
+    When,
     Illegal(String),
     Import,
     In,
@@ -120,6 +124,7 @@ impl Display for Token {
             GreaterThanOrEqual => ">=".to_string(),
             Identifier(value) => value.to_string(),
             If => "if".to_string(),
+            When => "when".to_string(),
             Illegal(value) => value.to_string(),
             Import => "import".to_string(),
             In => "in".to_string(),
@@ -202,6 +207,7 @@ keywords! {
     "move" => Move,
     "return" => Return,
     "if" => If,
+    "when" => When,
     "import" => Import,
     "else" => Else,
     "struct" => Struct,
