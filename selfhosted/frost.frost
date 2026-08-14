@@ -753,6 +753,7 @@ main :: fn() -> i64 {
         answer_locals = arena_make($LocalVar, 4096),
         frame_places = arena_make($LocalVar, 4096),
         frame_reported = arena_make($LocalVar, 4096),
+        indirect_reported = arena_make($LocalVar, 4096),
         walk_types = arena_make($LocalVar, 4096),
         region_via_pointer = arena_make($LocalVar, 4096),
         frame_ret = -1,

@@ -1931,6 +1931,11 @@ Parser :: struct {
     // instance. One place in the source is one fault, which is what the other
     // compiler says about it too.
     frame_reported: Arena<LocalVar>,
+    // Where a call going to a value rather than to a name has already been
+    // named, in `name_off`. A table of its own rather than the one above,
+    // since a warning about a call and a refusal about a frame are two things
+    // and one may not silence the other.
+    indirect_reported: Arena<LocalVar>,
     // The declared or inferred type of each parameter and local, in `ty`. The
     // frame check runs before the type pass, so it carries its own.
     walk_types: Arena<LocalVar>,

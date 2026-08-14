@@ -662,10 +662,17 @@ module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
     0
 }
 
+// A newline is left where it is. A report names the line a thing is written on
+// by counting the newlines above it, so a list blanked away took its lines with
+// it and everything below was named as if it stood that many lines higher: an
+// `export` running over thirteen lines put every report in the file twelve
+// lines above what the reader wrote.
 blank_range :: fn(buffer: str, from: i64, through: i64) {
     mut b := from
     while (b <= through) {
-        buffer[b] = CH_SPACE
+        if (buffer[b] != CH_LF) {
+            buffer[b] = CH_SPACE
+        }
         b = b + 1
     }
 }

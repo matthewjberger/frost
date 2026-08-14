@@ -54,9 +54,58 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "already vouches for what is in it",
     ),
+    // A call through a name that holds a function rather than being one.
+    (
+        "a_call_through_a_name_holding_a_function",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+main :: fn() -> i64 {
+             held := double
+             held(3)
+}
+",
+        "a call goes to a name, and 'held' holds a function rather than being one",
+    ),
+    // A call through a struct field of function type.
+    (
+        "a_call_through_a_field_holding_a_function",
+        "Pass :: struct { go: fn(i64) -> i64 }
+double :: fn(n: i64) -> i64 { n * 2 }
+main :: fn() -> i64 {
+             one := Pass { go = double }
+             one.go(4)
+}
+",
+        "a call goes to a name, and this one goes to a value",
+    ),
+    // A call through a parameter of function type.
+    (
+        "a_call_through_a_parameter_holding_a_function",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+through :: fn(go: fn(i64) -> i64) -> i64 { go(5) }
+main :: fn() -> i64 { through(double) }
+",
+        "a call goes to a name, and 'go' holds a function rather than being one",
+    ),
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A list of exports running over several lines. The names are blanked out
+    // of the source once they are read, and blanking their newlines away with
+    // them named every report below the list as if it stood that many lines
+    // higher: a thirteen-line `export` put the whole file twelve lines up.
+    (
+        "a_report_below_a_long_export_names_the_line_it_is_on",
+        "export alpha,\n\
+         \x20   beta,\n\
+         \x20   gamma,\n\
+         \x20   delta\n\
+         alpha :: fn() -> i64 { 1 }\n\
+         beta :: fn() -> i64 { 2 }\n\
+         gamma :: fn() -> i64 { 3 }\n\
+         delta :: fn() -> i64 { no_such_name() }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "call to undefined function 'no_such_name'",
+    ),
     // A resource reached through a `ref` into a container's run, given away.
     // The container still holds the element, so it frees the same storage
     // again, and which element the borrow found is worked out while the program

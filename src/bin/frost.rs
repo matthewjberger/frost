@@ -503,7 +503,7 @@ fn lowered_and_checked(
     collected: &[frost::Diagnostic],
     idle: &[frost::Diagnostic],
 ) -> Result<frost::IrModule> {
-    let (module, lowering) = beside(
+    let (module, lowering, indirect) = beside(
         collected,
         frost::build_module_recovering(
             &mut program.ast,
@@ -531,10 +531,15 @@ fn lowered_and_checked(
     // A build that is refused says what it refused and nothing else, so this is
     // past the last of them. A warning is a report too, and a caller reading
     // JSON gets it as one rather than as a line in the middle of the stream.
+    // A call going to a value is named beside a block that vouches for nothing,
+    // for the same reason: both are lists worth reading only while every entry
+    // on them earns its place.
+    let mut warnings = idle.to_vec();
+    warnings.extend(indirect);
     if wants_json() {
-        eprint!("{}", frost::diagnostics_as_json(idle, "warning"));
+        eprint!("{}", frost::diagnostics_as_json(&warnings, "warning"));
     } else {
-        eprint!("{}", frost::render_warnings(idle));
+        eprint!("{}", frost::render_warnings(&warnings));
     }
     Ok(module)
 }

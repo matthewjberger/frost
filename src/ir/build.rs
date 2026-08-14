@@ -109,13 +109,50 @@ pub struct IrBuilder {
     linear: HashSet<String>,
     // Callback registrations, by name.
     registrations: HashMap<String, crate::lower::callbacks::CallbackShape>,
-    // A number per type, handed out in the order `type_id` first asks for one.
-    // What it is for is a table keyed by type in a program that decides at run
-    // time what it holds: a component registry knows a type at the call that
-    // registers it and an index only afterwards, and this is what ties the two
-    // together. The numbers are this build's own and mean nothing outside it.
-    type_ids: std::cell::RefCell<HashMap<String, i64>>,
-    anon_counter: std::cell::Cell<usize>,
+}
+
+// The two tables that grow while the bodies lower, rather than being settled
+// before them. They are handed to each body as one mutable argument, so what
+// changes during a build is named in the signature that changes it and the
+// tables every body only reads stay shared.
+// What lowering one body answers with beside the function itself: the
+// instantiations it asked for, the anonymous functions it wrote, and the calls
+// in it that go to a value. The caller drains each into the build's own.
+struct LoweredFunction {
+    function: IrFunction,
+    specializations: Vec<Specialization>,
+    anonymous: Vec<AnonRequest>,
+    indirect_calls: Vec<crate::diagnostic::Diagnostic>,
+}
+
+#[derive(Default)]
+struct BuildShared {
+    // The number each type goes by, handed out in the order `type_id` first
+    // asks for one. What it is for is a table keyed by type in a program that
+    // decides at run time what it holds: a component registry knows a type at
+    // the call that registers it and an index only afterwards, and this is what
+    // ties the two together. The numbers are this build's own and mean nothing
+    // outside it.
+    type_ids: HashMap<String, i64>,
+    // How many anonymous functions have been named, so the next one gets a name
+    // no other has.
+    anon_counter: usize,
+}
+
+impl BuildShared {
+    // The number this type goes by, made the first time it is asked for.
+    fn type_id(&mut self, ty: &Type) -> i64 {
+        let written = ty.to_string();
+        let next = self.type_ids.len() as i64;
+        *self.type_ids.entry(written).or_insert(next)
+    }
+
+    // The name the next anonymous function goes by.
+    fn anon_name(&mut self) -> String {
+        let id = self.anon_counter;
+        self.anon_counter = id + 1;
+        format!("__anon_{id}")
+    }
 }
 
 // A flags declaration, as the two things the rest of the compiler asks it for.
@@ -219,14 +256,12 @@ pub fn build_module_recovering(
     roots: &[StmtId],
     linear: &HashSet<String>,
     per_module: bool,
-) -> Result<(IrModule, Vec<crate::diagnostic::Diagnostic>)> {
+) -> Result<LoweredModule> {
     build_module_inner(ast, roots, linear, per_module)
 }
 
-fn strict(
-    lowered: (IrModule, Vec<crate::diagnostic::Diagnostic>),
-) -> Result<IrModule> {
-    let (module, diagnostics) = lowered;
+fn strict(lowered: LoweredModule) -> Result<IrModule> {
+    let (module, diagnostics, _) = lowered;
     if diagnostics.is_empty() {
         return Ok(module);
     }
@@ -512,12 +547,18 @@ fn collect_bound_functions(
     found
 }
 
+type LoweredModule = (
+    IrModule,
+    Vec<crate::diagnostic::Diagnostic>,
+    Vec<crate::diagnostic::Diagnostic>,
+);
+
 fn build_module_inner(
     ast: &mut Ast,
     roots: &[StmtId],
     linear: &HashSet<String>,
     per_module: bool,
-) -> Result<(IrModule, Vec<crate::diagnostic::Diagnostic>)> {
+) -> Result<LoweredModule> {
     let synthetic_structs = expand_generic_structs(ast, roots)?;
     let mut layout_roots: Vec<StmtId> = roots.to_vec();
     layout_roots.extend(synthetic_structs.iter().copied());
@@ -657,8 +698,6 @@ fn build_module_inner(
         registrations: crate::lower::callbacks::callback_registrations(
             ast, roots,
         ),
-        type_ids: std::cell::RefCell::new(HashMap::new()),
-        anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(ast, roots);
 
@@ -673,6 +712,10 @@ fn build_module_inner(
     let mut pending: Vec<Specialization> = Vec::new();
     let mut pending_anon: Vec<AnonRequest> = Vec::new();
     let mut diagnostics: Vec<crate::diagnostic::Diagnostic> = Vec::new();
+    // Every call that goes to a value rather than to a name, gathered from the
+    // bodies as they lower and named on every build as a warning.
+    let mut indirect_calls: Vec<crate::diagnostic::Diagnostic> = Vec::new();
+    let mut shared = BuildShared::default();
 
     for statement in roots {
         let position = ast.stmt_position(*statement);
@@ -737,8 +780,9 @@ fn build_module_inner(
                     });
                     continue;
                 }
-                let (function, requests, anon) = match builder.lower_function(
+                let lowered = match builder.lower_function(
                     ast,
+                    &mut shared,
                     &name,
                     FunctionSource {
                         parameters,
@@ -752,9 +796,16 @@ fn build_module_inner(
                         continue;
                     }
                 };
-                functions.push(in_module(function, position.file));
-                pending.extend(requested_by(requests, position.file));
-                pending_anon.extend(anon_requested_by(anon, position.file));
+                indirect_calls.extend(lowered.indirect_calls);
+                functions.push(in_module(lowered.function, position.file));
+                pending.extend(requested_by(
+                    lowered.specializations,
+                    position.file,
+                ));
+                pending_anon.extend(anon_requested_by(
+                    lowered.anonymous,
+                    position.file,
+                ));
             }
             Statement::Extern {
                 name,
@@ -841,6 +892,7 @@ fn build_module_inner(
         ));
         match builder.lower_function(
             ast,
+            &mut shared,
             "main",
             FunctionSource {
                 parameters: Range32::EMPTY,
@@ -848,12 +900,13 @@ fn build_module_inner(
                 body,
             },
         ) {
-            Ok((function, requests, anon)) => {
-                functions.push(in_module(function, 0));
+            Ok(lowered) => {
+                functions.push(in_module(lowered.function, 0));
+                indirect_calls.extend(lowered.indirect_calls);
                 // Synthesized `main` from loose top-level statements, which
                 // belong to the entry file.
-                pending.extend(requested_by(requests, 0));
-                pending_anon.extend(anon_requested_by(anon, 0));
+                pending.extend(requested_by(lowered.specializations, 0));
+                pending_anon.extend(anon_requested_by(lowered.anonymous, 0));
             }
             Err(error) => {
                 report(&mut diagnostics, Position::default(), &error);
@@ -1027,9 +1080,10 @@ fn build_module_inner(
                 });
                 continue;
             }
-            let (function, requests, anon) = match locate_instantiation(
+            let lowered = match locate_instantiation(
                 builder.lower_function(
                     ast,
+                    &mut shared,
                     &specialization.mangled_name,
                     FunctionSource {
                         parameters,
@@ -1049,8 +1103,9 @@ fn build_module_inner(
                     continue;
                 }
             };
+            indirect_calls.extend(lowered.indirect_calls);
             let function =
-                local_to_module(function, specialization.requested_by);
+                local_to_module(lowered.function, specialization.requested_by);
             functions.push(IrFunction {
                 instantiated: Some(crate::ir::Instantiation {
                     name: specialization.display.clone(),
@@ -1063,14 +1118,20 @@ fn build_module_inner(
             // and so does the call site. The inner call was written inside a
             // template, and the line the reader wrote is the outer one.
             pending.extend(requested_at(
-                requested_by(requests, specialization.requested_by),
+                requested_by(
+                    lowered.specializations,
+                    specialization.requested_by,
+                ),
                 specialization.requested_at,
             ));
-            pending_anon
-                .extend(anon_requested_by(anon, specialization.requested_by));
+            pending_anon.extend(anon_requested_by(
+                lowered.anonymous,
+                specialization.requested_by,
+            ));
         } else if let Some(request) = pending_anon.pop() {
-            let (function, requests, anon) = match builder.lower_function(
+            let lowered = match builder.lower_function(
                 ast,
+                &mut shared,
                 &request.name,
                 FunctionSource {
                     parameters: request.parameters,
@@ -1084,9 +1145,17 @@ fn build_module_inner(
                     continue;
                 }
             };
-            functions.push(local_to_module(function, request.requested_by));
-            pending.extend(requested_by(requests, request.requested_by));
-            pending_anon.extend(anon_requested_by(anon, request.requested_by));
+            indirect_calls.extend(lowered.indirect_calls);
+            functions
+                .push(local_to_module(lowered.function, request.requested_by));
+            pending.extend(requested_by(
+                lowered.specializations,
+                request.requested_by,
+            ));
+            pending_anon.extend(anon_requested_by(
+                lowered.anonymous,
+                request.requested_by,
+            ));
         } else {
             break;
         }
@@ -1100,6 +1169,7 @@ fn build_module_inner(
             imported: declared,
         },
         diagnostics,
+        indirect_calls,
     ))
 }
 
@@ -1437,9 +1507,10 @@ impl IrBuilder {
     fn lower_function(
         &self,
         ast: &mut Ast,
+        shared: &mut BuildShared,
         name: &str,
         source: FunctionSource,
-    ) -> Result<(IrFunction, Vec<Specialization>, Vec<AnonRequest>)> {
+    ) -> Result<LoweredFunction> {
         let FunctionSource {
             parameters,
             return_sig,
@@ -1451,7 +1522,7 @@ impl IrBuilder {
         let declared_parameters: Vec<Parameter> =
             ast.params_in(parameters).to_vec();
         let mut function =
-            FunctionLowering::new(self, ast, return_type.clone());
+            FunctionLowering::new(self, shared, ast, return_type.clone());
 
         // A parameter is bound before any statement runs, so it would carry no
         // position and a type error about one would name a function and nothing
@@ -1508,6 +1579,7 @@ impl IrBuilder {
 
         let specializations = std::mem::take(&mut function.specializations);
         let anonymous = std::mem::take(&mut function.anonymous);
+        let indirect_calls = std::mem::take(&mut function.indirect_calls);
         let (locals, blocks) = function.finish();
         // Which parameters C hands over as the struct itself. The declaration
         // says `value`, and the type is the one it was written with, since the
@@ -1526,8 +1598,8 @@ impl IrBuilder {
                 self.c_layout(ty)
             })
             .collect();
-        Ok((
-            IrFunction {
+        Ok(LoweredFunction {
+            function: IrFunction {
                 name: name.to_string(),
                 param_count: declared_parameters.len(),
                 param_layouts,
@@ -1545,7 +1617,8 @@ impl IrBuilder {
             },
             specializations,
             anonymous,
-        ))
+            indirect_calls,
+        })
     }
 
     fn signature(&self, name: &str) -> Option<&FunctionSignature> {
@@ -1677,14 +1750,6 @@ impl IrBuilder {
 
     fn struct_layout(&self, name: &str) -> Option<&StructLayout> {
         self.structs.get(name)
-    }
-
-    // The number this type goes by, made the first time it is asked for.
-    fn type_id(&self, ty: &Type) -> i64 {
-        let written = ty.to_string();
-        let mut held = self.type_ids.borrow_mut();
-        let next = held.len() as i64;
-        *held.entry(written).or_insert(next)
     }
 
     fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
@@ -5344,6 +5409,8 @@ struct LoopTargets {
 
 struct FunctionLowering<'a> {
     builder: &'a IrBuilder,
+    // What grows while this body lowers, owned by the build and lent to it.
+    shared: &'a mut BuildShared,
     ast: &'a mut Ast,
     locals: Vec<IrLocal>,
     blocks: Vec<BlockUnderConstruction>,
@@ -5358,6 +5425,9 @@ struct FunctionLowering<'a> {
     current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
+    // Every call in this body that goes to a value rather than to a name.
+    // Drained by the caller the way the two above are.
+    indirect_calls: Vec<crate::diagnostic::Diagnostic>,
     // What the enclosing declaration named its `format` parameter, and every
     // parameter name in the order they were written. A body that hands its own
     // literal on together with its own trailing parameters is handing on what a
@@ -5370,6 +5440,7 @@ struct FunctionLowering<'a> {
 impl<'a> FunctionLowering<'a> {
     fn new(
         builder: &'a IrBuilder,
+        shared: &'a mut BuildShared,
         ast: &'a mut Ast,
         return_type: Type,
     ) -> Self {
@@ -5379,6 +5450,7 @@ impl<'a> FunctionLowering<'a> {
         };
         FunctionLowering {
             builder,
+            shared,
             ast,
             locals: Vec::new(),
             blocks: vec![entry],
@@ -5390,6 +5462,7 @@ impl<'a> FunctionLowering<'a> {
             current_position: Position::default(),
             specializations: Vec::new(),
             anonymous: Vec::new(),
+            indirect_calls: Vec::new(),
             forwarded_format: None,
             parameter_names: Vec::new(),
         }
@@ -6735,9 +6808,7 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::Function(parameters, return_sig, body)
             | Expression::Proc(parameters, return_sig, body) => {
-                let id = self.builder.anon_counter.get();
-                self.builder.anon_counter.set(id + 1);
-                let name = format!("__anon_{id}");
+                let name = self.shared.anon_name();
                 let param_types: Vec<Type> = self
                     .ast
                     .params_in(parameters)
@@ -7922,7 +7993,7 @@ impl<'a> FunctionLowering<'a> {
                 )
             }
             "type_id" => {
-                let id = self.builder.type_id(&ty);
+                let id = self.shared.type_id(&ty);
                 (
                     IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
                     Type::I64,
@@ -9050,6 +9121,33 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), return_type))
     }
 
+    // A call reaching here goes to a value: a declared function was looked for
+    // first, and a bundle's field folded to one before this. What is left is a
+    // callee decided while the program runs, which every build names.
+    //
+    // A specialization lowers the body again, so one written call arrives once
+    // per instance. Where it was written is what says they are the same call.
+    fn name_indirect_call(&mut self, callee: ExprId) {
+        let position = self.at_expression(callee);
+        if self
+            .indirect_calls
+            .iter()
+            .any(|held| held.position == position)
+        {
+            return;
+        }
+        let message = match self.ast.expr(callee) {
+            Expression::Identifier(name) => format!(
+                "a call goes to a name, and '{}' holds a function rather than being one",
+                self.ast.name(*name)
+            ),
+            _ => "a call goes to a name, and this one goes to a value"
+                .to_string(),
+        };
+        self.indirect_calls
+            .push(crate::diagnostic::Diagnostic::new(position, message));
+    }
+
     fn lower_indirect_call(
         &mut self,
         callee: ExprId,
@@ -9060,6 +9158,7 @@ impl<'a> FunctionLowering<'a> {
         let Type::Proc(parameter_types, return_type) = callee_type else {
             bail!("cannot call a value that is not a function pointer");
         };
+        self.name_indirect_call(callee);
         let return_type = *return_type;
         if arguments.len() != parameter_types.len() {
             bail!(
@@ -13228,8 +13327,14 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        build_module_recovering(&mut module.ast, &module.roots, &linear, false)
-            .unwrap()
+        let (module, faults, _) = build_module_recovering(
+            &mut module.ast,
+            &module.roots,
+            &linear,
+            false,
+        )
+        .unwrap();
+        (module, faults)
     }
 
     // One failed function does not mask another, and a function that lowers
