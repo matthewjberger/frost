@@ -381,20 +381,25 @@ There is no tuple type behind that. A return type list cannot be stored in a
 field, passed as an argument, or bound to one name. To pass a pair around,
 declare a struct.
 
-A function is a value, and a parameter may hold one. There are no capturing
-closures.
+A function is a value, and a parameter may hold one. A call names the function
+it goes to, so the one a caller varies is named at the call with a `$`. There
+are no capturing closures.
 
 ```frost
 import "io.frost"
 
-apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
 main :: fn() -> i64 {
-    print("{}\n", apply(double, 21))
+    print("{}\n", apply($double, 21))
     0
 }
 ```
+
+Calling a value is refused: a parameter or a field of `fn` type is built, stored
+and handed to C, and what runs is read off the call rather than off what
+arrived.
 
 ## Ownership, moves, and linear types
 

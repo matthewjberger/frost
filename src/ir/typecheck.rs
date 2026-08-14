@@ -336,33 +336,6 @@ fn check_rvalue(
                 );
             }
         }
-        IrRvalue::CallIndirect {
-            callee,
-            arguments,
-            parameter_types,
-            ..
-        } => {
-            check_operand(function, callee)?;
-            if !matches!(operand_type(function, callee), Type::Proc(_, _)) {
-                bail!(
-                    "indirect call in '{}' calls a value of non-function type {}",
-                    function.name,
-                    operand_type(function, callee)
-                );
-            }
-            for argument in arguments {
-                check_operand(function, argument)?;
-            }
-            if arguments.len() != parameter_types.len() {
-                bail!(
-                    "indirect call in '{}' passes {} arguments but the callee \
-                     type takes {}",
-                    function.name,
-                    arguments.len(),
-                    parameter_types.len()
-                );
-            }
-        }
     }
     Ok(())
 }
@@ -445,7 +418,6 @@ fn rvalue_type(
         } => signatures
             .get(callee.as_str())
             .map(|signature| signature.return_type.clone()),
-        IrRvalue::CallIndirect { return_type, .. } => Some(return_type.clone()),
         IrRvalue::AddressOf { .. }
         | IrRvalue::FieldAddress { .. }
         | IrRvalue::ElementAddress { .. }

@@ -68,6 +68,27 @@ pub fn is_columns_bookkeeping(field: &str) -> bool {
 struct FunctionSignature {
     parameters: Vec<Type>,
     return_type: Type,
+    // How many of those parameters the capability pass added. They sit at the
+    // end, and a function read as a value answers the signature without them:
+    // what the reader wrote is what a `fn(..)` annotation is weighed against.
+    capabilities: usize,
+}
+
+impl FunctionSignature {
+    // The function type as the reader wrote it. A `uses` function carries one
+    // parameter per source it draws, added by the capability pass, so naming
+    // those in a report tells the reader about a parameter they cannot see.
+    // Taking such a function as a value is refused by that pass, in a sentence
+    // of its own; this is what everything weighing one against a written
+    // `fn(..)` reads. The address the backend takes is the widened function and
+    // is built from the parameters themselves.
+    fn as_written(&self) -> Type {
+        let written = self.parameters.len() - self.capabilities;
+        Type::Proc(
+            self.parameters[..written].to_vec(),
+            Box::new(self.return_type.clone()),
+        )
+    }
 }
 
 // A generic struct declaration as its parameter names and written fields, and
@@ -116,13 +137,12 @@ pub struct IrBuilder {
 // changes during a build is named in the signature that changes it and the
 // tables every body only reads stay shared.
 // What lowering one body answers with beside the function itself: the
-// instantiations it asked for, the anonymous functions it wrote, and the calls
-// in it that go to a value. The caller drains each into the build's own.
+// instantiations it asked for and the anonymous functions it wrote. The caller
+// drains each into the build's own.
 struct LoweredFunction {
     function: IrFunction,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
-    indirect_calls: Vec<crate::diagnostic::Diagnostic>,
 }
 
 #[derive(Default)]
@@ -261,7 +281,7 @@ pub fn build_module_recovering(
 }
 
 fn strict(lowered: LoweredModule) -> Result<IrModule> {
-    let (module, diagnostics, _) = lowered;
+    let (module, diagnostics) = lowered;
     if diagnostics.is_empty() {
         return Ok(module);
     }
@@ -547,11 +567,7 @@ fn collect_bound_functions(
     found
 }
 
-type LoweredModule = (
-    IrModule,
-    Vec<crate::diagnostic::Diagnostic>,
-    Vec<crate::diagnostic::Diagnostic>,
-);
+type LoweredModule = (IrModule, Vec<crate::diagnostic::Diagnostic>);
 
 fn build_module_inner(
     ast: &mut Ast,
@@ -712,9 +728,6 @@ fn build_module_inner(
     let mut pending: Vec<Specialization> = Vec::new();
     let mut pending_anon: Vec<AnonRequest> = Vec::new();
     let mut diagnostics: Vec<crate::diagnostic::Diagnostic> = Vec::new();
-    // Every call that goes to a value rather than to a name, gathered from the
-    // bodies as they lower and named on every build as a warning.
-    let mut indirect_calls: Vec<crate::diagnostic::Diagnostic> = Vec::new();
     let mut shared = BuildShared::default();
 
     for statement in roots {
@@ -796,7 +809,6 @@ fn build_module_inner(
                         continue;
                     }
                 };
-                indirect_calls.extend(lowered.indirect_calls);
                 functions.push(in_module(lowered.function, position.file));
                 pending.extend(requested_by(
                     lowered.specializations,
@@ -902,7 +914,6 @@ fn build_module_inner(
         ) {
             Ok(lowered) => {
                 functions.push(in_module(lowered.function, 0));
-                indirect_calls.extend(lowered.indirect_calls);
                 // Synthesized `main` from loose top-level statements, which
                 // belong to the entry file.
                 pending.extend(requested_by(lowered.specializations, 0));
@@ -973,6 +984,7 @@ fn build_module_inner(
                     // handing on one a caller already wrote, and the
                     // specialization is where that body is read.
                     format: parameter.format,
+                    capability: false,
                 })
                 .collect();
             // The bound was checked at the call that asked for this
@@ -1012,6 +1024,7 @@ fn build_module_inner(
                         compile_time_default: None,
                         pack: false,
                         format: false,
+                        capability: false,
                     });
                 }
             }
@@ -1103,7 +1116,6 @@ fn build_module_inner(
                     continue;
                 }
             };
-            indirect_calls.extend(lowered.indirect_calls);
             let function =
                 local_to_module(lowered.function, specialization.requested_by);
             functions.push(IrFunction {
@@ -1145,7 +1157,6 @@ fn build_module_inner(
                     continue;
                 }
             };
-            indirect_calls.extend(lowered.indirect_calls);
             functions
                 .push(local_to_module(lowered.function, request.requested_by));
             pending.extend(requested_by(
@@ -1169,7 +1180,6 @@ fn build_module_inner(
             imported: declared,
         },
         diagnostics,
-        indirect_calls,
     ))
 }
 
@@ -1461,6 +1471,11 @@ impl IrBuilder {
                             return_type: ast
                                 .signature_to_type(ast.signature(*return_sig))
                                 .unwrap_or(Type::Void),
+                            capabilities: ast
+                                .params_in(*parameters)
+                                .iter()
+                                .filter(|held| held.capability)
+                                .count(),
                         },
                     );
                 }
@@ -1477,6 +1492,7 @@ impl IrBuilder {
                             return_type: return_type
                                 .clone()
                                 .unwrap_or(Type::Void),
+                            capabilities: 0,
                         },
                     );
                 }
@@ -1496,6 +1512,11 @@ impl IrBuilder {
                             return_type: ast
                                 .signature_to_type(ast.signature(*return_sig))
                                 .unwrap_or(Type::Void),
+                            capabilities: ast
+                                .params_in(*params)
+                                .iter()
+                                .filter(|held| held.capability)
+                                .count(),
                         },
                     );
                 }
@@ -1579,7 +1600,7 @@ impl IrBuilder {
 
         let specializations = std::mem::take(&mut function.specializations);
         let anonymous = std::mem::take(&mut function.anonymous);
-        let indirect_calls = std::mem::take(&mut function.indirect_calls);
+
         let (locals, blocks) = function.finish();
         // Which parameters C hands over as the struct itself. The declaration
         // says `value`, and the type is the one it was written with, since the
@@ -1617,7 +1638,6 @@ impl IrBuilder {
             },
             specializations,
             anonymous,
-            indirect_calls,
         })
     }
 
@@ -2084,6 +2104,29 @@ pub fn settled_by(ast: &Ast, parameters: &[Parameter]) -> Vec<Option<Symbol>> {
 /// pass reading a call against a declaration lines the two up through this, so
 /// an argument is weighed against the parameter it was written for rather than
 /// the one beside it.
+/// A declared signature, as the parameters of a real function travel. A
+/// parameter written with no mode borrows what it is given when the value is
+/// not a copy, and a function's own signature is recorded after that rewriting
+/// while a signature written in a declaration is recorded as written. Comparing
+/// the two without this refused every `$f` declared to take a struct: both read
+/// `fn(Ctx)` and one of them meant `fn(mut Ctx)`.
+fn as_parameters_travel(ty: &Type) -> Type {
+    let Type::Proc(parameters, answer) = ty else {
+        return ty.clone();
+    };
+    Type::Proc(
+        parameters
+            .iter()
+            .map(|held| match held {
+                Type::Ref(_) | Type::RefMut(_) => held.clone(),
+                held if held.is_copy() => held.clone(),
+                held => Type::Ref(Box::new(held.clone())),
+            })
+            .collect(),
+        answer.clone(),
+    )
+}
+
 pub(crate) fn argument_slots(
     ast: &Ast,
     parameters: &[Parameter],
@@ -5145,10 +5188,7 @@ fn array_element_type(
         Some(Expression::Identifier(name))
             if let Some(signature) = signatures.get(ast.name(*name)) =>
         {
-            Type::Proc(
-                signature.parameters.clone(),
-                Box::new(signature.return_type.clone()),
-            )
+            signature.as_written()
         }
         Some(
             Expression::Function(parameters, return_sig, _)
@@ -5436,9 +5476,6 @@ struct FunctionLowering<'a> {
     current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
-    // Every call in this body that goes to a value rather than to a name.
-    // Drained by the caller the way the two above are.
-    indirect_calls: Vec<crate::diagnostic::Diagnostic>,
     // What the enclosing declaration named its `format` parameter, and every
     // parameter name in the order they were written. A body that hands its own
     // literal on together with its own trailing parameters is handing on what a
@@ -5473,7 +5510,6 @@ impl<'a> FunctionLowering<'a> {
             current_position: Position::default(),
             specializations: Vec::new(),
             anonymous: Vec::new(),
-            indirect_calls: Vec::new(),
             forwarded_format: None,
             parameter_names: Vec::new(),
         }
@@ -8139,7 +8175,7 @@ impl<'a> FunctionLowering<'a> {
                 self.at_expression(callee),
             );
         }
-        self.lower_indirect_call(callee, &arguments)
+        self.refuse_call_to_a_value(callee, &arguments)
     }
 
     // Whether `Type::Name`, or a `.Name` an annotation names the type of,
@@ -8183,6 +8219,52 @@ impl<'a> FunctionLowering<'a> {
             && self.builder.enum_layout(named).is_none()
     }
 
+    // The literal a name, or a chain of fields reaching one, stands for. A
+    // bundle holding a bundle is read the same way one level further in:
+    // `i64_element.hashing` is the literal that field holds, whether it was
+    // written out there or written as the name of another constant.
+    fn constant_literal(&self, expr: ExprId) -> Option<ExprId> {
+        match self.ast.expr(expr) {
+            Expression::Identifier(name) => {
+                let name = self.ast.name(*name);
+                if self.resolve_variable(name).is_some() {
+                    return None;
+                }
+                let constant = self.builder.constants.get(name).copied()?;
+                matches!(self.ast.expr(constant), Expression::StructInit(..))
+                    .then_some(constant)
+            }
+            Expression::FieldAccess(base, field) => {
+                let held = self.constant_field(*base, field)?;
+                match self.ast.expr(held) {
+                    Expression::StructInit(..) => Some(held),
+                    Expression::Identifier(_) => self.constant_literal(held),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // What one field of such a literal was written as, left as it was written.
+    fn constant_field(
+        &self,
+        base: ExprId,
+        field: &crate::ast::Symbol,
+    ) -> Option<ExprId> {
+        let held = self.constant_literal(base)?;
+        let Expression::StructInit(_, fields) = self.ast.expr(held) else {
+            return None;
+        };
+        Some(
+            self.ast
+                .named_in(*fields)
+                .iter()
+                .find(|held| held.name == *field)?
+                .value,
+        )
+    }
+
     // The function a bundle's field names, for a bundle that is a constant.
     // `ops.less(a, b)` where `ops` is a constant whose `less` field names a
     // function is a call to that function: there is one value the field can
@@ -8192,23 +8274,8 @@ impl<'a> FunctionLowering<'a> {
         let Expression::FieldAccess(base, field) = self.ast.expr(callee) else {
             return None;
         };
-        let Expression::Identifier(name) = self.ast.expr(*base) else {
-            return None;
-        };
-        let name = self.ast.name(*name);
-        if self.resolve_variable(name).is_some() {
-            return None;
-        }
-        let constant = self.builder.constants.get(name).copied()?;
-        let Expression::StructInit(_, fields) = self.ast.expr(constant) else {
-            return None;
-        };
-        let entry = self
-            .ast
-            .named_in(*fields)
-            .iter()
-            .find(|held| held.name == *field)?;
-        let Expression::Identifier(target) = self.ast.expr(entry.value) else {
+        let named = self.constant_field(*base, field)?;
+        let Expression::Identifier(target) = self.ast.expr(named) else {
             return None;
         };
         let target = self.ast.name(*target);
@@ -8340,7 +8407,8 @@ impl<'a> FunctionLowering<'a> {
         // may name type parameters that other arguments bind, and value
         // arguments are what bind most of them, so `subst` is not complete
         // until every argument has been walked.
-        let mut signature_checks: Vec<(&Parameter, String)> = Vec::new();
+        let mut signature_checks: Vec<(&Parameter, String, Option<ExprId>)> =
+            Vec::new();
         // The same, for a parameter declared with a bundle type: the constant
         // the argument names has to be of that type.
         let mut bundle_checks: Vec<(&Parameter, String)> = Vec::new();
@@ -8417,7 +8485,11 @@ impl<'a> FunctionLowering<'a> {
                                 bound
                             );
                         };
-                        signature_checks.push((parameter, target.clone()));
+                        signature_checks.push((
+                            parameter,
+                            target.clone(),
+                            slot.map(|index| arguments[index]),
+                        ));
                     }
                     Some(_) => {
                         let Type::ConstValue(target) = &bound else {
@@ -8597,19 +8669,35 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
-        for (parameter, target) in signature_checks {
+        for (parameter, target, written) in signature_checks {
             let Some(declared) = parameter.compile_time_signature.as_ref()
             else {
                 continue;
             };
-            let expected = substitute_type(declared, &subst);
+            let expected =
+                as_parameters_travel(&substitute_type(declared, &subst));
             let Some(signature) = self.builder.signature(&target) else {
                 continue;
             };
-            let actual = Type::Proc(
-                signature.parameters.clone(),
-                Box::new(signature.return_type.clone()),
-            );
+            // A function that draws a capability has one more parameter than
+            // its signature was written with, filled at each call. The body of
+            // a specialization is written here, past the pass that fills them,
+            // so the call it holds would go out one argument short. The pass
+            // named this where the reader wrote it; named again here, in the
+            // same words, the two are one report.
+            if signature.capabilities > 0 {
+                let fault = Err(anyhow::anyhow!(
+                    "{}",
+                    crate::lower::allocation_sources::taken_as_a_value(&target)
+                ));
+                return match written {
+                    Some(argument) => {
+                        locate(fault, self.at_expression(argument))
+                    }
+                    None => fault,
+                };
+            }
+            let actual = signature.as_written();
             if actual != expected {
                 bail!(
                     "'{}' given to '{name}' as '{}' has the signature '{}', but '{}' is declared as '{}'",
@@ -9164,212 +9252,40 @@ impl<'a> FunctionLowering<'a> {
 
     // A call reaching here goes to a value: a declared function was looked for
     // first, and a bundle's field folded to one before this. What is left is a
-    // callee decided while the program runs, which every build names.
+    // callee decided while the program runs, and Frost does not have one.
     //
-    // A specialization lowers the body again, so one written call arrives once
-    // per instance. Where it was written is what says they are the same call.
-    fn name_indirect_call(&mut self, callee: ExprId) {
-        let position = self.at_expression(callee);
-        if self
-            .indirect_calls
-            .iter()
-            .any(|held| held.position == position)
-        {
-            return;
-        }
-        let message = match self.ast.expr(callee) {
-            Expression::Identifier(name) => format!(
-                "a call goes to a name, and '{}' holds a function rather than being one",
+    // A call names what it goes to, so a reader of the call site knows which
+    // body runs and every pass that answers a question about a call has a
+    // declaration to read. A function held in a field or a local is still a
+    // value that C may be handed; what it is not is something this language
+    // calls.
+    // A call names the function it goes to. A parameter, a binding, a field or
+    // an element of function type holds one, and calling it would leave what
+    // runs to be decided by what the value happened to hold, so it is refused
+    // where the callee was written.
+    fn refuse_indirect_call(&self, callee: ExprId) -> anyhow::Error {
+        match self.ast.expr(callee) {
+            Expression::Identifier(name) => anyhow::anyhow!(
+                "a call names the function it goes to, and '{}' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one",
                 self.ast.name(*name)
             ),
-            _ => "a call goes to a name, and this one goes to a value"
-                .to_string(),
-        };
-        self.indirect_calls
-            .push(crate::diagnostic::Diagnostic::new(position, message));
+            _ => anyhow::anyhow!(
+                "a call names the function it goes to, and this one goes to a value. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one"
+            ),
+        }
     }
 
-    fn lower_indirect_call(
+    fn refuse_call_to_a_value(
         &mut self,
         callee: ExprId,
         arguments: &[ExprId],
     ) -> Result<(IrOperand, Type)> {
-        let (callee_operand, callee_type) =
-            self.lower_expression(callee, None)?;
-        let Type::Proc(parameter_types, return_type) = callee_type else {
-            bail!("cannot call a value that is not a function pointer");
-        };
-        self.name_indirect_call(callee);
-        let return_type = *return_type;
-        if arguments.len() != parameter_types.len() {
-            bail!(
-                "function pointer expects {} argument(s) but {} were given",
-                parameter_types.len(),
-                arguments.len()
-            );
+        // The arguments are still walked, so a fault inside one is reported
+        // where it is rather than hidden behind the call.
+        for argument in arguments {
+            self.lower_expression(*argument, None)?;
         }
-
-        let mut lowered = Vec::with_capacity(arguments.len());
-        for (index, argument) in arguments.iter().enumerate() {
-            let held_target;
-            let expected = parameter_types.get(index);
-            // A function value is its signature, and two that differ are two
-            // different functions. Compared here, where both are still spelled
-            // the way the reader wrote them and where the self-hosted compiler
-            // compares them too. The IR check below does catch it, in lowered
-            // terms and in a sentence of its own, so the two compilers named
-            // one fault two ways. The rule is that check's, reused rather than
-            // written again.
-            if let Some(wanted @ Type::Proc(..)) = expected
-                && let Some(given) = self.value_signature(*argument)
-                && matches!(given, Type::Proc(..))
-                && !crate::ir::typecheck::fits(&given, wanted)
-            {
-                return locate(
-                    Err(anyhow::anyhow!(
-                        "this argument is a '{}' and a '{}' is what is wanted here",
-                        spelled(&given),
-                        spelled(wanted)
-                    )),
-                    self.at_expression(*argument),
-                );
-            }
-            // An argument stands where its parameter's type is written. Asked
-            // here, ahead of the address-taking below, because an aggregate
-            // parameter is a reference by the time it reaches this and the
-            // address is taken without a word about what it points at; the IR
-            // check that follows sees two pointers, and a pointer fits every
-            // other. That is how an 'Other' reached a 'Point' parameter and the
-            // callee read one layout as the other. The rule is that check's,
-            // asked while both sides are still spelled the way they were
-            // written, and the borrow a mode added is read through.
-            if let Some(target) = expected {
-                let wanted = match target {
-                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
-                    other => other,
-                };
-                // Text written down is a run of bytes, and what it reaches is a
-                // run of them or the address a call into C reads. Asked of the
-                // expression rather than of a type, since being a literal is
-                // what decides it: the bytes the compiler wrote down are the
-                // ones it terminated. Its type alone is an address, and an
-                // address reaches a whole number, which is how `show("abc")`
-                // filled an `i64` parameter with a pointer.
-                if matches!(
-                    self.ast.expr(*argument),
-                    Expression::Literal(Literal::String(_))
-                ) && !matches!(
-                    wanted,
-                    Type::Str
-                        | Type::Slice(_)
-                        | Type::Ptr(_)
-                        | Type::Array(..)
-                        | Type::TypeParam(_)
-                        | Type::Unknown
-                ) {
-                    return locate(
-                        Err(anyhow::anyhow!(
-                            "this argument is a 'str' and a '{}' is what is wanted here",
-                            spelled(wanted)
-                        )),
-                        self.at_expression(*argument),
-                    );
-                }
-            }
-            if let Some(target) = expected
-                && let Some(given) = self.answer_type(*argument)
-            {
-                let wanted = match target {
-                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
-                    other => other,
-                };
-                if self.type_is_settled(&given)
-                    && self.type_is_settled(wanted)
-                    && !value_stands_for(&given, wanted)
-                {
-                    return locate(
-                        Err(self.argument_mismatch(*argument, &given, wanted)),
-                        self.at_expression(*argument),
-                    );
-                }
-            }
-            // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
-            // value place passed to it takes its address here. An argument that
-            // is already a reference (a reference-typed local passed onward) or
-            // an explicit borrow is left alone, so nothing is double-referenced.
-            if let Some(reference @ (Type::Ref(inner) | Type::RefMut(inner))) =
-                expected
-            {
-                let already_reference =
-                    matches!(
-                        self.ast.expr(*argument),
-                        Expression::Borrow(_)
-                            | Expression::BorrowMut(_)
-                            | Expression::AddressOf(_)
-                    ) || self.probe_type(*argument).as_ref() == Some(reference);
-                if !already_reference {
-                    let pointee = (**inner).clone();
-                    let address = self.aggregate_argument_address(
-                        *argument, &pointee, false,
-                    )?;
-                    lowered.push(address);
-                    continue;
-                }
-            }
-            // A parameter whose type is still the template's own name is one
-            // this call did not pin down, and then the argument says how it
-            // travels: an aggregate goes by address whatever the parameter was
-            // written as. A `str` passed on from one generic to another is
-            // this, and passing it in a register is what the backend refuses.
-            let expected = match expected {
-                Some(Type::TypeParam(_)) => match self.probe_type(*argument) {
-                    Some(ty) if needs_memory(&ty) => {
-                        held_target = ty;
-                        Some(&held_target)
-                    }
-                    _ => expected,
-                },
-                _ => expected,
-            };
-            if let Some(target) = expected
-                && needs_memory(target)
-            {
-                let address =
-                    self.aggregate_argument_address(*argument, target, true)?;
-                lowered.push(address);
-                continue;
-            }
-            let (operand, value_type) =
-                self.lower_expression(*argument, expected)?;
-            if let Some(Type::Ref(inner) | Type::RefMut(inner)) = expected
-                && needs_memory(&value_type)
-                && value_type == **inner
-            {
-                bail!(
-                    "a '{}' is wanted here as a borrow and this is the value; a parameter's mode is what borrows, so declare the one this reaches as `read` or `mut`",
-                    spelled(&value_type)
-                );
-            }
-            let coerced = match expected {
-                Some(target) => {
-                    self.coerce_value(operand, &value_type, target, *argument)?
-                }
-                None => operand,
-            };
-            lowered.push(coerced);
-        }
-
-        let result = self.fresh_local(return_type.clone(), None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::CallIndirect {
-                callee: callee_operand,
-                arguments: lowered,
-                parameter_types,
-                return_type: return_type.clone(),
-            },
-        ));
-        Ok((IrOperand::Local(result), return_type))
+        Err(self.refuse_indirect_call(callee))
     }
 
     fn aggregate_argument_address(
@@ -9917,12 +9833,9 @@ impl<'a> FunctionLowering<'a> {
         if self.resolve_variable(&name).is_some() {
             return None;
         }
-        self.builder.signature(&name).map(|signature| {
-            Type::Proc(
-                signature.parameters.clone(),
-                Box::new(signature.return_type.clone()),
-            )
-        })
+        self.builder
+            .signature(&name)
+            .map(FunctionSignature::as_written)
     }
 
     /// Whether every name a type is built from is one this call has settled. A
@@ -13368,7 +13281,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        let (module, faults, _) = build_module_recovering(
+        let (module, faults) = build_module_recovering(
             &mut module.ast,
             &module.roots,
             &linear,

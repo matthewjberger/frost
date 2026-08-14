@@ -741,6 +741,25 @@ pub fn check_frame_escapes_recovering(
             _ => None,
         })
         .collect();
+    // The type of every constant written as a struct literal. A bundle is one,
+    // and a call through one of its fields reads the field's declared signature
+    // to say where the answer came from, the same as a call through a field of a
+    // parameter does. Without these the field's type could not be found and the
+    // walk had nothing to trace, so `ops.pass(p)` on a constant `ops` was
+    // refused where the same call on a parameter was allowed.
+    let constant_types: HashMap<String, Type> = roots
+        .iter()
+        .filter_map(|statement| match ast.stmt(*statement) {
+            Statement::Constant(name, value) => match ast.expr(*value) {
+                Expression::StructInit(held, _) => Some((
+                    ast.name(*name).to_string(),
+                    Type::Struct(ast.name(*held).to_string()),
+                )),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     let mut diagnostics = Vec::new();
     for statement in roots {
         if let Statement::Constant(name, value) = ast.stmt(*statement)
@@ -776,7 +795,7 @@ pub fn check_frame_escapes_recovering(
                 params: &param_modes,
                 bindings: &call_bindings,
                 answers_place_by_name: &ref_returns,
-                types: HashMap::new(),
+                types: constant_types.clone(),
                 fields: &fields,
                 returns: &return_types,
                 diagnostics: Vec::new(),

@@ -1,6 +1,7 @@
 // Things that turn, which is a game's idea rather than an engine's.
 //
-//     app_install(app, spin_plugin)
+//     app_install($spin_plugin, app)
+//     app_run(app, spin_system)
 //     ecs_set($Spin, app.world, held, component_of($Spin, app.world),
 //         spinning(vec3(0.0, 1.0, 0.0), 1.2, Quat::IDENTITY))
 //
@@ -19,7 +20,7 @@ import "../../lib/engine/world.frost"
 import "ecs.frost"
 import "math.frost"
 
-export Spin, spinning, spin_plugin, turn_things
+export Spin, spinning, spin_plugin, spin_system, turn_things
 
 // An axis, how fast about it, how far round so far, and where it started. The
 // rest is kept apart from the angle so a thing loaded facing somewhere turns
@@ -33,9 +34,18 @@ spinning :: fn(axis: Vec3, speed: f32, rest: Quat) -> Spin {
 // Turning, composed into the App. It registers the component and the one system
 // that advances it, so a program that installs this can put a `Spin` on anything
 // with a transform.
-spin_plugin :: fn(mut app: App) {
+spin_build :: fn(mut app: App) {
     component_for($Spin, app.world)
-    app_add_system(app, Stage::FrameUpdate, turn_things)
+}
+
+spin_plugin :: Plugin { name = "spin", build = spin_build }
+
+// What the plugin registers is the component; what turns things is a system a
+// program names in the run it writes.
+spin_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = turn_things
 }
 
 // Every turn advanced by the frame's step, and written where a rotation lives.

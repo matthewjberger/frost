@@ -97,28 +97,28 @@ caller resets at a known boundary, per frame or per request, so transient
 allocations cost nothing to free. That is a use of arena reset, and a function
 may draw several sources at once for it.
 
-## An allocator as a value
+## An allocator named at the call
 
-Where the backing has to be chosen while the program runs, an allocator is
-written as a value rather than a call. Frost has function pointers and no
-closures, so the Odin shape fits with no vtable and no compiler support at all,
-because it is an ordinary struct:
+Where the backing varies from caller to caller, the function that takes memory
+is named at the call and the state travels beside it. Frost has function
+pointers and no closures, and a call names the function it goes to, so the Odin
+shape fits with no vtable and no compiler support at all:
 
-```frost
-Allocator :: struct {
-    take: fn(^u8, i64) -> ^u8, // state, size
-    state: ^u8, // the allocator's own state
+```frost,sketch
+alloc :: fn($S: Type, $take: fn(mut S, i64) -> ^u8, mut state: S, size: i64)
+    -> ^u8 {
+    take(state, size)
 }
 ```
 
-A container takes one of those and never names `malloc`, so the same code runs
-against an arena, a static buffer, or the OS.
+A container written this way never names `malloc`, so the same code runs against
+an arena, a static buffer, or the OS.
 `examples/native/allocator.frost` is a bump allocator behind that interface.
 
 This is a library pattern, separate from the language's mechanism. `uses` and
 `with` decide *which* source a call draws from, at compile time, and pay
-nothing. The struct above decides it at run time and costs an indirect call, so
-use it when the answer is not known until then.
+nothing. The shape above decides it at each call site, and pays nothing either:
+the name is a compile-time argument, so what is emitted is a direct call.
 
 The middle of those two is a data structure generic over its allocator type,
 which costs nothing and covers most of what a swap is wanted for. That is a

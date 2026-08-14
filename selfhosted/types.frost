@@ -17,6 +17,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pending_tuples, hold_declaration, restore_declaration,
     MONO_DEPTH_MAX, Declaring,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
+    names_a_record_constant,
     note_format_forward, note_format_call, check_format_types,
     parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local, untyped_literal,
@@ -1127,7 +1128,14 @@ settled_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
     while (extra < total) {
         arena_push(
             p.gargs,
-            GArg { value = bounds[extra], is_type = 0, pending = -1, node = -1 }
+            GArg {
+                value = bounds[extra],
+                is_type = 0,
+                pending = -1,
+                node = -1,
+                const_off = 0,
+                const_len = 0
+            }
         )
         extra = extra + 1
     }
@@ -1167,7 +1175,9 @@ hold_pending_tuple :: fn(mut p: Parser, node: i64, fn_index: i64, head: i64) {
                     value = argument_type(p, value),
                     is_type = 0,
                     pending = -1,
-                    node = bound
+                    node = bound,
+                    const_off = 0,
+                    const_len = 0
                 }
             )
             count = count + 1
@@ -1193,6 +1203,26 @@ settle_pending_tuples :: fn(mut p: Parser) {
     while (index < p.pending_tuples.count) {
         held := arena_at(p.pending_tuples, index)
         owner := generic_fn_of(p, held.fn_index)
+        // A call to a generic taking a compile-time list, held because one of
+        // the names it hands over is declared further down the file. The
+        // arguments are read again here, where every declaration is known: read
+        // at the call they would have been a number, and the instance made from
+        // that read a `System` field off an `i64`.
+        if (owner >= 0 && takes_pack(p, held.fn_index)) {
+            args := arena_at(p.arena, held.node).a
+            if (pack_call_args(p, args, held.fn_index)) {
+                note_type_args(
+                    p,
+                    p.call_pack_primary,
+                    p.call_xarg_start,
+                    p.call_xarg_count,
+                    owner + 1,
+                    owner
+                )
+            }
+            index = index + 1
+            continue
+        }
         if (owner >= 0 && takes_pack(p, held.fn_index) == false
             && first_settled_gparam(p, owner)) {
             arg := pending_type_args(p, held, owner)
@@ -1260,7 +1290,14 @@ pending_type_args :: fn(mut p: Parser, held: PendingTuple, owner: i64) -> i64 {
     while (extra < total) {
         arena_push(
             p.gargs,
-            GArg { value = bounds[extra], is_type = 0, pending = -1, node = -1 }
+            GArg {
+                value = bounds[extra],
+                is_type = 0,
+                pending = -1,
+                node = -1,
+                const_off = 0,
+                const_len = 0
+            }
         )
         extra = extra + 1
     }
@@ -1319,7 +1356,9 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
                         value = vnode.val,
                         is_type = 0,
                         pending = -1,
-                        node = -1
+                        node = -1,
+                        const_off = 0,
+                        const_len = 0
                     }
                 )
             }
@@ -1496,12 +1535,33 @@ collect_type_args :: fn(mut p: Parser) {
         // A generic struct written as `Box<i64>` names no function, so its
         // tuple is offered to every generic.
         entry := arena_at(p.instances, i)
-        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count, 0, -1)
+        // A tuple owned by nothing is offered to every generic there is, which
+        // is what brings `vec_get<Table>` into being from `Vec<Table>` alone.
+        // What a generic struct is written with is a type, so a run carrying a
+        // function is one no struct wrote: offering it built a body of every
+        // generic that takes a compile-time function, each bound to a name that
+        // is not a function at all, and each of those bodies called a symbol
+        // nothing defines.
+        if (entry.arg < FN_BASE) {
+            note_type_args(
+                p,
+                entry.arg,
+                entry.xarg_start,
+                entry.xarg_count,
+                0,
+                -1
+            )
+        }
         i = i + 1
     }
     i = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
+        // A call whose arguments a template wrote is not one to name a tuple
+        // for. The parse marked it: its compile-time arguments are the
+        // declaration's own parameters with nothing bound to them, and the
+        // instance a tuple built from those asks for is a body nobody calls
+        // whose own calls go to a symbol nothing defines.
         if (node.kind == NodeKind::Call) {
             owner := generic_fn_of(p, node.val)
             if (owner >= 0) {
@@ -1606,7 +1666,9 @@ settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
                 value = settled,
                 is_type = is_type,
                 pending = later,
-                node = keep
+                node = keep,
+                const_off = held.const_off,
+                const_len = held.const_len
             }
         )
         k = k + 1
@@ -1683,6 +1745,7 @@ Declaring :: struct {
     decl_pack_len: i64,
     decl_pack_fixed: i64,
     decl_pack_format: i64,
+    unbound_pack_for: i64,
     decl_format_off: i64,
     decl_format_len: i64,
     parse_param_start: i64,
@@ -1727,6 +1790,7 @@ hold_declaration :: fn(mut p: Parser) -> Declaring {
         decl_pack_len = p.decl_pack_len,
         decl_pack_fixed = p.decl_pack_fixed,
         decl_pack_format = p.decl_pack_format,
+        unbound_pack_for = p.unbound_pack_for,
         decl_format_off = p.decl_format_off,
         decl_format_len = p.decl_format_len,
         parse_param_start = p.parse_param_start,
@@ -1771,6 +1835,7 @@ restore_declaration :: fn(mut p: Parser, held: Declaring) {
     p.decl_pack_len = held.decl_pack_len
     p.decl_pack_fixed = held.decl_pack_fixed
     p.decl_pack_format = held.decl_pack_format
+    p.unbound_pack_for = held.unbound_pack_for
     p.decl_format_off = held.decl_format_off
     p.decl_format_len = held.decl_format_len
     p.parse_param_start = held.parse_param_start
@@ -1855,31 +1920,56 @@ fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // whose `less` field names a function is a call to that function: the field can
 // hold one value and it is known here, so nothing is loaded and nothing is
 // called through a pointer.
-bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
-    node := arena_at(p.arena, callee)
+// The literal a name, or a chain of fields reaching one, stands for, or -1 when
+// what is written is anything else. A bundle holding a bundle is read the same
+// way one level further in: `i64_element.hashing` is the literal that field
+// holds, whether it was written out there or written as the name of another
+// constant.
+constant_literal :: fn(mut p: Parser, at: i64) -> i64 {
+    node := arena_at(p.arena, at)
+    if (node.kind == NodeKind::Var) {
+        if (local_exists(p, node.val, node.c)) {
+            return -1
+        }
+        held := value_const_node(p, node.val, node.c)
+        if (held < 0) {
+            return -1
+        }
+        held_node := arena_at(p.arena, held)
+        if (held_node.kind != NodeKind::StructLit) {
+            return -1
+        }
+        return held
+    }
     if (node.kind != NodeKind::Field) {
         return -1
     }
-    base := node.a
-    field_off := node.val
-    field_len := node.c
-    base_node := arena_at(p.arena, base)
-    if (base_node.kind != NodeKind::Var) {
+    named := constant_field(p, node.a, node.val, node.c)
+    if (named < 0) {
         return -1
     }
-    name_off := base_node.val
-    name_len := base_node.c
-    if (local_exists(p, name_off, name_len)) {
-        return -1
+    named_node := arena_at(p.arena, named)
+    if (named_node.kind == NodeKind::StructLit) {
+        return named
     }
-    literal := value_const_node(p, name_off, name_len)
+    if (named_node.kind == NodeKind::Var) {
+        return constant_literal(p, named)
+    }
+    -1
+}
+
+// What one field of such a literal was written as, left as it was written.
+constant_field :: fn(
+    mut p: Parser,
+    base: i64,
+    field_off: i64,
+    field_len: i64
+) -> i64 {
+    literal := constant_literal(p, base)
     if (literal < 0) {
         return -1
     }
     literal_node := arena_at(p.arena, literal)
-    if (literal_node.kind != NodeKind::StructLit) {
-        return -1
-    }
     mut id := literal_node.a
     while (id != (-1)) {
         init := arena_at(p.arena, id)
@@ -1889,15 +1979,32 @@ bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
         next_id := init.next
         if (init_len == field_len
             && bytes_equal(p.src, init_off, field_off, field_len)) {
-            value_node := arena_at(p.arena, value)
-            if (value_node.kind != NodeKind::Var) {
-                return -1
-            }
-            return fn_index_of(p, value_node.val, value_node.c)
+            return value
         }
         id = next_id
     }
     -1
+}
+
+// The function a bundle's field names, for a bundle that is a constant, or -1
+// when the callee is anything else. `ops.less(a, b)` where `ops` is a constant
+// whose `less` field names a function is a call to that function: the field can
+// hold one value and it is known here, so nothing is loaded and nothing is
+// called through a pointer.
+bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
+    node := arena_at(p.arena, callee)
+    if (node.kind != NodeKind::Field) {
+        return -1
+    }
+    named := constant_field(p, node.a, node.val, node.c)
+    if (named < 0) {
+        return -1
+    }
+    value_node := arena_at(p.arena, named)
+    if (value_node.kind != NodeKind::Var) {
+        return -1
+    }
+    fn_index_of(p, value_node.val, value_node.c)
 }
 
 // The function-pointer type of a global function: its parameter types and its
@@ -1913,7 +2020,14 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
         pnode := arena_at(p.arena, pid)
         arena_push(
             p.proc_params,
-            GArg { value = pnode.b, is_type = 0, node = -1, pending = -1 }
+            GArg {
+                value = pnode.b,
+                is_type = 0,
+                node = -1,
+                pending = -1,
+                const_off = 0,
+                const_len = 0
+            }
         )
         count = count + 1
         pid = pnode.next
@@ -2895,6 +3009,21 @@ takes_pack :: fn(mut p: Parser, fn_index: i64) -> bool {
     gfn.pack_len > 0
 }
 
+// What the declaration wrote as the default for one of a callee's compile-time
+// parameters, or -1 where it wrote none. Slot zero is the primary one and the
+// rest are the extras in the order they were written.
+pack_gparam_fallback :: fn(mut p: Parser, fn_index: i64, slot: i64) -> i64 {
+    gi := generic_fn_of(p, fn_index)
+    if (gi < 0) {
+        return -1
+    }
+    gfn := arena_at(p.generic_fns, gi)
+    if (slot == 0) {
+        return gfn.tparam_fallback
+    }
+    arena_at(p.gparams, gfn.xparam_start + slot - 1).fallback
+}
+
 // The argument tuple a call to a generic names, when the callee takes a
 // compile-time list. The tuple is the type of every argument past the ordinary
 // parameters, in order, which is what makes two calls giving different types
@@ -2930,30 +3059,50 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     // would interleave the two.
     buf_start := p.argbuf.count
     mut primary: i64 = TY_I64
-    mut types_seen: i64 = 0
+    // How many of the compile-time parameters the call wrote for. A parameter
+    // the call left out takes the default the declaration wrote, which is what
+    // makes a call to `run($step = nothing, mut b, args: $...)` reach `$step`
+    // without writing it. Read here as well as in `settled_type_args`, because
+    // a callee taking a compile-time list comes through this and not that.
+    mut written: i64 = 0
     mut id := args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
-        value := node.a
-        next_id := node.next
-        vnode := arena_at(p.arena, value)
-        if (vnode.kind == NodeKind::TypeVal && types_seen < declared) {
-            if (types_seen == 0) {
-                primary = vnode.val
+        vnode := arena_at(p.arena, node.a)
+        if (vnode.kind == NodeKind::TypeVal && written < declared) {
+            written = written + 1
+        }
+        id = node.next
+    }
+    mut slot: i64 = 0
+    mut filling: bool = true
+    while (slot < declared && filling) {
+        mut bound: i64 = -1
+        if (slot < written) {
+            bound = nth_type_arg(p, args, slot)
+        } else {
+            bound = pack_gparam_fallback(p, fn_index, slot)
+        }
+        if (bound < 0) {
+            filling = false
+        } else {
+            if (slot == 0) {
+                primary = bound
             } else {
                 arena_push(
                     p.argbuf,
                     GArg {
-                        value = vnode.val,
+                        value = bound,
                         is_type = 0,
                         pending = -1,
-                        node = -1
+                        node = -1,
+                        const_off = 0,
+                        const_len = 0
                     }
                 )
             }
-            types_seen = types_seen + 1
+            slot = slot + 1
         }
-        id = next_id
     }
     mut count: i64 = 0
     mut index: i64 = 0
@@ -2975,7 +3124,9 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
                         value = vnode.val,
                         is_type = 1,
                         pending = -1,
-                        node = -1
+                        node = -1,
+                        const_off = 0,
+                        const_len = 0
                     }
                 )
                 count = count + 1
@@ -2989,13 +3140,31 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
                 if (later < 0) {
                     written = -1
                 }
+                // A name standing for a record constant is that constant. The
+                // body writes the name rather than the parameter it arrives
+                // under, so a field read off it is read off a constant and a
+                // call through a field that names a function is a call to that
+                // function.
+                //
+                // A record, rather than any constant. What the name buys is
+                // that a field may be read off it: a number carries nothing to
+                // read, and leaving one alone keeps the questions a body asks
+                // about an element's type answerable the one way.
+                mut name_off: i64 = 0
+                mut name_len: i64 = 0
+                if (names_a_record_constant(p, value)) {
+                    name_off = value_const_name_off(p, vnode.val, vnode.c)
+                    name_len = vnode.c
+                }
                 arena_push(
                     p.argbuf,
                     GArg {
                         value = held,
                         is_type = 0,
                         pending = later,
-                        node = written
+                        node = written,
+                        const_off = name_off,
+                        const_len = name_len
                     }
                 )
                 count = count + 1
@@ -3013,6 +3182,24 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     p.call_xarg_count = gfn.xparam_count + count
     p.call_pack_primary = primary
     true
+}
+
+// Whether an element was written as a name that stands for a record constant
+// and for nothing nearer. A local of the same spelling is the local.
+names_a_record_constant :: fn(mut p: Parser, value: i64) -> bool {
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Var) {
+        return false
+    }
+    if (local_exists(p, node.val, node.c)
+        || parse_local_type(p, node.val, node.c) >= 0) {
+        return false
+    }
+    written := value_const_node(p, node.val, node.c)
+    if (written < 0) {
+        return false
+    }
+    arena_at(p.arena, written).kind == NodeKind::StructLit
 }
 
 // What a formatted value may be: a number, a yes or no, or text. Read through
@@ -3378,13 +3565,17 @@ copy_run :: fn(mut p: Parser, at: i64) -> i64 {
         is_type := held.is_type
         pending := held.pending
         written := held.node
+        name_off := held.const_off
+        name_len := held.const_len
         arena_push(
             p.gargs,
             GArg {
                 value = value,
                 is_type = is_type,
                 pending = pending,
-                node = written
+                node = written,
+                const_off = name_off,
+                const_len = name_len
             }
         )
         k = k + 1

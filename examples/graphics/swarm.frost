@@ -112,13 +112,9 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    app_install_group(app, default_plugins())
-    app_install(app, render_plugin)
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, swarm_plugin)
-    // What the R key asks for, acted on where there is a device.
-    app_before_render(app, settle_the_mesh, ptr_to(app))
+    app_install($log_plugin, app)
+    app_install($render_plugin, app)
+    app_install($swarm_plugin, app)
 
     device := app_device(app)
     queue := app_queue(app)
@@ -246,7 +242,15 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.25
     app_camera_set(app, eye)
 
-    app_run(app)
+    app_run(
+        $declares_nothing,
+        $settle_the_mesh,
+        app,
+        camera_system,
+        escape_system,
+        turning_system,
+        keys_system
+    )
     app_close(app)
 }
 
@@ -260,11 +264,23 @@ lamp_colour :: fn(index: i64) -> Vec3 {
 // The systems this program brings, and the screen it starts on. Turning is only
 // registered for `RUNNING`, so pausing is the schedule skipping it rather than
 // a flag every system has to read.
-swarm_plugin :: fn(mut app: App) {
+swarm_build :: fn(mut app: App) {
     component_for($Orbit, app.world)
     app_insert_state(app, RUNNING)
-    app_add_system_in_state(app, Stage::FrameUpdate, RUNNING, turn_the_swarm)
-    app_add_system(app, Stage::FrameUpdate, watch_the_keys)
+}
+
+swarm_plugin :: Plugin { name = "swarm", build = swarm_build }
+
+turning_system :: System {
+    stage = Stage::FrameUpdate,
+    state = RUNNING,
+    run = turn_the_swarm
+}
+
+keys_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = watch_the_keys
 }
 
 // Every circling thing, moved along its circle. One system over the whole swarm,
@@ -332,13 +348,13 @@ watch_the_keys :: fn(mut world: World) {
 // nothing else does.
 //
 // Registered against the App itself, since what it needs is the world and the
-// device and both are in there. A hook carries a state of the caller's
-// choosing; this one has nothing of its own to carry.
+// device and both are in there. It is named where the frame runs, which is what
+// makes the call go to this function rather than through a field.
 //
 // The slot is reused when the mesh comes back, because a name that is already
 // there keeps its place. So the ring returns without anything it carries being
 // rewritten.
-settle_the_mesh :: fn(mut app: App, mut held: App) {
+settle_the_mesh :: fn(mut app: App) {
     mut kit := ecs_resource($Swarm, app.world, resource_of($Swarm, app.world))
     if (kit.sphere_wanted == kit.sphere_loaded) {
         return

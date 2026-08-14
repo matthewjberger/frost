@@ -135,7 +135,7 @@ An unmarked parameter is borrowed to read, so nothing here is copied and nothing
 is consumed.
 
 Where Rust would write `a.dot(&b)`, Frost writes `dot(a, b)`. Higher-order code
-uses function pointers, covered below. There are no closures.
+names the function it calls at the call, covered below. There are no closures.
 
 ## Returning several values
 
@@ -683,9 +683,11 @@ Two orderings for one type. In Rust this is the newtype dance or a wrapper. In
 Frost it is a second constant, `i64_descending`, and the two never collide,
 because neither was ever implicit.
 
-Runtime dispatch comes from the same declaration. Drop the `$` and `ops` is an
-ordinary value that can be chosen while the program runs, stored in an array, or
-swapped. Rust needs `dyn Trait` and a second signature for that.
+Drop the `$` and `ops` is an ordinary value: chosen while the program runs,
+stored in an array, handed to C. What it does not do is dispatch, because a call
+names the function it goes to and a field of one is a field. Where Rust reaches
+for `dyn Trait`, Frost names the bundle at the call, or matches on the value
+that stands for the choice and calls each one.
 
 Composing bounds is a struct with struct fields, where Rust writes `T: A + B`,
 and the body reads `ops.ordering.less(a, b)`.
@@ -701,22 +703,34 @@ surfaces when the specialization is compiled.
 
 ## Function pointers and an explicit context
 
-Functions are values. A parameter of type `fn(..) -> T` holds one, and you call
-it directly:
+Functions are values, and a call names the function it goes to. The two live
+together: a `fn(..) -> T` is built, stored and handed on, and where Rust would
+write `f(x)` through a `fn` pointer you name the function at the call as a
+compile-time argument:
 
-```frost,inside
-apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+```frost
+import "io.frost"
+
+apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
-apply(double, 21)    // 42
+main :: fn() -> i64 {
+    print("{}\n", apply($double, 21))    // 42
+    0
+}
 ```
+
+Each call is a call to a function the reader can see, and one specialization is
+emitted per function named. Calling through a value is refused, so there is no
+dispatch to follow and no case where what runs is decided by what a field held.
+Where the set of functions is not known at the call, you match on the value that
+stands for the choice and call each one by name.
 
 There are no capturing closures, and therefore no `Fn` / `FnMut` / `FnOnce`
 distinction and no closure environment. Where a Rust closure would capture
-state, you pass that state explicitly as another argument. This keeps every
-indirect call a plain function pointer with no hidden allocation and no captured
-lifetimes to reason about. In practice, callback-style code threads a context
-value alongside the function pointer, the same pattern C uses.
+state, you pass that state explicitly as another argument. In practice,
+callback-style code threads a context value alongside the function named at the
+call, the same pattern C uses.
 
 Registering a callback with a C library is the one case where that pattern
 gets language support, because it is the case where the context outlives the
@@ -829,11 +843,11 @@ only. See [modules.md](impl/modules.md).
 | Rust feature | Frost approach |
 | --- | --- |
 | Lifetimes (`'a`) | Not needed; an implicit borrow cannot escape and `ref T` is checked without one |
-| Traits, `impl Trait`, `dyn Trait` | None; capability bundles, function pointers, or concrete code |
+| Traits, `impl Trait`, `dyn Trait` | None; capability bundles named at the call, or concrete code |
 | Trait bounds, associated types | `where` bounds over a closed vocabulary of what a type *is* (11.4a); no associated types |
 | Methods, `self`, `impl` blocks | Free functions that take the data as a parameter |
 | `Drop`, RAII guards | `linear` types (consume exactly once), plus `defer` |
-| Closures, `Fn`/`FnMut`/`FnOnce` | Function pointers plus an explicit context argument |
+| Closures, `Fn`/`FnMut`/`FnOnce` | A `$f` compile-time function argument plus an explicit context |
 | `Box`, `Rc`, `Arc`, `RefCell` | Slabs and `Handle<T>` (generational indices) |
 | `Vec`, `HashMap`, `String` | `std/vec.frost`, `std/map.frost`, `str` and `std/strings.frost` |
 | `#[derive(..)]`, macros, attributes | None; write what you need explicitly |

@@ -225,6 +225,11 @@ expressible over an arbitrary `T`.
 `fn(T1, ...) -> R` is a function pointer. There are no closure types. A
 function-typed value is always a plain pointer to a function.
 
+A value of one is built, bound, stored in a field or an array, and handed on,
+which is what a C library takes where it registers a callback. Writing a call on
+one is refused (6.1): a call names the function it goes to. A `$f: fn(...) -> R`
+parameter is how a caller varies which function a body calls (11.1b).
+
 A parameter of a function type may be written `mut T`, which means the same
 reference the `mut` mode means on a declared parameter (chapter 8). An unmarked
 parameter is the type as written, and `move T` is the type as written too, so a

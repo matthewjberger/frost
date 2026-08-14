@@ -191,6 +191,12 @@ const_asks_folding :: fn(mut p: Parser) -> bool {
         } else if (depth == 0 && ahead > 0 && kind == TokenKind::Ident
             && peek_kind(p, ahead + 1) == TokenKind::Coloncolon) {
             return false
+        } else if (depth == 0 && ahead > 0 && kind == TokenKind::KwTest) {
+            // A `test` opens a declaration the way a name and a `::` do.
+            // Without it the scan read straight through the block and took a
+            // call written inside it for one this value asked to fold, which
+            // turned a value the pass was meant to leave alone into a refusal.
+            return false
         }
         if (kind == TokenKind::Ident) {
             after := peek_kind(p, ahead + 1)
@@ -1276,6 +1282,13 @@ const_factor :: fn(mut p: Parser, at: i64) -> ConstValue {
         const_stop(p)
     }
     const_fault(p, at)
+    // A reading that is only being tried says nothing about what it met. The
+    // value is set aside for the pass that keeps it as a node, which is where
+    // a name under a type and a function are read, so meeting one here is not
+    // a fault to tell a reader about.
+    if (p.const_quiet > 0) {
+        return const_int(0)
+    }
     report("this is not something a compile-time call may do")
     frost_rt_recover_escape()
     const_int(0)

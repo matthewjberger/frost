@@ -76,9 +76,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     hierarchy_detach, hierarchy_parent, hierarchy_first_child,
     hierarchy_next_sibling, hierarchy_child_count, hierarchy_despawn_tree,
     no_entity, is_no_entity,
-    System, Schedule, schedule_new, schedule_free, schedule_add,
-    schedule_remove,
-    schedule_add_in_state, schedule_run, schedule_start, schedule_count,
+    System, run_stage_of, stage_at,
     Stage, stage_order, FIRST_FRAME_STAGE, ANY_STATE,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
@@ -1460,48 +1458,6 @@ ecs_resource_ref :: fn($T: Type, world: World, slot: i64) -> ref T {
     result
 }
 
-// Two systems, for the tests below. What they do is nothing: the question a
-// schedule answers is which of them is in it and in what order.
-runs_first :: fn(mut w: World) {}
-runs_second :: fn(mut w: World) {}
-
-test "a system is removed by the function it was registered with" {
-    mut held := schedule_new()
-    schedule_add(held, Stage::Update, runs_first)
-    schedule_add(held, Stage::Update, runs_second)
-    assert(schedule_count(held) == 2)
-    assert(schedule_remove(held, runs_first))
-    assert(schedule_count(held) == 1)
-    // The one left is the one that was not asked for, and it kept its stage.
-    kept := vec_get(held.systems, 0)
-    assert(kept.run == runs_second)
-    assert(kept.stage == Stage::Update)
-    schedule_free(held)
-}
-
-test "removing a system that was never added changes nothing" {
-    mut held := schedule_new()
-    schedule_add(held, Stage::Update, runs_first)
-    assert(schedule_remove(held, runs_second) == false)
-    assert(schedule_count(held) == 1)
-    schedule_free(held)
-}
-
-test "the systems after the one removed keep their order" {
-    mut held := schedule_new()
-    schedule_add(held, Stage::First, runs_first)
-    schedule_add(held, Stage::Update, runs_second)
-    schedule_add(held, Stage::Last, runs_first)
-    assert(schedule_remove(held, runs_first))
-    assert(schedule_count(held) == 2)
-    // The first match went, so what is left is the second and the third in the
-    // order they were written.
-    mut items := vec_slice(held.systems)
-    assert(items[0].stage == Stage::Update)
-    assert(items[1].stage == Stage::Last)
-    schedule_free(held)
-}
-
 test "a resource that holds a resource is read where it lives" {
     mut world := ecs_new()
     slot := ecs_resource_register($Hierarchy, world)
@@ -2257,13 +2213,12 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 // stage each, run in ascending stage order, so ordering is a number rather than
 // a graph of declared dependencies: what a frame does is read top to bottom.
 //
-//     mut frame := schedule_new()
-//     schedule_add(frame, Stage::Update, integrate)
-//     schedule_add(frame, Stage::Last, upload)
-//     schedule_run(frame, world, ANY_STATE)
+//     integrating :: System { stage = Stage::Update, ... run = integrate }
+//     uploading   :: System { stage = Stage::Last, ... run = upload }
+//     run_stage_of(world, ANY_STATE, stage_at(order), integrating, uploading)
 //
-// The system is a function pointer, not a compile-time argument, because a
-// schedule is built while the program runs. `for_each` and `for_each_row` are
+// A system is named where the frame runs rather than registered and kept, so
+// each call above is a call to the function that constant names. `for_each` and `for_each_row` are
 // the other half of this pair, for the inner loop where the call has to fold
 // away.
 // ---------------------------------------------------------------------------
@@ -2310,123 +2265,45 @@ FIRST_FRAME_STAGE :: 1
 // A system with this state runs whatever the state is.
 ANY_STATE :: -1
 
-System :: struct {
-    run: fn(mut World),
-    stage: Stage,
-    state: i64,
-}
-
-Schedule :: struct {
-    systems: Vec<System>,
-}
-
-schedule_new :: fn() -> Schedule {
-    Schedule { systems = vec_new($System, 16) }
-}
-
-schedule_free :: fn(move s: Schedule) {
-    vec_free(s.systems)
-}
-
-schedule_add :: fn(mut s: Schedule, stage: Stage, run: fn(mut World)) {
-    vec_push(s.systems, System { run = run, stage = stage, state = ANY_STATE })
-}
-
-// Drops a system by handing back the same function it was registered with, and
-// answers whether anything went. A program that drives its own loop takes one
-// of the engine's own frame systems out this way rather than working around it.
+// One system, as a constant a program names where its frame runs.
 //
-// The order of what is left is the order they were added, so removing one does
-// not reorder the rest: the systems after it move down by one.
-schedule_remove :: fn(mut s: Schedule, run: fn(mut World)) -> bool {
-    held := vec_slice(s.systems)
-    mut found: i64 = -1
-    mut i: i64 = 0
-    while (i < vec_len(s.systems)) {
-        if (held[i].run == run) {
-            found = i
-            i = vec_len(s.systems)
-        } else {
-            i = i + 1
-        }
-    }
-    if (found < 0) {
-        return false
-    }
-    mut moving := found
-    mut items := vec_slice(s.systems)
-    while (moving + 1 < vec_len(s.systems)) {
-        items[moving] = items[moving + 1]
-        moving = moving + 1
-    }
-    vec_truncate(s.systems, vec_len(s.systems) - 1)
-    true
-}
-
-// A system that runs only while the world is in one state: the pause menu's
-// systems, the loading screen's.
-schedule_add_in_state :: fn(
-    mut s: Schedule,
+// A system is not registered and kept for later: the set a frame runs is named
+// where it runs, so each `s.run(world)` below is a call to the function that
+// constant names. What a stage decides is the order, and what a state decides
+// is whether a system runs on this frame at all.
+System :: struct {
     stage: Stage,
+    // The screen this runs on, or `ANY_STATE` for every one of them.
     state: i64,
-    run: fn(mut World)
-) {
-    vec_push(s.systems, System { run = run, stage = stage, state = state })
+    run: fn(mut World),
 }
 
-schedule_count :: fn(s: Schedule) -> i64 {
-    vec_len(s.systems)
-}
-
-// Every system of a frame, stage by stage. The systems are walked once per
-// stage rather than sorted, since a sort would move them out of the order they
-// were added in, which is the order a stage runs them.
-schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
-    run_stages(s, world, state, FIRST_FRAME_STAGE, highest_stage(s))
-}
-
-// The systems added to `Stage::Startup`, which a frame does not run.
-schedule_start :: fn(mut s: Schedule, mut world: World, state: i64) {
-    startup := stage_order(Stage::Startup)
-    run_stages(s, world, state, startup, startup)
-}
-
-// How many passes a frame makes, read off the systems rather than kept as a
-// count beside the enum, which would be a third thing to remember when a stage
-// is added.
-highest_stage :: fn(s: Schedule) -> i64 {
-    mut highest := FIRST_FRAME_STAGE
-    mut i: i64 = 0
-    while (i < vec_len(s.systems)) {
-        held := vec_get(s.systems, i)
-        order := stage_order(held.stage)
-        if (order > highest) {
-            highest = order
+// Every system of one stage, in the order they are written. The list is a
+// compile-time one, so this is one direct call per system that belongs to the
+// stage and nothing at all for the rest: the stage and the state are known
+// here, and what is left after the unroll is the calls that can run.
+run_stage_of :: fn(mut world: World, state: i64, want: Stage, systems: $...) {
+    for s in systems {
+        if (s.stage == want && (s.state == ANY_STATE || s.state == state)) {
+            s.run(world)
         }
-        i = i + 1
     }
-    highest
 }
 
-run_stages :: fn(
-    mut s: Schedule,
-    mut world: World,
-    state: i64,
-    from: i64,
-    to: i64
-) {
-    mut stage := from
-    while (stage <= to) {
-        mut k: i64 = 0
-        while (k < vec_len(s.systems)) {
-            system := vec_get(s.systems, k)
-            if (stage_order(system.stage) == stage
-                && (system.state == ANY_STATE || system.state == state)) {
-                system.run(world)
-            }
-            k = k + 1
-        }
-        stage = stage + 1
+// The stage at a place in the order, so a frame can walk them without naming
+// each one. The order and the enum are one list read two ways, and this turns
+// the number back into the stage.
+stage_at :: fn(order: i64) -> Stage {
+    match order {
+        case 0: Stage::Startup
+        case 1: Stage::First
+        case 2: Stage::Update
+        case 3: Stage::LateUpdate
+        case 4: Stage::FrameStart
+        case 5: Stage::FrameUpdate
+        case 6: Stage::FramePostUpdate
+        case 7: Stage::Render
+        case _: Stage::Last
     }
 }
 
@@ -3333,8 +3210,26 @@ second_system :: fn(mut world: World) {
     ecs_resource_set(world, 0, TestOrder { steps = held.steps * 2 })
 }
 
+first_of_two :: System {
+    stage = Stage::First,
+    state = ANY_STATE,
+    run = first_system
+}
+
+last_of_two :: System {
+    stage = Stage::Last,
+    state = ANY_STATE,
+    run = second_system
+}
+
 spawning_system :: fn(mut world: World) {
     ecs_spawn(world)
+}
+
+spawns_in_state_one :: System {
+    stage = Stage::Update,
+    state = 1,
+    run = spawning_system
 }
 
 test "a resource is found by the type it is" {
@@ -3573,30 +3468,30 @@ test "despawning a parent despawns what was under it" {
     ecs_free(world)
 }
 
-test "a schedule runs its systems in stage order" {
+test "systems run in stage order rather than the order they are written" {
     mut world := ecs_new()
     ecs_resource_register($TestOrder, world)
-    mut frame := schedule_new()
-    // Added last, run first: the stage decides, not the order they were added.
-    schedule_add(frame, Stage::Last, second_system)
-    schedule_add(frame, Stage::First, first_system)
-    assert(schedule_count(frame) == 2)
-    schedule_run(frame, world, ANY_STATE)
+    // Written last, run first: the stage decides, not the written order.
+    mut order := stage_order(Stage::First)
+    while (order <= stage_order(Stage::Last)) {
+        run_stage_of(
+            world,
+            ANY_STATE,
+            stage_at(order), last_of_two, first_of_two)
+        order = order + 1
+    }
     // first_system then second_system: (0 * 2 + 1) * 2.
     assert(ecs_resource($TestOrder, world, 0).steps == 2)
-    schedule_free(frame)
     ecs_free(world)
 }
 
-test "a system bound to a state runs only in that state" {
+test "a system written for a state runs only in that state" {
     mut world := ecs_new()
-    mut frame := schedule_new()
-    schedule_add_in_state(frame, Stage::Update, 1, spawning_system)
-    schedule_run(frame, world, 0)
+    update := Stage::Update
+    run_stage_of(world, 0, update, spawns_in_state_one)
     assert(ecs_count(world) == 0)
-    schedule_run(frame, world, 1)
+    run_stage_of(world, 1, update, spawns_in_state_one)
     assert(ecs_count(world) == 1)
-    schedule_free(frame)
     ecs_free(world)
 }
 
@@ -3774,11 +3669,8 @@ test "a tree gives back what it took" {
     assert(heap_live() == before)
 }
 
-test "a schedule, a tag and a command buffer give back what they took" {
+test "a tag and a command buffer give back what they took" {
     before := heap_live()
-    mut frame := schedule_new()
-    schedule_add(frame, Stage::Update, spawning_system)
-    schedule_free(frame)
     mut marks := tag_new()
     mut world := ecs_new()
     a := ecs_spawn(world)
@@ -4377,41 +4269,45 @@ test "despawning a leaf leaves the rest of the tree standing" {
     ecs_free(world)
 }
 
-test "an empty schedule runs nothing and says so" {
+test "no systems named runs nothing" {
     mut world := ecs_new()
-    mut frame := schedule_new()
-    assert(schedule_count(frame) == 0)
-    schedule_run(frame, world, ANY_STATE)
+    mut order := stage_order(Stage::First)
+    while (order <= stage_order(Stage::Last)) {
+        run_stage_of(world, ANY_STATE, stage_at(order))
+        order = order + 1
+    }
     assert(ecs_count(world) == 0)
-    schedule_free(frame)
     ecs_free(world)
 }
 
 test "every stage runs, in the order the stages are written" {
     mut world := ecs_new()
     ecs_resource_register($TestOrder, world)
-    mut frame := schedule_new()
-    // Added back to front, so only the stage can put them right.
-    schedule_add(frame, Stage::Last, third_system)
-    schedule_add(frame, Stage::Update, second_system)
-    schedule_add(frame, Stage::First, first_system)
-    assert(schedule_count(frame) == 3)
-    schedule_run(frame, world, ANY_STATE)
+    mut order := stage_order(Stage::First)
+    while (order <= stage_order(Stage::Last)) {
+        // Written back to front, so only the stage can put them right.
+        run_stage_of(
+            world,
+            ANY_STATE,
+            stage_at(order),
+            third_of_three,
+            second_of_three,
+            first_of_three
+        )
+        order = order + 1
+    }
     // first: 0 * 2 + 1 = 1, second: 1 * 2 = 2, third: 2 * 3 = 6.
     assert(ecs_resource($TestOrder, world, 0).steps == 6)
-    schedule_free(frame)
     ecs_free(world)
 }
 
 test "a system runs once per pass over its stage" {
     mut world := ecs_new()
-    mut frame := schedule_new()
-    schedule_add(frame, Stage::Update, spawning_system)
-    schedule_run(frame, world, ANY_STATE)
+    update := Stage::Update
+    run_stage_of(world, 1, update, spawns_in_state_one)
     assert(ecs_count(world) == 1)
-    schedule_run(frame, world, ANY_STATE)
+    run_stage_of(world, 1, update, spawns_in_state_one)
     assert(ecs_count(world) == 2)
-    schedule_free(frame)
     ecs_free(world)
 }
 
@@ -4444,6 +4340,24 @@ test "time accumulates rather than replacing" {
 third_system :: fn(mut world: World) {
     held := ecs_resource($TestOrder, world, 0)
     ecs_resource_set(world, 0, TestOrder { steps = held.steps * 3 })
+}
+
+first_of_three :: System {
+    stage = Stage::First,
+    state = ANY_STATE,
+    run = first_system
+}
+
+second_of_three :: System {
+    stage = Stage::Update,
+    state = ANY_STATE,
+    run = second_system
+}
+
+third_of_three :: System {
+    stage = Stage::Last,
+    state = ANY_STATE,
+    run = third_system
 }
 
 // ---------------------------------------------------------------------------
@@ -5557,21 +5471,32 @@ test "the stages are ordered" {
 test "a startup system runs once and a frame does not" {
     mut world := ecs_new()
     ecs_resource_register($TestOrder, world)
-    mut frame := schedule_new()
-    schedule_add(frame, Stage::Startup, first_system)
-    schedule_add(frame, Stage::Update, second_system)
 
     // `first_system` doubles and adds one, `second_system` doubles.
-    schedule_start(frame, world, ANY_STATE)
-    assert(ecs_resource($TestOrder, world, resource_of($TestOrder, world)).steps == 1)
+    run_stage_of(world, ANY_STATE, Stage::Startup, starts_once, second_of_three)
+    assert(ecs_resource($TestOrder, world, 0).steps == 1)
 
-    schedule_run(frame, world, ANY_STATE)
-    schedule_run(frame, world, ANY_STATE)
+    mut frame: i64 = 0
+    while (frame < 2) {
+        mut order := FIRST_FRAME_STAGE
+        while (order <= stage_order(Stage::Last)) {
+            run_stage_of(
+                world,
+                ANY_STATE,
+                stage_at(order), starts_once, second_of_three)
+            order = order + 1
+        }
+        frame = frame + 1
+    }
     // Two frames of doubling and no second startup.
-    assert(ecs_resource($TestOrder, world, resource_of($TestOrder, world)).steps == 4)
-
-    schedule_free(frame)
+    assert(ecs_resource($TestOrder, world, 0).steps == 4)
     ecs_free(world)
+}
+
+starts_once :: System {
+    stage = Stage::Startup,
+    state = ANY_STATE,
+    run = first_system
 }
 
 // A tag named by a type rather than by a handle, kept by the group so several

@@ -466,22 +466,26 @@ holds no function pointer at all. `std/ordering.frost` and `std/sort.frost` are
 this written out, and 11.4b of [generics.md](reference/generics.md) has the
 rest.
 
-When the operation varies at runtime, drop the `$` and the same declaration
-gives an ordinary value. A `fn(...) -> T` parameter holds a pointer, and a
-bundle without the `$` is a struct holding several. There are no capturing
-closures.
+One function on its own is named the same way. A `$f: fn(...) -> T` parameter
+takes the name at the call, and the body calls it under that name. There are no
+capturing closures.
 
 ```frost
 import "io.frost"
 
-apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
 main :: fn() -> i64 {
-    print("{}\n", apply(double, 21)) // 42
+    print("{}\n", apply($double, 21)) // 42
     0
 }
 ```
+
+Dropping the `$` gives an ordinary value: a `fn(...) -> T` parameter or field
+holds an address, which is what a C library is handed where it takes a callback.
+Calling through one is refused. Where the choice is made while the program runs,
+match on the value that stands for it and call each function by name.
 
 ## A compile-time list of arguments
 

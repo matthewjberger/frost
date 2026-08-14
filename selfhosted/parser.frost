@@ -731,7 +731,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         advance(p)
         note_called_name(p, offset, length)
         fn_index := intern_global(p, offset, length)
-        args := parse_arg_list_for(p, fn_index)
+        args, args_unbound := parse_arg_list_for(p, fn_index)
         // A call whose arguments came from a compile-time list that is not
         // bound belongs to a template's own parse. It is marked here so that
         // nothing later asks it for a type, since the tuple it would name is
@@ -744,7 +744,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             p,
             NodeKind::Call,
             args,
-            p.args_unbound_map,
+            args_unbound,
             fn_index,
             offset
         )
@@ -757,7 +757,15 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // Whether this call hands its own literal and its own list on, noted
         // while the names this declaration gave them are still in scope.
         note_format_forward(p, args, fn_index)
-        if (p.args_unbound_map == 0 && pack_call_args(p, args, fn_index)) {
+        // A call handing over a name this file declares further down. What the
+        // name holds is not known here, and a list filed holding the guess names
+        // an instance whose elements are numbers. The call is taken down and
+        // read again once every declaration is known.
+        if (args_unbound == 0 && takes_pack(p, fn_index)
+            && args_name_a_later_declaration(p, args)) {
+            hold_pending_tuple(p, made, fn_index, args)
+        } else if (args_unbound == 0
+            && pack_call_args(p, args, fn_index)) {
             note_type_args(
                 p,
                 p.call_pack_primary,
@@ -769,14 +777,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             // Kept for the pass that reads what the list turned out to hold,
             // which is after every instance has been walked.
             note_format_call(p, args, fn_index)
-        } else if (p.args_unbound_map == 0
+        } else if (args_unbound == 0
             && generic_fn_of(p, fn_index) < 0
             && arena_at(p.fns, fn_index).defined == 0) {
             // The callee has not been declared yet, so nothing here says
             // whether it reads a compile-time parameter off an argument. What
             // the arguments hold is taken down while their names are in scope.
             hold_pending_tuple(p, made, fn_index, args)
-        } else if (p.args_unbound_map == 0 && generic_fn_of(p, fn_index) >= 0) {
+        } else if (args_unbound == 0 && generic_fn_of(p, fn_index) >= 0) {
             owner := generic_fn_of(p, fn_index)
             // A generic one of whose compile-time parameters a value parameter
             // settles names its tuple through the types of its arguments, and
@@ -1006,7 +1014,14 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
         bound := type_code_for(p, param.name_off, param.name_len)
         arena_push(
             p.gargs,
-            GArg { value = bound, is_type = 0, pending = -1, node = -1 }
+            GArg {
+                value = bound,
+                is_type = 0,
+                pending = -1,
+                node = -1,
+                const_off = 0,
+                const_len = 0
+            }
         )
         j = j + 1
     }
@@ -1167,7 +1182,14 @@ instantiate_inferred :: fn(
         }
         arena_push(
             p.gargs,
-            GArg { value = bound, is_type = 0, pending = -1, node = -1 }
+            GArg {
+                value = bound,
+                is_type = 0,
+                pending = -1,
+                node = -1,
+                const_off = 0,
+                const_len = 0
+            }
         )
         j = j + 1
     }
@@ -1594,6 +1616,10 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             }
             advance(p)
             node = new_node(p, NodeKind::CallPtr, node, head, 0)
+            if (p.unbound_pack_for == 1) {
+                held_ptr := arena_at(p.arena, node)
+                held_ptr.c = 1
+            }
         } else if (cur(p) == TokenKind::Question) {
             advance(p)
             node = lower_try(p, node)
@@ -1744,6 +1770,64 @@ names_the_pack :: fn(mut p: Parser) -> bool {
     peek_kind(p, 1) == TokenKind::Comma || peek_kind(p, 1) == TokenKind::Rparen
 }
 
+// Whether any argument of a call is written as a name nothing has declared yet.
+// A local, a parameter, a constant already read and a function already read are
+// all names this parse can type; what is left is a declaration further down the
+// file, and typing one here answers with a number.
+args_name_a_later_declaration :: fn(mut p: Parser, args: i64) -> bool {
+    mut id := args
+    while (id != (-1)) {
+        entry := arena_at(p.arena, id)
+        node := arena_at(p.arena, entry.a)
+        if (node.kind == NodeKind::Var
+            && local_exists(p, node.val, node.c) == false
+            && parse_local_type(p, node.val, node.c) < 0
+            && value_const_node(p, node.val, node.c) < 0
+            && is_const(p, node.val, node.c) == false
+            && global_is_defined(p, node.val, node.c) == false) {
+            return true
+        }
+        id = entry.next
+    }
+    false
+}
+
+// Whether a name has already been read as a function of this program.
+global_is_defined :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.fns.count) {
+        held := arena_at(p.fns, i)
+        if (held.len == len && held.defined == 1
+            && bytes_equal(p.src, held.off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// The same argument during a template's own parse, where the list this
+// declaration takes has nothing bound to it yet. Handing the list on to another
+// generic reads here as one ordinary name, and typing that name gave the callee
+// a tuple built from a list that does not exist: the instance it named took the
+// element as a number, and the real call went out to it. Marked the way the map
+// form is, so nothing later asks this call for a type.
+names_unbound_pack :: fn(mut p: Parser) -> bool {
+    if (p.pack_len > 0 || p.decl_pack_len == 0) {
+        return false
+    }
+    if (cur(p) != TokenKind::Ident) {
+        return false
+    }
+    if (cur_len(p) != p.decl_pack_len) {
+        return false
+    }
+    if (bytes_equal(p.src, cur_off(p), p.decl_pack_off, p.decl_pack_len) == false) {
+        return false
+    }
+    peek_kind(p, 1) == TokenKind::Comma || peek_kind(p, 1) == TokenKind::Rparen
+}
+
 // One argument per element of the list, in order: a value element is the
 // parameter this instance took it under, a type element is the type itself.
 splice_pack_arguments :: fn(
@@ -1760,7 +1844,18 @@ splice_pack_arguments :: fn(
     while (k < p.pack_count) {
         element := arena_at(p.gargs, p.pack_start + k)
         mut value: i64 = -1
-        if (element.is_type == 1) {
+        if (element.const_len > 0) {
+            // The constant itself, so the callee reads it as one too and the
+            // body it unrolls names the same function this one names.
+            value = new_named_node_at(
+                p,
+                NodeKind::Var,
+                0,
+                element.const_off,
+                element.const_len,
+                at
+            )
+        } else if (element.is_type == 1) {
             value = new_type_node(p, NodeKind::TypeVal, 0, element.value)
         } else {
             name_off, name_len := pack_element_name(
@@ -1886,10 +1981,18 @@ splice_pack_map :: fn(
     return head, tail, index
 }
 
-parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
+parse_arg_list_for :: fn(
+    mut p: Parser,
+    callee: i64
+) -> (head: i64, unbound: i64) {
     mut head: i64 = -1
     mut tail: i64 = -1
     mut index: i64 = 0
+    // An argument that is itself a call reads its own list, and that reading
+    // starts from nothing. What this list had found is kept, since a list inside
+    // an unbound one is unbound too: `put_bytes($out, line, span(fmt, at, n))`
+    // read the inner call and forgot that `$out` was a placeholder.
+    outer_unbound := p.args_unbound_map
     p.args_unbound_map = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         saved_expected := p.expected_type
@@ -1929,6 +2032,9 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             p.expected_type = saved_expected
             p.expected_alt = saved_alt
         } else {
+            if (names_unbound_pack(p)) {
+                p.args_unbound_map = 1
+            }
             value := hold_struct_result(p, parse_expr(p))
             p.expected_type = saved_expected
             p.expected_alt = saved_alt
@@ -1981,7 +2087,14 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         }
     }
     advance(p)
-    head
+    mine := p.args_unbound_map
+    // The list this one sits in keeps what it had found, and takes this on
+    // besides: an argument that is itself a call written against a template's
+    // placeholders leaves the enclosing call with an argument whose type is a
+    // guess. Without this, `put_bytes($out, line, span(fmt, at, n))` read the
+    // inner call and forgot that `$out` was one.
+    p.args_unbound_map = outer_unbound
+    return head, mine
 }
 
 // Prefix `-` and `!`, binding tighter than every binary operator and looser
@@ -2670,7 +2783,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
             }
             arena_push(
                 p.proc_params,
-                GArg { value = param_ty, is_type = 0, pending = -1, node = -1 }
+                GArg {
+                    value = param_ty,
+                    is_type = 0,
+                    pending = -1,
+                    node = -1,
+                    const_off = 0,
+                    const_len = 0
+                }
             )
             param_count = param_count + 1
             if (cur(p) == TokenKind::Comma) {
@@ -2831,7 +2951,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 }
                 arena_push(
                     p.argbuf,
-                    GArg { value = a, is_type = 0, pending = -1, node = -1 }
+                    GArg {
+                        value = a,
+                        is_type = 0,
+                        pending = -1,
+                        node = -1,
+                        const_off = 0,
+                        const_len = 0
+                    }
                 )
                 count = count + 1
                 if (cur(p) == TokenKind::Comma) {
@@ -2854,7 +2981,9 @@ parse_type :: fn(mut p: Parser) -> i64 {
                             value = entry.value,
                             is_type = 0,
                             pending = -1,
-                            node = -1
+                            node = -1,
+                            const_off = 0,
+                            const_len = 0
                         }
                     )
                     j = j + 1
@@ -2882,7 +3011,9 @@ parse_type :: fn(mut p: Parser) -> i64 {
                                 value = fallback,
                                 is_type = 0,
                                 pending = -1,
-                                node = -1
+                                node = -1,
+                                const_off = 0,
+                                const_len = 0
                             }
                         )
                         xarg_count = xarg_count + 1
@@ -5789,7 +5920,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         len_var := new_named_node(p, NodeKind::Var, 0, len_off, len_len)
         condition := new_node(p, NodeKind::Bin, index_var, len_var, OP_LT)
 
+        // A `for` over the list this declaration takes, read while nothing is
+        // bound to it, is the template's own copy of the body and is never
+        // emitted. What is written through the loop's name names no function
+        // here and names one in every copy that is.
+        held_pack_for := p.unbound_pack_for
+        if (in_place
+            && p.pack_len == 0
+            && p.decl_pack_len > 0
+            && seq_len == p.decl_pack_len
+            && bytes_equal(p.src, seq_off, p.decl_pack_off, p.decl_pack_len)) {
+            p.unbound_pack_for = 1
+        }
         body := parse_block(p)
+        p.unbound_pack_for = held_pack_for
 
         // The element, bound under the name the reader wrote, ahead of the
         // body they wrote.
@@ -6661,7 +6805,20 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         // for this one copy of the body.
         mut mark: i64 = p.aliases.count
         mut type_mark: i64 = p.type_aliases.count
-        if (element_is_type == 1) {
+        if (element.const_len > 0) {
+            // A record constant is written into the body under its own name, so
+            // the loop's name stands for the constant rather than for a
+            // parameter holding a copy of it. A field read is then read off a
+            // constant, and a call through a field that names a function is a
+            // call to that function.
+            mark = push_alias(
+                p,
+                item_off,
+                item_len,
+                element.const_off,
+                element.const_len
+            )
+        } else if (element_is_type == 1) {
             arena_push(
                 p.type_aliases,
                 ConstDef {
@@ -6698,8 +6855,14 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
         k = k + 1
     }
     if (p.pack_count == 0) {
+        // Nothing runs, and the body is read once anyway to leave the cursor
+        // past it. What that read builds is thrown away, so a call written
+        // through the loop's name names no function in it and never will.
         p.ti = body_start
+        held_none := p.unbound_pack_for
+        p.unbound_pack_for = 1
         parse_block(p)
+        p.unbound_pack_for = held_none
         return nothing_statement(p)
     }
     if (head == (-1)) {
@@ -6880,6 +7043,14 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 note_called_name(p, poff, plen)
             }
             mut declared := parse_type_annotation(p)
+            // A parameter declared to take a function is one whether or not
+            // this body calls it. Handing it on to another generic is as much
+            // a use as calling it, and a body that only handed it on left the
+            // declaration reading as a type parameter, so no instance was made
+            // and the call linked to a name nothing defined.
+            if (declared >= 0 && is_proc(declared)) {
+                note_called_name(p, poff, plen)
+            }
             note_fallback(p, primary, parse_fallback(p))
             // An instance re-parses the declaration with its arguments bound,
             // so the same parameter is written down again under the types this
@@ -8526,6 +8697,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
         p.decl_pack_len = 0
         p.decl_pack_fixed = 0
         p.decl_pack_format = -1
+        p.unbound_pack_for = 0
         p.decl_format_len = 0
         body := parse_block(p)
         return new_func_node(p, body, params, fn_index, 0)
@@ -9226,6 +9398,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
     p.decl_pack_format = -1
+    p.unbound_pack_for = 0
     p.decl_format_len = 0
     fn_name_off := synth_numbered(p, "__test", p.tests.count)
     fn_name_len := 6 + digits_in(p.tests.count)
@@ -9799,6 +9972,7 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
     p.decl_pack_len = 0
     p.decl_pack_fixed = 0
     p.decl_pack_format = -1
+    p.unbound_pack_for = 0
     p.decl_format_len = 0
     start := p.ti
     item := parse_function(p)
@@ -10461,6 +10635,11 @@ parse_generic_instance :: fn(
     pack_off := gfn.pack_off
     pack_len := gfn.pack_len
     saved_ti := p.ti
+    // The names an enclosing compile-time `for` bound are not this body's. It is
+    // read as the declaration it is, and a parameter of it that happens to spell
+    // what a loop outside spells is that parameter.
+    saved_alias_floor := p.alias_floor
+    p.alias_floor = p.aliases.count
     saved_pack_off := p.pack_off
     saved_pack_len := p.pack_len
     saved_pack_start := p.pack_start
@@ -10526,6 +10705,7 @@ parse_generic_instance :: fn(
     p.type_param_len = saved_len
     p.type_binding = saved_bind
     p.binding_active = saved_active
+    p.alias_floor = saved_alias_floor
     arena_push(
         p.mono_nodes,
         MonoNode {

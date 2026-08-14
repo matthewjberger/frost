@@ -183,7 +183,12 @@ draw_layer :: fn(mut s: Scene, context: NodeContext) {
 // walked twice: once into the App's, which is the near layer, and once into this
 // demo's own. Which layer a run holds is what the two passes differ by, and the
 // view they are culled against is the same one.
-before_frame :: fn(mut s: FrameState, mut app: App) {
+before_frame :: fn(mut app: App) {
+    mut s := ecs_resource(
+        $FrameState,
+        app.world,
+        resource_of($FrameState, app.world)
+    )
     queue := app_queue(app)
     write_frame(
         queue,
@@ -225,21 +230,46 @@ FrameState :: struct {
 // Both passes write both targets and nothing stands between them, so the graph
 // keeps them in the order they were declared: near clears, far draws over what
 // near left and sorts against the depth it wrote.
-declare_passes :: fn(
-    mut s: FrameState,
-    mut g: Graph,
-    device: Device,
-    format: u32
-) {
-    screen := graph_backbuffer(g)
-    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+// Which of this program's passes is which. The engine keeps zero for its own,
+// so a program numbers its own from one.
+NEAR_PASS :: 1
+FAR_PASS :: 2
+
+declare_passes :: fn(mut app: App) {
+    screen := graph_backbuffer(app.renderer.graph)
+    depth := graph_depth(
+        app.renderer.graph,
+        "depth",
+        WINDOW_SIZED,
+        WINDOW_SIZED,
+        DEPTH_FORMAT
+    )
     background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
-    near_pass := graph_node_pass(g, "near", draw_layer, s.near_scene)
-    graph_writes_color(g, near_pass, screen, background)
-    graph_writes_depth(g, near_pass, depth)
-    far_pass := graph_node_pass(g, "far", draw_layer, s.far_scene)
-    graph_writes_color(g, far_pass, screen, background)
-    graph_writes_depth(g, far_pass, depth)
+    near_pass := graph_node_pass(app.renderer.graph, "near", NEAR_PASS)
+    graph_writes_color(app.renderer.graph, near_pass, screen, background)
+    graph_writes_depth(app.renderer.graph, near_pass, depth)
+    far_pass := graph_node_pass(app.renderer.graph, "far", FAR_PASS)
+    graph_writes_color(app.renderer.graph, far_pass, screen, background)
+    graph_writes_depth(app.renderer.graph, far_pass, depth)
+}
+
+// One layer or the other, by the number the graph hands back. Both are the same
+// body over a different run, which is what two views of one world are.
+record_pass :: fn(mut app: App, which: i64, context: NodeContext) {
+    mut held := ecs_resource(
+        $FrameState,
+        app.world,
+        resource_of($FrameState, app.world)
+    )
+    if (which == NEAR_PASS) {
+        draw_layer(scene_at(held.near_scene), context)
+        return
+    }
+    if (which == FAR_PASS) {
+        draw_layer(scene_at(held.far_scene), context)
+        return
+    }
+    app_engine_record(app, which, context)
 }
 
 // The state a pass was pointed at, read the way a run is.
@@ -334,10 +364,8 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    app_install_group(app, default_plugins())
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, spin_plugin)
+    app_install($log_plugin, app)
+    app_install($spin_plugin, app)
     // Turning is this program's, so which component it is is asked of the
     // world here rather than read off the engine's list.
     spin := component_of($Spin, app.world)
@@ -490,9 +518,16 @@ run :: fn(move app: App) -> i64 {
         near_scene = ptr_to(near_scene),
         far_scene = ptr_to(far_scene)
     }
-    app_configure_graph(app, declare_passes, ptr_to(frame))
-    app_before_render(app, before_frame, ptr_to(frame))
-    app_run(app)
+    app_insert_resource(app, frame)
+    app_run(
+        $declare_passes,
+        $before_frame,
+        $record_pass,
+        app,
+        camera_system,
+        escape_system,
+        spin_system
+    )
 
     batch_pipelines_free(scene_at(ptr_to(near_scene)).steps)
     batch_pipelines_free(scene_at(ptr_to(far_scene)).steps)

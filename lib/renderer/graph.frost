@@ -1,11 +1,32 @@
 // A render graph: a table of resources, a table of passes, and the order that
 // follows from what each pass declares it reads and writes.
 //
-// A pass is handed a render pass encoder rather than the frame, so it draws
-// where it declared and nowhere else. The graph owns the textures, works out the
-// order, and decides every load op, so the rule that every pass after the first
-// has to load what the passes before it wrote stops being a rule a reader holds
-// and becomes one nobody can break.
+// A pass is opened onto a render pass encoder rather than onto the frame, so it
+// draws where it declared and nowhere else. The graph owns the textures, works
+// out the order, and decides every load op, so the rule that every pass after
+// the first has to load what the passes before it wrote stops being a rule a
+// reader holds and becomes one nobody can break.
+//
+// Nothing here calls into a program. A call names the function it goes to, so a
+// pass carries the program's own number for it and the caller walks the order a
+// step at a time, opening each pass and answering that number itself:
+//
+//     if (graph_begin_run(g, -1)) {
+//         mut step: i64 = 0
+//         while (step < graph_step_count(g, -1)) {
+//             one := graph_step_at(g, -1, step)
+//             if (graph_step_runs(one, ANY_PHASE)) {
+//                 encoder := graph_open_render(g, -1, f, one)
+//                 draw(app, one.which, encoder)
+//                 graph_close_render(encoder)
+//             }
+//             step = step + 1
+//         }
+//     }
+//
+// `-1` is the graph itself and a sub-graph's index goes there instead.
+// `lib/engine/app.frost` writes that walk once, so a program using the engine
+// writes only the answer to `one.which`.
 
 import "mem.frost"
 import "wgpu.frost"
@@ -17,13 +38,17 @@ export ResourceId, PassId, Resource, GraphPass, Graph, NodeContext,
     graph_node_pass,
     graph_new, graph_free, graph_backbuffer, graph_color, graph_depth,
     graph_pass, graph_writes_color, graph_writes_depth, graph_reads,
-    graph_schedule, graph_resize, graph_run, graph_view, graph_sampler,
+    graph_schedule, graph_resize, graph_view, graph_sampler,
+    graph_begin_run, graph_step_count, graph_step_at, graph_step_runs,
+    graph_open_render, graph_close_render, graph_open_node,
+    graph_open_compute, graph_close_compute, graph_bind_sub,
+    graph_touched_count, graph_touched_at, graph_touched_clear, graph_sub_count,
     graph_order_at, graph_buffer, graph_buffer_of, graph_writes,
     graph_compute_pass, graph_transient_color, graph_transient_depth,
     graph_pool_size, graph_slot_of, graph_runs_after,
     graph_set_enabled, graph_enabled, graph_only, graph_all_enabled,
     graph_save_enabled, graph_restore_enabled,
-    graph_run_phase, graph_set_phase, graph_phase_of, ANY_PHASE,
+    graph_set_phase, graph_phase_of, ANY_PHASE,
     graph_external_color, graph_set_external,
     graph_sub, graph_sub_pass, graph_takes, graph_rebuilds, graph_device,
     graph_set_device,
@@ -181,10 +206,12 @@ NodeContext :: struct {
 GraphPass :: struct {
     name: str,
     kind: PassKind,
-    draw: fn(^u8, RenderPassEncoder),
-    dispatch: fn(^u8, ComputePassEncoder),
-    record: fn(^u8, NodeContext),
-    state: ^u8,
+    // Which of the program's passes this is. The graph does not know what a
+    // pass does: it knows what the pass reads and writes, and it hands the
+    // number back when the pass's turn comes. What that number means is the
+    // program's, and the function it names is one this build knows, so the call
+    // goes to a name rather than through a field.
+    which: i64,
     color: ResourceId,
     depth: ResourceId,
     clear: Color,
@@ -195,14 +222,11 @@ GraphPass :: struct {
     write_count: i64,
     // Which phase it belongs to. A run asking for one phase skips the rest.
     phase: i64,
-    // What to call when a resource this pass names has been made again. A pass
-    // that reads a target sized by the window keeps a bind group naming its
-    // view, and this is where that binding is built afresh. A pass that reads
-    // nothing that moves never needs one.
-    rebuild: fn(^u8, mut Graph),
-    // What that call is handed. Its own rather than the pass's, since one
-    // rebuild often fills bindings that more than one pass reads.
-    rebuild_state: ^u8,
+    // Whether to tell this pass when a resource it names has been made again. A
+    // pass that reads a target sized by the window keeps a bind group naming its
+    // view, and that binding is built afresh then. A pass that reads nothing
+    // that moves never asks.
+    rebuilds: bool,
     // Which sub-graph it runs, for a pass that is one. A sub-graph is a graph
     // built on its own and handed over: it schedules itself, owns its own
     // targets, and is ordered inside its parent by what this pass declares it
@@ -470,30 +494,10 @@ add_resource :: fn(
     cast($ResourceId, index)
 }
 
-// A pass records with its own state and the table holds one shape, so the two
-// meet in these two functions and nowhere else.
-//
-// A `mut` parameter is an address in the signature and Frost shares C's calling
-// convention, so `fn(mut Ctx, RenderPassEncoder)` and
-// `fn(^u8, RenderPassEncoder)` are one function and the cast generates nothing.
-// This is the only place in the graph that knows a pass state has a type, which
-// is what keeps `unsafe` out of the passes themselves.
-graph_pass :: fn(
-    $Ctx: Type,
-    mut g: Graph,
-    name: str,
-    draw: fn(mut Ctx, RenderPassEncoder),
-    state: ^Ctx
-) -> PassId {
-    add_pass(
-        g,
-        name,
-        PassKind::Render,
-        unsafe { ptr_cast($fn(^u8, RenderPassEncoder), draw) },
-        dispatches_nothing,
-        records_nothing,
-        unsafe { ptr_cast($u8, state) }
-    )
+// A pass that draws into the targets it declared. The number is the program's
+// own name for it, handed back when the pass's turn comes.
+graph_pass :: fn(mut g: Graph, name: str, which: i64) -> PassId {
+    add_pass(g, name, PassKind::Render, which)
 }
 
 // A pass that records for itself. It is handed the encoder and its targets and
@@ -504,54 +508,18 @@ graph_pass :: fn(
 // It declares the targets it writes exactly as a drawing pass does, so the graph
 // orders it the same way and decides its load ops the same way; what differs is
 // only that the node applies them itself.
-graph_node_pass :: fn(
-    $Ctx: Type,
-    mut g: Graph,
-    name: str,
-    record: fn(mut Ctx, NodeContext),
-    state: ^Ctx
-) -> PassId {
-    add_pass(
-        g,
-        name,
-        PassKind::Node,
-        draws_nothing,
-        dispatches_nothing,
-        unsafe { ptr_cast($fn(^u8, NodeContext), record) },
-        unsafe { ptr_cast($u8, state) }
-    )
+graph_node_pass :: fn(mut g: Graph, name: str, which: i64) -> PassId {
+    add_pass(g, name, PassKind::Node, which)
 }
 
 // A pass that runs a compute shader. It declares what it reads and writes the
 // same way a drawing one does, and the order follows from the same edges: the
 // difference is only what it is handed to record into.
-graph_compute_pass :: fn(
-    $Ctx: Type,
-    mut g: Graph,
-    name: str,
-    dispatch: fn(mut Ctx, ComputePassEncoder),
-    state: ^Ctx
-) -> PassId {
-    add_pass(
-        g,
-        name,
-        PassKind::Compute,
-        draws_nothing,
-        unsafe { ptr_cast($fn(^u8, ComputePassEncoder), dispatch) },
-        records_nothing,
-        unsafe { ptr_cast($u8, state) }
-    )
+graph_compute_pass :: fn(mut g: Graph, name: str, which: i64) -> PassId {
+    add_pass(g, name, PassKind::Compute, which)
 }
 
-add_pass :: fn(
-    mut g: Graph,
-    name: str,
-    kind: PassKind,
-    draw: fn(^u8, RenderPassEncoder),
-    dispatch: fn(^u8, ComputePassEncoder),
-    record: fn(^u8, NodeContext),
-    state: ^u8
-) -> PassId {
+add_pass :: fn(mut g: Graph, name: str, kind: PassKind, which: i64) -> PassId {
     index := g.pass_count
     // The order and the saved flags are read at a pass's own index, so they
     // grow with the passes.
@@ -565,10 +533,7 @@ add_pass :: fn(
     held[index] = GraphPass {
         name = name,
         kind = kind,
-        draw = draw,
-        dispatch = dispatch,
-        record = record,
-        state = state,
+        which = which,
         color = no_resource(),
         depth = no_resource(),
         clear = clear_black(),
@@ -576,8 +541,7 @@ add_pass :: fn(
         read_count = 0,
         writes = [no_resource(); MAX_WRITES],
         write_count = 0,
-        rebuild = rebuilds_nothing,
-        rebuild_state = no_pointer(),
+        rebuilds = false,
         sub = -1,
         phase = 0,
         enabled = true,
@@ -604,15 +568,7 @@ graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
 // other, which is what puts the nested work in the right place in this graph's
 // order.
 graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
-    made := add_pass(
-        g,
-        name,
-        PassKind::SubGraph,
-        draws_nothing,
-        dispatches_nothing,
-        records_nothing,
-        no_pointer()
-    )
+    made := add_pass(g, name, PassKind::SubGraph, -1)
     if (pass_index(made) >= 0) {
         mut held := g.passes
         held[pass_index(made)].sub = sub
@@ -655,27 +611,10 @@ is_sub :: fn(one: GraphPass) -> bool {
 
 // What a pass does when the targets it reads have been made again. Told rather
 // than worked out: only the pass knows which bindings name which view.
-graph_rebuilds :: fn(
-    $Ctx: Type,
-    mut g: Graph,
-    p: PassId,
-    rebuild: fn(mut Ctx, mut Graph),
-    state: ^Ctx
-) {
+graph_rebuilds :: fn(mut g: Graph, p: PassId) {
     mut held := g.passes
-    held[pass_index(p)].rebuild =
-    unsafe { ptr_cast($fn(^u8, mut Graph), rebuild) }
-    held[pass_index(p)].rebuild_state = unsafe { ptr_cast($u8, state) }
+    held[pass_index(p)].rebuilds = true
 }
-
-rebuilds_nothing :: fn(state: ^u8, g: Graph) {}
-
-// The half of a pass that its kind does not use. Neither is ever called: the
-// kind decides which one is, and a pass is made through one of the two entry
-// points above rather than by filling the struct in.
-draws_nothing :: fn(state: ^u8, pass: RenderPassEncoder) {}
-records_nothing :: fn(state: ^u8, context: NodeContext) {}
-dispatches_nothing :: fn(state: ^u8, pass: ComputePassEncoder) {}
 
 clear_black :: fn() -> Color {
     Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
@@ -1007,7 +946,7 @@ check_declarations :: fn(mut g: Graph) -> bool {
             // resize, so a binding naming its view has to be built again too.
             // A pass that says how is handed the shape; one that does not
             // would read a view of a texture that no longer exists.
-            if (resource_window_sized(g, wanted) && rebuilds(one) == false) {
+            if (resource_window_sized(g, wanted) && one.rebuilds == false) {
                 print(
                     "graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:\n{}\n{}\n",
                     one.name,
@@ -1040,11 +979,6 @@ check_declarations :: fn(mut g: Graph) -> bool {
         r = r + 1
     }
     ok
-}
-
-// Whether a pass was given something to call when its targets move.
-rebuilds :: fn(one: GraphPass) -> bool {
-    one.rebuild != rebuilds_nothing
 }
 
 is_backbuffer :: fn(one: Resource) -> bool {
@@ -1249,7 +1183,6 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
         slot = slot + 1
     }
     make_resources(g)
-    tell_passes(g)
     // A sub-graph is handed over and cannot be reached afterwards, so it is
     // sized through the one that holds it. A child whose resources are a fixed
     // size makes them on the first of these and ignores the rest; one whose
@@ -1264,35 +1197,65 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
 
 // Every pass that names a resource made again since it last built its
 // bindings, told once, and the marks cleared behind them.
-tell_passes :: fn(mut g: Graph) {
-    mut p: i64 = 0
-    while (p < g.pass_count) {
-        held := g.passes
-        one := held[p]
-        mut touched: bool = false
-        mut r: i64 = 0
-        while (r < g.resource_count) {
-            kept := g.resources
-            if (kept[r].remade && (pass_reads(g, p, r) || pass_writes(g, p, r))) {
-                touched = true
-            }
-            r = r + 1
-        }
-        if (touched) {
-            // Read out of the table before the call, so nothing of the graph is
-            // still borrowed while the pass reaches back into it for its view.
-            rebuild := one.rebuild
-            state := one.rebuild_state
-            rebuild(state, g)
-        }
-        p = p + 1
+// How many passes a graph holds, for a caller walking them to tell each one
+// whose targets moved.
+graph_touched_count :: fn(mut g: Graph, sub: i64) -> i64 {
+    if (sub < 0) {
+        return g.pass_count
     }
+    mut nested := g.subs
+    nested[sub].pass_count
+}
+
+// The number of the pass at that index when a resource it names has been made
+// again and it asked to be told, and -1 otherwise. A pass that reads a target
+// sized by the window keeps a bind group naming its view, and this is what says
+// that binding has to be built afresh.
+graph_touched_at :: fn(mut g: Graph, sub: i64, index: i64) -> i64 {
+    if (sub < 0) {
+        return touched_at_in(g, index)
+    }
+    mut nested := g.subs
+    touched_at_in(nested[sub], index)
+}
+
+touched_at_in :: fn(mut here: Graph, index: i64) -> i64 {
+    held := here.passes
+    one := held[index]
+    if (one.rebuilds == false) {
+        return -1
+    }
+    mut r: i64 = 0
+    while (r < here.resource_count) {
+        kept := here.resources
+        if (kept[r].remade
+            && (pass_reads(here, index, r) || pass_writes(here, index, r))) {
+            return one.which
+        }
+        r = r + 1
+    }
+    -1
+}
+
+// The marks cleared, once every pass that had to be told has been.
+graph_touched_clear :: fn(mut g: Graph) {
     mut i: i64 = 0
     while (i < g.resource_count) {
         mut kept := g.resources
         kept[i].remade = false
         i = i + 1
     }
+    mut sub: i64 = 0
+    while (sub < g.sub_count) {
+        mut nested := g.subs
+        graph_touched_clear(nested[sub])
+        sub = sub + 1
+    }
+}
+
+// How many graphs a program's own passes may sit in: this one and its children.
+graph_sub_count :: fn(g: Graph) -> i64 {
+    g.sub_count
 }
 
 // The view of a resource the graph owns. A graph learns its size from
@@ -1456,67 +1419,17 @@ graph_order_at :: fn(g: Graph, n: i64) -> i64 {
 // One frame. Every resource starts unwritten, so the first pass to reach one
 // clears it and every pass after loads what is there.
 // Every pass, whatever phase it is in.
-graph_run :: fn(mut g: Graph, mut f: Frame) {
-    graph_run_phase(g, f, ANY_PHASE)
-}
+// What a frame does with this graph, one step at a time. The order is the
+// graph's and what each step records is the caller's, so the two never hold the
+// graph at once: a step is copied out, the graph opens what the step records
+// into, and the caller records with nothing of the graph borrowed.
+//
+// A sub-graph is addressed by its number, and -1 is this graph itself, which is
+// what lets one walk read either.
 
-// The passes of one phase, in the order the whole graph was scheduled in. The
-// order is the graph's and does not change with the phase asked for, so two
-// phases run in the order they would have run in together.
-graph_run_phase :: fn(mut g: Graph, mut f: Frame, wanted: i64) {
-    if (g.scheduled == false) {
-        print("graph: this graph was never scheduled, so it has no order to run\n")
-        return
-    }
-    mut i: i64 = 0
-    while (i < g.resource_count) {
-        mut held := g.resources
-        held[i].written = false
-        i = i + 1
-    }
-
-    mut step: i64 = 0
-    while (step < g.pass_count) {
-        which := graph_order_at(g, step)
-        held := g.passes
-        one := held[which]
-        if (one.enabled == false || in_phase(one, wanted) == false) {
-            step = step + 1
-            continue
-        }
-        if (is_sub(one)) {
-            run_sub(g, f, one.sub)
-            step = step + 1
-            continue
-        }
-        if (is_compute(one)) {
-            run_compute(f, one)
-            step = step + 1
-            continue
-        }
-        if (is_node(one)) {
-            run_node(g, f, one)
-            step = step + 1
-            continue
-        }
-        color_load := load_for(g, one.color)
-        depth_load := load_for(g, one.depth)
-        mark_written(g, one.color)
-        mark_written(g, one.depth)
-
-        into := target_for(g, f, one)
-        encoder := frame_pass_into(f, into, color_load, one.clear, depth_load)
-        one.draw(one.state, encoder)
-        render_pass_encoder_end(encoder)
-        render_pass_encoder_release(encoder)
-        step = step + 1
-    }
-}
-
-in_phase :: fn(one: GraphPass, wanted: i64) -> bool {
-    wanted == ANY_PHASE || one.phase == wanted
-}
-
+// Which phase a pass belongs to. A run asking for one phase skips the rest, and
+// the order is the graph's either way: two phases run in the order they would
+// have run in together.
 graph_set_phase :: fn(mut g: Graph, p: PassId, phase: i64) {
     mut held := g.passes
     held[pass_index(p)].phase = phase
@@ -1527,63 +1440,146 @@ graph_phase_of :: fn(g: Graph, p: PassId) -> i64 {
     held[pass_index(p)].phase
 }
 
-is_compute :: fn(one: GraphPass) -> bool {
-    match one.kind {
-        case PassKind::Compute: true
-        case PassKind::Render: false
-        case PassKind::Node: false
-        case PassKind::SubGraph: false
+// Whether this graph can run, with the resource marks cleared for a fresh
+// frame. False for one nothing scheduled, which has no order to walk.
+graph_begin_run :: fn(mut g: Graph, sub: i64) -> bool {
+    if (sub < 0) {
+        return begin_run_in(g)
     }
+    mut nested := g.subs
+    begin_run_in(nested[sub])
 }
 
-is_node :: fn(one: GraphPass) -> bool {
-    match one.kind {
-        case PassKind::Node: true
-        case PassKind::Compute: false
-        case PassKind::Render: false
-        case PassKind::SubGraph: false
+begin_run_in :: fn(mut here: Graph) -> bool {
+    if (here.scheduled == false) {
+        print("graph: this graph was never scheduled, so it has no order to run
+")
+        return false
     }
+    mut i: i64 = 0
+    while (i < here.resource_count) {
+        mut held := here.resources
+        held[i].written = false
+        i = i + 1
+    }
+    true
 }
 
-// A pass that records for itself. It is given the encoder, the targets it
-// declared and what the graph decided about loading them, and it opens whatever
-// passes it wants. The graph marks the targets written here rather than after,
-// since what the node did with them is not something the graph watched.
-run_node :: fn(mut g: Graph, mut f: Frame, one: GraphPass) {
-    color_load := load_for(g, one.color)
-    depth_load := load_for(g, one.depth)
-    mark_written(g, one.color)
-    mark_written(g, one.depth)
-    one.record(
-        one.state,
-        NodeContext {
-            encoder = frame_encoder(f),
-            into = target_for(g, f, one),
-            color_load = color_load,
-            depth_load = depth_load,
-            clear = one.clear,
-        }
-    )
+graph_step_count :: fn(mut g: Graph, sub: i64) -> i64 {
+    if (sub < 0) {
+        return g.pass_count
+    }
+    mut nested := g.subs
+    nested[sub].pass_count
+}
+
+// The pass at a step, copied out. Nothing of the graph is borrowed afterwards,
+// which is what lets the caller act on it and reach the graph again.
+graph_step_at :: fn(mut g: Graph, sub: i64, step: i64) -> GraphPass {
+    if (sub < 0) {
+        return step_at_in(g, step)
+    }
+    mut nested := g.subs
+    step_at_in(nested[sub], step)
+}
+
+step_at_in :: fn(mut here: Graph, step: i64) -> GraphPass {
+    which := graph_order_at(here, step)
+    held := here.passes
+    held[which]
+}
+
+// Whether a step runs this time: one that is off keeps its place in the order
+// and records nothing, and one of another phase is not this walk's.
+graph_step_runs :: fn(one: GraphPass, wanted: i64) -> bool {
+    one.enabled && (wanted == ANY_PHASE || one.phase == wanted)
+}
+
+// A render pass on the frame, with the load ops the graph decided and its
+// targets marked written.
+graph_open_render :: fn(
+    mut g: Graph,
+    sub: i64,
+    mut f: Frame,
+    one: GraphPass
+) -> RenderPassEncoder {
+    if (sub < 0) {
+        return open_render_in(g, f, one)
+    }
+    mut nested := g.subs
+    open_render_in(nested[sub], f, one)
+}
+
+open_render_in :: fn(
+    mut here: Graph,
+    mut f: Frame,
+    one: GraphPass
+) -> RenderPassEncoder {
+    color_load := load_for(here, one.color)
+    depth_load := load_for(here, one.depth)
+    mark_written(here, one.color)
+    mark_written(here, one.depth)
+    into := target_for(here, f, one)
+    frame_pass_into(f, into, color_load, one.clear, depth_load)
+}
+
+graph_close_render :: fn(encoder: RenderPassEncoder) {
+    render_pass_encoder_end(encoder)
+    render_pass_encoder_release(encoder)
+}
+
+// What a node pass records with: the encoder, the targets it declared and what
+// the graph decided about loading them. The graph marks them written here rather
+// than after, since what the node did with them is not something it watched.
+graph_open_node :: fn(
+    mut g: Graph,
+    sub: i64,
+    mut f: Frame,
+    one: GraphPass
+) -> NodeContext {
+    if (sub < 0) {
+        return open_node_in(g, f, one)
+    }
+    mut nested := g.subs
+    open_node_in(nested[sub], f, one)
+}
+
+open_node_in :: fn(
+    mut here: Graph,
+    mut f: Frame,
+    one: GraphPass
+) -> NodeContext {
+    color_load := load_for(here, one.color)
+    depth_load := load_for(here, one.depth)
+    mark_written(here, one.color)
+    mark_written(here, one.depth)
+    NodeContext {
+        encoder = frame_encoder(f),
+        into = target_for(here, f, one),
+        color_load = color_load,
+        depth_load = depth_load,
+        clear = one.clear,
+    }
 }
 
 // A compute pass over the frame's encoder. It writes buffers, so it has no
 // attachments to build and no load op to decide; the order it runs in is the
 // whole of what the graph gave it.
-run_compute :: fn(mut f: Frame, one: GraphPass) {
+graph_open_compute :: fn(mut f: Frame) -> ComputePassEncoder {
     mut descriptor := compute_pass_descriptor_init()
-    encoder := command_encoder_begin_compute_pass(
-        frame_encoder(f),
-        ptr_to(descriptor)
-    )
-    one.dispatch(one.state, encoder)
+    command_encoder_begin_compute_pass(frame_encoder(f), ptr_to(descriptor))
+}
+
+graph_close_compute :: fn(encoder: ComputePassEncoder) {
     compute_pass_encoder_end(encoder)
     compute_pass_encoder_release(encoder)
 }
 
-// A nested graph, given what its parent holds and then run whole. Every phase
-// of it runs: a phase is a division of the graph it was declared in, and the
-// child's phases are its own.
-run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
+// A sub-graph's resources take what this graph holds for them, which is done
+// once before the child's first step. Applied every time the child runs, so a
+// parent that binds a different target per camera draws each view where that
+// view goes.
+graph_bind_sub :: fn(mut g: Graph, sub: i64) {
     if (sub < 0 || sub >= g.sub_count) {
         return
     }
@@ -1620,8 +1616,6 @@ run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
         }
         i = i + 1
     }
-    mut nested := g.subs
-    graph_run(nested[sub], f)
 }
 
 load_for :: fn(mut g: Graph, r: ResourceId) -> u32 {
@@ -1662,50 +1656,35 @@ target_for :: fn(mut g: Graph, f: Frame, one: GraphPass) -> Target {
 }
 
 // The order is arithmetic over two tables, so it is answered without a device
-// and without drawing.
-// How many times a pass recorded. These tests schedule graphs and never run
-// one, so the count answers whether scheduling records anything, which is the
-// property the test below names.
-Recorded :: struct { times: i64 }
-nothing_drawn :: fn(mut s: Recorded, pass: RenderPassEncoder) {
-    s.times = s.times + 1
-}
-nothing_dispatched :: fn(mut s: Recorded, pass: ComputePassEncoder) {
-    s.times = s.times + 1
-}
-nothing_rebuilt :: fn(mut s: Recorded, g: Graph) {
-    s.times = s.times + 1
-}
+// and without drawing. A pass is a number here: these tests schedule graphs and
+// never run one, and what a number means is the program's.
 
 test "a pass runs after the pass whose write it reads" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     shadow := graph_depth(g, "shadow", 512, 512, 0)
     // Declared first, and it reads what the second writes.
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, shadow)
-    caster := graph_pass(g, "shadow", nothing_drawn, ptr_to(nothing))
+    caster := graph_pass(g, "shadow", 0)
     graph_writes_depth(g, caster, shadow)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 1)
     assert(graph_order_at(g, 1) == 0)
     // Working out the order is not running it. Neither body has been called,
     // which is what lets a graph be scheduled once and run every frame.
-    assert(nothing.times == 0)
     graph_free(g)
 }
 
 test "a graph with nothing to order runs exactly as it was written" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_color(g, second, screen, clear_black())
-    third := graph_pass(g, "third", nothing_drawn, ptr_to(nothing))
+    third := graph_pass(g, "third", 0)
     graph_writes_color(g, third, screen, clear_black())
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 0)
@@ -1715,24 +1694,23 @@ test "a graph with nothing to order runs exactly as it was written" {
 }
 
 test "two passes over one are stable in declaration order" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     base := graph_depth(g, "base", 8, 8, 0)
     left := graph_depth(g, "left", 8, 8, 0)
     right := graph_depth(g, "right", 8, 8, 0)
     // Declared last to first, so only the edges can put them in order.
-    last := graph_pass(g, "last", nothing_drawn, ptr_to(nothing))
+    last := graph_pass(g, "last", 0)
     graph_writes_color(g, last, screen, clear_black())
     graph_reads(g, last, left)
     graph_reads(g, last, right)
-    one := graph_pass(g, "one", nothing_drawn, ptr_to(nothing))
+    one := graph_pass(g, "one", 0)
     graph_writes_depth(g, one, left)
     graph_reads(g, one, base)
-    two := graph_pass(g, "two", nothing_drawn, ptr_to(nothing))
+    two := graph_pass(g, "two", 0)
     graph_writes_depth(g, two, right)
     graph_reads(g, two, base)
-    root := graph_pass(g, "root", nothing_drawn, ptr_to(nothing))
+    root := graph_pass(g, "root", 0)
     graph_writes_depth(g, root, base)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 3)
@@ -1743,14 +1721,13 @@ test "two passes over one are stable in declaration order" {
 }
 
 test "passes that wait on each other are refused" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     one := graph_depth(g, "one", 8, 8, 0)
     two := graph_depth(g, "two", 8, 8, 0)
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_depth(g, first, one)
     graph_reads(g, first, two)
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_depth(g, second, two)
     graph_reads(g, second, one)
     assert(graph_schedule(g) == false)
@@ -1758,11 +1735,10 @@ test "passes that wait on each other are refused" {
 }
 
 test "a read of a resource nothing writes is refused" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     orphan := graph_depth(g, "orphan", 8, 8, 0)
-    only := graph_pass(g, "only", nothing_drawn, ptr_to(nothing))
+    only := graph_pass(g, "only", 0)
     graph_writes_color(g, only, screen, clear_black())
     graph_reads(g, only, orphan)
     assert(graph_schedule(g) == false)
@@ -1770,28 +1746,21 @@ test "a read of a resource nothing writes is refused" {
 }
 
 test "a pass that writes nothing is refused" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
-    idle := graph_pass(g, "idle", nothing_drawn, ptr_to(nothing))
+    idle := graph_pass(g, "idle", 0)
     assert(graph_schedule(g) == false)
     graph_free(g)
 }
 
 test "a pass runs after the compute pass whose buffer it reads" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     visible := graph_buffer(g, "visible", 4096, BufferUsage::Storage)
     // Declared first, and it reads what the compute pass writes.
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, visible)
-    cull := graph_compute_pass(
-        g,
-        "cull",
-        nothing_dispatched,
-        ptr_to(nothing)
-    )
+    cull := graph_compute_pass(g, "cull", 0)
     graph_writes(g, cull, visible)
     assert(graph_schedule(g))
     assert(graph_order_at(g, 0) == 1)
@@ -1800,18 +1769,12 @@ test "a pass runs after the compute pass whose buffer it reads" {
 }
 
 test "a compute pass that writes a buffer draws nowhere and is allowed" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
-    cull := graph_compute_pass(
-        g,
-        "cull",
-        nothing_dispatched,
-        ptr_to(nothing)
-    )
+    cull := graph_compute_pass(g, "cull", 0)
     graph_writes(g, cull, counts)
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, counts)
     assert(graph_schedule(g))
@@ -1819,7 +1782,6 @@ test "a compute pass that writes a buffer draws nowhere and is allowed" {
 }
 
 test "a chain of three targets costs two textures" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // The shape a post-process chain has: each step reads the one before and
@@ -1829,20 +1791,15 @@ test "a chain of three targets costs two textures" {
     first := graph_transient_color(g, "first", 64, 64, 0)
     middle := graph_transient_color(g, "middle", 64, 64, 0)
     last := graph_transient_color(g, "last", 64, 64, 0)
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, first, clear_black())
-    bright := graph_pass(g, "bright", nothing_drawn, ptr_to(nothing))
+    bright := graph_pass(g, "bright", 0)
     graph_reads(g, bright, first)
     graph_writes_color(g, bright, middle, clear_black())
-    blur := graph_pass(g, "blur", nothing_drawn, ptr_to(nothing))
+    blur := graph_pass(g, "blur", 0)
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass(
-        g,
-        "compose",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    compose := graph_pass(g, "compose", 0)
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1853,23 +1810,17 @@ test "a chain of three targets costs two textures" {
 }
 
 test "two transients alive at once are two textures" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // Both are read by the same pass, so neither is finished with before the
     // other starts and they cannot be the same texture.
     left := graph_transient_color(g, "left", 64, 64, 0)
     right := graph_transient_color(g, "right", 64, 64, 0)
-    one := graph_pass(g, "one", nothing_drawn, ptr_to(nothing))
+    one := graph_pass(g, "one", 0)
     graph_writes_color(g, one, left, clear_black())
-    two := graph_pass(g, "two", nothing_drawn, ptr_to(nothing))
+    two := graph_pass(g, "two", 0)
     graph_writes_color(g, two, right, clear_black())
-    compose := graph_pass(
-        g,
-        "compose",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    compose := graph_pass(g, "compose", 0)
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, left)
     graph_reads(g, compose, right)
@@ -1880,7 +1831,6 @@ test "two transients alive at once are two textures" {
 }
 
 test "two transients of different shapes never share" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // The same chain as above, with the third target a different size. The
@@ -1889,20 +1839,15 @@ test "two transients of different shapes never share" {
     first := graph_transient_color(g, "first", 64, 64, 0)
     middle := graph_transient_color(g, "middle", 64, 64, 0)
     last := graph_transient_color(g, "last", 32, 32, 0)
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, first, clear_black())
-    bright := graph_pass(g, "bright", nothing_drawn, ptr_to(nothing))
+    bright := graph_pass(g, "bright", 0)
     graph_reads(g, bright, first)
     graph_writes_color(g, bright, middle, clear_black())
-    blur := graph_pass(g, "blur", nothing_drawn, ptr_to(nothing))
+    blur := graph_pass(g, "blur", 0)
     graph_reads(g, blur, middle)
     graph_writes_color(g, blur, last, clear_black())
-    compose := graph_pass(
-        g,
-        "compose",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    compose := graph_pass(g, "compose", 0)
     graph_reads(g, compose, last)
     graph_writes_color(g, compose, screen, clear_black())
     assert(graph_schedule(g))
@@ -1912,15 +1857,14 @@ test "two transients of different shapes never share" {
 }
 
 test "an order a program says is kept when nothing implies one" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     other := graph_depth(g, "other", 8, 8, 0)
     // Two passes sharing no resource, so the graph reads nothing between them
     // and would keep them as written. The second is told to run first.
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_depth(g, second, other)
     graph_runs_after(g, first, second)
     assert(graph_schedule(g))
@@ -1930,13 +1874,12 @@ test "an order a program says is kept when nothing implies one" {
 }
 
 test "an order a program says can be a cycle and is refused" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     other := graph_depth(g, "other", 8, 8, 0)
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_depth(g, second, other)
     graph_runs_after(g, first, second)
     graph_runs_after(g, second, first)
@@ -1945,15 +1888,14 @@ test "an order a program says can be a cycle and is refused" {
 }
 
 test "what was saved is what comes back, not everything" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", 8, 8, 0)
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_color(g, first, screen, clear_black())
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_depth(g, second, depth)
-    third := graph_pass(g, "third", nothing_drawn, ptr_to(nothing))
+    third := graph_pass(g, "third", 0)
     graph_writes_color(g, third, screen, clear_black())
 
     // One already off before anything saves, which is the case a restore that
@@ -1971,14 +1913,13 @@ test "what was saved is what comes back, not everything" {
 }
 
 test "a pass that is off is still in the order" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     shadow := graph_depth(g, "shadow", 8, 8, 0)
-    scene := graph_pass(g, "scene", nothing_drawn, ptr_to(nothing))
+    scene := graph_pass(g, "scene", 0)
     graph_writes_color(g, scene, screen, clear_black())
     graph_reads(g, scene, shadow)
-    caster := graph_pass(g, "caster", nothing_drawn, ptr_to(nothing))
+    caster := graph_pass(g, "caster", 0)
     graph_writes_depth(g, caster, shadow)
     assert(graph_schedule(g))
     // Turning it off after scheduling changes nothing about the order, which
@@ -1990,17 +1931,16 @@ test "a pass that is off is still in the order" {
 }
 
 test "a run of one phase leaves the other phases alone" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     depth := graph_depth(g, "depth", 8, 8, 0)
-    shared := graph_pass(g, "shared", nothing_drawn, ptr_to(nothing))
+    shared := graph_pass(g, "shared", 0)
     graph_writes_depth(g, shared, depth)
-    left := graph_pass(g, "left", nothing_drawn, ptr_to(nothing))
+    left := graph_pass(g, "left", 0)
     graph_writes_color(g, left, screen, clear_black())
     graph_reads(g, left, depth)
     graph_set_phase(g, left, 1)
-    right := graph_pass(g, "right", nothing_drawn, ptr_to(nothing))
+    right := graph_pass(g, "right", 0)
     graph_writes_color(g, right, screen, clear_black())
     graph_reads(g, right, depth)
     graph_set_phase(g, right, 2)
@@ -2016,10 +1956,9 @@ test "a run of one phase leaves the other phases alone" {
 }
 
 test "a sub-graph is ordered by what its pass declares" {
-    mut nothing := Recorded { times = 0 }
     mut child := graph_new(no_device())
     inner := graph_external_color(child, "target")
-    draw := graph_pass(child, "draw", nothing_drawn, ptr_to(nothing))
+    draw := graph_pass(child, "draw", 0)
     graph_writes_color(child, draw, inner, clear_black())
     assert(graph_schedule(child))
 
@@ -2028,12 +1967,7 @@ test "a sub-graph is ordered by what its pass declares" {
     offscreen := graph_color(g, "offscreen", 64, 64, 0)
     // Declared second and reading what the sub-graph writes, so the nested
     // work is ordered first by the same rule any other pass follows.
-    compose := graph_pass(
-        g,
-        "compose",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    compose := graph_pass(g, "compose", 0)
     graph_writes_color(g, compose, screen, clear_black())
     graph_reads(g, compose, offscreen)
     sub := graph_sub(g, child)
@@ -2054,13 +1988,12 @@ test "a size is a share of the window" {
 }
 
 test "a resource that follows the window may not be read blindly" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     sized := graph_depth(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
-    writer := graph_pass(g, "writer", nothing_drawn, ptr_to(nothing))
+    writer := graph_pass(g, "writer", 0)
     graph_writes_depth(g, writer, sized)
-    reader := graph_pass(g, "reader", nothing_drawn, ptr_to(nothing))
+    reader := graph_pass(g, "reader", 0)
     graph_writes_color(g, reader, screen, clear_black())
     graph_reads(g, reader, sized)
     assert(graph_schedule(g) == false)
@@ -2068,18 +2001,17 @@ test "a resource that follows the window may not be read blindly" {
 }
 
 test "a pass that says how it rebuilds may read one" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     sized := graph_color(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
-    writer := graph_pass(g, "writer", nothing_drawn, ptr_to(nothing))
+    writer := graph_pass(g, "writer", 0)
     graph_writes_color(g, writer, sized, clear_black())
-    reader := graph_pass(g, "reader", nothing_drawn, ptr_to(nothing))
+    reader := graph_pass(g, "reader", 0)
     graph_writes_color(g, reader, screen, clear_black())
     graph_reads(g, reader, sized)
     // The same graph the case above refuses, and the one line that makes it a
     // graph that can run: the pass says what to call when its input moves.
-    graph_rebuilds(g, reader, nothing_rebuilt, ptr_to(nothing))
+    graph_rebuilds(g, reader)
     assert(graph_schedule(g))
     graph_free(g)
 }
@@ -2089,7 +2021,6 @@ test "a pass that says how it rebuilds may read one" {
 // past the starting room on purpose, one per table, so each doubling is walked.
 
 test "a graph takes more passes and resources than it started with" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // Twice the starting room, so the passes, the order, the saved flags and
@@ -2097,23 +2028,18 @@ test "a graph takes more passes and resources than it started with" {
     // the next reads it, which is both what keeps every resource alive and what
     // fixes the order against the doublings.
     mut held := graph_color(g, "first", 8, 8, 0)
-    mut writer := graph_pass(
-        g,
-        "write",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    mut writer := graph_pass(g, "write", 0)
     graph_writes_color(g, writer, held, clear_black())
     mut made: i64 = 1
     while (made < FIRST_ROOM * 2) {
         next := graph_color(g, "next", 8, 8, 0)
-        one := graph_pass(g, "step", nothing_drawn, ptr_to(nothing))
+        one := graph_pass(g, "step", 0)
         graph_writes_color(g, one, next, clear_black())
         graph_reads(g, one, held)
         held = next
         made = made + 1
     }
-    last := graph_pass(g, "last", nothing_drawn, ptr_to(nothing))
+    last := graph_pass(g, "last", 0)
     graph_writes_color(g, last, screen, clear_black())
     graph_reads(g, last, held)
     assert(graph_schedule(g))
@@ -2124,7 +2050,6 @@ test "a graph takes more passes and resources than it started with" {
 }
 
 test "a graph takes more sub-graphs and inputs than it started with" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // Each nested graph draws into its own target and the pass after it reads
@@ -2135,12 +2060,7 @@ test "a graph takes more sub-graphs and inputs than it started with" {
     while (made < FIRST_ROOM * 2) {
         mut child := graph_new(no_device())
         inner := graph_external_color(child, "target")
-        draw := graph_pass(
-            child,
-            "draw",
-            nothing_drawn,
-            ptr_to(nothing)
-        )
+        draw := graph_pass(child, "draw", 0)
         graph_writes_color(child, draw, inner, clear_black())
         assert(graph_schedule(child))
 
@@ -2150,18 +2070,13 @@ test "a graph takes more sub-graphs and inputs than it started with" {
         graph_takes(g, sub, inner, held)
 
         next := graph_color(g, "after", 8, 8, 0)
-        reader := graph_pass(
-            g,
-            "reads",
-            nothing_drawn,
-            ptr_to(nothing)
-        )
+        reader := graph_pass(g, "reads", 0)
         graph_writes_color(g, reader, next, clear_black())
         graph_reads(g, reader, held)
         held = next
         made = made + 1
     }
-    last := graph_pass(g, "last", nothing_drawn, ptr_to(nothing))
+    last := graph_pass(g, "last", 0)
     graph_writes_color(g, last, screen, clear_black())
     graph_reads(g, last, held)
     assert(graph_schedule(g))
@@ -2169,30 +2084,24 @@ test "a graph takes more sub-graphs and inputs than it started with" {
 }
 
 test "a graph takes more pool slots than it started with" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     screen := graph_backbuffer(g)
     // Each is written by its own pass and read by the next, so no two lifetimes
     // overlap a slot that is free, and every one of them takes a slot of its
     // own rather than reusing the one before.
     mut held := graph_transient_color(g, "first", 8, 8, 0)
-    mut writer := graph_pass(
-        g,
-        "write",
-        nothing_drawn,
-        ptr_to(nothing)
-    )
+    mut writer := graph_pass(g, "write", 0)
     graph_writes_color(g, writer, held, clear_black())
     mut made: i64 = 1
     while (made < FIRST_ROOM * 2) {
         next := graph_transient_color(g, "next", 8 + made, 8, 0)
-        one := graph_pass(g, "step", nothing_drawn, ptr_to(nothing))
+        one := graph_pass(g, "step", 0)
         graph_writes_color(g, one, next, clear_black())
         graph_reads(g, one, held)
         held = next
         made = made + 1
     }
-    last := graph_pass(g, "last", nothing_drawn, ptr_to(nothing))
+    last := graph_pass(g, "last", 0)
     graph_writes_color(g, last, screen, clear_black())
     graph_reads(g, last, held)
     assert(graph_schedule(g))
@@ -2203,13 +2112,12 @@ test "a graph takes more pool slots than it started with" {
 }
 
 test "the first write of a resource clears it and the second loads it" {
-    mut nothing := Recorded { times = 0 }
     mut g := graph_new(no_device())
     shared := graph_depth(g, "shared", 8, 8, 0)
     screen := graph_backbuffer(g)
-    first := graph_pass(g, "first", nothing_drawn, ptr_to(nothing))
+    first := graph_pass(g, "first", 0)
     graph_writes_depth(g, first, shared)
-    second := graph_pass(g, "second", nothing_drawn, ptr_to(nothing))
+    second := graph_pass(g, "second", 0)
     graph_writes_color(g, second, screen, clear_black())
     graph_writes_depth(g, second, shared)
     assert(graph_schedule(g))

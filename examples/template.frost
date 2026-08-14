@@ -57,10 +57,18 @@ TemplateState :: struct { frames: i64, elapsed: f32 }
 // component is what lets an entity be spawned wearing it; inserting the
 // resource is what gives the systems their shared state; the system is what
 // runs once a frame from then on.
-template_plugin :: fn(mut app: App) {
+template_build :: fn(mut app: App) {
     component_for($Spin, app.world)
     app_insert_resource(app, TemplateState { frames = 0, elapsed = 0.0 })
-    app_add_system(app, Stage::FrameUpdate, tick)
+}
+
+template_plugin :: Plugin { name = "template", build = template_build }
+
+// What this program runs each frame, named where the frame runs.
+tick_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = tick
 }
 
 // Once a frame: the counters advance, and everything wearing a `Spin` turns.
@@ -112,11 +120,9 @@ run :: fn(move app: App) -> i64 {
     // The engine's pieces, then this program's. `render_plugin` draws the
     // world; the two controller plugins are the keys above; the template
     // plugin is everything declared in this file.
-    app_install_group(app, default_plugins())
-    app_install(app, render_plugin)
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, template_plugin)
+    app_install($log_plugin, app)
+    app_install($render_plugin, app)
+    app_install($template_plugin, app)
 
     // What things are made of. A mesh goes into the shared buffers once and is
     // named by the slot that came back; a material is a row in a table the
@@ -244,6 +250,6 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.15
     app_camera_set(app, eye)
 
-    app_run(app)
+    app_run(app, camera_system, escape_system, tick_system)
     app_close(app)
 }

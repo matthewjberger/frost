@@ -98,7 +98,10 @@ and `examples/native/generic_slab.frost` is the same shape as a single file.
 
 A parameter written `$f: Type` whose argument names a declared function is a
 compile-time function parameter. The specialization calls it directly, with no
-function pointer and no indirect call:
+function pointer and nothing dispatched. This is how a body varies which
+function it calls: a call names the function it goes to (6.1), so a `fn(..)`
+parameter holds one and cannot be called through, and the name arrives here
+instead.
 
 ```frost,sketch
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
@@ -575,15 +578,17 @@ Because `$ops` is a compile-time argument, `ops.less(a, b)` folds to a direct
 call to `i64_less`. The specialization holds no function pointer, loads nothing,
 and dispatches on nothing.
 
-Dropping the `$` gives the runtime form from the same declaration:
+Dropping the `$` gives an ordinary value of the same type:
 
 ```frost,sketch
-sort_at_runtime :: fn(ops: Ordering<i64>, mut items: []i64) { ... }
+holds_ordering :: fn(ops: Ordering<i64>) -> i64 { 1 }
 ```
 
-In that form `ops` is an ordinary value: it can be chosen while the program
-runs, stored in an array, or swapped, and the calls go through the pointers it
-holds. There is no separate feature and no second spelling of the bundle type.
+In that form `ops` is chosen while the program runs, stored in an array, or
+handed to C. What it does not do is answer a call: a call names the function it
+goes to, so `ops.less(a, b)` on a parameter is refused (6.1) and only a chain of
+constants folds. There is no separate feature and no second spelling of the
+bundle type.
 
 Two orderings over one type are two constants:
 
@@ -592,7 +597,8 @@ i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 ```
 
 Composition is a struct with struct fields, and the body reads
-`ops.ordering.less(a, b)`.
+`ops.ordering.less(a, b)`. The fold follows a chain, so a bundle holding a
+bundle names its function the same way one level further in.
 
 `std/ordering.frost` and `std/sort.frost` are this written out.
 

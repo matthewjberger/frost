@@ -5,7 +5,7 @@
 //   while (platform_poll(p)) {
 //       if (resized(p)) { renderer_resize(r, width(p), height(p)) }
 //       mut f := renderer_begin(r)
-//       if (frame_ok(f)) { graph_run(r.graph, f) }
+//       if (frame_ok(f)) { draw_the_graph(r, f) }
 //       renderer_end(r, f)
 //   }
 //

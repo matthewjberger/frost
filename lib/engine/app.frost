@@ -9,11 +9,16 @@
 //     }
 //
 //     run :: fn(move app: App) -> i64 {
-//         app_install(app, exit_on_escape_plugin)
-//         ...
-//         app_configure_graph(app, declare_passes, ptr_to(scene))
-//         app_before_render(app, before_frame, ptr_to(scene))
-//         app_run(app)
+//         app_insert_resource(app, scene)
+//         app_run(
+//             $declare_passes,
+//             $before_frame,
+//             $record_pass,
+//             app,
+//             camera_system,
+//             escape_system,
+//             spin_system
+//         )
 //         app_close(app)
 //     }
 //
@@ -21,12 +26,22 @@
 // pipeline, the passes and how they are wired. Everything above that is the
 // same in every one of them, which is what this is.
 //
-// The graph is the renderer's, and what a program says into it is a hook the
-// App keeps. Which passes exist, what each reads and writes and what each
-// records is the whole of what one program has to say, and it says it once on
-// the way into the first frame, after every plugin has had its turn. Scheduling
-// and the first size are the App's, so a program declares passes and never
-// orders them.
+// The graph is the renderer's, and what a program says into it is named at the
+// call. Which passes exist, what each reads and writes and what each records is
+// the whole of what one program has to say, and it says it once on the way into
+// the first frame, after every plugin has had its turn. Scheduling and the first
+// size are the App's, so a program declares passes and never orders them.
+//
+// A call names the function it goes to, so each of those is a `$` argument
+// rather than a pointer the App holds: `app_run` is a generic, and the
+// specialization it stamps out calls `declare_passes`, `before_frame` and
+// `record_pass` by name. What a program does not write takes the default that
+// does nothing. A pass says which of the program's passes it is with a number
+// it declared, and the program answers that number with a `match` or an `if`
+// chain, ending in `app_engine_record` for the one the engine declared.
+//
+// State a pass reads lives in the world as a resource rather than behind a
+// pointer the App kept, which is what `app_insert_resource` above is for.
 //
 // `main` is two calls because a window that did not open is a value rather than
 // a flag: `app_open` gives back whatever it took before answering with a
@@ -53,6 +68,7 @@ import "vec.frost"
 import "mem.frost"
 import "math.frost"
 import "io.frost"
+import "strings.frost"
 
 // Stopping, which a module that needs it declares for itself: neither
 // `ecs.frost` nor the wgpu binding hands these out.
@@ -60,15 +76,16 @@ frost_rt_error :: extern fn(text: ^i8)
 frost_rt_die :: safe extern fn()
 
 export AppConfig, App, AppError, AppFault, app_config, app_open, app_close,
-    app_failed, app_install, app_install_if_absent, app_install_group,
-    PluginGroup, plugin_group_new, plugin_group_free, plugin_group_add,
-    plugin_group_set, plugin_group_disable, default_plugins,
-    engine_plugin, exit_on_escape_plugin, camera_controller_plugin,
-    app_configure_graph, app_before_render, app_update_graph, app_run,
+    app_failed, app_install, app_install_if_absent,
+    Plugin,
+    engine_plugin,
+    app_run, ENGINE_LIT_PASS, app_engine_record,
+    declares_nothing, rebuilds_nothing, draws_nothing, records_nothing,
+    dispatches_nothing, each_frame_nothing,
     log_plugin, app_log, render_plugin,
-    app_set_runner, app_set_runner_if_unset,
-    app_add_system, app_add_systems, app_remove_system, app_insert_resource,
-    app_add_system_in_state, app_insert_state, app_on_enter, app_on_exit,
+    app_run_with,
+    app_insert_resource, app_insert_state,
+    camera_system, escape_system,
     app_next, app_extract, app_draw,
     app_device, app_queue, app_format, app_ids, app_input,
     app_width, app_height, app_camera, app_camera_set, app_view
@@ -130,24 +147,12 @@ App :: linear struct {
     platform: Platform,
     renderer: Renderer,
     world: World,
-    schedule: Schedule,
     store: Geometry,
     meshes: MeshCache,
     materials: Materials,
     render: RenderWorld,
     // Which plugins are in, so one composed by two others goes in once.
     installed: Vec<Installed>,
-    // What says which passes exist, run once before the first frame.
-    graph_configs: Vec<GraphConfig>,
-    // What changes the graph each frame: which passes run this time.
-    update_graph: Vec<UpdateGraph>,
-    // What runs each frame between the schedule and the graph, where a
-    // system cannot reach: writing a uniform, filling the run.
-    before_render: Vec<BeforeRender>,
-    // The loop, where a program brings its own. Nothing runs the App's when
-    // one is set.
-    runner: fn(mut App),
-    has_runner: bool,
     // Where lines go, once something composes the plugin that opens it. A
     // program without it holds one that was never opened and writes nothing.
     log: Log,
@@ -164,10 +169,7 @@ App :: linear struct {
     // without this a program that never asks would have its startup systems
     // registered and never run.
     started: bool,
-    // What runs when the program arrives at a screen and when it leaves one,
-    // and whether the screen it starts on has been entered yet.
-    on_enter: Vec<StateHook>,
-    on_exit: Vec<StateHook>,
+    // Whether the screen the program starts on has been entered yet.
     state_started: bool,
 }
 
@@ -194,7 +196,6 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         platform = p,
         renderer = r,
         world = ecs_new(),
-        schedule = schedule_new(),
         store = geometry_new(device, config.vertices, config.indices),
         meshes = mesh_cache_new(config.meshes),
         materials = materials_new(config.materials),
@@ -205,11 +206,6 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
             config.materials
         ),
         installed = vec_new($Installed, 8),
-        graph_configs = vec_new($GraphConfig, 4),
-        update_graph = vec_new($UpdateGraph, 4),
-        before_render = vec_new($BeforeRender, 4),
-        runner = runs_nothing,
-        has_runner = false,
         log = log_open("", log_config()),
         logging = false,
         lit = lit_none(),
@@ -217,72 +213,94 @@ app_open :: fn(config: AppConfig) -> App ! AppError {
         lights = heap_slice($GpuLight, MAX_LIGHTS),
         drawable = true,
         started = false,
-        on_enter = vec_new($StateHook, 4),
-        on_exit = vec_new($StateHook, 4),
         state_started = false,
     }
     // The one plugin an App is not an App without. Everything else a program
     // installs for itself.
-    app_install(app, engine_plugin)
+    app_install($engine_plugin, app)
     app
+}
+
+// What a plugin is: the name it is known by, and what it builds into an App.
+//
+// A plugin is a constant of this, named at the call that installs it. The name
+// is its identity, which is what says a plugin is in twice; the function is
+// reached through the constant, so installing folds to a call to that function
+// and nothing is dispatched.
+Plugin :: struct {
+    name: str,
+    build: fn(mut App),
 }
 
 // The engine's own registration. What every drawing program needs and nothing
 // a particular one does.
-engine_plugin :: fn(mut app: App) {
+engine_build :: fn(mut app: App) {
     world_prepare(app.world)
-    app_add_system(app, Stage::FramePostUpdate, place_things)
 }
 
-// The camera moved by what was held. A program driving the camera itself
-// installs everything else and leaves this out.
-camera_controller_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage::FrameUpdate, move_camera)
+engine_plugin :: Plugin { name = "engine", build = engine_build }
+
+// The camera moved by what was held. A program driving the camera itself names
+// its own system and leaves this one out of the run it writes.
+camera_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = move_camera
 }
 
-// Escape closes the window. Installed by a demo rather than built into the
-// poll, so a program that wants that key for a menu simply does not install it.
-exit_on_escape_plugin :: fn(mut app: App) {
-    app_add_system(app, Stage::FrameUpdate, exit_on_escape)
+// Escape closes the window. Named by a demo rather than built into the poll, so
+// a program that wants that key for a menu simply does not name it.
+escape_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = exit_on_escape
 }
 
 // One plugin, built into this App.
 //
-// A plugin is a `fn(mut App)` and nothing else: it registers the components it
-// reads, the resources it needs at their defaults, and its systems. There is no
-// configuration on it, because what a program wants different it writes after
-// installing, the way `app_camera_set` follows `app_open`. One signature for
-// all of them is what makes a set of plugins a list of names rather than a
-// shape each caller has to know.
+// A plugin registers the components it reads, the resources it needs at their
+// defaults, and its systems. There is no configuration on it, because what a
+// program wants different it writes after installing, the way `app_camera_set`
+// follows `app_open`. One shape for all of them is what makes a set of plugins
+// a list of names rather than a shape each caller has to know.
 //
-// The signature is spelled where it is used rather than named, because a
-// function type in Frost has no alias: `schedule_add` spells `fn(mut World)`
-// the same way.
-app_install :: fn(mut app: App, build: fn(mut App)) {
-    if (already_installed(app, build)) {
+// The plugin is named at the call rather than handed over as a value, so
+// `plugin.build(app)` is a call to the function that constant names. What is
+// remembered is the name, which is what says a plugin is in twice: two
+// constants naming one function are two plugins, and the same constant named
+// at two calls is one.
+app_install :: fn($plugin: Plugin, mut app: App) {
+    if (already_installed(app, plugin.name)) {
         unsafe { frost_rt_error("frost: a plugin is installed twice\n") }
         frost_rt_die()
     }
-    vec_push(app.installed, Installed { build = build })
-    build(app)
+    vec_push(app.installed, Installed { name = plugin.name })
+    plugin.build(app)
 }
 
 // The same, where a plugin that is already in is what was wanted. A plugin
 // composing what it depends on uses this, since more than one may depend on
 // the same thing and none of them can see whether another got there first.
-app_install_if_absent :: fn(mut app: App, build: fn(mut App)) {
-    if (already_installed(app, build)) {
+app_install_if_absent :: fn($plugin: Plugin, mut app: App) {
+    if (already_installed(app, plugin.name)) {
         return
     }
-    vec_push(app.installed, Installed { build = build })
-    build(app)
+    vec_push(app.installed, Installed { name = plugin.name })
+    plugin.build(app)
 }
 
-already_installed :: fn(app: App, build: fn(mut App)) -> bool {
-    held := vec_slice(app.installed)
+already_installed :: fn(app: App, name: str) -> bool {
+    holds_plugin(app.installed, name)
+}
+
+// Whether a name is on a list of plugins. Apart from the App, because what says
+// a plugin is in twice is a question about the list and a device has nothing to
+// do with it.
+holds_plugin :: fn(installed: Vec<Installed>, name: str) -> bool {
+    held := vec_slice(installed)
     mut i: i64 = 0
-    while (i < vec_len(app.installed)) {
-        if (held[i].build == build) {
+    while (i < vec_len(installed)) {
+        if (str_eq(held[i].name, name)) {
             return true
         }
         i = i + 1
@@ -291,123 +309,57 @@ already_installed :: fn(app: App, build: fn(mut App)) -> bool {
 }
 
 // A plugin that is in, so two that pull in the same one pull it in once.
-Installed :: struct { build: fn(mut App) }
+Installed :: struct { name: str }
 
-// One plugin of a group, and whether it is still on. `named` is what the group
-// was built with and never changes, so a member replaced by
-// `plugin_group_set` is still found under the name the group knows it by; it
-// keeps its place in the order too, since what a program composes above the
-// engine is often written against that order.
-GroupMember :: struct {
-    named: fn(mut App),
-    build: fn(mut App),
-    enabled: bool,
+test "a plugin that was installed is on the list" {
+    mut installed := vec_new($Installed, 4)
+    vec_push(installed, Installed { name = "engine" })
+    vec_push(installed, Installed { name = "render" })
+    assert(holds_plugin(installed, "engine"))
+    assert(holds_plugin(installed, "render"))
+    vec_free(installed)
 }
 
-// An ordered set of plugins a program composes as one, each replaceable and
-// each removable before the App takes any of them.
-//
-//     mut standard := default_plugins()
-//     plugin_group_disable(standard, log_plugin)
-//     app_install_group(app, standard)
-//
-// `linear` because it owns its list: a group built and never installed still
-// has to give its storage back.
-PluginGroup :: linear struct { members: Vec<GroupMember> }
-
-plugin_group_new :: fn() -> PluginGroup {
-    PluginGroup { members = vec_new($GroupMember, 8) }
+test "a plugin that was never installed is not on the list" {
+    mut installed := vec_new($Installed, 4)
+    vec_push(installed, Installed { name = "engine" })
+    assert(holds_plugin(installed, "log") == false)
+    vec_free(installed)
 }
 
-plugin_group_free :: fn(move group: PluginGroup) {
-    vec_free(group.members)
+test "nothing is on an empty list" {
+    mut installed := vec_new($Installed, 4)
+    assert(holds_plugin(installed, "engine") == false)
+    vec_free(installed)
 }
 
-plugin_group_add :: fn(mut group: PluginGroup, build: fn(mut App)) {
-    vec_push(
-        group.members,
-        GroupMember { named = build, build = build, enabled = true }
-    )
+// The names are compared, not the constants, so two plugins that name one
+// function are two plugins and the same constant named twice is one.
+test "one name is on the list once however often it is asked for" {
+    mut installed := vec_new($Installed, 4)
+    vec_push(installed, Installed { name = "engine" })
+    assert(holds_plugin(installed, "engine"))
+    assert(holds_plugin(installed, "engine"))
+    assert(vec_len(installed) == 1)
+    vec_free(installed)
 }
 
-// Which member of the group this name is, or -1 where the group has none.
-group_index :: fn(group: PluginGroup, named: fn(mut App)) -> i64 {
-    held := vec_slice(group.members)
-    mut i: i64 = 0
-    while (i < vec_len(group.members)) {
-        if (held[i].named == named) {
-            return i
-        }
-        i = i + 1
-    }
-    -1
-}
-
-// The group's own `named` built another way, keeping its place. A group that
-// does not hold it is a program naming a member that is not there, which is
-// worth stopping rather than silently composing something else.
-plugin_group_set :: fn(
-    mut group: PluginGroup,
-    named: fn(mut App),
-    build: fn(mut App)
-) {
-    at := group_index(group, named)
-    if (at < 0) {
-        unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
-        frost_rt_die()
-    }
-    mut held := vec_slice(group.members)
-    held[at].build = build
-}
-
-// The group without it. Refused the same way as `set` when the group has no
-// such member, since disabling what was never there is a program that thinks
-// it turned something off.
-plugin_group_disable :: fn(mut group: PluginGroup, named: fn(mut App)) {
-    at := group_index(group, named)
-    if (at < 0) {
-        unsafe { frost_rt_error("frost: this plugin group has no such member\n") }
-        frost_rt_die()
-    }
-    mut held := vec_slice(group.members)
-    held[at].enabled = false
-}
-
-// The group's members in group order, skipping the ones turned off. They count
-// toward the same once-per-plugin rule everything else does, so a group holding
-// what a program already installed stops rather than installing it twice.
-app_install_group :: fn(mut app: App, move group: PluginGroup) {
-    mut i: i64 = 0
-    while (i < vec_len(group.members)) {
-        held := vec_get(group.members, i)
-        if (held.enabled) {
-            app_install(app, held.build)
-        }
-        i = i + 1
-    }
-    plugin_group_free(group)
-}
-
-// The standard composition. What a program writes when it wants the engine's
-// own and nothing else, and what it starts from when it wants most of them.
-//
-// The window and the device are not in here: `app_open` brings both up before a
-// plugin can run, because the rest of the App is built against a device. The
-// camera controller and escape-to-close stay out for the same reason they do
-// above: a program that drives its own camera or wants that key for a menu
-// installs neither.
-default_plugins :: fn() -> PluginGroup {
-    mut group := plugin_group_new()
-    plugin_group_add(group, log_plugin)
-    group
+// A name that another name starts with is a different plugin.
+test "a name is not on the list because a longer one is" {
+    mut installed := vec_new($Installed, 4)
+    vec_push(installed, Installed { name = "engine" })
+    assert(holds_plugin(installed, "eng") == false)
+    vec_free(installed)
 }
 
 // Lines to a file beside the program, named for the window. Composing this is
 // what opens the file; a program without it writes nothing at all.
-log_plugin :: fn(mut app: App) {
+log_build :: fn(mut app: App) {
     app.logging = true
     app_log(app, "opened")
 }
+
+log_plugin :: Plugin { name = "log", build = log_build }
 
 // One line, where a log was opened. A program that composed no log plugin calls
 // this and nothing happens, so nothing has to ask first.
@@ -418,113 +370,90 @@ app_log :: fn(mut app: App, said: str) {
     log_line(app.log, said)
 }
 
-// What says which passes exist. The graph, and the two things every pipeline
-// in it is built against, so a plugin declaring a pass needs nothing else.
-GraphConfig :: struct {
-    hook: fn(^u8, mut Graph, Device, u32),
-    state: ^u8,
-}
-
-// Passes, declared into the App's graph. Run once on the way into the first
-// frame rather than here, so a plugin installed after this call still declares
-// its own, and so everything a program spawns before then is already in.
+// What a program's passes are, named where the App runs rather than registered
+// with it. Each is a `match` over the numbers that program declared, so every
+// arm is a call to a function this build knows and none of them goes through a
+// field.
 //
-// What a hook may not do is ask the graph for a view or a sampler: nothing is
-// made until the graph has a size, and the size comes after every hook has run.
-// A pass that binds what the graph holds says so with `graph_rebuilds`, which is
-// called with the first size as well as with every one after it.
-app_configure_graph :: fn(
-    $Ctx: Type,
-    mut app: App,
-    hook: fn(mut Ctx, mut Graph, Device, u32),
-    state: ^Ctx
-) {
-    vec_push(
-        app.graph_configs,
-        GraphConfig {
-            hook = unsafe { ptr_cast($fn(^u8, mut Graph, Device, u32), hook) },
-            state = unsafe { ptr_cast($u8, state) }
-        }
-    )
+// The engine's own pass carries the number below and a program numbers its own
+// from one, so the default recorder answers for the engine and a program with
+// node passes of its own hands the numbers it does not know back to it.
+ENGINE_LIT_PASS :: 0
+
+app_engine_record :: fn(mut app: App, which: i64, context: NodeContext) {
+    if (which == ENGINE_LIT_PASS) {
+        record_view(app, context)
+    }
 }
 
-// The hooks, then the order they imply, then the first size. False when the
+declares_nothing :: fn(mut app: App) {}
+
+rebuilds_nothing :: fn(mut app: App, which: i64) {}
+
+draws_nothing :: fn(mut app: App, which: i64, pass: RenderPassEncoder) {}
+
+records_nothing :: fn(mut app: App, which: i64, context: NodeContext) {
+    app_engine_record(app, which, context)
+}
+
+dispatches_nothing :: fn(mut app: App, which: i64, pass: ComputePassEncoder) {}
+
+each_frame_nothing :: fn(mut app: App) {}
+
+// The passes, then the order they imply, then the first size. False when the
 // graph refuses, which is a program that cannot draw rather than one that draws
 // nothing, so it says so once here instead of every frame.
-configure_graph :: fn(mut app: App) -> bool {
-    device := renderer_device(app.renderer)
-    format := renderer_format(app.renderer)
-    mut i: i64 = 0
-    while (i < vec_len(app.graph_configs)) {
-        held := vec_get(app.graph_configs, i)
-        held.hook(held.state, app.renderer.graph, device, format)
-        i = i + 1
+//
+// Declared on the way into the first frame rather than while the App is opening,
+// so a plugin installed after `app_open` still declares its passes and so
+// everything a program spawns before then is already in.
+//
+// What a declaration may not do is ask the graph for a view or a sampler:
+// nothing is made until the graph has a size, and the size comes after every
+// declaration. A pass that binds what the graph holds says so with
+// `graph_rebuilds`, and is told with the first size as well as with every one
+// after it.
+configure_graph :: fn(
+    $declare: fn(mut App),
+    $rebuild: fn(mut App, i64),
+    mut app: App
+) -> bool {
+    if (app.drawing) {
+        declare_lit(app)
     }
+    declare(app)
     if (graph_schedule(app.renderer.graph) == false) {
-        print("the render graph cannot run\n")
+        print("the render graph cannot run
+")
         return false
     }
-    graph_resize(app.renderer.graph, width(app.platform), height(app.platform))
+    graph_resize(
+        app.renderer.graph,
+        width(app.platform),
+        height(app.platform)
+    )
+    tell_passes($rebuild, app)
     true
 }
 
-// What changes the graph each frame. A pass can be turned off and on with
-// `graph_set_enabled`, and what decides that is the world: a settings resource
-// saying the bloom is off is read here and the pass stops running, without the
-// graph being scheduled again.
-UpdateGraph :: struct {
-    hook: fn(^u8, mut Graph, World),
-    state: ^u8,
-}
-
-app_update_graph :: fn(
-    $Ctx: Type,
-    mut app: App,
-    hook: fn(mut Ctx, mut Graph, World),
-    state: ^Ctx
-) {
-    vec_push(
-        app.update_graph,
-        UpdateGraph {
-            hook = unsafe { ptr_cast($fn(^u8, mut Graph, World), hook) },
-            state = unsafe { ptr_cast($u8, state) }
+// Every pass whose targets moved, told once, and the marks cleared behind them.
+// The walk is here rather than inside the graph because what a pass rebuilds is
+// the program's, and the graph and the App are never held at once: the number is
+// read out of the graph and the call takes the App alone.
+tell_passes :: fn($rebuild: fn(mut App, i64), mut app: App) {
+    mut sub: i64 = -1
+    while (sub < graph_sub_count(app.renderer.graph)) {
+        mut index: i64 = 0
+        while (index < graph_touched_count(app.renderer.graph, sub)) {
+            which := graph_touched_at(app.renderer.graph, sub, index)
+            if (which >= 0) {
+                rebuild(app, which)
+            }
+            index = index + 1
         }
-    )
-}
-
-// The hooks, in the order they were added, before the frame is filled. What
-// runs this frame is settled first and what goes in it second.
-update_graph :: fn(mut app: App) {
-    mut i: i64 = 0
-    while (i < vec_len(app.update_graph)) {
-        held := vec_get(app.update_graph, i)
-        held.hook(held.state, app.renderer.graph, app.world)
-        i = i + 1
+        sub = sub + 1
     }
-}
-
-// What a frame does between the world and the graph. A system is a
-// `fn(mut World)` and cannot reach a device, so what writes a uniform or
-// fills the run is this instead: the App, and whatever the caller kept its
-// own state in, which is how a pass is given its state too.
-BeforeRender :: struct {
-    hook: fn(^u8, mut App),
-    state: ^u8,
-}
-
-app_before_render :: fn(
-    $Ctx: Type,
-    mut app: App,
-    hook: fn(mut Ctx, mut App),
-    state: ^Ctx
-) {
-    vec_push(
-        app.before_render,
-        BeforeRender {
-            hook = unsafe { ptr_cast($fn(^u8, mut App), hook) },
-            state = unsafe { ptr_cast($u8, state) }
-        }
-    )
+    graph_touched_clear(app.renderer.graph)
 }
 
 // The renderer, composed: a pass that draws what the world says is drawn, lit by
@@ -535,7 +464,7 @@ app_before_render :: fn(
 // fills the run and the lights every frame. Which targets they write is the
 // window and a depth buffer the graph makes, so a program that wants its own
 // chain writes its own passes instead and does not compose this.
-render_plugin :: fn(mut app: App) {
+render_build :: fn(mut app: App) {
     app.drawing = true
     // The two layouts the pass binds against, and nothing else. What it records
     // with beyond that is its own: the grid over the lights and the steps that
@@ -547,12 +476,12 @@ render_plugin :: fn(mut app: App) {
         render_world_layout(app.render),
         render_world_batch_layout(app.render)
     )
-    app_configure_graph(app, declare_lit, ptr_to(app))
-    app_before_render(app, fill_lit, ptr_to(app))
 }
 
+render_plugin :: Plugin { name = "render", build = render_build }
+
 // The world into the run, and the world's lights into the buffer beside it.
-fill_lit :: fn(mut app: App, mut held: App) {
+fill_lit :: fn(mut app: App) {
     queue := app_queue(app)
     ids := app_ids(app)
     app_extract(
@@ -594,13 +523,18 @@ fill_lit :: fn(mut app: App, mut held: App) {
 //
 // The steps that decide what is drawn go in first and the pass that draws reads
 // what they wrote, which is the whole of what puts the two in order.
-declare_lit :: fn(mut app: App, mut g: Graph, device: Device, format: u32) {
-    screen := graph_backbuffer(g)
-    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+declare_lit :: fn(mut app: App) {
+    screen := graph_backbuffer(app.renderer.graph)
+    depth := graph_depth(
+        app.renderer.graph,
+        "depth",
+        WINDOW_SIZED,
+        WINDOW_SIZED,
+        DEPTH_FORMAT
+    )
     lit_declare(
-        g,
-        record_view,
-        ptr_to(app),
+        app.renderer.graph,
+        ENGINE_LIT_PASS,
         screen,
         depth,
         Color { r = 0.02, g = 0.02, b = 0.03, a = 1.0 }
@@ -622,27 +556,6 @@ record_view :: fn(mut app: App, context: NodeContext) {
     lit_record(app.lit, app.render, app.store, context)
 }
 
-// A system, onto a stage. The one registration door: `Stage::Startup` runs once
-// on the way into the first frame and the rest run every frame, which is what
-// the stage already decides, so this is the App saying it rather than a program
-// reaching past it into the schedule.
-app_add_system :: fn(mut app: App, stage: Stage, run: fn(mut World)) {
-    schedule_add(app.schedule, stage, run)
-}
-
-// A system that runs only while the program is on one screen. Which screen a
-// system belongs to travels with it in the schedule, so this is what a language
-// with closures would write as a wrapper around the system: there is nothing to
-// capture and nothing to wrap.
-app_add_system_in_state :: fn(
-    mut app: App,
-    stage: Stage,
-    state: i64,
-    run: fn(mut World)
-) {
-    schedule_add_in_state(app.schedule, stage, state, run)
-}
-
 // Where the program starts. A state is a number a program names its own
 // constants for, and every screen after this one is asked for from a system
 // with `world_state_request`.
@@ -658,60 +571,17 @@ app_insert_state :: fn(mut app: App, initial: i64) {
 // One system each time the program arrives at a screen, and each time it
 // leaves one. Both run between the transition and the frame that follows it, so
 // what an enter hook spawns is there for the first frame of its own screen.
-app_on_enter :: fn(mut app: App, state: i64, run: fn(mut World)) {
-    vec_push(app.on_enter, StateHook { state = state, run = run })
-}
-
-app_on_exit :: fn(mut app: App, state: i64, run: fn(mut World)) {
-    vec_push(app.on_exit, StateHook { state = state, run = run })
-}
-
 // What runs when the program arrives at a screen or leaves one.
-StateHook :: struct { state: i64, run: fn(mut World) }
-
-// The requested screen taken, and the hooks either side of the change run. The
-// first frame is a change too: a program that never asks for another state
-// still enters the one it started in, so what its enter hooks spawn is there
-// before anything reads the world.
+// The requested screen taken. The first frame is a change too: a program that
+// never asks for another state still enters the one it started in.
+//
+// What runs at a change is a system written for that state, which the schedule
+// already carries: `app_add_system_in_state` names one, and a system runs on
+// the frames its state is on. A hook either side of the change was a second
+// way to say that, and it said it by keeping a function to call later.
 settle_state :: fn(mut app: App) {
-    was := world_state(app.world)
-    changed := world_state_apply(app.world)
-    if (app.state_started && changed == false) {
-        return
-    }
-    if (app.state_started) {
-        run_hooks(app.on_exit, app.world, was)
-    }
+    world_state_apply(app.world)
     app.state_started = true
-    run_hooks(app.on_enter, app.world, world_state(app.world))
-}
-
-run_hooks :: fn(held: Vec<StateHook>, mut world: World, state: i64) {
-    mut index: i64 = 0
-    while (index < vec_len(held)) {
-        one := vec_get(held, index)
-        if (one.state == state) {
-            run := one.run
-            run(world)
-        }
-        index = index + 1
-    }
-}
-
-// Several onto one stage, in the order they are written. The list is a
-// compile-time one, so this is one call per system after the unroll and there
-// is nothing here at run time.
-app_add_systems :: fn(mut app: App, stage: Stage, args: $...) {
-    for run in args {
-        schedule_add(app.schedule, stage, run)
-    }
-}
-
-// One out again, by the same function it went in as. Answers whether anything
-// went, which is what a program dropping one of the engine's own frame systems
-// checks rather than assuming.
-app_remove_system :: fn(mut app: App, run: fn(mut World)) -> bool {
-    schedule_remove(app.schedule, run)
 }
 
 // A resource, readable from any system. Registered here if it was not already,
@@ -746,11 +616,6 @@ app_failed :: fn(held: AppError) -> i64 {
 // and the window outlives the device it was drawn into.
 app_close :: fn(move app: App) -> i64 {
     vec_free(app.installed)
-    vec_free(app.graph_configs)
-    vec_free(app.update_graph)
-    vec_free(app.before_render)
-    vec_free(app.on_enter)
-    vec_free(app.on_exit)
     lit_free(app.lit)
     heap_release_slice(app.lights)
     log_close(app.log)
@@ -758,7 +623,6 @@ app_close :: fn(move app: App) -> i64 {
     geometry_free(app.store)
     materials_free(app.materials)
     mesh_cache_free(app.meshes)
-    schedule_free(app.schedule)
     giving := world_tree_take(app.world)
     hierarchy_free(giving)
     ecs_free(app.world)
@@ -773,22 +637,56 @@ app_close :: fn(move app: App) -> i64 {
 // business, so `exit_on_escape_plugin` is what a demo installs and this reads
 // only the answer.
 //
+// Every stage of a frame, in order, over the engine's own systems and then the
+// ones the program named. The engine's run first within a stage, which is what
+// puts `place_things` after whatever wrote the transforms it reads.
+//
+// Two calls rather than one list, because a compile-time list is what a call
+// wrote and there is no splicing one into another.
+run_frame_systems :: fn(mut app: App, systems: $...) {
+    state := world_state(app.world)
+    mut order := FIRST_FRAME_STAGE
+    while (order <= stage_order(Stage::Last)) {
+        run_stage_of(app.world, state, stage_at(order), place_things_system)
+        run_stage_of(app.world, state, stage_at(order), systems)
+        order = order + 1
+    }
+}
+
+// The one system the engine runs whatever a program names: what a thing wears
+// becomes where it is drawn.
+place_things_system :: System {
+    stage = Stage::FramePostUpdate,
+    state = ANY_STATE,
+    run = place_things
+}
+
 // The renderer and the graph are resized together, because a surface and every
 // target tested against it are the same size or nothing draws.
-app_next :: fn(mut app: App) -> bool {
+app_next :: fn(
+    $declare: fn(mut App) = declares_nothing,
+    $rebuild: fn(mut App, i64) = rebuilds_nothing,
+    mut app: App,
+    systems: $...
+) -> bool {
     // The graph and the startup stage, on the way into the first frame rather
     // than at the end of opening, so a plugin installed after `app_open` still
     // declares its passes and still gets a startup run.
     if (app.started == false) {
         app.started = true
-        app.drawable = configure_graph(app)
+        app.drawable = configure_graph($declare, $rebuild, app)
         // Nothing runs for a program that cannot draw, so a graph that refuses
         // stops here rather than after a startup pass whose work is thrown away.
         if (app.drawable == false) {
             return false
         }
         settle_state(app)
-        schedule_start(app.schedule, app.world, world_state(app.world))
+        run_stage_of(
+            app.world,
+            world_state(app.world),
+            Stage::Startup,
+            systems
+        )
     }
     if (app.drawable == false) {
         return false
@@ -799,13 +697,18 @@ app_next :: fn(mut app: App) -> bool {
     // One call: the surface and every target measured against it are the same
     // size or nothing draws, so the renderer resizes its own graph.
     if (resized(app.platform)) {
-        renderer_resize(app.renderer, width(app.platform), height(app.platform))
+        renderer_resize(
+            app.renderer,
+            width(app.platform),
+            height(app.platform)
+        )
+        tell_passes($rebuild, app)
     }
     world_input(app.world, platform_input(app.platform))
     // The screen settles before anything runs, so no frame has some of its
     // systems under one screen and the rest under another.
     settle_state(app)
-    schedule_run(app.schedule, app.world, world_state(app.world))
+    run_frame_systems(app, systems)
     // A system deciding the program is finished is the last thing a frame does,
     // so the frame it decided in is finished rather than half drawn.
     world_exit_wanted(app.world) == false
@@ -817,15 +720,19 @@ app_next :: fn(mut app: App) -> bool {
 // geometry through a pointer the program took before the first frame, and a
 // pointer into a value that has been moved names where it used to be. What
 // closes the App is the caller, after this answers.
-app_run :: fn(mut app: App) {
-    if (app.has_runner) {
-        run := app.runner
-        return run(app)
-    }
-    while (app_next(app)) {
-        update_graph(app)
-        before_render(app)
-        app_draw(app)
+app_run :: fn(
+    $declare: fn(mut App) = declares_nothing,
+    $each_frame: fn(mut App) = each_frame_nothing,
+    $record: fn(mut App, i64, NodeContext) = records_nothing,
+    $draw: fn(mut App, i64, RenderPassEncoder) = draws_nothing,
+    $dispatch: fn(mut App, i64, ComputePassEncoder) = dispatches_nothing,
+    $rebuild: fn(mut App, i64) = rebuilds_nothing,
+    mut app: App,
+    systems: $...
+) {
+    while (app_next($declare, $rebuild, app, systems)) {
+        each_frame(app)
+        app_draw($draw, $record, $dispatch, app)
     }
 }
 
@@ -835,36 +742,16 @@ app_run :: fn(mut app: App) {
 // `app_draw`, which are the two halves of a frame and are exported for exactly
 // this.
 //
+// The runner is named here rather than set on the App beforehand, so the loop
+// a program runs is the one written at the call. A program with its own writes
+// this instead of `app_run`, which is what replaces asking the App which of
+// them it holds.
+//
 // It borrows rather than takes, for the same reason `app_run` does: a pass
 // reaches its state through a pointer the program took before the first frame,
 // and a pointer into a value that has been moved names where it used to be.
-app_set_runner :: fn(mut app: App, runner: fn(mut App)) {
-    app.runner = runner
-    app.has_runner = true
-}
-
-// The same, where the first one composed wins. A plugin that owns the loop uses
-// this, so a program that sets its own with `app_set_runner` still overrides it
-// whichever order the two were written in.
-app_set_runner_if_unset :: fn(mut app: App, runner: fn(mut App)) {
-    if (app.has_runner) {
-        return
-    }
-    app.runner = runner
-    app.has_runner = true
-}
-
-runs_nothing :: fn(mut app: App) {}
-
-// The hooks, in the order they were added. Each is handed the App and the state
-// it was registered with.
-before_render :: fn(mut app: App) {
-    mut i: i64 = 0
-    while (i < vec_len(app.before_render)) {
-        held := vec_get(app.before_render, i)
-        held.hook(held.state, app)
-        i = i + 1
-    }
+app_run_with :: fn($runner: fn(mut App), mut app: App) {
+    runner(app)
 }
 
 // What the world says is drawn, put in the run the passes read. A program
@@ -887,12 +774,118 @@ app_extract :: fn(mut app: App, ids: ObjectIds, view_projection: Mat4) {
 // The near half of a frame: the graph, recorded into whatever the surface
 // handed over. A frame that could not be acquired records nothing and is still
 // ended, because the handles it took are counted whether it drew or not.
-app_draw :: fn(mut app: App) {
+app_draw :: fn(
+    $draw: fn(mut App, i64, RenderPassEncoder) = draws_nothing,
+    $record: fn(mut App, i64, NodeContext) = records_nothing,
+    $dispatch: fn(mut App, i64, ComputePassEncoder) = dispatches_nothing,
+    mut app: App
+) {
+    // What the engine's own pass reads, filled before anything records. A
+    // program that composed no renderer plugin has nothing bound here and this
+    // does nothing.
+    if (app.drawing) {
+        fill_lit(app)
+    }
     mut f := renderer_begin(app.renderer)
     if (frame_ok(f)) {
-        graph_run(app.renderer.graph, f)
+        run_graph($draw, $record, $dispatch, app, f, -1)
     }
     renderer_end(app.renderer, f)
+}
+
+// The graph's order, walked here rather than inside the graph. What each step
+// records is the program's, and a step is read out of the graph before anything
+// records into it, so the graph and the App are never held at once.
+//
+// `sub` is which graph: -1 is the App's own and anything else is a child of it.
+run_graph :: fn(
+    $draw: fn(mut App, i64, RenderPassEncoder),
+    $record: fn(mut App, i64, NodeContext),
+    $dispatch: fn(mut App, i64, ComputePassEncoder),
+    mut app: App,
+    mut f: Frame,
+    sub: i64
+) {
+    if (graph_begin_run(app.renderer.graph, sub) == false) {
+        return
+    }
+    mut step: i64 = 0
+    while (step < graph_step_count(app.renderer.graph, sub)) {
+        one := graph_step_at(app.renderer.graph, sub, step)
+        if (graph_step_runs(one, ANY_PHASE)) {
+            match one.kind {
+                case PassKind::SubGraph: {
+                    graph_bind_sub(app.renderer.graph, one.sub)
+                    run_sub_graph($draw, $record, $dispatch, app, f, one.sub)
+                }
+                case PassKind::Compute: {
+                    encoder := graph_open_compute(f)
+                    dispatch(app, one.which, encoder)
+                    graph_close_compute(encoder)
+                }
+                case PassKind::Node: {
+                    context := graph_open_node(app.renderer.graph, sub, f, one)
+                    record(app, one.which, context)
+                }
+                case PassKind::Render: {
+                    encoder := graph_open_render(
+                        app.renderer.graph,
+                        sub,
+                        f,
+                        one
+                    )
+                    draw(app, one.which, encoder)
+                    graph_close_render(encoder)
+                }
+            }
+        }
+        step = step + 1
+    }
+}
+
+// A child graph, walked whole. It is its own function rather than the walk above
+// calling itself, because a graph nests one deep: a child is reached through the
+// graph that holds it, and a child of a child is not reachable that way.
+run_sub_graph :: fn(
+    $draw: fn(mut App, i64, RenderPassEncoder),
+    $record: fn(mut App, i64, NodeContext),
+    $dispatch: fn(mut App, i64, ComputePassEncoder),
+    mut app: App,
+    mut f: Frame,
+    sub: i64
+) {
+    if (graph_begin_run(app.renderer.graph, sub) == false) {
+        return
+    }
+    mut step: i64 = 0
+    while (step < graph_step_count(app.renderer.graph, sub)) {
+        one := graph_step_at(app.renderer.graph, sub, step)
+        if (graph_step_runs(one, ANY_PHASE)) {
+            match one.kind {
+                case PassKind::SubGraph: {}
+                case PassKind::Compute: {
+                    encoder := graph_open_compute(f)
+                    dispatch(app, one.which, encoder)
+                    graph_close_compute(encoder)
+                }
+                case PassKind::Node: {
+                    context := graph_open_node(app.renderer.graph, sub, f, one)
+                    record(app, one.which, context)
+                }
+                case PassKind::Render: {
+                    encoder := graph_open_render(
+                        app.renderer.graph,
+                        sub,
+                        f,
+                        one
+                    )
+                    draw(app, one.which, encoder)
+                    graph_close_render(encoder)
+                }
+            }
+        }
+        step = step + 1
+    }
 }
 
 app_device :: fn(app: App) -> Device { renderer_device(app.renderer) }
@@ -925,60 +918,4 @@ app_view :: fn(app: App) -> Mat4 {
         width(app.platform),
         height(app.platform)
     )
-}
-
-// Three plugins that register nothing, for the tests below. What a group holds
-// is functions, so which one is which is the only thing these have to be.
-adds_nothing :: fn(mut app: App) {}
-adds_nothing_either :: fn(mut app: App) {}
-stands_in :: fn(mut app: App) {}
-
-test "a group keeps its members in the order they were added" {
-    mut group := plugin_group_new()
-    plugin_group_add(group, adds_nothing)
-    plugin_group_add(group, adds_nothing_either)
-    held := vec_slice(group.members)
-    assert(held[0].build == adds_nothing)
-    assert(held[1].build == adds_nothing_either)
-    plugin_group_free(group)
-}
-
-test "a member set another way keeps its place and its name" {
-    mut group := plugin_group_new()
-    plugin_group_add(group, adds_nothing)
-    plugin_group_add(group, adds_nothing_either)
-    plugin_group_set(group, adds_nothing, stands_in)
-    held := vec_slice(group.members)
-    // First still, and still found under the name the group knows it by.
-    assert(held[0].build == stands_in)
-    assert(held[0].named == adds_nothing)
-    assert(group_index(group, adds_nothing) == 0)
-    assert(held[1].build == adds_nothing_either)
-    plugin_group_free(group)
-}
-
-test "a disabled member stays in the group and is not installed" {
-    mut group := plugin_group_new()
-    plugin_group_add(group, adds_nothing)
-    plugin_group_add(group, adds_nothing_either)
-    plugin_group_disable(group, adds_nothing)
-    held := vec_slice(group.members)
-    // Its place is kept, so disabling one does not renumber the rest.
-    assert(vec_len(group.members) == 2)
-    assert(held[0].enabled == false)
-    assert(held[1].enabled)
-    plugin_group_free(group)
-}
-
-test "a group answers with nothing for a member it does not hold" {
-    mut group := plugin_group_new()
-    plugin_group_add(group, adds_nothing)
-    assert(group_index(group, adds_nothing_either) == (-1))
-    plugin_group_free(group)
-}
-
-test "the standard group holds the log plugin" {
-    mut group := default_plugins()
-    assert(group_index(group, log_plugin) == 0)
-    plugin_group_free(group)
 }

@@ -1,8 +1,12 @@
-// The allocator interface. An allocator is a value, so a data structure can be
-// backed by any of them and the backing can be swapped. An Allocator is a
-// function pointer plus the allocator's own state, no closures and no vtable. Frost's function pointers express this
-// directly. Here a bump allocator over a byte buffer implements the interface,
-// and `alloc` allocates through the interface without naming the bump at all.
+// The allocator interface, settled where it is named. An allocator is a
+// compile-time argument: the function that takes memory, beside the state that
+// memory comes from. Each `take(...)` folds to a direct call to the function
+// the call named, so nothing is dispatched.
+//
+// The state keeps its own type rather than travelling as `^u8` beside a
+// function that casts it back, which is what a table of function pointers
+// costs: two `unsafe` blocks here were the cast out and the cast in, and
+// neither is needed. Swapping the allocator is naming a different pair.
 
 import "io.frost"
 
@@ -12,34 +16,29 @@ Bump :: struct {
     offset: i64,
 }
 
-// The bump's take function matches the Allocator interface, (state, size) -> ptr.
-bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
-    b := unsafe { ptr_cast($Bump, state) }
-    slot := unsafe { ptr_to(b^.data[b^.offset]) }
-    unsafe { b^.offset = b^.offset + size }
+// The bump's take function matches the allocator shape, (state, size) -> ptr.
+bump_take :: fn(mut state: Bump, size: i64) -> ^u8 {
+    slot := unsafe { ptr_to(state.data[state.offset]) }
+    state.offset = state.offset + size
     slot
 }
 
-Allocator :: struct {
-    take: fn(^u8, i64) -> ^u8,
-    state: ^u8,
-}
-
-alloc :: fn(a: Allocator, size: i64) -> ^u8 {
-    a.take(a.state, size)
+alloc :: fn(
+    $S: Type,
+    $take: fn(mut S, i64) -> ^u8,
+    mut state: S,
+    size: i64
+) -> ^u8 {
+    take(state, size)
 }
 
 main :: fn() -> i64 {
     mut backing: [64]u8 = [0; 64]
     mut bump: Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0, }
-    a: Allocator = Allocator {
-        take = bump_take,
-        state = unsafe { ptr_cast($u8, ptr_to(bump)) },
-    }
 
-    p := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    p := unsafe { ptr_cast($i64, alloc($bump_take, bump, 8)) }
     unsafe { p^ = 42 }
-    q := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    q := unsafe { ptr_cast($i64, alloc($bump_take, bump, 8)) }
     unsafe { q^ = 7 }
 
     print("{}\n", unsafe { p^ }) // 42

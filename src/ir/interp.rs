@@ -193,10 +193,7 @@ impl<'a> Interpreter<'a> {
                 if matches!(ty, Type::Void | Type::Unknown) {
                     // A call made for what it does rather than what it answers
                     // with still has to happen.
-                    if matches!(
-                        rvalue,
-                        IrRvalue::Call { .. } | IrRvalue::CallIndirect { .. }
-                    ) {
+                    if matches!(rvalue, IrRvalue::Call { .. }) {
                         self.evaluate(function, rvalue, locals, depth)?;
                     }
                     return Ok(());
@@ -214,8 +211,7 @@ impl<'a> Interpreter<'a> {
                                 .aggregate_address(function, *source, locals);
                             self.copy_bytes(destination, from, size)?;
                         }
-                        IrRvalue::Call { .. }
-                        | IrRvalue::CallIndirect { .. } => {
+                        IrRvalue::Call { .. } => {
                             let frame = Frame {
                                 function,
                                 locals,
@@ -466,7 +462,6 @@ impl<'a> Interpreter<'a> {
     ) -> Eval<Value> {
         let function = frame.function;
         let locals = frame.locals;
-        let depth = frame.depth;
         match rvalue {
             IrRvalue::Use(operand) => {
                 Ok(self.operand_value(function, operand, locals))
@@ -494,24 +489,6 @@ impl<'a> Interpreter<'a> {
                 function: callee,
                 arguments,
             } => self.call_named(frame, callee, arguments, out),
-            IrRvalue::CallIndirect {
-                callee, arguments, ..
-            } => {
-                let index =
-                    self.operand_value(function, callee, locals).as_i64();
-                let Some(target) = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| self.module.functions.get(index))
-                else {
-                    return unsupported("indirect call to unknown target");
-                };
-                let mut values =
-                    self.argument_values(function, arguments, locals);
-                if let Some(address) = out {
-                    values.push(Value::Int(address));
-                }
-                self.call(target, &values, depth + 1)
-            }
             IrRvalue::FunctionAddress(name) => {
                 match self.module.functions.iter().position(|f| &f.name == name)
                 {
@@ -944,14 +921,6 @@ fn collect_rvalue_literals(rvalue: &IrRvalue, found: &mut Vec<String>) {
             collect_literal(index, found);
         }
         IrRvalue::Call { arguments, .. } => {
-            for argument in arguments {
-                collect_literal(argument, found);
-            }
-        }
-        IrRvalue::CallIndirect {
-            callee, arguments, ..
-        } => {
-            collect_literal(callee, found);
             for argument in arguments {
                 collect_literal(argument, found);
             }

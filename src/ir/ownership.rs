@@ -171,14 +171,6 @@ fn collect_rvalue(rvalue: &IrRvalue, referenced: &mut HashSet<LocalId>) {
                 collect_operand(argument, referenced);
             }
         }
-        IrRvalue::CallIndirect {
-            callee, arguments, ..
-        } => {
-            collect_operand(callee, referenced);
-            for argument in arguments {
-                collect_operand(argument, referenced);
-            }
-        }
         IrRvalue::FunctionAddress(_) => {}
     }
 }

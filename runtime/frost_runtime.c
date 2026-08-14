@@ -90,7 +90,13 @@ static void frost_rt_backtrace(void) {
    Not static: the checks themselves are written in Frost now, in
    `runtime.frost` beside this, and this is what they end on. Asking the
    platform for a backtrace is the reason it stays here. */
+void frost_rt_report_flush(void);
+
 void frost_rt_stop(void) {
+    /* `abort` runs no exit handler, so what a run has said is written here or
+       not at all. A crash midway through a compile is the case where those
+       reports are worth most. */
+    frost_rt_report_flush();
     frost_rt_backtrace();
     fflush(stderr);
     abort();
@@ -558,41 +564,65 @@ static void frost_rt_json_hold(const char *data, size_t length) {
     frost_rt_json_length += length;
 }
 
-/* Writes the open record, if there is one, as one object on one line. */
+/* The report buffer below, which a closed record is written into rather than
+   written out, so JSON records come out in the order they are written the same
+   as the block form does. */
+static void frost_rt_report_begin(int64_t at);
+static int frost_rt_report_append(const char *data, size_t length);
+
+static void frost_rt_json_put(const char *text) {
+    frost_rt_report_append(text, strlen(text));
+}
+
+static void frost_rt_json_putc(char byte) {
+    frost_rt_report_append(&byte, 1);
+}
+
+/* Holds the open record, if there is one, as one object on one line. */
 void frost_rt_json_close(void) {
     if (!frost_rt_json_on || (!frost_rt_json_open && frost_rt_json_length == 0)) {
         return;
     }
     frost_rt_json_open = 0;
-    fputs("{\"file\":\"", stderr);
+    frost_rt_report_begin(frost_rt_json_offset);
+    frost_rt_json_put("{\"file\":\"");
     for (const char *at = frost_rt_json_file; *at; at++) {
         if (*at == '\\' || *at == '\"') {
-            fputc('\\', stderr);
+            frost_rt_json_putc('\\');
         }
-        fputc(*at, stderr);
+        frost_rt_json_putc(*at);
     }
-    fprintf(stderr,
-            "\",\"line\":%lld,\"column\":%lld,"
-            "\"span\":[%lld,%lld],\"severity\":\"error\","
-            "\"message\":\"",
-            (long long)frost_rt_json_line, (long long)frost_rt_json_column,
-            (long long)frost_rt_json_offset, (long long)frost_rt_json_offset);
+    char numbers[128];
+    int written = snprintf(numbers, sizeof(numbers),
+                           "\",\"line\":%lld,\"column\":%lld,"
+                           "\"span\":[%lld,%lld],\"severity\":\"error\","
+                           "\"message\":\"",
+                           (long long)frost_rt_json_line,
+                           (long long)frost_rt_json_column,
+                           (long long)frost_rt_json_offset,
+                           (long long)frost_rt_json_offset);
+    if (written > 0) {
+        frost_rt_report_append(numbers, (size_t)written);
+    }
     for (size_t at = 0; at < frost_rt_json_length; at++) {
         unsigned char held = (unsigned char)frost_rt_json_message[at];
         if (held == '\"' || held == '\\') {
-            fputc('\\', stderr);
-            fputc(held, stderr);
+            frost_rt_json_putc('\\');
+            frost_rt_json_putc((char)held);
         } else if (held == '\n') {
-            fputs("\\n", stderr);
+            frost_rt_json_put("\\n");
         } else if (held < 0x20) {
-            fprintf(stderr, "\\u%04x", held);
+            char escaped[8];
+            int room = snprintf(escaped, sizeof(escaped), "\\u%04x", held);
+            if (room > 0) {
+                frost_rt_report_append(escaped, (size_t)room);
+            }
         } else {
-            fputc(held, stderr);
+            frost_rt_json_putc((char)held);
         }
     }
-    fputs("\"}\n", stderr);
+    frost_rt_json_put("\"}\n");
     frost_rt_json_length = 0;
-    fflush(stderr);
 }
 
 /* Opens a record. Everything written after this belongs to its message. */
@@ -627,6 +657,8 @@ static jmp_buf frost_rt_recover_stack[FROST_RT_RECOVER_DEPTH];
 static int frost_rt_recover_depth = 0;
 
 void frost_rt_die(void);
+/* Ends the line a report was written on, into the report where one is open. */
+void frost_rt_end_line(void);
 
 /* Runs the body with a mark armed. Answers 0 when the body returned and 1
    when it escaped. */
@@ -667,8 +699,7 @@ void frost_rt_recover_escape(void) {
     }
     /* The newline frost_rt_die would have written, so a report composed
        piece by piece ends its line when the parse goes on instead. */
-    fputc('\n', stderr);
-    fflush(stderr);
+    frost_rt_end_line();
     frost_rt_recover_count++;
     frost_rt_recover_depth--;
     longjmp(frost_rt_recover_stack[frost_rt_recover_depth], 1);
@@ -687,8 +718,7 @@ void frost_rt_recover_note(void) {
         frost_rt_recover_count++;
         return;
     }
-    fputc('\n', stderr);
-    fflush(stderr);
+    frost_rt_end_line();
     frost_rt_recover_count++;
 }
 
@@ -737,7 +767,155 @@ void frost_rt_error(const char *text) {
    there to answer for. Straight, rather than through frost_rt_error_int, because
    a check that failed is not a report and must not be held back while reports
    are being collected as JSON. */
+/* Reports held until the run is over, so they go out in the order they are
+   written rather than the order the passes found them. Which pass looks at a
+   file first is the compiler's business; a reader reads top to bottom.
+
+   A report opens with the byte its place is at and takes every piece written
+   after it. Anything written with none open goes straight out: a line about the
+   command rather than about the program has no place to sort against. */
+typedef struct {
+    /* Where the report sorts. A second line of one report carries the first
+       line's place rather than its own, so the two stay together and the pair
+       sorts where the fault is rather than where the note points. */
+    int64_t at;
+    char *text;
+    size_t length;
+    size_t room;
+} frost_rt_report;
+
+static frost_rt_report *frost_rt_reports = 0;
+static size_t frost_rt_report_count = 0;
+static size_t frost_rt_report_room = 0;
+static int frost_rt_report_armed = 0;
+
+void frost_rt_report_flush(void);
+
+/* Everything held, in the order it is written, then nothing held. Runs at exit,
+   which covers a refused run and one that only warned, and can be called again
+   by hand without writing anything twice. */
+void frost_rt_report_flush(void) {
+    size_t count = frost_rt_report_count;
+    /* Cleared first: writing a report cannot open another, and a second flush
+       finding the list empty is what makes calling it twice harmless. */
+    frost_rt_report_count = 0;
+    /* An insertion sort, which is stable, so two reports about one place stay
+       in the order they were found. There are as many of these as a run has
+       faults, and a run with enough for the order to cost anything has already
+       told the reader more than they will read. */
+    for (size_t outer = 1; outer < count; outer++) {
+        frost_rt_report held = frost_rt_reports[outer];
+        size_t inner = outer;
+        while (inner > 0 && frost_rt_reports[inner - 1].at > held.at) {
+            frost_rt_reports[inner] = frost_rt_reports[inner - 1];
+            inner--;
+        }
+        frost_rt_reports[inner] = held;
+    }
+    for (size_t index = 0; index < count; index++) {
+        frost_rt_report *held = &frost_rt_reports[index];
+        if (held->length > 0) {
+            fwrite(held->text, 1, held->length, stderr);
+        }
+        free(held->text);
+        held->text = 0;
+        held->length = 0;
+        held->room = 0;
+    }
+    fflush(stderr);
+}
+
+static void frost_rt_report_begin(int64_t at) {
+    if (!frost_rt_report_armed) {
+        frost_rt_report_armed = 1;
+        atexit(frost_rt_report_flush);
+    }
+    if (frost_rt_report_count == frost_rt_report_room) {
+        size_t room = frost_rt_report_room * 2 + 16;
+        frost_rt_report *grown = (frost_rt_report *)realloc(
+            frost_rt_reports, room * sizeof(frost_rt_report));
+        if (grown == 0) {
+            return;
+        }
+        frost_rt_reports = grown;
+        frost_rt_report_room = room;
+    }
+    frost_rt_report *held = &frost_rt_reports[frost_rt_report_count++];
+    held->at = at;
+    held->text = 0;
+    held->length = 0;
+    held->room = 0;
+}
+
+/* Opens a report at a place. Everything written after this belongs to it. */
+void frost_rt_report_open(int64_t at) {
+    /* A JSON record opens its own report when it closes, holding the object it
+       renders to rather than the pieces written into it, so the place is taken
+       there instead of here. */
+    if (frost_rt_json_on) {
+        return;
+    }
+    frost_rt_report_begin(at);
+}
+
+/* Opens another line of the report already open, at a place of its own. It
+   sorts with the report it continues, so a fault and the note under it are one
+   thing to read wherever each of them points. */
+void frost_rt_report_note(void) {
+    if (frost_rt_json_on) {
+        return;
+    }
+    int64_t held =
+        frost_rt_report_count == 0
+            ? 0
+            : frost_rt_reports[frost_rt_report_count - 1].at;
+    frost_rt_report_open(held);
+}
+
+/* Appends to the open report, or answers 0 where there is none to append to. */
+static int frost_rt_report_append(const char *data, size_t length) {
+    if (frost_rt_report_count == 0) {
+        return 0;
+    }
+    frost_rt_report *held = &frost_rt_reports[frost_rt_report_count - 1];
+    if (held->length + length + 1 > held->room) {
+        size_t room = held->room * 2 + length + 256;
+        char *grown = (char *)realloc(held->text, room);
+        if (grown == 0) {
+            return 0;
+        }
+        held->text = grown;
+        held->room = room;
+    }
+    memcpy(held->text + held->length, data, length);
+    held->length += length;
+    return 1;
+}
+
+static int frost_rt_report_hold(const char *data, size_t length) {
+    if (frost_rt_json_on) {
+        return 0;
+    }
+    return frost_rt_report_append(data, length);
+}
+
+/* The end of the line a report was written on. It belongs to that report, so
+   it is held with the rest of it; with none open it goes straight out, which is
+   what ends a line the run wrote about itself. */
+void frost_rt_end_line(void) {
+    char held = '\n';
+    if (frost_rt_report_hold(&held, 1)) {
+        return;
+    }
+    fputc((int)held, stderr);
+    fflush(stderr);
+}
+
 void frost_rt_error_char(int64_t byte) {
+    char held = (char)(unsigned char)byte;
+    if (frost_rt_report_hold(&held, 1)) {
+        return;
+    }
     fputc((int)(unsigned char)byte, stderr);
 }
 
@@ -748,6 +926,9 @@ void frost_rt_error_bytes(const char *data, int64_t length) {
         frost_rt_json_hold(data, (size_t)length);
         return;
     }
+    if (frost_rt_report_hold(data, (size_t)length)) {
+        return;
+    }
     fwrite(data, 1, (size_t)length, stderr);
 }
 
@@ -756,27 +937,38 @@ void frost_rt_error_src(const char *text, int64_t offset, int64_t length) {
         frost_rt_json_hold(text + offset, (size_t)length);
         return;
     }
+    if (frost_rt_report_hold(text + offset, (size_t)length)) {
+        return;
+    }
     fwrite(text + offset, 1, (size_t)length, stderr);
 }
 
 void frost_rt_error_int(int64_t value) {
-    if (frost_rt_json_on) {
-        char held[32];
-        int written = snprintf(held, sizeof(held), "%lld", (long long)value);
-        if (written > 0) {
-            frost_rt_json_hold(held, (size_t)written);
-        }
+    char held[32];
+    int written = snprintf(held, sizeof(held), "%lld", (long long)value);
+    if (written <= 0) {
         return;
     }
-    fprintf(stderr, "%lld", (long long)value);
+    if (frost_rt_json_on) {
+        frost_rt_json_hold(held, (size_t)written);
+        return;
+    }
+    if (frost_rt_report_hold(held, (size_t)written)) {
+        return;
+    }
+    fwrite(held, 1, (size_t)written, stderr);
 }
 
 void frost_rt_die(void) {
     if (frost_rt_json_on) {
         frost_rt_json_close();
+        frost_rt_report_flush();
         exit(1);
     }
-    fputc('\n', stderr);
+    /* The line the last report was written on, into that report, and then
+       everything held goes out in the order it is written. */
+    frost_rt_end_line();
+    frost_rt_report_flush();
     exit(1);
 }
 

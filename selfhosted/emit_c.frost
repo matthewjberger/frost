@@ -2418,7 +2418,15 @@ emit_mono_name :: fn(
     mut i: i64 = 0
     while (i < xarg_count) {
         garg := arena_at(p.gargs, xarg_start + i)
-        emit_mangled_arg(p, garg.value)
+        // An element that names a record constant is written into the body, so
+        // two constants of one type are two bodies. The name is what tells them
+        // apart, and the offset it starts at is unique within a build.
+        if (garg.const_len > 0) {
+            emit_text("_r")
+            frost_rt_emit_int(garg.const_off)
+        } else {
+            emit_mangled_arg(p, garg.value)
+        }
         i = i + 1
     }
 }

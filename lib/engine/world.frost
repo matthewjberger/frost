@@ -1,10 +1,9 @@
 // What a frame does to a world, which is everything before the renderer sees it.
 //
 //     ids := world_prepare(world)
-//     mut frame := world_schedule()
+//     world_run_frame(world)
 //     ...
 //     world_input(world, platform_input(p))
-//     schedule_run(frame, world, ANY_STATE)
 //
 // A drawing program has two halves and this is the far one. Here a thing has a
 // local transform, a turn and somewhere it hangs from, and a frame works out
@@ -25,7 +24,8 @@ import "math.frost"
 
 export LocalTransform, GlobalTransform, WorldIds, Exit, local_at,
     world_prepare, world_tree, world_tree_take,
-    world_schedule, place_things, move_camera,
+    world_run_frame, world_place_things, world_move_camera,
+    place_things, move_camera,
     exit_on_escape,
     world_exit, world_exit_wanted,
     world_input, world_ids, world_camera, world_camera_set,
@@ -146,15 +146,35 @@ world_tree_take :: fn(mut world: World) -> Hierarchy {
 // loop that owns the window reads it.
 Exit :: struct { wanted: bool }
 
-// The three the engine registers, as a schedule of their own, for a program
-// running the world with no device anywhere near it. What the App composes is
-// the same three, through its own plugins, since a plugin is handed an App and
-// this file cannot name one.
-world_schedule :: fn() -> Schedule {
-    mut held := schedule_new()
-    schedule_add(held, Stage::FramePostUpdate, place_things)
-    schedule_add(held, Stage::FrameUpdate, move_camera)
-    held
+// The two the engine runs, as constants a program running the world with no
+// device anywhere near it names where its frame runs. What the App runs is the
+// same two, named the same way.
+world_place_things :: System {
+    stage = Stage::FramePostUpdate,
+    state = ANY_STATE,
+    run = place_things
+}
+
+world_move_camera :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = move_camera
+}
+
+// Every stage of one frame over the two of them, which is what a test and a
+// headless program both want.
+world_run_frame :: fn(mut world: World) {
+    mut order := FIRST_FRAME_STAGE
+    while (order <= stage_order(Stage::Last)) {
+        run_stage_of(
+            world,
+            ANY_STATE,
+            stage_at(order),
+            world_move_camera,
+            world_place_things
+        )
+        order = order + 1
+    }
 }
 
 // Which screen the program is on. A number rather than a type of the program's
@@ -163,7 +183,7 @@ world_schedule :: fn() -> Schedule {
 //
 //     TITLE :: 0
 //     PLAYING :: 1
-//     app_add_system_in_state(app, Stage::FrameUpdate, PLAYING, step)
+//     stepping :: System { stage = Stage::FrameUpdate, state = PLAYING, ... }
 world_state :: fn(world: World) -> i64 {
     states_current(ecs_resource($States, world, resource_of($States, world)))
 }
@@ -306,35 +326,58 @@ count_a_point :: fn(mut world: World) {
     ecs_resource_set(world, resource_of($Score, world), held)
 }
 
+counts_while_playing :: System {
+    stage = Stage::FrameUpdate,
+    state = PLAYING,
+    run = count_a_point
+}
+
 test "a system bound to a screen runs on that screen and no other" {
     mut world := ecs_new()
     world_prepare(world)
     ecs_resource_register($Score, world)
-    mut frame := schedule_new()
-    schedule_add_in_state(frame, Stage::FrameUpdate, PLAYING, count_a_point)
 
     // The world starts on the title screen, where this system is not.
-    schedule_run(frame, world, world_state(world))
+    run_stage_of(
+        world,
+        world_state(world),
+        Stage::FrameUpdate,
+        counts_while_playing
+    )
     assert(ecs_resource($Score, world, resource_of($Score, world)).points == 0)
 
     world_state_request(world, PLAYING)
     // Asking is not arriving. Nothing changes until the state is taken, which
     // is what stops a frame running half its systems under each screen.
-    schedule_run(frame, world, world_state(world))
+    run_stage_of(
+        world,
+        world_state(world),
+        Stage::FrameUpdate,
+        counts_while_playing
+    )
     assert(ecs_resource($Score, world, resource_of($Score, world)).points == 0)
 
     assert(world_state_apply(world))
     assert(world_state(world) == PLAYING)
-    schedule_run(frame, world, world_state(world))
+    run_stage_of(
+        world,
+        world_state(world),
+        Stage::FrameUpdate,
+        counts_while_playing
+    )
     assert(ecs_resource($Score, world, resource_of($Score, world)).points == 1)
 
     // And back, which stops it again.
     world_state_request(world, TITLE)
     assert(world_state_apply(world))
-    schedule_run(frame, world, world_state(world))
+    run_stage_of(
+        world,
+        world_state(world),
+        Stage::FrameUpdate,
+        counts_while_playing
+    )
     assert(ecs_resource($Score, world, resource_of($Score, world)).points == 1)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)
@@ -369,15 +412,13 @@ test "the engine finds its resources wherever they landed" {
     world_input(world, held)
 
     before := world_camera(world)
-    mut frame := world_schedule()
-    schedule_run(frame, world, ANY_STATE)
+    world_run_frame(world)
     after := world_camera(world)
     assert(after.position.z < before.position.z)
 
     // And the thing that was there first is untouched by any of it.
     assert(ecs_resource($Bystander, world, resource_of($Bystander, world)).count == 0)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)
@@ -394,13 +435,11 @@ test "the camera moves by what the world was told was held" {
     world_input(world, held)
 
     before := world_camera(world)
-    mut frame := world_schedule()
-    schedule_run(frame, world, ANY_STATE)
+    world_run_frame(world)
     after := world_camera(world)
     // Zero yaw looks down -Z, so forward is a smaller z.
     assert(after.position.z < before.position.z)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)
@@ -415,13 +454,11 @@ test "the camera turns by what the world was told was held" {
     world_input(world, held)
 
     before := world_camera(world)
-    mut frame := world_schedule()
-    schedule_run(frame, world, ANY_STATE)
+    world_run_frame(world)
     after := world_camera(world)
     assert(after.yaw > before.yaw)
     assert(after.position.x == before.position.x)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)
@@ -437,13 +474,11 @@ test "a frame in which nothing was held moves nothing" {
     world_input(world, held)
 
     before := world_camera(world)
-    mut frame := world_schedule()
-    schedule_run(frame, world, ANY_STATE)
+    world_run_frame(world)
     after := world_camera(world)
     assert(after.position.z == before.position.z)
     assert(after.yaw == before.yaw)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)
@@ -481,8 +516,7 @@ test "a thing is placed against whatever it hangs off, however deep" {
     hierarchy_attach(tree, chain[1], chain[0])
     hierarchy_attach(tree, chain[2], chain[1])
 
-    mut frame := world_schedule()
-    schedule_run(frame, world, ANY_STATE)
+    world_run_frame(world)
 
     // One step along x each, applied down the chain, so the leaf lands at
     // three. Two passes over roots and their children would leave it at two.
@@ -491,7 +525,6 @@ test "a thing is placed against whatever it hangs off, however deep" {
     between := ecs_get($GlobalTransform, world, chain[1], ids.global_transform)
     assert(between.matrix.m[12] > 1.999 && between.matrix.m[12] < 2.001)
 
-    schedule_free(frame)
     giving := world_tree_take(world)
     hierarchy_free(giving)
     ecs_free(world)

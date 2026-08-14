@@ -66,7 +66,23 @@ impl Source {
     }
 }
 
-pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
+/// A function that draws a capability, said of wherever it was taken as a
+/// value. One sentence, because the walk below names it where the reader wrote
+/// it and the lowering names it again where a specialization would have been
+/// built against it: one fault, one wording, and the two fold into one report.
+pub fn taken_as_a_value(name: &str) -> String {
+    format!(
+        "'{name}' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else"
+    )
+}
+
+/// Answers with what the walk found and rewrote nothing for. A rewrite that
+/// fails answers `Err` and ends the run, since no pass after a half-finished
+/// edit can be trusted to read what it left behind.
+pub fn lower_allocation_sources(
+    ast: &mut Ast,
+    roots: &[StmtId],
+) -> Result<Vec<crate::diagnostic::Diagnostic>> {
     let mut uses_functions: HashMap<String, Vec<Type>> = HashMap::new();
 
     // First pass. Give every `uses` function one implicit capability parameter
@@ -101,6 +117,7 @@ pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
                 compile_time_default: None,
                 pack: false,
                 format: false,
+                capability: true,
             });
         }
         let widened = ast.add_parameters(parameters);
@@ -115,7 +132,10 @@ pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
 
     // Second pass. Thread the capability argument through calls and inline the
     // `with` blocks that provide it.
-    let threader = Threader { uses_functions };
+    let mut threader = Threader {
+        uses_functions,
+        reported: Vec::new(),
+    };
     for statement in roots {
         let Statement::Constant(name, value) = ast.stmt(*statement) else {
             continue;
@@ -148,7 +168,7 @@ pub fn lower_allocation_sources(ast: &mut Ast, roots: &[StmtId]) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(threader.reported)
 }
 
 // The capability variable name for a type: the type's base name with its first
@@ -170,11 +190,17 @@ fn capability_binding(capability: &Type) -> String {
 
 struct Threader {
     uses_functions: HashMap<String, Vec<Type>>,
+    // Taking a capability-drawing function as a value is a fault this pass
+    // finds and rewrites nothing for, so it is collected the way a check's is
+    // and the walk carries on. The rewrites below still end the run when one of
+    // them fails, since no pass after a half-finished edit can be trusted to
+    // read what it left behind.
+    reported: Vec<crate::diagnostic::Diagnostic>,
 }
 
 impl Threader {
     fn thread_block(
-        &self,
+        &mut self,
         ast: &mut Ast,
         block: Range32,
         provider: &Provider,
@@ -205,7 +231,7 @@ impl Threader {
     }
 
     fn thread_statement(
-        &self,
+        &mut self,
         ast: &mut Ast,
         statement: StmtId,
         provider: &Provider,
@@ -249,7 +275,7 @@ impl Threader {
     }
 
     fn thread_expression(
-        &self,
+        &mut self,
         ast: &mut Ast,
         expression: ExprId,
         provider: &Provider,
@@ -290,13 +316,9 @@ impl Threader {
             Expression::Identifier(name) => {
                 let name = ast.name(name).to_string();
                 if self.uses_functions.contains_key(&name) {
-                    return Err(anyhow::Error::new(
-                        crate::diagnostic::LocatedError {
-                            position: ast.expr_position(expression),
-                            message: format!(
-                                "'{name}' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else"
-                            ),
-                        },
+                    self.reported.push(crate::diagnostic::Diagnostic::new(
+                        ast.expr_position(expression),
+                        taken_as_a_value(&name),
                     ));
                 }
             }
@@ -312,13 +334,9 @@ impl Threader {
                     return Ok(());
                 };
                 if self.uses_functions.contains_key(target) {
-                    return Err(anyhow::Error::new(
-                        crate::diagnostic::LocatedError {
-                            position: ast.expr_position(expression),
-                            message: format!(
-                                "'{target}' draws a capability, which is one more parameter, so it cannot be taken as a value: a call through a function value supplies what its type says and nothing else"
-                            ),
-                        },
+                    self.reported.push(crate::diagnostic::Diagnostic::new(
+                        ast.expr_position(expression),
+                        taken_as_a_value(target),
                     ));
                 }
             }

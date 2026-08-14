@@ -39,7 +39,7 @@ Each layer may name the ones below it and none may name the ones above.
 | File | What it is |
 | --- | --- |
 | `app.frost` | The window, the device, the world and the tables, opened once and given back once |
-| `world.frost` | Transforms, a tree and the schedule that resolves them |
+| `world.frost` | Transforms, a tree and the systems that resolve them |
 | `camera.frost` | Where the eye is and what it looks at |
 | `light.frost` | A light in the world, and what the renderer reads instead of it |
 | `scene_sync.frost` | The walk from a world to the flat run a pass draws |
@@ -56,7 +56,7 @@ Each layer may name the ones below it and none may name the ones above.
 | `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
 | `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
 | `textured.frost` | The same field with its surfaces read off an image |
-| `shadowed.frost` | An ECS schedule driving compute, shadows, a bloom chain and a second view |
+| `shadowed.frost` | ECS systems driving compute, shadows, a bloom chain and a second view |
 | `gltf_model.frost` | A model read out of a file and spawned into the world |
 | `lit.frost` | A world drawn with no line of shader in it |
 | `swarm.frost` | Five hundred and twelve things, lit by lamps that stop |
@@ -245,26 +245,36 @@ declared through an extern's parameter list takes its context first, and Win32's
 
 ## The render graph
 
-Everything past the triangle draws through `graph.frost`. A pass is a name, a
-function and the state it records with, and it declares three things: the colour
-target it writes, the depth target it writes, and the resources it reads.
+Everything past the triangle draws through `graph.frost`. A pass is a name and a
+number, and it declares three things: the colour target it writes, the depth
+target it writes, and the resources it reads. The number is the program's own
+name for that pass, handed back when its turn comes.
 
 ```frost,sketch
-mut g := graph_new(device, 3, 2)
+SHADOW_PASS :: 1
+SCENE_PASS  :: 2
+
+mut g := graph_new(device)
 screen := graph_backbuffer(g)
 map := graph_depth(g, "shadow map", 1024, 1024, DEPTH_FORMAT)
 depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
 
-shadow := graph_pass(g, "shadow", draw_things, ptr_to(shadow_scene))
+shadow := graph_pass(g, "shadow", SHADOW_PASS)
 graph_writes_depth(g, shadow, map)
 
-scene := graph_pass(g, "scene", draw_things, ptr_to(lit_scene))
+scene := graph_pass(g, "scene", SCENE_PASS)
 graph_writes_color(g, scene, screen, background)
 graph_writes_depth(g, scene, depth)
 graph_reads(g, scene, map)
 
 graph_schedule(g)
 ```
+
+The graph does not know what a pass does. It knows what each reads and writes,
+and it hands the number back; the program answers it with a `match` or an `if`
+chain over its own pass numbers. That is what a call naming the function it goes
+to means here: the recording call is written in the program, against a number it
+declared, rather than reached through a field the graph held.
 
 From those declarations `graph_schedule` works out the order: an edge from a
 pass that writes a resource to every pass that reads it, and an edge in
@@ -280,10 +290,32 @@ bind group naming a texture is made once, and a window-sized texture is thrown
 away and remade on a resize, so sampling one leaves the binding pointing at a
 texture that no longer exists.
 
-`graph_run` then makes each pass's `Target` and hands its function a
+A frame then walks the order the graph worked out, a step at a time:
+
+```frost,sketch
+if (graph_begin_run(g, -1)) {
+    mut step: i64 = 0
+    while (step < graph_step_count(g, -1)) {
+        one := graph_step_at(g, -1, step)
+        if (graph_step_runs(one, ANY_PHASE)) {
+            encoder := graph_open_render(g, -1, f, one)
+            draw(app, one.which, encoder)   // the program's own `match`
+            graph_close_render(encoder)
+        }
+        step = step + 1
+    }
+}
+```
+
+`graph_open_render` makes that pass's `Target` and hands back a
 `RenderPassEncoder` over it. The load ops come from the same declarations: every
 resource starts each frame unwritten, the first pass to write one clears it, and
 every pass after loads what is there. A pass body picks no load op of its own.
+`-1` is the graph itself; a sub-graph's index goes there instead.
+
+`app.frost` writes this walk once, in `run_graph`, so a program using the engine
+writes the `match` and nothing else. It is spelled out here because the graph is
+usable without the engine.
 
 ### What a resource can be
 
@@ -334,10 +366,11 @@ a debug view toggles one every frame with no rescheduling. `graph_save_enabled`
 and `graph_restore_enabled` put back the state each pass had, so a pass that was
 already off stays off.
 
-A pass belongs to a phase, and `graph_run_phase` runs one. Rendering the same
-graph once per camera goes through phases: the shared work carries one phase,
-each view's work carries its own, and a program runs the shared phase once and
-each view's phase with a different external bound.
+A pass belongs to a phase, set with `graph_set_phase`, and `graph_step_runs(one,
+phase)` answers whether a step is this walk's. Rendering the same graph once per
+camera goes through phases: the shared work carries one phase, each view's work
+carries its own, and a program walks the shared phase once and each view's phase
+with a different external bound. `ANY_PHASE` walks all of them.
 
 ### Sub-graphs
 
@@ -363,6 +396,83 @@ and touch no device, so `graph.frost` carries twenty-four `test` blocks that run
 under `just test` with `no_device()` in place of a GPU: what runs first, which
 transients share a texture, what the load ops come out as, the phase and enabled
 state a pass carries, and each of the five graphs that cannot run at all.
+
+## The App
+
+`lib/engine/app.frost` is the window, the device, the world and the tables, as
+one thing opened once and given back once. Every example past the triangle is
+this plus what it draws.
+
+```frost,sketch
+main :: fn() -> i64 {
+    match app_open(app_config("Frost", WIDTH, HEIGHT)) {
+        case Result::Ok { value }: run(value)
+        case Result::Err { error }: app_failed(error)
+    }
+}
+
+run :: fn(move app: App) -> i64 {
+    app_insert_resource(app, scene)
+    app_run(
+        $declare_passes,
+        $before_frame,
+        $record_pass,
+        app,
+        camera_system,
+        escape_system,
+        spin_system
+    )
+    app_close(app)
+}
+```
+
+`main` is two calls because a window that did not open is a value rather than a
+flag: `app_open` gives back whatever it took before answering with a failure, so
+there is no half-open App and nothing to check for.
+
+Everything a program says to the App is named at the call. `app_run` is a
+generic, and the specialization it stamps out calls `declare_passes`,
+`before_frame` and `record_pass` by name — a call names the function it goes to,
+so none of these is a pointer the App holds. What a program does not write takes
+the default that does nothing.
+
+| Hook | When it runs |
+| --- | --- |
+| `$declare` | Once, on the way into the first frame, after every plugin |
+| `$each_frame` | Once a frame, between the systems and the graph |
+| `$record` | For a node pass, with the encoder and targets it declared |
+| `$draw` | For a drawing pass, with a `RenderPassEncoder` |
+| `$dispatch` | For a compute pass, with a `ComputePassEncoder` |
+| `$rebuild` | For each pass whose resources were made again after a resize |
+
+Each is handed the pass number the program declared, so the program answers it:
+
+```frost,sketch
+SCENE_PASS :: 1
+
+record_pass :: fn(mut app: App, which: i64, context: NodeContext) {
+    if (which == SCENE_PASS) {
+        mut s := ecs_resource($Scene, app.world, resource_of($Scene, app.world))
+        draw_scene(s, context)
+        return
+    }
+    app_engine_record(app, which, context)
+}
+```
+
+The last line hands on what the program does not claim, which is the engine's
+own lit pass. State a pass reads lives in the world as a resource rather than
+behind a pointer, which is what `app_insert_resource` is for.
+
+The systems after the App are a compile-time list, so a frame is one direct call
+per system that belongs to the stage running and nothing at all for the rest.
+
+A `Plugin` is a name and a `build` function, installed with `app_install`, and
+is named at the call the same way: `app_install($engine_plugin, app)`.
+
+`app_run` is the loop. A program with its own writes `app_run_with($runner,
+app)`, or drives `app_next` and `app_draw` itself, which are the two halves of a
+frame.
 
 ## From a world to a run
 
@@ -396,11 +506,13 @@ LocalTransform :: struct { translation: Vec3, rotation: Quat, scale: Vec3 }
 GlobalTransform :: struct { matrix: Mat4 }
 ```
 
-`world_schedule` is the frame. `move_camera` and `turn_things` run in `First`,
-and `place_things` walks down from every root in `Update`, leaving each thing's
+`world_run_frame` is the frame: every stage in order over the two systems the
+engine names, `world_move_camera` in `FrameUpdate` and `world_place_things` in
+`FramePostUpdate`. The second walks down from every root, leaving each thing's
 `GlobalTransform` with whatever it hangs off applied over its own
-`LocalTransform`, however deep it hangs. A system is a `fn(mut World)` and captures nothing, so which component
-is which travels in a `WorldIds` resource.
+`LocalTransform`, however deep it hangs. A system is a `fn(mut World)` and
+captures nothing, so which component is which travels in a `WorldIds`
+resource.
 
 ### What a system knows about the machine
 
@@ -411,7 +523,7 @@ world:
 
 ```frost,sketch
 world_input(world, platform_input(p))
-schedule_run(frame_schedule, world, ANY_STATE)
+run_stage_of(world, ANY_STATE, Stage::Update, integrating, uploading)
 write_frame(queue, frame_uniform, world_camera(world), width(p), height(p))
 ```
 
@@ -426,8 +538,8 @@ Every accessor comes in two forms, `key_down(p, Key::W)` and
 system has only what it was given. The first is a one-line call to the second.
 
 The camera lives in the world for the same reason: `world_camera_set` puts it
-where a program wants it to start, the schedule moves it, and the loop reads it
-back to write the frame uniform.
+where a program wants it to start, `world_move_camera` moves it, and the loop
+reads it back to write the frame uniform.
 
 Then `scene_sync` walks the world once and leaves a `DrawList` behind:
 
@@ -532,7 +644,7 @@ renderer_end :: fn(mut r: Renderer, move f: Frame) { ... }
 ```frost,sketch
 mut f := renderer_begin(r)
 if (frame_ok(f)) {
-    graph_run(graph, f)
+    draw_the_graph(app, f)
     renderer_end(r, f)      // ends the frame only when one was acquired
 }
 ```

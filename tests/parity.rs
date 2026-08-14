@@ -54,38 +54,6 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ",
         "already vouches for what is in it",
     ),
-    // A call through a name that holds a function rather than being one.
-    (
-        "a_call_through_a_name_holding_a_function",
-        "double :: fn(n: i64) -> i64 { n * 2 }
-main :: fn() -> i64 {
-             held := double
-             held(3)
-}
-",
-        "a call goes to a name, and 'held' holds a function rather than being one",
-    ),
-    // A call through a struct field of function type.
-    (
-        "a_call_through_a_field_holding_a_function",
-        "Pass :: struct { go: fn(i64) -> i64 }
-double :: fn(n: i64) -> i64 { n * 2 }
-main :: fn() -> i64 {
-             one := Pass { go = double }
-             one.go(4)
-}
-",
-        "a call goes to a name, and this one goes to a value",
-    ),
-    // A call through a parameter of function type.
-    (
-        "a_call_through_a_parameter_holding_a_function",
-        "double :: fn(n: i64) -> i64 { n * 2 }
-through :: fn(go: fn(i64) -> i64) -> i64 { go(5) }
-main :: fn() -> i64 { through(double) }
-",
-        "a call goes to a name, and 'go' holds a function rather than being one",
-    ),
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
@@ -1897,6 +1865,12 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // callee reads the register nobody wrote. The bootstrap caught it as a
     // signature that did not match and the self-hosted compiler built it, and
     // what it built faulted with no `unsafe` written anywhere.
+    //
+    // `call_it` takes the value and does not call it: calling a value is
+    // refused on its own now, and this program has both: `call_it` calls what
+    // it was handed, and what it was handed draws a capability. Two faults, and
+    // both compilers name both, which is what a program is written this way to
+    // hold them to.
     (
         "a_capability_drawing_function_taken_as_a_value",
         "import \"io.frost\"
@@ -2076,9 +2050,9 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // all behind it.
     (
         "a_write_to_a_named_destination_is_checked",
-        "import \"io.frost\"\nloud :: fn(text: str) { write(to_stdout, \"[{}]\", text) }\n\
+        "import \"io.frost\"\nloud :: fn(text: str) { write($to_stdout, \"[{}]\", text) }\n\
          main :: fn() -> i64 {\n\
-         \x20   write(loud, \"{} of {}\n\", 1)\n\
+         \x20   write($loud, \"{} of {}\n\", 1)\n\
          \x20   0\n\
          }\n",
         "this format string opens 2 hole(s) and the call gives 1 value(s)",
@@ -3406,14 +3380,14 @@ Holder :: struct { a: i64, b: i64 }
     ),
     // What a compile-time call may do is arithmetic over its arguments. A call
     // into the world has nothing to answer with before the program runs, and
-    // the name it stops at is the one that reads it.
+    // the write it reaches is what it stops at.
     (
         "a_compile_time_call_that_reads_the_world",
         "import \"io.frost\"\n\
          noisy :: fn(n: i64) -> i64 { print(\"{}\\n\", n) n }\n\
          SAID :: noisy(4)\n\
          main :: fn() -> i64 { print(\"{}\\n\", SAID) 0 }\n",
-        "has no value at compile time",
+        "this is not something a compile-time call may do",
     ),
     // A body may loop, so how long one takes is not read off the text. The
     // bound is what says a compile finishes.
@@ -4045,6 +4019,48 @@ Holder :: struct { a: i64, b: i64 }
          'frost_rt_' and 'frost_u_' are the runtime's and the compiler's own, \
          so a definition here would replace what every program calls",
     ),
+    // A call names the function it goes to. A parameter holding one is the
+    // shape a reader reaches for first, and it is refused by name: what runs is
+    // then read off the call rather than off whatever arrived.
+    (
+        "a_call_through_a_parameter_holding_a_function",
+        "twice :: fn(n: i64) -> i64 { n * 2 }
+         apply :: fn(f: fn(i64) -> i64, n: i64) -> i64 {
+             f(n)
+         }
+         main :: fn() -> i64 { apply(twice, 21) }
+",
+        "a call names the function it goes to, and 'f' holds a function rather \
+         than being one",
+    ),
+    // The same rule reached through a field rather than through a name. A
+    // struct may still hold a function, because that is what C is handed;
+    // calling it here is what is refused.
+    (
+        "a_call_through_a_field_holding_a_function",
+        "Handler :: struct { run: fn(i64) -> i64 }
+         twice :: fn(n: i64) -> i64 { n * 2 }
+         main :: fn() -> i64 {
+             held := Handler { run = twice }
+             held.run(21)
+         }
+",
+        "a call names the function it goes to, and this one goes to a value",
+    ),
+    // A local bound to a function, called under that name. Nothing about the
+    // binding says which function arrived, so the call is refused where the
+    // reader wrote it rather than at the binding.
+    (
+        "a_call_through_a_local_holding_a_function",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+         main :: fn() -> i64 {
+             held := double
+             held(3)
+         }
+",
+        "a call names the function it goes to, and 'held' holds a function \
+         rather than being one",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held
@@ -4280,7 +4296,11 @@ fn both_compilers_refuse_the_same_programs() {
         // Containing the phrase is not saying the same thing. Two compilers can
         // both carry it and differ in every word around it, which is how one
         // came to quote a name the other left bare and to explain a leak in
-        // another sentence entirely. What each said is what is compared.
+        // another sentence entirely. What each said is what is compared, in the
+        // order it was said: both write their reports in the order the program
+        // is written rather than the order their passes ran, so a run that
+        // names the same faults in a different sequence is a divergence like
+        // any other.
         let said = spoken(&bootstrap);
         let hosted_said = spoken(&hosted);
         if said != hosted_said {
@@ -4905,6 +4925,41 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   0\n\
          }\n",
         "none\n",
+    ),
+    // A compile-time function handed on to another generic rather than called.
+    // The self-hosted compiler read a `$` parameter as one taking a function
+    // only where the body called it by name, so a body that only handed it on
+    // was recorded as taking a type. No instance was made for it, and the call
+    // linked to a name nothing defined.
+    (
+        "a_compile_time_function_is_handed_on_rather_than_called",
+        "import \"io.frost\"\n\
+         twice :: fn(n: i64) -> i64 { n * 2 }\n\
+         innermost :: fn($f: fn(i64) -> i64, n: i64) -> i64 { f(n) }\n\
+         middle :: fn($f: fn(i64) -> i64, n: i64) -> i64 { innermost($f, n) }\n\
+         outermost :: fn($f: fn(i64) -> i64, n: i64) -> i64 { middle($f, n) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", outermost($twice, 21))\n\
+         \x20   0\n\
+         }\n",
+        "42\n",
+    ),
+    // An instance named while another is being read, where the generic it
+    // names sits earlier in the table than the one being read. A single pass
+    // forward has gone past it, so the emitters read the table again until a
+    // pass finds nothing new. Without it the nested instance was called and
+    // never defined, and the link failed on a name it had written a call to.
+    (
+        "an_instance_named_by_an_instance_read_before_it",
+        "import \"io.frost\"\n\
+         plus :: fn(n: i64) -> i64 { n + 1 }\n\
+         first :: fn($f: fn(i64) -> i64, n: i64) -> i64 { f(n) }\n\
+         second :: fn($f: fn(i64) -> i64, n: i64) -> i64 { first($f, n) + 1 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print(\"{}\\n\", second($plus, 1))\n\
+         \x20   0\n\
+         }\n",
+        "3\n",
     ),
     // A bit of a set bound straight to a name. The bootstrap read it as a
     // variant and asked the enum table for a flags type, so `f := InitFlags::A`
@@ -5596,10 +5651,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "a_program_names_its_own_sink",
         "import \"io.frost\"\nloud :: fn(text: str) {\n\
-         \x20   write(to_stdout, \"[{}]\", text)\n\
+         \x20   write($to_stdout, \"[{}]\", text)\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   write(loud, \"a {} b\n\", 3)\n\
+         \x20   write($loud, \"a {} b\n\", 3)\n\
          \x20   0\n\
          }\n",
         "[a 3 b\n]",
@@ -6191,6 +6246,10 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     // state it belongs to. Nothing is generated: a `mut` parameter is an address
     // in the signature and Frost shares C's convention, so the typed function
     // and the erased one are the same function.
+    //
+    // What the field holds is never called: a call names the function it goes
+    // to. The type is what this pins, and the field assignment is what pins it,
+    // since a `^proc` coming back would not fit where a `proc` is written.
     (
         "a_pointer_cast_to_a_function_type_answers_with_that_type",
         "import \"io.frost\"\nHeld :: struct { value: i64 }
@@ -6198,11 +6257,12 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          add :: fn(mut held: Held, more: i64) {
              held.value = held.value + more
          }
+         takes_table :: fn(t: Table) -> i64 { 41 }
          main :: fn() -> i64 {
              mut held := Held { value = 1 }
-             mut table := Table {
+             table := Table {
                  call = unsafe { ptr_cast($fn(^u8, i64), add) } }
-             table.call(unsafe { ptr_cast($u8, ptr_to(held)) }, 41)
+             add(held, takes_table(table))
              print(\"{}\\n\", held.value)
              0
          }
@@ -8123,18 +8183,20 @@ Bad :: enum { Nope }
     // named the instance was filed for a type nobody passed. The call emitted
     // the name of the instance it meant and the link found nothing there. This
     // is the shape a typed callback takes: a hook beside the context it reads.
+    // The hook is named at the call, since a call names the function it goes
+    // to, and the context type is still what the `^C` argument says.
     (
         "a_context_settles_its_type_through_the_pointer_that_carries_it",
         "import \"io.frost\"
          Ctx :: struct { n: i64 }
-         configure :: fn($C: Type, hook: fn(mut C, i64), state: ^C) -> i64 {
+         configure :: fn($C: Type, $hook: fn(mut C, i64), state: ^C) -> i64 {
              unsafe { hook(state^, 5) }
              0
          }
          bump :: fn(mut c: Ctx, by: i64) { c.n = c.n + by }
          main :: fn() -> i64 {
              mut c := Ctx { n = 0 }
-             configure(bump, ptr_to(c))
+             configure($bump, ptr_to(c))
              print(\"{}\\n\", c.n)
              0
          }

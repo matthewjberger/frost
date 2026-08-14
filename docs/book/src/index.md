@@ -33,7 +33,7 @@ Frost uses these in place of the machinery you may be expecting:
 | a long-lived pointer into a collection | a generational handle, a copy value that goes stale instead of dangling |
 | destructors | linear resources, consumed exactly once, checked at compile time |
 | exceptions and `Result` plumbing | failure sets, `-> T ! E` and `?` |
-| dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
+| dynamic dispatch | a call names the function it goes to; generics are monomorphized |
 | classes and methods | plain structs and free functions |
 
 ## The language in one paragraph

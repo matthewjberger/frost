@@ -1908,6 +1908,14 @@ impl Renamer {
                     {
                         self.ty(ty);
                     }
+                    // What a parameter stands for where a call writes nothing
+                    // for it is a name this module wrote, so it is the module's
+                    // own the way every other name in the declaration is.
+                    if let Some(ty) =
+                        &mut ast.parameters[index].compile_time_default
+                    {
+                        self.ty(ty);
+                    }
                 }
                 if return_type.is_some() {
                     let Statement::Extern {
@@ -2094,6 +2102,12 @@ impl Renamer {
             // any other, and a bundle parameter names one this module imported.
             if let Some(ty) = &mut ast.parameters[index].compile_time_signature
             {
+                self.ty(ty);
+            }
+            // What it stands for where a call writes nothing for it is a name
+            // this module wrote, and a call in another module that leaves the
+            // argument out is what reads it.
+            if let Some(ty) = &mut ast.parameters[index].compile_time_default {
                 self.ty(ty);
             }
             let name = ast.parameters[index].name;

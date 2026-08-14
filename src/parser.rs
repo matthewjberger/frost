@@ -2508,6 +2508,7 @@ impl<'a> Parser<'a> {
                     compile_time_default: None,
                     pack: false,
                     format: false,
+                    capability: false,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -3747,6 +3748,7 @@ impl<'a> Parser<'a> {
                     compile_time_default: None,
                     pack,
                     format,
+                    capability: false,
                 });
             } else {
                 let written = self.peek_nth(0).to_string();
@@ -4338,6 +4340,7 @@ impl<'a> Parser<'a> {
                     compile_time_default: None,
                     pack,
                     format,
+                    capability: false,
                 });
             } else {
                 let written = self.peek_nth(0).to_string();
@@ -4483,6 +4486,7 @@ impl<'a> Parser<'a> {
             compile_time_default,
             pack: false,
             format: false,
+            capability: false,
         })
     }
 

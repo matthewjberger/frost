@@ -482,7 +482,7 @@ test "a snapshot is a run of bytes that reads back" {
     // The same bytes handed to a fresh snapshot are the same snapshot: a file
     // read back in is this, with the run of bytes coming from somewhere else.
     mut copied := snapshot_new()
-    snapshot_put_bytes(copied, unsafe { ptr_to(held[0]) }, slice_len(held))
+    snapshot_put_bytes(copied, ptr_to(held[0]), slice_len(held))
     assert(snapshot_len(copied) == snapshot_len(written))
 
     mut read := ecs_new()

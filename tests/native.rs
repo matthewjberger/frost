@@ -886,18 +886,22 @@ fn native_wrapping_and_unary() {
     assert_eq!(output, "44\n705032704\n-42\n");
 }
 
+// An anonymous function is a value: bound, stored in an array and handed on,
+// which is how a C callback is written where it is registered. Nothing is
+// called through one, because a call names the function it goes to.
 const ANON_FUNCTIONS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+holds :: fn(f: fn(i64) -> i64) -> i64 { 1 }
+
+holds_two :: fn(ops: [2]fn(i64) -> i64) -> i64 { 2 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", apply(fn(a: i64) -> i64 { a + 1 }, 41)) }
-    unsafe { printf("%lld\n", apply(fn(a: i64) -> i64 { a * a }, 9)) }
     g := fn(a: i64) -> i64 { a - 3 }
-    unsafe { printf("%lld\n", g(50)) }
     ops := [fn(a: i64) -> i64 { a + 1 }, fn(a: i64) -> i64 { a * 2 }]
-    unsafe { printf("%lld\n", ops[1](10)) }
+    unsafe { printf("%lld\n", holds(g)) }
+    unsafe { printf("%lld\n", holds_two(ops)) }
+    unsafe { printf("%lld\n", holds(fn(a: i64) -> i64 { a * a })) }
     0
 }
 "#;
@@ -2214,23 +2218,21 @@ shifted :: fn(scale: i64) -> Point {
     Point { x = scale + 100, y = scale }
 }
 
-// The pointer as a parameter, which is how a caller varies what a loop calls.
-apply :: fn(make: fn(i64) -> Point, scale: i64) -> i64 {
+// The function named at the call, which is how a caller varies what a loop
+// calls. What it answers with is an aggregate, so the address the caller passes
+// for the answer travels through the instance the name picked out.
+apply :: fn($make: fn(i64) -> Point, scale: i64) -> i64 {
     p := make(scale)
     p.x * 1000 + p.y
 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", apply(origin, 3)) }
-    unsafe { printf("%lld\n", apply(shifted, 3)) }
+    unsafe { printf("%lld\n", apply($origin, 3)) }
+    unsafe { printf("%lld\n", apply($shifted, 3)) }
 
-    // And as a local that is reassigned, so the callee is not known at the
-    // call site at all.
-    mut chosen : fn(i64) -> Point = origin
-    q := chosen(5)
+    q := origin(5)
     unsafe { printf("%lld\n", q.x + q.y) }
-    chosen = shifted
-    r := chosen(5)
+    r := shifted(5)
     unsafe { printf("%lld\n", r.x + r.y) }
     0
 }
@@ -3140,7 +3142,7 @@ fn native_anonymous_functions() {
     let Some(output) = compile_and_run_unaudited("anon", ANON_FUNCTIONS) else {
         return;
     };
-    assert_eq!(output, "42\n81\n47\n20\n");
+    assert_eq!(output, "1\n2\n1\n");
 }
 
 // Build the self-hosted compiler, run it over `input`, and return what it wrote
@@ -3265,22 +3267,24 @@ fn the_interpreter_spells_a_float_the_way_the_runtime_does() {
     );
 }
 
-// A call through a function-pointer field has to agree with the definition it
-// reaches about how an aggregate travels. Every definition takes one by
-// address, so the cast the call goes through says a pointer too.
+// A struct field of function type is what a C library is handed where it takes
+// a callback, so building one and passing the struct on stays legal. Nothing is
+// called through the field: a call names the function it goes to.
 //
-// Behaviour cannot answer this. A sixteen-byte struct passed by value goes as a
-// hidden pointer under the Windows convention, which is the same thing the
-// callee reads, so a mismatch runs correctly there and reads the data pointer
-// as the struct under the System V one. The emitted text is the same on both,
-// so that is what this reads.
+// What the emitted text has to show is the address landing in the field and the
+// struct crossing into a function that takes it. The field's own C type is a
+// `void*`, which is what an address is; the cast that used to spell out a
+// signature belonged to the call, and there is no call.
 #[test]
-fn a_call_through_a_field_passes_an_aggregate_by_address() {
+fn a_field_of_function_type_reaches_c() {
     let source = "import \"io.frost\"\n\
-         loud :: fn(text: str) { write(to_stdout, \"[{}]\", text) }\n\
+         Sink :: struct { out: fn(str) }\n\
+         loud :: fn(text: str) { print(\"[{}]\", text) }\n\
+         holds :: fn(s: Sink) -> i64 { 0 }\n\
          main :: fn() -> i64 {\n\
-         \x20   write(loud, \"a {} b\\n\", 3)\n\
-         \x20   0\n\
+         \x20   held := Sink { out = loud }\n\
+         \x20   loud(\"a b\\n\")\n\
+         \x20   holds(held)\n\
          }\n";
     let directory = std::env::temp_dir();
     let input = directory.join("frost_fieldabi.frost");
@@ -3290,25 +3294,18 @@ fn a_call_through_a_field_passes_an_aggregate_by_address() {
     };
     let _ = std::fs::remove_file(&input);
 
-    // `(*)(struct __arr0)` is the by-value spelling and `(*)(struct __arr0*)`
-    // the one that matches. Finding the first is the fault.
-    let mut faults = Vec::new();
-    for (index, _) in emitted.match_indices("(*)(") {
-        let rest = &emitted[index + 4..];
-        let Some(close) = rest.find(')') else {
-            continue;
-        };
-        for parameter in rest[..close].split(',') {
-            let parameter = parameter.trim();
-            if parameter.starts_with("struct ") && !parameter.ends_with('*') {
-                faults.push(parameter.to_string());
-            }
-        }
-    }
     assert!(
-        faults.is_empty(),
-        "a function-pointer cast takes an aggregate by value, which the \
-         definition does not: {faults:?}"
+        emitted.contains("void* out;"),
+        "the field holds an address:\n{emitted}"
+    );
+    assert!(
+        emitted.contains(".out = (void*)"),
+        "the function's address lands in the field:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("struct Sink* s"),
+        "the struct travels by address into the function that takes it:\n\
+         {emitted}"
     );
 }
 
@@ -8830,7 +8827,7 @@ fn frost_run_forwards_arguments_and_the_exit_code() {
 const STD_MODULES: &[(&str, &str)] = &[
     ("allocation.frost", "3 passed"),
     ("arena.frost", "5 passed"),
-    ("ecs.frost", "116 passed"),
+    ("ecs.frost", "113 passed"),
     ("fixed.frost", "4 passed"),
     ("fs.frost", "2 passed"),
     ("map.frost", "13 passed"),
@@ -9342,19 +9339,24 @@ bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
     slot
 }
 
-Allocator :: struct { take: fn(^u8, i64) -> ^u8, state: ^u8 }
+// The interface is a constant naming the function, and the state travels
+// beside it. A call names the function it goes to, so the name is what the
+// caller writes and the state is what varies.
+Allocator :: struct { take: fn(^u8, i64) -> ^u8 }
 
-alloc :: fn(a: Allocator, size: i64) -> ^u8 {
-    a.take(a.state, size)
+bump_allocator :: Allocator { take = bump_take }
+
+alloc :: fn($a: Allocator, state: ^u8, size: i64) -> ^u8 {
+    a.take(state, size)
 }
 
 main :: fn() -> i64 {
     mut backing : [64]u8 = [0; 64]
     mut bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
-    a : Allocator = unsafe { Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) } }
-    p := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    state := unsafe { ptr_cast($u8, ptr_to(bump)) }
+    p := unsafe { ptr_cast($i64, alloc($bump_allocator, state, 8)) }
     unsafe { p^ = 42 }
-    q := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    q := unsafe { ptr_cast($i64, alloc($bump_allocator, state, 8)) }
     unsafe { q^ = 7 }
     unsafe { printf("%lld\n", unsafe { p^ + q^ }) }
     unsafe { printf("%lld\n", bump.offset) }
@@ -10229,17 +10231,17 @@ fn self_hosted_inline_emits_c_qualifier() {
     );
 }
 
-// A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
-// and calling through it, with a function's name passed as its address. A
-// single function pointer is a closed call target, not a vtable.
+// A higher-order function: the one it calls is named at the call as a
+// compile-time argument, so each call goes to a function the reader can see.
+// One specialization is emitted per function named.
 const SELFHOSTED_FUNCTION_POINTER: &str = concat!(
     "import \"io.frost\"\n",
-    "apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n",
+    "apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n",
     "double :: fn(x: i64) -> i64 { x * 2 }\n",
     "inc :: fn(x: i64) -> i64 { x + 1 }\n",
     "main :: fn() -> i64 {\n",
-    "    print(\"{}\\n\", apply(double, 21))\n",
-    "    print(\"{}\\n\", apply(inc, 41))\n",
+    "    print(\"{}\\n\", apply($double, 21))\n",
+    "    print(\"{}\\n\", apply($inc, 41))\n",
     "    0\n",
     "}\n",
 );
@@ -10261,12 +10263,12 @@ const SELFHOSTED_CLOSURE: &str = concat!(
     "import \"io.frost\"\n",
     "Adder :: struct { amount: i64 }\n",
     "add_by :: fn(ctx: Adder, x: i64) -> i64 { x + ctx.amount }\n",
-    "apply_each :: fn(f: fn(Adder, i64) -> i64, ctx: Adder, a: i64, b: i64) -> i64 {\n",
+    "apply_each :: fn($f: fn(Adder, i64) -> i64, ctx: Adder, a: i64, b: i64) -> i64 {\n",
     "    f(ctx, a) + f(ctx, b)\n",
     "}\n",
     "main :: fn() -> i64 {\n",
     "    plus10 : Adder = Adder { amount = 10 }\n",
-    "    print(\"{}\\n\", apply_each(add_by, plus10, 1, 2))\n",
+    "    print(\"{}\\n\", apply_each($add_by, plus10, 1, 2))\n",
     "    0\n",
     "}\n",
 );
@@ -11500,6 +11502,7 @@ Pair :: struct($T: Type) { first: T, second: T }
 Op :: struct($T: Type) { f: fn(T) -> T, seed: T }
 
 inc :: fn(x: i64) -> i64 { x + 1 }
+o :: Op<i64> { f = inc, seed = 41 }
 swap :: fn(mut a: $T, mut b: $T) {
     t := a
     a = b
@@ -11518,9 +11521,7 @@ main :: fn() -> i64 {
     }
     unsafe { printf("%lld\n", total) }
 
-    o : Op<i64> = Op { f = inc, seed = 41 }
-    g := o.f
-    unsafe { printf("%lld\n", g(o.seed)) }
+    unsafe { printf("%lld\n", o.f(o.seed)) }
 
     mut x : Pair<i64> = Pair { first = 1, second = 2 }
     mut y : Pair<i64> = Pair { first = 9, second = 8 }
@@ -11905,24 +11906,26 @@ double :: fn(x: i64) -> i64 { x * 2 }
 square :: fn(x: i64) -> i64 { x * x }
 increment :: fn(x: i64) -> i64 { x + 1 }
 
-apply :: fn(f: fn(i64) -> i64, value: i64) -> i64 {
+apply :: fn($f: fn(i64) -> i64, value: i64) -> i64 {
     f(value)
 }
 
-apply_twice :: fn(f: fn(i64) -> i64, value: i64) -> i64 {
+apply_twice :: fn($f: fn(i64) -> i64, value: i64) -> i64 {
     f(f(value))
 }
 
 main :: fn() -> i64 {
-    unsafe { printf("%lld\n", apply(double, 21)) }
-    unsafe { printf("%lld\n", apply(square, 9)) }
-    unsafe { printf("%lld\n", apply_twice(increment, 40)) }
-    g := double
-    unsafe { printf("%lld\n", g(50)) }
+    unsafe { printf("%lld\n", apply($double, 21)) }
+    unsafe { printf("%lld\n", apply($square, 9)) }
+    unsafe { printf("%lld\n", apply_twice($increment, 40)) }
+    unsafe { printf("%lld\n", double(50)) }
     0
 }
 "#;
 
+// An array of functions is built and handed on. Nothing is called through it:
+// a call names the function it goes to, so the chain is written as one named
+// call apiece and the array is what C would be given.
 const FUNCTION_POINTER_ARRAY: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -11930,15 +11933,19 @@ add1 :: fn(x: i64) -> i64 { x + 1 }
 mul2 :: fn(x: i64) -> i64 { x * 2 }
 sub3 :: fn(x: i64) -> i64 { x - 3 }
 
+step :: fn($f: fn(i64) -> i64, value: i64) -> i64 { f(value) }
+
+holds :: fn(ops: [3]fn(i64) -> i64) -> i64 { 3 }
+
 main :: fn() -> i64 {
     ops := [add1, mul2, sub3]
     mut v : i64 = 10
-    for i in 0..3 {
-        f := ops[i]
-        v = f(v)
-    }
+    v = step($add1, v)
+    v = step($mul2, v)
+    v = step($sub3, v)
     unsafe { printf("%lld\n", v) }
-    unsafe { printf("%lld\n", ops[1](21)) }
+    unsafe { printf("%lld\n", mul2(21)) }
+    unsafe { printf("%lld\n", holds(ops)) }
     0
 }
 "#;
@@ -11950,7 +11957,7 @@ fn native_function_pointer_array() {
     else {
         return;
     };
-    assert_eq!(output, "19\n42\n");
+    assert_eq!(output, "19\n42\n3\n");
 }
 
 // A field name is read where nothing else can appear, so a keyword is taken as
@@ -12149,7 +12156,7 @@ fib :: fn(n: i64) -> i64 {
 
 triple :: fn(x: i64) -> i64 { x * 3 }
 
-apply_to_array :: fn(f: fn(i64) -> i64, values: [4]i64) -> i64 {
+apply_to_array :: fn($f: fn(i64) -> i64, values: [4]i64) -> i64 {
     mut total : i64 = 0
     for i in 0..4 {
         total = total + f(values[i])
@@ -12170,7 +12177,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", fib(15)) }
 
     nums := [1, 2, 3, 4]
-    unsafe { printf("%lld\n", apply_to_array(triple, nums)) }
+    unsafe { printf("%lld\n", apply_to_array($triple, nums)) }
     0
 }
 "#;
@@ -13154,10 +13161,11 @@ fn a_view_traced_to_storage_that_outlives_the_call_is_allowed() {
     let source = "import \"io.frost\"\nHolder :: struct { a: [4]i64 }\n\
                   Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
                   identity :: fn(p: ^i64) -> ^i64 { p }\n\
+                  ops :: Ops { pass = identity }\n\
                   pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
                   through :: fn(mut h: Holder) -> ref i64 { pick(h, 0) }\n\
                   handed :: fn(p: ^i64) -> ^i64 { identity(p) }\n\
-                  indirect :: fn(p: ^i64, ops: Ops) -> ^i64 { ops.pass(p) }\n\
+                  bundled :: fn(p: ^i64) -> ^i64 { ops.pass(p) }\n\
                   span :: fn(held: []i64, from: i64) -> []i64 {\n\
                   \x20   count := slice_len(held) - from\n\
                   \x20   unsafe { slice_from($i64, ptr_to(held[from]), count) }\n}\n\
@@ -13270,10 +13278,11 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
     let allowed = "import \"io.frost\"\nHolder :: struct { a: [4]i64 }\n\
                    Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
                    identity :: fn(p: ^i64) -> ^i64 { p }\n\
+                   ops :: Ops { pass = identity }\n\
                    pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
                    through :: fn(mut h: Holder) -> ref i64 { pick(h, 0) }\n\
                    handed :: fn(p: ^i64) -> ^i64 { identity(p) }\n\
-                   indirect :: fn(p: ^i64, ops: Ops) -> ^i64 { ops.pass(p) }\n\
+                   bundled :: fn(p: ^i64) -> ^i64 { ops.pass(p) }\n\
                    bump :: fn(mut v: i64) -> i64 { v }\n\
                    main :: fn() -> i64 {\n\
                    \x20   mut h : Holder = Holder { a = [1, 2, 3, 4] }\n\
@@ -13919,9 +13928,11 @@ fn self_hosted_uses_an_enum_as_a_value() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
-// A struct whose fields are function pointers, called through. This is what an
-// interface is here: an ordinary value with an ordinary type, so the field is
-// reached the way any field is and the call goes through what it holds.
+// A struct whose fields name functions, read as a constant. This is what an
+// interface is here: the field is reached the way any field is, and what it
+// names is the function the call goes to, whatever the field's type is. Each
+// answer is a different shape, so the four cover a bool, an i64, an f64 and an
+// aggregate coming back from a folded call.
 const FIELD_CALLS: &str = r#"import "io.frost"
 
 Point :: struct { x: i64, y: i64 }
@@ -13938,9 +13949,10 @@ i64_add :: fn(a: i64, b: i64) -> i64 { a + b }
 f64_double :: fn(v: f64, by: i64) -> f64 { v * 2.0 }
 make_point :: fn(n: i64) -> Point { Point { x = n, y = n * 2 } }
 
+ops :: Ops { less = i64_less, combine = i64_add, scale = f64_double,
+    origin = make_point }
+
 main :: fn() -> i64 {
-    ops := Ops { less = i64_less, combine = i64_add, scale = f64_double,
-        origin = make_point }
     if (ops.less(1, 2)) { print("{}\n", 1) } else { print("{}\n", 0) }
     print("{}\n", ops.combine(20, 22))
     print("{}\n", ops.scale(1.5, 3))
@@ -14900,19 +14912,17 @@ smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {
     b
 }
 
-chosen :: fn(ops: Ordering<i64>, a: i64, b: i64) -> i64 {
-    if (ops.less(a, b)) { return a }
-    b
-}
+// A bundle is still a value: it is bound and handed on. Nothing is called
+// through the copy, because a call names the function it goes to and a
+// parameter says nothing about which bundle arrived.
+holds :: fn(ops: Ordering<i64>) -> i64 { 1 }
 
 main :: fn() -> i64 {
     print("{}\n", smaller($ascending, 7, 3))
     print("{}\n", smaller($descending, 7, 3))
     print("{}\n", ascending.less(1, 2))
-    print("{}\n", chosen(ascending, 2, 9))
-    print("{}\n", chosen(descending, 2, 9))
     held := descending
-    print("{}\n", chosen(held, 4, 5))
+    print("{}\n", holds(held))
     0
 }
 "#;
@@ -14923,7 +14933,7 @@ fn a_capability_bundle_is_a_constant_of_function_fields() {
     else {
         return;
     };
-    assert_eq!(output, "3\n7\n1\n2\n9\n5\n");
+    assert_eq!(output, "3\n7\n1\n1\n");
 }
 
 // The compile-time form leaves no function pointer behind: the specialization
@@ -14974,7 +14984,7 @@ fn self_hosted_takes_a_capability_bundle() {
     else {
         return;
     };
-    assert_eq!(output, "3\n7\n1\n2\n9\n5\n");
+    assert_eq!(output, "3\n7\n1\n1\n");
 
     let directory = std::env::temp_dir();
     let input = directory.join("frost_shbundle_input.frost");
@@ -17849,9 +17859,9 @@ fn the_mesh_cache_grows_and_compacts_its_buffers() {
     }
 }
 
-// How a program composes what the engine offers: a group whose members are
-// replaceable and removable before any of them is installed. Answered without a
-// device, because which plugins are in a group is arithmetic over a list.
+// How a program composes what the engine offers: which plugins are in, so that
+// two that pull in the same one pull it in once. Answered without a device,
+// because what says a plugin is in twice is a question about a list of names.
 #[test]
 fn the_app_composes_its_plugins() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -90,9 +90,9 @@ through a call to what the call binds a `$T` to, and through the arguments a
 callee's answer can name.
 
 Any expression form the check cannot follow is refused. Every road a view can
-travel has to be one the check answers for: an ordinary call, a call through a
-function pointer, an assignment into a local, a `return` inside a match arm,
-the address of a `move` parameter. A check that answers "this does not name my
+travel has to be one the check answers for: an ordinary call, a call reached
+through a constant's field, an assignment into a local, a `return` inside a
+match arm, the address of a `move` parameter. A check that answers "this does not name my
 frame" for a shape it has never been taught compiles a function handing back a
 view of a dead frame, so an unfamiliar shape is refused instead.
 

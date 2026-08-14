@@ -9,7 +9,7 @@ pub use check::linear_instances::pooled_instance_names;
 pub use diagnostic::{
     Diagnostic, LocatedError, Place, Replacement, Report,
     as_json as diagnostics_as_json, as_report, grouped as grouped_diagnostics,
-    render as render_diagnostic, render_warnings,
+    in_source_order, render as render_diagnostic, render_warnings,
 };
 pub use tools::api::{Exported, exported, nearest, sources};
 pub use tools::fixes::{Edit, byte_offset, edit_for};

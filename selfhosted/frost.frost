@@ -697,6 +697,7 @@ main :: fn() -> i64 {
         decl_pack_len = 0,
         decl_pack_fixed = 0,
         decl_pack_format = -1,
+        unbound_pack_for = 0,
         decl_format_off = 0,
         decl_format_len = 0,
         tparam_is_value = 0,
@@ -722,6 +723,7 @@ main :: fn() -> i64 {
         pending_types = arena_make($GArg, 16384),
         mono_depth = 0,
         mono_on_demand = 1,
+        alias_floor = 0,
         moved = arena_make($LocalVar, 4096),
         move_views = arena_make($LocalVar, 1024),
         label_id = 0,
@@ -893,6 +895,11 @@ main :: fn() -> i64 {
     check_frame_escapes(parser)
     check_reference_fields(parser)
     check_borrow_exclusivity(parser)
+    // Every call that goes to a value rather than to a name. A walk over the
+    // arena, so it needs nothing the checks around it build, and it sits ahead
+    // of the two that read a whole program: a body whose calls are not settled
+    // is not one to ask about moves or types.
+    refuse_indirect_calls(parser)
     check_moves(parser)
     // Last of the checks, because it is the one that walks functions the way
     // the emitters do, and the passes before it read whatever local table the

@@ -182,15 +182,13 @@ lit_free :: fn(mut held: Lit) {
 // order in every program that draws a view, and a program with two views would
 // assemble it twice.
 lit_declare :: fn(
-    $Ctx: Type,
     mut g: Graph,
-    record: fn(mut Ctx, NodeContext),
-    state: ^Ctx,
+    which: i64,
     screen: ResourceId,
     depth: ResourceId,
     clear: Color
 ) -> PassId {
-    made := graph_node_pass(g, "lit", record, state)
+    made := graph_node_pass(g, "lit", which)
     graph_writes_color(g, made, screen, clear)
     graph_writes_depth(g, made, depth)
     made

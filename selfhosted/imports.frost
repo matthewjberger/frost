@@ -6,7 +6,8 @@ import "lexer.frost"
 
 export json_reports, SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
     file_name,
-    joined_path, join_path, module_at, report_where, line_of, column_of, file_of,
+    joined_path, join_path, module_at, report_where, report_note_where,
+    line_of, column_of, file_of,
     resolve_imports, search_roots_from, manifest_roots, source_with_room,
     manifest_above
 
@@ -527,7 +528,27 @@ file_of :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
     module_at(modules, offset) + 1
 }
 
+// The second line of a report already open: the same block of file, line and
+// caret, sorting with the line above it rather than where it points.
+report_note_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
+    frost_rt_report_note()
+    report_place(modules, src, offset)
+}
+
 report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
+    // The report starts here, at the byte its place is. Everything written
+    // after this belongs to it, and the run writes them all out in the order
+    // they are written rather than the order the passes found them. Opened
+    // before the two answers below, so a report with no file to name is still
+    // one report and still sorts where it belongs.
+    frost_rt_report_open(offset)
+    report_place(modules, src, offset)
+}
+
+// The block a report opens with: the file, the line and the column, the line of
+// source itself, and a caret under the column. Written by both of the two
+// above, which differ only in whether they start a report or continue one.
+report_place :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     // A program the compiler holds itself rather than reads is in no module, so
     // there is no file and no line to name. The report still says what is
     // wrong; without this it died on the empty table instead.

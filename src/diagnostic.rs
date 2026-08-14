@@ -125,7 +125,11 @@ fn leading_place(message: &str) -> Option<(String, &str)> {
 /// faults the run found. A report carrying an edit is left alone, since the
 /// edit belongs to the place it was made for and a reader applying them wants
 /// one per place.
+///
+/// In the order a reader reads them, which is what `in_source_order` puts them
+/// in.
 pub fn grouped(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let diagnostics = in_source_order(diagnostics);
     let mut kept: Vec<Diagnostic> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
     for diagnostic in diagnostics {
@@ -175,12 +179,45 @@ fn claim_of(diagnostic: &Diagnostic) -> &str {
 fn shown_position(diagnostic: &Diagnostic) -> crate::lexer::Position {
     let (place, _) = shown_as(diagnostic);
     let Some((path, line, column)) = numbered(&place) else {
-        return diagnostic.position;
+        // A place written out in words names no file, so the file is the one
+        // the report already carries. Read here rather than left alone, since
+        // this is the place the reader is shown and the one two reports of the
+        // same fault are weighed against.
+        return match described(&place) {
+            Some((line, column)) => crate::lexer::Position {
+                line,
+                column,
+                file: diagnostic.position.file,
+            },
+            None => diagnostic.position,
+        };
     };
     let Some(file) = crate::source_map::id_of(&path) else {
         return diagnostic.position;
     };
     crate::lexer::Position { line, column, file }
+}
+
+/// Reports in the order a reader reads them, which is the order they are
+/// written in rather than the order the passes ran. A report from nowhere goes
+/// last, since there is no line to read it against, and two at one place keep
+/// the order they were found in. Warnings are ordered by this too: a report is
+/// a report, and a reader walking a file wants them where the file puts them.
+pub fn in_source_order(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let mut diagnostics = diagnostics;
+    diagnostics.sort_by_key(|diagnostic| {
+        let at = shown_position(diagnostic);
+        (at.line == 0, at.file, at.line, at.column)
+    });
+    diagnostics
+}
+
+/// A place written as `line 7, column 1`, which is what a fault raised inside
+/// an instance carries when there is no file to name.
+fn described(place: &str) -> Option<(usize, usize)> {
+    let rest = place.strip_prefix("line ")?;
+    let (line, column) = rest.split_once(", column ")?;
+    Some((line.parse().ok()?, column.parse().ok()?))
 }
 
 // An error that knows where it happened. A bail site that can see the

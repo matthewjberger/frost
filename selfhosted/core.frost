@@ -51,6 +51,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_thread_spawn, frost_rt_thread_join,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
     frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
+    frost_rt_report_open, frost_rt_report_note,
     frost_rt_recover_failures
 
 // The runtime's allocator rather than the C library's, so a request that cannot
@@ -308,6 +309,16 @@ frost_rt_recover_note :: safe extern fn()
 frost_rt_json_reports :: safe extern fn()
 frost_rt_json_place :: extern fn(path: ^i8, line: i64, column: i64, offset: i64)
 frost_rt_json_close :: safe extern fn()
+// Reports held until the run is over, so they go out in the order they are
+// written rather than the order the passes found them. A place opens one and
+// every piece written after it belongs to it; anything written with none open
+// goes straight out, which is what a line about the command rather than about
+// the program is. The flush runs at exit.
+frost_rt_report_open :: safe extern fn(at: i64)
+// Another line of the report already open, at a place of its own. It sorts
+// with the report it continues, so a fault and the note under it stay one thing
+// to read wherever each of them points.
+frost_rt_report_note :: safe extern fn()
 frost_rt_recover_failures :: safe extern fn() -> i64
 frost_rt_remove_file :: extern fn(path: ^i8) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
@@ -936,6 +947,16 @@ GArg :: struct {
     // it are read again from here once that base is known. -1 for an element
     // that waits on nothing.
     node: i64,
+    // The name a caller wrote, where that name stands for a record constant.
+    // The element takes no parameter and is handed over nowhere: the body writes
+    // the constant's own name, so a field read off it is read off a constant and
+    // a call through that field is a call to the function the constant names.
+    // Zero for every other element.
+    //
+    // Two constants of one type are two elements, so the name is part of what
+    // makes a specialization the one it is and part of what its symbol is called.
+    const_off: i64,
+    const_len: i64,
 }
 
 // One place a function hands on that belongs to a borrowed parameter: which
@@ -1739,6 +1760,12 @@ Parser :: struct {
     decl_pack_len: i64,
     decl_pack_fixed: i64,
     decl_pack_format: i64,
+    // Whether the body being parsed is the body of a `for` over that list while
+    // nothing is bound to it. A template's own copy is read once with the list
+    // empty, and it is never emitted: each instance reads the body again with
+    // the list bound and unrolls it. A call through a field written there names
+    // no function in this copy and names one in every copy that is emitted.
+    unbound_pack_for: i64,
     // The name the declaration being parsed gave its `format` parameter. A body
     // that hands that name on to another `format` parameter is handing on a
     // literal a caller already wrote, so the holes were counted where the
@@ -1804,6 +1831,12 @@ Parser :: struct {
     // settling, and false once the checks start: parsing a template there would
     // put a body into the middle of the walk reading the program.
     mono_on_demand: i64,
+    // The height below which the names a compile-time `for` bound are out of
+    // force. A body read again for an instance is a declaration of its own, and
+    // the loop the call sits in is not part of it: without this, a loop over
+    // `value` rewrote the callee's own `value` to the loop's element and the
+    // callee named a parameter it does not have.
+    alias_floor: i64,
     moved: Arena<LocalVar>,
     // For a binding that views a container's storage rather than its own, the
     // node of the place that container sits in. `slot` holds it.

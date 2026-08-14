@@ -276,24 +276,38 @@ while (is_no_entity(child) == false) {
 hierarchy_despawn_tree(tree, world, car)   // the car and everything under it
 ```
 
-## Schedules, states and time
+## Systems, states and time
 
-A system is a function of the world. A schedule is a list of them with a stage
-each, run in ascending stage order, so ordering is a number:
+A system is a function of the world, written down as a constant with the stage
+it belongs to and the state it runs on. Stages run in ascending order, so
+ordering is a number rather than a graph of declared dependencies: what a frame
+does is read top to bottom.
 
 ```frost,sketch
-mut frame := schedule_new()
-schedule_add(frame, Stage::First, read_input)
-schedule_add(frame, Stage::Update, integrate)
-schedule_add_in_state(frame, Stage::Update, PAUSED, draw_menu)
-schedule_add(frame, Stage::Last, upload)
+reading    :: System { stage = Stage::First,  state = ANY_STATE, run = read_input }
+integrating :: System { stage = Stage::Update, state = ANY_STATE, run = integrate }
+menu       :: System { stage = Stage::Update, state = PAUSED,    run = draw_menu }
+uploading  :: System { stage = Stage::Last,   state = ANY_STATE, run = upload }
 
-schedule_run(frame, world, states_current(states))
+mut order := stage_order(Stage::First)
+while (order <= stage_order(Stage::Last)) {
+    run_stage_of(world, states_current(states), stage_at(order),
+        reading, integrating, menu, uploading)
+    order = order + 1
+}
 ```
 
-The system is a function pointer, since a schedule is built while the program
-runs. `for_each` and `for_each_row` cover the other half, the inner loop where
-the call has to fold away.
+The set a frame runs is named where it runs, not registered and kept. The list
+is a compile-time one, so the `for` over it unrolls and each system that belongs
+to the stage becomes a direct call to the function its constant names; the rest
+compile to nothing. A call names the function it goes to, which is why a system
+is a constant rather than a pointer handed to a table.
+
+`for_each` and `for_each_row` cover the other half, the inner loop where the
+call has to fold away.
+
+A stage the enum names and `stage_order` does not is a compile error rather than
+a system that quietly runs in the wrong one.
 
 A state change is requested during a frame and taken between frames, so a system
 that asks to leave a state keeps the schedule it started under until it

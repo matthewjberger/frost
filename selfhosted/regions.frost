@@ -17,7 +17,7 @@ export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources,
     check_reference_fields, check_regions, check_types, check_types_in,
-    check_unsafety
+    check_unsafety, refuse_indirect_calls
 
 // A pool whose elements are resources.
 //
@@ -2798,7 +2798,16 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     // the room past it, so the line a reader was shown for a fault about
     // `items__0` was ` items__0 items__0 `.
     root_at := strip_place(p, id, place_depth(p, id))
-    at := arena_at(p.arena, root_at).pos
+    // A constant is written out again wherever it is named, so naming one twice
+    // is two values and neither took anything from the other. The walk records
+    // it before the constants are in the table, which is why this is asked
+    // here rather than where the move was taken down.
+    root_node := arena_at(p.arena, root_at)
+    if (root_node.kind == NodeKind::Var
+        && names_a_constant_value(p, root_node.val, root_node.c)) {
+        return
+    }
+    at := root_node.pos
     if (move_fault_told(p, at)) {
         return
     }
@@ -2811,7 +2820,7 @@ report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
     report("\n")
     moved_root := strip_place(p, moved_slot, place_depth(p, moved_slot))
     moved_node := arena_at(p.arena, moved_root)
-    report_where(p.modules, p.src, moved_node.pos)
+    report_note_where(p.modules, p.src, moved_node.pos)
     report_fmt("'{}' was moved here", said)
     // The walk goes on. What is refused is this use, and the uses after it are
     // their own faults about their own places, so abandoning here would report
@@ -4300,8 +4309,15 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                     frost_rt_recover_escape()
                 }
             }
-            if (pnode.a != 1 && anode.kind == NodeKind::Var
-                && is_aggregate(ptype)) {
+            // A `move` parameter is the one that takes an aggregate away. An
+            // aggregate written with no mode borrows, so the flag reads 1 there
+            // and the caller keeps what it had. An element of a compile-time
+            // list is the third: nothing parsed a mode for it, so the flag
+            // reads 0 while the value is passed the way any other copy is, and
+            // reading that as a move refused a list handed on inside a loop.
+            if (pnode.a == 2 && anode.kind == NodeKind::Var
+                && is_aggregate(ptype)
+                && names_a_constant_value(p, anode.val, anode.c) == false) {
                 arena_push(
                     p.moved,
                     LocalVar {
@@ -4313,6 +4329,7 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 )
             } else if (pnode.a == 2 && ptype == TY_VOID
                 && anode.kind == NodeKind::Var
+                && names_a_constant_value(p, anode.val, anode.c) == false
                 && generic_fn_of(p, p.moves_fn) >= 0) {
                 // Inside a template the call's type argument is the parameter
                 // an instance binds, so whether the value leaves anything
@@ -4509,6 +4526,29 @@ in_scratch_range :: fn(
 // body is walked once and what it moved is sorted into those two cases. Walking
 // the body a second time instead reported the fresh binding as a use after move,
 // which is what a struct-returning call held in a temporary inside a loop is.
+// Whether a name stands for something other than storage a frame holds. A
+// constant is written out again wherever it is named and a function is a name,
+// so handing either to a call takes nothing away from anywhere: there is no
+// place for a later read to find empty. Frost has no mutable global, so a name
+// that is not a local is one of those two.
+//
+// A function's own compile-time list is the third. Each call writes the list's
+// elements out where the body names them, so handing the whole list on to
+// another generic hands over names rather than a value, and a loop that does it
+// every turn takes nothing away on the first one.
+names_a_constant_value :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    if (value_const_node(p, off, len) >= 0) {
+        return true
+    }
+    gi := generic_fn_of(p, p.moves_fn)
+    if (gi < 0) {
+        return false
+    }
+    gfn := arena_at(p.generic_fns, gi)
+    (gfn.pack_len > 0 && gfn.pack_len == len
+        && bytes_equal(p.src, gfn.pack_off, off, len))
+}
+
 walk_moves_while :: fn(mut p: Parser, body: i64) {
     base := p.moved.count
     scratch_base := p.move_scratch.count
@@ -4534,7 +4574,8 @@ walk_moves_while :: fn(mut p: Parser, body: i64) {
     mut k := base
     while (k < p.moved.count) {
         e := arena_at(p.moved, k)
-        if (in_scratch_range(p, scratch_base, scratch_top, e.name_off, e.name_len) == false) {
+        if (in_scratch_range(p, scratch_base, scratch_top, e.name_off, e.name_len) == false
+            && names_a_constant_value(p, e.name_off, e.name_len) == false) {
             report_where(p.modules, p.src, e.name_off)
             report("value '")
             report_src(p.src, e.name_off, e.name_len)
@@ -4829,7 +4870,7 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 // Where it went, on its own line, the way every other move
                 // fault says it.
                 report("\n")
-                report_where(p.modules, p.src, rnode.val)
+                report_note_where(p.modules, p.src, rnode.val)
                 report_fmt("'{}' was moved here", said)
                 frost_rt_recover_escape()
             }
@@ -6314,6 +6355,14 @@ frame_call_ptr_prov :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     callee := node.a
     args := node.b
+    // A call through a constant bundle's field is a call to the function that
+    // field names, so what its answer is worth is what that signature says,
+    // the same as a call written by name. Without this the answer was worth
+    // nothing the walk could trace and a function handing one back was refused.
+    direct := bundle_field_fn(p, callee)
+    if (direct >= 0) {
+        return frame_proc_prov(p, fn_proc_type(p, direct), args)
+    }
     proc_ty := frame_place_type(p, callee)
     if (proc_ty < 0 || is_proc(proc_ty) == false) {
         return PROV_UNKNOWN
@@ -8149,7 +8198,6 @@ check_unsafety :: fn(mut p: Parser) {
         i = i + 1
     }
     report_idle_unsafe(p)
-    report_indirect_calls(p)
 }
 
 // Mark the innermost `unsafe` holding this position as having earned itself.
@@ -8237,7 +8285,7 @@ report_idle_unsafe :: fn(mut p: Parser) {
     }
 }
 
-// Whether a call going to a value has already been named at this place, and a
+// Whether a call going to a value has already been refused at this place, and a
 // note that it has where it had not. A generic's instance is the declaration
 // parsed again, so the walk reaches one written call once per instance.
 indirect_first_report :: fn(mut p: Parser, pos: i64) -> bool {
@@ -8256,18 +8304,6 @@ indirect_first_report :: fn(mut p: Parser, pos: i64) -> bool {
     true
 }
 
-// Every call that goes to a value rather than to a name, named on every build
-// as a warning, the way a block that vouches for nothing is. The count is what
-// says whether anything still calls that way.
-//
-// A call through a constant bundle's field is not one. `ops.less(a, b)`, where
-// `ops` is a compile-time argument, folds to a call to the function that field
-// names, so nothing is loaded and nothing is dispatched. What is left is a call
-// whose callee is decided while the program runs.
-// Whether the field a call goes through hangs off a compile-time parameter. A
-// template's own body is parsed with that parameter unbound, so the field names
-// no function there, and the instances hold the same call with it bound. The
-// template's copy is not emitted, and the instance's folds.
 // Where the whole of a called expression begins. A field or an index hangs off
 // what it reads from, so the leftmost of the chain is what a reader is pointed
 // at, rather than the dot or the bracket partway along it.
@@ -8281,24 +8317,48 @@ callee_start :: fn(mut p: Parser, callee: i64) -> i64 {
     node.pos
 }
 
+// Whether the field a call goes through hangs off a compile-time parameter. A
+// template's own body is parsed with that parameter unbound, so the field names
+// no function there, and the instances hold the same call with it bound. The
+// template's copy is not emitted, and the instance's folds.
 callee_is_compile_time :: fn(mut p: Parser, callee: i64) -> bool {
     node := arena_at(p.arena, callee)
     if (node.kind != NodeKind::Field) {
         return false
     }
-    base := arena_at(p.arena, node.a)
+    // A bundle holding a bundle is reached through a chain of fields, and what
+    // decides the chain is what it starts from, however long it runs.
+    mut at := node.a
+    mut base := arena_at(p.arena, at)
+    while (base.kind == NodeKind::Field) {
+        at = base.a
+        base = arena_at(p.arena, at)
+    }
     if (base.kind != NodeKind::Var) {
         return false
     }
     names_cfn_param(p, base.val, base.c)
 }
 
-report_indirect_calls :: fn(mut p: Parser) {
+// A call names the function it goes to. Every one that goes to a value instead
+// is refused here, so what a program does is read off the call rather than off
+// whatever the value held when the line ran.
+//
+// A call through a constant bundle's field is not one. `ops.less(a, b)`, where
+// `ops` is a compile-time argument, folds to a call to the function that field
+// names, so nothing is loaded and nothing is dispatched. What is left is a call
+// whose callee is decided while the program runs.
+refuse_indirect_calls :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         kind := node.kind
-        if (kind == NodeKind::CallPtr) {
+        // A call written in the body of a `for` over the list a declaration
+        // takes, read while nothing is bound to it, is the template's own copy
+        // and is never emitted. Each instance reads that body again with the
+        // list bound, and what is written through the loop's name names a
+        // function there.
+        if (kind == NodeKind::CallPtr && node.c == 0) {
             // Where the callee was written, rather than where the call's
             // arguments closed, which is the line below it. A field hangs off
             // what it reads from, and the reader is pointed at the whole of
@@ -8308,8 +8368,8 @@ report_indirect_calls :: fn(mut p: Parser) {
                 && callee_is_compile_time(p, node.a) == false
                 && indirect_first_report(p, at)) {
                 report_where(p.modules, p.src, at)
-                report_warning_mark(p)
-                report("a call goes to a name, and this one goes to a value\n")
+                report("a call names the function it goes to, and this one goes to a value. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
+                frost_rt_recover_note()
             }
         } else if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, node.val)
@@ -8317,10 +8377,10 @@ report_indirect_calls :: fn(mut p: Parser) {
                 && proc_param_named(p, sym.off, sym.len) >= 0
                 && indirect_first_report(p, node.pos)) {
                 report_where(p.modules, p.src, node.pos)
-                report_warning_mark(p)
-                report("a call goes to a name, and '")
+                report("a call names the function it goes to, and '")
                 report_src(p.src, sym.off, sym.len)
-                report("' holds a function rather than being one\n")
+                report("' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
+                frost_rt_recover_note()
             }
         }
         i = i + 1

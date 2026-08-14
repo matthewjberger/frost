@@ -504,7 +504,9 @@ draw_things :: fn(mut s: Scene, context: NodeContext) {
 // view, and this one is drawn from the camera, from the light, and from the
 // second camera in the corner. The walk is the same each time and only the
 // frustum differs, which is what the three uploads are.
-before_frame :: fn(mut s: Built, mut app: App) {
+before_frame :: fn(mut app: App) {
+    slot := resource_of($Built, app.world)
+    mut s := ecs_resource($Built, app.world, slot)
     queue := app_queue(app)
     light := s.light
     s.elapsed = s.elapsed + input_delta_seconds(app_input(app))
@@ -617,10 +619,15 @@ watch_inset :: fn(mut world: World) {
 // it keeps its place in the order and records nothing. Both the sub-graph that
 // draws the second view and the step that puts it in the corner go, so nothing
 // is drawn for a picture nothing shows.
-update_inset :: fn(mut s: Built, mut g: Graph, world: World) {
-    held := ecs_resource($ShowInset, world, resource_of($ShowInset, world))
-    graph_set_enabled(g, s.inset_pass, held.on)
-    graph_set_enabled(g, s.corner_pass, held.on)
+update_inset :: fn(mut app: App) {
+    mut s := ecs_resource($Built, app.world, resource_of($Built, app.world))
+    held := ecs_resource(
+        $ShowInset,
+        app.world,
+        resource_of($ShowInset, app.world)
+    )
+    graph_set_enabled(app.renderer.graph, s.inset_pass, held.on)
+    graph_set_enabled(app.renderer.graph, s.corner_pass, held.on)
 }
 
 // Where the light is looking from, as a matrix. A directional light has no
@@ -1092,17 +1099,33 @@ make_post_shader :: fn(device: Device, source: StringView) -> ShaderModule {
 // The second view is a graph of its own, built here and handed over, so where
 // the nested work falls in the order comes from what its pass declares it
 // writes, the same as everything else.
-declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
-    screen := graph_backbuffer(g)
+// Which of this program's passes is which. The engine keeps zero for its own,
+// so a program numbers its own from one, and the number is what the graph hands
+// back when the pass's turn comes.
+SHADOW_PASS :: 1
+LIT_PASS :: 2
+PULSE_PASS :: 3
+BRIGHT_PASS :: 4
+BLUR_PASS :: 5
+COMPOSE_PASS :: 6
+INSET_SCENE_PASS :: 7
+CORNER_PASS :: 8
+
+declare_passes :: fn(mut app: App) {
+    device := app_device(app)
+    format := app_format(app)
+    slot := resource_of($Built, app.world)
+    mut s := ecs_resource($Built, app.world, slot)
+    screen := graph_backbuffer(app.renderer.graph)
     shadow_map := graph_depth(
-        g,
+        app.renderer.graph,
         "shadow map",
         SHADOW_SIZE,
         SHADOW_SIZE,
         DEPTH_FORMAT
     )
     depth := graph_transient_depth(
-        g,
+        app.renderer.graph,
         "depth",
         WINDOW_SIZED,
         WINDOW_SIZED,
@@ -1112,54 +1135,67 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     // has something to read. It and the two bloom steps are transient: written
     // and consumed inside one frame, so the graph hands them one texture
     // between them wherever their lifetimes leave room.
-    lit := graph_transient_color(g, "lit", WINDOW_SIZED, WINDOW_SIZED, format)
-    bright := graph_transient_color(g, "bright", HALF, HALF, format)
-    blurred := graph_transient_color(g, "blurred", HALF, HALF, format)
+    lit := graph_transient_color(
+        app.renderer.graph,
+        "lit",
+        WINDOW_SIZED,
+        WINDOW_SIZED,
+        format
+    )
+    bright := graph_transient_color(
+        app.renderer.graph,
+        "bright",
+        HALF,
+        HALF,
+        format
+    )
+    blurred := graph_transient_color(
+        app.renderer.graph,
+        "blurred",
+        HALF,
+        HALF,
+        format
+    )
     // A run of bytes rather than a picture. Nothing draws into it and nothing
     // samples it; one pass fills it and another reads it, which is the only
     // thing the graph needs to put them in order.
-    glow := graph_buffer(g, "glow", GLOW_BYTES, BufferUsage::Storage)
+    glow := graph_buffer(
+        app.renderer.graph,
+        "glow",
+        GLOW_BYTES,
+        BufferUsage::Storage
+    )
     // What the second view is drawn into. Transient like the rest of the chain,
     // and a fixed size, so the binding that reads it is built once.
     inset := graph_transient_color(
-        g,
+        app.renderer.graph,
         "inset",
         INSET_WIDTH,
         INSET_HEIGHT,
         format
     )
 
-    shadow_pass := graph_node_pass(
-        g,
-        "shadow",
-        draw_things,
-        ptr_to(s.shadow_scene)
-    )
-    graph_writes_depth(g, shadow_pass, shadow_map)
+    shadow_pass := graph_node_pass(app.renderer.graph, "shadow", SHADOW_PASS)
+    graph_writes_depth(app.renderer.graph, shadow_pass, shadow_map)
 
     // Declared second and reading what the first writes, which is the edge the
     // order follows. Declaring them the other way round changes nothing.
-    lit_pass := graph_node_pass(
-        g,
-        "scene",
-        draw_things,
-        ptr_to(s.lit_scene)
-    )
+    lit_pass := graph_node_pass(app.renderer.graph, "scene", LIT_PASS)
     graph_writes_color(
-        g,
+        app.renderer.graph,
         lit_pass,
         lit,
         Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 }
     )
-    graph_writes_depth(g, lit_pass, depth)
-    graph_reads(g, lit_pass, shadow_map)
-    graph_reads(g, lit_pass, glow)
+    graph_writes_depth(app.renderer.graph, lit_pass, depth)
+    graph_reads(app.renderer.graph, lit_pass, shadow_map)
+    graph_reads(app.renderer.graph, lit_pass, glow)
     // One hook for three bindings, because the map and the run of glow values
     // are read by the scene pass and by the inset's, and the inset's graph
     // holds neither resource to rebuild from.
     s.lit_scene.shadow_map = shadow_map
     s.lit_scene.glow = glow
-    graph_rebuilds(g, lit_pass, rebuild_bindings, ptr_to(s))
+    graph_rebuilds(app.renderer.graph, lit_pass)
 
     // What is drawn at all is decided once per view, and each of the three
     // views does it inside its own node: the light's is culled by the box it
@@ -1168,63 +1204,48 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
 
     // Declared after the pass that reads it, and it runs first: the buffer
     // between them is the whole of what says so.
-    pulse_pass := graph_compute_pass(
-        g,
-        "pulse",
-        dispatch_pulse,
-        ptr_to(s.pulse)
-    )
-    graph_writes(g, pulse_pass, glow)
+    pulse_pass := graph_compute_pass(app.renderer.graph, "pulse", PULSE_PASS)
+    graph_writes(app.renderer.graph, pulse_pass, glow)
 
     // The chain. Each step is the same fullscreen triangle with a different
     // fragment entry and a different input, and each is declared in whatever
     // order reads well: what runs when comes from the reads and writes.
     s.bright_step.source = lit
     s.bright_step.second_source = lit
-    bright_pass := graph_pass(
-        g,
-        "bright",
-        draw_cover,
-        ptr_to(s.bright_step)
-    )
+    bright_pass := graph_pass(app.renderer.graph, "bright", BRIGHT_PASS)
     graph_writes_color(
-        g,
+        app.renderer.graph,
         bright_pass,
         bright,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
-    graph_reads(g, bright_pass, lit)
-    graph_rebuilds(g, bright_pass, rebuild_step, ptr_to(s.bright_step))
+    graph_reads(app.renderer.graph, bright_pass, lit)
+    graph_rebuilds(app.renderer.graph, bright_pass)
 
     s.blur_step.source = bright
     s.blur_step.second_source = bright
-    blur_pass := graph_pass(g, "blur", draw_cover, ptr_to(s.blur_step))
+    blur_pass := graph_pass(app.renderer.graph, "blur", BLUR_PASS)
     graph_writes_color(
-        g,
+        app.renderer.graph,
         blur_pass,
         blurred,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
-    graph_reads(g, blur_pass, bright)
-    graph_rebuilds(g, blur_pass, rebuild_step, ptr_to(s.blur_step))
+    graph_reads(app.renderer.graph, blur_pass, bright)
+    graph_rebuilds(app.renderer.graph, blur_pass)
 
     s.compose_step.source = lit
     s.compose_step.second_source = blurred
-    compose_pass := graph_pass(
-        g,
-        "compose",
-        draw_cover,
-        ptr_to(s.compose_step)
-    )
+    compose_pass := graph_pass(app.renderer.graph, "compose", COMPOSE_PASS)
     graph_writes_color(
-        g,
+        app.renderer.graph,
         compose_pass,
         screen,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
-    graph_reads(g, compose_pass, lit)
-    graph_reads(g, compose_pass, blurred)
-    graph_rebuilds(g, compose_pass, rebuild_step, ptr_to(s.compose_step))
+    graph_reads(app.renderer.graph, compose_pass, lit)
+    graph_reads(app.renderer.graph, compose_pass, blurred)
+    graph_rebuilds(app.renderer.graph, compose_pass)
 
     // The second view: its own target, its own depth, its own pass.
     mut inset_graph := graph_new(device)
@@ -1239,8 +1260,7 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
     inset_scene_pass := graph_node_pass(
         inset_graph,
         "inset scene",
-        draw_things,
-        ptr_to(s.inset_scene)
+        INSET_SCENE_PASS
     )
     graph_writes_color(
         inset_graph,
@@ -1253,39 +1273,106 @@ declare_passes :: fn(mut s: Built, mut g: Graph, device: Device, format: u32) {
         print("the inset graph cannot run\n")
     }
 
-    sub := graph_sub(g, inset_graph)
-    inset_pass := graph_sub_pass(g, "inset view", sub)
+    sub := graph_sub(app.renderer.graph, inset_graph)
+    inset_pass := graph_sub_pass(app.renderer.graph, "inset view", sub)
     s.inset_pass = inset_pass
     graph_writes_color(
-        g,
+        app.renderer.graph,
         inset_pass,
         inset,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
     // What the child draws into is what this graph holds for `inset`, given
     // again every time the child runs.
-    graph_takes(g, sub, inset_target, inset)
+    graph_takes(app.renderer.graph, sub, inset_target, inset)
 
     // Last, and over the top: the second view drawn into a corner of what the
     // compose pass left. Both write the window, and the graph keeps them in the
     // order they were declared, so this one loads rather than clears.
     s.inset_step.source = inset
     s.inset_step.second_source = inset
-    corner_pass := graph_pass(
-        g,
-        "corner",
-        draw_cover,
-        ptr_to(s.inset_step)
-    )
+    corner_pass := graph_pass(app.renderer.graph, "corner", CORNER_PASS)
     s.corner_pass = corner_pass
     graph_writes_color(
-        g,
+        app.renderer.graph,
         corner_pass,
         screen,
         Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
     )
-    graph_reads(g, corner_pass, inset)
-    graph_rebuilds(g, corner_pass, rebuild_step, ptr_to(s.inset_step))
+    graph_reads(app.renderer.graph, corner_pass, inset)
+    graph_rebuilds(app.renderer.graph, corner_pass)
+    ecs_resource_set(app.world, slot, s)
+}
+
+// What each of this program's passes records, by the number it was declared
+// under. Every arm is a call to a function this build knows.
+record_passes :: fn(mut app: App, which: i64, context: NodeContext) {
+    mut s := ecs_resource($Built, app.world, resource_of($Built, app.world))
+    if (which == SHADOW_PASS) {
+        draw_things(s.shadow_scene, context)
+        return
+    }
+    if (which == LIT_PASS) {
+        draw_things(s.lit_scene, context)
+        return
+    }
+    if (which == INSET_SCENE_PASS) {
+        draw_things(s.inset_scene, context)
+        return
+    }
+    app_engine_record(app, which, context)
+}
+
+draw_passes :: fn(mut app: App, which: i64, pass: RenderPassEncoder) {
+    mut s := ecs_resource($Built, app.world, resource_of($Built, app.world))
+    if (which == BRIGHT_PASS) {
+        draw_cover(s.bright_step, pass)
+        return
+    }
+    if (which == BLUR_PASS) {
+        draw_cover(s.blur_step, pass)
+        return
+    }
+    if (which == COMPOSE_PASS) {
+        draw_cover(s.compose_step, pass)
+        return
+    }
+    if (which == CORNER_PASS) {
+        draw_cover(s.inset_step, pass)
+    }
+}
+
+dispatch_passes :: fn(mut app: App, which: i64, pass: ComputePassEncoder) {
+    mut s := ecs_resource($Built, app.world, resource_of($Built, app.world))
+    if (which == PULSE_PASS) {
+        dispatch_pulse(s.pulse, pass)
+    }
+}
+
+// What a pass whose targets moved builds again. What it makes is a binding the
+// pass keeps, so the step it holds is written back.
+rebuild_passes :: fn(mut app: App, which: i64) {
+    slot := resource_of($Built, app.world)
+    mut s := ecs_resource($Built, app.world, slot)
+    if (which == LIT_PASS) {
+        rebuild_bindings(s, app.renderer.graph)
+    } else if (which == BRIGHT_PASS) {
+        rebuild_step(s.bright_step, app.renderer.graph)
+    } else if (which == BLUR_PASS) {
+        rebuild_step(s.blur_step, app.renderer.graph)
+    } else if (which == COMPOSE_PASS) {
+        rebuild_step(s.compose_step, app.renderer.graph)
+    } else if (which == CORNER_PASS) {
+        rebuild_step(s.inset_step, app.renderer.graph)
+    }
+    ecs_resource_set(app.world, slot, s)
+}
+
+// What a frame settles before it is recorded: which passes run this time, then
+// the three views uploaded.
+each_frame :: fn(mut app: App) {
+    update_inset(app)
+    before_frame(app)
 }
 
 // The shadow map and the run of glow values, bound again. One hook rather than
@@ -1327,11 +1414,15 @@ main :: fn() -> i64 {
     }
 }
 
+watch_inset_system :: System {
+    stage = Stage::FrameUpdate,
+    state = ANY_STATE,
+    run = watch_inset
+}
+
 run :: fn(move app: App) -> i64 {
-    app_install_group(app, default_plugins())
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, spin_plugin)
+    app_install($log_plugin, app)
+    app_install($spin_plugin, app)
     device := app_device(app)
     queue := app_queue(app)
 
@@ -1786,12 +1877,22 @@ run :: fn(move app: App) -> i64 {
     app_camera_set(app, eye)
 
     app_insert_resource(app, ShowInset { on = true })
-    app_add_system(app, Stage::FrameUpdate, watch_inset)
-    app_configure_graph(app, declare_passes, ptr_to(built))
-    app_update_graph(app, update_inset, ptr_to(built))
-    app_before_render(app, before_frame, ptr_to(built))
-    app_run(app)
+    app_insert_resource(app, built)
+    app_run(
+        $declare_passes,
+        $each_frame,
+        $record_passes,
+        $draw_passes,
+        $dispatch_passes,
+        $rebuild_passes,
+        app,
+        camera_system,
+        escape_system,
+        spin_system,
+        watch_inset_system
+    )
 
+    mut built := ecs_resource($Built, app.world, resource_of($Built, app.world))
     batch_pipelines_free(built.shadow_scene.steps)
     batch_pipelines_free(built.lit_scene.steps)
     batch_pipelines_free(built.inset_scene.steps)

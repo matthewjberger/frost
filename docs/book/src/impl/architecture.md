@@ -75,7 +75,16 @@ collect what they find (`src/diagnostic.rs`). A program with any diagnostic
 is refused before a backend writes a word. Recovery raises how many faults one
 run reports, and the set of programs a build accepts stays the same. The
 self-hosted compiler does the same with a runtime recovery mark, and a harness
-test holds the two to the same faults, on the same lines, in the same words.
+test holds the two to the same faults, on the same lines, in the same words, in
+the same order.
+
+That order is the order the program is written in, not the order the passes ran:
+which pass looks at a file first is the compiler's business, and a reader reads
+top to bottom. The bootstrap sorts what it collected (`in_source_order`); the
+self-hosted compiler holds each report in `runtime/frost_runtime.c` from the
+place that opens it until the run ends, then writes them sorted. A note under a
+fault sorts with the fault rather than with where it points, so "was moved here"
+stays under "use of moved value".
 `src/tools/query.rs` answers what an editor asks of a checked program (symbols,
 definitions, fields, local types) from the same arenas and IR the build reads.
 The self-hosted compiler answers the same questions through `FROST_QUERY`.
@@ -223,10 +232,11 @@ What the two backends carry, verified by running native binaries
   literal patterns, identifier binding, and wildcard.
 - Tuple patterns in `match` (e.g. `match (i % 3, i % 5) { case (0, 0): ... }`),
   with literal, wildcard, and identifier-binding sub-patterns.
-- Function pointers: a function used as a value becomes its address, a
-  `fn(...) -> T` parameter or local holds one, and calling through it is an
-  indirect call. That pointer is the language's higher-order form
-  (`apply(f: fn(i64) -> i64, x: i64)`).
+- Function pointers: a function used as a value becomes its address, and a
+  `fn(...) -> T` parameter, local or field holds one. Calling through one is
+  refused; the higher-order form names the function at the call
+  (`apply($f: fn(i64) -> i64, x: i64)`), which emits one specialization per
+  function named.
 - `defer`: function-scoped, run in LIFO order at each return wherever that
   return is written, where the body falls off the end, and where a `?` hands a
   failure on. A `defer` written inside a nested block is refused, since it

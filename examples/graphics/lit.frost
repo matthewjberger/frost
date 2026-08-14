@@ -59,11 +59,9 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    app_install_group(app, default_plugins())
-    app_install(app, render_plugin)
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, spin_plugin)
+    app_install($log_plugin, app)
+    app_install($render_plugin, app)
+    app_install($spin_plugin, app)
     // Turning is this program's, so which component it is is asked of the
     // world here rather than read off the engine's list.
     spin := component_of($Spin, app.world)
@@ -207,7 +205,7 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = -0.12
     app_camera_set(app, eye)
 
-    app_run(app)
+    app_run(app, camera_system, escape_system, spin_system)
     app_close(app)
 }
 

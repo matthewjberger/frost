@@ -905,15 +905,6 @@ fn store_incoming_register(
     builder.ins().call(memcpy_ref, &[destination, source, size]);
 }
 
-// A call through a function pointer, as the pieces the emitter needs. They
-// travel together because they describe one signature.
-struct IndirectCall<'a> {
-    callee: &'a IrOperand,
-    arguments: &'a [IrOperand],
-    parameter_types: &'a [Type],
-    return_type: &'a Type,
-}
-
 fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
     if is_aggregate(ty) {
         Ok(pointer_type)
@@ -996,30 +987,14 @@ impl Translator<'_, '_> {
             IrStatement::Assign(local, rvalue) => {
                 let local_type = self.function.local_type(*local).clone();
                 if matches!(local_type, Type::Void | Type::Unknown) {
-                    match rvalue {
-                        IrRvalue::Call {
-                            function,
-                            arguments,
-                        } => {
-                            self.emit_call(function, arguments)?;
-                        }
-                        IrRvalue::CallIndirect {
-                            callee,
-                            arguments,
-                            parameter_types,
-                            return_type,
-                        } => {
-                            self.emit_call_indirect(
-                                IndirectCall {
-                                    callee,
-                                    arguments,
-                                    parameter_types,
-                                    return_type,
-                                },
-                                None,
-                            )?;
-                        }
-                        _ => {}
+                    // A call made for what it does rather than what it answers
+                    // with still has to happen.
+                    if let IrRvalue::Call {
+                        function,
+                        arguments,
+                    } = rvalue
+                    {
+                        self.emit_call(function, arguments)?;
                     }
                     return Ok(());
                 }
@@ -1038,27 +1013,6 @@ impl Translator<'_, '_> {
                         } => {
                             let out = self.slot_address(*local)?;
                             self.emit_call_with_out(function, arguments, out)?;
-                        }
-                        // A function pointer hands an aggregate back the way a
-                        // named function does, through the trailing
-                        // out-pointer, since both are Frost functions and the
-                        // pointer's type is the signature.
-                        IrRvalue::CallIndirect {
-                            callee,
-                            arguments,
-                            parameter_types,
-                            return_type,
-                        } => {
-                            let out = self.slot_address(*local)?;
-                            self.emit_call_indirect(
-                                IndirectCall {
-                                    callee,
-                                    arguments,
-                                    parameter_types,
-                                    return_type,
-                                },
-                                Some(out),
-                            )?;
                         }
                         _ => bail!(
                             "native backend: unsupported aggregate assignment"
@@ -1214,26 +1168,6 @@ impl Translator<'_, '_> {
                     .decls
                     .declare_func_in_func(*func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
-            }
-            IrRvalue::CallIndirect {
-                callee,
-                arguments,
-                parameter_types,
-                return_type,
-            } => {
-                let results = self.emit_call_indirect(
-                    IndirectCall {
-                        callee,
-                        arguments,
-                        parameter_types,
-                        return_type,
-                    },
-                    None,
-                )?;
-                match results.first() {
-                    Some(value) => Ok(*value),
-                    None => Ok(self.zero_value(result_type)?),
-                }
             }
         }
     }
@@ -1676,53 +1610,6 @@ impl Translator<'_, '_> {
         self.builder.ins().stack_load(clif, slot, 0)
     }
 
-    // `out` is where an aggregate result lands. A Frost function that returns
-    // one takes the address as a trailing parameter and returns nothing, and a
-    // call through a pointer is the same call, so the signature built here
-    // matches the one build_signature builds for the callee.
-    fn emit_call_indirect(
-        &mut self,
-        call: IndirectCall,
-        out: Option<Value>,
-    ) -> Result<Vec<Value>> {
-        let IndirectCall {
-            callee,
-            arguments,
-            parameter_types,
-            return_type,
-        } = call;
-        let mut signature = self.decls.make_signature();
-        for parameter in parameter_types {
-            signature.params.push(AbiParam::new(param_abi_type(
-                self.pointer_type,
-                parameter,
-            )?));
-        }
-        if out.is_some() {
-            signature.params.push(AbiParam::new(self.pointer_type));
-        } else if !matches!(return_type, Type::Void) {
-            signature.returns.push(AbiParam::new(clif_type(
-                self.pointer_type,
-                return_type,
-            )?));
-        }
-        let signature_ref = self.builder.import_signature(signature);
-        let callee_value = self.operand(callee)?;
-        let mut argument_values = Vec::with_capacity(arguments.len() + 1);
-        for argument in arguments {
-            argument_values.push(self.operand(argument)?);
-        }
-        if let Some(out) = out {
-            argument_values.push(out);
-        }
-        let call = self.builder.ins().call_indirect(
-            signature_ref,
-            callee_value,
-            &argument_values,
-        );
-        Ok(self.builder.inst_results(call).to_vec())
-    }
-
     fn emit_call_with_out(
         &mut self,
         function: &str,
@@ -1998,8 +1885,7 @@ fn collect_rvalue_strings(
             collect_operand_strings(left, handle)?;
             collect_operand_strings(right, handle)
         }
-        IrRvalue::Call { arguments, .. }
-        | IrRvalue::CallIndirect { arguments, .. } => {
+        IrRvalue::Call { arguments, .. } => {
             for argument in arguments {
                 collect_operand_strings(argument, handle)?;
             }

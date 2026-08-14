@@ -383,22 +383,44 @@ build_image :: fn(which: i64) -> Image {
 // One node, and what runs inside it is the node's business. The steps that
 // decide what is drawn write the buffer the draw reads, and both are recorded
 // into the same encoder, so the graph is not asked to order them.
-declare_passes :: fn(mut s: Scene, mut g: Graph, device: Device, format: u32) {
-    screen := graph_backbuffer(g)
-    depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
-    scene_pass := graph_node_pass(g, "scene", draw_scene, ptr_to(s))
+// Which of this program's passes is which. The engine keeps zero for its own,
+// so a program numbers its own from one.
+SCENE_PASS :: 1
+
+declare_passes :: fn(mut app: App) {
+    screen := graph_backbuffer(app.renderer.graph)
+    depth := graph_depth(
+        app.renderer.graph,
+        "depth",
+        WINDOW_SIZED,
+        WINDOW_SIZED,
+        DEPTH_FORMAT
+    )
+    scene_pass := graph_node_pass(app.renderer.graph, "scene", SCENE_PASS)
     graph_writes_color(
-        g,
+        app.renderer.graph,
         scene_pass,
         screen,
         Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 }
     )
-    graph_writes_depth(g, scene_pass, depth)
+    graph_writes_depth(app.renderer.graph, scene_pass, depth)
+}
+
+// What each of this program's node passes records. A number the graph hands
+// back, and a call to the function that number names.
+record_pass :: fn(mut app: App, which: i64, context: NodeContext) {
+    if (which == SCENE_PASS) {
+        mut s := ecs_resource($Scene, app.world, resource_of($Scene, app.world))
+        draw_scene(s, context)
+        return
+    }
+    app_engine_record(app, which, context)
 }
 
 // What a frame does between the world and the graph. A system cannot reach a
 // device, so writing the frame's uniform and filling the run are this instead.
-before_frame :: fn(mut s: Scene, mut app: App) {
+before_frame :: fn(mut app: App) {
+    mut s := ecs_resource($Scene, app.world, resource_of($Scene, app.world))
     write_frame(
         app_queue(app),
         s.frame_uniform,
@@ -426,10 +448,8 @@ main :: fn() -> i64 {
 }
 
 run :: fn(move app: App) -> i64 {
-    app_install_group(app, default_plugins())
-    app_install(app, camera_controller_plugin)
-    app_install(app, exit_on_escape_plugin)
-    app_install(app, spin_plugin)
+    app_install($log_plugin, app)
+    app_install($spin_plugin, app)
     // Turning is this program's, so which component it is is asked of the
     // world here rather than read off the engine's list.
     spin := component_of($Spin, app.world)
@@ -584,9 +604,16 @@ run :: fn(move app: App) -> i64 {
     eye.pitch = 0.0
     app_camera_set(app, eye)
 
-    app_configure_graph(app, declare_passes, ptr_to(scene))
-    app_before_render(app, before_frame, ptr_to(scene))
-    app_run(app)
+    app_insert_resource(app, scene)
+    app_run(
+        $declare_passes,
+        $before_frame,
+        $record_pass,
+        app,
+        camera_system,
+        escape_system,
+        spin_system
+    )
     texture_free(images)
     app_close(app)
 }

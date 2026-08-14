@@ -179,6 +179,7 @@ fn harness_parameter(ast: &mut Ast, name: &str, ty: Type) -> AstParameter {
         compile_time_default: None,
         pack: false,
         format: false,
+        capability: false,
     }
 }
 
@@ -503,7 +504,7 @@ fn lowered_and_checked(
     collected: &[frost::Diagnostic],
     idle: &[frost::Diagnostic],
 ) -> Result<frost::IrModule> {
-    let (module, lowering, indirect) = beside(
+    let (module, lowering) = beside(
         collected,
         frost::build_module_recovering(
             &mut program.ast,
@@ -531,11 +532,9 @@ fn lowered_and_checked(
     // A build that is refused says what it refused and nothing else, so this is
     // past the last of them. A warning is a report too, and a caller reading
     // JSON gets it as one rather than as a line in the middle of the stream.
-    // A call going to a value is named beside a block that vouches for nothing,
-    // for the same reason: both are lists worth reading only while every entry
-    // on them earns its place.
-    let mut warnings = idle.to_vec();
-    warnings.extend(indirect);
+    // A warning is a report, so it comes out where the file puts it rather than
+    // where the pass that found it ran.
+    let warnings = frost::in_source_order(idle.to_vec());
     if wants_json() {
         eprint!("{}", frost::diagnostics_as_json(&warnings, "warning"));
     } else {
@@ -1148,7 +1147,10 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         if wants_json() {
             eprint!("{}", frost::diagnostics_as_json(&idle, "warning"));
         } else {
-            eprint!("{}", frost::render_warnings(&idle));
+            eprint!(
+                "{}",
+                frost::render_warnings(&frost::in_source_order(idle.clone()))
+            );
         }
         anyhow::bail!(
             "Unsafe audit: {} block(s) vouch for nothing",
@@ -1180,10 +1182,16 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.ast,
         &program.roots,
     ));
-    beside(
+    // Threading a capability through the calls that draw one is a rewrite, so a
+    // failure here ends the run. What it finds and rewrites nothing for — a
+    // function that draws a capability taken as a value — joins the checks
+    // above instead, so a program with one of those and an unrelated fault
+    // elsewhere names both.
+    let taken_as_values = beside(
         &faults,
         lower_allocation_sources(&mut program.ast, &program.roots),
     )?;
+    faults.extend(taken_as_values);
     // A failure set's result is linear when what it carries is, so the set of
     // linear types grows here and the ownership check below sees the whole of
     // it.

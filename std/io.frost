@@ -44,13 +44,15 @@ frost_rt_format_f64 :: extern fn(value: f64, out: ^u8, room: i64) -> i64
 // It is what a `print` costs on the stack.
 LINE :: 256
 
-// A line being built, and where it goes when it is done. It lives for one call
-// and is never handed out, so what it holds cannot outlive the write that
-// empties it.
+// A line being built. It lives for one call and is never handed out, so what it
+// holds cannot outlive the write that empties it.
+//
+// Where it goes is not on it. A destination is named at the call and travels as
+// a compile-time argument, so every step below writes to a function this build
+// knows, and `out(...)` is a call to that function rather than through a field.
 Line :: struct {
     bytes: [LINE]u8,
     used: i64,
-    out: fn(str),
 }
 
 to_stdout :: fn(text: str) {
@@ -64,32 +66,32 @@ to_stdout :: fn(text: str) {
 
 // What has been composed, written out, and the line emptied. Nothing goes out
 // for an empty line, so a destination is never called with no bytes.
-drain :: fn(mut line: Line) {
+drain :: fn($out: fn(str), mut line: Line) {
     if (line.used == 0) {
         return
     }
-    line.out(slice_range(line.bytes, 0, line.used))
+    out(slice_range(line.bytes, 0, line.used))
     line.used = 0
 }
 
 // Room for `want` more bytes, made by writing out what is already there.
 // Answers how much room there is, which is less than was asked for only when
 // the whole line would not hold it.
-room_for :: fn(mut line: Line, want: i64) -> i64 {
+room_for :: fn($out: fn(str), mut line: Line, want: i64) -> i64 {
     if (line.used + want <= LINE) {
         return want
     }
-    drain(line)
+    drain($out, line)
     if (want <= LINE) {
         return want
     }
     LINE
 }
 
-put_bytes :: fn(mut line: Line, text: str) {
+put_bytes :: fn($out: fn(str), mut line: Line, text: str) {
     mut at: i64 = 0
     while (at < str_len(text)) {
-        room := room_for(line, str_len(text) - at)
+        room := room_for($out, line, str_len(text) - at)
         mut k: i64 = 0
         while (k < room) {
             line.bytes[line.used + k] = text[at + k]
@@ -106,7 +108,7 @@ put_bytes :: fn(mut line: Line, text: str) {
 //
 // Each digit is taken off the negative side, so the most negative i64 needs no
 // negation of its own and there is no value this cannot write.
-put_int :: fn(mut line: Line, value: i64) {
+put_int :: fn($out: fn(str), mut line: Line, value: i64) {
     mut digits: [20]u8 = [0; 20]
     mut count: i64 = 0
     mut rest := value
@@ -125,12 +127,12 @@ put_int :: fn(mut line: Line, value: i64) {
         rest = rest / 10
     }
     if (negative) {
-        put_bytes(line, "-")
+        put_bytes($out, line, "-")
     }
     mut k := count
     while (k > 0) {
         k = k - 1
-        room_for(line, 1)
+        room_for($out, line, 1)
         line.bytes[line.used] = digits[k]
         line.used = line.used + 1
     }
@@ -139,8 +141,8 @@ put_int :: fn(mut line: Line, value: i64) {
 // A `%g` is a couple of dozen bytes at most, so a line with that much room
 // takes the whole of one and a line without is emptied first. What comes back
 // is how many bytes were written, which the runtime holds to the room given.
-put_f64 :: fn(mut line: Line, value: f64) {
-    room_for(line, 32)
+put_f64 :: fn($out: fn(str), mut line: Line, value: f64) {
+    room_for($out, line, 32)
     // The pointer is one past the bytes already composed and the room is what
     // is left of this line, so the run offered is inside the buffer by
     // construction.
@@ -165,7 +167,7 @@ span :: fn(text: str, from: i64, count: i64) -> str {
 // A `{` that opens nothing was refused where the call is written, so what
 // arrives here is either a hole, a doubled brace, or a byte that stands for
 // itself. That is why nothing here reports a fault: a lone `}` is a `}`.
-run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
+run_from :: fn($out: fn(str), mut line: Line, fmt: str, at: i64) -> i64 {
     length := str_len(fmt)
     mut start := at
     mut index := at
@@ -175,11 +177,11 @@ run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
             if (index + 1 < length) {
                 next := fmt[index + 1]
                 if (byte == 123 && next == 125) {
-                    put_bytes(line, span(fmt, start, index - start))
+                    put_bytes($out, line, span(fmt, start, index - start))
                     return index + 2
                 }
                 if (next == byte) {
-                    put_bytes(line, span(fmt, start, index + 1 - start))
+                    put_bytes($out, line, span(fmt, start, index + 1 - start))
                     index = index + 2
                     start = index
                     continue
@@ -188,7 +190,7 @@ run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
         }
         index = index + 1
     }
-    put_bytes(line, span(fmt, start, index - start))
+    put_bytes($out, line, span(fmt, start, index - start))
     index
 }
 
@@ -199,25 +201,25 @@ run_from :: fn(mut line: Line, fmt: str, at: i64) -> i64 {
 //
 // The order the arms are asked in is what routes a `bool`, which answers no to
 // every predicate and lands in the last two arms.
-write :: fn(out: fn(str), format fmt: str, args: $...) {
-    mut line := Line { bytes = [0; LINE], used = 0, out = out }
+write :: fn($out: fn(str), format fmt: str, args: $...) {
+    mut line := Line { bytes = [0; LINE], used = 0 }
     mut at: i64 = 0
     for value in args {
-        at = run_from(line, fmt, at)
+        at = run_from($out, line, fmt, at)
         if (is_float(value)) {
-            put_f64(line, cast($f64, value))
+            put_f64($out, line, cast($f64, value))
         } else if (is_slice(value)) {
-            put_bytes(line, value)
+            put_bytes($out, line, value)
         } else if (is_numeric(value)) {
-            put_int(line, cast($i64, value))
+            put_int($out, line, cast($i64, value))
         } else if (value) {
-            put_int(line, 1)
+            put_int($out, line, 1)
         } else {
-            put_int(line, 0)
+            put_int($out, line, 0)
         }
     }
-    at = run_from(line, fmt, at)
-    drain(line)
+    at = run_from($out, line, fmt, at)
+    drain($out, line)
 }
 
 // `format` on the parameter is what makes the literal's holes count against the
@@ -226,5 +228,5 @@ write :: fn(out: fn(str), format fmt: str, args: $...) {
 // the same word, and this hands its own literal and its own list straight on,
 // which is what lets the count be checked once at the caller.
 print :: fn(format fmt: str, args: $...) {
-    write(to_stdout, fmt, args)
+    write($to_stdout, fmt, args)
 }

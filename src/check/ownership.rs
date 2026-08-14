@@ -72,6 +72,11 @@ type ParamTypes = HashMap<String, Vec<Option<Type>>>;
 /// modes from here, since the field is where that signature is written.
 type FieldTypes = HashMap<(String, String), Type>;
 
+/// Which argument slots a call may leave out: a compile-time parameter with a
+/// default takes an argument only where the call writes a `$` for it. One entry
+/// per slot of `ParamTypes`, in the same order.
+type ParamDefaults = HashMap<String, Vec<bool>>;
+
 /// What every check needs to know about the program around the item it is
 /// looking at: which types are linear, what each function answers with, and how
 /// each function and each field-held signature takes its arguments.
@@ -79,6 +84,7 @@ struct Program<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    param_defaults: &'a ParamDefaults,
     packed: &'a HashSet<String>,
     field_types: &'a FieldTypes,
     summaries: &'a Summaries,
@@ -96,6 +102,7 @@ struct Program<'a> {
 pub struct Specializations {
     signatures: Signatures,
     param_types: ParamTypes,
+    param_defaults: ParamDefaults,
     packed: HashSet<String>,
     field_types: FieldTypes,
     held: HashSet<String>,
@@ -112,6 +119,7 @@ pub fn specializations(
 ) -> Specializations {
     let signatures = collect_signatures(ast, roots);
     let param_types = collect_param_types(ast, roots);
+    let param_defaults = collect_param_defaults(ast, roots);
     let packed = collect_packed(ast, roots);
     let field_types = collect_field_types(ast, roots);
     let held = linear_closure(linear, &field_types, ast, roots);
@@ -123,6 +131,7 @@ pub fn specializations(
             linear: &held,
             signatures: &signatures,
             param_types: &param_types,
+            param_defaults: &param_defaults,
             packed: &packed,
             field_types: &field_types,
             summaries: &Summaries::new(),
@@ -132,6 +141,7 @@ pub fn specializations(
     Specializations {
         signatures,
         param_types,
+        param_defaults,
         packed,
         field_types,
         held,
@@ -157,6 +167,7 @@ impl Specializations {
                 linear: &self.held,
                 signatures: &self.signatures,
                 param_types: &self.param_types,
+                param_defaults: &self.param_defaults,
                 packed: &self.packed,
                 field_types: &self.field_types,
                 summaries: &self.summaries,
@@ -244,6 +255,7 @@ pub fn check_ownership_recovering(
 ) -> Vec<crate::diagnostic::Diagnostic> {
     let signatures = collect_signatures(ast, roots);
     let param_types = collect_param_types(ast, roots);
+    let param_defaults = collect_param_defaults(ast, roots);
     let packed = collect_packed(ast, roots);
     let field_types = collect_field_types(ast, roots);
     let held = linear_closure(linear, &field_types, ast, roots);
@@ -255,6 +267,7 @@ pub fn check_ownership_recovering(
             linear: &held,
             signatures: &signatures,
             param_types: &param_types,
+            param_defaults: &param_defaults,
             packed: &packed,
             field_types: &field_types,
             summaries: &Summaries::new(),
@@ -265,6 +278,7 @@ pub fn check_ownership_recovering(
         linear: &held,
         signatures: &signatures,
         param_types: &param_types,
+        param_defaults: &param_defaults,
         packed: &packed,
         field_types: &field_types,
         summaries: &summaries,
@@ -354,6 +368,79 @@ fn collect_param_types(ast: &Ast, roots: &[StmtId]) -> ParamTypes {
         );
     }
     param_types
+}
+
+/// Which of a function's argument slots may be left out. A compile-time
+/// parameter with a default takes an argument only where the call writes a `$`
+/// for it, so a call that leaves one out gives one argument fewer than the
+/// declaration has slots and everything after it slides. Pairing them by
+/// position anyway read the first value argument against the compile-time
+/// parameter's own type and reported it moved.
+/// The declared types a call's arguments are written for, in the call's own
+/// order. `None` where nothing was left out and the declaration's own order
+/// already lines up, which is every call to a function whose compile-time
+/// parameters have no defaults.
+fn aligned_param_types(
+    ast: &Ast,
+    declared: Option<&Vec<Option<Type>>>,
+    defaults: Option<&Vec<bool>>,
+    arguments: &[ExprId],
+) -> Option<Vec<Option<Type>>> {
+    let declared = declared?;
+    let defaults = defaults?;
+    if defaults.iter().all(|held| !held) {
+        return None;
+    }
+    let mut aligned: Vec<Option<Type>> = Vec::with_capacity(arguments.len());
+    let mut written = 0usize;
+    for (index, slot) in declared.iter().enumerate() {
+        if written >= arguments.len() {
+            break;
+        }
+        // A slot that may be left out takes the argument in hand only when that
+        // argument is written `$`, which is what says it was meant for a
+        // compile-time parameter.
+        if defaults.get(index).copied().unwrap_or(false)
+            && !matches!(ast.expr(arguments[written]), Expression::TypeValue(_))
+        {
+            continue;
+        }
+        aligned.push(slot.clone());
+        written += 1;
+    }
+    // Whatever a compile-time list took, which the declaration has no slot for.
+    while aligned.len() < arguments.len() {
+        aligned.push(None);
+    }
+    Some(aligned)
+}
+
+fn collect_param_defaults(ast: &Ast, roots: &[StmtId]) -> ParamDefaults {
+    let mut defaults = HashMap::new();
+    for statement in roots {
+        let (name, params) = match ast.stmt(*statement) {
+            Statement::Constant(name, value) => match ast.expr(*value) {
+                Expression::Function(params, _, _)
+                | Expression::Proc(params, _, _) => (*name, *params),
+                _ => continue,
+            },
+            Statement::Extern { name, params, .. }
+            | Statement::Declared { name, params, .. } => (*name, *params),
+            _ => continue,
+        };
+        let slots =
+            crate::ir::build::argument_slots(ast, ast.params_in(params));
+        defaults.insert(
+            ast.name(name).to_string(),
+            ast.params_in(params)
+                .iter()
+                .zip(slots)
+                .filter(|(_, slot)| slot.is_some())
+                .map(|(parameter, _)| parameter.compile_time_default.is_some())
+                .collect(),
+        );
+    }
+    defaults
 }
 
 fn collect_signatures(ast: &Ast, roots: &[StmtId]) -> Signatures {
@@ -1314,6 +1401,7 @@ fn run_function<'a>(
         linear: program.linear,
         signatures: program.signatures,
         param_types: program.param_types,
+        param_defaults: program.param_defaults,
         packed: program.packed,
         field_types: program.field_types,
         summaries: program.summaries,
@@ -1388,6 +1476,7 @@ struct MoveChecker<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    param_defaults: &'a ParamDefaults,
     // The functions taking a compile-time list. A call to one gives as many
     // arguments as it likes, so a count that differs from the declaration says
     // nothing there.
@@ -2602,6 +2691,23 @@ impl MoveChecker<'_> {
                         self.param_types.get(ast.name(*name)).or(held.as_ref())
                     }
                     _ => held.as_ref(),
+                };
+                // A compile-time parameter with a default takes an argument
+                // only where the call writes a `$` for it, so what each
+                // argument is written for is worked out here the way the
+                // lowering works it out: by the sigil rather than by counting.
+                let realigned = match ast.expr(callee) {
+                    Expression::Identifier(name) => aligned_param_types(
+                        ast,
+                        param_types,
+                        self.param_defaults.get(ast.name(*name)),
+                        ast.exprs_in(arguments),
+                    ),
+                    _ => None,
+                };
+                let param_types = match realigned.as_ref() {
+                    Some(types) => Some(types),
+                    None => param_types,
                 };
                 // A call giving a different number of arguments than the
                 // callee declares parameters is one the lowering refuses by

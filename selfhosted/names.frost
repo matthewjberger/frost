@@ -9,7 +9,8 @@ import "imports.frost"
 export append_node, array_element, array_index_of, array_length, array_of,
     check_name_is_free,
     mark_safe, place_renames,
-    bytes_equal, const_value, value_const_node, digits_in, gargs_equal,
+    bytes_equal, const_value, value_const_node, value_const_name_off,
+    digits_in, gargs_equal,
     gargs_alike,
     generic_index_for,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
@@ -478,7 +479,7 @@ alias_for :: fn(
     len: i64
 ) -> (start: i64, length: i64) {
     mut i: i64 = p.aliases.count
-    while (i > 0) {
+    while (i > p.alias_floor) {
         i = i - 1
         held := arena_at(p.aliases, i)
         if (held.from_len == len
@@ -772,6 +773,23 @@ const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // The node a struct constant's literal parsed to, or -1 for a name that is not
 // one. A struct constant is its value wherever it is named, so every use writes
 // that node out again rather than referring to storage somewhere.
+// Where the declaration of a value constant writes its name. Two calls naming
+// one constant write it at two offsets, and what tells one constant from another
+// has to be the constant rather than the occurrence.
+value_const_name_off :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.value_consts.count) {
+        entry := arena_at(p.value_consts, i)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return entry.name_off
+        }
+        i = i + 1
+    }
+    -1
+}
+
 value_const_node :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i: i64 = 0
     while (i < p.value_consts.count) {
@@ -2053,6 +2071,19 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 // True when two argument runs in the `gargs` arena hold the same values.
+// Whether two elements name the same record constant, or neither names one. A
+// constant is written into the body rather than handed over, so two constants of
+// one type are two bodies and the run is what tells them apart.
+same_const_element :: fn(mut p: Parser, left: GArg, right: GArg) -> bool {
+    if (left.const_len != right.const_len) {
+        return false
+    }
+    if (left.const_len == 0) {
+        return true
+    }
+    bytes_equal(p.src, left.const_off, right.const_off, left.const_len)
+}
+
 gargs_equal :: fn(
     mut p: Parser,
     a_start: i64,
@@ -2063,7 +2094,8 @@ gargs_equal :: fn(
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
         right := arena_at(p.gargs, b_start + i)
-        if (left.value != right.value) {
+        if (left.value != right.value
+            || same_const_element(p, left, right) == false) {
             return false
         }
         i = i + 1
@@ -2088,7 +2120,8 @@ gargs_alike :: fn(
     while (i < count) {
         left := arena_at(p.gargs, a_start + i)
         right := arena_at(p.gargs, b_start + i)
-        if (left.value != right.value || left.pending != right.pending) {
+        if (left.value != right.value || left.pending != right.pending
+            || same_const_element(p, left, right) == false) {
             return false
         }
         i = i + 1

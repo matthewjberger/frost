@@ -31,6 +31,12 @@ Under that idiom every callback-shaped API is an unsafe API, because the only
 expression of a callback is a raw escape hatch. The surface `&` removal pushed
 that shape out of the language, and it comes back at the C boundary.
 
+Half of the idiom is not writable at all now: a call names the function it goes
+to (expressions.md 6.1), so a `fn(..)` a Frost body holds cannot be called
+through. The value is still built, stored and handed over, which is the half a C
+library needs, and the call happens on the other side of the boundary. What is
+below is the form for that crossing.
+
 ## The shape
 
 Closures stay a non-goal. A callback is a compile-time function argument plus a

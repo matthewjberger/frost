@@ -9,19 +9,28 @@ listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
 count is an integer, a constant, or a value parameter of the generic the literal
 is written in (11.1a).
 
-A call may go through a value. A parameter, a binding, or a struct field of
-function-pointer type is called by writing the call on it:
+A call names the function it goes to. A parameter, a binding, or a struct field
+of function-pointer type holds a function, and writing a call on one is refused:
+what runs would be decided by what the value happened to hold. The two ways to
+write it are naming the function at the call as a compile-time argument (11.1),
+and matching on the value that stands for the choice and calling each function
+by name:
 
 ```frost,sketch
-System :: struct { run: fn(mut World), stage: i64 }
+run_with :: fn($run: fn(mut World), mut world: World) {
+    run(world)
+}
 
-systems[index].run(world)
-held := systems[index].run
-held(world)
+run_with($physics, world)
 ```
 
-The parameters of an indirect call travel exactly as the signature writes them:
+The parameters of such a call travel exactly as the signature writes them:
 `fn(mut World)` borrows, so the world is not consumed by being handed to one.
+
+A field of function-pointer type is still built, stored and handed on, which is
+what a C library is given where it takes a callback. Reading it as a constant is
+a call too: where the whole chain is constants, `ops.less(a, b)` names the
+function that field was written with (11.4b).
 
 ## 6.2 Operators
 
@@ -52,7 +61,7 @@ both are available.
 
 ## 6.4 Calls, indexing, and field access
 
-- `f(a, b, ...)` calls a function or function pointer.
+- `f(a, b, ...)` calls a function `f` names.
 - `a[i]` indexes an array, slice, or pool (for a pool, `i` is a `Handle`).
 - `e.field` accesses a struct field or, on an enum place, a variant field.
 

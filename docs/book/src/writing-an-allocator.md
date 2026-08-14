@@ -207,23 +207,23 @@ with scratch {
 }
 ```
 
-## Choosing at run time instead
+## Choosing per call site instead
 
-Everything above decides the allocator at compile time. Where the answer is not
-known until the program runs, an allocator is a value, a function pointer and
-the state it works on. It is an ordinary struct, with no vtable and no compiler
-support behind it.
+Everything above binds the allocator to a `uses` declaration. Where a caller has
+to vary it, the function that takes memory is named at the call and the state
+travels beside it. There is no vtable and no compiler support behind it: a call
+names the function it goes to, so the name is a compile-time argument.
 
-```frost
-Allocator :: struct {
-    take: fn(^u8, i64) -> ^u8,
-    state: ^u8,
+```frost,sketch
+alloc :: fn($S: Type, $take: fn(mut S, i64) -> ^u8, mut state: S, size: i64)
+    -> ^u8 {
+    take(state, size)
 }
 ```
 
-`examples/native/allocator.frost` is a bump allocator behind that interface. It
-costs an indirect call per allocation, so reach for it where the backing is
-chosen while the program runs.
+`examples/native/allocator.frost` is a bump allocator behind that interface. The
+function is named at the call, so each allocation is a direct call and the state
+is what varies.
 
 ## Where to go next
 

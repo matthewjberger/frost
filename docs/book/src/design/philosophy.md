@@ -21,7 +21,7 @@ transform that layout efficiently.
 | ------------------ | ---------------------------------- | ------------------------------------------------------ |
 | Grouping           | Objects bundle data + behavior     | **Plain structs** hold data; **free functions** transform it |
 | Reuse / hierarchy  | Inheritance, virtual methods       | **Composition** and **`match` on enums**; no inheritance |
-| Polymorphism       | Dynamic dispatch (vtables)         | **Monomorphized generics** + **function pointers** (static) |
+| Polymorphism       | Dynamic dispatch (vtables)         | **Monomorphized generics**; the call names the function it goes to |
 | Identity / linking | References everywhere              | **Generational handles** into pools; references are second-class |
 | Lifetime           | GC or destructors                  | **Linear resources** consumed exactly once; no hidden `Drop` |
 | Memory             | Per-object heap allocation         | **Pools / explicit allocation**; contiguous, predictable layout |
@@ -34,8 +34,10 @@ walks it keeps the layout visible and the machine's actual work predictable.
 
 - No classes, methods, or `self`. Structs are data. Functions are functions.
 - No inheritance or interfaces. Reuse comes from composition and generics.
-- No virtual dispatch. Higher-order code uses function pointers (chosen
-  explicitly), and polymorphism is resolved at compile time by monomorphization.
+- No virtual dispatch, and nothing to devirtualize. A call names the function
+  it goes to, so higher-order code names it at the call as a compile-time
+  argument and polymorphism is resolved by monomorphization. A `fn(..)` value is
+  still built and handed to C, which is where a callback is registered.
 - No garbage collector and no destructors. Cleanup is a *linear* obligation
   the type system tracks, and long-lived data is addressed by *handles* rather
   than by references the runtime must keep alive.
@@ -60,9 +62,10 @@ walks it keeps the layout visible and the machine's actual work predictable.
    the same way: a compile-time list decides an arity, so a query over any
    number of components is one function rather than one per count, and it emits
    what a hand-written one does. You pay for abstraction while you compile.
-   Function pointers remain for the cases that are genuinely dynamic, and they
-   are honest about costing an indirect call. Neither backend devirtualizes
-   one, because goal 7 asks that the lowering match what you read.
+   A call names the function it goes to, so there is no dispatch to devirtualize
+   and nothing about what runs is decided by what a value held. Function
+   pointers remain as values: they are built, stored and handed to C, which is
+   where a callback is registered.
 4. Cleanup as a tracked obligation. `linear` resources must be consumed
    exactly once. This replaces `Drop` and finalizers with something the
    compiler checks and the reader can see, and it makes error values

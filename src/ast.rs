@@ -343,6 +343,12 @@ pub struct Parameter {
     // and read where the call is written rather than inside the body, because
     // the literal is the caller's and so is the count it has to agree with.
     pub format: bool,
+    // Whether this parameter is one the capability pass added rather than one
+    // the reader wrote. A `uses` function takes one per source it draws, and
+    // asking what such a function is *as a value* has to answer the signature
+    // as written: the pass's own parameter is not part of it, and naming it in
+    // a report tells the reader about something they cannot see.
+    pub capability: bool,
 }
 
 #[derive(
