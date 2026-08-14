@@ -1920,6 +1920,12 @@ struct Specialization {
 #[derive(Clone)]
 enum PackElement {
     Value(String, Type),
+    // An element the caller named rather than computed: a record constant,
+    // whose value is known here. It takes no parameter and is handed over
+    // nowhere, and the body writes the constant's own name, so a field read off
+    // it is read off a constant and a call through that field is a call to the
+    // function the constant names.
+    Constant(String, Type),
     Type(Type),
 }
 
@@ -1927,7 +1933,7 @@ impl PackElement {
     // The element as an argument, for a call that hands a whole list on.
     fn as_argument(&self, ast: &mut Ast, span: TokenSpan) -> ExprId {
         match self {
-            PackElement::Value(name, _) => {
+            PackElement::Value(name, _) | PackElement::Constant(name, _) => {
                 let symbol = ast.intern(name);
                 ast.push_expr(Expression::Identifier(symbol), span)
             }
@@ -1941,6 +1947,7 @@ impl PackElement {
     fn written(&self) -> String {
         match self {
             PackElement::Value(_, ty) => ty.to_string(),
+            PackElement::Constant(name, _) => name.clone(),
             PackElement::Type(ty) => format!("${ty}"),
         }
     }
@@ -2723,7 +2730,9 @@ fn check_format(
         )
     }
     for element in elements {
-        let PackElement::Value(_, ty) = element else {
+        let (PackElement::Value(_, ty) | PackElement::Constant(_, ty)) =
+            element
+        else {
             bail!("a format string writes a value, and a type is not one")
         };
         if !writable_by_format(ty) {
@@ -3077,7 +3086,8 @@ impl Expansion<'_> {
                     // is not a value at all: the loop's name is a type, and
                     // what the body wrote it in are type positions.
                     match element {
-                        PackElement::Value(name, _) => {
+                        PackElement::Value(name, _)
+                        | PackElement::Constant(name, _) => {
                             let bound = substitute_identifier(
                                 ast, body, &variable, name,
                             );
@@ -3173,7 +3183,7 @@ impl Expansion<'_> {
         body: ExprId,
     ) -> Result<ExprId> {
         match element {
-            PackElement::Value(name, _) => {
+            PackElement::Value(name, _) | PackElement::Constant(name, _) => {
                 let bound = substitute_identifier_in_expression(
                     ast, body, variable, name,
                 );
@@ -3448,7 +3458,8 @@ impl Expansion<'_> {
                 )
             };
             return Ok(match element {
-                PackElement::Value(name, _) => {
+                PackElement::Value(name, _)
+                | PackElement::Constant(name, _) => {
                     let name = name.clone();
                     let symbol = ast.intern(&name);
                     ast.push_expr(Expression::Identifier(symbol), span)
@@ -8629,6 +8640,36 @@ impl<'a> FunctionLowering<'a> {
                     pack_elements
                         .push(PackElement::Type(substitute_type(&ty, &subst)));
                     continue;
+                }
+                // A name the caller wrote that stands for a record constant is
+                // that constant, and its value is known here. The element keeps
+                // the name, takes no parameter and is handed over nowhere, so
+                // the unrolled body reads the constant itself: a field read off
+                // it is read off a constant, and a call through that field is a
+                // call to the function the constant names.
+                //
+                // A record, rather than any constant. What the name buys is
+                // that a field can be read off it; a number carries nothing to
+                // read, and leaving it a parameter keeps the questions a body
+                // asks about an element's type answerable the one way.
+                if let Expression::Identifier(name) = self.ast.expr(*argument) {
+                    let written = self.ast.name(*name).to_string();
+                    let record =
+                        self.builder.constants.get(&written).is_some_and(
+                            |held| {
+                                matches!(
+                                    self.ast.expr(*held),
+                                    Expression::StructInit(..)
+                                )
+                            },
+                        );
+                    if record && self.resolve_variable(&written).is_none() {
+                        let (_, value_type) =
+                            self.lower_expression(*argument, None)?;
+                        pack_elements
+                            .push(PackElement::Constant(written, value_type));
+                        continue;
+                    }
                 }
                 let (operand, value_type) =
                     self.lower_expression(*argument, None)?;
