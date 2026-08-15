@@ -31,7 +31,12 @@ shadow it by putting a file of the same name somewhere earlier.
 
 ## The manifest
 
-`frost.json`, optional, in the entry file's directory or any directory above it:
+`frost.json`, optional, in the entry file's directory or any directory above it.
+"Above" is read off the entry file's absolute directory, up to the root, so which
+manifest is found does not depend on how the path was spelled or on the
+directory the build was started in. `frost deep/x.frost` from inside a project
+and `frost project/deep/x.frost` from above it are one build and find one
+manifest.
 
 ```json
 { "name": "demo", "paths": ["lib", "vendor/things"] }

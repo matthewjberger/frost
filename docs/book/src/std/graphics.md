@@ -65,9 +65,12 @@ Each layer may name the ones below it and none may name the ones above.
 Frost has no crates, so the four names and the order they may reach in are
 declared in `frost.json`, and both compilers refuse a crossing while they
 resolve the import: `layer: 'lib/renderer' may not reach 'lib/engine'`. The
-tests `both_compilers_refuse_a_layer_reaching_upward` and
-`both_compilers_refuse_a_layer_reached_through_an_absolute_root` hold the two to
-the same answer. A crossing is visible where it is written, because reaching
+tests `both_compilers_refuse_a_layer_reaching_upward`,
+`both_compilers_refuse_a_layer_reached_through_an_absolute_root` and
+`both_compilers_enforce_layers_however_the_entry_is_spelled` hold the two to the
+same answer. The last of those is over six spellings of one entry file, because
+which manifest a build finds is a question about the file and not about the path
+that named it. A crossing is visible where it is written, because reaching
 another layer is a path and reaching a neighbour is a bare name:
 
 ```frost,sketch
