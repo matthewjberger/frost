@@ -2980,6 +2980,9 @@ emit_asm_call_tail :: fn(
         emit_text("*%r11")
     } else if (generic_fn_of(p, fn_index) >= 0) {
         arg := call_args_for(p, args, fn_index)
+        // What this call names is a specialization that has to be written. The
+        // pass below writes the ones reached this way and no others.
+        want_mono(p, fn_index, arg, p.call_xarg_start, p.call_xarg_count)
         emit_asm_mono_name(
             p,
             fn_index,
@@ -3697,6 +3700,126 @@ emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
     }
 }
 
+// A stand-in for one specialization's identity, over the function it comes from
+// and the types it was written with. Two that collide are still weighed in
+// full, so this only has to be cheap and spread out.
+mono_hash :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
+    mut sum := wrap_mul(fn_index, 2654435761)
+    sum = wrap_add(wrap_mul(sum, 33), arg)
+    sum = wrap_add(wrap_mul(sum, 33), xarg_count)
+    mut i: i64 = 0
+    while (i < xarg_count) {
+        held := arena_at(p.gargs, xarg_start + i)
+        sum = wrap_add(wrap_mul(sum, 33), held.value)
+        i = i + 1
+    }
+    sum & 4611686018427387903
+}
+
+// Lays the table of wanted specializations out again at a new size, which is
+// what a table addressed by a mask has to do when it grows.
+rebuild_wanted_table :: fn(mut p: Parser, slots: i64) {
+    p.wanted_table.count = 0
+    mut k: i64 = 0
+    while (k < slots) {
+        arena_push(p.wanted_table, InstanceSlot { at = 0, mark = 0 })
+        k = k + 1
+    }
+    mut at: i64 = 0
+    while (at < p.wanted_monos.count) {
+        held := arena_at(p.wanted_monos, at)
+        mut probe := (
+            mono_hash(
+                p,
+                held.fn_index,
+                held.arg,
+                held.xarg_start,
+                held.xarg_count
+            ) & (slots - 1)
+        )
+        while (arena_at(p.wanted_table, probe).mark == 1) {
+            probe = (probe + 1) & (slots - 1)
+        }
+        arena_at(p.wanted_table, probe).at = at
+        arena_at(p.wanted_table, probe).mark = 1
+        at = at + 1
+    }
+}
+
+// Where this specialization sits among the ones emitted code refers to, or -1
+// when nothing has been seen to call it.
+mono_slot :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) -> i64 {
+    if (p.wanted_table.count == 0) {
+        return -1
+    }
+    slots := p.wanted_table.count
+    mut probe := (
+        mono_hash(p, fn_index, arg, xarg_start, xarg_count) & (slots - 1)
+    )
+    while (arena_at(p.wanted_table, probe).mark == 1) {
+        at := arena_at(p.wanted_table, probe).at
+        held := arena_at(p.wanted_monos, at)
+        if (held.fn_index == fn_index && held.arg == arg
+            && held.xarg_count == xarg_count
+            && gargs_equal(p, held.xarg_start, xarg_start, xarg_count)) {
+            return at
+        }
+        probe = (probe + 1) & (slots - 1)
+    }
+    -1
+}
+
+// Records that emitted code calls this specialization, so that the pass which
+// writes them knows to write this one.
+want_mono :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) {
+    mut slots: i64 = 16
+    while (slots < (p.wanted_monos.count + 1) * 2) {
+        slots = slots * 2
+    }
+    if (p.wanted_table.count < slots) {
+        rebuild_wanted_table(p, slots)
+    }
+    if (mono_slot(p, fn_index, arg, xarg_start, xarg_count) >= 0) {
+        return
+    }
+    at := arena_push(
+        p.wanted_monos,
+        WantedMono {
+            fn_index = fn_index,
+            arg = arg,
+            xarg_start = xarg_start,
+            xarg_count = xarg_count,
+            emitted = 0,
+        }
+    )
+    mut probe := (
+        mono_hash(p, fn_index, arg, xarg_start, xarg_count) & (slots - 1)
+    )
+    while (arena_at(p.wanted_table, probe).mark == 1) {
+        probe = (probe + 1) & (slots - 1)
+    }
+    arena_at(p.wanted_table, probe).at = at
+    arena_at(p.wanted_table, probe).mark = 1
+}
+
 emit_asm_mono_name :: fn(
     mut p: Parser,
     fn_index: i64,
@@ -3880,46 +4003,96 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     // one in hand, which is the square of them for every generic declared.
     mut firsts: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
     mut instance_table: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
-    mut gi: i64 = 0
-    while (gi < p.generic_fns.count) {
-        if (unit_owns_generic(p, gi)) {
-            mark_first_instances(p, gi, firsts, instance_table)
-            mut ii: i64 = 0
-            while (ii < p.type_args.count) {
-                used := arena_at(p.type_args, ii)
-                arg := used.arg
-                xstart := used.xarg_start
-                xcount := used.xarg_count
-                is_pack := used.is_pack
-                owner := used.owner
-                // An instance parsed below can put more in the table, and
-                // those come after what was marked, so they are asked the long
-                // way. They are few, where the ones marked are all of them.
-                mut first: bool = false
-                if (ii < firsts.count) {
-                    first = arena_at(firsts, ii).mark == gi + 1
-                } else {
-                    first = (
-                        instance_fits_kind(
-                            p,
-                            gi,
-                            arg,
-                            xstart,
-                            xcount,
-                            is_pack,
-                            owner
-                        ) && tuple_is_first_for(p, gi, ii)
-                    )
+    // A specialization is written because something reached it. The functions
+    // above have been written by now, so what they call is known; writing one
+    // of these can reach further ones, so the sweep runs again until a pass
+    // reaches nothing new.
+    //
+    // Only for a whole program. A build that writes one unit per module has
+    // each specialization written by the unit that declared its template, and
+    // what a *different* unit calls is not known here, so those units write
+    // every specialization they own as they always did.
+    mut sweeping: bool = true
+    while (sweeping) {
+        sweeping = false
+        mut gi: i64 = 0
+        while (gi < p.generic_fns.count) {
+            if (unit_owns_generic(p, gi)) {
+                mark_first_instances(p, gi, firsts, instance_table)
+                mut ii: i64 = 0
+                while (ii < p.type_args.count) {
+                    used := arena_at(p.type_args, ii)
+                    arg := used.arg
+                    xstart := used.xarg_start
+                    xcount := used.xarg_count
+                    is_pack := used.is_pack
+                    owner := used.owner
+                    // An instance parsed below can put more in the table, and
+                    // those come after what was marked, so they are asked the long
+                    // way. They are few, where the ones marked are all of them.
+                    mut first: bool = false
+                    if (ii < firsts.count) {
+                        first = arena_at(firsts, ii).mark == gi + 1
+                    } else {
+                        first = (
+                            instance_fits_kind(
+                                p,
+                                gi,
+                                arg,
+                                xstart,
+                                xcount,
+                                is_pack,
+                                owner
+                            ) && tuple_is_first_for(p, gi, ii)
+                        )
+                    }
+                    if (first) {
+                        gfn := arena_at(p.generic_fns, gi)
+                        mut write: bool = true
+                        if (p.emit_module < 0) {
+                            at := mono_slot(
+                                p,
+                                gfn.fn_index,
+                                arg,
+                                xstart,
+                                xcount
+                            )
+                            write = (
+                                at >= 0
+                                && arena_at(p.wanted_monos, at).emitted == 0
+                            )
+                            if (write) {
+                                arena_at(p.wanted_monos, at).emitted = 1
+                            }
+                        }
+                        if (write) {
+                            node := parse_generic_instance(
+                                p,
+                                gi,
+                                arg,
+                                xstart,
+                                xcount
+                            )
+                            ret := p.last_return_type
+                            emit_asm_mono_function(
+                                p,
+                                node,
+                                arg,
+                                xstart,
+                                xcount,
+                                ret
+                            )
+                            sweeping = true
+                        }
+                    }
+                    ii = ii + 1
                 }
-                if (first) {
-                    node := parse_generic_instance(p, gi, arg, xstart, xcount)
-                    ret := p.last_return_type
-                    emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
-                }
-                ii = ii + 1
             }
+            gi = gi + 1
         }
-        gi = gi + 1
+        if (p.emit_module >= 0) {
+            sweeping = false
+        }
     }
 
     // One entry point however many units there are, in the first, which is the

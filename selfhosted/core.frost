@@ -15,7 +15,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     ResultEnum,
     PendingTuple,
-    AsmUse, InstanceSlot, LocalVar, Module, ToldMove,
+    AsmUse, InstanceSlot, LocalVar, Module, ToldMove, WantedMono,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
@@ -1389,6 +1389,23 @@ ToldMove :: struct {
     said: str,
 }
 
+// One specialization that emitted code refers to.
+//
+// A specialization is emitted because something calls it, not because the
+// program mentioned its types somewhere. A library whose only use of `Map` is
+// in a `test` block has no caller for those bodies once the test bodies are
+// left out, and emitting them anyway put 197 functions in an object the
+// bootstrap wrote 18 into.
+WantedMono :: struct {
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    // Set once this one has been written, so the walk that follows what a
+    // specialization itself calls does not write it twice.
+    emitted: i64,
+}
+
 // One entry of the tables below: which instance reached this slot, and which
 // generic put it there. A record rather than a bare number, since a scalar read
 // out of an arena is a value and not a place to write back through.
@@ -2058,6 +2075,10 @@ Parser :: struct {
     // Where each instance already recorded sits, so that noting a new one is a
     // probe rather than a walk over every instance before it.
     type_arg_table: Arena<InstanceSlot>,
+    // The specializations emitted code has been seen to call, and where each
+    // sits, so that asking is a probe rather than a walk.
+    wanted_monos: Arena<WantedMono>,
+    wanted_table: Arena<InstanceSlot>,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list
     // that was not bound, which is what a template's own parse sees. That parse
