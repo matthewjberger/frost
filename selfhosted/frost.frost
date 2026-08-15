@@ -157,13 +157,14 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_die()
         }
         p.emit_module = index
-        // Labels start again for each unit. Left running, a unit's labels begin
-        // where the unit before it stopped, so an edit that adds a branch to one
-        // module renumbers every module after it and every object is built
-        // again. A unit is its own object and these labels are local to it, so
-        // two units may use the same numbers.
+        // Labels and frame symbols start again for each unit. Left running, a
+        // unit's numbers begin where the unit before it stopped, so an edit
+        // that adds a function to one module renumbers every module after it
+        // and every object is built again. A unit is its own object and these
+        // names are local to it, so two units may use the same numbers.
         p.label_id = 0
         p.asm_slots = 0
+        p.frame_id = 0
         if (options.backend == Backend::C) {
             // Every unit carries the declarations, since a C unit cannot call
             // what it has not seen: the runtime's prototypes, every type, every
@@ -751,6 +752,8 @@ main :: fn() -> i64 {
         type_arg_table = arena_make($InstanceSlot, 4096),
         wanted_monos = arena_make($WantedMono, 4096),
         wanted_table = arena_make($InstanceSlot, 4096),
+        mono_plan = arena_make($MonoPlan, 4096),
+        mono_plan_upto = -1,
         abi_windows = 0,
         args_unbound_map = 0,
         loop_top = -1,

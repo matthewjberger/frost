@@ -15,7 +15,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     ResultEnum,
     PendingTuple,
-    AsmUse, InstanceSlot, LocalVar, Module, ToldMove, WantedMono,
+    AsmUse, InstanceSlot, LocalVar, Module, MonoPlan, ToldMove, WantedMono,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
@@ -1389,6 +1389,15 @@ ToldMove :: struct {
     said: str,
 }
 
+// One specialization a per-module build will write, and which generic stamps it
+// out. Which instances are the first of their kind does not depend on the unit
+// being written, so it is worked out once and read by each of them: worked out
+// per unit, a build pays it as many times as the program has modules.
+MonoPlan :: struct {
+    gi: i64,
+    ii: i64,
+}
+
 // One specialization that emitted code refers to.
 //
 // A specialization is emitted because something calls it, not because the
@@ -2079,6 +2088,10 @@ Parser :: struct {
     // sits, so that asking is a probe rather than a walk.
     wanted_monos: Arena<WantedMono>,
     wanted_table: Arena<InstanceSlot>,
+    // What a per-module build writes, and how far through `type_args` it was
+    // worked out. Empty until the first unit asks for it.
+    mono_plan: Arena<MonoPlan>,
+    mono_plan_upto: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list
     // that was not bound, which is what a template's own parse sees. That parse
