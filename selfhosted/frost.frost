@@ -108,6 +108,11 @@ run_built_program :: fn(executable: ^i8, options: Options) -> i64 {
 }
 
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
+    // One stamp for every node, which is what says whether the unit being
+    // emitted refers to a literal written somewhere else. Made here rather than
+    // with the rest of the parser, since a whole-program build defines every
+    // literal where it was written and never asks.
+    p.asm_used = arena_make($AsmUse, p.arena.cap)
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
     mut executable: ^i8 = options.output
@@ -637,6 +642,7 @@ main :: fn() -> i64 {
         aliases = arena_make($Alias, 64),
         frame_used = 0,
         emit_module = -1,
+        asm_used = arena_make($AsmUse, 1),
         field_bindings = arena_make($LocalVar, 64),
         parse_locals = arena_make($LocalVar, 4096),
         parse_local_values = arena_make($BoundValue, 4096),

@@ -15,7 +15,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     ResultEnum,
     PendingTuple,
-    LocalVar, Module, ToldMove,
+    AsmUse, LocalVar, Module, ToldMove,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
@@ -1382,6 +1382,12 @@ ToldMove :: struct {
     said: str,
 }
 
+// Which unit last referred to one literal node, stamped as the unit index plus
+// two so that nothing counts as referred to before a unit has run.
+AsmUse :: struct {
+    unit: i64,
+}
+
 LocalVar :: struct {
     name_off: i64,
     name_len: i64,
@@ -1716,6 +1722,17 @@ Parser :: struct {
     // module, and a specialization goes in every unit that could call it, as a
     // symbol local to that unit so the copies do not collide at the link.
     emit_module: i64,
+    // Which unit last referred to each literal node, stamped as the unit index
+    // plus two so that nothing counts as referred to before a unit has run.
+    //
+    // A literal is labelled by the node holding it and defined by the unit
+    // whose source that node was written in, which is not always the unit that
+    // refers to it: `typename(T)` reads the name where the type was declared,
+    // so a specialization emitted beside its caller refers to a name written in
+    // a third module. These labels are local to the object a unit becomes, so a
+    // definition in one object cannot be seen from another. A unit therefore
+    // defines every literal it refers to, and this is what it refers to.
+    asm_used: Arena<AsmUse>,
     // The fields in force: a `for` over `fields(T)` binds its name to one of
     // them per copy of the body. `ty` is what the field holds and `slot` is
     // where it sits, which is every question that may be asked of one.

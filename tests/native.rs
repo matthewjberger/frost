@@ -14663,6 +14663,87 @@ main :: fn() -> i64 {
 }
 "#;
 
+// A literal a unit refers to is a literal that unit defines.
+//
+// A literal is labelled by the node holding it and, in the assembly backend, is
+// written out by the unit whose source that node came from. Those are not always
+// the same unit: `typename(T)` reads the name where the type was declared, so a
+// specialization stamped out beside its template refers to a name written in a
+// third module. The label is local to the object a unit becomes, so a definition
+// in one object cannot be seen from another, and the link fails on a name that
+// the whole program plainly has.
+//
+// Three modules is the smallest program that shows it, and the incremental test
+// above is one file, which is why this needs its own.
+#[test]
+fn an_incremental_build_defines_the_literals_each_unit_refers_to() {
+    let Some(compiler) = build_self_hosted_compiler("incrementalliterals")
+    else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory =
+        std::env::temp_dir().join(unique("frost_incremental_literals"));
+    let _ = std::fs::create_dir_all(&directory);
+    // The type is declared here and named nowhere else, so the string the
+    // program prints is written in this module and referred to from the one
+    // holding the generic.
+    std::fs::write(
+        directory.join("shapes.frost"),
+        "export Point\n\nPoint :: struct { x: i64 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("naming.frost"),
+        "export named\n\nnamed :: fn($T: Type) -> str {\n    typename(T)\n}\n",
+    )
+    .unwrap();
+    let source = directory.join("program.frost");
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\nimport \"shapes.frost\"\n\
+         import \"naming.frost\"\n\nmain :: fn() -> i64 {\n    \
+         print(\"{}\\n\", named($Point))\n    0\n}\n",
+    )
+    .unwrap();
+
+    for backend in [Vec::new(), vec!["--emit-c"]] {
+        let named = if backend.is_empty() { "assembly" } else { "C" };
+        let build = directory.join(format!("build_{named}"));
+        let exe = directory
+            .join(format!("out_{named}{}", std::env::consts::EXE_SUFFIX));
+        let built = Command::new(&compiler)
+            .args(&backend)
+            .arg("--incremental")
+            .arg("--build-dir")
+            .arg(&build)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&source)
+            .env("FROST_PATH", root.join("std"))
+            .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the incremental build through {named} failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+            "Point\n",
+            "the program built through {named} printed something else"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 #[test]
 fn a_walk_over_a_types_fields_is_a_layout_table() {
     let Some(output) = compile_and_run_unaudited("fieldwalk", FIELD_WALK)

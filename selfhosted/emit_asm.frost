@@ -2128,6 +2128,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // The literal's bits, assembled from the digits by the assembler, which
     // already knows how to read a decimal and this compiler does not need to.
     if (kind == NodeKind::Float) {
+        mark_asm_used(p, id)
         asm_i("movq .Lflt", id, "(%rip), %rax")
         // Read at single precision. The digits were laid down as a double, so
         // narrowing is what leaves the number an `f32` holds, and the bits stay
@@ -2147,6 +2148,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_text("    movq %rax, ")
         emit_asm_arg_reg(p, 0)
         emit_text("\n")
+        mark_asm_used(p, id)
         emit_text("    leaq .Lpos")
         frost_rt_emit_int(id)
         emit_text("(%rip), ")
@@ -2310,6 +2312,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::StrLit) {
+        mark_asm_used(p, id)
         asm_i("leaq .Lstr", id, "(%rip), %rax")
         return
     }
@@ -3901,6 +3904,29 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     emit_asm_strings(p)
 }
 
+// Records that the unit being emitted refers to the literal at `id`, so that
+// the unit defines it whether or not the source it was written in is the
+// unit's own.
+mark_asm_used :: fn(mut p: Parser, id: i64) {
+    // A whole program emits every literal where it was written, so there is
+    // nothing here for it to record.
+    if (p.emit_module < 0) {
+        return
+    }
+    while (p.asm_used.count <= id) {
+        arena_push(p.asm_used, AsmUse { unit = 0 })
+    }
+    arena_at(p.asm_used, id).unit = p.emit_module + 2
+}
+
+// Whether the unit being emitted refers to the literal at `id`.
+asm_used_here :: fn(mut p: Parser, id: i64) -> bool {
+    if (id >= p.asm_used.count) {
+        return false
+    }
+    arena_at(p.asm_used, id).unit == p.emit_module + 2
+}
+
 // Every string literal in the program, labelled by the node that holds it.
 emit_asm_strings :: fn(mut p: Parser) {
     mut i: i64 = 0
@@ -3909,7 +3935,8 @@ emit_asm_strings :: fn(mut p: Parser) {
         kind := node.kind
         off := node.val
         len := node.c
-        if (kind == NodeKind::StrLit && unit_holds(p, off)) {
+        if (kind == NodeKind::StrLit
+            && (unit_holds(p, off) || asm_used_here(p, i))) {
             emit_text(".Lstr")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -3917,7 +3944,8 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_string_content(p.src, off, len)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Assert && unit_holds(p, node.pos)) {
+        if (kind == NodeKind::Assert
+            && (unit_holds(p, node.pos) || asm_used_here(p, i))) {
             emit_text(".Lpos")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -3925,7 +3953,8 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_position(p.modules, p.src, node.pos)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Float && unit_holds(p, off)) {
+        if (kind == NodeKind::Float
+            && (unit_holds(p, off) || asm_used_here(p, i))) {
             emit_text("    .align 8\n")
             emit_text(".Lflt")
             frost_rt_emit_int(i)
