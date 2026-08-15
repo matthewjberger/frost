@@ -20291,6 +20291,22 @@ main :: fn() -> i64 {
             "{name} wrote something other than the formatted generated file"
         );
 
+        // A check leaves the tree as it found it. What it compares the
+        // output against it takes with it, so the project holds the same
+        // names after the command as before it, whichever way the check came
+        // out. Where that file goes is not readable from here, since it is
+        // gone by the time the command has answered.
+        let listing = |at: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(at)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let before = listing(&project);
+
         let checked = generate(compiler, &["--check"]);
         assert!(
             checked.status.success(),
@@ -20300,6 +20316,11 @@ main :: fn() -> i64 {
             String::from_utf8_lossy(&checked.stderr).trim(),
             "frost generate: answer.frost is up to date",
             "{name} said something else while checking"
+        );
+        assert_eq!(
+            listing(&project),
+            before,
+            "{name} left something in the project while checking"
         );
 
         // What the check is for: a file that is no longer what its generator
@@ -20328,6 +20349,11 @@ main :: fn() -> i64 {
             "ANSWER :: 6
 ",
             "{name} wrote over the file it was only asked about"
+        );
+        assert_eq!(
+            listing(&project),
+            before,
+            "{name} left something in the project while checking a stale file"
         );
     }
     let _ = std::fs::remove_dir_all(&project);
@@ -20450,6 +20476,70 @@ fn a_half_declared_generator_stops_only_the_command_that_reads_it() {
         );
     }
     let _ = std::fs::remove_dir_all(&project);
+}
+
+// Two files of one name are two programs to `frost run`.
+//
+// Named after the last part of the path, every `tools/writer.frost` on the
+// machine is one name, and two runs at once build over each other until one of
+// them executes the other's program. That is a race, so what it costs is read
+// here as what it is: two runs of two files, and the two files a run built.
+//
+// A run removes what it built once the program has answered, so the name is
+// readable only from inside the program while it holds it. The first argument
+// is that name, which is what the platform starts a program with.
+#[test]
+fn a_run_builds_two_files_of_one_name_apart() {
+    let Some(hosted) = build_self_hosted_compiler("runapart") else {
+        return;
+    };
+    let held = std::env::temp_dir().join(unique("frost_run_apart"));
+    let stem = unique("twin");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for under in ["first", "second"] {
+        std::fs::create_dir_all(held.join(under)).unwrap();
+        std::fs::write(
+            held.join(under).join(format!("{stem}.frost")),
+            "import \"io.frost\"\nimport \"os.frost\"\n\n\
+             main :: fn() -> i64 {\n    print(\"{}\\n\", os_arg(0))\n    0\n}\n",
+        )
+        .unwrap();
+    }
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let built = |under: &str| {
+            let ran = Command::new(compiler)
+                .arg("run")
+                .arg(held.join(under).join(format!("{stem}.frost")))
+                .env("FROST_PATH", root.join("std"))
+                .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+                .env("FROST_RUNTIME_FROST", root.join("runtime/runtime.frost"))
+                .output()
+                .unwrap();
+            assert!(
+                ran.status.success(),
+                "{name} did not run the program under {under}:\n{}",
+                String::from_utf8_lossy(&ran.stderr)
+            );
+            String::from_utf8_lossy(&ran.stdout)
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        let first = built("first");
+        let second = built("second");
+        assert!(
+            first.contains("frost_run"),
+            "{name} ran '{first}', which is not what a run builds"
+        );
+        assert_ne!(
+            first, second,
+            "{name} built two programs of one name as one file"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&held);
 }
 
 // Every member is read before any of them runs.
