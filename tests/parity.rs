@@ -4129,6 +4129,7 @@ fn both_compilers_warn_about_the_same_programs() {
     };
     let directory = std::env::temp_dir();
     let mut drifted = Vec::new();
+    let mut byte_drift: Vec<String> = Vec::new();
     for (name, source, wanted) in WARNED_BY_BOTH {
         // One file, handed to both. What a report calls a file is compared
         // below, and two files named differently cannot answer that.
@@ -4177,7 +4178,23 @@ fn both_compilers_warn_about_the_same_programs() {
             named_files(&hosted),
             "the two compilers call the file different things in {name}"
         );
+        if bootstrap != hosted {
+            byte_drift.push(format!(
+                "{name}\n  bootstrap:   {bootstrap:?}\n  self-hosted: {hosted:?}"
+            ));
+        }
     }
+    // A warning is a report like any other, and these are held to the whole of
+    // it rather than to the words after the caret. There is nothing on a list
+    // here because there is nothing to put on one.
+    assert!(
+        byte_drift.is_empty(),
+        "the two compilers put these warnings in different places ({} of \
+         {}):\n{}",
+        byte_drift.len(),
+        WARNED_BY_BOTH.len(),
+        byte_drift.join("\n")
+    );
     assert!(
         drifted.is_empty(),
         "the two compilers warn about these differently ({} of {}):
@@ -4264,6 +4281,7 @@ fn both_compilers_refuse_the_same_programs() {
     };
     let directory = std::env::temp_dir();
     let mut drifted = Vec::new();
+    let mut byte_drift: Vec<String> = Vec::new();
     for (name, source, wanted) in REFUSED_BY_BOTH {
         // One file, handed to both. What a report calls a file is compared
         // below, and two files named differently cannot answer that.
@@ -4315,7 +4333,50 @@ fn both_compilers_refuse_the_same_programs() {
             named_files(&hosted),
             "the two compilers call the file different things in {name}"
         );
+        if bootstrap != hosted {
+            byte_drift.push(format!(
+                "{name}\n  bootstrap:   {bootstrap:?}\n  self-hosted: {hosted:?}"
+            ));
+        }
     }
+    let unplaced: Vec<&String> = byte_drift
+        .iter()
+        .filter(|report| {
+            let name = report.split('\n').next().unwrap_or("");
+            !POSITIONED_DIFFERENTLY.contains(&name)
+        })
+        .collect();
+    assert!(
+        unplaced.is_empty(),
+        "the two compilers put these reports in different places, and nothing          said they would ({} of {}):
+{}",
+        unplaced.len(),
+        REFUSED_BY_BOTH.len(),
+        unplaced
+            .iter()
+            .map(|held| held.as_str())
+            .collect::<Vec<_>>()
+            .join("
+")
+    );
+    let placed: Vec<&str> = POSITIONED_DIFFERENTLY
+        .iter()
+        .filter(|name| {
+            !byte_drift
+                .iter()
+                .any(|report| report.split('\n').next() == Some(**name))
+        })
+        .copied()
+        .collect();
+    assert!(
+        placed.is_empty(),
+        "these are placed the same now, so take them off the list:
+{}",
+        placed.join(
+            "
+"
+        )
+    );
     let unexpected: Vec<&String> = drifted
         .iter()
         .filter(|report| {
@@ -4350,6 +4411,53 @@ fn both_compilers_refuse_the_same_programs() {
         mended.join("\n")
     );
 }
+
+// The refusals the two compilers place differently: same file, same words, a
+// caret under a different column. Held as a list rather than fixed all at once
+// because each one is its own question about which token a fault belongs to, and
+// the list can only shrink: a pair that drifts fails on the way in, and one that
+// is mended fails until its name comes off.
+//
+// Written down after the harness learned to compare the whole report rather than
+// the words after the caret, which is what let these sit unseen. `spoken` keeps
+// the claim and drops the header and the column it sits under, so two compilers
+// pointing a reader at two different places compared equal.
+const POSITIONED_DIFFERENTLY: &[&str] = &[
+    "a_value_of_one_ordinal_set_is_not_a_value_of_another",
+    "a_resource_given_away_through_a_borrow_into_a_run",
+    "an_argument_takes_the_struct_its_parameter_names",
+    "a_value_named_under_a_type_is_a_value_of_it",
+    "a_block_of_values_is_closed",
+    "a_capability_drawing_function_as_a_compile_time_argument",
+    "a_test_that_draws_a_capability",
+    "a_format_string_that_is_not_a_literal",
+    "a_live_walk_over_a_computed_container",
+    "a_mut_on_a_discard",
+    "a_return_type_list_that_leaves_a_value_unnamed",
+    "a_view_of_a_parameter_returned_from_a_branch",
+    "borrowed_field_twice",
+    "write_into_consumed",
+    "generic_pool",
+    "pool_nobody_named",
+    "consumed_through_a_borrow_twice",
+    "handed_out_of_a_borrow_twice",
+    "handed_out_by_element",
+    "a_generic_literal_with_no_argument_to_read",
+    "a_raw_pointer_read_outside_an_unsafe_block",
+    "an_undeclared_type_in_a_signature",
+    "a_literal_of_an_undeclared_type",
+    "an_alternative_that_binds_a_payload",
+    "a_case_range_that_runs_backwards",
+    "a_case_range_whose_ends_meet",
+    "text_in_a_case",
+    "a_case_after_one_that_covers_everything",
+    "a_tuple_case_after_one_that_covers_everything",
+    "a_case_two_earlier_spans_cover_between_them",
+    "a_range_inside_a_tuple_case",
+    "a_case_an_earlier_span_covers",
+    "a_case_an_earlier_alternative_covers",
+    "a_match_over_spans_still_needs_the_rest",
+];
 
 // The refusals the two compilers word differently. Empty, and it is the test
 // above that keeps it so: a pair that drifts fails on the way in, and one that
