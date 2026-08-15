@@ -26,7 +26,10 @@ def fan_out(calls, name="main"):
         out += ["    total", "}", ""]
     out += [f"{name} :: fn() -> i64 {{", "    mut total : i64 = 0"]
     out += [f"    total = total + group{index}()" for index in range(len(groups))]
-    out += ['    printf("%lld\n", total)', "    0", "}"]
+    # Calling a C function is unchecked, so the call sits in an `unsafe` block.
+    # Without it every generated program is refused and the table below times
+    # how long each compiler takes to say so.
+    out += ['    unsafe { printf("%lld\n", total) }', "    0", "}"]
     return out
 
 
