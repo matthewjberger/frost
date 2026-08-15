@@ -33,6 +33,41 @@ pub struct Manifest {
     // does not share one cannot be asked for with `frost api`.
     #[serde(default)]
     pub prefixes: std::collections::BTreeMap<String, String>,
+    // The files this project writes with a program of its own, in the order
+    // they are written. `frost generate` runs them.
+    #[serde(default)]
+    pub generated: Vec<Generated>,
+}
+
+// One file a program in this project writes.
+//
+// The program is an ordinary Frost program taking the output path first and its
+// inputs after, so it can be compiled, run and read on its own without knowing
+// a manifest exists. Declaring it here is what lets a checkout regenerate every
+// such file with one command and check that none of them is stale, rather than
+// each generator needing a build script that knows where its own inputs are.
+//
+// What it writes stays a file in the tree: a reader can open it, a diff shows
+// what a schema change did to it, and the compiler that reads it afterward is
+// the ordinary one. That is the whole reason generation lives here rather than
+// inside the compiler as a step that injects declarations.
+// Each path is optional to read and required to use, so a member missing one is
+// refused by `frost generate` rather than by whatever read the manifest next. A
+// build reads `paths` and `layers` and never this, and refusing to compile a
+// program because a build step beside it is half declared would be refusing it
+// for a reason that has nothing to do with it.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
+pub struct Generated {
+    // The file the program writes, relative to the manifest.
+    #[serde(default)]
+    pub output: String,
+    // The program that writes it, relative to the manifest.
+    #[serde(default)]
+    pub from: String,
+    // What that program reads, relative to the manifest, handed to it after the
+    // output path in the order written here.
+    #[serde(default)]
+    pub inputs: Vec<String>,
 }
 
 pub const MANIFEST_NAME: &str = "frost.json";
@@ -76,6 +111,25 @@ impl Manifest {
             .iter()
             .map(|entry| project_root.join(entry))
             .collect()
+    }
+}
+
+impl Generated {
+    // The three paths it declares, resolved against the manifest, so a command
+    // run from anywhere reaches the same files a command run from the project
+    // root does.
+    pub fn resolved(
+        &self,
+        project_root: &Path,
+    ) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+        (
+            project_root.join(&self.output),
+            project_root.join(&self.from),
+            self.inputs
+                .iter()
+                .map(|entry| project_root.join(entry))
+                .collect(),
+        )
     }
 }
 
@@ -136,5 +190,35 @@ mod tests {
             serde_json::from_str(r#"{ "paths": ["lib"] }"#).unwrap();
         assert_eq!(manifest.name, "");
         assert_eq!(manifest.paths, vec!["lib".to_string()]);
+    }
+
+    #[test]
+    fn a_manifest_declares_the_files_a_program_of_its_own_writes() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{ "generated": [
+                   { "output": "lib/wgpu.frost",
+                     "from": "tools/bindgen.frost",
+                     "inputs": ["vendor/webgpu.json"] }] }"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.generated.len(), 1);
+        let (output, from, inputs) =
+            manifest.generated[0].resolved(Path::new("/project"));
+        assert!(output.ends_with("lib/wgpu.frost"));
+        assert!(from.ends_with("tools/bindgen.frost"));
+        assert_eq!(inputs.len(), 1);
+        assert!(inputs[0].ends_with("vendor/webgpu.json"));
+    }
+
+    // A generator that reads nothing still writes something, so the inputs are
+    // what may be left out rather than what has to be there.
+    #[test]
+    fn a_generator_may_read_nothing() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{ "generated": [
+                   { "output": "a.frost", "from": "b.frost" }] }"#,
+        )
+        .unwrap();
+        assert!(manifest.generated[0].inputs.is_empty());
     }
 }

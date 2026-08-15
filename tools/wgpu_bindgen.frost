@@ -1,12 +1,14 @@
 // Generates Frost bindings for wgpu from webgpu.json.
 //
-//   frost run tools/build.frost bindgen
+//   frost generate
 //
 // The file to write and the file to read are the first two arguments, so this
 // runs from wherever it is started rather than only from the directory a pair
-// of hardcoded paths were once relative to. `webgpu.h` is itself generated from
-// that same file upstream, so this reads what the C header is made from rather
-// than parsing the header.
+// of hardcoded paths were once relative to. That is the shape every generator
+// takes, and `frost.json` is where this one's three paths are declared, which is
+// what lets one command write every such file and another check that none of
+// them is stale. `webgpu.h` is itself generated from that same file upstream, so
+// this reads what the C header is made from rather than parsing the header.
 
 import "json.frost"
 import "fs.frost"
@@ -470,8 +472,23 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
         }
         return
     }
-    if (type_starts(document, kind, "object.")
-        || type_starts(document, kind, "callback.")
+    // A field holds what its declaration says, and a handle field is declared
+    // at the handle's own type, so the zero pointer is named as one.
+    if (type_starts(document, kind, "object.")) {
+        builder_str_value(out, "cast($")
+        append_after_dot(out, document, kind)
+        builder_str_value(out, ", unsafe { ptr_cast($u8, zero) })")
+        return
+    }
+    // The same for a set of flags, whose empty set is the zero of its own type
+    // rather than the integer zero.
+    if (type_starts(document, kind, "bitflag.")) {
+        builder_str_value(out, "cast($")
+        append_after_dot(out, document, kind)
+        builder_str_value(out, ", 0)")
+        return
+    }
+    if (type_starts(document, kind, "callback.")
         || type_is_array(document, kind)
         || json_text_eq(document, kind, "c_void")) {
         builder_str_value(out, "unsafe { ptr_cast($u8, zero) }")
@@ -1003,8 +1020,13 @@ emit_handles :: fn(
         builder_str_value(names, ", ")
         builder_str_value(out, " :: fn() -> ")
         append_pascal(out, document, name)
+        // A body answers at the type its declaration names, and `null_handle`
+        // answers with the `^u8` a handle is laid out as, so the cast is what
+        // carries it up to the handle type.
         builder_str_value(out, " {
-    null_handle()
+    cast($")
+        append_pascal(out, document, name)
+        builder_str_value(out, ", null_handle())
 }
 ")
         // Giving a handle back. Every object in the API is counted, and the
@@ -1235,10 +1257,20 @@ emit_functions :: fn(
                 if (callback >= 0) {
                     builder_str_value(out, ", callback_info")
                 }
+                // Against the handle type's own nothing rather than against a
+                // raw pointer: a distinct type is compared only with itself,
+                // and `no_x()` is what a handle of nothing is written as
+                // everywhere else in this file.
+                builder_str_value(out, ") }
+    if (held == no_")
+                append_after_dot_snake(
+                    out,
+                    document,
+                    json_member(document, returns, "type")
+                )
                 builder_str_value(
                     out,
-                    ") }
-    if (held == null_handle()) {
+                    "()) {
         unsafe { frost_rt_error(\"wgpu: "
                 )
                 append_snake(out, document, object_name)
@@ -1322,12 +1354,9 @@ main :: fn() -> i64 {
         "// Generated from webgpu.json by tools/wgpu_bindgen.frost.
 "
     )
-    builder_str_value(
-        out,
-        "// Do not edit. Run `frost run tools/build.frost bindgen` instead.
+    builder_str_value(out, "// Do not edit. Run `frost generate` instead.
 
-"
-    )
+")
     builder_str_value(out, "export ")
     builder_str_value(out, builder_str(names))
     builder_str_value(out, "Chained

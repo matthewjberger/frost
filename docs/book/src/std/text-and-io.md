@@ -331,10 +331,10 @@ file to read as arguments, through `os_arg`, so it runs from wherever it is
 started. That is a code generator built from these six modules alone. See
 [graphics.md](graphics.md).
 
-`tools/build.frost` is what starts it, and it is built out of the same six:
-`os_getenv` finds the compiler that ran it, `os_run` drives that compiler and
-then the generator, and `fs_read` plus `str_eq` decide whether what the
-generator would write is what is already on disk.
+`frost generate` is what starts it, off the three paths `frost.json` declares
+for it. It takes the file to write and the file to read as arguments and knows
+nothing about a manifest, which is what lets it run by hand as readily as from
+a build.
 
 ## Tests
 
@@ -345,6 +345,6 @@ frost --test std/strings.frost
 ```
 
 `io.frost`, `format.frost` and `json.frost` are covered where they are used. The
-bindgen exercises those three and `fs.frost` end to end on a 182 KB document
-every time `just bindgen` runs, and a difference in any of them shows up as a
+generator exercises those three and `fs.frost` end to end on a 182 KB document
+every time `just generate` runs, and a difference in any of them shows up as a
 generated file that does not compile.

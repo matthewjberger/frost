@@ -196,8 +196,8 @@ worth reaching for:
 | `just install` | Builds the bootstrap compiler and puts it on PATH as `frost` |
 | `just install-self` | Builds the self-hosted compiler and puts it on PATH as `frostc` |
 | `just run FILE` | Compiles and runs a frost file |
-| `just bindgen` | Regenerates `lib/renderer/wgpu.frost` from `webgpu.json` |
-| `just bindgen-check` | Says whether those bindings are what the generator would write, and exits nonzero when they are not |
+| `just generate` | Writes every file `frost.json` says a program of this project writes |
+| `just generate-check` | Says whether each of those is what its generator would write, and exits nonzero when one is not |
 | `just compile FILE` | Compiles a frost file to a native executable |
 | `just compile-c FILE` | Compiles a frost file through the C backend instead of the native one |
 | `just check-file FILE` | Checks a frost file without producing an executable, for the editor |
@@ -238,9 +238,8 @@ The executable is temporary and is taken away again, the way `--test` builds
 one. Both compilers accept this and both set `FROST_COMPILER` for the program
 they run.
 
-This is what a build program written in Frost is started with. `tools/build.frost`
-is the one in this repository, and `just bindgen` and `just bindgen-check` are
-two lines that call it.
+This is what a build program written in Frost is started with, and it is how
+`frost generate` runs the generators a project declares.
 
 ### `frost fmt <paths...>`
 
@@ -281,6 +280,24 @@ directory it is run in.
 
 A flat namespace has no `.` to narrow a guess with, and a family is named by its
 prefix here, so this asks for that narrowing directly.
+
+### `frost generate [--check]`
+
+Writes every file the project's `frost.json` says a program of its own writes,
+in the order declared. `--check` writes each one somewhere else instead and says
+whether it matches what is on disk, exiting nonzero when one does not, which is
+what holds a checkout to generated files that are not stale.
+
+A step always writes, and staleness is decided from content rather than from
+timestamps, because a checkout stamps every file with the time it was made.
+
+The generator is compiled and run by the compiler that was asked, so a checkout
+holding two compilers regenerates with whichever one it was given. It is handed
+the output path first and the declared inputs after. A `.frost` output then goes
+through `frost fmt`, so what a check compares is what a build would leave on
+disk. Both compilers accept this and write the same files.
+
+See [Finding a module](../impl/modules.md) for how a generator is declared.
 
 ## Diagnostics as JSON
 

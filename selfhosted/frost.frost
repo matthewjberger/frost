@@ -436,6 +436,12 @@ main :: fn() -> i64 {
         && cstr_eq(frost_rt_arg_at(1), "fmt")) {
         return format_command()
     }
+    // The same for `generate`, which names no file at all: what it writes comes
+    // out of the project's manifest rather than off the command line.
+    if (frost_rt_arg_count() > 1
+        && cstr_eq(frost_rt_arg_at(1), "generate")) {
+        return generate_command()
+    }
     options := options_from_command_line()
     if (options.help == 1) {
         usage()
@@ -1045,6 +1051,27 @@ main :: fn() -> i64 {
         return link_with_toolchain(emit_path, executable, options)
     }
     0
+}
+
+// `frost generate [--check]`: write every file the project's manifest declares
+// a program of its own writes, or check that none of them is stale.
+generate_command :: fn() -> i64 {
+    mut checking: bool = false
+    mut index: i64 = 2
+    count := frost_rt_arg_count()
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (cstr_eq(argument, "--check")) {
+            checking = true
+        } else {
+            report("frost generate: unknown option '")
+            report_cstr(argument)
+            report("'\n")
+            return 1
+        }
+        index = index + 1
+    }
+    run_generators(checking)
 }
 
 // `frost fmt <paths...>`: write the one rendering of every file named, or with

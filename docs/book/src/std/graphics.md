@@ -137,18 +137,18 @@ SDL. A call added to it is one line beside its extern.
 moves:
 
 ```bash
-just bindgen
+just generate
 just app triangle
 ```
 
-`just bindgen` builds `tools/wgpu_bindgen.frost` and runs it. It reads
+`just generate` builds `tools/wgpu_bindgen.frost` and runs it. It reads
 `lib/renderer/wgpu/webgpu.json`, the same file upstream generates
 `webgpu.h` from, so the binding follows the schema upstream publishes. It writes
 `lib/renderer/wgpu.frost`. Both paths are constants at
 the top of the tool, so neither is configurable.
 
 `lib/renderer/wgpu/` is gitignored except for the two the tree carries:
-`webgpu.json`, which the bindgen reads, and `wgpu_native.dll`, which a Windows
+`webgpu.json`, which the generator reads, and `wgpu_native.dll`, which a Windows
 build links against. `just deps` fetches the rest of a wgpu-native
 distribution. On Windows the recipe links `lib/renderer/wgpu/wgpu_native.dll`
 and copies it beside the executable. On Unix it links `-lwgpu_native` from the
@@ -156,7 +156,7 @@ system. SDL3 is the same story, from the system on Unix and from
 `lib/platform/SDL3.dll` on Windows, with `SDL3_DIR` to point the recipe
 somewhere else.
 
-`just bindgen` prints ten numbers when it finishes: how many handles,
+`just generate` prints ten numbers when it finishes: how many handles,
 enumerations, flag families, structs, methods, callback infos, free functions,
 constants and initialisers it emitted, and the size of the file.
 

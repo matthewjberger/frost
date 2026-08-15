@@ -8,7 +8,8 @@ export json_reports, SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_po
     file_name,
     joined_path, join_path, module_at, report_where, report_note_where,
     line_of, column_of, file_of,
-    resolve_imports, search_roots_from, manifest_roots, source_with_room,
+    resolve_imports, search_roots_from, manifest_roots, manifest_generators,
+    source_with_room,
     manifest_above
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
@@ -829,6 +830,103 @@ manifest_roots :: fn(
         layer = json_next(document, layer)
     }
     json_free(document)
+}
+
+// The files a program of this project writes, as the manifest declares them, in
+// the order it declares them.
+//
+// A manifest that is not there declares none, which is what a project with
+// nothing generated looks like and is no error. A member of `generated` that
+// names only one of the two paths it has to name is refused, because a project
+// that wrote half a declaration meant the whole of it.
+manifest_generators :: fn(entry: ^i8, mut into: Arena<Generator>) {
+    directory := manifest_above(entry)
+    if (directory < 0) {
+        return
+    }
+    path := manifest_path(entry, directory)
+    text := cstr_slice(unsafe { frost_rt_read_file(path) })
+    mut document := json_parse(text)
+    root := json_root(document)
+    if (root < 0 || json_kind(document, root) != JsonKind::Object) {
+        report("frost: cannot read '")
+        report_cstr(path)
+        report("' as a manifest")
+        frost_rt_die()
+    }
+    under := prefix_of(entry, directory)
+    mut step := json_at(document, json_member(document, root, "generated"), 0)
+    while (step >= 0) {
+        if (json_kind(document, step) == JsonKind::Object) {
+            written := json_member(document, step, "output")
+            from := json_member(document, step, "from")
+            if (json_kind(document, written) != JsonKind::String
+                || json_kind(document, from) != JsonKind::String) {
+                report("frost generate: a member of 'generated' in frost.json ")
+                report("does not name both an output and what writes it")
+                frost_rt_die()
+            }
+            // Every path is relative to the manifest, the way a declared search
+            // directory is, so the same command run from anywhere under the
+            // project reaches the same files.
+            mut arguments: ^i8 = ""
+            mut input := json_at(
+                document,
+                json_member(document, step, "inputs"),
+                0
+            )
+            while (input >= 0) {
+                if (json_kind(document, input) == JsonKind::String) {
+                    arguments = join_two(
+                        join_two(
+                            join_two(arguments, " \""),
+                            resolved_under(under, text, input, document)
+                        ),
+                        "\""
+                    )
+                }
+                input = json_next(document, input)
+            }
+            arena_push(
+                into,
+                Generator {
+                    output_named = spelled(text, written, document),
+                    output = resolved_under(under, text, written, document),
+                    from_named = spelled(text, from, document),
+                    from = resolved_under(under, text, from, document),
+                    inputs = arguments,
+                }
+            )
+        }
+        step = json_next(document, step)
+    }
+    json_free(document)
+}
+
+// A path as the manifest spelled it, which is what a report about it says.
+spelled :: fn(text: str, node: i64, mut document: Json) -> ^i8 {
+    text_as_cstr(
+        text,
+        json_text_off(document, node),
+        json_text_len(document, node)
+    )
+}
+
+// A path a manifest member names, under the directory the manifest sits in.
+resolved_under :: fn(
+    under: ^i8,
+    text: str,
+    node: i64,
+    mut document: Json
+) -> ^i8 {
+    normalise_path(
+        join_under(
+            under,
+            text,
+            json_text_off(document, node),
+            json_text_len(document, node)
+        )
+    )
 }
 
 // A run of the manifest's text as a string of its own.

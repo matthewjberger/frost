@@ -25,7 +25,9 @@ const SUBCOMMANDS: &str = "Words read before the options, each taking files or d
   fmt <path>...     write each file the way the formatter renders it, `-` for stdin
   lint <path>...    findings a build does not refuse on: `--diagnostics=json` for one object a line
   fix <file>        apply the fixes the diagnostics offered
-  api <prefix>      the exported surface under a name prefix, with signatures";
+  api <prefix>      the exported surface under a name prefix, with signatures
+  generate [--check]  write the files frost.json says a program of this project
+                    writes, or check that none of them is stale";
 
 #[derive(Parser)]
 #[command(name = "frost")]
@@ -831,6 +833,127 @@ fn apply_fixes(file: &str) -> Result<()> {
     Ok(())
 }
 
+/// `frost generate [--check]`: write every file the project's manifest says a
+/// program of its own writes.
+///
+/// The generator is compiled and run by this compiler, so a checkout holding two
+/// compilers regenerates with whichever one was asked. Its arguments are the
+/// output path first and the declared inputs after, which is the order a program
+/// written before any manifest existed already took.
+///
+/// A step always writes, and `--check` writes somewhere else and compares the
+/// bytes. Staleness is decided from content because a checkout stamps every file
+/// with the time it was made, so a timestamp says nothing about whether the
+/// generator would write something different.
+fn run_generators(arguments: &[String]) -> Result<bool> {
+    let checking = arguments.iter().any(|held| held == "--check");
+    if let Some(unknown) = arguments
+        .iter()
+        .find(|held| held.starts_with('-') && *held != "--check")
+    {
+        // Said here rather than raised, so it reads the same as every other
+        // line this command writes and as what the self-hosted compiler says.
+        eprintln!("frost generate: unknown option '{unknown}'");
+        return Ok(false);
+    }
+    let here = std::env::current_dir().context("finding the project")?;
+    let Some((manifest, root)) = Manifest::find_upward(&here)? else {
+        eprintln!("frost generate: no frost.json declares this project");
+        return Ok(true);
+    };
+    if manifest.generated.is_empty() {
+        eprintln!("frost generate: this project declares nothing to generate");
+        return Ok(true);
+    }
+    let compiler =
+        std::env::current_exe().context("finding the compiler to run")?;
+    let mut settled = true;
+    for step in &manifest.generated {
+        if step.output.is_empty() || step.from.is_empty() {
+            eprintln!(
+                "frost generate: a member of 'generated' in frost.json does \
+                 not name both an output and what writes it"
+            );
+            return Ok(false);
+        }
+        let (output, from, inputs) = step.resolved(&root);
+        let written = if checking {
+            scratch_beside(&output)
+        } else {
+            output.clone()
+        };
+        let mut running = Command::new(&compiler);
+        running.arg("run").arg(&from).arg(&written);
+        running.args(&inputs);
+        let status = running
+            .status()
+            .with_context(|| format!("running {}", from.display()))?;
+        if !status.success() {
+            // What went wrong was said by whatever ran, on the stream this
+            // shares, so this names the step rather than repeating it.
+            eprintln!(
+                "frost generate: {} did not write {}",
+                step.from, step.output
+            );
+            return Ok(false);
+        }
+        // A generator lays its output out to be read while it assembles it, and
+        // the tree holds every Frost file to one rendering. Formatting here is
+        // what makes those two agree, so `--check` compares what a build leaves
+        // on disk rather than the form on the way there.
+        if written.extension().is_some_and(|held| held == "frost") {
+            let rendered = Command::new(&compiler)
+                .arg("fmt")
+                .arg(&written)
+                .status()
+                .with_context(|| format!("formatting {}", written.display()))?;
+            if !rendered.success() {
+                eprintln!(
+                    "frost generate: the formatter refused {}",
+                    step.output
+                );
+                return Ok(false);
+            }
+        }
+        if !checking {
+            eprintln!("frost generate: wrote {}", step.output);
+            continue;
+        }
+        let fresh = fs::read(&written)
+            .with_context(|| format!("reading {}", written.display()))?;
+        let current = fs::read(&output).unwrap_or_default();
+        fs::remove_file(&written).ok();
+        if fresh == current {
+            eprintln!("frost generate: {} is up to date", step.output);
+            continue;
+        }
+        settled = false;
+        eprintln!(
+            "frost generate: {} is not what {} writes. Run `frost generate`",
+            step.output, step.from
+        );
+    }
+    Ok(settled)
+}
+
+/// Where a `--check` writes instead of over the declared output.
+///
+/// In the temporary directory, so a check that dies partway leaves nothing in
+/// the tree, and named after the output's own file name so the extension
+/// survives and the formatter reads it as the kind of file it is. The number in
+/// front is the whole output path, so two projects generating a file of the same
+/// name do not check each other's.
+fn scratch_beside(output: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    output.hash(&mut hasher);
+    let name = output
+        .file_name()
+        .map(|held| held.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "generated".to_string());
+    std::env::temp_dir()
+        .join(format!("frost_generate_{:016x}_{name}", hasher.finish()))
+}
+
 /// What this compiler says about a file, as reports.
 fn reports_for(file: &str) -> Result<Vec<frost::Report>> {
     let executable =
@@ -903,6 +1026,16 @@ fn main() -> std::process::ExitCode {
     }
     if arguments.first().is_some_and(|held| held == "lint") {
         return match lint_paths(&arguments[1..]) {
+            Ok(true) => std::process::ExitCode::SUCCESS,
+            Ok(false) => std::process::ExitCode::FAILURE,
+            Err(error) => {
+                eprint!("{}", frost::render_diagnostic(&error));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    if arguments.first().is_some_and(|held| held == "generate") {
+        return match run_generators(&arguments[1..]) {
             Ok(true) => std::process::ExitCode::SUCCESS,
             Ok(false) => std::process::ExitCode::FAILURE,
             Err(error) => {

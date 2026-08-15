@@ -369,7 +369,7 @@ tree.
 The binding in [`lib/renderer/wgpu.frost`](lib/renderer/wgpu.frost) is generated
 from `webgpu.json` by [`tools/wgpu_bindgen.frost`](tools/wgpu_bindgen.frost)
 rather than written, which is why there are three thousand lines of it and no
-hand-maintained header. `just bindgen` regenerates it.
+hand-maintained header. `just generate` regenerates it.
 
 ### Editor support
 

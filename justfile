@@ -305,7 +305,7 @@ deps:
     Write-Host "webgpu.json at {{webgpu_headers_rev}}"
     $json = "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
     Invoke-WebRequest -Uri $json -OutFile "lib/renderer/wgpu/webgpu.json" -UseBasicParsing
-    Write-Host "ready. run: just bindgen; just app triangle"
+    Write-Host "ready. run: just generate; just app triangle"
 
 [unix]
 deps:
@@ -337,13 +337,13 @@ deps:
     esac
     echo "ready. run: just app triangle"
 
-# Regenerates the wgpu bindings from webgpu.json
-bindgen:
-    cargo run -r -q -p frost --bin frost -- run tools/build.frost bindgen
+# Writes every file frost.json says a program of this project writes
+generate:
+    cargo run -r -q -p frost --bin frost -- generate
 
-# Checks the wgpu bindings are what the generator would write from webgpu.json
-bindgen-check:
-    cargo run -r -q -p frost --bin frost -- run tools/build.frost bindgen --check
+# Checks each of those is what its generator would write
+generate-check:
+    cargo run -r -q -p frost --bin frost -- generate --check
 
 # Builds the self-hosted compiler (frost written in frost)
 #

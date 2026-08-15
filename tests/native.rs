@@ -20197,3 +20197,385 @@ fn a_report_spells_a_function_type_the_way_it_is_written() {
 {report}"
     );
 }
+
+// A generator declared in the manifest is run by `frost generate`, and
+// `--check` says whether what it would write is what is already there.
+//
+// Over a project built here rather than over this repository's own, so the test
+// says what the command does rather than whether the wgpu bindings happen to be
+// current, and so the failing half can be exercised by changing a file.
+//
+// Both compilers are run against the same project and held to the same lines,
+// because a build step declared in one place has to mean the same thing to
+// whichever compiler a checkout was given.
+#[test]
+fn both_compilers_run_the_generators_a_manifest_declares() {
+    let Some(hosted) = build_self_hosted_compiler("generate") else {
+        return;
+    };
+    let project = std::env::temp_dir().join(unique("frost_generate"));
+    std::fs::create_dir_all(project.join("tools")).unwrap();
+    std::fs::write(
+        project.join("frost.json"),
+        r#"{ "generated": [
+               { "output": "answer.frost",
+                 "from": "tools/writer.frost",
+                 "inputs": ["seed.txt"] }] }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join("seed.txt"), "7").unwrap();
+    // The shape every generator takes: the file to write first, what it reads
+    // after, and nothing said about a manifest. It writes the constant without
+    // the spaces the tree renders one with, so what lands on disk shows whether
+    // the formatter was run over it.
+    std::fs::write(
+        project.join("tools").join("writer.frost"),
+        r#"
+import "fs.frost"
+import "os.frost"
+import "format.frost"
+
+main :: fn() -> i64 {
+    read := fs_read(os_arg(2))
+    mut out := builder_new(64)
+    builder_str_value(out, "ANSWER::")
+    builder_str_value(out, read.text)
+    fs_write(os_arg(1), builder_str(out))
+    builder_free(out)
+    fs_free(read)
+    0
+}
+"#,
+    )
+    .unwrap();
+
+    // `generate` hands the generator to `frost run`, which resolves that
+    // program's imports the way any program's are resolved, so the standard
+    // library and the runtime are named through the environment rather than
+    // through options this command does not take. A self-hosted compiler built
+    // into a temporary directory finds neither beside itself.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let generate = |compiler: &Path, extra: &[&str]| {
+        Command::new(compiler)
+            .arg("generate")
+            .args(extra)
+            .current_dir(&project)
+            .env("FROST_PATH", root.join("std"))
+            .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+            .env("FROST_RUNTIME_FROST", root.join("runtime/runtime.frost"))
+            .output()
+            .unwrap()
+    };
+
+    let written = project.join("answer.frost");
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let _ = std::fs::remove_file(&written);
+        let ran = generate(compiler, &[]);
+        assert!(
+            ran.status.success(),
+            "{name} refused to generate:\n{}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&ran.stderr).trim(),
+            "frost generate: wrote answer.frost",
+            "{name} said something else while writing"
+        );
+        // Rendered the way the tree holds every Frost file, which the generator
+        // did not do and the step after it did.
+        assert_eq!(
+            std::fs::read_to_string(&written).unwrap(),
+            "ANSWER :: 7
+",
+            "{name} wrote something other than the formatted generated file"
+        );
+
+        let checked = generate(compiler, &["--check"]);
+        assert!(
+            checked.status.success(),
+            "{name} called a file it had just written stale"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&checked.stderr).trim(),
+            "frost generate: answer.frost is up to date",
+            "{name} said something else while checking"
+        );
+
+        // What the check is for: a file that is no longer what its generator
+        // writes, whether because it was edited or because an input moved.
+        std::fs::write(
+            &written,
+            "ANSWER :: 6
+",
+        )
+        .unwrap();
+        let stale = generate(compiler, &["--check"]);
+        assert!(
+            !stale.status.success(),
+            "{name} passed a check over a file that is not what is written"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&stale.stderr).trim(),
+            "frost generate: answer.frost is not what tools/writer.frost \
+             writes. Run `frost generate`",
+            "{name} said something else about a stale file"
+        );
+        // A check leaves what it found alone, so the failing file is still
+        // there to look at.
+        assert_eq!(
+            std::fs::read_to_string(&written).unwrap(),
+            "ANSWER :: 6
+",
+            "{name} wrote over the file it was only asked about"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+// A project that declares nothing to generate, and a directory with no manifest
+// at all, are two different answers and neither is a failure. Both compilers
+// give the same line for each.
+#[test]
+fn both_compilers_say_the_same_thing_about_a_project_with_no_generators() {
+    let Some(hosted) = build_self_hosted_compiler("generatenone") else {
+        return;
+    };
+    let bare = std::env::temp_dir().join(unique("frost_generate_bare"));
+    let empty = std::env::temp_dir().join(unique("frost_generate_empty"));
+    std::fs::create_dir_all(&bare).unwrap();
+    std::fs::create_dir_all(&empty).unwrap();
+    std::fs::write(empty.join("frost.json"), r#"{ "name": "empty" }"#).unwrap();
+
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        for (directory, said) in [
+            (&bare, "frost generate: no frost.json declares this project"),
+            (
+                &empty,
+                "frost generate: this project declares nothing to generate",
+            ),
+        ] {
+            let ran = Command::new(compiler)
+                .arg("generate")
+                .current_dir(directory)
+                .output()
+                .unwrap();
+            assert!(
+                ran.status.success(),
+                "{name} failed on a project with nothing to generate"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&ran.stderr).trim(),
+                said,
+                "{name} said something else in {}",
+                directory.display()
+            );
+        }
+        // An option neither compiler knows is a failure, said the same way.
+        let unknown = Command::new(compiler)
+            .arg("generate")
+            .arg("--wat")
+            .current_dir(&empty)
+            .output()
+            .unwrap();
+        assert!(!unknown.status.success(), "{name} took an unknown option");
+        assert_eq!(
+            String::from_utf8_lossy(&unknown.stderr).trim(),
+            "frost generate: unknown option '--wat'",
+            "{name} said something else about an unknown option"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&bare);
+    let _ = std::fs::remove_dir_all(&empty);
+}
+
+// A `generated` member that names only half of what it needs is refused by
+// `frost generate` and by nothing else.
+//
+// A build reads `paths` and `layers` and never reads this, so refusing to
+// compile a program because a build step declared beside it is half written
+// would be refusing it for a reason that has nothing to do with it. Both
+// compilers refuse the one command and compile the program.
+#[test]
+fn a_half_declared_generator_stops_only_the_command_that_reads_it() {
+    let Some(hosted) = build_self_hosted_compiler("generatehalf") else {
+        return;
+    };
+    let project = std::env::temp_dir().join(unique("frost_generate_half"));
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("frost.json"),
+        r#"{ "generated": [ { "output": "a.frost" } ] }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("program.frost"),
+        "main :: fn() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let refused = Command::new(compiler)
+            .arg("generate")
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        assert!(
+            !refused.status.success(),
+            "{name} generated from a member naming no program"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr).trim(),
+            "frost generate: a member of 'generated' in frost.json does not \
+             name both an output and what writes it",
+            "{name} said something else about a half declared member"
+        );
+
+        let built = Command::new(compiler)
+            .arg("-o")
+            .arg(project.join("program.out"))
+            .arg("program.frost")
+            .current_dir(&project)
+            .env("FROST_PATH", root.join("std"))
+            .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{name} refused a program over a build step beside it:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+// A generator that does not run is reported the same way by both compilers, and
+// leaves what is already on disk alone.
+//
+// The step is what is named. Why it failed was said by whatever ran, on the
+// stream this shares, so repeating it here would print it twice.
+#[test]
+fn both_compilers_say_the_same_thing_about_a_generator_that_does_not_run() {
+    let Some(hosted) = build_self_hosted_compiler("generatefails") else {
+        return;
+    };
+    let project = std::env::temp_dir().join(unique("frost_generate_fails"));
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("frost.json"),
+        r#"{ "generated": [
+               { "output": "a.frost", "from": "tools/absent.frost" }] }"#,
+    )
+    .unwrap();
+    std::fs::write(project.join("a.frost"), "KEPT :: 1\n").unwrap();
+
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let ran = Command::new(compiler)
+            .arg("generate")
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        assert!(
+            !ran.status.success(),
+            "{name} succeeded with a generator that is not there"
+        );
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert!(
+            said.contains(
+                "frost generate: tools/absent.frost did not write a.frost"
+            ),
+            "{name} said something else about a generator that did not run:\n\
+             {said}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.join("a.frost")).unwrap(),
+            "KEPT :: 1\n",
+            "{name} wrote over the output of a step that failed"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+// An output that is not a Frost source is left as the generator wrote it, and
+// compared byte for byte.
+//
+// The formatter runs over a `.frost` output because the tree holds every Frost
+// file to one rendering, and over nothing else, because what a generator writes
+// otherwise is whatever it writes. A zero among those bytes is one of them, so
+// two files that first differ after one are two different files.
+#[test]
+fn a_generated_file_that_is_not_frost_source_is_compared_whole() {
+    let Some(hosted) = build_self_hosted_compiler("generatebytes") else {
+        return;
+    };
+    let project = std::env::temp_dir().join(unique("frost_generate_bytes"));
+    std::fs::create_dir_all(project.join("tools")).unwrap();
+    std::fs::write(
+        project.join("frost.json"),
+        r#"{ "generated": [
+               { "output": "table.bin", "from": "tools/writer.frost" }] }"#,
+    )
+    .unwrap();
+    // Two bytes, a zero between them, and the leading spaces a formatter would
+    // have taken away had it been run.
+    std::fs::write(
+        project.join("tools").join("writer.frost"),
+        r#"
+import "fs.frost"
+import "os.frost"
+import "format.frost"
+
+main :: fn() -> i64 {
+    mut out := builder_new(8)
+    builder_str_value(out, "  A")
+    builder_byte(out, 0)
+    builder_str_value(out, "B")
+    fs_write(os_arg(1), builder_str(out))
+    builder_free(out)
+    0
+}
+"#,
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let written = project.join("table.bin");
+
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let generate = |extra: &[&str]| {
+            Command::new(compiler)
+                .arg("generate")
+                .args(extra)
+                .current_dir(&project)
+                .env("FROST_PATH", root.join("std"))
+                .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+                .env("FROST_RUNTIME_FROST", root.join("runtime/runtime.frost"))
+                .output()
+                .unwrap()
+        };
+        let _ = std::fs::remove_file(&written);
+        assert!(generate(&[]).status.success(), "{name} refused to generate");
+        assert_eq!(
+            std::fs::read(&written).unwrap(),
+            b"  A\0B",
+            "{name} did not leave the output as the generator wrote it"
+        );
+        assert!(
+            generate(&["--check"]).status.success(),
+            "{name} called a file it had just written stale"
+        );
+
+        // The same length, the same bytes up to the zero, and different after
+        // it. Compared to a terminator these are one file.
+        std::fs::write(&written, b"  A\0C").unwrap();
+        assert!(
+            !generate(&["--check"]).status.success(),
+            "{name} stopped comparing at the zero byte"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&project);
+}

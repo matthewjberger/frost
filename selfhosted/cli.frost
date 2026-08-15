@@ -5,11 +5,11 @@
 import "core.frost"
 import "imports.frost"
 
-export Backend, Options, c_compiler, join_two, join_number,
+export Backend, Options, c_compiler, join_number,
     file_checksum, text_checksum, stored_checksum, write_checksum,
     make_directory, cached_runtime_object, runtime_source,
     cached_frost_runtime_object, frost_runtime_source, compiling_the_runtime,
-    options_from_command_line, usage
+    options_from_command_line, run_generators, usage
 
 // Which backend the program goes through. Nothing is chosen until the arguments
 // and the environment have both had their say, so the answer starts as nothing.
@@ -78,7 +78,11 @@ usage :: fn() {
     report("--diagnostics=json\n")
     report("                    writes one object a line\n")
     report("    api <prefix>    the exported surface under a name prefix, ")
-    report("with signatures\n\n")
+    report("with signatures\n")
+    report("    generate [--check]  write the files frost.json says a program ")
+    report("of this\n")
+    report("                    project writes, or check that none of them is ")
+    report("stale\n\n")
     report("Without -o the output goes to standard output. FROST_INPUT ")
     report("and\nFROST_BACKEND are read when the matching argument is ")
     report("absent.\n")
@@ -126,26 +130,6 @@ value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
         k = k + 1
     }
     byte_set(out, rest, 0)
-    out
-}
-
-// Two strings end to end, in memory the caller keeps. Command lines and derived
-// file names are the only strings this compiler builds rather than points into.
-join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
-    first_len := cstr_len(first)
-    second_len := cstr_len(second)
-    out := unsafe { ptr_cast($i8, frost_rt_alloc(first_len + second_len + 1)) }
-    mut k: i64 = 0
-    while (k < first_len) {
-        byte_set(out, k, byte_at(first, k))
-        k = k + 1
-    }
-    k = 0
-    while (k < second_len) {
-        byte_set(out, first_len + k, byte_at(second, k))
-        k = k + 1
-    }
-    byte_set(out, first_len + second_len, 0)
     out
 }
 
@@ -512,7 +496,7 @@ backslashed :: fn(path: ^i8) -> ^i8 {
 }
 
 // One name replaced by another, which the shell does in one step on either
-// platform. This is the second of the two places that knows which one it is
+// platform. This is the second of the three places that knows which one it is
 // running on.
 // What it has to say goes nowhere: a compiler with no `-o` writes the program
 // it emitted to standard output, and a shell announcing a file it moved would
@@ -537,7 +521,7 @@ move_file :: fn(from: ^i8, to: ^i8) {
 
 // The directory the objects go in, made if it is not there. The shell is what
 // makes a directory on either platform, and the command differs, so this is one
-// of the two places that knows which one it is running on.
+// of the three places that knows which one it is running on.
 make_directory :: fn(path: ^i8) {
     mut command := join_two("mkdir -p ", path)
     if (frost_rt_is_windows() == 1) {
@@ -545,6 +529,177 @@ make_directory :: fn(path: ^i8) {
         command = join_two(join_two(command, path), "\"")
     }
     unsafe { frost_rt_run_command(command) }
+}
+
+// One part of a command line, quoted and with a space in front, since the line
+// goes to a shell and a path with a space in it is one argument rather than two.
+quoted_after :: fn(line: ^i8, part: ^i8) -> ^i8 {
+    join_two(join_two(join_two(line, " \""), part), "\"")
+}
+
+// A command line the shell will read whole. `cmd` takes a line that begins and
+// ends with a quote and strips that pair before reading the rest, which turns a
+// quoted program followed by a quoted last argument into something it cannot
+// find. A pair of its own is what gets stripped instead. This is the third of
+// the three places that knows which platform it is running on.
+shell_line :: fn(command: ^i8) -> ^i8 {
+    if (frost_rt_is_windows() == 1) {
+        return join_two(join_two("\"", command), "\"")
+    }
+    command
+}
+
+// Whether a path names a Frost source, which is what decides if the formatter
+// is run over what a generator wrote.
+ends_in_frost :: fn(path: ^i8) -> bool {
+    length := cstr_len(path)
+    suffix: ^i8 = ".frost"
+    wanted := cstr_len(suffix)
+    if (length < wanted) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < wanted) {
+        if (byte_at(path, length - wanted + k) != byte_at(suffix, k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// Where a `--check` writes instead of over the declared output.
+//
+// In the temporary directory, so a check that stops partway leaves nothing in
+// the tree, and under the output's own file name so the extension survives and
+// the formatter reads it as the kind of file it is. The number in front is the
+// whole output path, so two projects writing a file of the same name do not
+// check each other's.
+generated_scratch :: fn(output: ^i8) -> ^i8 {
+    join_two(
+        join_number(
+            join_two(temp_directory(), "/frost_generate_"),
+            cstr_checksum(output),
+            "_"
+        ),
+        file_name(output)
+    )
+}
+
+// Whether two files hold the same bytes.
+//
+// Read by length rather than to a terminator, since what a generator writes is
+// whatever it writes and a zero among those bytes would end the comparison
+// early. Each read is its own statement, because the length of one is asked for
+// after it and before the next read replaces it.
+same_contents :: fn(first: ^i8, second: ^i8) -> bool {
+    if (unsafe { frost_rt_file_exists(first) } == 0
+        || unsafe { frost_rt_file_exists(second) } == 0) {
+        return false
+    }
+    held := unsafe { frost_rt_file_read(first) }
+    held_length := unsafe { frost_rt_file_size() }
+    other := unsafe { frost_rt_file_read(second) }
+    other_length := unsafe { frost_rt_file_size() }
+    if (held_length != other_length || held_length < 0) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < held_length) {
+        if (byte_at(held, k) != byte_at(other, k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// `frost generate [--check]`: write every file the project's manifest says a
+// program of its own writes.
+//
+// The generator is compiled and run by this compiler, so a checkout holding two
+// compilers regenerates with whichever one was asked. Its arguments are the
+// output path first and the declared inputs after, which is the order a program
+// written before any manifest existed already took.
+//
+// A step always writes, and `--check` writes somewhere else and compares the
+// bytes. Staleness is decided from content because a checkout stamps every file
+// with the time it was made, so a timestamp says nothing about whether the
+// generator would write something different.
+run_generators :: fn(checking: bool) -> i64 {
+    // The manifest is looked for above the directory the command was run in,
+    // since `generate` names no file to start from the way a build does.
+    here := join_two(unsafe { frost_rt_absolute_path(".") }, "/frost")
+    if (manifest_above(here) < 0) {
+        report("frost generate: no frost.json declares this project\n")
+        return 0
+    }
+    mut steps: Arena<Generator> = arena_make($Generator, 16)
+    manifest_generators(here, steps)
+    if (steps.count == 0) {
+        report("frost generate: this project declares nothing to generate\n")
+        return 0
+    }
+    compiler := unsafe { frost_rt_absolute_path(frost_rt_arg_at(0)) }
+    mut settled: i64 = 0
+    mut index: i64 = 0
+    while (index < steps.count) {
+        step := arena_at(steps, index)
+        mut written := step.output
+        if (checking) {
+            written = generated_scratch(step.output)
+        }
+        mut command := quoted_after(quoted_after("", compiler), "run")
+        command = quoted_after(quoted_after(command, step.from), written)
+        command = join_two(command, step.inputs)
+        if (unsafe { frost_rt_run_command(shell_line(command)) } != 0) {
+            // What went wrong was said by whatever ran, on the stream this
+            // shares, so this names the step rather than repeating it.
+            report("frost generate: ")
+            report_cstr(step.from_named)
+            report(" did not write ")
+            report_cstr(step.output_named)
+            report("\n")
+            return 1
+        }
+        // A generator lays its output out to be read while it assembles it, and
+        // the tree holds every Frost file to one rendering. Formatting here is
+        // what makes those two agree, so `--check` compares what a build leaves
+        // on disk rather than the form on the way there.
+        if (ends_in_frost(written)) {
+            mut rendering := quoted_after(quoted_after("", compiler), "fmt")
+            rendering = quoted_after(rendering, written)
+            if (unsafe { frost_rt_run_command(shell_line(rendering)) } != 0) {
+                report("frost generate: the formatter refused ")
+                report_cstr(step.output_named)
+                report("\n")
+                return 1
+            }
+        }
+        if (checking == false) {
+            report("frost generate: wrote ")
+            report_cstr(step.output_named)
+            report("\n")
+            index = index + 1
+            continue
+        }
+        matched := same_contents(written, step.output)
+        unsafe { frost_rt_remove_file(written) }
+        if (matched) {
+            report("frost generate: ")
+            report_cstr(step.output_named)
+            report(" is up to date\n")
+        } else {
+            settled = 1
+            report("frost generate: ")
+            report_cstr(step.output_named)
+            report(" is not what ")
+            report_cstr(step.from_named)
+            report(" writes. Run `frost generate`\n")
+        }
+        index = index + 1
+    }
+    settled
 }
 
 // An argument beginning with `-` that nothing above claimed is a mistake worth

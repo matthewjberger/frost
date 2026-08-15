@@ -6,5 +6,12 @@
     "lib/renderer",
     "lib/engine",
     "examples/graphics"
+  ],
+  "generated": [
+    {
+      "output": "lib/renderer/wgpu.frost",
+      "from": "tools/wgpu_bindgen.frost",
+      "inputs": ["lib/renderer/wgpu/webgpu.json"]
+    }
   ]
 }

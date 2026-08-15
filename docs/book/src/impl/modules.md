@@ -37,16 +37,46 @@ shadow it by putting a file of the same name somewhere earlier.
 { "name": "demo", "paths": ["lib", "vendor/things"] }
 ```
 
-Every field is optional. `paths` are relative to the manifest. Two more say
+Every field is optional. `paths` are relative to the manifest. Three more say
 something about the project rather than about where a file is found: `layers`
 lists its directories lowest first, and a file may import from its own layer or
 one declared before it and from no later one; `prefixes` maps a directory to the
-prefix its exported names share, which `frost lint` holds them to.
+prefix its exported names share, which `frost lint` holds them to; `generated`
+names the files a program of the project writes.
 
 It answers one question about an import, where a library lives. It carries no
 versions and fetches no dependencies from anywhere, since compiling a program
 takes neither and each is a decision that would be hard to take back. The format
 is JSON, the same serde and JSON that interfaces and build records already use.
+
+## A file this project writes
+
+```json
+{ "generated": [
+    { "output": "lib/renderer/wgpu.frost",
+      "from":   "tools/wgpu_bindgen.frost",
+      "inputs": ["lib/renderer/wgpu/webgpu.json"] }] }
+```
+
+`frost generate` compiles each `from` with the compiler that was asked, runs it
+with the output path first and the inputs after, and puts a `.frost` output
+through the formatter. `frost generate --check` writes somewhere else and
+compares the bytes, so a checkout can be held to generated files that are not
+stale. Every path is relative to the manifest, the way a search directory is.
+
+The generator is an ordinary Frost program taking a file to write and files to
+read, so it compiles, runs and reads on its own without knowing a manifest
+exists. What it writes stays a file in the tree: a reader opens it, a diff shows
+what a schema change did to it, and the compiler that reads it afterward is the
+ordinary one.
+
+That is the whole of build-time generation here, and the shape is the argument.
+A metaprogram that injected declarations into a compilation would produce the
+same bindings invisibly, and every check in this compiler defaults toward
+refusing what it cannot see. Generating source on disk instead keeps the
+compile-time layer a function from shapes to values and refusals, and it is what
+made a gap in `emit_handles` visible as a diff rather than as a resize that
+failed on someone's machine.
 
 ## The standard library
 
