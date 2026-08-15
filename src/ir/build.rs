@@ -974,6 +974,7 @@ fn build_module_inner(
                     !is_type_parameter(ast, parameter) && !parameter.pack
                 })
                 .map(|parameter| Parameter {
+                    at: parameter.at,
                     name: parameter.name,
                     type_annotation: parameter.type_annotation.as_ref().map(
                         |ty| {
@@ -1026,6 +1027,9 @@ fn build_module_inner(
                         continue;
                     };
                     parameters.push(Parameter {
+                        // Made while a call is specialized, so there is no
+                        // place in the source it was written at.
+                        at: crate::lexer::Position::default(),
                         name: ast.intern(name),
                         type_annotation: Some(ty.clone()),
                         mutable: false,
@@ -5986,7 +5990,13 @@ impl<'a> FunctionLowering<'a> {
                     }
                     let ty = Type::Struct(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
-                    self.init_struct(local, &layout_name, field_inits)?;
+                    // At the literal. A statement lowered here carries the
+                    // statement's place, and what the sentence names is the
+                    // type the literal was written with.
+                    locate(
+                        self.init_struct(local, &layout_name, field_inits),
+                        self.at_expression(value),
+                    )?;
                     self.define_variable(&name, local);
                     return Ok(());
                 }

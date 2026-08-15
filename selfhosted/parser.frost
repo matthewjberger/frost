@@ -3867,7 +3867,7 @@ instantiate :: fn(
             xarg_start = xarg_start,
             xarg_count = xarg_count,
             struct_index = struct_index,
-            asked_at = cur_off(p)
+            asked_at = p.stmt_at
         },
     )
     STRUCT_BASE + struct_index
@@ -5801,6 +5801,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 frost_rt_recover_escape()
             }
             mut assignable: i64 = 0
+            // Where the `mut` is, since it is the word the reader takes away.
+            mut assignable_at := cur_off(p)
             if (cur(p) == TokenKind::KwMut) {
                 assignable = 1
                 advance(p)
@@ -5817,7 +5819,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             mut name_len := cur_len(p)
             if (cur(p) == TokenKind::Underscore) {
                 if (assignable == 1) {
-                    report_where(p.modules, p.src, cur_off(p))
+                    report_where(p.modules, p.src, assignable_at)
                     report("`mut` makes a binding assignable and `_` binds nothing; write `_` on its own")
                     frost_rt_recover_escape()
                 }
@@ -6600,6 +6602,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         // continuation that parses as a statement of its own is an expression
         // that lost the operator joining it to that line.
         stmt_at := cur_off(p)
+        p.stmt_at = stmt_at
         if (block_column > 0 && breaks_between(p.src, previous_at, stmt_at)
             && column_at(p.src, stmt_at) > block_column
             && in_lifted(p, stmt_at) == false) {

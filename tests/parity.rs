@@ -4413,25 +4413,20 @@ fn both_compilers_refuse_the_same_programs() {
 }
 
 // The refusals the two compilers place differently: same file, same words, a
-// caret under a different column. Held as a list rather than fixed all at once
-// because each one is its own question about which token a fault belongs to, and
-// the list can only shrink: a pair that drifts fails on the way in, and one that
-// is mended fails until its name comes off.
+// caret under a different column. Thirty-four when the harness learned to
+// compare the whole report rather than the words after the caret, and two now.
 //
-// Written down after the harness learned to compare the whole report rather than
-// the words after the caret, which is what let these sit unseen. `spoken` keeps
-// the claim and drops the header and the column it sits under, so two compilers
-// pointing a reader at two different places compared equal.
-const POSITIONED_DIFFERENTLY: &[&str] = &[
-    "a_test_that_draws_a_capability",
-    "a_mut_on_a_discard",
-    "write_into_consumed",
-    "generic_pool",
-    "pool_nobody_named",
-    "handed_out_by_element",
-    "an_undeclared_type_in_a_signature",
-    "a_literal_of_an_undeclared_type",
-];
+// Both are the same question and it is about a pool of resources, which neither
+// compiler finds where it is written: the fault is in an instance of a generic
+// container, and it is found by a sweep over every instance a program asked for,
+// long after the file that asked was read. What each has to go back to differs.
+// The self-hosted compiler records the statement that wanted the instance. The
+// bootstrap places it at the call that produced one, which is a column further
+// along the same line, and where that place is recorded has not been run down.
+//
+// The list can only shrink: a pair that drifts fails on the way in, and one that
+// is mended fails until its name comes off.
+const POSITIONED_DIFFERENTLY: &[&str] = &["generic_pool", "pool_nobody_named"];
 
 // The refusals the two compilers word differently. Empty, and it is the test
 // above that keeps it so: a pair that drifts fails on the way in, and one that

@@ -326,6 +326,13 @@ pub struct PatternBinding {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct Parameter {
+    // Where the parameter was written, so a report about its type says where
+    // the type is rather than where the declaration holding it starts.
+    // Defaulted on the way in, because an interface written before this carried
+    // no such thing and a build reading one is reading a program it already
+    // compiled.
+    #[serde(default)]
+    pub at: crate::lexer::Position,
     pub name: Symbol,
     pub type_annotation: Option<crate::types::Type>,
     pub mutable: bool,

@@ -27,7 +27,10 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                 };
                 for parameter in ast.params_in(*params) {
                     if let Some(ty) = &parameter.type_annotation {
-                        report_unknown(ty, &known, position, &mut found);
+                        // At the type, which is what the report names. The
+                        // declaration's own place put the caret on the word the
+                        // reader wrote first.
+                        report_unknown(ty, &known, parameter.at, &mut found);
                     }
                 }
                 if let crate::ast::ReturnKind::Single(ty)
@@ -54,7 +57,7 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
             } => {
                 for parameter in ast.params_in(*params) {
                     if let Some(ty) = &parameter.type_annotation {
-                        report_unknown(ty, &known, position, &mut found);
+                        report_unknown(ty, &known, parameter.at, &mut found);
                     }
                 }
                 if let Some(ty) = return_type {

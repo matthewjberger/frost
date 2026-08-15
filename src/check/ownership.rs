@@ -708,8 +708,16 @@ fn handed_out_unnameable(
             if nameable_under(path).is_some() {
                 continue;
             }
+            // In the body that hands the element out, which is where the edit
+            // goes. Raised with no place, it took the caller's, and a reader
+            // was sent to a call that is written correctly.
+            let where_gone = checker
+                .moved_at
+                .get(key)
+                .map(|at| format!("at {}: ", at.describe()))
+                .unwrap_or_default();
             reports.push(format!(
-                "'{key}' gives away a resource out of '{}', which \
+                "{where_gone}'{key}' gives away a resource out of '{}', which \
                  this function only borrows, and names it by an element rather \
                  than by a field. A caller cannot be told which element went, \
                  so nothing stops it asking again and being handed the same one \

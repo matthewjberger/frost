@@ -710,6 +710,7 @@ main :: fn() -> i64 {
         tparam_fallback = -1,
         last_return_type = 0,
         no_struct_lit = false,
+        stmt_at = 0,
         last_type_was_generic = 0,
         last_type_was_param = 0,
         unsafe_spans = arena_make($UnsafeSpan, 4096),

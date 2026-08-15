@@ -1834,6 +1834,10 @@ Parser :: struct {
     tparam_fallback: i64,
     last_return_type: i64,
     no_struct_lit: bool,
+    // Where the statement being read began. A generic instance is asked for in
+    // the middle of one, and what a report about the instance names is the
+    // statement that wanted it rather than the type position inside it.
+    stmt_at: i64,
     last_type_was_generic: i64,
     // Whether the type just read was the template's own compile-time parameter,
     // written bare. A parameter node records whichever instantiation was made

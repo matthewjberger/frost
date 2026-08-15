@@ -173,6 +173,8 @@ fn declares_extern(program: &Module, wanted: &str) -> bool {
 fn harness_parameter(ast: &mut Ast, name: &str, ty: Type) -> AstParameter {
     let name = ast.intern(name);
     AstParameter {
+        // Made for the test harness, which nobody wrote.
+        at: frost::Position::default(),
         name,
         type_annotation: Some(ty),
         mutable: false,

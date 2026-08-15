@@ -109,6 +109,8 @@ pub fn lower_allocation_sources(
         for capability in &capabilities {
             let binding = ast.intern(&capability_binding(capability));
             parameters.push(Parameter {
+                // A capability turned into a parameter, which nobody wrote.
+                at: crate::lexer::Position::default(),
                 name: binding,
                 type_annotation: Some(capability.clone()),
                 mutable: true,

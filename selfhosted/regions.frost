@@ -4878,7 +4878,13 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
                 root := strip_place(p, container, place_depth(p, container))
                 rnode := arena_at(p.arena, root)
                 said := source_text(p.src, rnode.val, rnode.c)
-                at := rnode.val
+                // The write is what is refused, so the fault is placed at the
+                // place being written. `moved_container_of` answers with the
+                // node recorded where the value went, which is the note's place
+                // and not this one: both lines pointed at the move and neither
+                // at the line that cannot be written.
+                written_root := strip_place(p, node.a, place_depth(p, node.a))
+                at := arena_at(p.arena, written_root).val
                 if (move_fault_told(p, at)) {
                     return
                 }

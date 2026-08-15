@@ -1050,6 +1050,12 @@ impl<'a> Parser<'a> {
         )
     }
 
+    // The place of a token by its index, for a report about something a couple
+    // of tokens ahead of where the read is.
+    fn position_at(&self, index: u32) -> Option<Position> {
+        self.positions.get(index as usize).copied()
+    }
+
     fn current_position(&self) -> Option<Position> {
         if self.positions.is_empty() {
             return None;
@@ -1536,8 +1542,17 @@ impl<'a> Parser<'a> {
                     && matches!(self.peek_nth(1), Token::StringLiteral(_))
                     && matches!(self.peek_nth(2), Token::Uses) =>
             {
-                return Err(self.here(
-                    "a `test` body is run by the test runner, which supplies nothing, so a test draws no capability".to_string(),
+                // At the `uses`, which is what the reader takes away. The
+                // word `test` is not what is wrong with the line.
+                let drawn =
+                    self.position_at(self.mark() + 2).unwrap_or_else(|| {
+                        self.current_position().unwrap_or_default()
+                    });
+                return Err(anyhow::Error::new(
+                    crate::diagnostic::LocatedError {
+                        position: drawn,
+                        message: "a `test` body is run by the test runner, which supplies nothing, so a test draws no capability".to_string(),
+                    },
                 ));
             }
             Token::Return => Some(self.parse_return_statement()?),
@@ -1996,6 +2011,8 @@ impl<'a> Parser<'a> {
             {
                 return Err(self.here("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries".to_string()));
             }
+            // Where the `mut` is, since it is the word the reader takes away.
+            let mut_at = self.current_position().unwrap_or_default();
             let mutable = if matches!(self.peek_nth(0), Token::Mut) {
                 self.read_token();
                 true
@@ -2016,6 +2033,14 @@ impl<'a> Parser<'a> {
             };
             if name == "_" {
                 if mutable {
+                    return Err(anyhow::Error::new(
+                        crate::diagnostic::LocatedError {
+                            position: mut_at,
+                            message: "`mut` makes a binding assignable and `_` binds nothing; write `_` on its own".to_string(),
+                        },
+                    ));
+                }
+                if false {
                     bail!(
                         "`mut` makes a binding assignable and `_` binds nothing; write `_` on its own"
                     );
@@ -2497,9 +2522,12 @@ impl<'a> Parser<'a> {
                 if !matches!(self.read_token(), Token::Colon) {
                     bail!("Expected ':' after parameter name");
                 }
+                // Where the type is written, for a report about the type.
+                let type_at = self.current_position().unwrap_or_default();
                 let param_type = self.parse_type()?;
                 let param_name = self.ast.intern(&param_name);
                 params.push(Parameter {
+                    at: type_at,
                     name: param_name,
                     type_annotation: Some(param_type),
                     mutable: false,
@@ -3731,6 +3759,9 @@ impl<'a> Parser<'a> {
                 // a value of some type, so it has no type annotation of its
                 // own: its length and its types arrive with the call.
                 let mut pack = false;
+                // Where the type is written, which is what a report about the
+                // type is placed at.
+                let mut type_at = self.current_position().unwrap_or_default();
                 let type_annotation =
                     if matches!(self.peek_nth(0), Token::Colon) {
                         self.read_token();
@@ -3742,6 +3773,8 @@ impl<'a> Parser<'a> {
                             pack = true;
                             None
                         } else {
+                            type_at =
+                                self.current_position().unwrap_or_default();
                             Some(self.parse_type()?)
                         }
                     } else {
@@ -3750,6 +3783,7 @@ impl<'a> Parser<'a> {
 
                 let name = self.ast.intern(&name);
                 parameters.push(Parameter {
+                    at: type_at,
                     name,
                     type_annotation,
                     mutable: false,
@@ -4429,6 +4463,9 @@ impl<'a> Parser<'a> {
                 // a value of some type, so it has no type annotation of its
                 // own: its length and its types arrive with the call.
                 let mut pack = false;
+                // Where the type is written, which is what a report about the
+                // type is placed at.
+                let mut type_at = self.current_position().unwrap_or_default();
                 let type_annotation =
                     if matches!(self.peek_nth(0), Token::Colon) {
                         self.read_token();
@@ -4440,6 +4477,8 @@ impl<'a> Parser<'a> {
                             pack = true;
                             None
                         } else {
+                            type_at =
+                                self.current_position().unwrap_or_default();
                             Some(self.parse_type()?)
                         }
                     } else {
@@ -4448,6 +4487,7 @@ impl<'a> Parser<'a> {
 
                 let name = self.ast.intern(&name);
                 parameters.push(Parameter {
+                    at: type_at,
                     name,
                     type_annotation,
                     mutable: false,
@@ -4594,6 +4634,7 @@ impl<'a> Parser<'a> {
         }
         let symbol = self.ast.intern(&name);
         Ok(Parameter {
+            at: crate::lexer::Position::default(),
             name: symbol,
             type_annotation: Some(Type::TypeParam(name)),
             mutable: false,
