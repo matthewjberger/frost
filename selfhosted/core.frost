@@ -1393,6 +1393,12 @@ ToldMove :: struct {
 // two so that nothing counts as referred to before a unit has run.
 AsmUse :: struct {
     unit: i64,
+    // What this literal is called in the unit that refers to it, counted from
+    // zero for each unit. The node's own index would do, but it is a number
+    // over the whole program: one line added to the first module shifts every
+    // index after it, so every unit's text changes and every object is built
+    // again for an edit that reached one of them.
+    slot: i64,
 }
 
 LocalVar :: struct {
@@ -2033,6 +2039,9 @@ Parser :: struct {
     // it keeps its own and fills it as it reads the bindings.
     move_locals: Arena<LocalVar>,
     label_id: i64,
+    // How many literals the unit being emitted has referred to, which is what
+    // the next one is called.
+    asm_slots: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list
     // that was not bound, which is what a template's own parse sees. That parse

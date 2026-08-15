@@ -2129,7 +2129,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // already knows how to read a decimal and this compiler does not need to.
     if (kind == NodeKind::Float) {
         mark_asm_used(p, id)
-        asm_i("movq .Lflt", id, "(%rip), %rax")
+        asm_i("movq .Lflt", asm_label(p, id), "(%rip), %rax")
         // Read at single precision. The digits were laid down as a double, so
         // narrowing is what leaves the number an `f32` holds, and the bits stay
         // in %eax because that is where every other single-precision value in
@@ -2150,7 +2150,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         mark_asm_used(p, id)
         emit_text("    leaq .Lpos")
-        frost_rt_emit_int(id)
+        frost_rt_emit_int(asm_label(p, id))
         emit_text("(%rip), ")
         emit_asm_arg_reg(p, 1)
         emit_text("\n")
@@ -2313,7 +2313,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::StrLit) {
         mark_asm_used(p, id)
-        asm_i("leaq .Lstr", id, "(%rip), %rax")
+        asm_i("leaq .Lstr", asm_label(p, id), "(%rip), %rax")
         return
     }
     if (kind == NodeKind::Sizeof) {
@@ -3939,9 +3939,27 @@ mark_asm_used :: fn(mut p: Parser, id: i64) {
         return
     }
     while (p.asm_used.count <= id) {
-        arena_push(p.asm_used, AsmUse { unit = 0 })
+        arena_push(p.asm_used, AsmUse { unit = 0, slot = 0 })
+    }
+    if (arena_at(p.asm_used, id).unit == p.emit_module + 2) {
+        return
     }
     arena_at(p.asm_used, id).unit = p.emit_module + 2
+    arena_at(p.asm_used, id).slot = p.asm_slots
+    p.asm_slots = p.asm_slots + 1
+}
+
+// What a literal is called in the text being written.
+//
+// A whole program is one unit and numbers these by the node that holds them,
+// which is what it has always written. A unit of a larger build counts its own
+// from zero, so what it writes turns on what it refers to rather than on where
+// every other module's nodes happened to land.
+asm_label :: fn(mut p: Parser, id: i64) -> i64 {
+    if (p.emit_module < 0) {
+        return id
+    }
+    arena_at(p.asm_used, id).slot
 }
 
 // Whether the unit being emitted refers to the literal at `id`.
@@ -3960,29 +3978,43 @@ emit_asm_strings :: fn(mut p: Parser) {
         kind := node.kind
         off := node.val
         len := node.c
-        if (kind == NodeKind::StrLit
-            && (unit_holds(p, off) || asm_used_here(p, i))) {
+        // A whole program writes every literal where it was written, which is
+        // what it has always written. A unit of a larger build writes the ones
+        // it refers to and no others: what it holds and never names is written
+        // by nobody, and a name it uses is a number of its own that no other
+        // module's nodes can move.
+        mut wanted: bool = false
+        if (p.emit_module < 0) {
+            wanted = unit_holds(p, off)
+        } else {
+            wanted = asm_used_here(p, i)
+        }
+        if (kind == NodeKind::StrLit && wanted) {
             emit_text(".Lstr")
-            frost_rt_emit_int(i)
+            frost_rt_emit_int(asm_label(p, i))
             emit_text(":\n")
             emit_text("    .asciz \"")
             emit_string_content(p.src, off, len)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Assert
-            && (unit_holds(p, node.pos) || asm_used_here(p, i))) {
+        mut wanted_pos: bool = false
+        if (p.emit_module < 0) {
+            wanted_pos = unit_holds(p, node.pos)
+        } else {
+            wanted_pos = asm_used_here(p, i)
+        }
+        if (kind == NodeKind::Assert && wanted_pos) {
             emit_text(".Lpos")
-            frost_rt_emit_int(i)
+            frost_rt_emit_int(asm_label(p, i))
             emit_text(":\n")
             emit_text("    .asciz \"")
             emit_position(p.modules, p.src, node.pos)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Float
-            && (unit_holds(p, off) || asm_used_here(p, i))) {
+        if (kind == NodeKind::Float && wanted) {
             emit_text("    .align 8\n")
             emit_text(".Lflt")
-            frost_rt_emit_int(i)
+            frost_rt_emit_int(asm_label(p, i))
             emit_text(":\n")
             emit_text("    .double ")
             // A sign when the literal was written negative. The assembler's own
