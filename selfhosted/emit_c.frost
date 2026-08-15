@@ -474,8 +474,8 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 // casts back to the signature before calling through it.
                 fi := fn_index_of(p, off, len)
                 if (fi >= 0) {
-                    emit_text("(void*)mf_")
-                    frost_rt_emit_int(fi)
+                    emit_text("(void*)")
+                    emit_fn_stem(p, fi)
                     return
                 }
                 // A struct constant is written out where it is named.
@@ -509,8 +509,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         direct := bundle_field_fn(p, node.a)
         if (direct >= 0) {
             base := emit_call_pins(p, node.b, direct)
-            emit_text("mf_")
-            frost_rt_emit_int(direct)
+            emit_fn_stem(p, direct)
             emit_text("(")
             emit_args(p, node.b, direct, base)
             emit_text(")")
@@ -2388,6 +2387,22 @@ emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
     }
 }
 
+// The stable part of a function's emitted name: which module declared it and
+// what it is called there.
+//
+// The index into the symbol table would be shorter, but it is a number over the
+// whole program. One function added to the first module shifts every index
+// after it, so every unit that calls one of them is written differently, and a
+// build that compiles each module to its own object builds all of them again
+// for an edit that reached one. A name and a module do not move.
+emit_fn_stem :: fn(mut p: Parser, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    emit_text("mf_")
+    frost_rt_emit_int(module_at(p.modules, sym.off))
+    emit_text("_")
+    emit_source(p.src, sym.off, sym.len)
+}
+
 // What a function is called in the emitted C. A C library's name, and a
 // function written as `extern fn` with a body, are both spelled the way they
 // were written, because something outside this translation unit names them.
@@ -2398,8 +2413,7 @@ emit_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
         emit_source(p.src, sym.off, sym.len)
         return
     }
-    emit_text("mf_")
-    frost_rt_emit_int(fn_index)
+    emit_fn_stem(p, fn_index)
 }
 
 // The mangled name of a monomorphization: `mf_<index>` then every argument in
@@ -2412,8 +2426,7 @@ emit_mono_name :: fn(
     xarg_start: i64,
     xarg_count: i64
 ) {
-    emit_text("mf_")
-    frost_rt_emit_int(fn_index)
+    emit_fn_stem(p, fn_index)
     emit_mangled_arg(p, arg)
     mut i: i64 = 0
     while (i < xarg_count) {
@@ -2664,8 +2677,8 @@ emit_test_main :: fn(mut p: Parser) {
         if (module_at(p.modules, entry.name_off) == 0) {
             emit_text("frost_rt_test_run(\"")
             emit_string_content(p.src, entry.name_off, entry.name_len)
-            emit_text("\", (void(*)(void))mf_")
-            frost_rt_emit_int(entry.fn_index)
+            emit_text("\", (void(*)(void))")
+            emit_fn_stem(p, entry.fn_index)
             emit_text(");\n")
         }
         i = i + 1

@@ -2093,8 +2093,8 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         if (local_exists(p, off, len) == false) {
             fi := fn_index_of(p, off, len)
             if (fi >= 0) {
-                emit_text("    leaq mf_")
-                frost_rt_emit_int(fi)
+                emit_text("    leaq ")
+                emit_asm_fn_stem(p, fi)
                 emit_text("(%rip), %rax\n")
                 return
             }
@@ -3652,6 +3652,22 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
     emit_asm_frame(p, body, params, ret)
 }
 
+// The stable part of a function's emitted name: which module declared it and
+// what it is called there.
+//
+// The index into the symbol table would be shorter, but it is a number over the
+// whole program. One function added to the first module shifts every index
+// after it, so every unit that calls one of them is written differently, and a
+// build that compiles each module to its own object builds all of them again
+// for an edit that reached one. A name and a module do not move.
+emit_asm_fn_stem :: fn(mut p: Parser, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    emit_text("mf_")
+    frost_rt_emit_int(module_at(p.modules, sym.off))
+    emit_text("_")
+    emit_source(p.src, sym.off, sym.len)
+}
+
 // What a function is called in the emitted assembly. A C library's name, and a
 // function written as `extern fn` with a body, are both spelled the way they
 // were written, because something outside this object names them. Everything
@@ -3662,8 +3678,7 @@ emit_asm_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
         emit_source(p.src, sym.off, sym.len)
         return
     }
-    emit_text("mf_")
-    frost_rt_emit_int(fn_index)
+    emit_asm_fn_stem(p, fn_index)
 }
 
 // One argument's contribution to a mangled name, the assembly backend's copy of
@@ -3689,8 +3704,7 @@ emit_asm_mono_name :: fn(
     xarg_start: i64,
     xarg_count: i64
 ) {
-    emit_text("mf_")
-    frost_rt_emit_int(fn_index)
+    emit_asm_fn_stem(p, fn_index)
     emit_asm_mangled_arg(p, arg)
     mut i: i64 = 0
     while (i < xarg_count) {
@@ -3752,8 +3766,8 @@ emit_asm_test_main :: fn(mut p: Parser) {
             emit_text("(%rip), ")
             emit_asm_arg_reg(p, 0)
             emit_text("\n")
-            emit_text("    leaq mf_")
-            frost_rt_emit_int(entry.fn_index)
+            emit_text("    leaq ")
+            emit_asm_fn_stem(p, entry.fn_index)
             emit_text("(%rip), ")
             emit_asm_arg_reg(p, 1)
             emit_text("\n")
