@@ -5966,8 +5966,13 @@ impl<'a> FunctionLowering<'a> {
                             let Some(instance) = self
                                 .generic_instance_of(&struct_name, field_inits)
                             else {
+                                // At the literal rather than at the binding it
+                                // fills. A statement lowered here carries the
+                                // statement's place, and the literal is what
+                                // the sentence is about.
                                 bail!(
-                                    "'{struct_name}' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '{struct_name}<i64> {{ ... }}', or give the binding a declared type that names them"
+                                    "at {}: '{struct_name}' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '{struct_name}<i64> {{ ... }}', or give the binding a declared type that names them",
+                                    self.at_expression(value).describe()
                                 );
                             };
                             instance

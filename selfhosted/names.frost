@@ -1984,7 +1984,8 @@ record_columns :: fn(mut p: Parser, element: i64, container: i64) {
             arg = element,
             xarg_start = 0,
             xarg_count = 0,
-            struct_index = struct_index_of(container)
+            struct_index = struct_index_of(container),
+            asked_at = cur_off(p)
         }
     )
 }

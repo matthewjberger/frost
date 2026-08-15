@@ -4424,11 +4424,8 @@ fn both_compilers_refuse_the_same_programs() {
 // pointing a reader at two different places compared equal.
 const POSITIONED_DIFFERENTLY: &[&str] = &[
     "a_resource_given_away_through_a_borrow_into_a_run",
-    "an_argument_takes_the_struct_its_parameter_names",
-    "a_value_of_one_ordinal_set_is_not_a_value_of_another",
     "a_value_named_under_a_type_is_a_value_of_it",
     "a_block_of_values_is_closed",
-    "a_capability_drawing_function_as_a_compile_time_argument",
     "a_test_that_draws_a_capability",
     "a_format_string_that_is_not_a_literal",
     "a_live_walk_over_a_computed_container",
@@ -4439,7 +4436,6 @@ const POSITIONED_DIFFERENTLY: &[&str] = &[
     "generic_pool",
     "pool_nobody_named",
     "handed_out_by_element",
-    "a_generic_literal_with_no_argument_to_read",
     "a_raw_pointer_read_outside_an_unsafe_block",
     "an_undeclared_type_in_a_signature",
     "a_literal_of_an_undeclared_type",

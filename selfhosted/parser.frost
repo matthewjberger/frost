@@ -1763,7 +1763,9 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
                 // same as a call through a name, so an aggregate a call answers
                 // with is bound first. Without the binding there is nothing to
                 // take the address of.
+                argument_at := written_at(p)
                 argument := hold_struct_result(p, parse_expr(p))
+                arena_at(p.arena, argument).pos = argument_at
                 held := new_node(p, NodeKind::Arg, argument, 0, 0)
                 if (head == (-1)) {
                     head = held
@@ -1992,6 +1994,16 @@ names_unbound_pack :: fn(mut p: Parser) -> bool {
 
 // One argument per element of the list, in order: a value element is the
 // parameter this instance took it under, a type element is the type itself.
+// Where the thing about to be parsed was written. A text token records where
+// its bytes begin, which is past the quote that opened it, and the quote is
+// what the reader wrote.
+written_at :: fn(mut p: Parser) -> i64 {
+    if (cur(p) == TokenKind::Str) {
+        return cur_off(p) - 1
+    }
+    cur_off(p)
+}
+
 splice_pack_arguments :: fn(
     mut p: Parser,
     head_in: i64,
@@ -2197,7 +2209,13 @@ parse_arg_list_for :: fn(
             if (names_unbound_pack(p)) {
                 p.args_unbound_map = 1
             }
+            // A node records where the cursor was when it was made, which for
+            // anything with children is past all of them, so an argument that
+            // is a literal or a call carries its own last token. What a report
+            // about the argument means is where the reader started writing it.
+            value_at := written_at(p)
             value := hold_struct_result(p, parse_expr(p))
+            arena_at(p.arena, value).pos = value_at
             p.expected_type = saved_expected
             p.expected_alt = saved_alt
             if (cur(p) == TokenKind::KwFor) {
@@ -3840,7 +3858,8 @@ instantiate :: fn(
             arg = arg,
             xarg_start = xarg_start,
             xarg_count = xarg_count,
-            struct_index = struct_index
+            struct_index = struct_index,
+            asked_at = cur_off(p)
         },
     )
     STRUCT_BASE + struct_index

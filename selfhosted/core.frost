@@ -837,6 +837,11 @@ Instance :: struct {
     xarg_start: i64,
     xarg_count: i64,
     struct_index: i64,
+    // Where the program asked for this instance. A whole-program sweep finds a
+    // fault in an instance long after the file that wanted one was read, and
+    // the template's own declaration is a place in the standard library rather
+    // than anywhere the reader wrote.
+    asked_at: i64,
 }
 
 // The enum one `-> T ! E` was lowered to, and the pair it was made for. The two

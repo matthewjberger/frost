@@ -97,9 +97,26 @@ is_column_field :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     true
 }
 
+// Where the program asked for this instance, or the template's own name where
+// nothing recorded one. A pool of resources is found by a sweep over every
+// instance, so the place a reader is sent has to come from the instance rather
+// than from where the sweep happens to be.
+pool_asked_at :: fn(mut p: Parser, struct_ty: i64, fallback: i64) -> i64 {
+    index := struct_index_of(struct_ty)
+    mut i: i64 = 0
+    while (i < p.instances.count) {
+        held := arena_at(p.instances, i)
+        if (held.struct_index == index && held.asked_at > 0) {
+            return held.asked_at
+        }
+        i = i + 1
+    }
+    fallback
+}
+
 report_pool :: fn(mut p: Parser, struct_ty: i64, element: i64) {
     def := arena_at(p.structs, struct_index_of(struct_ty))
-    report_where(p.modules, p.src, def.name_off)
+    report_where(p.modules, p.src, pool_asked_at(p, struct_ty, def.name_off))
     report_fmt(
         "'{}' is a pool of '{}', which is a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it.",
         instance_text(p, struct_ty),
