@@ -115,6 +115,13 @@ best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
 smallest := best($i64, $ascending, 7, 3)
 ```
 
+The argument may be a function written where it is named, which is the same
+argument once the build has named it:
+
+```frost,sketch
+best($i64, $fn(a: i64, b: i64) -> bool { a < b }, 7, 3)
+```
+
 Written `$f: Type` the parameter accepts a function of any signature, and a
 mismatch surfaces inside the specialized body. Writing the signature instead
 states what the argument has to be:
@@ -207,6 +214,22 @@ An element may be a type. `f($Position, $Velocity)` gives the list two types. A
 type element takes no parameter and is evaluated nowhere. It leaves behind a
 name the body writes where a type belongs, so a `for` over the list may write
 `sizeof(T)`, `[]T` and `T` as a generic argument. A list may hold both kinds.
+
+An element may be a function, and then the loop's name is the function's own:
+the body calls it, and the unrolled call goes to it directly. This is a chain of
+steps written as a call.
+
+```frost,sketch
+through :: fn(value: i64, ops: $...) -> i64 {
+    mut v := value
+    for f in ops {
+        v = f(v)
+    }
+    v
+}
+
+through(10, $add1, $mul2)
+```
 
 Naming the list in an argument list hands over its elements. One generic passes
 its list on to another this way:

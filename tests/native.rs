@@ -886,9 +886,11 @@ fn native_wrapping_and_unary() {
     assert_eq!(output, "44\n705032704\n-42\n");
 }
 
-// An anonymous function is a value: bound, stored in an array and handed on,
-// which is how a C callback is written where it is registered. Nothing is
-// called through one, because a call names the function it goes to.
+// An anonymous function written with `$` is a function this build names, and
+// the call goes to it. Written without one it is a value: bound, stored in an
+// array and handed on, which is how a C callback is written where it is
+// registered. Nothing is called through that one, because a call names the
+// function it goes to.
 const ANON_FUNCTIONS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -896,12 +898,15 @@ holds :: fn(f: fn(i64) -> i64) -> i64 { 1 }
 
 holds_two :: fn(ops: [2]fn(i64) -> i64) -> i64 { 2 }
 
+apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
 main :: fn() -> i64 {
     g := fn(a: i64) -> i64 { a - 3 }
     ops := [fn(a: i64) -> i64 { a + 1 }, fn(a: i64) -> i64 { a * 2 }]
     unsafe { printf("%lld\n", holds(g)) }
     unsafe { printf("%lld\n", holds_two(ops)) }
     unsafe { printf("%lld\n", holds(fn(a: i64) -> i64 { a * a })) }
+    unsafe { printf("%lld\n", apply($fn(a: i64) -> i64 { a * a }, 9)) }
     0
 }
 "#;
@@ -3142,7 +3147,7 @@ fn native_anonymous_functions() {
     let Some(output) = compile_and_run_unaudited("anon", ANON_FUNCTIONS) else {
         return;
     };
-    assert_eq!(output, "1\n2\n1\n");
+    assert_eq!(output, "1\n2\n1\n81\n");
 }
 
 // Build the self-hosted compiler, run it over `input`, and return what it wrote

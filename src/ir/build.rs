@@ -936,6 +936,16 @@ fn build_module_inner(
     let mut emitted: std::collections::HashSet<(u32, String)> =
         std::collections::HashSet::new();
     loop {
+        // A function written where it is used is one of this build's own, and a
+        // `$f` bound to one is called by name. The body doing the calling is
+        // lowered from the queue below, so the signature has to be declared
+        // before that happens rather than when the request itself is reached.
+        // Declared here, where the builder is the caller's to write to, and
+        // over the whole queue each round, which costs a walk of a list that is
+        // never long and needs nothing remembered about what was declared.
+        for request in &pending_anon {
+            builder.declare_anonymous(ast, request);
+        }
         if let Some(specialization) = pending.pop() {
             instantiated_by
                 .entry(specialization.mangled_name.clone())
@@ -1639,6 +1649,25 @@ impl IrBuilder {
             specializations,
             anonymous,
         })
+    }
+
+    // A function written where it is used, as a name this build knows the
+    // signature of. Every other function is read off a declaration the reader
+    // wrote, and this one has none.
+    fn declare_anonymous(&mut self, ast: &Ast, request: &AnonRequest) {
+        self.signatures
+            .entry(request.name.clone())
+            .or_insert_with(|| FunctionSignature {
+                parameters: ast
+                    .params_in(request.parameters)
+                    .iter()
+                    .map(parameter_type)
+                    .collect(),
+                return_type: ast
+                    .signature_to_type(ast.signature(request.return_sig))
+                    .unwrap_or(Type::Void),
+                capabilities: 0,
+            });
     }
 
     fn signature(&self, name: &str) -> Option<&FunctionSignature> {
@@ -3130,7 +3159,8 @@ impl Expansion<'_> {
                     // what the body wrote it in are type positions.
                     match element {
                         PackElement::Value(name, _)
-                        | PackElement::Constant(name, _) => {
+                        | PackElement::Constant(name, _)
+                        | PackElement::Type(Type::ConstFn(name)) => {
                             let bound = substitute_identifier(
                                 ast, body, &variable, name,
                             );
@@ -3226,7 +3256,9 @@ impl Expansion<'_> {
         body: ExprId,
     ) -> Result<ExprId> {
         match element {
-            PackElement::Value(name, _) | PackElement::Constant(name, _) => {
+            PackElement::Value(name, _)
+            | PackElement::Constant(name, _)
+            | PackElement::Type(Type::ConstFn(name)) => {
                 let bound = substitute_identifier_in_expression(
                     ast, body, variable, name,
                 );
@@ -3502,7 +3534,8 @@ impl Expansion<'_> {
             };
             return Ok(match element {
                 PackElement::Value(name, _)
-                | PackElement::Constant(name, _) => {
+                | PackElement::Constant(name, _)
+                | PackElement::Type(Type::ConstFn(name)) => {
                     let name = name.clone();
                     let symbol = ast.intern(&name);
                     ast.push_expr(Expression::Identifier(symbol), span)
@@ -6853,9 +6886,8 @@ impl<'a> FunctionLowering<'a> {
                     self.at_expression(expression),
                 )?
             }
-            Expression::Function(parameters, return_sig, body)
-            | Expression::Proc(parameters, return_sig, body) => {
-                let name = self.shared.anon_name();
+            Expression::Function(parameters, return_sig, _)
+            | Expression::Proc(parameters, return_sig, _) => {
                 let param_types: Vec<Type> = self
                     .ast
                     .params_in(parameters)
@@ -6867,13 +6899,7 @@ impl<'a> FunctionLowering<'a> {
                     .signature_to_type(self.ast.signature(return_sig))
                     .unwrap_or(Type::Void);
                 let proc_type = Type::Proc(param_types, Box::new(return_type));
-                self.anonymous.push(AnonRequest {
-                    name: name.clone(),
-                    parameters,
-                    return_sig,
-                    body,
-                    requested_by: 0,
-                });
+                let name = self.name_anonymous(expression);
                 let result = self.fresh_local(proc_type.clone(), None);
                 self.emit(IrStatement::Assign(
                     result,
@@ -8425,6 +8451,19 @@ impl<'a> FunctionLowering<'a> {
             // gave it, which lands where a written argument would.
             if is_type_parameter(self.ast, parameter) {
                 let ty = match slot {
+                    // A function written where it is named. It is the same
+                    // argument a name is, once it has one: the literal becomes
+                    // an ordinary function of this build and the parameter
+                    // binds to it, so the specialization calls it directly the
+                    // way it calls a function the reader declared.
+                    Some(index)
+                        if matches!(
+                            self.ast.expr(arguments[*index]),
+                            Expression::Function(..) | Expression::Proc(..)
+                        ) =>
+                    {
+                        Type::ConstFn(self.name_anonymous(arguments[*index]))
+                    }
                     Some(index) => {
                         let Expression::TypeValue(ty) =
                             self.ast.expr(arguments[*index])
@@ -8724,9 +8763,22 @@ impl<'a> FunctionLowering<'a> {
                 // takes no parameter and is evaluated nowhere: what it leaves
                 // behind is a name the body writes where a type belongs.
                 if let Expression::TypeValue(ty) = self.ast.expr(*argument) {
-                    let ty = ty.clone();
-                    pack_elements
-                        .push(PackElement::Type(substitute_type(&ty, &subst)));
+                    let ty = substitute_type(&ty.clone(), &subst);
+                    // `$add1` in a list reads as a named type here, and which
+                    // one it is comes from whether the name is a function this
+                    // program declares. A function element takes no parameter
+                    // and is handed over nowhere: the body writes the
+                    // function's own name, so a call on the loop's name is a
+                    // call to that function.
+                    let ty = match &ty {
+                        Type::Struct(named)
+                            if self.builder.signature(named).is_some() =>
+                        {
+                            Type::ConstFn(named.clone())
+                        }
+                        held => held.clone(),
+                    };
+                    pack_elements.push(PackElement::Type(ty));
                     continue;
                 }
                 // A name the caller wrote that stands for a record constant is
@@ -9263,6 +9315,28 @@ impl<'a> FunctionLowering<'a> {
     // an element of function type holds one, and calling it would leave what
     // runs to be decided by what the value happened to hold, so it is refused
     // where the callee was written.
+    // A function written where it is used, given a name and made one of this
+    // build's own. What comes back is that name, for whoever wanted it: an
+    // address to take, or a compile-time argument to bind a `$f` to.
+    fn name_anonymous(&mut self, expression: ExprId) -> String {
+        let (Expression::Function(parameters, return_sig, body)
+        | Expression::Proc(parameters, return_sig, body)) =
+            self.ast.expr(expression)
+        else {
+            unreachable!("a function literal is what this is called for")
+        };
+        let (parameters, return_sig, body) = (*parameters, *return_sig, *body);
+        let name = self.shared.anon_name();
+        self.anonymous.push(AnonRequest {
+            name: name.clone(),
+            parameters,
+            return_sig,
+            body,
+            requested_by: 0,
+        });
+        name
+    }
+
     fn refuse_indirect_call(&self, callee: ExprId) -> anyhow::Error {
         match self.ast.expr(callee) {
             Expression::Identifier(name) => anyhow::anyhow!(

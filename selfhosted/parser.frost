@@ -37,6 +37,20 @@ parse_compile_time :: fn(mut p: Parser) -> i64 {
     if (at_const_call(p)) {
         return CONST_BASE + const_size_here(p)
     }
+    // `$fn(a: i64) -> i64 { a + 1 }` names a function the same way `$compare`
+    // does, and the function is written where it is named. A body is what tells
+    // it from the type `fn(i64) -> i64`, which carries none. What is made is an
+    // ordinary function of this program under a name nobody wrote, joined to
+    // the program once the declaration this sits in has been read.
+    if (cur(p) == TokenKind::KwFn && function_literal_follows(p)) {
+        number := p.synth_fns.count
+        name_off := synth_numbered(p, "__anon_", number)
+        name_len := 7 + digits_in(number)
+        node := parse_function_named(p, name_off, name_len)
+        arena_push(p.synth_fns, SynthFn { node = node })
+        made := arena_at(p.arena, node)
+        return FN_BASE + made.val
+    }
     // `$compare` names a function rather than a type, and is carried as
     // FN_BASE plus its index the way a type argument carries a type code. The
     // name is interned rather than looked up, since the function it names may
@@ -49,6 +63,60 @@ parse_compile_time :: fn(mut p: Parser) -> i64 {
         return FN_BASE + intern_global(p, off, len)
     }
     parse_type(p)
+}
+
+// Whether the `fn` at the cursor opens a function written where it is named,
+// rather than the type of one. A body is what tells them apart, so this looks
+// past the parameter list and the return type for the brace that opens one.
+function_literal_follows :: fn(mut p: Parser) -> bool {
+    mut at: i64 = 1
+    if (peek_kind(p, at) != TokenKind::Lparen) {
+        return false
+    }
+    mut depth: i64 = 0
+    while (true) {
+        kind := peek_kind(p, at)
+        if (kind == TokenKind::Eof) {
+            return false
+        }
+        if (kind == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rparen) {
+            depth = depth - 1
+            if (depth == 0) {
+                at = at + 1
+                break
+            }
+        }
+        at = at + 1
+    }
+    // Past the parameters. Whatever the return type is, the brace that opens a
+    // body comes after it, and a comma or a closing bracket at the depth this
+    // started on is the argument ending instead.
+    depth = 0
+    while (true) {
+        kind := peek_kind(p, at)
+        if (kind == TokenKind::Eof) {
+            return false
+        }
+        if (kind == TokenKind::Lbrace && depth == 0) {
+            return true
+        }
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket
+            || kind == TokenKind::Lt) {
+            depth = depth + 1
+        } else if ((kind == TokenKind::Rparen || kind == TokenKind::Rbracket)
+            && depth == 0) {
+            return false
+        } else if (kind == TokenKind::Comma && depth == 0) {
+            return false
+        } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket
+            || kind == TokenKind::Gt) {
+            depth = depth - 1
+        }
+        at = at + 1
+    }
+    false
 }
 
 // A file's bytes, spliced in where `include_str("path")` was written. The
@@ -729,8 +797,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             return new_node(p, NodeKind::SliceFrom, ptr, len, slice_ty)
         }
         advance(p)
-        note_called_name(p, offset, length)
-        fn_index := intern_global(p, offset, length)
+        // A name the compile-time `for` around this copy bound stands for what
+        // that copy is for, and an element that is a function stands for the
+        // function itself. Read here as well as where a name is read as a
+        // value, because a call resolves its own name and would otherwise go
+        // looking for the loop's name among the functions.
+        called_off, called_len := alias_for(p, offset, length)
+        note_called_name(p, called_off, called_len)
+        fn_index := intern_global(p, called_off, called_len)
         args, args_unbound := parse_arg_list_for(p, fn_index)
         // A call whose arguments came from a compile-time list that is not
         // bound belongs to a template's own parse. It is marked here so that
@@ -5931,6 +6005,23 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             && seq_len == p.decl_pack_len
             && bytes_equal(p.src, seq_off, p.decl_pack_off, p.decl_pack_len)) {
             p.unbound_pack_for = 1
+            // An element of the list may be a function, and then the loop's
+            // name is called in the body. Nothing declares that name here, and
+            // nothing will: every instance reads the body again with the name
+            // standing for the function that was passed. Held the way a `$f`
+            // parameter is, and for as long: the walk that reads these runs
+            // once the whole program is parsed.
+            arena_push(
+                p.cfn_params,
+                GParam {
+                    name_off = item_off,
+                    name_len = item_len,
+                    is_value = 0,
+                    is_fn = 1,
+                    ty = 0,
+                    fallback = -1
+                }
+            )
         }
         body := parse_block(p)
         p.unbound_pack_for = held_pack_for
@@ -6818,6 +6909,14 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
                 element.const_off,
                 element.const_len
             )
+        } else if (element_is_type == 1 && element_ty >= FN_BASE) {
+            // A function element is written into the body under its own name,
+            // the way a record constant is. The loop's name then stands for the
+            // function rather than for a type, so a call on it is a call to
+            // that function: a call names the function it goes to, and this is
+            // the name it goes to.
+            named := arena_at(p.fns, element_ty - FN_BASE)
+            mark = push_alias(p, item_off, item_len, named.off, named.len)
         } else if (element_is_type == 1) {
             arena_push(
                 p.type_aliases,
@@ -7200,16 +7299,27 @@ parse_params :: fn(mut p: Parser) -> i64 {
 // are consumed here. An optional `-> type` return annotation is parsed and
 // discarded (every function still lowers to an int64_t C function).
 parse_function :: fn(mut p: Parser) -> i64 {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    parse_function_named(p, name_offset, name_length)
+}
+
+// The same, for a function whose name is not in the source: a function written
+// where it is used has one made for it. The cursor is on the `fn`, which is
+// where reading a declaration's name leaves it.
+parse_function_named :: fn(
+    mut p: Parser,
+    name_offset: i64,
+    name_length: i64
+) -> i64 {
     // What this function's names bind is recorded as it is parsed and dropped
     // when the parse is done, so the table holds one function's worth rather
     // than the program's and a later pass starts from nothing.
     locals_mark := p.parse_locals.count
     saved_param_start := p.parse_param_start
     saved_param_end := p.parse_param_end
-    name_offset := cur_off(p)
-    name_length := cur_len(p)
-    advance(p)
-    advance(p)
     // `name :: inline fn(...)` marks a function the C backend forces inline. The
     // keyword sits between the `::` and the `fn`, so it is consumed here before
     // the `fn` is stepped over like any other declaration.
@@ -10385,6 +10495,21 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 tail = turn.item
             }
         }
+    }
+    // Every function written where it was used, joined to the end of the
+    // program. Each is an ordinary declaration node, so every pass that walks
+    // the program reaches them without knowing where they came from.
+    mut synth: i64 = 0
+    while (synth < p.synth_fns.count) {
+        made := arena_at(p.synth_fns, synth)
+        if (head == (-1)) {
+            head = made.node
+            tail = made.node
+        } else {
+            set_next(p, tail, made.node)
+            tail = made.node
+        }
+        synth = synth + 1
     }
     settle_linear_types(p)
     head

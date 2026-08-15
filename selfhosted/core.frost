@@ -19,7 +19,8 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
-    MonoRet, PendingRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
+    MonoRet, PendingRet, ProcSig, SynthFn,
+    CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
@@ -809,6 +810,14 @@ MonoRet :: struct {
 // parse worked out. Parsing a template is deterministic given those two, and
 // every instantiation used to be parsed three times over, once to record its
 // return type and once each for its prototype and its body.
+// A function written where it is used, as the declaration node made for it.
+// The parse cannot splice one into the program it is in the middle of reading,
+// so they are collected here and joined to the end of it once that read is
+// done.
+SynthFn :: struct {
+    node: i64,
+}
+
 MonoNode :: struct {
     gfn_index: i64,
     arg: i64,
@@ -1924,6 +1933,7 @@ Parser :: struct {
     sret_slot: i64,
     mono_rets: Arena<MonoRet>,
     mono_nodes: Arena<MonoNode>,
+    synth_fns: Arena<SynthFn>,
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,

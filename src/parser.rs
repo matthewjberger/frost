@@ -2937,6 +2937,15 @@ impl<'a> Parser<'a> {
             }
             Token::Dollar => {
                 self.read_token();
+                // `$fn(a: i64) -> i64 { a + 1 }` names a function the same way
+                // `$double` does, and the function is written where it is
+                // named. A body is what tells it from the type `fn(i64) ->
+                // i64`, which carries none.
+                if matches!(self.peek_nth(0), Token::Function)
+                    && self.function_literal_follows()
+                {
+                    return self.parse_function_literal();
+                }
                 let held = self.parse_type()?;
                 self.ast.push_expr(
                     Expression::TypeValue(held),
@@ -4104,6 +4113,58 @@ impl<'a> Parser<'a> {
             Expression::If(condition, consequence, alternative),
             self.span_from(start),
         ))
+    }
+
+    // Whether the `fn` at the cursor opens a function written where it is
+    // named, rather than the type of one. A body is what tells them apart:
+    // `fn(i64) -> i64` is a type and carries none, and `fn(a: i64) -> i64 { a }`
+    // is a function and does. The parameter list and the return type are read
+    // past rather than parsed, since either form may be there and only what
+    // follows decides which this is.
+    fn function_literal_follows(&self) -> bool {
+        let mut at = 1;
+        if !matches!(self.peek_nth(at), Token::LeftParentheses) {
+            return false;
+        }
+        let mut depth = 0usize;
+        loop {
+            match self.peek_nth(at) {
+                Token::LeftParentheses => depth += 1,
+                Token::RightParentheses => {
+                    depth -= 1;
+                    if depth == 0 {
+                        at += 1;
+                        break;
+                    }
+                }
+                Token::EndOfFile => return false,
+                _ => {}
+            }
+            at += 1;
+        }
+        // Past the parameters. A return type may follow, and whatever it is,
+        // the brace that opens a body comes after it. A comma or a closing
+        // bracket at the depth this started on is the argument ending, which
+        // means there was no body and this is a type.
+        let mut depth = 0usize;
+        loop {
+            match self.peek_nth(at) {
+                Token::LeftBrace if depth == 0 => return true,
+                Token::LeftParentheses
+                | Token::LeftBracket
+                | Token::LessThan => depth += 1,
+                Token::RightParentheses | Token::RightBracket if depth == 0 => {
+                    return false;
+                }
+                Token::Comma if depth == 0 => return false,
+                Token::RightParentheses
+                | Token::RightBracket
+                | Token::GreaterThan => depth -= 1,
+                Token::EndOfFile => return false,
+                _ => {}
+            }
+            at += 1;
+        }
     }
 
     fn parse_function_literal(&mut self) -> Result<ExprId> {

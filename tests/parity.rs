@@ -8203,6 +8203,55 @@ Bad :: enum { Nope }
 ",
         "5\n",
     ),
+    // A function written where it is named. It is the same argument a name is,
+    // once it has one: the literal becomes an ordinary function of the build
+    // and the parameter binds to it, so the specialization calls it directly.
+    // Two of them in one call, and one called twice, since the name is made up
+    // and a made-up name that collided would put one body where another belongs.
+    (
+        "a_function_written_where_it_is_named",
+        "import \"io.frost\"
+         apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+         twice :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(f(x)) }
+         main :: fn() -> i64 {
+             print(\"{}\\n\", apply($fn(a: i64) -> i64 { a + 1 }, 41))
+             print(\"{}\\n\", apply($fn(a: i64) -> i64 { a * a }, 9))
+             print(\"{}\\n\", twice($fn(a: i64) -> i64 { a + 10 }, 22))
+             0
+         }
+",
+        "42
+81
+42
+",
+    ),
+    // A list element that is a function is written into the body under the
+    // function's own name, so the unrolled call goes to it. This is the shape a
+    // chain of steps takes, and the loop's name is what each step is called
+    // through. An empty list runs the body no times, which is the other half of
+    // the same question.
+    (
+        "a_list_element_that_names_a_function_is_called_by_that_name",
+        "import \"io.frost\"
+         add1 :: fn(x: i64) -> i64 { x + 1 }
+         mul2 :: fn(x: i64) -> i64 { x * 2 }
+         through :: fn(value: i64, ops: $...) -> i64 {
+             mut v := value
+             for f in ops {
+                 v = f(v)
+             }
+             v
+         }
+         main :: fn() -> i64 {
+             print(\"{}\\n\", through(10, $add1, $mul2))
+             print(\"{}\\n\", through(10))
+             0
+         }
+",
+        "22
+10
+",
+    ),
     // A compile-time list holds the types of the arguments it was given, and
     // both of these were read before anything could say what they are: a name
     // bound from an element, whose type the parse reads off its own table, and

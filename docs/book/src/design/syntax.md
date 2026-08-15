@@ -56,7 +56,7 @@ The binding names it. So the anonymous form falls out of the grammar. Delete
 the name and what remains is already a legal expression.
 
 ```frost,sketch
-apply(fn(a: i64, b: i64) -> i64 { a + b }, 3, 4)
+apply($fn(a: i64, b: i64) -> i64 { a + b }, 3, 4)
 
 callbacks := [
     fn(x: i64) -> i64 { x + 1 },
@@ -67,10 +67,17 @@ callbacks := [
 There is one function-literal syntax, and a named function is that literal given
 a name.
 
-*Implementation status.* The forms above compile and run on both native
-backends. An anonymous function literal is lifted to a synthetic top-level
-function and referenced by its address, so passing one inline or binding it to a
-name both work. There is no capture, which makes this lambda lifting.
+The `$` on the first is the same `$` a name carries. A call names the function
+it goes to (expressions.md 6.1), so a function a body calls arrives as a
+compile-time argument, and a literal written there is a function this build
+names for you. Without the `$` the literal is an ordinary value: bound, stored
+in an array, handed to C, and not called.
+
+*Implementation status.* Both forms compile and run on both compilers. A literal
+is lifted to a synthetic top-level function; written with `$` the parameter
+binds to that function and the specialization calls it by name, and written
+without it the value is that function's address. There is no capture, which
+makes this lambda lifting.
 
 The caveat is capture. Anonymous functions come free, and closures in the
 capturing sense do not. Whether `fn(x) { x + y }` may capture `y` from the

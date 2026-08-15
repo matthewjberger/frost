@@ -736,6 +736,7 @@ main :: fn() -> i64 {
         sret_slot = 0,
         mono_rets = arena_make($MonoRet, 4096),
         mono_nodes = arena_make($MonoNode, 4096),
+        synth_fns = arena_make($SynthFn, 64),
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
