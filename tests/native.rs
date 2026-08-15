@@ -20669,3 +20669,113 @@ fn both_compilers_enforce_layers_however_the_entry_is_spelled() {
     let _ = std::fs::remove_file(&object);
     let _ = std::fs::remove_dir_all(&project);
 }
+
+// Both compilers write a refusal as the same bytes, not merely the same words.
+//
+// The self-hosted compiler writes its diagnostics through the C library, which
+// opens a stream in text mode on Windows and turns every newline into two, and
+// ended a line that its own last byte had already ended. Neither shows up in a
+// comparison that trims, so the two agreed on the words and differed on what
+// landed in a file or a pipe.
+//
+// The unclosed brace is here because it crashed: the block parser stepped over
+// a closing brace that was not there, past the last token, and the next read
+// indexed the token arena out of range.
+#[test]
+fn both_compilers_write_a_refusal_as_the_same_bytes() {
+    let Some(hosted) = build_self_hosted_compiler("refusalbytes") else {
+        return;
+    };
+    let work = std::env::temp_dir().join(unique("frost_refusal_bytes"));
+    std::fs::create_dir_all(&work).unwrap();
+    let programs: [(&str, &str); 5] = [
+        ("undefined", "main :: fn() -> i64 { nope() }\n"),
+        (
+            "twice",
+            "Buffer :: struct { size: i64 }\n\
+             consume :: fn(move b: Buffer) -> i64 { b.size }\n\
+             main :: fn() -> i64 {\n\
+             \x20   b := Buffer { size = 1 }\n\
+             \x20   consume(b)\n\
+             \x20   consume(b)\n\
+             }\n",
+        ),
+        ("mistyped", "main :: fn() -> i64 { x: i64 = \"text\" x }\n"),
+        ("unclosed", "main :: fn() -> i64 {\n"),
+        ("unclosed_holding", "main :: fn() -> i64 { 1\n"),
+    ];
+    let object = work.join("out");
+    for (name, source) in programs {
+        let file = work.join(format!("{name}.frost"));
+        std::fs::write(&file, source).unwrap();
+        let mine = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("--native")
+            .arg("-o")
+            .arg(&object)
+            .arg(&file)
+            .output()
+            .unwrap();
+        let theirs = Command::new(&hosted)
+            .arg("-o")
+            .arg(work.join("out.c"))
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(!mine.status.success(), "the bootstrap took {name}");
+        assert!(
+            !theirs.status.success(),
+            "the self-hosted compiler took {name}"
+        );
+        // An internal fault names an arena rather than the program, and it is a
+        // refusal too, so the exit code alone would not have caught it.
+        let said = String::from_utf8_lossy(&theirs.stderr);
+        assert!(
+            !said.contains("arena was indexed"),
+            "the self-hosted compiler faulted on {name} instead of \
+             reporting:\n{said}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&mine.stderr),
+            said,
+            "the two wrote different bytes about {name}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+// A subcommand naming itself is not named twice.
+//
+// The compiler puts its own name in front of a line that has none, and a line
+// like `frost lint: which files?` already has one, so it read as `frost: frost
+// lint: which files?`.
+#[test]
+fn a_subcommand_that_names_itself_is_not_named_twice() {
+    for (arguments, said) in [
+        (["lint"].as_slice(), "frost lint: which files?"),
+        (["api"].as_slice(), "frost api: which prefix?"),
+    ] {
+        let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&ran.stderr).trim(),
+            said,
+            "the compiler named itself twice"
+        );
+    }
+    // A line that names nothing still gets the compiler's name, which is what
+    // tells a message from this compiler apart from one from whatever ran it.
+    let ran = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(std::env::temp_dir().join(unique("frost_prefix")))
+        .arg(std::env::temp_dir().join("frost_no_such_file_at_all.frost"))
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&ran.stderr).starts_with("frost: "),
+        "a message that names nothing lost the compiler's name:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+}

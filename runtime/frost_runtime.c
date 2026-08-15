@@ -36,6 +36,8 @@
 #include <string.h>
 #include <time.h>
 #if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #else
 /* `signal.h` and `unistd.h` belong here rather than beside the stack handler
@@ -221,6 +223,15 @@ static void frost_rt_install_stack_handler(void) {
    what runs something ahead of it. */
 static void frost_rt_arm_stack_guard(void) {
     frost_rt_install_stack_handler();
+    /* Diagnostics are bytes, and the C library on Windows opens a stream in
+       text mode, where writing a newline writes two. A report would then differ
+       from the same report written by the bootstrap compiler, and from the same
+       report written by the fault handler beside this, which uses the system
+       call and translates nothing. Two compilers held to one wording have to
+       write one line. */
+#if defined(_WIN32)
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -771,10 +782,24 @@ void frost_rt_assert_at(int8_t condition, const char *where) {
     }
 }
 
+/* Whether the last thing written with no report open left a line unended, which
+   is what frost_rt_die has to finish. Declared here because everything below
+   that writes straight out keeps it. */
+static int frost_rt_line_open;
+
+/* Straight to stderr, remembering whether that left a line open. */
+static void frost_rt_wrote(const char *data, size_t length) {
+    if (length == 0) {
+        return;
+    }
+    fwrite(data, 1, length, stderr);
+    frost_rt_line_open = data[length - 1] != '\n';
+}
+
 /* Diagnostics for a Frost-written compiler. Its program output goes to stdout,
    so errors are composed piecewise on stderr and frost_rt_die ends the process. */
 void frost_rt_error(const char *text) {
-    fputs(text, stderr);
+    frost_rt_wrote(text, strlen(text));
 }
 
 /* One byte, straight to stderr. The checks in runtime.frost compose their
@@ -943,13 +968,24 @@ static int frost_rt_report_hold(const char *data, size_t length) {
 
 /* The end of the line a report was written on. It belongs to that report, so
    it is held with the rest of it; with none open it goes straight out, which is
-   what ends a line the run wrote about itself. */
+   what ends a line the run wrote about itself.
+   A report whose own last byte was a newline has no line left open, and ending
+   one that is already ended is what left a blank line under every diagnostic. */
 void frost_rt_end_line(void) {
-    char held = '\n';
-    if (frost_rt_report_hold(&held, 1)) {
+    if (frost_rt_report_count > 0) {
+        frost_rt_report *held = &frost_rt_reports[frost_rt_report_count - 1];
+        if (held->length > 0 && held->text[held->length - 1] == '\n') {
+            return;
+        }
+    } else if (!frost_rt_line_open) {
         return;
     }
-    fputc((int)held, stderr);
+    char held = '\n';
+    if (frost_rt_report_hold(&held, 1)) {
+        frost_rt_line_open = 0;
+        return;
+    }
+    frost_rt_wrote(&held, 1);
     fflush(stderr);
 }
 
@@ -958,7 +994,7 @@ void frost_rt_error_char(int64_t byte) {
     if (frost_rt_report_hold(&held, 1)) {
         return;
     }
-    fputc((int)(unsigned char)byte, stderr);
+    frost_rt_wrote(&held, 1);
 }
 
 /* Write a counted run of bytes to stderr, so a diagnostic composed from a `str`
@@ -971,7 +1007,7 @@ void frost_rt_error_bytes(const char *data, int64_t length) {
     if (frost_rt_report_hold(data, (size_t)length)) {
         return;
     }
-    fwrite(data, 1, (size_t)length, stderr);
+    frost_rt_wrote(data, (size_t)length);
 }
 
 void frost_rt_error_src(const char *text, int64_t offset, int64_t length) {
@@ -982,7 +1018,7 @@ void frost_rt_error_src(const char *text, int64_t offset, int64_t length) {
     if (frost_rt_report_hold(text + offset, (size_t)length)) {
         return;
     }
-    fwrite(text + offset, 1, (size_t)length, stderr);
+    frost_rt_wrote(text + offset, (size_t)length);
 }
 
 void frost_rt_error_int(int64_t value) {
@@ -998,7 +1034,7 @@ void frost_rt_error_int(int64_t value) {
     if (frost_rt_report_hold(held, (size_t)written)) {
         return;
     }
-    fwrite(held, 1, (size_t)written, stderr);
+    frost_rt_wrote(held, (size_t)written);
 }
 
 void frost_rt_die(void) {

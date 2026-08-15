@@ -422,14 +422,26 @@ pub fn render(error: &anyhow::Error) -> String {
                 render_located(&mut out, &path, row, column, &message)
             }
             None => {
-                let _ = writeln!(out, "frost: {line}");
+                let _ = writeln!(out, "{}", named(line));
             }
         }
     }
     if out.is_empty() {
-        let _ = writeln!(out, "frost: {innermost}");
+        let _ = writeln!(out, "{}", named(&innermost));
     }
     out
+}
+
+/// A line with the compiler's name in front of it, unless it says one already.
+///
+/// A subcommand names itself, because what `frost lint` has to say about its own
+/// arguments is not about the program being compiled. Adding the name to that
+/// read as `frost: frost lint: which files?`.
+fn named(line: &str) -> String {
+    if line.starts_with("frost:") || line.starts_with("frost ") {
+        return line.to_string();
+    }
+    format!("frost: {line}")
 }
 
 /// Splits `at <path>:<line>:<column>: <message>` into its parts.

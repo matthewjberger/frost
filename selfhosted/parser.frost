@@ -2830,6 +2830,31 @@ parse_block :: fn(mut p: Parser) -> i64 {
     p.block_depth = p.block_depth + 1
     head := parse_stmt_list(p, TokenKind::Rbrace)
     p.block_depth = p.block_depth - 1
+    // The list stops at the closing brace or at the end of the file. Stepping
+    // over a brace that is not there steps past the last token, and the next
+    // walk to read one indexes the token arena out of range, which is an
+    // internal fault where a file with a brace missing should get a report.
+    if (cur(p) != TokenKind::Rbrace) {
+        // A parse already recovering from a fault got here by resynchronizing
+        // over the brace, so the block is closed and the reader has been told
+        // what is wrong with the file. Saying a brace is missing as well would
+        // name a second fault the file does not have.
+        if (frost_rt_recover_failures() > 0) {
+            return head
+        }
+        // At the last token rather than at the end of the file, which carries
+        // no place a reader can look. That is the token the read stopped on,
+        // which is the brace for an empty block and the last statement for one
+        // that holds something.
+        mut at := cur_off(p)
+        if (p.ti > 0) {
+            at = arena_at(p.tokens, p.ti - 1).off
+        }
+        report_where(p.modules, p.src, at)
+        report("expected '}' to close this block, found the end of the file")
+        frost_rt_recover_escape()
+        return head
+    }
     advance(p)
     head
 }

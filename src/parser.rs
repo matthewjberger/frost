@@ -5055,7 +5055,9 @@ impl<'a> Parser<'a> {
 
         self.block_depth -= 1;
         if !matches!(self.peek_nth(0), Token::RightBrace) {
-            bail!("Expected a right brace in block!");
+            bail!(
+                "expected '}}' to close this block, found the end of the file"
+            );
         }
         self.read_token();
 
