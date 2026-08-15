@@ -3861,9 +3861,15 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         id = next_id
     }
 
+    // Which instances are the first of their kind, marked once for each generic
+    // rather than asked one at a time. Asking walks every instance before the
+    // one in hand, which is the square of them for every generic declared.
+    mut firsts: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
+    mut instance_table: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
     mut gi: i64 = 0
     while (gi < p.generic_fns.count) {
         if (unit_owns_generic(p, gi)) {
+            mark_first_instances(p, gi, firsts, instance_table)
             mut ii: i64 = 0
             while (ii < p.type_args.count) {
                 used := arena_at(p.type_args, ii)
@@ -3872,7 +3878,26 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                 xcount := used.xarg_count
                 is_pack := used.is_pack
                 owner := used.owner
-                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack, owner) && tuple_is_first_for(p, gi, ii)) {
+                // An instance parsed below can put more in the table, and
+                // those come after what was marked, so they are asked the long
+                // way. They are few, where the ones marked are all of them.
+                mut first: bool = false
+                if (ii < firsts.count) {
+                    first = arena_at(firsts, ii).mark == gi + 1
+                } else {
+                    first = (
+                        instance_fits_kind(
+                            p,
+                            gi,
+                            arg,
+                            xstart,
+                            xcount,
+                            is_pack,
+                            owner
+                        ) && tuple_is_first_for(p, gi, ii)
+                    )
+                }
+                if (first) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_asm_mono_function(p, node, arg, xstart, xcount, ret)

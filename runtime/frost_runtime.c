@@ -45,6 +45,7 @@
    `write`, so including them there left that call with no declaration at all
    and the one the header then gave it conflicted with the guess. */
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #if defined(__has_include)
@@ -1110,6 +1111,71 @@ static int64_t frost_rt_heap_blocks = 0;
 
 int64_t frost_rt_heap_live(void) {
     return frost_rt_heap_blocks;
+}
+
+/* Address space for an arena, taken but not backed by memory yet.
+
+   An arena hands out raw pointers into its block, and the compiler holds those
+   while it pushes: a walk over the syntax tree reads a node and makes another
+   one in the same breath. Growing by reallocation would move the block and
+   leave every one of those pointing at memory that was freed, silently. So the
+   whole range is taken at the start, where the address is fixed for the life of
+   the arena, and pages are backed as the arena reaches them.
+
+   What this costs is address space, which on a 64-bit machine is not scarce.
+   What it buys is an arena that grows without a ceiling and without moving. */
+void *frost_rt_reserve(int64_t bytes) {
+#if defined(_WIN32)
+    void *held = VirtualAlloc(NULL, (SIZE_T)bytes, MEM_RESERVE, PAGE_READWRITE);
+#else
+    /* Read and write from the start: on this side the kernel backs a page when
+       it is first touched, so reserving and committing are one call. NORESERVE
+       keeps the range out of the overcommit accounting, which is the whole
+       point of taking more than will be used. */
+    void *held = mmap(NULL,
+                      (size_t)bytes,
+                      PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                      -1,
+                      0);
+    if (held == MAP_FAILED) {
+        held = NULL;
+    }
+#endif
+    if (held == NULL) {
+        fprintf(stderr,
+                "frost: out of memory reserving %lld bytes\n",
+                (long long)bytes);
+        frost_rt_stop();
+    }
+    return held;
+}
+
+/* Backs bytes `from` through `to` of a reserved range with memory.
+
+   The range rather than the total, because an arena grows by doubling and
+   asking again for what is already backed makes each growth cost the whole
+   arena rather than the part just added. */
+void frost_rt_commit(void *at, int64_t from, int64_t to) {
+#if defined(_WIN32)
+    if (to <= from) {
+        return;
+    }
+    if (VirtualAlloc((char *)at + from,
+                     (SIZE_T)(to - from),
+                     MEM_COMMIT,
+                     PAGE_READWRITE)
+        == NULL) {
+        fprintf(stderr,
+                "frost: out of memory committing %lld bytes\n",
+                (long long)(to - from));
+        frost_rt_stop();
+    }
+#else
+    (void)at;
+    (void)from;
+    (void)to;
+#endif
 }
 
 /* An allocation that fails aborts rather than answering with nothing, for the

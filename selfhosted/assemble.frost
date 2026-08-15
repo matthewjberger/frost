@@ -367,39 +367,12 @@ widen_buckets :: fn(mut unit: Assembly) {
     }
 }
 
-// Room for one more name, twice over when what there is runs out. How many a
-// unit holds is not known before it is read, and a fixed table is a ceiling on
-// how large a program this compiler will assemble.
-widen_symbols :: fn(mut unit: Assembly) {
-    mut wider := arena_make($AsmSym, unit.syms.cap * 2 + 1024)
-    mut i: i64 = 0
-    while (i < unit.syms.count) {
-        held := arena_at(unit.syms, i)
-        arena_push(
-            wider,
-            AsmSym {
-                off = held.off,
-                len = held.len,
-                section = held.section,
-                value = held.value,
-                global = held.global,
-                index = held.index,
-            }
-        )
-        i = i + 1
-    }
-    unit.syms = wider
-}
-
 // The symbol this name stands for, making one that stands for nothing yet if
 // this is the first mention. Every reference and every definition goes through
 // here, so a name has exactly one entry however many times it appears.
 intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
     if (unit.syms.count * 2 >= unit.buckets.cap) {
         widen_buckets(unit)
-    }
-    if (unit.syms.count >= unit.syms.cap) {
-        widen_symbols(unit)
     }
     mut slot := name_hash(unit.src, off, len) & unit.bucket_mask
     mut answer: i64 = -1
@@ -967,25 +940,6 @@ arith_acc_opcode :: fn(digit: i64) -> i64 { digit * 8 + 5 }
 
 // Record a place the linker fills in, at the four bytes about to be written.
 note_reloc :: fn(mut unit: Assembly, sym: i64, addend: i64, kind: i64) {
-    if (unit.relocs.count >= unit.relocs.cap) {
-        mut wider := arena_make($AsmReloc, unit.relocs.cap * 2 + 1024)
-        mut i: i64 = 0
-        while (i < unit.relocs.count) {
-            held := arena_at(unit.relocs, i)
-            arena_push(
-                wider,
-                AsmReloc {
-                    section = held.section,
-                    offset = held.offset,
-                    sym = held.sym,
-                    addend = held.addend,
-                    kind = held.kind
-                }
-            )
-            i = i + 1
-        }
-        unit.relocs = wider
-    }
     arena_push(
         unit.relocs,
         AsmReloc {
@@ -2805,11 +2759,15 @@ assembly_of :: fn(format: i64) -> Assembly {
         text_count = 0,
         data = buffer_of(0),
         data_count = 0,
-        insns = arena_make($Insn, 0),
-        syms = arena_make($AsmSym, 0),
-        relocs = arena_make($AsmReloc, 0),
-        files = arena_make($AsmFile, 0),
-        locs = arena_make($AsmLoc, 0),
+        // Sized for a module rather than for nothing. An arena grows from what
+        // it is given, so one that starts empty can only reach a multiple of
+        // nothing. One Assembly is made for a build, not one per module, so
+        // what this asks for is asked once.
+        insns = arena_make($Insn, 65536),
+        syms = arena_make($AsmSym, 8192),
+        relocs = arena_make($AsmReloc, 16384),
+        files = arena_make($AsmFile, 256),
+        locs = arena_make($AsmLoc, 16384),
         buckets = buckets,
         bucket_mask = ASSEMBLE_BUCKETS - 1,
         section = SEC_TEXT,
@@ -2821,33 +2779,6 @@ assembly_of :: fn(format: i64) -> Assembly {
 // many a unit holds is not known before it is read, and reading it twice to
 // find out costs more than the copying this does once in a while.
 push_insn :: fn(mut unit: Assembly, record: Insn) {
-    if (unit.insns.count >= unit.insns.cap) {
-        mut wider := arena_make($Insn, unit.insns.cap * 2 + 4096)
-        mut i: i64 = 0
-        while (i < unit.insns.count) {
-            held := arena_at(unit.insns, i)
-            arena_push(
-                wider,
-                Insn {
-                    op = held.op,
-                    cc = held.cc,
-                    a_kind = held.a_kind,
-                    a_reg = held.a_reg,
-                    a_disp = held.a_disp,
-                    a_sym = held.a_sym,
-                    b_kind = held.b_kind,
-                    b_reg = held.b_reg,
-                    b_disp = held.b_disp,
-                    b_sym = held.b_sym,
-                    offset = held.offset,
-                    size = held.size,
-                    long = held.long,
-                }
-            )
-            i = i + 1
-        }
-        unit.insns = wider
-    }
     arena_push(unit.insns, record)
 }
 
@@ -2855,38 +2786,10 @@ push_insn :: fn(mut unit: Assembly, record: Insn) {
 // A file compiled without `-g` writes neither directive and neither of these
 // ever asks for a byte.
 push_file :: fn(mut unit: Assembly, record: AsmFile) {
-    if (unit.files.count >= unit.files.cap) {
-        mut wider := arena_make($AsmFile, unit.files.cap * 2 + 64)
-        mut i: i64 = 0
-        while (i < unit.files.count) {
-            held := arena_at(unit.files, i)
-            arena_push(wider, AsmFile { off = held.off, len = held.len })
-            i = i + 1
-        }
-        unit.files = wider
-    }
     arena_push(unit.files, record)
 }
 
 push_loc :: fn(mut unit: Assembly, record: AsmLoc) {
-    if (unit.locs.count >= unit.locs.cap) {
-        mut wider := arena_make($AsmLoc, unit.locs.cap * 2 + 4096)
-        mut i: i64 = 0
-        while (i < unit.locs.count) {
-            held := arena_at(unit.locs, i)
-            arena_push(
-                wider,
-                AsmLoc {
-                    file = held.file,
-                    line = held.line,
-                    column = held.column,
-                    insn = held.insn
-                }
-            )
-            i = i + 1
-        }
-        unit.locs = wider
-    }
     arena_push(unit.locs, record)
 }
 

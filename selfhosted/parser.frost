@@ -12,6 +12,7 @@ import "layout.frost"
 import "lint.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
+    InstanceSlot, mark_first_instances,
     check_discarded_resources,
     instance_params,
     parse_generic_instance, parse_program, join_synth_fns,
@@ -10890,6 +10891,95 @@ tuple_is_first_for :: fn(mut p: Parser, gfn_index: i64, at: i64) -> bool {
         i = i + 1
     }
     true
+}
+
+// One entry of the tables below: which instance reached this slot, and which
+// generic put it there. A record rather than a bare number, since a scalar read
+// out of an arena is a value and not a place to write back through.
+//
+// `mark` is what makes clearing unnecessary. Both tables are sized once and
+// stamped with the generic being marked, so a slot left by an earlier one reads
+// as empty rather than having to be written over. Running over both per generic
+// would cost as much as the walk this replaces.
+InstanceSlot :: struct {
+    at: i64,
+    mark: i64,
+}
+
+// A stand-in for one instance's identity, so that two which cannot be the same
+// are told apart without walking their arguments. Two that collide here are
+// still weighed in full, so this only has to be cheap and spread out.
+instance_hash :: fn(mut p: Parser, at: i64) -> i64 {
+    used := arena_at(p.type_args, at)
+    mut sum := wrap_mul(used.arg, 2654435761)
+    sum = wrap_add(wrap_mul(sum, 33), used.xarg_count)
+    sum = wrap_add(wrap_mul(sum, 33), used.is_pack)
+    mut i: i64 = 0
+    while (i < used.xarg_count) {
+        held := arena_at(p.gargs, used.xarg_start + i)
+        sum = wrap_add(wrap_mul(sum, 33), held.value)
+        i = i + 1
+    }
+    sum & 4611686018427387903
+}
+
+// Which instances are the first of their kind for this generic, marked for the
+// whole list at once.
+//
+// Asked one at a time, each answer walks every instance before it, so a program
+// is charged the square of its specializations once for every generic it
+// declares. 10,240 of them across 64 generics is three billion steps. A table
+// of what has been seen answers each one in a step, and the walk that decides
+// which of two entries survives is unchanged: the first to reach a slot keeps
+// it, exactly as the first in the list did.
+mark_first_instances :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    mut firsts: Arena<InstanceSlot>,
+    mut table: Arena<InstanceSlot>
+) {
+    while (firsts.count < p.type_args.count) {
+        arena_push(firsts, InstanceSlot { at = 0, mark = 0 })
+    }
+    // Two slots for every instance, so a table never fills and the probe below
+    // always reaches an empty one.
+    mut slots: i64 = 16
+    while (slots < p.type_args.count * 2) {
+        slots = slots * 2
+    }
+    while (table.count < slots) {
+        arena_push(table, InstanceSlot { at = 0, mark = 0 })
+    }
+    stamp := gfn_index + 1
+    mut at: i64 = 0
+    while (at < p.type_args.count) {
+        used := arena_at(p.type_args, at)
+        arg := used.arg
+        xstart := used.xarg_start
+        xcount := used.xarg_count
+        is_pack := used.is_pack
+        if (instance_fits_kind(p, gfn_index, arg, xstart, xcount, is_pack, used.owner)) {
+            mut probe := instance_hash(p, at) & (slots - 1)
+            mut seen: bool = false
+            while (arena_at(table, probe).mark == stamp) {
+                other_at := arena_at(table, probe).at
+                other := arena_at(p.type_args, other_at)
+                if (other.arg == arg && other.xarg_count == xcount
+                    && other.is_pack == is_pack
+                    && gargs_equal(p, other.xarg_start, xstart, xcount)) {
+                    seen = true
+                    break
+                }
+                probe = (probe + 1) & (slots - 1)
+            }
+            if (seen == false) {
+                arena_at(table, probe).at = at
+                arena_at(table, probe).mark = stamp
+                arena_at(firsts, at).mark = stamp
+            }
+        }
+        at = at + 1
+    }
 }
 
 // Whether an argument is a compile-time number rather than a type or a

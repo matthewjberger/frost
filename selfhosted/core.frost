@@ -38,6 +38,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     add_root, add_layer, Layer, Generator, layer_of, path_under,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
+    frost_rt_reserve, frost_rt_commit,
     emit_to_memory, emit_memory_text,
     report, report_cstr, report_fmt, report_int, report_src, source_text, text_matches,
     SearchRoot,
@@ -61,6 +62,12 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
 // caller to write through it. Safe because the call either gives back a block or
 // does not return; what is done with the block is gated as ever.
 frost_rt_alloc :: safe extern fn(size: i64) -> ^u8
+// Address space for an arena, taken without being backed by memory. Safe for
+// the same reason as the allocator: it answers with a range or does not return.
+frost_rt_reserve :: safe extern fn(bytes: i64) -> ^u8
+// Backs bytes `from` through `to` of a reserved range. Safe because it either
+// succeeds or does not return, and what is written there is gated as ever.
+frost_rt_commit :: safe extern fn(at: ^u8, from: i64, to: i64)
 // How many bytes a count of elements takes, refused where the product would
 // wrap. Safe because it is arithmetic and an abort.
 frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64
@@ -1415,11 +1422,28 @@ UnsafeSpan :: struct {
 // arena_push appends and returns the element's index, arena_at turns an index
 // back into a pointer. The compiler is asked only for the raw memory and the
 // pointer reinterpret. The bump logic is here.
+// A growing run of elements at an address that never changes.
+//
+// The compiler holds raw references into an arena while it pushes to it: a walk
+// over the syntax tree reads a node and makes another one in the same breath.
+// Growing by reallocation would move the block out from under every one of
+// those. So the whole range is taken when the arena is made, where the address
+// is fixed for its life, and memory is put behind it as the arena reaches it.
+// `cap` is what is backed and `limit` is what was taken.
 Arena :: struct($T: Type) {
     data: ^T,
     cap: i64,
     count: i64,
+    limit: i64,
 }
+
+// How much more room an arena may take than it was asked for.
+//
+// Proportional rather than a flat figure per arena: the cost of this is the
+// address space reserved across every arena together, and a constant large
+// enough for the biggest made every small one just as large. A flat 32 MB
+// measured 523 ms against 389 for this, and a flat 256 MB measured 859.
+ARENA_HEADROOM :: 8
 
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     // `frost_rt_alloc` is a `safe extern`: it hands back memory or does not
@@ -1429,8 +1453,19 @@ arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     // The size is answered for rather than multiplied out. A count times a width
     // that wraps asks for fewer bytes than the arena believes it has, and the
     // arena's own bounds check then runs against the count it was told.
-    bytes := frost_rt_alloc(frost_rt_check_size(cap, sizeof(T)))
-    Arena { data = unsafe { ptr_cast($T, bytes) }, cap = cap, count = 0 }
+    mut room := cap
+    if (room < 1) {
+        room = 1
+    }
+    limit := room * ARENA_HEADROOM
+    block := frost_rt_reserve(frost_rt_check_size(limit, sizeof(T)))
+    frost_rt_commit(block, 0, frost_rt_check_size(room, sizeof(T)))
+    Arena {
+        data = unsafe { ptr_cast($T, block) },
+        cap = room,
+        count = 0,
+        limit = limit,
+    }
 }
 
 arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
@@ -1438,15 +1473,31 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
     // whatever the allocator put next and the damage surfaces somewhere else
     // entirely. Say so here instead.
     if (a.count >= a.cap) {
-        // The element type says which arena this is. The capacity alone said
-        // nothing a reader could act on: a dozen of them are made with the same
-        // size, so the number named every one of them and none of them.
-        report("frost: the ")
-        report(typename($T))
-        report(" arena is full at ")
-        frost_rt_error_int(a.cap)
-        report("; raise the size where it is made, or find what is filling it")
-        frost_rt_die()
+        // Back more of the range taken when this arena was made. The address
+        // does not move, so every reference already handed out stays good,
+        // which is what lets a walk read a node and make one at once.
+        if (a.cap < a.limit) {
+            mut room := a.cap * 2
+            if (room > a.limit) {
+                room = a.limit
+            }
+            frost_rt_commit(
+                unsafe { ptr_cast($u8, a.data) },
+                frost_rt_check_size(a.cap, sizeof(T)),
+                frost_rt_check_size(room, sizeof(T))
+            )
+            a.cap = room
+        } else {
+            // The element type says which arena this is. The capacity alone
+            // said nothing a reader could act on: a dozen of them are made with
+            // the same size, so the number named every one and none of them.
+            report("frost: the ")
+            report(typename($T))
+            report(" arena is full at ")
+            frost_rt_error_int(a.limit)
+            report("; raise the size where it is made, or find what is filling it")
+            frost_rt_die()
+        }
     }
     id := a.count
     // The bounds are checked above, so this index is in range. What the block
