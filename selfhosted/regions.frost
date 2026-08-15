@@ -8521,6 +8521,20 @@ call_fault_is_a_repeat :: fn(mut p: Parser, off: i64) -> bool {
     false
 }
 
+// Whether this call belongs to a template's own copy of a body that nothing
+// emits. A short list: one entry per such call written in the program.
+call_is_unemitted :: fn(mut p: Parser, id: i64) -> bool {
+    mut index: i64 = 0
+    while (index < p.unemitted_calls.count) {
+        held := arena_at(p.unemitted_calls, index)
+        if (held.node == id) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
 check_calls :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.arena.count) {
@@ -8559,6 +8573,13 @@ check_calls :: fn(mut p: Parser) {
             mut is_supplied: bool = false
             if (defined == 0) {
                 is_supplied = names_cfn_param(p, name_off, name_len)
+                // A call a template's own copy of a `for` over an unbound list
+                // holds. Taken down as a node where it was made, since what it
+                // names is a name only that copy of that body gives a meaning
+                // to, and every instance names a function there.
+                if (call_is_unemitted(p, i)) {
+                    is_supplied = true
+                }
                 // A type predicate is a question the compiler answers where the
                 // body is expanded, not a function. It survives in a template's
                 // own parse, which nothing emits, and is gone from every

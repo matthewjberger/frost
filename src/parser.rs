@@ -2944,13 +2944,14 @@ impl<'a> Parser<'a> {
                 if matches!(self.peek_nth(0), Token::Function)
                     && self.function_literal_follows()
                 {
-                    return self.parse_function_literal();
+                    self.parse_function_literal()?
+                } else {
+                    let held = self.parse_type()?;
+                    self.ast.push_expr(
+                        Expression::TypeValue(held),
+                        self.span_from(start),
+                    )
                 }
-                let held = self.parse_type()?;
-                self.ast.push_expr(
-                    Expression::TypeValue(held),
-                    self.span_from(start),
-                )
             }
             // `.Circle { radius = 5 }` where the type is already known, the
             // construction counterpart of the `case .Circle` a pattern writes.
@@ -4131,7 +4132,7 @@ impl<'a> Parser<'a> {
             match self.peek_nth(at) {
                 Token::LeftParentheses => depth += 1,
                 Token::RightParentheses => {
-                    depth -= 1;
+                    depth = depth.saturating_sub(1);
                     if depth == 0 {
                         at += 1;
                         break;
@@ -4142,10 +4143,19 @@ impl<'a> Parser<'a> {
             }
             at += 1;
         }
-        // Past the parameters. A return type may follow, and whatever it is,
-        // the brace that opens a body comes after it. A comma or a closing
-        // bracket at the depth this started on is the argument ending, which
-        // means there was no body and this is a type.
+        // Past the parameters. A function says what it answers with or opens
+        // its body right here, so anything else means the brackets held an
+        // expression rather than a parameter list. Asked before the search
+        // below, which would otherwise run to whatever brace came next.
+        if !matches!(
+            self.peek_nth(at),
+            Token::LeftBrace | Token::Arrow | Token::Uses
+        ) {
+            return false;
+        }
+        // Whatever the return type is, the brace that opens a body comes after
+        // it. A comma or a closing bracket at the depth this started on is the
+        // argument ending, which means there was no body and this is a type.
         let mut depth = 0usize;
         loop {
             match self.peek_nth(at) {
@@ -4157,9 +4167,16 @@ impl<'a> Parser<'a> {
                     return false;
                 }
                 Token::Comma if depth == 0 => return false,
+                // `Vec<Vec<i64>>` closes two of them with one token, which
+                // is how the lexer reads `>>`, so it counts for two.
+                Token::ShiftRight => depth = depth.saturating_sub(2),
+                // Saturating, since this reads past a form it has not
+                // decided the shape of yet. A `>` with no `<` in front of it is
+                // not a bracket at all, and the answer here is that no body was
+                // found rather than an arithmetic fault.
                 Token::RightParentheses
                 | Token::RightBracket
-                | Token::GreaterThan => depth -= 1,
+                | Token::GreaterThan => depth = depth.saturating_sub(1),
                 Token::EndOfFile => return false,
                 _ => {}
             }

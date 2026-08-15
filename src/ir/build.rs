@@ -4488,6 +4488,60 @@ fn collect_call_instances_in_expression(
                 );
             }
         }
+        // A function written where it is used. Its body calls what any body
+        // calls, and its signature names what any signature names, so an
+        // instance a program only ever asks for from inside one is asked for
+        // here or nowhere. Its parameters are its own, which is why the types
+        // a name stands for are taken fresh rather than carried in.
+        Expression::Function(parameters, return_sig, body)
+        | Expression::Proc(parameters, return_sig, body) => {
+            let mut inner: HashMap<String, Type> = HashMap::new();
+            for parameter in ast.params_in(*parameters) {
+                if let Some(ty) = &parameter.type_annotation {
+                    inner.insert(
+                        ast.name(parameter.name).to_string(),
+                        ty.clone(),
+                    );
+                    collect_instances_in_type(ty, out);
+                }
+            }
+            if let Some(answer) =
+                ast.signature_to_type(ast.signature(*return_sig))
+            {
+                collect_instances_in_type(&answer, out);
+            }
+            collect_call_instances_in_block(
+                ast, *body, &mut inner, discovery, out,
+            );
+        }
+        // `[a, b, c]`, which is a run of expressions and holds whatever any
+        // expression holds.
+        Expression::Literal(Literal::Array(held)) | Expression::Tuple(held) => {
+            for element in ast.exprs_in(*held) {
+                collect_call_instances_in_expression(
+                    ast, *element, env, discovery, out,
+                );
+            }
+        }
+        // A block, so its statements rather than its expressions, and it is
+        // the same scope: a name bound above is still bound inside it.
+        Expression::Unsafe(block) => {
+            collect_call_instances_in_block(ast, *block, env, discovery, out);
+        }
+        Expression::UnsafeFn(held)
+        | Expression::Try(held)
+        | Expression::ArrayRepeat(held, _)
+        | Expression::PackMap(held, _, _) => {
+            collect_call_instances_in_expression(
+                ast, *held, env, discovery, out,
+            );
+        }
+        Expression::Range(from, to, _) => {
+            collect_call_instances_in_expression(
+                ast, *from, env, discovery, out,
+            );
+            collect_call_instances_in_expression(ast, *to, env, discovery, out);
+        }
         _ => {}
     }
 }

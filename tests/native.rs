@@ -5160,6 +5160,63 @@ const PREDECLARED_NAMES: &str = "import \"io.frost\"\n\
      \x20   print(\"{}\\n\", held)\n\
      \x20   0\n}\n";
 
+// A function written where it is used, in each of the three places one can be
+// written, beside the arithmetic in brackets it must not be mistaken for.
+//
+// The `$fn` argument is named and called by the specialization. The other two
+// are values, filling a field of `fn` type, which is the shape C is handed.
+//
+// `Box<i64>` is asked for from inside a literal and nowhere else, which is the
+// walk that reached one only through a named function before. And
+// `(value + to - 1) / to` opens with brackets holding an expression, not a
+// parameter list.
+#[test]
+fn both_compilers_take_a_function_written_where_it_is_used() {
+    const WRITTEN_HERE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+round_up :: fn(value: i64, to: i64) -> i64 {
+    (value + to - 1) / to * to
+}
+
+Box :: struct($T: Type) { held: T }
+
+wrap :: fn($T: Type, v: $T) -> Box<T> { Box { held = v } }
+
+unwrap :: fn($T: Type, b: Box<T>) -> $T { b.held }
+
+Holder :: struct { f: fn(i64) -> i64 }
+
+width :: fn(h: Holder) -> i64 { sizeof(Holder) }
+
+main :: fn() -> i64 {
+    unsafe { printf("%lld\n", apply($fn(a: i64) -> i64 { a + 1 }, 1)) }
+    named := fn(a: i64) -> i64 { a * 2 }
+    held := Holder { f = named }
+    unsafe {
+        printf("%lld\n", apply($fn(a: i64) -> i64 { unwrap(wrap(a)) + 4 }, 2))
+    }
+    bare := (a: i64) -> i64 { a + 3 }
+    kept := Holder { f = bare }
+    unsafe { printf("%lld\n", round_up(5, 4)) }
+    unsafe { printf("%lld\n", width(held) + width(kept)) }
+    0
+}
+"#;
+    let Some(bootstrap) = bootstrap_output("literal_here", WRITTEN_HERE) else {
+        return;
+    };
+    assert_eq!(bootstrap, "2\n6\n8\n16\n");
+    let Some(hosted) =
+        selfhosted_unaudited_output("shliteral_here", WRITTEN_HERE)
+    else {
+        return;
+    };
+    assert_eq!(hosted, "2\n6\n8\n16\n");
+}
+
 #[test]
 fn both_compilers_accept_a_local_named_after_a_primitive() {
     let Some(bootstrap) = bootstrap_output("predeclared", PREDECLARED_NAMES)

@@ -736,7 +736,8 @@ main :: fn() -> i64 {
         sret_slot = 0,
         mono_rets = arena_make($MonoRet, 4096),
         mono_nodes = arena_make($MonoNode, 4096),
-        synth_fns = arena_make($SynthFn, 64),
+        synth_fns = arena_make($NodeRef, 64),
+        unemitted_calls = arena_make($NodeRef, 64),
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
@@ -844,7 +845,7 @@ main :: fn() -> i64 {
     // a name lookup has to be. Known from the export lines alone, so it is
     // answered before anything is parsed.
     check_export_collisions(parser)
-    program := parse_program(parser)
+    mut program := parse_program(parser)
     // The parser kept reading past its faults so every one of them is on
     // stderr, and a program that faulted at all is still refused, here, once
     // the whole file has had its say.
@@ -888,6 +889,10 @@ main :: fn() -> i64 {
     // entitled to add one: a walk over the program reading a template into it
     // would be reading a body nobody wrote where it stands.
     parser.mono_on_demand = 0
+    // Every function written where it was used, joined to the program now that
+    // no instance is left to parse. One of them may have been made inside a
+    // body the fixpoint above re-read.
+    program = join_synth_fns(parser, program)
     check_format_types(parser)
     check_calls(parser)
     check_entry_point(parser, program)

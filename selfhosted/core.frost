@@ -19,7 +19,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
-    MonoRet, PendingRet, ProcSig, SynthFn,
+    MonoRet, PendingRet, ProcSig, NodeRef,
     CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
@@ -805,19 +805,17 @@ MonoRet :: struct {
     ret: i64,
 }
 
+// One node, for the lists that are a set of them: the functions a parse made
+// up, and the calls a template's own copy of a body holds.
+NodeRef :: struct {
+    node: i64,
+}
+
 // A generic function already re-parsed with one type argument bound: which
 // template, which argument, the FUNC node it produced and the return type that
 // parse worked out. Parsing a template is deterministic given those two, and
 // every instantiation used to be parsed three times over, once to record its
 // return type and once each for its prototype and its body.
-// A function written where it is used, as the declaration node made for it.
-// The parse cannot splice one into the program it is in the middle of reading,
-// so they are collected here and joined to the end of it once that read is
-// done.
-SynthFn :: struct {
-    node: i64,
-}
-
 MonoNode :: struct {
     gfn_index: i64,
     arg: i64,
@@ -1933,7 +1931,16 @@ Parser :: struct {
     sret_slot: i64,
     mono_rets: Arena<MonoRet>,
     mono_nodes: Arena<MonoNode>,
-    synth_fns: Arena<SynthFn>,
+    // Every function written where it was used, as the declaration node made
+    // for it. The parse cannot splice one into the program it is in the middle
+    // of reading, so they are collected and joined to it afterwards.
+    synth_fns: Arena<NodeRef>,
+    // Every call a template's own copy of a `for` over an unbound list holds.
+    // What that copy builds is never emitted, and the loop's name names no
+    // function in it: each instance reads the body again with the name standing
+    // for what the call passed. Held as nodes rather than as names, so a name a
+    // loop happened to use says nothing about the same name anywhere else.
+    unemitted_calls: Arena<NodeRef>,
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,

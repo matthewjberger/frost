@@ -14,7 +14,8 @@ import "lint.frost"
 export expand_includes, instance_fits_kind, tuple_is_first_for,
     check_discarded_resources,
     instance_params,
-    parse_generic_instance, parse_program,
+    parse_generic_instance, parse_program, join_synth_fns,
+    function_literal_follows_at,
     record_mono_rets,
     resolve_variant_fixups, struct_field_count
 
@@ -47,7 +48,7 @@ parse_compile_time :: fn(mut p: Parser) -> i64 {
         name_off := synth_numbered(p, "__anon_", number)
         name_len := 7 + digits_in(number)
         node := parse_function_named(p, name_off, name_len)
-        arena_push(p.synth_fns, SynthFn { node = node })
+        arena_push(p.synth_fns, NodeRef { node = node })
         made := arena_at(p.arena, node)
         return FN_BASE + made.val
     }
@@ -69,7 +70,13 @@ parse_compile_time :: fn(mut p: Parser) -> i64 {
 // rather than the type of one. A body is what tells them apart, so this looks
 // past the parameter list and the return type for the brace that opens one.
 function_literal_follows :: fn(mut p: Parser) -> bool {
-    mut at: i64 = 1
+    function_literal_follows_at(p, 1)
+}
+
+// The same look-ahead from a given token, which is one past the `fn` when there
+// is one and the `(` itself when there is not.
+function_literal_follows_at :: fn(mut p: Parser, start: i64) -> bool {
+    mut at := start
     if (peek_kind(p, at) != TokenKind::Lparen) {
         return false
     }
@@ -90,9 +97,19 @@ function_literal_follows :: fn(mut p: Parser) -> bool {
         }
         at = at + 1
     }
-    // Past the parameters. Whatever the return type is, the brace that opens a
-    // body comes after it, and a comma or a closing bracket at the depth this
-    // started on is the argument ending instead.
+    // Past the parameters. A function says what it answers with or opens its
+    // body right here, so anything else means the brackets held an expression
+    // rather than a parameter list. Asked before the search below, which would
+    // otherwise run to whatever brace came next in the file and read
+    // `(value + to - 1) / to` as a function of `value` and `to`.
+    after := peek_kind(p, at)
+    if (after != TokenKind::Lbrace && after != TokenKind::Arrow
+        && after != TokenKind::KwUses) {
+        return false
+    }
+    // Whatever the return type is, the brace that opens a body comes after it,
+    // and a comma or a closing bracket at the depth this started on is the
+    // argument ending instead.
     depth = 0
     while (true) {
         kind := peek_kind(p, at)
@@ -110,9 +127,18 @@ function_literal_follows :: fn(mut p: Parser) -> bool {
             return false
         } else if (kind == TokenKind::Comma && depth == 0) {
             return false
+        } else if (kind == TokenKind::Shr) {
+            // `Vec<Vec<i64>>` closes two of them with one token, which is how
+            // the lexer reads `>>`.
+            depth = depth - 2
         } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket
             || kind == TokenKind::Gt) {
             depth = depth - 1
+        }
+        if (depth < 0) {
+            // Read past a form whose shape is not decided yet: a `>` with no
+            // `<` in front of it is not a bracket at all. No body was found.
+            return false
         }
         at = at + 1
     }
@@ -493,11 +519,63 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         head := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, head)
     }
+    // `(a: i64) -> i64 { a + 1 }` is the same function written without the `fn`
+    // in front of it. A body is what tells it from a group, and a group with a
+    // block after it is what a condition looks like, so the flag that keeps a
+    // `{` from being read as a struct there keeps it from being read as a body
+    // here.
+    if (kind == TokenKind::Lparen && p.no_struct_lit == false
+        && function_literal_follows_at(p, 0)) {
+        written := cur_off(p)
+        number := p.synth_fns.count
+        name_off := synth_numbered(p, "__anon_", number)
+        name_len := 7 + digits_in(number)
+        node := parse_function_named(p, name_off, name_len)
+        arena_push(p.synth_fns, NodeRef { node = node })
+        return new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            written
+        )
+    }
+    // `()` is a value nothing can be. The bootstrap reads it and refuses it
+    // when it lowers, in these words and at the bracket that opened it, and a
+    // refusal is one thing wherever it is written. Asked after the literal
+    // above, since `() -> i64 { 1 }` is a function of no parameters.
+    if (kind == TokenKind::Lparen && peek_kind(p, 1) == TokenKind::Rparen) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("unsupported expression: ()")
+        frost_rt_recover_escape()
+    }
     if (kind == TokenKind::Lparen) {
         advance(p)
         inner := parse_expr(p)
         advance(p)
         return inner
+    }
+    // `fn(n: i64) -> i64 { n + 1 }` written where a value is wanted: the
+    // function itself, under a name nobody wrote, and the name where it stood.
+    // A field of `fn` type is filled this way, which is the shape C is handed.
+    // The `$` form in `parse_compile_time` reads the same body; what differs is
+    // that this one answers with a value and that one with the function.
+    if (kind == TokenKind::KwFn && function_literal_follows(p)) {
+        written := cur_off(p)
+        number := p.synth_fns.count
+        name_off := synth_numbered(p, "__anon_", number)
+        name_len := 7 + digits_in(number)
+        node := parse_function_named(p, name_off, name_len)
+        arena_push(p.synth_fns, NodeRef { node = node })
+        return new_named_node_at(
+            p,
+            NodeKind::Var,
+            0,
+            name_off,
+            name_len,
+            written
+        )
     }
     // Everything past here reads a name. Any other token, a stray byte among
     // them, is refused where it stands, in the words the bootstrap says for
@@ -822,6 +900,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             fn_index,
             offset
         )
+        // A call in a template's own copy of a `for` over the list this
+        // declaration takes, read while nothing is bound to it. What that read
+        // builds is never emitted, and the loop's name names no function in it:
+        // every instance reads the body again with the name standing for what
+        // the call passed. Marked on the node rather than remembered by name,
+        // so a name a loop happened to use says nothing about the same name
+        // anywhere else.
+        if (p.unbound_pack_for == 1) {
+            arena_push(p.unemitted_calls, NodeRef { node = made })
+        }
         // What a compile-time list was given is the type of each argument past
         // the ordinary parameters, and only here are the names in scope to say
         // what those types are. Every later pass reads the tuple this noted.
@@ -6005,23 +6093,6 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             && seq_len == p.decl_pack_len
             && bytes_equal(p.src, seq_off, p.decl_pack_off, p.decl_pack_len)) {
             p.unbound_pack_for = 1
-            // An element of the list may be a function, and then the loop's
-            // name is called in the body. Nothing declares that name here, and
-            // nothing will: every instance reads the body again with the name
-            // standing for the function that was passed. Held the way a `$f`
-            // parameter is, and for as long: the walk that reads these runs
-            // once the whole program is parsed.
-            arena_push(
-                p.cfn_params,
-                GParam {
-                    name_off = item_off,
-                    name_len = item_len,
-                    is_value = 0,
-                    is_fn = 1,
-                    ty = 0,
-                    fallback = -1
-                }
-            )
         }
         body := parse_block(p)
         p.unbound_pack_for = held_pack_for
@@ -7328,7 +7399,11 @@ parse_function_named :: fn(
         wants_inline = 1
         advance(p)
     }
-    advance(p)
+    // A function written where it is used may be spelled with the `(` alone.
+    // There is no `fn` to step over then, and the parameters start here.
+    if (cur(p) == TokenKind::KwFn) {
+        advance(p)
+    }
     check_name_is_free(p, name_offset, name_length)
     fn_index := intern_global(p, name_offset, name_length)
     if (wants_inline == 1) {
@@ -10496,9 +10571,27 @@ parse_program :: fn(mut p: Parser) -> i64 {
             }
         }
     }
-    // Every function written where it was used, joined to the end of the
-    // program. Each is an ordinary declaration node, so every pass that walks
-    // the program reaches them without knowing where they came from.
+    settle_linear_types(p)
+    head
+}
+
+// Every function written where it was used, joined to the end of the program.
+// Each is an ordinary declaration node, so every pass that walks the program
+// reaches them without knowing where they came from.
+//
+// Called once every instance has been parsed rather than at the end of the
+// parse. Most instances are parsed where the call to them is read, but the
+// fixpoint that settles what a forwarded list holds may ask for one after that,
+// and a function written inside the body it re-reads is made there.
+join_synth_fns :: fn(mut p: Parser, program: i64) -> i64 {
+    if (p.synth_fns.count == 0) {
+        return program
+    }
+    mut head := program
+    mut tail := program
+    while (tail != (-1) && node_next(p, tail) != (-1)) {
+        tail = node_next(p, tail)
+    }
     mut synth: i64 = 0
     while (synth < p.synth_fns.count) {
         made := arena_at(p.synth_fns, synth)
@@ -10511,7 +10604,6 @@ parse_program :: fn(mut p: Parser) -> i64 {
         }
         synth = synth + 1
     }
-    settle_linear_types(p)
     head
 }
 

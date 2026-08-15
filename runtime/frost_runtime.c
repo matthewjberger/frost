@@ -123,6 +123,10 @@ static const char frost_rt_stack_message[] =
 /* Written with the system call rather than with stdio, because a handler runs
    where stdio's own locks and buffers may not be reachable, and on Windows it
    runs on the stack that just ran out. */
+/* Defined below, beside the reports it writes, and called from the handlers
+   above it. */
+static void frost_rt_report_drain(void);
+
 static void frost_rt_write_stderr(const char *text, unsigned long length) {
 #if defined(_WIN32)
     DWORD written = 0;
@@ -135,9 +139,16 @@ static void frost_rt_write_stderr(const char *text, unsigned long length) {
 
 #if defined(_WIN32)
 static LONG CALLBACK frost_rt_stack_handler(EXCEPTION_POINTERS *info) {
-    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
+    DWORD code = info->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_STACK_OVERFLOW) {
         frost_rt_write_stderr(frost_rt_stack_message,
                               sizeof(frost_rt_stack_message) - 1);
+    }
+    /* What the program found before it died, which is the whole of what it has
+       to say. The process is about to be killed by a fault, so no exit handler
+       runs and this is the last place anything can be written from. */
+    if (code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ACCESS_VIOLATION) {
+        frost_rt_report_drain();
     }
     /* The message is all this is for. What the process does next is what it
        would have done, so the exit code and the debugger's view are unchanged. */
@@ -166,6 +177,11 @@ static void frost_rt_stack_handler(int signal, siginfo_t *info, void *context) {
         frost_rt_write_stderr(frost_rt_stack_message,
                               sizeof(frost_rt_stack_message) - 1);
     }
+    /* What the program found before it died, which is the whole of what it has
+       to say. The fault is about to happen again and kill the process, so no
+       exit handler runs and this is the last place anything can be written
+       from. */
+    frost_rt_report_drain();
     /* Put the default back and return, so the fault happens again and kills the
        process the way it would have. Reporting a different exit code here would
        be the handler changing what the program did rather than explaining it. */
@@ -823,6 +839,32 @@ void frost_rt_report_flush(void) {
         held->room = 0;
     }
     fflush(stderr);
+}
+
+/* The same reports, written from a signal or exception handler. Sorts and
+   writes exactly what the flush does, and does none of what a handler may not:
+   nothing is allocated, nothing is freed, and the write is the system call
+   rather than stdio, whose locks are held by whatever was interrupted. Leaves
+   the list empty, so a flush that somehow still runs writes nothing twice. */
+static void frost_rt_report_drain(void) {
+    size_t count = frost_rt_report_count;
+    frost_rt_report_count = 0;
+    for (size_t outer = 1; outer < count; outer++) {
+        frost_rt_report held = frost_rt_reports[outer];
+        size_t inner = outer;
+        while (inner > 0 && frost_rt_reports[inner - 1].at > held.at) {
+            frost_rt_reports[inner] = frost_rt_reports[inner - 1];
+            inner--;
+        }
+        frost_rt_reports[inner] = held;
+    }
+    for (size_t index = 0; index < count; index++) {
+        frost_rt_report *held = &frost_rt_reports[index];
+        if (held->length > 0) {
+            frost_rt_write_stderr(held->text, (unsigned long)held->length);
+        }
+        held->length = 0;
+    }
 }
 
 static void frost_rt_report_begin(int64_t at) {
