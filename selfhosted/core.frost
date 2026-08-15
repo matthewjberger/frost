@@ -1479,7 +1479,7 @@ Arena :: struct($T: Type) {
 // address space reserved across every arena together, and a constant large
 // enough for the biggest made every small one just as large. A flat 32 MB
 // measured 523 ms against 389 for this, and a flat 256 MB measured 859.
-ARENA_HEADROOM :: 8
+ARENA_HEADROOM :: 16
 
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     // `frost_rt_alloc` is a `safe extern`: it hands back memory or does not

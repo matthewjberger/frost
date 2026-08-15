@@ -722,8 +722,16 @@ check_types :: fn(mut p: Parser, head: i64) {
     // Which instances are the first of their kind, marked once for each generic
     // rather than asked one at a time. Asking walks every instance before the
     // one in hand, which is the square of them for every generic declared.
-    mut firsts: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
-    mut instance_table: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
+    // Sized for the instances there are rather than for a guess: one mark per
+    // instance, and two table slots per instance so the table never fills.
+    mut firsts: Arena<InstanceSlot> = arena_make(
+        $InstanceSlot,
+        p.type_args.count + 1024
+    )
+    mut instance_table: Arena<InstanceSlot> = arena_make(
+        $InstanceSlot,
+        p.type_args.count * 4 + 1024
+    )
     mut gi: i64 = 0
     while (gi < p.generic_fns.count) {
         mark_first_instances(p, gi, firsts, instance_table)

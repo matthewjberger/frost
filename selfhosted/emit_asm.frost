@@ -4001,20 +4001,55 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     // Which instances are the first of their kind, marked once for each generic
     // rather than asked one at a time. Asking walks every instance before the
     // one in hand, which is the square of them for every generic declared.
-    mut firsts: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
-    mut instance_table: Arena<InstanceSlot> = arena_make($InstanceSlot, 1024)
     // A specialization is written because something reached it. The functions
-    // above have been written by now, so what they call is known; writing one
-    // of these can reach further ones, so the sweep runs again until a pass
-    // reaches nothing new.
+    // above have been written by now, so what they call is recorded; writing
+    // one of these can reach further ones, and the walk below picks those up
+    // because it reads the count again each time round.
     //
-    // Only for a whole program. A build that writes one unit per module has
-    // each specialization written by the unit that declared its template, and
-    // what a *different* unit calls is not known here, so those units write
-    // every specialization they own as they always did.
-    mut sweeping: bool = true
-    while (sweeping) {
-        sweeping = false
+    // Driven from what was reached rather than by sweeping every generic
+    // against every instance: the sweep costs the two multiplied together on
+    // every pass, and this costs one step for each specialization written.
+    if (p.emit_module < 0) {
+        mut at: i64 = 0
+        while (at < p.wanted_monos.count) {
+            if (arena_at(p.wanted_monos, at).emitted == 0) {
+                arena_at(p.wanted_monos, at).emitted = 1
+                held := arena_at(p.wanted_monos, at)
+                gi := generic_fn_of(p, held.fn_index)
+                if (gi >= 0) {
+                    node := parse_generic_instance(
+                        p,
+                        gi,
+                        held.arg,
+                        held.xarg_start,
+                        held.xarg_count
+                    )
+                    ret := p.last_return_type
+                    emit_asm_mono_function(
+                        p,
+                        node,
+                        held.arg,
+                        held.xarg_start,
+                        held.xarg_count,
+                        ret
+                    )
+                }
+            }
+            at = at + 1
+        }
+    } else {
+        // A build that writes one unit per module has each specialization
+        // written by the unit that declared its template, and what a different
+        // unit calls is not known while writing this one, so every one this
+        // unit owns is written as it always was.
+        mut firsts: Arena<InstanceSlot> = arena_make(
+            $InstanceSlot,
+            p.type_args.count + 1024
+        )
+        mut instance_table: Arena<InstanceSlot> = arena_make(
+            $InstanceSlot,
+            p.type_args.count * 4 + 1024
+        )
         mut gi: i64 = 0
         while (gi < p.generic_fns.count) {
             if (unit_owns_generic(p, gi)) {
@@ -4025,11 +4060,6 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                     arg := used.arg
                     xstart := used.xarg_start
                     xcount := used.xarg_count
-                    is_pack := used.is_pack
-                    owner := used.owner
-                    // An instance parsed below can put more in the table, and
-                    // those come after what was marked, so they are asked the long
-                    // way. They are few, where the ones marked are all of them.
                     mut first: bool = false
                     if (ii < firsts.count) {
                         first = arena_at(firsts, ii).mark == gi + 1
@@ -4041,57 +4071,33 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                                 arg,
                                 xstart,
                                 xcount,
-                                is_pack,
-                                owner
+                                used.is_pack,
+                                used.owner
                             ) && tuple_is_first_for(p, gi, ii)
                         )
                     }
                     if (first) {
-                        gfn := arena_at(p.generic_fns, gi)
-                        mut write: bool = true
-                        if (p.emit_module < 0) {
-                            at := mono_slot(
-                                p,
-                                gfn.fn_index,
-                                arg,
-                                xstart,
-                                xcount
-                            )
-                            write = (
-                                at >= 0
-                                && arena_at(p.wanted_monos, at).emitted == 0
-                            )
-                            if (write) {
-                                arena_at(p.wanted_monos, at).emitted = 1
-                            }
-                        }
-                        if (write) {
-                            node := parse_generic_instance(
-                                p,
-                                gi,
-                                arg,
-                                xstart,
-                                xcount
-                            )
-                            ret := p.last_return_type
-                            emit_asm_mono_function(
-                                p,
-                                node,
-                                arg,
-                                xstart,
-                                xcount,
-                                ret
-                            )
-                            sweeping = true
-                        }
+                        node := parse_generic_instance(
+                            p,
+                            gi,
+                            arg,
+                            xstart,
+                            xcount
+                        )
+                        ret := p.last_return_type
+                        emit_asm_mono_function(
+                            p,
+                            node,
+                            arg,
+                            xstart,
+                            xcount,
+                            ret
+                        )
                     }
                     ii = ii + 1
                 }
             }
             gi = gi + 1
-        }
-        if (p.emit_module >= 0) {
-            sweeping = false
         }
     }
 
