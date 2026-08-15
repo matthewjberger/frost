@@ -12,7 +12,7 @@ import "layout.frost"
 import "lint.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
-    InstanceSlot, mark_first_instances,
+    mark_first_instances,
     check_discarded_resources,
     instance_params,
     parse_generic_instance, parse_program, join_synth_fns,
@@ -10891,19 +10891,6 @@ tuple_is_first_for :: fn(mut p: Parser, gfn_index: i64, at: i64) -> bool {
         i = i + 1
     }
     true
-}
-
-// One entry of the tables below: which instance reached this slot, and which
-// generic put it there. A record rather than a bare number, since a scalar read
-// out of an arena is a value and not a place to write back through.
-//
-// `mark` is what makes clearing unnecessary. Both tables are sized once and
-// stamped with the generic being marked, so a slot left by an earlier one reads
-// as empty rather than having to be written over. Running over both per generic
-// would cost as much as the walk this replaces.
-InstanceSlot :: struct {
-    at: i64,
-    mark: i64,
 }
 
 // A stand-in for one instance's identity, so that two which cannot be the same

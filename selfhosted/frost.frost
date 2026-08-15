@@ -748,6 +748,7 @@ main :: fn() -> i64 {
         move_views = arena_make($LocalVar, 1024),
         label_id = 0,
         asm_slots = 0,
+        type_arg_table = arena_make($InstanceSlot, 4096),
         abi_windows = 0,
         args_unbound_map = 0,
         loop_top = -1,

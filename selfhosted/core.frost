@@ -15,7 +15,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     AnswerMask, AsmName, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     ResultEnum,
     PendingTuple,
-    AsmUse, LocalVar, Module, ToldMove,
+    AsmUse, InstanceSlot, LocalVar, Module, ToldMove,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
@@ -1389,6 +1389,19 @@ ToldMove :: struct {
     said: str,
 }
 
+// One entry of the tables below: which instance reached this slot, and which
+// generic put it there. A record rather than a bare number, since a scalar read
+// out of an arena is a value and not a place to write back through.
+//
+// `mark` is what makes clearing unnecessary. Both tables are sized once and
+// stamped with the generic being marked, so a slot left by an earlier one reads
+// as empty rather than having to be written over. Running over both per generic
+// would cost as much as the walk this replaces.
+InstanceSlot :: struct {
+    at: i64,
+    mark: i64,
+}
+
 // Which unit last referred to one literal node, stamped as the unit index plus
 // two so that nothing counts as referred to before a unit has run.
 AsmUse :: struct {
@@ -2042,6 +2055,9 @@ Parser :: struct {
     // How many literals the unit being emitted has referred to, which is what
     // the next one is called.
     asm_slots: i64,
+    // Where each instance already recorded sits, so that noting a new one is a
+    // probe rather than a walk over every instance before it.
+    type_arg_table: Arena<InstanceSlot>,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list
     // that was not bound, which is what a template's own parse sees. That parse

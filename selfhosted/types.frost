@@ -1507,17 +1507,34 @@ note_type_args :: fn(
         }
         g = g + 1
     }
-    mut i: i64 = 0
-    while (i < p.type_args.count) {
-        entry := arena_at(p.type_args, i)
+    // Where this tuple would sit, found by probing rather than by walking every
+    // tuple recorded so far. The walk made noting one instance cost the number
+    // already noted, so a program was charged the square of its
+    // specializations before a single one was emitted.
+    //
+    // The table holds one slot for every two instances, so it never fills and
+    // the probe always reaches an empty one. It only ever grows, the way
+    // `type_args` does, so the two stay in step.
+    mut slots: i64 = 16
+    while (slots < (p.type_args.count + 1) * 2) {
+        slots = slots * 2
+    }
+    if (p.type_arg_table.count < slots) {
+        rebuild_type_arg_table(p, slots)
+    }
+    mut probe := (
+        tuple_hash(p, arg, xarg_start, xarg_count, is_pack, owner) & (slots - 1)
+    )
+    while (arena_at(p.type_arg_table, probe).mark == 1) {
+        entry := arena_at(p.type_args, arena_at(p.type_arg_table, probe).at)
         if (entry.arg == arg && entry.xarg_count == xarg_count
             && entry.is_pack == is_pack && entry.owner == owner
             && gargs_alike(p, entry.xarg_start, xarg_start, xarg_count)) {
             return
         }
-        i = i + 1
+        probe = (probe + 1) & (slots - 1)
     }
-    arena_push(
+    at := arena_push(
         p.type_args,
         TypeArg {
             arg = arg,
@@ -1527,6 +1544,63 @@ note_type_args :: fn(
             owner = owner
         }
     )
+    arena_at(p.type_arg_table, probe).at = at
+    arena_at(p.type_arg_table, probe).mark = 1
+}
+
+// A stand-in for one tuple's identity. Two that collide are still weighed in
+// full, so this only has to be cheap and spread out.
+tuple_hash :: fn(
+    mut p: Parser,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    is_pack: i64,
+    owner: i64
+) -> i64 {
+    mut sum := wrap_mul(arg, 2654435761)
+    sum = wrap_add(wrap_mul(sum, 33), xarg_count)
+    sum = wrap_add(wrap_mul(sum, 33), is_pack)
+    sum = wrap_add(wrap_mul(sum, 33), owner)
+    mut i: i64 = 0
+    while (i < xarg_count) {
+        held := arena_at(p.gargs, xarg_start + i)
+        sum = wrap_add(wrap_mul(sum, 33), held.value)
+        i = i + 1
+    }
+    sum & 4611686018427387903
+}
+
+// Lays the table out again at the new size, which is what a table addressed by
+// a mask has to do when it grows: every slot a tuple lands in depends on how
+// many there are.
+rebuild_type_arg_table :: fn(mut p: Parser, slots: i64) {
+    p.type_arg_table.count = 0
+    mut k: i64 = 0
+    while (k < slots) {
+        arena_push(p.type_arg_table, InstanceSlot { at = 0, mark = 0 })
+        k = k + 1
+    }
+    mut at: i64 = 0
+    while (at < p.type_args.count) {
+        held := arena_at(p.type_args, at)
+        mut probe := (
+            tuple_hash(
+                p,
+                held.arg,
+                held.xarg_start,
+                held.xarg_count,
+                held.is_pack,
+                held.owner
+            ) & (slots - 1)
+        )
+        while (arena_at(p.type_arg_table, probe).mark == 1) {
+            probe = (probe + 1) & (slots - 1)
+        }
+        arena_at(p.type_arg_table, probe).at = at
+        arena_at(p.type_arg_table, probe).mark = 1
+        at = at + 1
+    }
 }
 
 collect_type_args :: fn(mut p: Parser) {
