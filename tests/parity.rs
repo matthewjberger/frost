@@ -4423,9 +4423,9 @@ fn both_compilers_refuse_the_same_programs() {
 // the claim and drops the header and the column it sits under, so two compilers
 // pointing a reader at two different places compared equal.
 const POSITIONED_DIFFERENTLY: &[&str] = &[
-    "a_value_of_one_ordinal_set_is_not_a_value_of_another",
     "a_resource_given_away_through_a_borrow_into_a_run",
     "an_argument_takes_the_struct_its_parameter_names",
+    "a_value_of_one_ordinal_set_is_not_a_value_of_another",
     "a_value_named_under_a_type_is_a_value_of_it",
     "a_block_of_values_is_closed",
     "a_capability_drawing_function_as_a_compile_time_argument",
@@ -4435,28 +4435,14 @@ const POSITIONED_DIFFERENTLY: &[&str] = &[
     "a_mut_on_a_discard",
     "a_return_type_list_that_leaves_a_value_unnamed",
     "a_view_of_a_parameter_returned_from_a_branch",
-    "borrowed_field_twice",
     "write_into_consumed",
     "generic_pool",
     "pool_nobody_named",
-    "consumed_through_a_borrow_twice",
-    "handed_out_of_a_borrow_twice",
     "handed_out_by_element",
     "a_generic_literal_with_no_argument_to_read",
     "a_raw_pointer_read_outside_an_unsafe_block",
     "an_undeclared_type_in_a_signature",
     "a_literal_of_an_undeclared_type",
-    "an_alternative_that_binds_a_payload",
-    "a_case_range_that_runs_backwards",
-    "a_case_range_whose_ends_meet",
-    "text_in_a_case",
-    "a_case_after_one_that_covers_everything",
-    "a_tuple_case_after_one_that_covers_everything",
-    "a_case_two_earlier_spans_cover_between_them",
-    "a_range_inside_a_tuple_case",
-    "a_case_an_earlier_span_covers",
-    "a_case_an_earlier_alternative_covers",
-    "a_match_over_spans_still_needs_the_rest",
 ];
 
 // The refusals the two compilers word differently. Empty, and it is the test

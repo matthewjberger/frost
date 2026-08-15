@@ -3859,6 +3859,10 @@ impl<'a> Parser<'a> {
             return Ok(first);
         }
         let mut alternatives = vec![first];
+        // Where the alternatives are joined. A report about the alternative as
+        // a whole belongs at the bar that made it one, rather than past the
+        // last thing written on the line.
+        let joined_at = self.current_position().unwrap_or_default();
         while matches!(self.peek_nth(0), Token::Pipe) {
             self.read_token();
             alternatives.push(self.parse_pattern_alternative()?);
@@ -3871,7 +3875,11 @@ impl<'a> Parser<'a> {
                 Pattern::EnumVariant { bindings, .. }
                     if !bindings.is_empty() =>
                 {
-                    let held = self.here(BINDING_ALTERNATIVE.to_string());
+                    let held =
+                        anyhow::Error::new(crate::diagnostic::LocatedError {
+                            position: joined_at,
+                            message: BINDING_ALTERNATIVE.to_string(),
+                        });
                     self.skip_past_match();
                     return Err(held);
                 }
@@ -3923,8 +3931,13 @@ impl<'a> Parser<'a> {
                 Pattern::Literal(Literal::Boolean(false))
             }
             _ if self.at_pattern_number() => {
+                // Where the span begins, kept because a span that covers
+                // nothing is named whole in the report and belongs at the
+                // number the reader wrote first, not past the one they wrote
+                // last.
+                let began = self.current_position().unwrap_or_default();
                 let low = self.parse_pattern_bound()?;
-                match self.parse_pattern_range(low)? {
+                match self.parse_pattern_range(low, began)? {
                     Some(range) => range,
                     None => Pattern::Literal(Literal::Integer(low)),
                 }
@@ -3951,11 +3964,19 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 let mut patterns = Vec::new();
                 while self.peek_nth(0) != &Token::RightParentheses {
+                    // Where this part begins, so what is said about it is said
+                    // where it was written rather than past its last token.
+                    let part_at = self.current_position().unwrap_or_default();
                     let part = self.parse_pattern_alternative()?;
                     if matches!(self.ast.pattern(part), Pattern::Range { .. })
                         || matches!(self.peek_nth(0), Token::Pipe)
                     {
-                        return Err(self.here(TUPLE_PART.to_string()));
+                        return Err(anyhow::Error::new(
+                            crate::diagnostic::LocatedError {
+                                position: part_at,
+                                message: TUPLE_PART.to_string(),
+                            },
+                        ));
                     }
                     patterns.push(part);
                     if matches!(self.peek_nth(0), Token::Comma) {
@@ -4045,7 +4066,11 @@ impl<'a> Parser<'a> {
 
     /// The rest of a span once its lower end has been read, or nothing where
     /// what was read stands on its own.
-    fn parse_pattern_range(&mut self, low: i64) -> Result<Option<Pattern>> {
+    fn parse_pattern_range(
+        &mut self,
+        low: i64,
+        began: Position,
+    ) -> Result<Option<Pattern>> {
         let inclusive = match self.peek_nth(0) {
             Token::DotDot => false,
             Token::DotDotEqual => true,
@@ -4056,9 +4081,12 @@ impl<'a> Parser<'a> {
         let holds = if inclusive { low <= high } else { low < high };
         if !holds {
             let between = if inclusive { "..=" } else { ".." };
-            return Err(self.here(format!(
-                "the case range {low}{between}{high} covers nothing"
-            )));
+            return Err(anyhow::Error::new(crate::diagnostic::LocatedError {
+                position: began,
+                message: format!(
+                    "the case range {low}{between}{high} covers nothing"
+                ),
+            }));
         }
         Ok(Some(Pattern::Range {
             low,

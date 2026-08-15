@@ -2071,7 +2071,12 @@ impl MoveChecker<'_> {
                 MoveState::Deferred
             } else {
                 if matches!(state, MoveState::Moved | MoveState::MaybeMoved) {
-                    self.moved_at.insert(key.clone(), self.at);
+                    // At the argument that was handed over, which is what the
+                    // note is about, and what the two places recording a move
+                    // through a call already write. The statement's own place
+                    // pointed a reader at the call's first token instead.
+                    self.moved_at
+                        .insert(key.clone(), self.ast.expr_position(*argument));
                 }
                 state
             };

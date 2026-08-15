@@ -4695,14 +4695,20 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
     mut closed: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
+        // Where this arm's pattern begins, for the same reason.
+        case_at := cur_off(p)
         mut condition: i64 = -1
         if (cur(p) == TokenKind::Lparen) {
             advance(p)
             mut index: i64 = 0
+            // Where the part being read began. What makes a part a range or an
+            // alternative is read after its first value, so the cursor at that
+            // point is on the `..` or the `|` and the part itself is behind it.
+            mut part_at := cur_off(p)
             while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
                 if (cur(p) == TokenKind::Pipe || cur(p) == TokenKind::Dotdot
                     || cur(p) == TokenKind::Dotdoteq) {
-                    report_where(p.modules, p.src, cur_off(p))
+                    report_where(p.modules, p.src, part_at)
                     report("a tuple case compares one value per part, so an alternative or a range belongs in a match on one value")
                     frost_rt_recover_escape()
                 }
@@ -4752,6 +4758,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                 index = index + 1
                 if (cur(p) == TokenKind::Comma) {
                     advance(p)
+                    part_at = cur_off(p)
                 }
             }
             advance(p)
@@ -4761,13 +4768,17 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         advance(p)
         body := parse_arm(p)
         if (closed == 1) {
-            report_where(p.modules, p.src, cur_off(p))
+            report_where(p.modules, p.src, case_at)
             report("this case is covered by an earlier one, so nothing reaches it")
             // The arm is well formed; what is refused is that it can be
             // reached. Escaping here would abandon a parse that is in good
             // order and leave the resync looking for a statement at the brace
             // closing the match, so the reader was told twice and once wrongly.
             frost_rt_recover_note()
+            // Nothing reaches it, so nothing is built for it. The arm that
+            // closed the chain is its else and set no tail to thread onto, so
+            // threading this one on read the arena at -1.
+            continue
         }
         if (condition == (-1)) {
             // Matches whatever is left, so it is the chain's else and the last
@@ -4793,6 +4804,10 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
 }
 
 parse_match :: fn(mut p: Parser) -> i64 {
+    // Where the `match` itself is, which is what a report about the match as a
+    // whole is placed at. A match covering less than its type does is about the
+    // match rather than about any one of its cases.
+    match_at := cur_off(p)
     advance(p)
     if (match_is_tuple(p)) {
         return parse_tuple_match(p)
@@ -4837,6 +4852,10 @@ parse_match :: fn(mut p: Parser) -> i64 {
     mut saw_default: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
+        // Where this arm's pattern begins, read before it is parsed. A report
+        // about the arm belongs at what the reader wrote, and the cursor by
+        // then is on the colon after it.
+        case_at := cur_off(p)
         mut is_default: i64 = 0
         mut value: i64 = 0
         mut case_node: i64 = -1
@@ -4937,7 +4956,9 @@ parse_match :: fn(mut p: Parser) -> i64 {
                 is_default = 1
                 advance(p)
             } else if (cur(p) == TokenKind::Str) {
-                report_where(p.modules, p.src, cur_off(p))
+                // A text token is recorded where its bytes start, which is past
+                // the quote that opened it. What the reader wrote is the quote.
+                report_where(p.modules, p.src, cur_off(p) - 1)
                 report("a case matches whole numbers, booleans and variants, so text belongs in an `if`")
                 frost_rt_recover_escape()
             } else {
@@ -4975,7 +4996,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         // `_` covers everything, so an arm below one is refused by the rule
         // about coverage rather than by a rule of its own.
         if (saw_default == 1 || case_is_shadowed(p, head, alts)) {
-            report_where(p.modules, p.src, cur_off(p))
+            report_where(p.modules, p.src, case_at)
             report("this case is covered by an earlier one, so nothing reaches it")
             // The arm is well formed; what is refused is that it can be
             // reached. Escaping here would abandon a parse that is in good
@@ -5004,7 +5025,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         }
     }
     if (saw_default == 0 && checkable == 1 && match_enum != (-1)) {
-        check_match_covers(p, match_enum, covered)
+        check_match_covers(p, match_enum, covered, match_at)
     }
     advance(p)
     new_node(p, NodeKind::Match, scrutinee, head, 0)
@@ -5015,7 +5036,12 @@ parse_match :: fn(mut p: Parser) -> i64 {
 // the match was going to answer with anyway, so adding a variant to an enum
 // silently changes the meaning of every match on it rather than pointing at the
 // places that now have a case to write.
-check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
+check_match_covers :: fn(
+    mut p: Parser,
+    enum_ty: i64,
+    covered: i64,
+    match_at: i64
+) {
     mut i: i64 = 0
     mut missing: i64 = 0
     while (i < p.variants.count) {
@@ -5023,7 +5049,7 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
         if (entry.enum_ty == enum_ty && entry.tag >= 0 && entry.tag < 63) {
             if ((covered & (1 << entry.tag)) == 0) {
                 if (missing == 0) {
-                    report_where(p.modules, p.src, cur_off(p))
+                    report_where(p.modules, p.src, match_at)
                     report_fmt(
                         "match on '{}' does not cover '.",
                         type_text(p, enum_ty)

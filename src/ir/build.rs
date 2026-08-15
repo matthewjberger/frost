@@ -12128,7 +12128,10 @@ impl<'a> FunctionLowering<'a> {
         let mut everything = false;
         for case in cases {
             if everything {
-                bail!(UNREACHABLE_CASE);
+                bail!(
+                    "at {}: {UNREACHABLE_CASE}",
+                    self.ast.pattern_position(case.pattern).describe()
+                );
             }
             if matches!(self.ast.pattern(case.pattern), Pattern::Wildcard) {
                 everything = true;
@@ -12140,7 +12143,10 @@ impl<'a> FunctionLowering<'a> {
             if !mine.is_empty()
                 && mine.iter().all(|name| variants.contains(name))
             {
-                bail!(UNREACHABLE_CASE);
+                bail!(
+                    "at {}: {UNREACHABLE_CASE}",
+                    self.ast.pattern_position(case.pattern).describe()
+                );
             }
             variants.extend(mine);
 
@@ -12149,7 +12155,10 @@ impl<'a> FunctionLowering<'a> {
             if !ours.is_empty()
                 && ours.iter().all(|(low, high)| covers(&spans, *low, *high))
             {
-                bail!(UNREACHABLE_CASE);
+                bail!(
+                    "at {}: {UNREACHABLE_CASE}",
+                    self.ast.pattern_position(case.pattern).describe()
+                );
             }
             spans.extend(ours);
         }
@@ -12549,7 +12558,10 @@ impl<'a> FunctionLowering<'a> {
         let mut everything = false;
         for case in cases {
             if everything {
-                bail!(UNREACHABLE_CASE);
+                bail!(
+                    "at {}: {UNREACHABLE_CASE}",
+                    self.ast.pattern_position(case.pattern).describe()
+                );
             }
             let parts: Vec<PatternId> = match self.ast.pattern(case.pattern) {
                 Pattern::Tuple(patterns) => {
