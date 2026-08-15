@@ -641,7 +641,9 @@ run_generators :: fn(checking: bool) -> i64 {
         return 0
     }
     compiler := unsafe { frost_rt_absolute_path(frost_rt_arg_at(0)) }
-    mut settled: i64 = 0
+    // Set when a file on disk is not what its generator writes, which is what
+    // `--check` answers with. Nothing else in this loop reaches the answer.
+    mut stale: i64 = 0
     mut index: i64 = 0
     while (index < steps.count) {
         step := arena_at(steps, index)
@@ -653,6 +655,11 @@ run_generators :: fn(checking: bool) -> i64 {
         command = quoted_after(quoted_after(command, step.from), written)
         command = join_two(command, step.inputs)
         if (unsafe { frost_rt_run_command(shell_line(command)) } != 0) {
+            // What a check wrote is a temporary file, and nothing reads it
+            // once the step it belongs to has stopped.
+            if (checking) {
+                unsafe { frost_rt_remove_file(written) }
+            }
             // What went wrong was said by whatever ran, on the stream this
             // shares, so this names the step rather than repeating it.
             report("frost generate: ")
@@ -670,6 +677,9 @@ run_generators :: fn(checking: bool) -> i64 {
             mut rendering := quoted_after(quoted_after("", compiler), "fmt")
             rendering = quoted_after(rendering, written)
             if (unsafe { frost_rt_run_command(shell_line(rendering)) } != 0) {
+                if (checking) {
+                    unsafe { frost_rt_remove_file(written) }
+                }
                 report("frost generate: the formatter refused ")
                 report_cstr(step.output_named)
                 report("\n")
@@ -690,7 +700,7 @@ run_generators :: fn(checking: bool) -> i64 {
             report_cstr(step.output_named)
             report(" is up to date\n")
         } else {
-            settled = 1
+            stale = 1
             report("frost generate: ")
             report_cstr(step.output_named)
             report(" is not what ")
@@ -699,7 +709,7 @@ run_generators :: fn(checking: bool) -> i64 {
         }
         index = index + 1
     }
-    settled
+    stale
 }
 
 // An argument beginning with `-` that nothing above claimed is a mistake worth

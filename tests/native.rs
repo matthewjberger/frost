@@ -15587,8 +15587,8 @@ fn both_compilers_refuse_an_address_read_as_a_float_or_a_bool() {
         };
         assert!(
             hosted.contains("^i64"),
-            "the self-hosted compiler refused {name} without naming the              pointer:
-{hosted}"
+            "the self-hosted compiler refused {name} without naming the \
+             pointer:\n{hosted}"
         );
     }
 
@@ -20450,6 +20450,140 @@ fn a_half_declared_generator_stops_only_the_command_that_reads_it() {
         );
     }
     let _ = std::fs::remove_dir_all(&project);
+}
+
+// Every member is read before any of them runs.
+//
+// A project holding a good step ahead of a half declared one writes no file at
+// all. Reading them in turn would run the first, leave its output on disk, and
+// then refuse over the second, so what a refused command had already done would
+// depend on the order the members were written in.
+//
+// Any shape counts as half declared. A member that is not an object names
+// nothing, so it is refused for the reason a member missing a field is, and a
+// build reading `paths` and `layers` beside it is left alone either way.
+#[test]
+fn a_generator_runs_only_once_every_member_has_been_read() {
+    let Some(hosted) = build_self_hosted_compiler("generateorder") else {
+        return;
+    };
+    for (shape, what) in [
+        (r#"{ "output": "b.frost" }"#, "a member missing a program"),
+        (r#""oops""#, "a member that is not an object"),
+    ] {
+        let project = std::env::temp_dir().join(unique("frost_generate_order"));
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("frost.json"),
+            format!(
+                r#"{{ "generated": [
+                       {{ "output": "a.frost", "from": "writer.frost" }},
+                       {shape} ] }}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("writer.frost"),
+            "import \"fs.frost\"\nimport \"os.frost\"\n\n\
+             main :: fn() -> i64 {\n    fs_write(os_arg(1), \"ok\\n\")\n    0\n}\n",
+        )
+        .unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+        for compiler in
+            [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()]
+        {
+            let name = compiler.display().to_string();
+            let refused = Command::new(compiler)
+                .arg("generate")
+                .current_dir(&project)
+                .env("FROST_PATH", root.join("std"))
+                .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+                .output()
+                .unwrap();
+            assert!(!refused.status.success(), "{name} generated past {what}");
+            assert_eq!(
+                String::from_utf8_lossy(&refused.stderr).trim(),
+                "frost generate: a member of 'generated' in frost.json does \
+                 not name both an output and what writes it",
+                "{name} said something else about {what}"
+            );
+            assert!(
+                !project.join("a.frost").exists(),
+                "{name} wrote the step ahead of {what}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&project);
+    }
+}
+
+// A `--check` that stops partway takes its temporary file with it.
+//
+// The file a check writes stands in for the output while the bytes are
+// compared, and a step that stops before the comparison leaves nothing to read
+// it. It is named after the output, so a run that kept it would grow one file
+// in the temporary directory for every check that ever stopped.
+#[test]
+fn a_check_that_refuses_keeps_no_temporary_file() {
+    let Some(hosted) = build_self_hosted_compiler("generatescratch") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for compiler in [Path::new(env!("CARGO_BIN_EXE_frost")), hosted.as_path()] {
+        let name = compiler.display().to_string();
+        let project = std::env::temp_dir().join(unique("frost_generate_left"));
+        std::fs::create_dir_all(&project).unwrap();
+        // Named for this run, so what is looked for in the temporary directory
+        // is this check's file and no other test's.
+        let output = format!("{}.frost", unique("left"));
+        std::fs::write(
+            project.join("frost.json"),
+            format!(
+                r#"{{ "generated": [
+                       {{ "output": "{output}",
+                          "from": "writer.frost" }}] }}"#
+            ),
+        )
+        .unwrap();
+        // Writes its file and then stops, so the step gets as far as leaving a
+        // temporary file behind and no further.
+        std::fs::write(
+            project.join("writer.frost"),
+            "import \"fs.frost\"\nimport \"os.frost\"\n\n\
+             main :: fn() -> i64 {\n    \
+             fs_write(os_arg(1), \"main :: fn() -> i64 { 0 }\\n\")\n    1\n}\n",
+        )
+        .unwrap();
+        let refused = Command::new(compiler)
+            .arg("generate")
+            .arg("--check")
+            .current_dir(&project)
+            .env("FROST_PATH", root.join("std"))
+            .env("FROST_RUNTIME", root.join("runtime/frost_runtime.c"))
+            .env("FROST_RUNTIME_FROST", root.join("runtime/runtime.frost"))
+            .output()
+            .unwrap();
+        assert!(
+            !refused.status.success(),
+            "{name} checked past a generator that stopped"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&refused.stderr).trim(),
+            format!("frost generate: writer.frost did not write {output}"),
+            "{name} said something else about a generator that stopped"
+        );
+        let left: Vec<String> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|held| held.ends_with(&output))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "{name} kept {left:?} after the check refused"
+        );
+        let _ = std::fs::remove_dir_all(&project);
+    }
 }
 
 // A generator that does not run is reported the same way by both compilers, and

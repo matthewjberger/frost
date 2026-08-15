@@ -218,30 +218,34 @@ static void frost_rt_install_stack_handler(void) {
 }
 #endif
 
-/* Armed before the program's own `main` runs. The generated code's `main` is the
-   program's, so there is no earlier place in it to put this, and the loader is
-   what runs something ahead of it. */
-static void frost_rt_arm_stack_guard(void) {
-    frost_rt_install_stack_handler();
-    /* Diagnostics are bytes, and the C library on Windows opens a stream in
-       text mode, where writing a newline writes two. A report would then differ
-       from the same report written by the bootstrap compiler, and from the same
-       report written by the fault handler beside this, which uses the system
-       call and translates nothing. Two compilers held to one wording have to
-       write one line. */
+/* Diagnostics are bytes, and the C library on Windows opens a stream in text
+   mode, where writing a newline writes two. A report would then differ from the
+   same report written by the bootstrap compiler, and from the same report
+   written by the fault handler beside this, which uses the system call and
+   translates nothing. Two compilers held to one wording have to write one
+   line. */
+static void frost_rt_open_stderr_as_bytes(void) {
 #if defined(_WIN32)
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
 }
 
+/* Run before the program's own `main` does. The generated code's `main` is the
+   program's, so there is no earlier place in it to put this, and the loader is
+   what runs something ahead of it. */
+static void frost_rt_start_up(void) {
+    frost_rt_install_stack_handler();
+    frost_rt_open_stderr_as_bytes();
+}
+
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((constructor)) static void frost_rt_arm_at_start(void) {
-    frost_rt_arm_stack_guard();
+    frost_rt_start_up();
 }
 #elif defined(_MSC_VER)
 #pragma section(".CRT$XCU", read)
 static void __cdecl frost_rt_arm_at_start(void) {
-    frost_rt_arm_stack_guard();
+    frost_rt_start_up();
 }
 __declspec(allocate(".CRT$XCU")) void(__cdecl *frost_rt_arm_slot)(void) =
     frost_rt_arm_at_start;

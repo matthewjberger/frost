@@ -32,9 +32,9 @@ shadow it by putting a file of the same name somewhere earlier.
 ## The manifest
 
 `frost.json`, optional, in the entry file's directory or any directory above it.
-"Above" is read off the entry file's absolute directory, up to the root, so which
-manifest is found does not depend on how the path was spelled or on the
-directory the build was started in. `frost deep/x.frost` from inside a project
+"Above" is read off the entry file's absolute directory, up to the root of the
+drive on Windows and up to `/` elsewhere, so which manifest is found does not
+depend on how the path was spelled or on the directory the build was started in. `frost deep/x.frost` from inside a project
 and `frost project/deep/x.frost` from above it are one build and find one
 manifest.
 
@@ -68,6 +68,13 @@ with the output path first and the inputs after, and puts a `.frost` output
 through the formatter. `frost generate --check` writes somewhere else and
 compares the bytes, so a checkout can be held to generated files that are not
 stale. Every path is relative to the manifest, the way a search directory is.
+
+A member that does not name both an output and what writes it is refused by
+`frost generate`, whatever shape it has, and a build reading `paths` and
+`layers` beside it is left alone: refusing to compile a program because a build
+step next to it is half declared would refuse it for a reason that has nothing
+to do with it. Every member is read before any of them runs, so a half declared
+step beside a good one writes no file at all.
 
 The generator is an ordinary Frost program taking a file to write and files to
 read, so it compiles, runs and reads on its own without knowing a manifest

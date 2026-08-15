@@ -4348,16 +4348,15 @@ fn both_compilers_refuse_the_same_programs() {
         .collect();
     assert!(
         unplaced.is_empty(),
-        "the two compilers put these reports in different places, and nothing          said they would ({} of {}):
-{}",
+        "the two compilers put these reports in different places, and nothing \
+         said they would ({} of {}):\n{}",
         unplaced.len(),
         REFUSED_BY_BOTH.len(),
         unplaced
             .iter()
             .map(|held| held.as_str())
             .collect::<Vec<_>>()
-            .join("
-")
+            .join("\n")
     );
     let placed: Vec<&str> = POSITIONED_DIFFERENTLY
         .iter()
@@ -4370,12 +4369,8 @@ fn both_compilers_refuse_the_same_programs() {
         .collect();
     assert!(
         placed.is_empty(),
-        "these are placed the same now, so take them off the list:
-{}",
-        placed.join(
-            "
-"
-        )
+        "these are placed the same now, so take them off the list:\n{}",
+        placed.join("\n")
     );
     let unexpected: Vec<&String> = drifted
         .iter()

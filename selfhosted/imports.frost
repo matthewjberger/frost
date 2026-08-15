@@ -718,13 +718,23 @@ joined_path :: fn(directory: ^i8, upto: i64, name: ^i8) -> ^i8 {
         byte_set(block, i, byte_at(directory, i))
         i = i + 1
     }
-    byte_set(block, upto, CH_SLASH)
+    // One separator between the two, whether or not the directory already ends
+    // in one. The root is the directory that does, and "/" joined with a name
+    // is "/name".
+    mut end := upto
+    if (end > 0) {
+        last := byte_at(directory, end - 1)
+        if (last == CH_SLASH || last == CH_BACKSLASH) {
+            end = end - 1
+        }
+    }
+    byte_set(block, end, CH_SLASH)
     mut k: i64 = 0
     while (k < extra) {
-        byte_set(block, upto + 1 + k, byte_at(name, k))
+        byte_set(block, end + 1 + k, byte_at(name, k))
         k = k + 1
     }
-    byte_set(block, upto + 1 + extra, 0)
+    byte_set(block, end + 1 + extra, 0)
     block
 }
 
@@ -767,16 +777,31 @@ MANIFEST_NAME :: "frost.json"
 manifest_above :: fn(entry: ^i8) -> ^i8 {
     absolute := absolute_path(entry)
     mut length := directory_part(absolute, cstr_len(absolute))
-    // Down to the root of the drive, which is the shortest prefix that still
-    // names a directory. A prefix of nothing names no directory at all, and
-    // reading it as the working directory would hand a project's manifest to a
-    // file compiled from somewhere else entirely.
+    // Down to the shortest prefix that still names a directory. On Windows that
+    // is the drive, "C:", which the walk reaches as a prefix of its own.
     while (length > 0) {
         held := prefix_of(absolute, length)
         if (unsafe { frost_rt_file_exists(manifest_path(held)) } == 1) {
             return held
         }
         length = directory_part(absolute, length)
+    }
+    // A path that begins with a separator has one directory above what the walk
+    // reached, the root itself, and "/frost.json" is a manifest like any other.
+    // The walk stops before it because the prefix that names it is one byte
+    // long and every step answers where a separator sits, which is byte 0.
+    //
+    // Read here rather than by letting the walk reach a prefix of nothing: on a
+    // path with no leading separator that prefix names no directory at all, and
+    // reading it as the working directory would hand a project's manifest to a
+    // file compiled from somewhere else entirely.
+    if (cstr_len(absolute) > 0) {
+        first := byte_at(absolute, 0)
+        if (first == CH_SLASH || first == CH_BACKSLASH) {
+            if (unsafe { frost_rt_file_exists(manifest_path("/")) } == 1) {
+                return "/"
+            }
+        }
     }
     ""
 }
@@ -864,47 +889,45 @@ manifest_generators :: fn(entry: ^i8, mut into: Arena<Generator>) {
     }
     mut step := json_at(document, json_member(document, root, "generated"), 0)
     while (step >= 0) {
-        if (json_kind(document, step) == JsonKind::Object) {
-            written := json_member(document, step, "output")
-            from := json_member(document, step, "from")
-            if (json_kind(document, written) != JsonKind::String
-                || json_kind(document, from) != JsonKind::String) {
-                report("frost generate: a member of 'generated' in frost.json ")
-                report("does not name both an output and what writes it")
-                frost_rt_die()
-            }
-            // Every path is relative to the manifest, the way a declared search
-            // directory is, so the same command run from anywhere under the
-            // project reaches the same files.
-            mut arguments: ^i8 = ""
-            mut input := json_at(
-                document,
-                json_member(document, step, "inputs"),
-                0
-            )
-            while (input >= 0) {
-                if (json_kind(document, input) == JsonKind::String) {
-                    arguments = join_two(
-                        join_two(
-                            join_two(arguments, " \""),
-                            resolved_under(under, text, input, document)
-                        ),
-                        "\""
-                    )
-                }
-                input = json_next(document, input)
-            }
-            arena_push(
-                into,
-                Generator {
-                    output_named = spelled(text, written, document),
-                    output = resolved_under(under, text, written, document),
-                    from_named = spelled(text, from, document),
-                    from = resolved_under(under, text, from, document),
-                    inputs = arguments,
-                }
-            )
+        // A member of any other shape names nothing, so it is refused here for
+        // the same reason a half declared one is. Reading the two paths off a
+        // member that is not an object answers -1 for each, which is the same
+        // answer a missing one gives, so one report covers every shape.
+        written := json_member(document, step, "output")
+        from := json_member(document, step, "from")
+        if (json_kind(document, written) != JsonKind::String
+            || json_kind(document, from) != JsonKind::String) {
+            report("frost generate: a member of 'generated' in frost.json ")
+            report("does not name both an output and what writes it")
+            frost_rt_die()
         }
+        // Every path is relative to the manifest, the way a declared search
+        // directory is, so the same command run from anywhere under the
+        // project reaches the same files.
+        mut arguments: ^i8 = ""
+        mut input := json_at(document, json_member(document, step, "inputs"), 0)
+        while (input >= 0) {
+            if (json_kind(document, input) == JsonKind::String) {
+                arguments = join_two(
+                    join_two(
+                        join_two(arguments, " \""),
+                        resolved_under(under, text, input, document)
+                    ),
+                    "\""
+                )
+            }
+            input = json_next(document, input)
+        }
+        arena_push(
+            into,
+            Generator {
+                output_named = spelled(text, written, document),
+                output = resolved_under(under, text, written, document),
+                from_named = spelled(text, from, document),
+                from = resolved_under(under, text, from, document),
+                inputs = arguments,
+            }
+        )
         step = json_next(document, step)
     }
     json_free(document)

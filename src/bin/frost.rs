@@ -863,6 +863,20 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
         eprintln!("frost generate: no frost.json declares this project");
         return Ok(true);
     };
+    // Every member is read before any of them runs. A project holding a half
+    // declared step beside a good one writes nothing, where running them in
+    // turn would leave a file on disk that the refusal never mentioned.
+    if manifest
+        .generated
+        .iter()
+        .any(|step| step.output.is_empty() || step.from.is_empty())
+    {
+        eprintln!(
+            "frost generate: a member of 'generated' in frost.json does \
+             not name both an output and what writes it"
+        );
+        return Ok(false);
+    }
     if manifest.generated.is_empty() {
         eprintln!("frost generate: this project declares nothing to generate");
         return Ok(true);
@@ -871,16 +885,9 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
         std::env::current_exe().context("finding the compiler to run")?;
     let mut settled = true;
     for step in &manifest.generated {
-        if step.output.is_empty() || step.from.is_empty() {
-            eprintln!(
-                "frost generate: a member of 'generated' in frost.json does \
-                 not name both an output and what writes it"
-            );
-            return Ok(false);
-        }
         let (output, from, inputs) = step.resolved(&root);
         let written = if checking {
-            scratch_beside(&output)
+            scratch_for(&output)
         } else {
             output.clone()
         };
@@ -891,6 +898,11 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
             .status()
             .with_context(|| format!("running {}", from.display()))?;
         if !status.success() {
+            // What a check wrote is a temporary file, and nothing reads it
+            // once the step it belongs to has stopped.
+            if checking {
+                fs::remove_file(&written).ok();
+            }
             // What went wrong was said by whatever ran, on the stream this
             // shares, so this names the step rather than repeating it.
             eprintln!(
@@ -910,6 +922,9 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
                 .status()
                 .with_context(|| format!("formatting {}", written.display()))?;
             if !rendered.success() {
+                if checking {
+                    fs::remove_file(&written).ok();
+                }
                 eprintln!(
                     "frost generate: the formatter refused {}",
                     step.output
@@ -945,7 +960,7 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
 /// survives and the formatter reads it as the kind of file it is. The number in
 /// front is the whole output path, so two projects generating a file of the same
 /// name do not check each other's.
-fn scratch_beside(output: &Path) -> PathBuf {
+fn scratch_for(output: &Path) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     output.hash(&mut hasher);
     let name = output
@@ -1625,11 +1640,22 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         )?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
+        // Named after the whole path rather than after the file's own name.
+        // Two projects each running a `tools/writer.frost` are two programs,
+        // and a name taken from the last part of the path is one name for
+        // both, so one run would build over the other's program and then
+        // execute it. The self-hosted compiler names this file after the whole
+        // path for the same reason.
         let stem = Path::new(&cli.file)
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        let mut hasher = DefaultHasher::new();
+        std::fs::canonicalize(&cli.file)
+            .unwrap_or_else(|_| PathBuf::from(&cli.file))
+            .hash(&mut hasher);
+        let stem = format!("{stem}_{:016x}", hasher.finish());
         let directory = std::env::temp_dir();
         let object_path = directory.join(format!("frost_run_{stem}.o"));
         let exe_path = directory

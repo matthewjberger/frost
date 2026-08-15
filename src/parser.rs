@@ -2040,11 +2040,6 @@ impl<'a> Parser<'a> {
                         },
                     ));
                 }
-                if false {
-                    bail!(
-                        "`mut` makes a binding assignable and `_` binds nothing; write `_` on its own"
-                    );
-                }
             } else {
                 self.refuse_literal_name(&name)?;
             }
@@ -4382,11 +4377,6 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
-        if false {
-            bail!(
-                "a return type list names every value; write `-> (name: T, name: T)`"
-            );
-        }
         for (index, held) in values.iter().enumerate() {
             if let Some(name) = held.name
                 && values[..index]
@@ -5275,11 +5265,6 @@ impl<'a> Parser<'a> {
                         "the values '{type_name}' names are written inside braces, and this block is not closed"
                     ),
                 ));
-            }
-            if false {
-                bail!(
-                    "the values '{type_name}' names are written inside braces, and this block is not closed"
-                );
             }
             if !named.is_empty() && self.on_the_same_line() {
                 bail!(

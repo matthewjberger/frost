@@ -35,8 +35,48 @@ pub struct Manifest {
     pub prefixes: std::collections::BTreeMap<String, String>,
     // The files this project writes with a program of its own, in the order
     // they are written. `frost generate` runs them.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "read_generated")]
     pub generated: Vec<Generated>,
+}
+
+// Read whatever shape is written, so that a build reading `paths` and `layers`
+// beside this gets its answer. A member that is not an object, one that names
+// its output with a number, and a `generated` that is not a list at all all
+// arrive with nothing named, and `frost generate` is what refuses them.
+fn read_generated<'de, D>(reader: D) -> Result<Vec<Generated>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let held = <serde_json::Value as serde::Deserialize>::deserialize(reader)?;
+    Ok(held
+        .as_array()
+        .map(|members| members.iter().map(read_one_generated).collect())
+        .unwrap_or_default())
+}
+
+fn read_one_generated(member: &serde_json::Value) -> Generated {
+    Generated {
+        output: text_at(member, "output"),
+        from: text_at(member, "from"),
+        inputs: member
+            .get("inputs")
+            .and_then(serde_json::Value::as_array)
+            .map(|held| {
+                held.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn text_at(member: &serde_json::Value, name: &str) -> String {
+    member
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 // One file a program in this project writes.
@@ -220,5 +260,38 @@ mod tests {
         )
         .unwrap();
         assert!(manifest.generated[0].inputs.is_empty());
+    }
+
+    // A build reads `paths` and `layers` and never reads this, so a member of
+    // any shape is read rather than refused. What it names comes out empty,
+    // which is what `frost generate` has something to say about.
+    #[test]
+    fn a_generated_member_of_any_shape_leaves_a_build_alone() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{ "paths": ["lib"],
+                 "generated": [
+                   "oops",
+                   7,
+                   { "output": 3, "from": "w.frost" },
+                   { "output": "a", "from": "b", "inputs": [1, "c"] }] }"#,
+        )
+        .expect("a member of any shape is read");
+        assert_eq!(manifest.paths, vec!["lib".to_string()]);
+        assert_eq!(manifest.generated.len(), 4);
+        assert!(manifest.generated[0].output.is_empty());
+        assert!(manifest.generated[0].from.is_empty());
+        assert!(manifest.generated[1].output.is_empty());
+        assert!(manifest.generated[2].output.is_empty());
+        assert_eq!(manifest.generated[2].from, "w.frost");
+        assert_eq!(manifest.generated[3].inputs, vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn a_generated_that_is_not_a_list_leaves_a_build_alone() {
+        let manifest: Manifest =
+            serde_json::from_str(r#"{ "layers": ["a"], "generated": "oops" }"#)
+                .expect("a 'generated' of any shape is read");
+        assert_eq!(manifest.layers, vec!["a".to_string()]);
+        assert!(manifest.generated.is_empty());
     }
 }
