@@ -9004,7 +9004,13 @@ impl<'a> FunctionLowering<'a> {
                         &self.builder.linear,
                     )
                 {
-                    bail!("{report}");
+                    // At the statement that asked for the instance, which is
+                    // where the other road to this same refusal puts it: one
+                    // finds the pool in a written annotation and reports at the
+                    // statement holding it, and this one finds it while a call
+                    // is specialized. Left to the expression being lowered, the
+                    // two roads placed one refusal in two places.
+                    bail!("at {}: {report}", self.current_position.describe());
                 }
             }
         }

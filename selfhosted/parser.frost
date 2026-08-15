@@ -6602,7 +6602,14 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
         // continuation that parses as a statement of its own is an expression
         // that lost the operator joining it to that line.
         stmt_at := cur_off(p)
+        // What the statement is about, which is the name a binding gives rather
+        // than the word saying the binding is assignable. A report about an
+        // instance the statement asked for is placed here, and `mut` is not
+        // what the reader has to look at.
         p.stmt_at = stmt_at
+        if (cur(p) == TokenKind::KwMut) {
+            p.stmt_at = peek_off(p, 1)
+        }
         if (block_column > 0 && breaks_between(p.src, previous_at, stmt_at)
             && column_at(p.src, stmt_at) > block_column
             && in_lifted(p, stmt_at) == false) {

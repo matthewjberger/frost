@@ -4413,20 +4413,15 @@ fn both_compilers_refuse_the_same_programs() {
 }
 
 // The refusals the two compilers place differently: same file, same words, a
-// caret under a different column. Thirty-four when the harness learned to
-// compare the whole report rather than the words after the caret, and two now.
+// caret under a different column. Empty, and it is the test above that keeps it
+// so: a pair that drifts fails on the way in, and one that is mended fails until
+// its name comes off.
 //
-// Both are the same question and it is about a pool of resources, which neither
-// compiler finds where it is written: the fault is in an instance of a generic
-// container, and it is found by a sweep over every instance a program asked for,
-// long after the file that asked was read. What each has to go back to differs.
-// The self-hosted compiler records the statement that wanted the instance. The
-// bootstrap places it at the call that produced one, which is a column further
-// along the same line, and where that place is recorded has not been run down.
-//
-// The list can only shrink: a pair that drifts fails on the way in, and one that
-// is mended fails until its name comes off.
-const POSITIONED_DIFFERENTLY: &[&str] = &["generic_pool", "pool_nobody_named"];
+// Thirty-four when the harness learned to compare the whole report rather than
+// the words after the caret. `spoken` keeps what a report claims and drops the
+// header and the column it sits under, so two compilers pointing a reader at two
+// different places about one fault compared equal.
+const POSITIONED_DIFFERENTLY: &[&str] = &[];
 
 // The refusals the two compilers word differently. Empty, and it is the test
 // above that keeps it so: a pair that drifts fails on the way in, and one that
