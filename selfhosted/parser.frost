@@ -1794,8 +1794,12 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             advance(p)
             node = new_field_node(p, node, offset, length)
         } else if (cur(p) == TokenKind::Caret) {
+            operand_at := arena_at(p.arena, node).pos
             advance(p)
             node = new_unary(p, NodeKind::Deref, node)
+            // Where the read begins, which is the thing being read through. The
+            // node is made after the `^`, so it carried whatever follows it.
+            arena_at(p.arena, node).pos = operand_at
         } else {
             bracket := cur_off(p)
             advance(p)
@@ -1860,7 +1864,11 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
         // `Pair<i64, Pair<i64, i64>>` resolves to the right instance.
         saved_expected := p.expected_type
         p.expected_type = field_type(p, struct_ty, offset, length)
+        value_at := written_at(p)
         value := parse_expr(p)
+        // The same as an argument: a node carries where the cursor was when it
+        // was made, and a report about the value means where it begins.
+        arena_at(p.arena, value).pos = value_at
         p.expected_type = saved_expected
         init := new_field_init(p, value, offset, length)
         if (head == (-1)) {
@@ -7497,8 +7505,9 @@ parse_function_named :: fn(
     if (cur(p) == TokenKind::Arrow) {
         advance(p)
         if (cur(p) == TokenKind::Lparen) {
+            list_at := cur_off(p)
             advance(p)
-            ret = synth_multi_struct(p)
+            ret = synth_multi_struct(p, list_at)
             p.multi_ty = ret
         } else {
             ret = parse_type(p)
@@ -8058,7 +8067,10 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
             report("' is a value named under a type, so it carries nothing")
             frost_rt_recover_escape()
         }
-        return type_value_node(p, index, variant_off)
+        // At the type name, which is where the whole of `Vec3::ZERO` begins.
+        // The value's own name underlines less than the report is about, the
+        // way the refusal above it already says.
+        return type_value_node(p, index, enum_off)
     }
     // A name under a type that names values, where no variant answers to it
     // either. The type's own values are the set a near name is looked for in.
@@ -8676,7 +8688,7 @@ nth_field :: fn(mut p: Parser, struct_ty: i64, index: i64) -> i64 {
 // are the ones that function declared. A value the signature named keeps that
 // name as its field, so `return { quotient = .. }` writes what the signature
 // reads. The `(` has been consumed.
-synth_multi_struct :: fn(mut p: Parser) -> i64 {
+synth_multi_struct :: fn(mut p: Parser, list_at: i64) -> i64 {
     mut head: i64 = -1
     mut tail: i64 = -1
     mut count: i64 = 0
@@ -8694,7 +8706,9 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
         // name writes. A list that left one out had that field called `value0`,
         // a spelling this compiler chose and the language never offered.
         if (name_off == (-1)) {
-            report_where(p.modules, p.src, cur_off(p))
+            // At the list, since what is wrong is the list rather than the
+            // one value the read happened to stop on.
+            report_where(p.modules, p.src, list_at)
             report("a return type list names every value; write `-> (name: T, name: T)`")
             frost_rt_recover_escape()
         }
@@ -9101,10 +9115,12 @@ read_values_block :: fn(
     if (at_values_block(p) == false) {
         return
     }
+    // The brace this opens, which is the block a report about it is about.
+    block_at := cur_off(p)
     advance(p)
     while (cur(p) != TokenKind::Rbrace) {
         if (cur(p) == TokenKind::Eof) {
-            report_where(p.modules, p.src, type_off)
+            report_where(p.modules, p.src, block_at)
             report("the values '")
             report_src(p.src, type_off, type_len)
             report("' names are written inside braces, and this block is not closed")

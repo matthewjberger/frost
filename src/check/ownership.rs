@@ -2783,8 +2783,12 @@ impl MoveChecker<'_> {
                         && self.view_borrows.contains(ast.name(*held))
                     {
                         let held = ast.name(*held);
+                        // At the argument that was handed away, which is what
+                        // the sentence names. The statement's own place put the
+                        // caret under the call's first token.
                         bail!(
-                            "'{held}' borrows into a container's run, and handing away what it reaches leaves the container holding storage it will free again. Which element the borrow found is worked out while the program runs, so the place that went is one no rule can name. Discharge the elements in place with `vec_drain`, which brings the length down before each one."
+                            "at {}: '{held}' borrows into a container's run, and handing away what it reaches leaves the container holding storage it will free again. Which element the borrow found is worked out while the program runs, so the place that went is one no rule can name. Discharge the elements in place with `vec_drain`, which brings the length down before each one.",
+                            ast.expr_position(*argument).describe()
                         );
                     }
                     self.visit(*argument, known && !borrows)?;

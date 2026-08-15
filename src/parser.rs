@@ -4302,6 +4302,9 @@ impl<'a> Parser<'a> {
     // are worth naming. A name says which value is which at the definition, and
     // it is the field name a `return { quotient = .. }` writes.
     fn parse_multiple_returns(&mut self) -> Result<ReturnKind> {
+        // Where the list opens, since what is wrong with it is the list rather
+        // than whatever token the read of it ended on.
+        let opened = self.mark();
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
             bail!("Expected '(' for a multiple return");
         }
@@ -4339,6 +4342,13 @@ impl<'a> Parser<'a> {
         // a spelling the compiler chose and the language never offered, so the
         // name is required rather than optional.
         if values.iter().any(|held| held.name.is_none()) {
+            return Err(self.at_mark(
+                opened,
+                "a return type list names every value; write `-> (name: T, name: T)`"
+                    .to_string(),
+            ));
+        }
+        if false {
             bail!(
                 "a return type list names every value; write `-> (name: T, name: T)`"
             );
@@ -5192,6 +5202,9 @@ impl<'a> Parser<'a> {
         if !self.at_values_block() {
             return Ok(());
         }
+        // Where the block opens, which is what a report about the block as a
+        // whole is placed at.
+        let opened_block = self.mark();
         // A generic declaration is one type for each set of arguments given to
         // it, so there is no single type for a value to be a value of, and
         // nothing to write `Box::EMPTY` at.
@@ -5212,6 +5225,17 @@ impl<'a> Parser<'a> {
         let mut named: Vec<String> = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
             if matches!(self.peek_nth(0), Token::EndOfFile) {
+                // At the declaration that opened the block. Where the read
+                // stopped is the end of the file, and the last value it got
+                // through is not what is wrong with the program.
+                return Err(self.at_mark(
+                    opened_block,
+                    format!(
+                        "the values '{type_name}' names are written inside braces, and this block is not closed"
+                    ),
+                ));
+            }
+            if false {
                 bail!(
                     "the values '{type_name}' names are written inside braces, and this block is not closed"
                 );

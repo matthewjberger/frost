@@ -3499,7 +3499,10 @@ check_format_call :: fn(
         if (forwards_own_format(p, args)) {
             return
         }
-        report_where(p.modules, p.src, literal_at(node))
+        // At the argument itself. `literal_at` reads back past the quote of a
+        // text token, and what is here is not one, so there is no quote to
+        // step back over.
+        report_where(p.modules, p.src, node.pos)
         report("a format string is written as a literal, since how many values follow it is settled where the call is written")
         frost_rt_recover_escape()
         return

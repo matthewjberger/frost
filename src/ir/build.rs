@@ -6503,8 +6503,11 @@ impl<'a> FunctionLowering<'a> {
             self.ast.expr(container),
             Expression::Identifier(_) | Expression::FieldAccess(..)
         ) {
+            // At the container that has to be worked out, which is what the
+            // sentence is about, rather than at the `for` the walk opens with.
             bail!(
-                "`live_slots` walks a container that is named, not one that is worked out; bind it first and walk the name"
+                "at {}: `live_slots` walks a container that is named, not one that is worked out; bind it first and walk the name",
+                self.at_expression(container).describe()
             );
         }
         // A container by shape rather than by name, the way a slab and a
