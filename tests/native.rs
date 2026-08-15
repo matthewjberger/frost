@@ -20579,3 +20579,93 @@ main :: fn() -> i64 {
     }
     let _ = std::fs::remove_dir_all(&project);
 }
+
+// A project's layers are enforced however the entry file was spelled, and both
+// compilers agree on every spelling.
+//
+// The manifest describes a whole project and the entry of a build is any file
+// in it, so which manifest is found cannot depend on the shape of the path on
+// the command line or on the directory the build was started in. Each of these
+// names the same file, so each has to reach the same answer.
+//
+// Both compilers used to walk to somewhere else. The self-hosted one walked the
+// path as written and stopped at the working directory, so `deep/x.frost` from
+// inside the project found nothing. The bootstrap resolved an entry named with
+// no directory to the empty path, which canonicalizes to nothing and sits under
+// no layer, so a bare name found nothing either.
+#[test]
+fn both_compilers_enforce_layers_however_the_entry_is_spelled() {
+    let Some(hosted) = build_self_hosted_compiler("layerspelling") else {
+        return;
+    };
+    let project = std::env::temp_dir().join(unique("frost_layers"));
+    std::fs::create_dir_all(project.join("a").join("deep")).unwrap();
+    std::fs::create_dir_all(project.join("b")).unwrap();
+    std::fs::create_dir_all(project.join("work")).unwrap();
+    std::fs::write(project.join("frost.json"), r#"{ "layers": ["a", "b"] }"#)
+        .unwrap();
+    std::fs::write(
+        project.join("b").join("high.frost"),
+        "export high\nhigh :: fn() -> i64 { 1 }\n",
+    )
+    .unwrap();
+    // `a` is declared before `b`, so a file in `a` may not reach into `b`.
+    std::fs::write(
+        project.join("a").join("low.frost"),
+        "import \"../b/high.frost\"\nmain :: fn() -> i64 { high() }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("a").join("deep").join("x.frost"),
+        "import \"../../b/high.frost\"\nmain :: fn() -> i64 { high() }\n",
+    )
+    .unwrap();
+
+    let object = std::env::temp_dir().join(unique("frost_layers_out"));
+    let spellings: [(&Path, &str); 6] = [
+        (&project.join("a"), "low.frost"),
+        (&project.join("a"), "./low.frost"),
+        (&project.join("a"), "deep/x.frost"),
+        (&project.join("work"), "../a/low.frost"),
+        (&project.join("work"), "../a/deep/x.frost"),
+        (&project, "a/low.frost"),
+    ];
+    for (directory, entry) in spellings {
+        for (compiler, native) in [
+            (Path::new(env!("CARGO_BIN_EXE_frost")), true),
+            (hosted.as_path(), false),
+        ] {
+            let name = compiler.display().to_string();
+            let mut command = Command::new(compiler);
+            if native {
+                command.arg("--native");
+            }
+            let ran = command
+                .arg("-o")
+                .arg(&object)
+                .arg(entry)
+                .current_dir(directory)
+                .output()
+                .unwrap();
+            assert!(
+                !ran.status.success(),
+                "{name} compiled {entry} from {}, which reaches a later layer",
+                directory.display()
+            );
+            let said = String::from_utf8_lossy(&ran.stderr);
+            assert!(
+                said.contains("layer: 'a' may not reach 'b'"),
+                "{name} refused {entry} from {} for another reason:\n{said}",
+                directory.display()
+            );
+            // The file is named under its layer whatever the build was started
+            // from, which is what the report is for.
+            assert!(
+                said.contains("imports 'b/high.frost'"),
+                "{name} did not name the imported file under its layer:\n{said}"
+            );
+        }
+    }
+    let _ = std::fs::remove_file(&object);
+    let _ = std::fs::remove_dir_all(&project);
+}

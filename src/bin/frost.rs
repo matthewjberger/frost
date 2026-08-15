@@ -1171,8 +1171,18 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
     let (tokens, positions, lifted) = frost::resolve_when(tokens, positions)
         .with_context(|| format!("in {}", cli.file))?;
 
+    // Where the search for the project's manifest starts, which is the entry
+    // file's directory as an absolute path. A file named with no directory at
+    // all sits in the one the build was started in, and the empty path that
+    // leaves behind canonicalizes to nothing, so the search would start nowhere
+    // and a build run from inside a project would not find it.
+    let named = if base_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        base_dir.as_path()
+    };
     let project_root =
-        base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
+        named.canonicalize().unwrap_or_else(|_| base_dir.clone());
     let (roots, layers) = search_roots(&cli, &project_root)?;
 
     let mut parser = FrostParser::with_positions(&tokens, &positions);

@@ -322,9 +322,17 @@ refuse_upward :: fn(parent: ^i8, found: ^i8, mut layers: Arena<Layer>) {
 
 // A file as a reader would write it: the layer's own name, then the rest of the
 // path under it, so a diagnostic says the same thing wherever the build ran.
-layer_relative :: fn(path: ^i8, held: Layer) -> ^i8 {
+//
+// A layer's path is absolute and the path asked about has to be, or the two
+// share no prefix and there is no rest to take. A path that is under no layer
+// after that is said whole, since what a report has to do is name the file.
+layer_relative :: fn(raw: ^i8, held: Layer) -> ^i8 {
+    path := absolute_path(raw)
     length := cstr_len(held.path)
     rest := cstr_len(path) - length - 1
+    if (rest < 0 || path_under(path, held.path) == false) {
+        return path
+    }
     name_len := cstr_len(held.name)
     out := unsafe { ptr_cast($i8, frost_rt_alloc(name_len + rest + 2)) }
     mut k: i64 = 0
@@ -744,38 +752,38 @@ directory_part :: fn(path: ^i8, upto: i64) -> i64 {
 // project saying something it meant.
 MANIFEST_NAME :: "frost.json"
 
-// The nearest manifest at or above the entry file, as the length of the prefix
-// of `entry` that names its directory, or -1 where there is none. A layer list
-// describes a whole project and a build's entry is any file in it, so the
-// declaration is found by walking up rather than repeated in every directory a
-// build might start in.
-manifest_above :: fn(entry: ^i8) -> i64 {
-    mut length := directory_part(entry, cstr_len(entry))
-    mut going: bool = true
-    while (going) {
-        if (unsafe { frost_rt_file_exists(manifest_path(entry, length)) } == 1) {
-            return length
+// The directory holding the nearest manifest at or above the entry file, or an
+// empty path where there is none. A layer list describes a whole project and a
+// build's entry is any file in it, so the declaration is found by walking up
+// rather than repeated in every directory a build might start in.
+//
+// The walk is over the entry's absolute directory, so how the path was spelled
+// on the command line says nothing about which manifest is found: `frost
+// deep/x.frost` from inside a project reaches the same declaration `frost
+// project/deep/x.frost` from above it does. Walking the path as written stopped
+// at the directory the build was started in, which let a build run from a
+// subdirectory compile a program the same build run from the project root
+// refuses.
+manifest_above :: fn(entry: ^i8) -> ^i8 {
+    absolute := absolute_path(entry)
+    mut length := directory_part(absolute, cstr_len(absolute))
+    // Down to the root of the drive, which is the shortest prefix that still
+    // names a directory. A prefix of nothing names no directory at all, and
+    // reading it as the working directory would hand a project's manifest to a
+    // file compiled from somewhere else entirely.
+    while (length > 0) {
+        held := prefix_of(absolute, length)
+        if (unsafe { frost_rt_file_exists(manifest_path(held)) } == 1) {
+            return held
         }
-        // A length of zero is the directory the build was started in, which is
-        // where a relative entry path is relative to and the last place worth
-        // looking.
-        if (length == 0) {
-            going = false
-        } else {
-            length = directory_part(entry, length)
-        }
+        length = directory_part(absolute, length)
     }
-    -1
+    ""
 }
 
-// The manifest for a directory given as a prefix of the entry path. An empty
-// prefix names the working directory, where a separator in front would make an
-// absolute path out of a relative one.
-manifest_path :: fn(entry: ^i8, length: i64) -> ^i8 {
-    if (length == 0) {
-        return MANIFEST_NAME
-    }
-    joined_path(entry, length, MANIFEST_NAME)
+// The manifest in a directory.
+manifest_path :: fn(directory: ^i8) -> ^i8 {
+    joined_path(directory, cstr_len(directory), MANIFEST_NAME)
 }
 
 manifest_roots :: fn(
@@ -783,11 +791,11 @@ manifest_roots :: fn(
     mut roots: Arena<SearchRoot>,
     mut layers: Arena<Layer>
 ) {
-    directory := manifest_above(entry)
-    if (directory < 0) {
+    under := manifest_above(entry)
+    if (cstr_len(under) == 0) {
         return
     }
-    path := manifest_path(entry, directory)
+    path := manifest_path(under)
     text := cstr_slice(unsafe { frost_rt_read_file(path) })
     mut document := json_parse(text)
     root := json_root(document)
@@ -808,7 +816,7 @@ manifest_roots :: fn(
             len := json_text_len(document, named)
             add_root(
                 roots,
-                normalise_path(join_under(prefix_of(entry, directory), text, off, len))
+                normalise_path(join_under(under, text, off, len))
             )
         }
         named = json_next(document, named)
@@ -824,7 +832,7 @@ manifest_roots :: fn(
             add_layer(
                 layers,
                 text_as_cstr(text, off, len),
-                absolute_path(join_under(prefix_of(entry, directory), text, off, len))
+                absolute_path(join_under(under, text, off, len))
             )
         }
         layer = json_next(document, layer)
@@ -840,11 +848,11 @@ manifest_roots :: fn(
 // names only one of the two paths it has to name is refused, because a project
 // that wrote half a declaration meant the whole of it.
 manifest_generators :: fn(entry: ^i8, mut into: Arena<Generator>) {
-    directory := manifest_above(entry)
-    if (directory < 0) {
+    under := manifest_above(entry)
+    if (cstr_len(under) == 0) {
         return
     }
-    path := manifest_path(entry, directory)
+    path := manifest_path(under)
     text := cstr_slice(unsafe { frost_rt_read_file(path) })
     mut document := json_parse(text)
     root := json_root(document)
@@ -854,7 +862,6 @@ manifest_generators :: fn(entry: ^i8, mut into: Arena<Generator>) {
         report("' as a manifest")
         frost_rt_die()
     }
-    under := prefix_of(entry, directory)
     mut step := json_at(document, json_member(document, root, "generated"), 0)
     while (step >= 0) {
         if (json_kind(document, step) == JsonKind::Object) {

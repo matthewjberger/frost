@@ -630,7 +630,7 @@ run_generators :: fn(checking: bool) -> i64 {
     // The manifest is looked for above the directory the command was run in,
     // since `generate` names no file to start from the way a build does.
     here := join_two(unsafe { frost_rt_absolute_path(".") }, "/frost")
-    if (manifest_above(here) < 0) {
+    if (cstr_len(manifest_above(here)) == 0) {
         report("frost generate: no frost.json declares this project\n")
         return 0
     }

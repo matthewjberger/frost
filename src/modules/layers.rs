@@ -30,7 +30,22 @@ fn layer_of(layers: &[Layer], file: &Path) -> Option<usize> {
     if layers.is_empty() {
         return None;
     }
-    let resolved = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    // The importing side is a directory, and a file named on the command line
+    // with no directory in front of it leaves an empty one. That names the
+    // directory the build was started in, and it has to be resolved as one:
+    // canonicalizing nothing answers nothing, which is under no layer, so the
+    // import would stand wherever it reached.
+    //
+    // Written as `.` rather than asked of the environment, so it goes through
+    // the same call every other path here does. On Windows those two answer
+    // differently, a layer's directory is the canonical form, and the other one
+    // is under no layer.
+    let named = if file.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        file
+    };
+    let resolved = named.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     layers
         .iter()
         .enumerate()
