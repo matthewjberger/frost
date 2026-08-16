@@ -57,6 +57,36 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A field read out of something that is not a struct.
+    //
+    // The self-hosted compiler weighed none of this: `a.hp` on an `i64`
+    // answered `i64` and it emitted twenty kilobytes of C for a program that
+    // means nothing. `make().hp`, `(a + 1).hp` and `a.hp.deeper` went the same
+    // way. The bootstrap refused all four, in two different sentences.
+    (
+        "a_field_read_out_of_a_name_that_is_not_a_struct",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a := 3
+             print(\"{}\n\", a.hp)
+             0
+         }
+        ",
+        "a field is read out of a struct, and this is i64",
+    ),
+    // The same, where what it is read out of is what a call answered. This was
+    // the bootstrap's other sentence, and both say the one thing now.
+    (
+        "a_field_read_out_of_a_call_that_answers_no_struct",
+        "import \"io.frost\"
+         make :: fn() -> i64 { 3 }
+         main :: fn() -> i64 {
+             print(\"{}\n\", make().hp)
+             0
+         }
+        ",
+        "a field is read out of a struct, and this is i64",
+    ),
     // A name whose value came from a call to a function nothing declares.
     //
     // The ownership rules ran ahead of lowering and their complaint went in

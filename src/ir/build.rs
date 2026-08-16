@@ -11658,7 +11658,9 @@ impl<'a> FunctionLowering<'a> {
                         };
                         Ok((IrOperand::Local(local), struct_name))
                     }
-                    other => bail!("'{name}' is not a struct (found {other})"),
+                    other => bail!(
+                        "a field is read out of a struct, and this is {other}"
+                    ),
                 }
             }
             Expression::FieldAccess(inner, field) => {
@@ -11720,9 +11722,8 @@ impl<'a> FunctionLowering<'a> {
                         );
                         Ok((address, struct_name))
                     }
-                    _ => bail!(
-                        "not a struct place: {}",
-                        display_expr(self.ast, base)
+                    other => bail!(
+                        "a field is read out of a struct, and this is {other}"
                     ),
                 }
             }

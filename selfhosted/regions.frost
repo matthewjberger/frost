@@ -1666,6 +1666,35 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             mut held := arena_at(p.arena, id)
             held.b = 1
         }
+        // What a field is read out of. Nothing weighed this, so `a.hp` on an
+        // `i64` answered `i64` and the emitters wrote the access out for
+        // whatever compiles the result to notice, or not to. Asked here rather
+        // than where the type is worked out, because the answer needs the
+        // locals and only this pass has them: `type_of` on the same node
+        // earlier in the run says `i64` about a payload binding that is a
+        // struct by the time this reads it.
+        //
+        // Only what the program wrote. The desugaring of a `match` arm reads a
+        // variant's payload as a field whose name the compiler made up, and
+        // the base it reads it out of is not the enum.
+        // A type nothing worked out is an `i64` like any other here, because
+        // that is what an answer nobody could give comes back as. A call the
+        // program got wrong leaves its answer that way, so `mut b := fresh(8)`
+        // against a two-argument `fresh` made `b.offset` a second report about
+        // the first mistake. What already failed is the thing to fix.
+        if (kind == NodeKind::Field && node.val < p.synth_start
+            && frost_rt_recover_failures() == 0) {
+            mut through := type_of(p, node.a)
+            if (is_pointer(through)) {
+                through = pointee(p, through)
+            }
+            if (is_struct_ty(through) == false) {
+                report_where(p.modules, p.src, arena_at(p.arena, node.a).pos)
+                report("a field is read out of a struct, and this is ")
+                report_type_name(p, through)
+                frost_rt_recover_escape()
+            }
+        }
         check_types_expr(p, node.a)
         return
     }
