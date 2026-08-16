@@ -283,31 +283,6 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
     total
 }
 
-// Whether a name is a compile-time parameter of the declaration being parsed
-// that nothing is bound to yet. That is the generic's own parse, before any
-// argument exists. Once an instance binds the name, it is whatever it was bound
-// to, and a name used as something it is not is an error rather than a
-// placeholder.
-names_gparam :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
-    if (binding_of(p, offset, length) >= 0) {
-        return false
-    }
-    if (p.type_param_len == length
-        && bytes_equal(p.src, p.type_param_off, offset, length)) {
-        return true
-    }
-    mut i: i64 = 0
-    while (i < p.xparam_count) {
-        param := arena_at(p.gparams, p.xparam_start + i)
-        if (param.name_len == length
-            && bytes_equal(p.src, param.name_off, offset, length)) {
-            return true
-        }
-        i = i + 1
-    }
-    false
-}
-
 parse_primary :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
     if (kind == TokenKind::Int) {

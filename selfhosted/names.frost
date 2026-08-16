@@ -7,6 +7,7 @@ import "cursor.frost"
 import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
+    names_gparam,
     nearest_name, name_distance, report_nearest_name,
     check_name_is_free,
     mark_safe, place_renames,
@@ -2185,8 +2186,16 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // without a word.
     // A type parameter in scope means this is a template's own parse, where a
     // name stands for whatever the instance binds it to.
-    if (p.type_check_names == 1 && p.type_param_len == 0
-        && p.gbindings.count == 0) {
+    // A name a generic binds stands for whatever an instance gives it. Every
+    // other name inside one is as much a name nothing declares as it is
+    // anywhere else: asking only whether *some* parameter is in scope let
+    // `fn($T: Type) -> U` name a `U` nothing has and go through every pass
+    // without a word.
+    // `Type` is what a compile-time parameter is declared as, not a type a
+    // program can hold, so it is read here and named nowhere.
+    if (p.type_check_names == 1 && p.gbindings.count == 0
+        && names_gparam(p, offset, length) == false
+        && str_range_eq(p.src, offset, length, "Type") == false) {
         report_where(p.modules, p.src, offset)
         report("'")
         report_src(p.src, offset, length)
@@ -2645,4 +2654,29 @@ report_nearest_name :: fn(mut p: Parser, off: i64, len: i64) {
         report_src(p.src, sym.off, sym.len)
         report("'?)")
     }
+}
+
+// Whether a name is a compile-time parameter of the declaration being parsed
+// that nothing is bound to yet. That is the generic's own parse, before any
+// argument exists. Once an instance binds the name, it is whatever it was bound
+// to, and a name used as something it is not is an error rather than a
+// placeholder.
+names_gparam :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
+    if (binding_of(p, offset, length) >= 0) {
+        return false
+    }
+    if (p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)) {
+        return true
+    }
+    mut i: i64 = 0
+    while (i < p.xparam_count) {
+        param := arena_at(p.gparams, p.xparam_start + i)
+        if (param.name_len == length
+            && bytes_equal(p.src, param.name_off, offset, length)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
