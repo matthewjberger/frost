@@ -292,6 +292,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "'U' is not a type this program declares",
     ),
+    // A `where` bound that does not hold, over a value the broken call then
+    // leaves unconsumed.
+    //
+    // The self-hosted compiler reads moves before types, so what it said was
+    // that the value is never consumed - which is so, and is so because the
+    // call it was written for is one the language does not have. The complaint
+    // waits now until the checks that read types have spoken, and is made only
+    // where they found nothing.
+    (
+        "a_broken_bound_over_a_value_left_unconsumed",
+        "Session :: linear struct { id: i64 }
+         take :: fn(v: $T) -> i64 where !is_linear(T) { 1 }
+         main :: fn() -> i64 {
+             s := Session { id = 1 }
+             take(s)
+         }
+        ",
+        "'take' is declared `where !is_linear(T)`, and that does not hold for T = Session",
+    ),
+    // The same holding-back, where what spoke first is an ordinary type fault.
+    // A value is left over because of what the program does with it, and a
+    // program whose types are wrong does not yet say what it does.
+    (
+        "a_value_left_unconsumed_beside_a_type_fault",
+        "Session :: linear struct { id: i64 }
+         main :: fn() -> i64 {
+             s := Session { id = 1 }
+             n: i64 = \"text\"
+             n
+         }
+        ",
+        "this binding is a 'i64' and the value is a 'str'",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

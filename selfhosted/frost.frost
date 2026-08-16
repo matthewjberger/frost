@@ -917,6 +917,7 @@ main :: fn() -> i64 {
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),
         said_unknown = arena_make($Cap, 256),
+        deferred_unconsumed = arena_make($Cap, 256),
         aliases = arena_make($Alias, 64),
         frame_used = 0,
         emit_module = -1,
@@ -1227,6 +1228,7 @@ main :: fn() -> i64 {
     // parse left behind. It also reads what `check_moves` settles about runs
     // and summaries, so the two are in this order and not the other.
     check_types(parser, program)
+    flush_unconsumed(parser)
     // After the types. What a format call was given is worked out from the
     // types around it, so a value whose type came out of something else that
     // is wrong is the second thing to say, not the first: `for held in a` over

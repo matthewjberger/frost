@@ -53,6 +53,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_read_file, frost_rt_remove_file, frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
+    frost_rt_end_line,
     frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
     frost_rt_report_open, frost_rt_report_note,
     frost_rt_recover_failures
@@ -313,6 +314,10 @@ frost_rt_recover_escape :: safe extern fn()
 // What a check whose state does not cross the thing it checks uses, so one run
 // names every call it found wrong rather than the first.
 frost_rt_recover_note :: safe extern fn()
+// The end of the line a report was written on, without counting a fault.
+// What a report already counted for uses: a complaint held back until the
+// checks after it have spoken was counted where it was found.
+frost_rt_end_line :: safe extern fn()
 // Reports as JSON: one object per report, one report per line. A place opens a
 // record and whatever ends the report closes it.
 frost_rt_json_reports :: safe extern fn()
@@ -1788,6 +1793,11 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // The linear values found unconsumed, said once the types have had their
+    // word. A value left unconsumed because the call it was written for is one
+    // the language does not have is the second thing to tell a reader, so the
+    // complaint waits to see whether a `where` bound says the first.
+    deferred_unconsumed: Arena<Cap>,
     // The names already reported as naming no type. A signature is read
     // more than once - a generic's is read again for every instance - and
     // one name written once is one mistake, however many times a pass goes

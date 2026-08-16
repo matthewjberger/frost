@@ -15,7 +15,7 @@ import "const_eval.frost"
 
 export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
-    check_frame_escapes, check_moves, check_pooled_resources,
+    check_frame_escapes, check_moves, check_pooled_resources, flush_unconsumed,
     check_reference_fields, check_regions, check_types, check_types_in,
     check_recursive_structs, check_unsafety, refuse_indirect_calls,
     report_bad_derefs
@@ -567,7 +567,10 @@ check_bound_at_call :: fn(
     // thing to say: `keep($i64, 3)` was told that `T` is settled by the value
     // and then that the bound does not hold for the `T` it was told not to
     // write.
-    if (frost_rt_recover_failures() > 0) {
+    //
+    // A value left unconsumed is not such a fault: it is what a call this bound
+    // refuses leaves behind, so it is counted out of the question here.
+    if (frost_rt_recover_failures() - p.deferred_unconsumed.count > 0) {
         return
     }
     sym := arena_at(p.fns, fn_index)
@@ -2672,10 +2675,12 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                     report("', which is consumed exactly once; bind it to a name and consume it")
                     frost_rt_recover_escape()
                 }
-                report_where(p.modules, p.src, node.val)
-                report("linear value '")
-                report_src(p.src, node.val, node.c)
-                report("' is not consumed on every path before return")
+                // Written down rather than said. Refer to
+                // `deferred_unconsumed`.
+                arena_push(
+                    p.deferred_unconsumed,
+                    Cap { ty = 0, off = node.val, len = node.c }
+                )
                 frost_rt_recover_escape()
             }
         }
@@ -5506,6 +5511,34 @@ move_fault_told :: fn(mut p: Parser, off: i64) -> bool {
         LocalVar { name_off = off, name_len = 0, ty = 0, slot = 0 }
     )
     false
+}
+
+// The unconsumed values, said now that the checks that read types have spoken.
+//
+// A value is left over because of what the program does with it, and a program
+// whose types are wrong does not yet say what it does: a `where` bound that
+// does not hold means the call the value was written for is one the language
+// does not have, and a binding that took the wrong type means the value is not
+// the one the reader meant. Either way this would be a second report about the
+// same mistake, so it is made only where nothing else was.
+//
+// The count is what says whether anything else was, less the ones held back
+// here: each was counted where it was found, and the line each was written on
+// is ended here instead.
+flush_unconsumed :: fn(mut p: Parser) {
+    if (frost_rt_recover_failures() - p.deferred_unconsumed.count > 0) {
+        return
+    }
+    mut i: i64 = 0
+    while (i < p.deferred_unconsumed.count) {
+        held := arena_at(p.deferred_unconsumed, i)
+        report_where(p.modules, p.src, held.off)
+        report("linear value '")
+        report_src(p.src, held.off, held.len)
+        report("' is not consumed on every path before return")
+        frost_rt_end_line()
+        i = i + 1
+    }
 }
 
 check_moves :: fn(mut p: Parser) {
