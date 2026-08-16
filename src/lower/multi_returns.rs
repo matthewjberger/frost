@@ -350,11 +350,18 @@ impl Lowering {
             );
         };
         if bindings.len() != types.len() {
-            bail!(
-                "this binding names {} values and the call returns {}",
-                bindings.len(),
-                types.len()
-            );
+            // At the first name the call has no value for, which is the one to
+            // take out.
+            let named = ast.bindings_in(bindings).to_vec();
+            let at = named
+                .get(types.len())
+                .map(|held| held.at)
+                .unwrap_or_default();
+            bail!(crate::diagnostic::LocatedError {
+                position: at,
+                message: "this binding names more values than the call returns"
+                    .to_string(),
+            });
         }
         let arguments = match ast.expr(value) {
             Expression::Call(_, arguments) => Some(*arguments),

@@ -364,12 +364,14 @@ pub struct Parameter {
     pub capability: bool,
 }
 
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct MultiBinding {
     pub name: Symbol,
     pub mutable: bool,
+    // Where the name was written, so a report about one of them says it at the
+    // name rather than at the binding that holds them all.
+    #[serde(default)]
+    pub at: crate::lexer::Position,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -1152,6 +1154,7 @@ impl<'a> Splicer<'a> {
                     .to_vec()
                     .into_iter()
                     .map(|binding| MultiBinding {
+                        at: binding.at,
                         name: self.symbol(dest, binding.name, rename),
                         mutable: binding.mutable,
                     })

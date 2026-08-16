@@ -2059,7 +2059,7 @@ impl<'a> Parser<'a> {
                 self.refuse_literal_name(&name)?;
             }
             let name = self.ast.intern(&name);
-            bindings.push(MultiBinding { name, mutable });
+            bindings.push(MultiBinding { name, mutable, at: mut_at });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             } else {

@@ -506,6 +506,9 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // context already carries. Every field is still named. An unresolved one is
     // an argument whose callee is written later, patched by the fixup pass.
     if (kind == TokenKind::Lbrace) {
+        // The brace the literal opens with, taken before it is read, since a
+        // report about the literal points at where it starts.
+        at := cur_off(p)
         advance(p)
         // The second place to look is what a `return` in a fallible function
         // sets: the value it answers with is not a struct there, so a literal
@@ -517,7 +520,6 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (is_struct_ty(struct_ty) == false) {
             struct_ty = -1
         }
-        at := cur_off(p)
         head := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, head, at)
     }
@@ -8624,7 +8626,25 @@ resolve_variant_fixups :: fn(mut p: Parser) {
                 // such report on the first line of the first file.
                 held := arena_at(p.arena, lit_id)
                 report_where(p.modules, p.src, held.pos)
-                report("this binding names the values of a call whose signature is not a return type list")
+                // Two faults wear the same shape here: a call that answers no
+                // list at all, and one that answers a shorter one than the
+                // binding names. The callee's answer tells them apart.
+                answer := arena_at(p.fns, target).ret_type
+                mut lists: i64 = 0
+                if (is_struct_ty(answer)) {
+                    def := arena_at(p.structs, struct_index_of(answer))
+                    if (def.name_len > 7
+                        && str_range_eq(p.src, def.name_off, 7, "__Multi")) {
+                        lists = 1
+                    }
+                }
+                if (lists == 1) {
+                    report(
+                        "this binding names more values than the call returns"
+                    )
+                } else {
+                    report("this binding names the values of a call whose signature is not a return type list")
+                }
                 frost_rt_recover_escape()
             }
         } else {

@@ -2560,7 +2560,7 @@ fn an_enum_carrying_fields_is_not_compared_with_equals() {
                   }\n";
     let message = compile_error("enumeqfields", source);
     assert!(
-        message.contains("carries fields") && message.contains("match"),
+        message.contains("carry fields") && message.contains("match"),
         "expected the ambiguity to be named, got:\n{message}"
     );
 }

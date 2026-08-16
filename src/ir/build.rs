@@ -6035,7 +6035,12 @@ impl<'a> FunctionLowering<'a> {
                     // statement's place, and what the sentence names is the
                     // type the literal was written with.
                     locate(
-                        self.init_struct(local, &layout_name, field_inits),
+                        self.init_struct(
+                            local,
+                            &layout_name,
+                            field_inits,
+                            self.ast.expr_position(value),
+                        ),
                         self.at_expression(value),
                     )?;
                     self.define_variable(&name, local);
@@ -7528,11 +7533,9 @@ impl<'a> FunctionLowering<'a> {
                     .iter()
                     .find(|variant| !variant.fields.is_empty())
                 {
-                    let readable =
-                        crate::modules::imports::demangle_private_names(&name);
+                    let _ = carrying;
                     bail!(
-                        "'{readable}' cannot be compared with == because its variant '.{}' carries fields, so two values of it can be the same variant and different values; match on it instead",
-                        carrying.name
+                        "an enum whose variants carry fields cannot be compared with ==, since two values can be the same variant and hold different things; match on it instead"
                     );
                 }
                 let left_tag = self.load_enum_tag(left_operand, &left_type)?;
@@ -9705,7 +9708,12 @@ impl<'a> FunctionLowering<'a> {
                     }
                     _ => name.clone(),
                 };
-                self.init_struct(local, &layout_name, fields)
+                self.init_struct(
+                    local,
+                    &layout_name,
+                    fields,
+                    self.ast.expr_position(expression),
+                )
             }
             // A value a type names under itself reads as a variant and is a
             // value, so it is lowered and stored rather than built here. Left
@@ -11748,6 +11756,7 @@ impl<'a> FunctionLowering<'a> {
         local: LocalId,
         struct_name: &str,
         field_inits: Range32,
+        at: crate::lexer::Position,
     ) -> Result<()> {
         self.mark_owned(local);
         let field_inits: Vec<NamedExpr> =
@@ -11781,6 +11790,17 @@ impl<'a> FunctionLowering<'a> {
             })
             .collect();
         if !missing.is_empty() {
+            // The struct a return type list stands for carries a name this
+            // compiler chose, which a reader has no way to write down, so what
+            // is missing is said in the words the signature is written in.
+            if struct_name.starts_with("__multi") {
+                bail!(crate::diagnostic::LocatedError {
+                    position: at,
+                    message:
+                        "this return names fewer values than the function answers"
+                            .to_string(),
+                });
+            }
             bail!(
                 "struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
                 if missing.len() == 1 {

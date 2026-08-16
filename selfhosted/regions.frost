@@ -1556,6 +1556,18 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                     given = gnode.next
                 }
                 if (seen == 0) {
+                    // The struct a return type list stands for carries a name
+                    // this compiler chose, which a reader has no way to write
+                    // down, so what is missing is said in the words the
+                    // signature is written in.
+                    if (def.name_len > 7
+                        && str_range_eq(p.src, def.name_off, 7, "__Multi")) {
+                        report_where(p.modules, p.src, node.pos)
+                        report(
+                            "this return names fewer values than the function answers"
+                        )
+                        frost_rt_recover_escape()
+                    }
                     if (absent == 0) {
                         report_where(p.modules, p.src, node.pos)
                         report("struct '")
