@@ -13332,10 +13332,14 @@ fn is_narrowing(from: &Type, to: &Type) -> bool {
 // literal is read at. Division and remainder by zero, and a shift past the
 // word, have no value to answer with and stay as they are written.
 fn fold_integers(binop: IrBinOp, left: i64, right: i64) -> Option<i64> {
+    // Arithmetic that overflows traps when the program runs, so working it out
+    // early may not answer where running it would not. Folded with wrapping,
+    // `9223372036854775807 + 1` was written into the program as its own
+    // negative, which is the one answer the language says it never gives.
     Some(match binop {
-        IrBinOp::Add => left.wrapping_add(right),
-        IrBinOp::Subtract => left.wrapping_sub(right),
-        IrBinOp::Multiply => left.wrapping_mul(right),
+        IrBinOp::Add => left.checked_add(right)?,
+        IrBinOp::Subtract => left.checked_sub(right)?,
+        IrBinOp::Multiply => left.checked_mul(right)?,
         IrBinOp::Divide if right != 0 => left.wrapping_div(right),
         IrBinOp::Modulo if right != 0 => left.wrapping_rem(right),
         IrBinOp::BitwiseAnd => left & right,

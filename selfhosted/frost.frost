@@ -1198,7 +1198,6 @@ main :: fn() -> i64 {
     // no instance is left to parse. One of them may have been made inside a
     // body the fixpoint above re-read.
     program = join_synth_fns(parser, program)
-    check_format_types(parser)
     check_calls(parser)
     check_entry_point(parser, program)
     check_pooled_resources(parser)
@@ -1216,6 +1215,13 @@ main :: fn() -> i64 {
     // the emitters do, and the passes before it read whatever local table the
     // parse left behind.
     check_types(parser, program)
+    // After the types. What a format call was given is worked out from the
+    // types around it, so a value whose type came out of something else that
+    // is wrong is the second thing to say, not the first: `for held in a` over
+    // a number was reported where `held` was printed.
+    if (frost_rt_recover_failures() == 0) {
+        check_format_types(parser)
+    }
     // After the types, because whether an index or a field read goes through a
     // raw pointer is a question about a local's type, and check_types is where
     // the locals are known. It writes the answer onto the node and this reads

@@ -1409,11 +1409,17 @@ check_length_subject :: fn(mut p: Parser, inner: i64, written: i64, at: i64) {
     if (is_array_ty(ty)) {
         // A run of anything answers `slice_len`. Only `str_len` asks what the
         // elements are.
-        if (written == 1 || array_element(p, ty) == TY_U8) {
+        if (written == 1 || written == 3 || array_element(p, ty) == TY_U8) {
             return
         }
     }
     report_where(p.modules, p.src, at)
+    if (written == 3) {
+        report("a `for` walks a range, a slice, an array or a `str`, and '")
+        report_type_name(p, ty)
+        report("' is none of those")
+        frost_rt_recover_escape()
+    }
     if (written == 2) {
         report("expected a str value, found ")
     } else {

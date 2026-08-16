@@ -6250,6 +6250,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 
         seq_var := new_named_node(p, NodeKind::Var, 0, seq_off, seq_len)
         length := new_unary(p, NodeKind::SliceLen, seq_var)
+        // What this `for` walks, asked of the length it takes. A `for` is a
+        // `while` over an index by the time anything can ask, so the question
+        // is written onto the one node that still names the sequence, and
+        // answered in the pass that has the locals. Left unmarked, a number was
+        // indexed, the element came back as a slice of itself, and the reader
+        // was told about a format string where the element was printed.
+        mut len_node := arena_at(p.arena, length)
+        len_node.val = 3
+        len_node.pos = start
         len_off := synth_numbered(p, "__for_len", unique)
         len_len := 9 + digits_in(unique)
         bind_len := new_let_node(p, length, len_off, len_len, -1)

@@ -57,6 +57,26 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A `for` over something that is not a run.
+    //
+    // The self-hosted compiler indexed the number, got a slice of itself back,
+    // and told the reader about the format string where the element was
+    // printed. A `for` is a `while` over an index by the time anything can ask,
+    // so the question is written onto the length it takes and answered in the
+    // pass that has the locals.
+    (
+        "a_for_over_something_that_is_not_a_run",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a := 3
+             for held in a {
+                 print(\"{}\\n\", held)
+             }
+             0
+         }
+        ",
+        "a `for` walks a range, a slice, an array or a `str`, and 'i64' is none of those",
+    ),
     // A struct literal that leaves a field out.
     //
     // The self-hosted compiler weighed only the fields the literal wrote, so a

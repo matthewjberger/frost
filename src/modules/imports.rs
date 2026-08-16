@@ -1154,9 +1154,16 @@ impl Walk<'_> {
                 self.root,
             )?
             else {
+                // The beside-it form, which is where the reader wrote the
+                // import and the first place it was looked for. The library
+                // paths a build was given are not the reader's to fix.
                 bail!(
-                    "failed to read imported file: '{path}' is not beside {} and is not on any library path",
-                    base_dir.display()
+                    "cannot read '{}'",
+                    base_dir
+                        .join(path)
+                        .display()
+                        .to_string()
+                        .replace('\\', "/")
                 );
             };
             let full = found.path.clone();
