@@ -989,14 +989,26 @@ impl Checker<'_> {
                     self.block(case.body);
                 }
             }
+            // Reaching a field through a raw pointer dereferences it, which is
+            // the same unchecked read a `^` is. A borrow reaching its field is
+            // not, which is what lets `mut p: Parser` write `p.field` with no
+            // block around it, and a borrow of a raw pointer is that pointer
+            // under another name.
+            Expression::FieldAccess(inner, _) => {
+                if let Some(Type::Ptr(_)) =
+                    self.type_of(*inner).map(without_borrow)
+                {
+                    self.refuse("reading a field through a raw pointer", at);
+                }
+                self.expression(*inner, at);
+            }
             Expression::PackMap(inner, _, _)
             | Expression::Prefix(_, inner)
             | Expression::AddressOf(inner)
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::Try(inner)
-            | Expression::ArrayRepeat(inner, _)
-            | Expression::FieldAccess(inner, _) => {
+            | Expression::ArrayRepeat(inner, _) => {
                 self.expression(*inner, at);
             }
             Expression::Infix(left, _, right)

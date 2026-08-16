@@ -1043,6 +1043,14 @@ new_field_node :: fn(
     offset: i64,
     length: i64
 ) -> i64 {
+    // Where the access is written, which is where its base is. Read off the
+    // parser instead, it named the token after the field name, so a report
+    // about reaching a field landed past the expression holding it: for the
+    // last one in a body, on the closing brace.
+    mut at := cur_off(p)
+    if (base >= 0 && base < p.arena.count) {
+        at = arena_at(p.arena, base).pos
+    }
     arena_push(
         p.arena,
         Node {
@@ -1052,7 +1060,7 @@ new_field_node :: fn(
             c = length,
             val = offset,
             next = -1,
-            pos = cur_off(p)
+            pos = at
         },
     )
 }

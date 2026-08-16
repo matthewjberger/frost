@@ -57,6 +57,22 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A field reached through a raw pointer, which dereferences it. The two
+    // compilers were exactly inverted here: the bootstrap read the access as
+    // checked and so refused a block around it as vouching for nothing, and the
+    // self-hosted one read it as unchecked and refused it without one. Neither
+    // noticed, because the corpus reaches such a field by writing the `^` out.
+    (
+        "a_field_reached_through_a_raw_pointer_needs_a_block",
+        "Holder :: struct { value: i64 }\n\
+         \n\
+         probe :: fn(raw: ^Holder) -> i64 {\n\
+         \x20   raw.value\n\
+         }\n\
+         \n\
+         main :: fn() -> i64 { 0 }\n",
+        "reading a field through a raw pointer is unchecked",
+    ),
     // A list of exports running over several lines. The names are blanked out
     // of the source once they are read, and blanking their newlines away with
     // them named every report below the list as if it stood that many lines
