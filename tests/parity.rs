@@ -74,6 +74,21 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "cannot dereference a value of type i64",
     ),
+    // The same, over an `i8`. The type was written into the field a `Deref`
+    // already uses to say whether it reads through a borrow, and `i8` is 1, so
+    // the walk that follows a borrow to what it views followed a node holding
+    // no borrow.
+    (
+        "a_read_through_an_i8",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a: i8 = 3
+             print(\"{}\\n\", cast($i64, a^))
+             0
+         }
+        ",
+        "cannot dereference a value of type i8",
+    ),
     // A generic named with fewer type arguments than it binds.
     //
     // The self-hosted compiler read the bindings past their end and died on the
@@ -159,6 +174,75 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }
         ",
         "holds a 'Node' by value, which has no end; hold a pointer to one instead",
+    ),
+    // The same, where the cycle runs through a second name. The report named
+    // the struct twice - "'A' holds a 'A'" - which is not what A holds.
+    (
+        "two_structs_that_hold_each_other",
+        "A :: struct { b: B }
+         B :: struct { a: A }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'A' holds a 'B' by value, which has no end; hold a pointer to one instead",
+    ),
+    // The same, of an enum. One variant is live at a time, but the storage is
+    // as wide as the widest, so a variant carrying the enum has no width to be
+    // wide enough for. The bootstrap collected only structs and took it.
+    (
+        "an_enum_that_holds_one_of_itself",
+        "Tree :: enum { Leaf, Branch { held: Tree } }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Tree' holds a 'Tree' by value, which has no end; hold a pointer to one instead",
+    ),
+    // A struct literal that leaves two fields out. The self-hosted compiler
+    // wrote the "s" of "fields" after the first name it had already printed,
+    // so it read `is missing field 'x's, 'z'`.
+    (
+        "a_literal_missing_two_fields",
+        "Point :: struct { x: i64, y: i64, z: i64 }
+         main :: fn() -> i64 {
+             p := Point { y = 2 }
+             p.y
+         }
+        ",
+        "struct 'Point' is missing fields 'x', 'z'; a field left out would be read uninitialized",
+    ),
+    // The one division whose answer is wider than an i64. Both folded it with
+    // wrapping and wrote the smallest number back into the program as its own
+    // quotient, which is the one answer the language says it never gives.
+    (
+        "the_smallest_number_divided_by_minus_one",
+        "BAD :: (-9223372036854775807 - 1) / (-1)
+         main :: fn() -> i64 { BAD }
+        ",
+        "this overflows an i64",
+    ),
+    // A function declared inside a block that stands for a value.
+    //
+    // The bootstrap walked the blocks a statement holds and not the ones an
+    // argument holds, so what it reported was the call to the name. The
+    // self-hosted compiler asked at the statement list alone, and a body read
+    // as one expression never reached it; the walk that resumed after the
+    // report then read a brace the statement had opened as the end of the
+    // function, and every line after it as a declaration.
+    (
+        "a_function_declared_inside_a_call_argument",
+        "take :: fn(a: i64) -> i64 { a }
+         main :: fn() -> i64 {
+             take(if (true) { twice :: fn(a: i64) -> i64 { a } 1 } else { 0 })
+         }
+        ",
+        "a function is declared where a file's other declarations are, and 'twice' is declared inside a body",
+    ),
+    (
+        "a_function_declared_inside_an_unsafe_value",
+        "main :: fn() -> i64 {
+             x := unsafe { twice :: fn(a: i64) -> i64 { a } 1 }
+             x
+         }
+        ",
+        "a function is declared where a file's other declarations are, and 'twice' is declared inside a body",
     ),
     // A constant whose arithmetic has no answer.
     //

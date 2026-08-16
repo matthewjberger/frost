@@ -4,9 +4,12 @@ mod c_abi;
 mod const_eval;
 mod diagnostic;
 pub use check::constant_arithmetic::check_constant_arithmetic;
-pub use check::declared_types::check_declared_types;
-pub use check::recursive_structs::check_recursive_structs;
-pub use check::nested_functions::check_nested_functions;
+pub use ir::build::UNDEFINED_CALL;
+pub use check::declared_types::{UNDECLARED_TYPE, check_declared_types};
+pub use check::recursive_structs::{
+    RECURSIVE_STRUCT, check_recursive_structs,
+};
+pub use check::nested_functions::{NESTED_FUNCTION, check_nested_functions};
 pub use check::entry::check_entry_point;
 pub use check::linear_instances::pooled_instance_names;
 pub use diagnostic::{

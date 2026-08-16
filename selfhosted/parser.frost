@@ -403,6 +403,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         advance(p)
         p.unsafe_depth = p.unsafe_depth + 1
         advance(p)
+        refuse_nested_function(p, cur_off(p))
         inner := parse_expr(p)
         advance(p)
         // The span ends past the closing brace, since a node made while parsing
@@ -5722,6 +5723,53 @@ can_begin_expression :: fn(kind: TokenKind) -> bool {
         || kind == TokenKind::KwMatch || kind == TokenKind::KwUnsafe)
 }
 
+// `name :: fn` where a statement is expected. Asked from every place that
+// reads what a body holds, because a body is read two ways: as a list of
+// statements, and, where `unsafe { .. }` stands for a value, as one expression.
+// Asked only at the first, a function declared inside the second was told
+// about as a name with no variant called `fn`.
+// How many brackets a statement opened and had not closed when it failed.
+//
+// The walk that resumes after a fault stops on the first closing brace with
+// nothing open behind it, so it has to know what was already open: the block
+// depth answers for blocks alone, and `x := unsafe { f :: fn .. }` failed
+// inside a brace that opened no block, so the walk read that brace as the end
+// of the function it was written in and every line after it as a declaration.
+// The tokens the statement has read say it exactly, so they are what is asked.
+left_open :: fn(p: Parser, from: i64, to: i64) -> i64 {
+    mut open: i64 = 0
+    mut at := from
+    while (at < to && at < p.tokens.count) {
+        kind := arena_at(p.tokens, at).kind
+        if (kind == TokenKind::Lbrace || kind == TokenKind::Lparen
+            || kind == TokenKind::Lbracket) {
+            open = open + 1
+        }
+        if (kind == TokenKind::Rbrace || kind == TokenKind::Rparen
+            || kind == TokenKind::Rbracket) {
+            if (open > 0) {
+                open = open - 1
+            }
+        }
+        at = at + 1
+    }
+    open
+}
+
+refuse_nested_function :: fn(mut p: Parser, start: i64) {
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloncolon
+        && peek_kind(p, 2) == TokenKind::KwFn) {
+        report_where(p.modules, p.src, start)
+        report(
+            "a function is declared where a file's other declarations are, and '"
+        )
+        report_src(p.src, start, cur_len(p))
+        report("' is declared inside a body")
+        skip_declaration(p)
+        frost_rt_recover_escape()
+    }
+}
+
 parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
     // Where the statement starts. Everything below builds its node after
@@ -5745,17 +5793,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // reason. Written in a body it read as a name reaching into a type, and the
     // reader was told the type has no variant called `fn`, then that `->` is
     // not a token an expression can hold.
-    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloncolon
-        && peek_kind(p, 2) == TokenKind::KwFn) {
-        report_where(p.modules, p.src, start)
-        report(
-            "a function is declared where a file's other declarations are, and '"
-        )
-        report_src(p.src, start, cur_len(p))
-        report("' is declared inside a body")
-        skip_declaration(p)
-        frost_rt_recover_escape()
-    }
+    refuse_nested_function(p, start)
 
     // `ref x := place` binds a borrow of a place: an address that types as a
     // borrow, so reading a field through it needs no `unsafe` block, unlike a
@@ -6558,14 +6596,19 @@ parse_stmt_guarded :: fn(raw: ^u8) {
 // After a fault inside a block, skip to the next token that begins a
 // statement, without crossing the token that closes the block. Always makes
 // progress, so recovery cannot loop.
-synchronize_statement :: fn(mut p: Parser, terminator: TokenKind) {
+synchronize_statement :: fn(mut p: Parser, terminator: TokenKind, open: i64) {
     // Only the braces opened past the cursor are counted, so a statement that
     // failed while its own body was still unread is walked over whole. Left
     // uncounted, `for slot in live_slots(made()) { print(...) }` ended the walk
     // on the loop body's closing brace, which the statement list took for its
     // own: the function ended there and everything after it read as a
     // declaration, so one refusal was told twice and the second time wrongly.
-    mut depth: i64 = 0
+    //
+    // `open` is how many blocks the fault was found inside of, which the walk
+    // has to come back out of before a closing brace means this statement's
+    // own. A refusal reported inside `take(if (c) { .. })` left one open, and
+    // the brace closing the `if` ended the function it was written in.
+    mut depth: i64 = open
     if (cur(p) != terminator && cur(p) != TokenKind::Eof) {
         if (cur(p) == TokenKind::Lbrace) {
             depth = depth + 1
@@ -6727,7 +6770,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             report_src(p.src, cur_off(p), cur_len(p))
             report("': a line break ends a statement, so there is nothing above for it to join to. Put the operator at the end of the line above, or the whole expression inside brackets, where a line break says nothing")
             frost_rt_recover_note()
-            synchronize_statement(p, terminator)
+            synchronize_statement(p, terminator, 0)
             continue
         }
         opened_with_minus := head != (-1) && cur(p) == TokenKind::Minus
@@ -6776,6 +6819,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             )
         }
         if (escaped == 1) {
+            open := left_open(p, turn.ti, p.ti)
             p.pending.count = mark
             p.block_depth = turn.depth
             p.unsafe_depth = turn.unsafe_depth
@@ -6785,7 +6829,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             if (p.ti < turn.ti) {
                 p.ti = turn.ti
             }
-            synchronize_statement(p, terminator)
+            synchronize_statement(p, terminator, open)
             while (cur(p) == TokenKind::Semi) {
                 advance(p)
             }
@@ -9191,6 +9235,11 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
         left := fold_const(p, node.a)
         right := fold_const(p, node.b)
         op := node.val
+        // Where the leftmost value under this is written, rather than where
+        // this expression starts. A `(` is a token the expression starts at
+        // and the other compiler keeps no record of, so the two pointed at
+        // different columns for a constant written inside parentheses.
+        at := leftmost_written(p, id)
         // Worked out with the checks written out, because the compiler's own
         // arithmetic traps: a constant that overflows killed the compiler where
         // it stood, with a fault and a stack address instead of a report about
@@ -9199,7 +9248,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
             sum := wrap_add(left, right)
             if ((left > 0 && right > 0 && sum < 0)
                 || (left < 0 && right < 0 && sum >= 0)) {
-                const_overflows_at(p, node.pos)
+                const_overflows_at(p, at)
             }
             return sum
         }
@@ -9207,30 +9256,41 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
             held := wrap_sub(left, right)
             if ((left >= 0 && right < 0 && held < 0)
                 || (left < 0 && right > 0 && held >= 0)) {
-                const_overflows_at(p, node.pos)
+                const_overflows_at(p, at)
             }
             return held
         }
         if (op == OP_MUL) {
             held := wrap_mul(left, right)
             if (left != 0 && (held / left != right)) {
-                const_overflows_at(p, node.pos)
+                const_overflows_at(p, at)
             }
             return held
         }
+        // The smallest i64 divided by -1 is one past the largest, which is the
+        // one division that answers nothing without dividing by zero. Left to
+        // the division itself it took the compiler down with it.
         if (op == OP_DIV) {
             if (right == 0) {
-                report_where(p.modules, p.src, node.pos)
+                report_where(p.modules, p.src, at)
                 report("this divides by zero")
                 frost_rt_recover_escape()
+            }
+            if (left == (-9223372036854775807 - 1) && right == (-1)) {
+                const_overflows_at(p, at)
             }
             return left / right
         }
         if (op == OP_MOD) {
             if (right == 0) {
-                report_where(p.modules, p.src, node.pos)
+                report_where(p.modules, p.src, at)
                 report("this divides by zero")
                 frost_rt_recover_escape()
+            }
+            // The remainder of the smallest by minus one is nothing, and that
+            // is what the machine answers. Only the quotient leaves the range.
+            if (right == (-1)) {
+                return 0
             }
             return left % right
         }
@@ -9243,6 +9303,17 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     report("this is not a constant expression")
     frost_rt_recover_escape()
     0
+}
+
+// Where the leftmost value under an expression is written. An operator node
+// begins at the first token of what it is written over, and a `(` is one; the
+// value inside it is what a report about the arithmetic names.
+leftmost_written :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    if (node.kind == NodeKind::Bin && node.a != (-1)) {
+        return leftmost_written(p, node.a)
+    }
+    node.pos
 }
 
 // `Meters :: distinct i64`, a name of its own for another type's
@@ -10149,6 +10220,15 @@ skip_declaration :: fn(mut p: Parser) {
         if (kind == TokenKind::Lbrace) {
             depth = depth + 1
         } else if (kind == TokenKind::Rbrace) {
+            // A brace this walk did not open closes the body the declaration
+            // was written inside of, so the declaration ends here. Stepping
+            // over it drove the count below zero, where no later brace could
+            // bring it back, and the walk ate the rest of the file: a function
+            // declared in a body took every line after it along with it, and
+            // the cursor came to rest past the last token.
+            if (depth == 0) {
+                return
+            }
             depth = depth - 1
         } else if (depth == 0 && at_declaration_start(p)) {
             return

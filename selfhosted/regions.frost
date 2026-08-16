@@ -1478,6 +1478,27 @@ check_capability_as_argument :: fn(mut p: Parser, index: i64, at: i64) {
     frost_rt_recover_escape()
 }
 
+// Whether a struct literal writes the named field. The list is walked per
+// field rather than gathered once because a literal names few fields and the
+// answer is wanted twice: to count what is missing, and to say which.
+field_is_given :: fn(
+    p: Parser,
+    head: i64,
+    name_off: i64,
+    name_len: i64
+) -> bool {
+    mut given := head
+    while (given != (-1)) {
+        gnode := arena_at(p.arena, given)
+        if (gnode.c == name_len
+            && bytes_equal(p.src, gnode.val, name_off, name_len)) {
+            return true
+        }
+        given = gnode.next
+    }
+    return false
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
@@ -1551,58 +1572,55 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             && arena_at(p.structs, struct_index_of(struct_ty)).is_enum != 1
             && struct_holds_tag(p, struct_ty) == false) {
             def := arena_at(p.structs, struct_index_of(struct_ty))
+            // How many are missing is counted before a word of the report is
+            // written, because the report says "field" or "fields" on that
+            // count and a stream of text cannot go back for the "s" once the
+            // first name is out.
             mut want := def.field_head
             mut absent: i64 = 0
             while (want != (-1)) {
                 field := arena_at(p.fields, want)
-                mut given := node.a
-                mut seen: i64 = 0
-                while (given != (-1)) {
-                    gnode := arena_at(p.arena, given)
-                    if (gnode.c == field.name_len
-                        && bytes_equal(
-                            p.src,
-                            gnode.val,
-                            field.name_off,
-                            field.name_len
-                        )) {
-                        seen = 1
-                    }
-                    given = gnode.next
-                }
-                if (seen == 0) {
-                    // The struct a return type list stands for carries a name
-                    // this compiler chose, which a reader has no way to write
-                    // down, so what is missing is said in the words the
-                    // signature is written in.
-                    if (def.name_len > 7
-                        && str_range_eq(p.src, def.name_off, 7, "__Multi")) {
-                        report_where(p.modules, p.src, node.pos)
-                        report(
-                            "this return names fewer values than the function answers"
-                        )
-                        frost_rt_recover_escape()
-                    }
-                    if (absent == 0) {
-                        report_where(p.modules, p.src, node.pos)
-                        report("struct '")
-                        report_src(p.src, def.name_off, def.name_len)
-                        report("' is missing field")
-                    }
-                    if (absent == 1) {
-                        report("s")
-                    }
-                    if (absent > 0) {
-                        report(",")
-                    }
-                    report(" '")
-                    report_src(p.src, field.name_off, field.name_len)
-                    report("'")
+                if (field_is_given(p, node.a, field.name_off, field.name_len)
+                    == false) {
                     absent = absent + 1
                 }
                 want = field.next
             }
             if (absent > 0) {
+                // The struct a return type list stands for carries a name
+                // this compiler chose, which a reader has no way to write
+                // down, so what is missing is said in the words the
+                // signature is written in.
+                if (def.name_len > 7
+                    && str_range_eq(p.src, def.name_off, 7, "__Multi")) {
+                    report_where(p.modules, p.src, node.pos)
+                    report(
+                        "this return names fewer values than the function answers"
+                    )
+                    frost_rt_recover_escape()
+                }
+                report_where(p.modules, p.src, node.pos)
+                report("struct '")
+                report_src(p.src, def.name_off, def.name_len)
+                report("' is missing field")
+                if (absent > 1) {
+                    report("s")
+                }
+                mut shown: i64 = 0
+                want = def.field_head
+                while (want != (-1)) {
+                    field := arena_at(p.fields, want)
+                    if (field_is_given(p, node.a, field.name_off, field.name_len) == false) {
+                        if (shown > 0) {
+                            report(",")
+                        }
+                        report(" '")
+                        report_src(p.src, field.name_off, field.name_len)
+                        report("'")
+                        shown = shown + 1
+                    }
+                    want = field.next
+                }
                 report("; a field left out would be read uninitialized")
                 frost_rt_recover_escape()
             }
@@ -1743,7 +1761,12 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             if (is_pointer(held) == false && held != TY_PARAM) {
                 mut mark := arena_at(p.arena, id)
                 mark.c = 1
-                mark.val = held
+                // In `b`, because `val` on a `Deref` already says whether the
+                // node reads through a borrow, and `TY_I8` is 1: a `^` over an
+                // `i8` written here would have read back as that flag, and the
+                // walk that follows a borrow to what it views would have
+                // followed a node holding no borrow.
+                mark.b = held
             }
         }
         if (kind == NodeKind::Field && is_raw_pointer(type_of(p, node.a))) {
@@ -9091,18 +9114,50 @@ check_recursive_structs :: fn(mut p: Parser) {
     mut index: i64 = 0
     while (index < p.structs.count) {
         def := arena_at(p.structs, index)
-        if (def.is_generic != 1
-            && struct_reaches(p, index, index, 0)) {
-            report_where(p.modules, p.src, def.name_off)
-            report("'")
-            report_src(p.src, def.name_off, def.name_len)
-            report("' holds a '")
-            report_src(p.src, def.name_off, def.name_len)
-            report("' by value, which has no end; hold a pointer to one instead")
-            frost_rt_recover_note()
+        if (def.is_generic != 1) {
+            inner := reaching_field(p, index)
+            if (inner != (-1)) {
+                held := arena_at(p.structs, struct_index_of(inner))
+                report_where(p.modules, p.src, def.name_off)
+                report("'")
+                report_src(p.src, def.name_off, def.name_len)
+                report("' holds a '")
+                report_src(p.src, held.name_off, held.name_len)
+                report(
+                    "' by value, which has no end; hold a pointer to one instead"
+                )
+                frost_rt_recover_note()
+            }
         }
         index = index + 1
     }
+}
+
+// The type of the first field that leads back to the struct at `index`, which
+// is what the report names, or -1 where none does. Naming the struct twice was
+// a lie where the cycle runs through something else: an `A` holding a `B`
+// holding an `A` does not hold an `A`.
+reaching_field :: fn(mut p: Parser, index: i64) -> i64 {
+    def := arena_at(p.structs, index)
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (type_reaches(p, field.ty, index, 0)) {
+            return field_stands_under(p, field.ty)
+        }
+        fid = field.next
+    }
+    -1
+}
+
+// The struct a field's storage stands under, which an array is written over the
+// top of and a distinct type is written over the name of. The name under it is
+// what a reader wrote, so it is the name the report says.
+field_stands_under :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_array_ty(ty)) {
+        return field_stands_under(p, array_element(p, ty))
+    }
+    distinct_repr(ty)
 }
 
 // Whether a value of the struct at `from` has to contain one of the struct at
@@ -9161,7 +9216,7 @@ report_bad_derefs :: fn(mut p: Parser) {
         if (node.kind == NodeKind::Deref && node.c == 1) {
             report_where(p.modules, p.src, arena_at(p.arena, node.a).pos)
             report("cannot dereference a value of type ")
-            report_type_name(p, node.val)
+            report_type_name(p, node.b)
             frost_rt_recover_note()
         }
         id = id + 1

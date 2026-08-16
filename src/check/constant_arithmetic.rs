@@ -36,7 +36,10 @@ pub fn check_constant_arithmetic(
 fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, String> {
     match ast.expr(value) {
         Expression::Literal(Literal::Integer(held)) => Ok(Some(*held)),
-        Expression::Prefix(Operator::Subtract, inner) => {
+        // `Negate`, which is what a minus in front of a number is. Written as
+        // `Subtract`, which is what a minus between two is, this arm never ran
+        // and every constant holding a negative number went unread.
+        Expression::Prefix(Operator::Negate, inner) => {
             let Some(held) = worked_out(ast, *inner)? else {
                 return Ok(None);
             };
@@ -60,11 +63,29 @@ fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, Strin
                 Operator::Multiply => {
                     left.checked_mul(right).ok_or_else(overflowed)?
                 }
+                // Zero is asked for before the division, because a division
+                // answers nothing for two reasons and they are not the same
+                // fault: `i64::MIN / -1` has an answer one wider than an i64
+                // holds, and calling that dividing by zero named something the
+                // program does not do.
                 Operator::Divide => {
-                    left.checked_div(right).ok_or_else(divided)?
+                    if right == 0 {
+                        return Err(divided());
+                    }
+                    left.checked_div(right).ok_or_else(overflowed)?
                 }
+                // The remainder of the smallest by minus one is nothing, and
+                // that is what the machine answers. Only the quotient leaves
+                // the range.
                 Operator::Modulo => {
-                    left.checked_rem(right).ok_or_else(divided)?
+                    if right == 0 {
+                        return Err(divided());
+                    }
+                    if right == -1 {
+                        0
+                    } else {
+                        left % right
+                    }
                 }
                 _ => return Ok(None),
             }))

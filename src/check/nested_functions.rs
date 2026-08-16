@@ -10,6 +10,11 @@
 use crate::ast::{Ast, Expression, Statement, StmtId};
 use crate::diagnostic::Diagnostic;
 
+/// The phrase a report about a function declared inside a body is written with,
+/// named for the driver the way [`crate::check::declared_types::UNDECLARED_TYPE`]
+/// is.
+pub const NESTED_FUNCTION: &str = "is declared inside a body";
+
 /// Every function declared under another one.
 pub fn check_nested_functions(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
     let mut found = Vec::new();
@@ -43,7 +48,7 @@ fn in_statement(ast: &Ast, statement: StmtId, found: &mut Vec<Diagnostic>) {
                 found.push(Diagnostic::new(
                     ast.stmt_position(statement),
                     format!(
-                        "a function is declared where a file's other declarations are, and '{}' is declared inside a body",
+                        "a function is declared where a file's other declarations are, and '{}' {NESTED_FUNCTION}",
                         crate::demangle_private_names(ast.name(*name))
                     ),
                 ));
@@ -88,6 +93,15 @@ fn in_expression(
             }
         }
         Expression::Unsafe(held) => in_block(ast, *held, found),
+        // An argument is an expression and an expression may hold a block, so a
+        // declaration inside `print("{}", if (c) { f :: fn ... })` is as much
+        // inside a body as one written on a line of its own. Left out, the
+        // report was the one about the call to it.
+        Expression::Call(_, arguments) => {
+            for argument in ast.exprs_in(*arguments) {
+                in_expression(ast, *argument, found);
+            }
+        }
         Expression::Switch(subject, cases) => {
             in_expression(ast, *subject, found);
             for case in ast.cases_in(*cases) {

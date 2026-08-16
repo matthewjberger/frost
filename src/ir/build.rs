@@ -18,6 +18,11 @@ use crate::lexer::Position;
 use crate::parser::Operator;
 use crate::types::{Type, spelled};
 
+/// The phrase a report about a call to a name nothing declares is written
+/// with. Named so the driver, which holds the ownership rules back on it,
+/// reads the words this writes rather than a copy of them.
+pub const UNDEFINED_CALL: &str = "call to undefined function";
+
 // The names the compiler reads as its own wherever they are written: the calls
 // it answers, and the three constants a `when` chooses on. What makes them
 // reserved is that a program may not declare one, and that is asked in one
@@ -8347,7 +8352,7 @@ impl<'a> FunctionLowering<'a> {
             && !self.builder.constants.contains_key(name)
         {
             return locate(
-                Err(anyhow::anyhow!("call to undefined function '{name}'")),
+                Err(anyhow::anyhow!("{UNDEFINED_CALL} '{name}'")),
                 self.at_expression(callee),
             );
         }
@@ -11665,7 +11670,8 @@ impl<'a> FunctionLowering<'a> {
         let layout =
             self.builder.struct_layout(&struct_name).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "'{struct_name}' is not a type this program declares"
+                    "'{struct_name}' {}",
+                    crate::check::declared_types::UNDECLARED_TYPE
                 )
             })?;
         let field_layout = layout.field(field).ok_or_else(|| {
@@ -11819,7 +11825,8 @@ impl<'a> FunctionLowering<'a> {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
                     anyhow::anyhow!(
-                        "'{struct_name}' is not a type this program declares"
+                        "'{struct_name}' {}",
+                    crate::check::declared_types::UNDECLARED_TYPE
                     )
                 })?;
             layout
@@ -13394,7 +13401,11 @@ fn fold_integers(binop: IrBinOp, left: i64, right: i64) -> Option<i64> {
         IrBinOp::Add => left.checked_add(right)?,
         IrBinOp::Subtract => left.checked_sub(right)?,
         IrBinOp::Multiply => left.checked_mul(right)?,
-        IrBinOp::Divide if right != 0 => left.wrapping_div(right),
+        // The smallest number divided by minus one is one past the largest, so
+        // it is the one division that answers nothing. Folded with wrapping it
+        // came out as itself, which is the same silent wrong answer the
+        // addition above used to give.
+        IrBinOp::Divide if right != 0 => left.checked_div(right)?,
         IrBinOp::Modulo if right != 0 => left.wrapping_rem(right),
         IrBinOp::BitwiseAnd => left & right,
         IrBinOp::BitwiseOr => left | right,

@@ -11,6 +11,11 @@ use crate::ast::{Ast, Statement, StmtId};
 use crate::diagnostic::Diagnostic;
 use crate::types::Type;
 
+/// The phrase a report about a name nothing declares is written with. Named
+/// here so the driver, which holds back later checks on it, reads the words the
+/// check writes rather than a copy that a rewording leaves behind.
+pub const UNDECLARED_TYPE: &str = "is not a type this program declares";
+
 /// Every signature and every field, checked against the types the program
 /// declares.
 pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
@@ -300,7 +305,7 @@ fn report_unknown(
             }
             found.push(Diagnostic::new(
                 position,
-                format!("'{name}' is not a type this program declares"),
+                format!("'{name}' {UNDECLARED_TYPE}"),
             ));
         }
         Type::Ptr(inner)

@@ -391,6 +391,28 @@ pub struct Parser<'a> {
 // at the end of the file. A declaration head is a name followed by `::`, and
 // `import` is the one that starts with a keyword instead. Everything nested is
 // inside brackets of some kind, so only depth zero is looked at.
+/// How many brackets a run of tokens opens and does not close.
+fn left_open(tokens: Iter<'_, Token>, read: usize) -> u32 {
+    let mut open: u32 = 0;
+    for token in tokens.take(read) {
+        open = counted(open, token);
+    }
+    open
+}
+
+/// The count of open brackets after one more token.
+fn counted(open: u32, token: &Token) -> u32 {
+    match token {
+        Token::LeftBrace | Token::LeftParentheses | Token::LeftBracket => {
+            open + 1
+        }
+        Token::RightBrace | Token::RightParentheses | Token::RightBracket => {
+            open.saturating_sub(1)
+        }
+        _ => open,
+    }
+}
+
 fn declaration_value_end(tokens: &[Token], start: usize) -> usize {
     let mut depth = 0usize;
     for index in start..tokens.len() {
@@ -1443,17 +1465,31 @@ impl<'a> Parser<'a> {
     /// After an error inside a block, skip tokens until the next token begins a
     /// statement or closes the block, without crossing the block's own closing
     /// brace. At least one token is always consumed so recovery cannot loop.
-    fn synchronize_in_block(&mut self) {
-        if !matches!(self.peek_nth(0), Token::EndOfFile | Token::RightBrace) {
-            self.read_token();
-        }
+    ///
+    /// `open` is how many brackets the statement had opened and not closed when
+    /// it failed, which the walk has to come back out of before a closing brace
+    /// means the block's own. A `match` whose arm was refused failed inside its
+    /// own brace, and that brace read as the end of the function the match was
+    /// written in, so the line after it was reported as a declaration head that
+    /// is not one.
+    fn synchronize_in_block(&mut self, open: u32) {
         // A run, an argument list and a nested block are counted, so a
         // statement that failed with one of them still open is walked over
         // whole. Uncounted, a fault before `Bag<8> { data = [0; 8] }` stopped
         // recovery on that literal's own closing brace, the enclosing block
         // ended there, and everything after it read as a declaration: one fault
         // was told twice and the second time about a line that was fine.
-        let mut depth: u32 = 0;
+        let mut depth: u32 = open;
+        // At least one token is always consumed so recovery cannot loop, and it
+        // counts like every other: a closer stepped over uncounted left the
+        // walk holding a bracket that was already shut, and it ran to the end
+        // of the file looking for what would close it.
+        if !matches!(self.peek_nth(0), Token::EndOfFile)
+            && (depth > 0 || !matches!(self.peek_nth(0), Token::RightBrace))
+        {
+            depth = counted(depth, self.peek_nth(0));
+            self.read_token();
+        }
         while !matches!(self.peek_nth(0), Token::EndOfFile) {
             if depth == 0
                 && (matches!(self.peek_nth(0), Token::RightBrace)
@@ -1461,15 +1497,7 @@ impl<'a> Parser<'a> {
             {
                 return;
             }
-            match self.peek_nth(0) {
-                Token::LeftBrace
-                | Token::LeftParentheses
-                | Token::LeftBracket => depth += 1,
-                Token::RightBrace
-                | Token::RightParentheses
-                | Token::RightBracket => depth = depth.saturating_sub(1),
-                _ => {}
-            }
+            depth = counted(depth, self.peek_nth(0));
             self.read_token();
         }
     }
@@ -5144,7 +5172,7 @@ impl<'a> Parser<'a> {
                         "a line cannot open with '{written}': a line break ends a statement, so there is nothing above for it to join to. Put the operator at the end of the line above, or the whole expression inside brackets, where a line break says nothing"
                     ),
                 );
-                self.synchronize_in_block();
+                self.synchronize_in_block(0);
                 continue;
             }
             // Every statement of a block begins at the same column. One
@@ -5171,6 +5199,10 @@ impl<'a> Parser<'a> {
                 block_column = Some(position.column);
             }
             previous_line = position.line;
+            // Where the statement began, so a fault inside it can be told what
+            // it had left open.
+            let began = self.tokens.clone();
+            let before = self.tokens.len();
             match self.parse_statement() {
                 Ok(Some(statement)) => {
                     statements.push(statement);
@@ -5178,7 +5210,8 @@ impl<'a> Parser<'a> {
                 Ok(None) => break,
                 Err(error) => {
                     self.record_error(position, &error);
-                    self.synchronize_in_block();
+                    let read = before - self.tokens.len();
+                    self.synchronize_in_block(left_open(began, read));
                 }
             }
             // A right brace here means that statement was the block's value,

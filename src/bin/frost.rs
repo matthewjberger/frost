@@ -469,11 +469,11 @@ fn declared_files(
 /// The name a report says is not there, out of the reports that say so.
 fn names_a_missing_name(message: &str) -> Option<String> {
     for opening in [
-        "unknown variable '",
-        "call to undefined function '",
-        "unknown function '",
+        "unknown variable '".to_string(),
+        format!("{} '", frost::UNDEFINED_CALL),
+        "unknown function '".to_string(),
     ] {
-        if let Some(rest) = message.split_once(opening)
+        if let Some(rest) = message.split_once(opening.as_str())
             && let Some((name, _)) = rest.1.split_once(QUOTE)
         {
             return Some(name.to_string());
@@ -559,14 +559,21 @@ fn lowered_and_checked(
     // A type nothing declares stops the run here. Lowering asks every type for
     // a width and a layout, so what it says about one that is not there is the
     // same fault told a second way: `sizeof(Widget)` reported the missing name
-    // and then reported that `sizeof` has no layout for it.
+    // and then reported that `sizeof` has no layout for it. It is also what
+    // holds back the checks that read the module below, since a local written
+    // with a type the program does not have makes them report the value put
+    // into it rather than the name that is not there.
     // A function declared inside a body stops it for the same reason: every use
     // of the name is refused, and those refusals are what follows from the
     // declaration rather than anything else to fix.
+    //
+    // Each phrase is the one the check itself writes rather than a copy of it,
+    // so rewording a report carries its gate along instead of switching it off
+    // quietly.
     if collected.iter().any(|held| {
-        held.message.contains("is not a type this program declares")
-            || held.message.contains("is declared inside a body")
-            || held.message.contains("by value, which has no end")
+        held.message.contains(frost::UNDECLARED_TYPE)
+            || held.message.contains(frost::NESTED_FUNCTION)
+            || held.message.contains(frost::RECURSIVE_STRUCT)
     }) {
         let mut faults = collected.to_vec();
         suggest_names(program, &program.roots.clone(), &mut faults);
@@ -586,14 +593,7 @@ fn lowered_and_checked(
     let mut faults = collected.to_vec();
     faults.extend(lowering.iter().cloned());
 
-    // A type nothing declares leaves every local written with it carrying a
-    // type the program does not have, so the IR check reports the value
-    // assigned into one rather than the name that is not there. The same reason
-    // the checks wait on a clean lowering: what they say is the consequence.
-    let types_are_known = !collected.iter().any(|held| {
-        held.message.contains("is not a type this program declares")
-    });
-    if lowering.is_empty() && types_are_known {
+    if lowering.is_empty() {
         faults.extend(frost::check_module_recovering(&module));
         // The linearity check and the ownership rules say the same kind of
         // thing about the same values, so a function both have something to say
@@ -618,7 +618,7 @@ fn lowered_and_checked(
     // an undeclared type holds those checks back.
     let calls_are_known = !faults
         .iter()
-        .any(|held| held.message.contains("call to undefined function"));
+        .any(|held| held.message.contains(frost::UNDEFINED_CALL));
     if calls_are_known {
         faults.extend(frost::check_ownership_recovering(
             &program.ast,
