@@ -5,7 +5,7 @@
 import "core.frost"
 import "imports.frost"
 
-export Backend, Options, c_compiler, join_number,
+export Backend, Options, c_compiler, join_number, cstr_checksum,
     file_checksum, text_checksum, stored_checksum, write_checksum,
     make_directory, cached_runtime_object, runtime_source,
     cached_frost_runtime_object, frost_runtime_source, compiling_the_runtime,

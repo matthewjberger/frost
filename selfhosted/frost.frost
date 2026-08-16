@@ -107,6 +107,241 @@ run_built_program :: fn(executable: ^i8, options: Options) -> i64 {
     status
 }
 
+// What one module's source says, as one number.
+module_source_sum :: fn(mut p: Parser, index: i64) -> i64 {
+    entry := arena_at(p.modules, index)
+    mut sum: i64 = entry.finish - entry.start + 1
+    mut at := entry.start
+    while (at < entry.finish) {
+        sum = wrap_add(wrap_mul(sum, 33), p.src[at])
+        at = at + 1
+    }
+    sum & 4611686018427387903
+}
+
+// Folds a run of the source into a running number.
+fold_source :: fn(mut p: Parser, sum: i64, from: i64, upto: i64) -> i64 {
+    mut held := sum
+    mut at := from
+    while (at < upto) {
+        held = wrap_add(wrap_mul(held, 33), p.src[at])
+        at = at + 1
+    }
+    held & 4611686018427387903
+}
+
+// Whether compile-time evaluation reached the function declared under this
+// name. What such a function answers is written into whoever asked, so its body
+// crosses the import the way a constant's value does.
+name_ran_at_compile_time :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut at: i64 = 0
+    while (at < p.const_fns.count) {
+        held := arena_at(p.const_fns, at)
+        if (held.ran == 1 && held.name_off == off && held.name_len == len) {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
+// Whether a module offers this name to whoever imports it.
+name_is_exported :: fn(mut p: Parser, m: i64, off: i64, len: i64) -> bool {
+    mut at: i64 = 0
+    while (at < p.exports.count) {
+        held := arena_at(p.exports, at)
+        if (held.module == m && held.len == len
+            && str_eq_at(p.src, held.off, off, len)) {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
+// Whether two runs of the source read the same.
+str_eq_at :: fn(src: str, a: i64, b: i64, len: i64) -> bool {
+    mut k: i64 = 0
+    while (k < len) {
+        if (src[a + k] != src[b + k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// What one module offers to the modules that import it.
+//
+// Everything the module's source says, less the parts that provably cross no
+// import: the whole of a function nobody else can name, and the body of one
+// they can. Changing such a body changes what this module emits and nothing
+// that any other module emits.
+//
+// Written as the whole source minus what is taken out, rather than as the sum
+// of the parts that matter, because those two are not the same when something
+// is overlooked. Constants and types never reached a walk over function
+// declarations, so a dependent went on reading a constant that had changed.
+// Anything this does not recognise stays in.
+//
+// A body a compile-time call reads stays in as well: what such a function
+// answers is written into whoever asked, so its body is theirs as much as its
+// name.
+module_interface_sum :: fn(mut p: Parser, program: i64, m: i64) -> i64 {
+    entry := arena_at(p.modules, m)
+    mut sum: i64 = m + 1
+    mut at := entry.start
+    mut id := program
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (node.kind == NodeKind::Func && node.pos >= entry.start
+            && node.pos < entry.finish) {
+            mut stop := entry.finish
+            if (next_id != (-1)) {
+                held := arena_at(p.arena, next_id)
+                if (held.pos > node.pos && held.pos < stop) {
+                    stop = held.pos
+                }
+            }
+            sym := arena_at(p.fns, node.val)
+            mut cut := node.pos
+            if (name_is_exported(p, m, sym.off, sym.len)
+                || name_ran_at_compile_time(p, sym.off, sym.len)) {
+                cut = stop
+                if (node.a >= 0
+                    && name_ran_at_compile_time(p, sym.off, sym.len) == false) {
+                    body := arena_at(p.arena, node.a)
+                    if (body.pos > node.pos && body.pos <= stop) {
+                        cut = body.pos
+                    }
+                }
+            }
+            // Up to where this declaration stops mattering, then past the rest
+            // of it.
+            if (cut > at) {
+                sum = fold_source(p, sum, at, cut)
+            }
+            if (stop > at) {
+                at = stop
+            }
+        }
+        id = next_id
+    }
+    if (entry.finish > at) {
+        sum = fold_source(p, sum, at, entry.finish)
+    }
+    sum & 4611686018427387903
+}
+
+// Which modules a unit's emitted text can turn on, marked for one module: its
+// own, and every module it imports, and everything those import in turn. A name
+// it calls, a type it lays out and a size it reads all come from there.
+mark_reachable :: fn(mut p: Parser, from: i64, mut seen: Arena<InstanceSlot>) {
+    if (arena_at(seen, from).mark == 1) {
+        return
+    }
+    arena_at(seen, from).mark = 1
+    mut edge: i64 = 0
+    while (edge < p.import_edges.count) {
+        held := arena_at(p.import_edges, edge)
+        if (held.importer == from) {
+            mark_reachable(p, held.imported, seen)
+        }
+        edge = edge + 1
+    }
+}
+
+// One number for what a unit will emit, worked out before emitting it.
+//
+// A unit whose number is last build's writes the same text, so its object is
+// still good and the unit is neither emitted nor assembled. The number covers
+// everything the text turns on:
+//
+//   - the module's own source, which is its bodies
+//   - the source of every module it reaches by import, which is the signatures,
+//     layouts and names its bodies read
+//   - the specializations it owns, since a template declared here is stamped out
+//     with types a module somewhere else wrote, and that module is not one this
+//     one imports
+//   - how many modules there are and what they are called, since a file table
+//     is written into every unit and a module added moves the numbers that name
+//     the others
+//
+// Conservative where it is unsure: a number that changes when the text would
+// not costs a rebuild, and one that stays when the text would change is a wrong
+// program, so everything doubtful is folded in.
+unit_keys :: fn(mut p: Parser, program: i64, mut sums: Arena<InstanceSlot>) {
+    // `at` is what the module offers across an import, `mark` becomes its key.
+    mut m: i64 = 0
+    while (m < p.modules.count) {
+        arena_push(
+            sums,
+            InstanceSlot { at = module_interface_sum(p, program, m), mark = 0 }
+        )
+        m = m + 1
+    }
+    // The file table, which every unit carries.
+    mut shared: i64 = p.modules.count + 1
+    m = 0
+    while (m < p.modules.count) {
+        entry := arena_at(p.modules, m)
+        shared = wrap_add(wrap_mul(shared, 33), cstr_checksum(entry.name))
+        m = m + 1
+    }
+    // What each unit owns, which its dependents can add to.
+    mut owned: Arena<InstanceSlot> = arena_make(
+        $InstanceSlot,
+        p.modules.count + 1
+    )
+    m = 0
+    while (m < p.modules.count) {
+        arena_push(owned, InstanceSlot { at = 1, mark = 0 })
+        m = m + 1
+    }
+    mut step: i64 = 0
+    while (step < p.mono_plan.count) {
+        plan := arena_at(p.mono_plan, step)
+        gfn := arena_at(p.generic_fns, plan.gi)
+        sym := arena_at(p.fns, gfn.fn_index)
+        home := module_at(p.modules, sym.off)
+        held := arena_at(owned, home).at
+        held = wrap_add(
+            wrap_mul(held, 33),
+            sym.off - arena_at(p.modules, home).start
+        )
+        held = wrap_add(wrap_mul(held, 33), instance_hash(p, plan.ii))
+        arena_at(owned, home).at = held & 4611686018427387903
+        step = step + 1
+    }
+    mut seen: Arena<InstanceSlot> = arena_make(
+        $InstanceSlot,
+        p.modules.count + 1
+    )
+    m = 0
+    while (m < p.modules.count) {
+        seen.count = 0
+        mut k: i64 = 0
+        while (k < p.modules.count) {
+            arena_push(seen, InstanceSlot { at = 0, mark = 0 })
+            k = k + 1
+        }
+        mark_reachable(p, m, seen)
+        // Its own source in full, since every line of it is emitted here.
+        mut key := wrap_add(wrap_mul(shared, 33), module_source_sum(p, m))
+        key = wrap_add(wrap_mul(key, 33), arena_at(owned, m).at)
+        k = 0
+        while (k < p.modules.count) {
+            if (arena_at(seen, k).mark == 1 && k != m) {
+                key = wrap_add(wrap_mul(key, 33), arena_at(sums, k).at)
+            }
+            k = k + 1
+        }
+        arena_at(sums, m).mark = key & 4611686018427387903
+        m = m + 1
+    }
+}
+
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     // One stamp for every node, which is what says whether the unit being
     // emitted refers to a literal written somewhere else. Made here rather than
@@ -138,6 +373,17 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     mut jobs: Arena<Assembling> = arena_make($Assembling, 4096)
     mut records: Arena<Assembling> = arena_make($Assembling, 4096)
 
+    // One number for each unit, worked out before any of them is written. A unit
+    // whose number is last build's is skipped whole: not emitted, not
+    // assembled, and its object goes to the link as it stands. The checksum of
+    // the emitted text below still decides whether an object is assembled
+    // again, which catches a unit whose number changed but whose text did not.
+    mut keys: Arena<InstanceSlot> = arena_make(
+        $InstanceSlot,
+        p.modules.count + 1
+    )
+    unit_keys(p, program, keys)
+
     mut objects: ^i8 = ""
     mut index: i64 = 0
     while (index < p.modules.count) {
@@ -148,6 +394,17 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         source := join_number(prefix, index, suffix)
         record := join_number(prefix, index, ".sum")
         object := join_number(prefix, index, ".o")
+        held := join_number(prefix, index, ".key")
+        key := arena_at(keys, index).mark
+        // Only where a unit holds its own module and nothing else. A C unit
+        // carries every declaration in the program, so anything anywhere
+        // changes its text and a key over this module alone would not say so.
+        if (assembles && key == stored_checksum(held)
+            && unsafe { frost_rt_file_exists(object) } == 1) {
+            objects = join_two(join_two(objects, " "), object)
+            index = index + 1
+            continue
+        }
         if (assembles) {
             emit_to_memory()
         } else if (unsafe { frost_rt_emit_open(source) } == 0) {
@@ -198,6 +455,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             // a build that dies partway leaves nothing claiming to be up to
             // date.
             write_checksum(record, sum)
+            write_checksum(held, key)
         } else if (stale) {
             command := join_two(
                 join_two(
@@ -208,6 +466,13 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             )
             arena_push(jobs, Assembling { command = command, status = 0 })
             arena_push(records, Assembling { command = record, status = sum })
+            arena_push(records, Assembling { command = held, status = key })
+        }
+        if (stale == false) {
+            // Emitted because the number changed, but the text came out the
+            // same, so the object standing there is still the right one and the
+            // number is written down for next time.
+            write_checksum(held, key)
         }
         objects = join_two(join_two(objects, " "), object)
         index = index + 1
@@ -245,8 +510,12 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             report("\n")
             frost_rt_die()
         }
-        entry := arena_at(records, checked)
+        // Two for each run: the checksum of the text, and the number that says
+        // whether the unit has to be looked at again at all.
+        entry := arena_at(records, checked * 2)
         write_checksum(entry.command, entry.status)
+        keyed := arena_at(records, checked * 2 + 1)
+        write_checksum(keyed.command, keyed.status)
         checked = checked + 1
     }
 

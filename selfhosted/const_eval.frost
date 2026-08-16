@@ -75,7 +75,8 @@ record_const_functions :: fn(mut p: Parser) {
                 ConstFn {
                     name_off = cur_off(p),
                     name_len = cur_len(p),
-                    at = p.ti + 2
+                    at = p.ti + 2,
+                    ran = 0,
                 }
             )
         }
@@ -94,6 +95,7 @@ const_fn_index :: fn(mut p: Parser, off: i64, len: i64, use_off: i64) -> i64 {
         if (entry.name_len == len
             && bytes_equal(p.src, entry.name_off, off, len)
             && name_visible(p, entry.name_off, entry.name_len, use_off)) {
+            arena_at(p.const_fns, i).ran = 1
             return i
         }
         i = i + 1

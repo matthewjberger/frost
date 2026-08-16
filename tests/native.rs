@@ -14663,6 +14663,140 @@ main :: fn() -> i64 {
 }
 "#;
 
+// A unit skipped because its key is unchanged is a unit whose object was still
+// right.
+//
+// A build reuses an object without emitting the module again, so the key has to
+// name everything the module's text turns on. Miss something and the build is
+// quiet about it: the object is stale and the program is wrong, where a missing
+// symbol at least fails loudly. The check is that a build which reused objects
+// and a build which wrote everything come out as the same compiler.
+#[test]
+fn a_reused_object_builds_the_same_program() {
+    let Some(compiler) = build_self_hosted_compiler("reusedobject") else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory = std::env::temp_dir().join(unique("frost_reused"));
+    let _ = std::fs::create_dir_all(&directory);
+    // Two modules, so one can be edited and the other reused.
+    std::fs::write(
+        directory.join("helper.frost"),
+        "export twice\n\ntwice :: fn(n: i64) -> i64 { helper_add(n) }\n\
+         helper_add :: fn(n: i64) -> i64 { n + 21 }\n",
+    )
+    .unwrap();
+    let source = directory.join("program.frost");
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\nimport \"helper.frost\"\n\n\
+         main :: fn() -> i64 {\n    print(\"{}\n\", twice(21))\n    0\n}\n",
+    )
+    .unwrap();
+
+    let build = |extra: &[&str], out: &std::path::Path| {
+        Command::new(&compiler)
+            .args(extra)
+            .arg("-o")
+            .arg(out)
+            .arg(&source)
+            .env("FROST_PATH", root.join("std"))
+            .env("FROST_RUNTIME", &runtime)
+            .env("FROST_RUNTIME_FROST", frost_runtime_source())
+            .output()
+            .unwrap()
+    };
+    let cache = directory.join("build");
+    let reused =
+        directory.join(format!("reused{}", std::env::consts::EXE_SUFFIX));
+    let whole =
+        directory.join(format!("whole{}", std::env::consts::EXE_SUFFIX));
+    let cached: Vec<&str> =
+        vec!["--incremental", "--build-dir", cache.to_str().unwrap()];
+
+    let first = build(&cached, &reused);
+    assert!(
+        first.status.success(),
+        "the first incremental build failed:\n{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    // A body nobody outside the module can name. What the other unit emits does
+    // not turn on it, so that unit's object is reused.
+    std::fs::write(
+        directory.join("helper.frost"),
+        "export twice\n\ntwice :: fn(n: i64) -> i64 { helper_add(n) }\n\
+         helper_add :: fn(n: i64) -> i64 { n + 41 }\n",
+    )
+    .unwrap();
+    let again = build(&cached, &reused);
+    assert!(
+        again.status.success(),
+        "the incremental build after an edit failed:\n{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    let fresh = build(&["--link"], &whole);
+    assert!(
+        fresh.status.success(),
+        "the whole-program build failed:\n{}",
+        String::from_utf8_lossy(&fresh.stderr)
+    );
+
+    let from_reused = Command::new(&reused).output().unwrap();
+    let from_whole = Command::new(&whole).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&from_reused.stdout).replace("\r\n", "\n"),
+        String::from_utf8_lossy(&from_whole.stdout).replace("\r\n", "\n"),
+        "the build that reused an object is a different program"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&from_reused.stdout).replace("\r\n", "\n"),
+        "62\n",
+        "neither build answered what the program says"
+    );
+    // The other half of the key: a value the dependent reads across the import.
+    // Its unit has to be written again, where the body above did not touch it.
+    std::fs::write(
+        directory.join("helper.frost"),
+        "export twice, BONUS\n\nBONUS :: 100\n\
+         twice :: fn(n: i64) -> i64 { helper_add(n) }\n\
+         helper_add :: fn(n: i64) -> i64 { n + 41 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\nimport \"helper.frost\"\n\n\
+         main :: fn() -> i64 {\n    \
+         print(\"{}\\n\", twice(21) + BONUS)\n    0\n}\n",
+    )
+    .unwrap();
+    assert!(
+        build(&cached, &reused).status.success(),
+        "the build with a constant failed"
+    );
+    std::fs::write(
+        directory.join("helper.frost"),
+        "export twice, BONUS\n\nBONUS :: 200\n\
+         twice :: fn(n: i64) -> i64 { helper_add(n) }\n\
+         helper_add :: fn(n: i64) -> i64 { n + 41 }\n",
+    )
+    .unwrap();
+    assert!(
+        build(&cached, &reused).status.success(),
+        "the build after the constant changed failed"
+    );
+    let changed = Command::new(&reused).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&changed.stdout).replace("\r\n", "\n"),
+        "262\n",
+        "a unit reading a changed constant was not written again"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // A literal a unit refers to is a literal that unit defines.
 //
 // A literal is labelled by the node holding it and, in the assembly backend, is

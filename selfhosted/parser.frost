@@ -12,7 +12,7 @@ import "layout.frost"
 import "lint.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
-    mark_first_instances,
+    mark_first_instances, instance_hash,
     check_discarded_resources,
     instance_params,
     parse_generic_instance, parse_program, join_synth_fns,

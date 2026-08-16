@@ -1075,6 +1075,10 @@ ConstFn :: struct {
     name_off: i64,
     name_len: i64,
     at: i64,
+    // Set when compile-time evaluation reaches this one. Its body is then part
+    // of what other modules see, because what it answers is written into them,
+    // and a build that reuses their objects has to know its body changed.
+    ran: i64,
 }
 
 // A parameter or a local while a compile-time call runs. `kind` says which of
