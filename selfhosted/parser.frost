@@ -6056,6 +6056,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // name bound past this point is a different binding from the one the
         // deferred statement names, which is what the check below refuses.
         bound := p.parse_locals.count
+        // A `defer` runs where the function leaves, so one that leaves the
+        // function is read again at the exit it makes, which makes another
+        // exit. Both compilers ran out of stack on it rather than saying so.
+        if (cur(p) == TokenKind::KwReturn) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a `defer` runs where the function leaves, and a `return` ")
+            report("inside one would leave it again")
+            frost_rt_recover_escape()
+        }
         parse_stmt(p)
         arena_push(
             p.defers,

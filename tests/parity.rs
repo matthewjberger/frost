@@ -57,6 +57,34 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A `defer` that leaves the function.
+    //
+    // A `defer` runs where the function leaves, so one that leaves the function
+    // is read again at the exit it makes, which makes another exit. Neither
+    // compiler said so: the bootstrap overflowed its stack and the self-hosted
+    // one reported that the stack ran out.
+    (
+        "a_defer_that_leaves_the_function",
+        "main :: fn() -> i64 {
+             defer return 1
+             0
+         }
+        ",
+        "a `defer` runs where the function leaves, and a `return` inside one would leave it again",
+    ),
+    // A struct that holds one of itself.
+    //
+    // Both took the declaration. The bootstrap then had no layout for it, so
+    // `sizeof` was refused where it was written and nothing else was; the
+    // self-hosted compiler answered with a width for a type that cannot have
+    // one.
+    (
+        "a_struct_that_holds_one_of_itself",
+        "Node :: struct { next: Node, v: i64 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "holds a 'Node' by value, which has no end; hold a pointer to one instead",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

@@ -566,6 +566,7 @@ fn lowered_and_checked(
     if collected.iter().any(|held| {
         held.message.contains("is not a type this program declares")
             || held.message.contains("is declared inside a body")
+            || held.message.contains("by value, which has no end")
     }) {
         let mut faults = collected.to_vec();
         suggest_names(program, &program.roots.clone(), &mut faults);
@@ -1387,6 +1388,10 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.roots,
     ));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
+    faults.extend(frost::check_recursive_structs(
+        &program.ast,
+        &program.roots,
+    ));
     faults.extend(frost::check_nested_functions(
         &program.ast,
         &program.roots,

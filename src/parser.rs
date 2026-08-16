@@ -1908,6 +1908,16 @@ impl<'a> Parser<'a> {
         let on_failure = matches!(self.peek_nth(0), Token::ErrDefer);
         let word = if on_failure { "errdefer" } else { "defer" };
         self.read_token();
+        // A `defer` runs where the function leaves, so one that leaves the
+        // function is read again at the exit it makes, which makes another
+        // exit. Both compilers ran out of stack on it rather than saying so.
+        let at_return = self.here(String::new());
+        if matches!(self.peek_nth(0), Token::Return) {
+            return Err(self.reword(
+                at_return,
+                "a `defer` runs where the function leaves, and a `return` inside one would leave it again",
+            ));
+        }
         let statement = self.parse_statement()?.ok_or_else(|| {
             anyhow::anyhow!("Expected statement after {word}")
         })?;

@@ -17,7 +17,7 @@ export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources,
     check_reference_fields, check_regions, check_types, check_types_in,
-    check_unsafety, refuse_indirect_calls
+    check_recursive_structs, check_unsafety, refuse_indirect_calls
 
 // A pool whose elements are resources.
 //
@@ -9051,4 +9051,77 @@ struct_has_field :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> bool {
         fid = field.next
     }
     false
+}
+
+// A struct that holds one of itself.
+//
+// `Node :: struct { next: Node, v: i64 }` asks for storage that has no end: a
+// Node holds a Node holds a Node. The declaration was taken and a width was
+// answered for a type that cannot have one.
+//
+// A pointer to one is fine, and so is a slice of them: neither holds the value.
+// Only what a value of the type would have to contain is followed - its fields,
+// and the elements of any array among them.
+check_recursive_structs :: fn(mut p: Parser) {
+    mut index: i64 = 0
+    while (index < p.structs.count) {
+        def := arena_at(p.structs, index)
+        if (def.is_generic != 1
+            && struct_reaches(p, index, index, 0)) {
+            report_where(p.modules, p.src, def.name_off)
+            report("'")
+            report_src(p.src, def.name_off, def.name_len)
+            report("' holds a '")
+            report_src(p.src, def.name_off, def.name_len)
+            report("' by value, which has no end; hold a pointer to one instead")
+            frost_rt_recover_note()
+        }
+        index = index + 1
+    }
+}
+
+// Whether a value of the struct at `from` has to contain one of the struct at
+// `wanted`. The depth bounds a walk over a table that may hold a cycle this has
+// not reached yet.
+struct_reaches :: fn(
+    mut p: Parser,
+    from: i64,
+    wanted: i64,
+    depth: i64
+) -> bool {
+    if (depth > 64) {
+        return false
+    }
+    def := arena_at(p.structs, from)
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (type_reaches(p, field.ty, wanted, depth)) {
+            return true
+        }
+        fid = field.next
+    }
+    false
+}
+
+// The types a field's storage takes in, which is the field's own and, for an
+// array, its elements'.
+type_reaches :: fn(mut p: Parser, ty: i64, wanted: i64, depth: i64) -> bool {
+    // A run of a known length is storage the value takes in. A slice is a view
+    // of storage somewhere else, and reads as an array of no length here, so a
+    // `[]Graph` inside a Graph is a table of them rather than one of itself.
+    if (is_array_ty(ty)) {
+        if (array_length(p, ty) < 0) {
+            return false
+        }
+        return type_reaches(p, array_element(p, ty), wanted, depth)
+    }
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    held := struct_index_of(ty)
+    if (held == wanted) {
+        return true
+    }
+    struct_reaches(p, held, wanted, depth + 1)
 }

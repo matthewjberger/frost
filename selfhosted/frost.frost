@@ -1198,6 +1198,7 @@ main :: fn() -> i64 {
     // no instance is left to parse. One of them may have been made inside a
     // body the fixpoint above re-read.
     program = join_synth_fns(parser, program)
+    check_recursive_structs(parser)
     check_calls(parser)
     check_entry_point(parser, program)
     check_pooled_resources(parser)
