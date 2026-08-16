@@ -57,6 +57,29 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A case binding a field the variant does not carry.
+    //
+    // The self-hosted compiler left it to the field read, which came back as
+    // `struct 'Kind' has no field 'Monster_power'` - about a name the compiler
+    // joined, at a place inside the run of names it joined them in, which is
+    // not in the program. The bootstrap had the words right and said them at
+    // the `match` rather than at the field.
+    (
+        "a_case_binding_a_field_the_variant_does_not_carry",
+        "import \"io.frost\"
+         Kind :: enum { Hero, Monster { damage: i64 } }
+         main :: fn() -> i64 {
+             k := Kind::Hero
+             n := match k {
+                 case Kind::Hero: 1
+                 case Kind::Monster { power }: power
+             }
+             print(\"{}\n\", n)
+             0
+         }
+        ",
+        "variant 'Monster' has no field 'power'",
+    ),
     // A type nothing declares, written where a type is asked for.
     //
     // The bootstrap answered with what `sizeof` could not do about it - no

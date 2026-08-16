@@ -12835,9 +12835,12 @@ impl<'a> FunctionLowering<'a> {
                     let Some((_, offset, field_type)) =
                         fields.iter().find(|(name, _, _)| *name == field_name)
                     else {
-                        bail!(
-                            "variant '{variant_name}' has no field '{field_name}'"
-                        );
+                        bail!(crate::diagnostic::LocatedError {
+                            position: binding.at,
+                            message: format!(
+                                "variant '{variant_name}' has no field '{field_name}'"
+                            ),
+                        });
                     };
                     let field_address = self.fresh_local(
                         Type::Ptr(Box::new(field_type.clone())),

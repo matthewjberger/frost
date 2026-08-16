@@ -316,12 +316,16 @@ pub struct NamedExpr {
 
 // One `name` binding a payload field of a matched enum variant: the field,
 // and the name the arm reads it by.
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct PatternBinding {
     pub field: Symbol,
     pub binding: Symbol,
+    // Where the field was written, so a report about a field the variant does
+    // not carry says it at the word rather than at the `match` holding it.
+    // Defaulted on the way in, because an interface written before this carried
+    // no such thing.
+    #[serde(default)]
+    pub at: crate::lexer::Position,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -1462,6 +1466,7 @@ impl<'a> Splicer<'a> {
                     .map(|held| PatternBinding {
                         field: self.symbol(dest, held.field, rename),
                         binding: self.symbol(dest, held.binding, rename),
+                        at: held.at,
                     })
                     .collect();
                 Pattern::EnumVariant {

@@ -3897,6 +3897,7 @@ impl<'a> Parser<'a> {
         self.read_token();
         let mut bindings = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
+            let at = self.current_position().unwrap_or_default();
             let field_name = match self.read_token() {
                 Token::Identifier(name) => name.to_string(),
                 _ => bail!("Expected binding name in pattern"),
@@ -3905,6 +3906,7 @@ impl<'a> Parser<'a> {
             bindings.push(PatternBinding {
                 field: symbol,
                 binding: symbol,
+                at,
             });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();

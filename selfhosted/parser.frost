@@ -4198,6 +4198,42 @@ parse_variant_pattern :: fn(mut p: Parser, subject: i64, enum_ty: i64) -> i64 {
                 field_off,
                 field_len
             )
+            // A field the variant does not carry. Left to the field read, it
+            // came back as `struct 'Kind' has no field 'Monster_power'`, about
+            // a name the compiler joined, at a place inside the run of names it
+            // joined them in. The variant and the field are two words here and
+            // the reader wrote both.
+            if (index >= 0) {
+                holder := arena_at(p.variants, index).enum_ty
+                if (is_struct_ty(holder)) {
+                    qlen := variant_len + field_len + 1
+                    def := arena_at(p.structs, struct_index_of(holder))
+                    mut fid := def.field_head
+                    mut seen: i64 = 0
+                    while (fid != (-1)) {
+                        held := arena_at(p.fields, fid)
+                        if (held.name_len == qlen
+                            && bytes_equal(
+                                p.src,
+                                held.name_off,
+                                qualified,
+                                qlen
+                            )) {
+                            seen = 1
+                        }
+                        fid = held.next
+                    }
+                    if (seen == 0) {
+                        report_where(p.modules, p.src, field_off)
+                        report("variant '")
+                        report_src(p.src, variant_off, variant_len)
+                        report("' has no field '")
+                        report_src(p.src, field_off, field_len)
+                        report("'")
+                        frost_rt_recover_note()
+                    }
+                }
+            }
             read := new_field_node(
                 p,
                 subject,

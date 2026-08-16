@@ -535,6 +535,7 @@ impl Lowerer {
         let ok_bindings = ast.add_pattern_bindings(&[PatternBinding {
             field: value_field,
             binding: value_binding_symbol,
+            at: Default::default(),
         }]);
         // The `?` wrote these two arms, so they stand where it does.
         let ok_pattern = ast.push_pattern(
@@ -553,6 +554,7 @@ impl Lowerer {
         let err_bindings = ast.add_pattern_bindings(&[PatternBinding {
             field: error_field,
             binding: error_binding_symbol,
+            at: Default::default(),
         }]);
         let err_pattern = ast.push_pattern(
             Pattern::EnumVariant {
