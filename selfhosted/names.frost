@@ -18,6 +18,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_flags_type, flag_bit_value, flag_bit_holding, record_flag_bit,
     type_value_index, names_values, record_type_value,
     report_type_name, report_distinct_note, written_number,
+    fn_names_matching,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
@@ -187,6 +188,90 @@ bytes_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
     true
 }
 
+// One number for the bytes of a name.
+fn_name_hash :: fn(src: str, off: i64, len: i64) -> i64 {
+    mut sum: i64 = len + 1
+    mut k: i64 = 0
+    while (k < len) {
+        sum = wrap_add(wrap_mul(sum, 33), src[off + k])
+        k = k + 1
+    }
+    sum & 4611686018427387903
+}
+
+// File one function under its name. The slot is the first free one at or after
+// where the name hashes to, so everything written under one name lies between
+// there and the next free slot.
+fn_names_place :: fn(mut p: Parser, index: i64) {
+    entry := arena_at(p.fns, index)
+    cap := p.fn_names.count
+    mut at := fn_name_hash(p.src, entry.off, entry.len) % cap
+    while (arena_at(p.fn_names, at).at == 1) {
+        at = at + 1
+        if (at == cap) {
+            at = 0
+        }
+    }
+    arena_at(p.fn_names, at).at = 1
+    arena_at(p.fn_names, at).mark = index
+}
+
+// Every function declared so far, filed. Kept under half full, so a walk from
+// where a name hashes to always reaches a free slot and stops.
+fn_names_sync :: fn(mut p: Parser) {
+    wanted := p.fns.count * 2 + 64
+    if (p.fn_names.count < wanted) {
+        mut cap: i64 = 1024
+        while (cap < wanted) {
+            cap = cap * 2
+        }
+        p.fn_names.count = 0
+        mut k: i64 = 0
+        while (k < cap) {
+            arena_push(p.fn_names, InstanceSlot { at = 0, mark = -1 })
+            k = k + 1
+        }
+        p.fn_names_upto = 0
+    }
+    while (p.fn_names_upto < p.fns.count) {
+        fn_names_place(p, p.fn_names_upto)
+        p.fn_names_upto = p.fn_names_upto + 1
+    }
+}
+
+// The functions written under this name, in the order they were declared.
+//
+// Declaration order is what the answer turns on: which of two functions a name
+// reaches is the one written first, and a refusal that names two modules names
+// them in that order. The walk gives that order without sorting for it. Two
+// functions of one name hash to one slot, each is filed in the first free slot
+// at or after it, and so the one filed first is always the nearer of the two to
+// where the walk starts. A rebuild files them by index, which is that order
+// again.
+// The answer lands in `p.fn_name_hits`, which the caller reads. One list serves
+// every caller because no lookup runs inside another: reading a name weighs
+// visibility and which module wrote it, and neither of those reads a name.
+fn_names_matching :: fn(mut p: Parser, off: i64, len: i64) {
+    p.fn_name_hits.count = 0
+    fn_names_sync(p)
+    cap := p.fn_names.count
+    if (cap == 0) {
+        return
+    }
+    mut at := fn_name_hash(p.src, off, len) % cap
+    while (arena_at(p.fn_names, at).at == 1) {
+        held := arena_at(p.fn_names, at).mark
+        entry := arena_at(p.fns, held)
+        if (entry.len == len && bytes_equal(p.src, entry.off, off, len)) {
+            arena_push(p.fn_name_hits, InstanceSlot { at = held, mark = 0 })
+        }
+        at = at + 1
+        if (at == cap) {
+            at = 0
+        }
+    }
+}
+
 intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // A `$f` parameter stands for the function the call site passed, so inside
     // an instance the name resolves to that function and nothing is looked up.
@@ -206,16 +291,16 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         sought_len = entry.exported_len
         wanted = entry.imported
     }
+    fn_names_matching(p, sought_off, sought_len)
     mut i: i64 = 0
     mut found: i64 = -1
-    while (i < p.fns.count) {
-        entry := arena_at(p.fns, i)
-        if (entry.len == sought_len
-            && bytes_equal(p.src, entry.off, sought_off, sought_len)
-            && name_visible(p, entry.off, entry.len, offset)
+    while (i < p.fn_name_hits.count) {
+        index := arena_at(p.fn_name_hits, i).at
+        entry := arena_at(p.fns, index)
+        if (name_visible(p, entry.off, entry.len, offset)
             && (wanted < 0 || module_at(p.modules, entry.off) == wanted)) {
             if (found < 0) {
-                found = i
+                found = index
                 // Nothing else can match unless two modules in this program
                 // export the same name, so the rest of the scan is skipped in
                 // every program that does not.

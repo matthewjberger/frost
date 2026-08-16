@@ -1050,6 +1050,9 @@ main :: fn() -> i64 {
         // who holds a pointer handed to a call for as long as it lives.
         kept_masks = arena_make($AnswerMask, 131072),
         mask_views_copy = 0,
+        fn_names = arena_make($InstanceSlot, 4096),
+        fn_names_upto = 0,
+        fn_name_hits = arena_make($InstanceSlot, 64),
         answer_locals = arena_make($LocalVar, 4096),
         settle_funcs = arena_make($InstanceSlot, 4096),
         settle_edges = arena_make($InstanceSlot, 16384),

@@ -2147,6 +2147,17 @@ Parser :: struct {
     // that one is written into, so a pointer handed to a call is judged
     // against what will still be holding it.
     kept_masks: Arena<AnswerMask>,
+    // Where each declared function is filed, under the bytes of its name, so
+    // reading a name reaches the few functions written under it rather than
+    // walking every function the program declares. `p.fns` only ever gains
+    // entries, so the table is filled forward from `fn_names_upto` and rebuilt
+    // whole only when it would run more than half full.
+    //
+    // `at` is 1 where a slot holds something, `mark` the index into `p.fns`.
+    fn_names: Arena<InstanceSlot>,
+    fn_names_upto: i64,
+    // The functions one name reached, in the order they were declared.
+    fn_name_hits: Arena<InstanceSlot>,
     answer_locals: Arena<LocalVar>,
     // The two mask fixpoints above grow one function's answer out of the
     // answers of the functions it calls, so a round that changes nothing a

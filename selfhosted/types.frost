@@ -1977,12 +1977,13 @@ bind_param_type :: fn(mut p: Parser, ty: i64, arg: i64) -> i64 {
 // The global function of this name, or -1. A function used as a value or called
 // indirectly is found this way when the name is not a local.
 fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    fn_names_matching(p, off, len)
     mut i: i64 = 0
-    while (i < p.fns.count) {
-        sym := arena_at(p.fns, i)
-        if (sym.len == len && sym.defined == 1
-            && bytes_equal(p.src, sym.off, off, len)) {
-            return i
+    while (i < p.fn_name_hits.count) {
+        index := arena_at(p.fn_name_hits, i).at
+        sym := arena_at(p.fns, index)
+        if (sym.defined == 1) {
+            return index
         }
         i = i + 1
     }
