@@ -7307,6 +7307,7 @@ answer_call_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
     if (callee >= 0 && callee < p.answer_masks.count) {
         held := arena_at(p.answer_masks, callee)
         reaches = held.mask
+        settle_note_edge(p, callee, p.settle_owner)
     }
     mut found: i64 = 0
     count := count_value_args(p, args)
@@ -7467,6 +7468,7 @@ kept_walk_expr :: fn(mut p: Parser, id: i64, params: i64, fn_index: i64)
         callee := node.val
         args := node.a
         count := count_value_args(p, args)
+        settle_note_edge(p, callee, p.settle_owner)
         mut index: i64 = 0
         while (index < count && index < KEPT_SLOTS) {
             slot := kept_slot(callee, index)
@@ -7606,31 +7608,119 @@ kept_walk_block :: fn(mut p: Parser, head: i64, params: i64, fn_index: i64)
     grew | kept_walk_expr(p, block_answer(p, head), params, fn_index)
 }
 
+// Every function declaration in the program, gathered once. The two fixpoints
+// below each run several rounds over all of them, and finding 1,500
+// declarations by scanning 190,000 nodes is most of what a round costs.
+settle_gather_funcs :: fn(mut p: Parser) {
+    p.settle_funcs.count = 0
+    mut i: i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        if (node.kind == NodeKind::Func) {
+            arena_push(p.settle_funcs, InstanceSlot { at = i, mark = node.val })
+        }
+        i = i + 1
+    }
+}
+
+// One flag per function, all lowered.
+settle_flags_clear :: fn(mut table: Arena<InstanceSlot>, count: i64) {
+    table.count = 0
+    mut i: i64 = 0
+    while (i < count) {
+        arena_push(table, InstanceSlot { at = 0, mark = 0 })
+        i = i + 1
+    }
+}
+
+settle_flag :: fn(mut table: Arena<InstanceSlot>, at: i64) -> i64 {
+    if (at < 0 || at >= table.count) {
+        return 0
+    }
+    arena_at(table, at).at
+}
+
+settle_raise :: fn(mut table: Arena<InstanceSlot>, at: i64) {
+    if (at < 0 || at >= table.count) {
+        return
+    }
+    arena_at(table, at).at = 1
+}
+
+// That the function being walked read what the function it calls says. Recorded
+// where the read happens, on every round, since a bit turning on can open an
+// argument an earlier round never descended into and the call in there is read
+// for the first time then.
+settle_note_edge :: fn(mut p: Parser, callee: i64, caller: i64) {
+    if (callee < 0 || caller < 0) {
+        return
+    }
+    arena_push(p.settle_edges, InstanceSlot { at = callee, mark = caller })
+}
+
+// Which functions the next round has to walk: the ones that call a function
+// this round changed. Everything else reads what it read before and says what
+// it said before.
+settle_queue_callers :: fn(mut p: Parser) -> i64 {
+    settle_flags_clear(p.settle_queued, p.fns.count)
+    mut any: i64 = 0
+    mut at: i64 = 0
+    while (at < p.settle_edges.count) {
+        edge := arena_at(p.settle_edges, at)
+        if (settle_flag(p.settle_grew, edge.at) == 1) {
+            settle_raise(p.settle_queued, edge.mark)
+            any = 1
+        }
+        at = at + 1
+    }
+    any
+}
+
 // Which parameter of each call keeps which other. Grown from nothing to a
 // fixpoint, since keeping travels: a wrapper that forwards its argument to
 // something that keeps it keeps it too.
+//
+// The first round walks every function, since nothing is known yet. Later
+// rounds walk only the functions that call one the round before changed: what a
+// function keeps is built from its own body and from what the functions it
+// calls keep, so a round that changes nothing it reads cannot change what it
+// says. That is the same least fixed point the whole-program rounds reach,
+// since a mask only ever gains bits.
 settle_kept :: fn(mut p: Parser) {
     while (p.kept_masks.count < p.fns.count * KEPT_SLOTS) {
         arena_push(p.kept_masks, AnswerMask { mask = 0 })
     }
-    mut grew: i64 = 1
-    while (grew == 1) {
-        grew = 0
-        mut i: i64 = 0
-        while (i < p.arena.count) {
-            node := arena_at(p.arena, i)
-            if (node.kind == NodeKind::Func && node.val >= 0
-                && node.val < p.fns.count) {
-                sym := arena_at(p.fns, node.val)
+    settle_gather_funcs(p)
+    p.settle_edges.count = 0
+    settle_flags_clear(p.settle_queued, p.fns.count)
+    mut first: i64 = 1
+    mut more: i64 = 1
+    while (more == 1) {
+        settle_flags_clear(p.settle_grew, p.fns.count)
+        mut at: i64 = 0
+        while (at < p.settle_funcs.count) {
+            entry := arena_at(p.settle_funcs, at)
+            fn_index := entry.mark
+            walking := (first == 1
+                || settle_flag(p.settle_queued, fn_index) == 1)
+            if (walking && fn_index >= 0 && fn_index < p.fns.count) {
+                node := arena_at(p.arena, entry.at)
+                sym := arena_at(p.fns, fn_index)
                 params := sym.params
                 p.walk_types.count = 0
                 p.answer_locals.count = 0
                 p.mask_views_copy = 0
+                p.settle_owner = fn_index
                 frame_seed_types(p, params)
-                grew = grew | kept_walk_block(p, node.a, params, node.val)
+                if (kept_walk_block(p, node.a, params, fn_index) == 1) {
+                    settle_raise(p.settle_grew, fn_index)
+                }
+                p.settle_owner = -1
             }
-            i = i + 1
+            at = at + 1
         }
+        first = 0
+        more = settle_queue_callers(p)
     }
 }
 
@@ -7641,21 +7731,29 @@ settle_answer_sources :: fn(mut p: Parser) {
     while (p.answer_masks.count < p.fns.count) {
         arena_push(p.answer_masks, AnswerMask { mask = 0 })
     }
-    mut grew: i64 = 1
-    while (grew == 1) {
-        grew = 0
-        mut i: i64 = 0
-        while (i < p.arena.count) {
-            node := arena_at(p.arena, i)
-            if (node.kind == NodeKind::Func) {
+    settle_gather_funcs(p)
+    p.settle_edges.count = 0
+    settle_flags_clear(p.settle_queued, p.fns.count)
+    mut first: i64 = 1
+    mut more: i64 = 1
+    while (more == 1) {
+        settle_flags_clear(p.settle_grew, p.fns.count)
+        mut at: i64 = 0
+        while (at < p.settle_funcs.count) {
+            entry := arena_at(p.settle_funcs, at)
+            fn_index := entry.mark
+            walking := (first == 1
+                || settle_flag(p.settle_queued, fn_index) == 1)
+            if (walking) {
+                node := arena_at(p.arena, entry.at)
                 body := node.a
-                fn_index := node.val
                 sym := arena_at(p.fns, fn_index)
                 params := sym.params
                 answers_place := is_borrow(sym.ret_type)
                 p.walk_types.count = 0
                 p.answer_locals.count = 0
                 p.mask_views_copy = 1
+                p.settle_owner = fn_index
                 frame_seed_types(p, params)
                 // A function handing back a place reaches it through bindings
                 // this walk does not follow closely enough to narrow, so it
@@ -7664,17 +7762,20 @@ settle_answer_sources :: fn(mut p: Parser) {
                 if (answers_place == false) {
                     mask = answer_walk_block(p, body, params, answers_place)
                 }
+                p.settle_owner = -1
                 if (fn_index >= 0 && fn_index < p.answer_masks.count) {
                     mut held := arena_at(p.answer_masks, fn_index)
                     merged := held.mask | mask
                     if (merged != held.mask) {
                         held.mask = merged
-                        grew = 1
+                        settle_raise(p.settle_grew, fn_index)
                     }
                 }
             }
-            i = i + 1
+            at = at + 1
         }
+        first = 0
+        more = settle_queue_callers(p)
     }
 }
 

@@ -2148,6 +2148,24 @@ Parser :: struct {
     // against what will still be holding it.
     kept_masks: Arena<AnswerMask>,
     answer_locals: Arena<LocalVar>,
+    // The two mask fixpoints above grow one function's answer out of the
+    // answers of the functions it calls, so a round that changes nothing a
+    // function reads cannot change what that function says. These carry what a
+    // round needs to know that without walking the program again.
+    //
+    // `settle_funcs` is every function declaration, gathered once, so a round
+    // reads 1,500 entries rather than scanning 190,000 nodes for them.
+    // `settle_edges` is one entry per call the walk read a mask through, `at`
+    // the function called and `mark` the function calling it. `settle_owner` is
+    // the function being walked, which is what names the near end of an edge
+    // where the walk itself does not carry it.
+    settle_funcs: Arena<InstanceSlot>,
+    settle_edges: Arena<InstanceSlot>,
+    settle_owner: i64,
+    // Per function: whether this round changed what it says, and whether the
+    // next round already holds it.
+    settle_grew: Arena<InstanceSlot>,
+    settle_queued: Arena<InstanceSlot>,
     // Whether the walk filling these masks is asking what a function's answer
     // names, where reading a field that is itself a view copies the view and
     // names what it pointed at, or asking what a call keeps, where that same
