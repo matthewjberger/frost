@@ -18,6 +18,57 @@ use support::{
 // fails intermittently; a fresh name every time sidesteps it. The process id
 // separates one `cargo test` run from the next, the counter separates tests
 // within a run.
+// What the command itself reported, which is the part these tests pin.
+//
+// `frost generate` builds and runs the generator, so a C compiler and a linker
+// write to this same stream on the way. What they say belongs to the machine:
+// a linker warning about a section an object does not carry appears on one host
+// and not another, and the first test to compile the runtime sees a warning the
+// tests after it do not, because the object is cached by then. Reading only the
+// lines the command wrote pins its wording without pinning theirs.
+fn own_report(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .filter(|line| line.starts_with("frost: ") || line.starts_with("frost "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// A report is what the command said, and not what it ran on the way.
+//
+// These are the bytes a Linux runner wrote while `frost generate` built its
+// generator: a warning about a file the build compiled, and two from `ld` about
+// a section the object it linked does not carry. Reading the whole stream made
+// the two generator tests fail there and pass here, which is a test pinning the
+// machine rather than the compiler.
+#[test]
+fn a_report_is_what_the_command_said_and_not_what_it_ran() {
+    let noisy = concat!(
+        "runtime.frost:250:16:\n",
+        "    cast($i64, unsafe { bytes[index] })\n",
+        "               ^ warning: this `unsafe` block holds no unchecked ",
+        "operation, so it vouches for nothing\n",
+        "/usr/bin/ld: warning: ./frost_runtime_frost_810279933.o: missing ",
+        ".note.GNU-stack section implies executable stack\n",
+        "/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed ",
+        "in a future version of the linker\n",
+        "frost generate: wrote answer.frost\n",
+    );
+    assert_eq!(
+        own_report(noisy.as_bytes()),
+        "frost generate: wrote answer.frost",
+        "a nested toolchain's lines reached the report"
+    );
+    // Its own lines are kept whole, however many it runs to, so a command that
+    // says more than it should still fails the tests that pin what it says.
+    let mine = "frost: cannot write 'x'\nfrost lint: which files?\n";
+    assert_eq!(
+        own_report(mine.as_bytes()),
+        "frost: cannot write 'x'\nfrost lint: which files?",
+        "a line the compiler wrote was dropped from the report"
+    );
+}
+
 fn compile_and_run_unaudited(name: &str, source: &str) -> Option<String> {
     run_backend(name, source, false)
 }
@@ -7330,6 +7381,62 @@ fn the_self_hosted_compiler_refuses_a_narrowing_conversion() {
     assert!(
         complaint.contains("this is a 'i64' and a 'i32' is wanted")
             && complaint.contains("write cast($i32"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+}
+
+// An unchecked operation inside a `cast` is still one.
+//
+// Whether an index goes through a raw pointer is a question about the base's
+// type, so the type walk writes the answer onto the node and the unsafety gate
+// reads it back. That walk never went into what a cast converts, so the node
+// said nothing and `cast($i64, bytes[index])` went through with no block asked
+// for. The bootstrap refused it all along, which is what makes it a hole rather
+// than a choice: the compiler's own runtime carried one, and the block around
+// it was reported as vouching for nothing.
+//
+// The two compilers still point at different columns here, the bootstrap at the
+// statement and this one at the operation, so what is pinned is the refusal and
+// its wording rather than the whole report.
+#[test]
+fn the_self_hosted_compiler_gates_an_index_inside_a_cast() {
+    let Some(compiler) = build_self_hosted_compiler("castgate") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_shcastgate"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "probe :: fn(text: ^i8, index: i64) -> i64 {\n\
+         \x20   bytes := unsafe { ptr_cast($u8, text) }\n\
+         \x20   cast($i64, bytes[index])\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let emitted = directory
+        .join(unique("frost_shcastgate"))
+        .with_extension("c");
+    let built = Command::new(&compiler)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&emitted)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&emitted);
+    assert!(
+        !built.status.success(),
+        "the self-hosted compiler indexed a raw pointer inside a cast with no block"
+    );
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        complaint.contains(
+            "indexing a raw pointer is unchecked, so it belongs in an `unsafe` block"
+        ),
         "the refusal did not say what was wrong:\n{complaint}"
     );
 }
@@ -20493,7 +20600,7 @@ main :: fn() -> i64 {
             String::from_utf8_lossy(&ran.stderr)
         );
         assert_eq!(
-            String::from_utf8_lossy(&ran.stderr).trim(),
+            own_report(&ran.stderr),
             "frost generate: wrote answer.frost",
             "{name} said something else while writing"
         );
@@ -20528,7 +20635,7 @@ main :: fn() -> i64 {
             "{name} called a file it had just written stale"
         );
         assert_eq!(
-            String::from_utf8_lossy(&checked.stderr).trim(),
+            own_report(&checked.stderr),
             "frost generate: answer.frost is up to date",
             "{name} said something else while checking"
         );
@@ -20552,7 +20659,7 @@ main :: fn() -> i64 {
             "{name} passed a check over a file that is not what is written"
         );
         assert_eq!(
-            String::from_utf8_lossy(&stale.stderr).trim(),
+            own_report(&stale.stderr),
             "frost generate: answer.frost is not what tools/writer.frost \
              writes. Run `frost generate`",
             "{name} said something else about a stale file"
@@ -20607,7 +20714,7 @@ fn both_compilers_say_the_same_thing_about_a_project_with_no_generators() {
                 "{name} failed on a project with nothing to generate"
             );
             assert_eq!(
-                String::from_utf8_lossy(&ran.stderr).trim(),
+                own_report(&ran.stderr),
                 said,
                 "{name} said something else in {}",
                 directory.display()
@@ -20622,7 +20729,7 @@ fn both_compilers_say_the_same_thing_about_a_project_with_no_generators() {
             .unwrap();
         assert!(!unknown.status.success(), "{name} took an unknown option");
         assert_eq!(
-            String::from_utf8_lossy(&unknown.stderr).trim(),
+            own_report(&unknown.stderr),
             "frost generate: unknown option '--wat'",
             "{name} said something else about an unknown option"
         );
@@ -20669,7 +20776,7 @@ fn a_half_declared_generator_stops_only_the_command_that_reads_it() {
             "{name} generated from a member naming no program"
         );
         assert_eq!(
-            String::from_utf8_lossy(&refused.stderr).trim(),
+            own_report(&refused.stderr),
             "frost generate: a member of 'generated' in frost.json does not \
              name both an output and what writes it",
             "{name} said something else about a half declared member"
@@ -20808,7 +20915,7 @@ fn a_generator_runs_only_once_every_member_has_been_read() {
                 .unwrap();
             assert!(!refused.status.success(), "{name} generated past {what}");
             assert_eq!(
-                String::from_utf8_lossy(&refused.stderr).trim(),
+                own_report(&refused.stderr),
                 "frost generate: a member of 'generated' in frost.json does \
                  not name both an output and what writes it",
                 "{name} said something else about {what}"
@@ -20873,7 +20980,7 @@ fn a_check_that_refuses_keeps_no_temporary_file() {
             "{name} checked past a generator that stopped"
         );
         assert_eq!(
-            String::from_utf8_lossy(&refused.stderr).trim(),
+            own_report(&refused.stderr),
             format!("frost generate: writer.frost did not write {output}"),
             "{name} said something else about a generator that stopped"
         );
@@ -21198,7 +21305,7 @@ fn a_subcommand_that_names_itself_is_not_named_twice() {
             .output()
             .unwrap();
         assert_eq!(
-            String::from_utf8_lossy(&ran.stderr).trim(),
+            own_report(&ran.stderr),
             said,
             "the compiler named itself twice"
         );
