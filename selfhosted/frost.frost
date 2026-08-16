@@ -917,6 +917,7 @@ main :: fn() -> i64 {
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),
         said_unknown = arena_make($Cap, 256),
+        result_fn = -1,
         deferred_unconsumed = arena_make($Cap, 256),
         aliases = arena_make($Alias, 64),
         frame_used = 0,

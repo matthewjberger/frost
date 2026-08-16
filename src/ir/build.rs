@@ -3173,6 +3173,17 @@ fn expand_compile_time(
     expansion.block(ast, body)
 }
 
+// Whether an expression is written as a call to `fields`, whatever it names.
+fn names_a_field_walk(ast: &Ast, expression: ExprId) -> bool {
+    let Expression::Call(callee, arguments) = ast.expr(expression) else {
+        return false;
+    };
+    let Expression::Identifier(named) = ast.expr(*callee) else {
+        return false;
+    };
+    ast.name(*named) == "fields" && arguments.len() == 1
+}
+
 impl Expansion<'_> {
     fn block(&self, ast: &mut Ast, block: Range32) -> Result<Range32> {
         let expanded = self.statements(ast, block)?;
@@ -3205,6 +3216,20 @@ impl Expansion<'_> {
                     expanded.extend(bound.statements(ast, body)?);
                 }
                 continue;
+            }
+            // A `for` over `fields(..)` of something that is not a struct. Left
+            // to fall through, the walk read it as an ordinary call and the
+            // reader was told there is no function called `fields`, which is
+            // not what is wrong: there is, and a number has no fields to walk.
+            if let Statement::For(_, None, iterable, _) = ast.stmt(statement)
+                && names_a_field_walk(ast, *iterable)
+            {
+                return Err(crate::diagnostic::LocatedError {
+                    position: ast.expr_position(*iterable),
+                    message: "a `for` over `fields(T)` walks a struct, and this is not one"
+                        .to_string(),
+                }
+                .into());
             }
             if let Statement::For(variable, None, iterable, body) =
                 ast.stmt(statement).clone()

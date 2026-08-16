@@ -356,6 +356,63 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "linear value 'r' is not consumed on every path before return",
     ),
+    // A `?` in a function that declares no failure set.
+    //
+    // The bootstrap said it with no place at all: the walk that found the `?`
+    // answered whether there was one rather than where it was. The self-hosted
+    // compiler read the cursor, which by then named the token past the whole
+    // expression, so a `?` on one line was reported on the next.
+    (
+        "a_question_mark_where_no_failure_set_is_declared",
+        "Fault :: enum { Bad }
+         risky :: fn(n: i64) -> i64 ! Fault { n }
+         main :: fn() -> i64 {
+             v := risky(3)?
+             v
+         }
+        ",
+        "the `?` operator is only allowed in a function with a failure set; 'main' must declare `-> T ! E`",
+    ),
+    // A `for` over the fields of something that is not a struct. The bootstrap
+    // read it as an ordinary call and said there is no function called
+    // `fields`, which is not what is wrong: there is one, and a number has no
+    // fields to walk.
+    (
+        "a_field_walk_over_something_that_is_not_a_struct",
+        "main :: fn() -> i64 {
+             for field in fields(i64) { }
+             0
+         }
+        ",
+        "a `for` over `fields(T)` walks a struct, and this is not one",
+    ),
+    // An array whose length is a constant below zero. Both told the reader the
+    // name is not a constant, which it is: a count is held as a number that
+    // cannot be negative, so one that is read as a name nothing declares.
+    (
+        "an_array_length_that_is_negative",
+        "N :: 0 - 4
+         main :: fn() -> i64 {
+             xs: [N]i64 = [0; N]
+             xs[0]
+         }
+        ",
+        "an array holds a number of elements that cannot be negative",
+    ),
+    // A range written where an index goes. The bootstrap carried it to the walk
+    // that lowers expressions and was refused there as a shape that walk has no
+    // arm for; the self-hosted compiler read the range as its first value and
+    // complained about the bracket left over.
+    (
+        "a_range_written_as_an_index",
+        "main :: fn() -> i64 {
+             xs: [6]i64 = [1, 2, 3, 4, 5, 6]
+             a := xs[1..5]
+             a[0]
+         }
+        ",
+        "an index names one element, and this is a range; `slice_range` takes part of a run",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

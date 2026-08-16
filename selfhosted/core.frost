@@ -1793,6 +1793,9 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // The function whose answer `result_ty` belongs to, so a report about a `?`
+    // written in one that declares no failure set can name it.
+    result_fn: i64,
     // The linear values found unconsumed, said once the types have had their
     // word. A value left unconsumed because the call it was written for is one
     // the language does not have is the second thing to tell a reader, so the

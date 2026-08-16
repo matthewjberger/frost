@@ -263,8 +263,14 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
     }
     bound := value_binding_of(p, cur_off(p), cur_len(p))
     mut total := bound
-    if (bound < 0) {
+    // Whether the name stands for anything at all, which is a different
+    // question from what it stands for: a count of -1 was read as a name
+    // nothing declares, so `N :: 0 - 4` was reported as not being a constant,
+    // which it is.
+    mut named: bool = bound >= 0
+    if (bound < 0 && is_const(p, cur_off(p), cur_len(p))) {
         total = const_value(p, cur_off(p), cur_len(p))
+        named = true
     }
     // The generic's own parse, before any instantiation, where the count is
     // still the parameter's name. Nothing of that parse is emitted: the body is
@@ -274,9 +280,14 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
         advance(p)
         return 0
     }
-    if (total < 0) {
+    if (named == false) {
         report_where(p.modules, p.src, cur_off(p))
         report("an array repeat count has to be a literal, a constant, or a value parameter of the generic it is written in")
+        frost_rt_recover_escape()
+    }
+    if (total < 0) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("an array holds a number of elements that cannot be negative")
         frost_rt_recover_escape()
     }
     advance(p)
@@ -1488,8 +1499,18 @@ skip_past_match :: fn(mut p: Parser) {
 // statement can.
 lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     if (p.result_ty == (-1)) {
-        report_where(p.modules, p.src, cur_off(p))
-        report("'?' needs a function that declares a failure set")
+        // At what the `?` is written after, which is what the reader looks at.
+        // Read off the cursor it named the token past the whole expression, so
+        // a `?` on one line was reported on the next.
+        report_where(p.modules, p.src, arena_at(p.arena, value).pos)
+        report(
+            "the `?` operator is only allowed in a function with a failure set; '"
+        )
+        if (p.result_fn >= 0 && p.result_fn < p.fns.count) {
+            sym := arena_at(p.fns, p.result_fn)
+            report_src(p.src, sym.off, sym.len)
+        }
+        report("' must declare `-> T ! E`")
         frost_rt_recover_escape()
     }
     name_off := synth_numbered(p, "__try", p.try_count)
@@ -1785,7 +1806,18 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
         } else {
             bracket := cur_off(p)
             advance(p)
+            at := cur_off(p)
             index := parse_expr(p)
+            // `xs[1..5]` names a run rather than an element. The range reads as
+            // its first value and then the `..` is left where a `]` is wanted,
+            // so what the reader was told was about the bracket.
+            if (cur(p) == TokenKind::Dotdot || cur(p) == TokenKind::Dotdoteq) {
+                report_where(p.modules, p.src, at)
+                report(
+                    "an index names one element, and this is a range; `slice_range` takes part of a run"
+                )
+                frost_rt_recover_escape()
+            }
             advance(p)
             // `list[K]` is the Kth element of a compile-time list, which is a
             // name rather than an indexed read: the list is not a value and
@@ -6208,11 +6240,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // struct's own field list, so its length is fixed by a declaration.
         if (str_range_eq(p.src, cur_off(p), cur_len(p), "fields")
             && peek_kind(p, 1) == TokenKind::Lparen) {
+            // Where `fields` is written, for a report about what it was given.
+            // Read at the point the walk gives up, the cursor names the body's
+            // `{` and the caret landed past the closing parenthesis.
+            walk_at := cur_off(p)
             advance(p)
             advance(p)
             walked := parse_type(p)
             advance(p)
-            return unroll_fields(p, item_off, item_len, walked)
+            return unroll_fields(p, item_off, item_len, walked, walk_at)
         }
         // `for slot in live_slots(c)` walks the slots of a generational container
         // that hold an element, in slot order, and nothing else.
@@ -6964,7 +7000,8 @@ unroll_fields :: fn(
     mut p: Parser,
     item_off: i64,
     item_len: i64,
-    walked: i64
+    walked: i64,
+    walk_at: i64
 ) -> i64 {
     if (is_struct_ty(walked) == false) {
         // A template is read once with nothing bound, so the type parameter is
@@ -6975,7 +7012,7 @@ unroll_fields :: fn(
             parse_block(p)
             return nothing_statement(p)
         }
-        report_where(p.modules, p.src, cur_off(p))
+        report_where(p.modules, p.src, walk_at)
         report("a `for` over `fields(T)` walks a struct, and this is not one")
         frost_rt_recover_escape()
     }
@@ -7722,6 +7759,7 @@ parse_function_named :: fn(
     }
     p.result_ty = ret
     p.failure_ty = failure
+    p.result_fn = fn_index
     if (failure == (-1)) {
         p.result_ty = -1
     }

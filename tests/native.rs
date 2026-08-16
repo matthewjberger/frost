@@ -8659,7 +8659,7 @@ fn self_hosted_rejects_a_try_outside_a_fallible_function() {
         return;
     };
     assert!(
-        message.contains("declares a failure set"),
+        message.contains("must declare `-> T ! E`"),
         "expected a misplaced-'?' error, got:\n{message}"
     );
 }

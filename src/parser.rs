@@ -357,6 +357,12 @@ pub struct Parser<'a> {
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
     integer_constants: HashMap<String, usize>,
+    /// The names whose constant value is a whole number below zero.
+    ///
+    /// `integer_constants` holds counts, so a negative one is not in it and the
+    /// name read as one nothing declares: `N :: 0 - 4` written as an array
+    /// length was reported as not being a constant, which it is.
+    negative_constants: std::collections::HashSet<String>,
     // The same constants with what each one worked out to, and the machinery
     // that works a call out. A length may call a function the file declares,
     // and the answer has to be in hand where the length is read.
@@ -571,6 +577,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         internal_types: false,
         no_struct_literal: false,
         integer_constants: HashMap::new(),
+        negative_constants: std::collections::HashSet::new(),
         constant_values: HashMap::new(),
         folder: crate::const_eval::Folder::new(
             &[],
@@ -862,6 +869,7 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
+            negative_constants: std::collections::HashSet::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
                 &[],
@@ -891,6 +899,11 @@ impl<'a> Parser<'a> {
         let (values, folder, faults) =
             scan_constants(self.all_tokens, imported);
         self.integer_constants = integers_among(&values);
+        self.negative_constants = values
+            .iter()
+            .filter(|(_, value)| value.integer().is_some_and(|held| held < 0))
+            .map(|(name, _)| name.clone())
+            .collect();
         self.constant_values = values;
         self.folder = folder;
         let mut held = constant_faults(&faults, self.positions);
@@ -931,6 +944,7 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
+            negative_constants: std::collections::HashSet::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
                 &[],
@@ -3383,6 +3397,21 @@ impl<'a> Parser<'a> {
                 {
                     self.integer_constants[name]
                 }
+                // A constant below zero. There is no array of that many
+                // elements, and read as a name nothing declares the reader was
+                // told the name is not a constant, which it is.
+                Token::Identifier(name)
+                    if self.negative_constants.contains(name) =>
+                {
+                    return Err(crate::diagnostic::LocatedError {
+                        position: self
+                            .position_at(self.mark() - 1)
+                            .unwrap_or_default(),
+                        message: "an array holds a number of elements that cannot be negative"
+                            .to_string(),
+                    }
+                    .into());
+                }
                 // A name that is not a constant is a generic's value
                 // parameter, whose number arrives with the instantiation. The
                 // literal is carried unexpanded until then.
@@ -3444,7 +3473,20 @@ impl<'a> Parser<'a> {
 
     fn parse_index_expression(&mut self, expression: ExprId) -> Result<ExprId> {
         self.read_token();
+        let at = self.current_position().unwrap_or_default();
         let index_expression = self.parse_expression(Precedence::Lowest)?;
+        // `xs[1..5]` names a run rather than an element. Carried through, it
+        // reached the walk that lowers expressions and was refused there as a
+        // shape that walk has no arm for, which named the range and said
+        // nothing about it.
+        if matches!(self.ast.expr(index_expression), Expression::Range(..)) {
+            return Err(crate::diagnostic::LocatedError {
+                position: at,
+                message: "an index names one element, and this is a range; `slice_range` takes part of a run"
+                    .to_string(),
+            }
+            .into());
+        }
         self.read_token();
         Ok(self.ast.push_expr(
             Expression::Index(expression, index_expression),

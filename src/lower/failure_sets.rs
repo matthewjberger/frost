@@ -106,11 +106,14 @@ pub fn lower_failure_sets(
             lowerer.value_is_aggregate =
                 matches!(value, Type::Struct(_) | Type::Enum(_));
             lowerer.rewrite_block(ast, body, &result, &error);
-        } else if block_has_try(ast, body) {
+        } else if let Some(held) = block_has_try(ast, body) {
             let name = ast.name(name);
-            bail!(
-                "the `?` operator is only allowed in a function with a failure set; '{name}' must declare `-> T ! E`"
-            );
+            bail!(crate::diagnostic::LocatedError {
+                position: ast.expr_position(held),
+                message: format!(
+                    "the `?` operator is only allowed in a function with a failure set; '{name}' must declare `-> T ! E`"
+                ),
+            });
         }
     }
 
@@ -124,38 +127,42 @@ pub fn lower_failure_sets(
     Ok(())
 }
 
-fn block_has_try(ast: &Ast, block: Range32) -> bool {
+/// Where the first `?` under this block is written, or `None`.
+///
+/// The place is what the report about it needs: said without one, a program
+/// with a `?` in a function that declares no failure set was told so with no
+/// file, no line and no column, and the reader was left to find it.
+fn block_has_try(ast: &Ast, block: Range32) -> Option<ExprId> {
     ast.stmts_in(block)
         .iter()
-        .any(|statement| statement_has_try(ast, *statement))
+        .find_map(|statement| statement_has_try(ast, *statement))
 }
 
-fn statement_has_try(ast: &Ast, statement: StmtId) -> bool {
+fn statement_has_try(ast: &Ast, statement: StmtId) -> Option<ExprId> {
     match ast.stmt(statement) {
         Statement::Return(value)
         | Statement::Let { value, .. }
         | Statement::Constant(_, value)
         | Statement::Expression(value) => expression_has_try(ast, *value),
-        Statement::Assignment(place, value) => {
-            expression_has_try(ast, *place) || expression_has_try(ast, *value)
-        }
+        Statement::Assignment(place, value) => expression_has_try(ast, *place)
+            .or_else(|| expression_has_try(ast, *value)),
         Statement::Defer(inner) | Statement::ErrDefer(inner) => {
             statement_has_try(ast, *inner)
         }
-        Statement::While(condition, body) => {
-            expression_has_try(ast, *condition) || block_has_try(ast, *body)
-        }
+        Statement::While(condition, body) => expression_has_try(ast, *condition)
+            .or_else(|| block_has_try(ast, *body)),
         Statement::For(_, _, iterable, body) => {
-            expression_has_try(ast, *iterable) || block_has_try(ast, *body)
+            expression_has_try(ast, *iterable)
+                .or_else(|| block_has_try(ast, *body))
         }
         Statement::With(_, body) => block_has_try(ast, *body),
-        _ => false,
+        _ => None,
     }
 }
 
-fn expression_has_try(ast: &Ast, expression: ExprId) -> bool {
+fn expression_has_try(ast: &Ast, expression: ExprId) -> Option<ExprId> {
     match ast.expr(expression) {
-        Expression::Try(_) => true,
+        Expression::Try(_) => Some(expression),
         Expression::PackMap(inner, _, _)
         | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
@@ -165,31 +172,33 @@ fn expression_has_try(ast: &Ast, expression: ExprId) -> bool {
         | Expression::ArrayRepeat(inner, _)
         | Expression::FieldAccess(inner, _) => expression_has_try(ast, *inner),
         Expression::Infix(left, _, right) | Expression::Index(left, right) => {
-            expression_has_try(ast, *left) || expression_has_try(ast, *right)
+            expression_has_try(ast, *left)
+                .or_else(|| expression_has_try(ast, *right))
         }
-        Expression::Call(callee, arguments) => {
-            expression_has_try(ast, *callee)
-                || ast
-                    .exprs_in(*arguments)
+        Expression::Call(callee, arguments) => expression_has_try(ast, *callee)
+            .or_else(|| {
+                ast.exprs_in(*arguments)
                     .iter()
-                    .any(|argument| expression_has_try(ast, *argument))
-        }
+                    .find_map(|argument| expression_has_try(ast, *argument))
+            }),
         Expression::If(condition, then_block, else_block) => {
             expression_has_try(ast, *condition)
-                || block_has_try(ast, *then_block)
-                || else_block.is_some_and(|block| block_has_try(ast, block))
+                .or_else(|| block_has_try(ast, *then_block))
+                .or_else(|| {
+                    else_block.and_then(|block| block_has_try(ast, block))
+                })
         }
         Expression::StructInit(_, fields)
         | Expression::EnumVariantInit(_, _, fields) => ast
             .named_in(*fields)
             .iter()
-            .any(|field| expression_has_try(ast, field.value)),
+            .find_map(|field| expression_has_try(ast, field.value)),
         Expression::Switch(scrutinee, cases) => {
-            expression_has_try(ast, *scrutinee)
-                || ast
-                    .cases_in(*cases)
+            expression_has_try(ast, *scrutinee).or_else(|| {
+                ast.cases_in(*cases)
                     .iter()
-                    .any(|case| block_has_try(ast, case.body))
+                    .find_map(|case| block_has_try(ast, case.body))
+            })
         }
         Expression::Unsafe(body) => block_has_try(ast, *body),
         // A run and a written tuple both hold expressions. The run was caught
@@ -198,7 +207,7 @@ fn expression_has_try(ast: &Ast, expression: ExprId) -> bool {
         | Expression::Literal(crate::ast::Literal::Array(items)) => ast
             .exprs_in(*items)
             .iter()
-            .any(|item| expression_has_try(ast, *item)),
+            .find_map(|item| expression_has_try(ast, *item)),
         // Listed rather than caught by `_`, so a new expression form is a
         // compile error here instead of silently reporting no `?` inside it.
         Expression::Identifier(_)
@@ -208,7 +217,7 @@ fn expression_has_try(ast: &Ast, expression: ExprId) -> bool {
         | Expression::Range(..)
         | Expression::Function(..)
         | Expression::Proc(..)
-        | Expression::UnsafeFn(_) => false,
+        | Expression::UnsafeFn(_) => None,
     }
 }
 
