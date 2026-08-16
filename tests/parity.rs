@@ -325,6 +325,37 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "this binding is a 'i64' and the value is a 'str'",
     ),
+    // A value written where a compile-time type parameter goes.
+    //
+    // A parameter another one's type mentions is settled by the argument that
+    // lands in it and a call writes nothing. One nothing settles has only the
+    // slot to be written in, and given a value there the self-hosted compiler
+    // read the value's own type: `make(3)` compiled as though `$i64` had been
+    // written.
+    (
+        "a_value_where_a_type_parameter_goes",
+        "make :: fn($T: Type) -> i64 { sizeof(T) }
+         main :: fn() -> i64 { make(3) }
+        ",
+        "type parameter 'T' of 'make' requires a type argument like '$T'",
+    ),
+    // A value left unconsumed beside an operation that belongs in an `unsafe`
+    // block. The gate says nothing about what the program does with its values,
+    // so both are the reader's to hear about: holding the complaint back for
+    // every other fault held it back for this one too.
+    (
+        "a_value_left_unconsumed_beside_an_ungated_call",
+        "File :: linear struct { h: i64 }
+         close :: extern fn(move f: File)
+         main :: fn() -> i64 {
+             mut c: i64 = 0
+             r := File { h = 1 }
+             if (c == 1) { close(r) } else { }
+             0
+         }
+        ",
+        "linear value 'r' is not consumed on every path before return",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

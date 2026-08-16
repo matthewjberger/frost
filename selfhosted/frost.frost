@@ -1214,21 +1214,12 @@ main :: fn() -> i64 {
     // of the two that read a whole program: a body whose calls are not settled
     // is not one to ask about moves or types.
     refuse_indirect_calls(parser)
-    // It walks functions the way the emitters do, and the passes before it read
-    // whatever local table the parse left behind.
-    //
-    // Ahead of the moves, because what a call may be written with at all is
-    // asked here: `fixed_over` over a run of resources is declared
-    // `where !is_linear(T)`, and asked after the moves the reader was told the
-    // run is never consumed - which is so, and is so because the call the run
-    // was written for is one the language does not have.
     check_moves(parser)
     // Last of the checks, because it is the one that walks functions the way
     // the emitters do, and the passes before it read whatever local table the
     // parse left behind. It also reads what `check_moves` settles about runs
     // and summaries, so the two are in this order and not the other.
     check_types(parser, program)
-    flush_unconsumed(parser)
     // After the types. What a format call was given is worked out from the
     // types around it, so a value whose type came out of something else that
     // is wrong is the second thing to say, not the first: `for held in a` over
@@ -1246,8 +1237,15 @@ main :: fn() -> i64 {
     // of them. A declaration that faulted may carry fewer of those answers than
     // it would have, so what this can miss is a second report on a declaration
     // already being refused.
+    // What the unsafety gate finds, counted apart: an operation that belongs in
+    // an `unsafe` block is not a reason to hold back what a value is left over
+    // for. Refer to `flush_unconsumed`.
+    before_gate := frost_rt_recover_failures()
     check_unsafety(parser)
+    gated := frost_rt_recover_failures() - before_gate
     report_bad_derefs(parser)
+    // Last, so every check that reads what the program says has said it.
+    flush_unconsumed(parser, gated)
     // Every fault reported so far, refused here, before any backend writes a
     // word.
     if (frost_rt_recover_failures() > 0) {
