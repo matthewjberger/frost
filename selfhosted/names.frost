@@ -1094,7 +1094,12 @@ new_field_node :: fn(
 
 // A struct literal `Name { ... }`: `val` is the struct's table index and `a` is
 // the head of a linked list of NodeKind::FieldInit nodes.
-new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
+new_struct_lit :: fn(
+    mut p: Parser,
+    struct_index: i64,
+    inits: i64,
+    at: i64
+) -> i64 {
     arena_push(
         p.arena,
         Node {
@@ -1104,7 +1109,7 @@ new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
             c = 0,
             val = struct_index,
             next = -1,
-            pos = cur_off(p)
+            pos = at
         },
     )
 }

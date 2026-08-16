@@ -306,12 +306,14 @@ pub struct Ast {
 
 // A field of a struct literal or an enum-variant literal: the name and what
 // it is set to.
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct NamedExpr {
     pub name: Symbol,
     pub value: ExprId,
+    // Where the field name was written, so a report about a field the struct
+    // does not carry says it at the word rather than at the literal.
+    #[serde(default)]
+    pub at: crate::lexer::Position,
 }
 
 // One `name` binding a payload field of a matched enum variant: the field,
@@ -1344,6 +1346,7 @@ impl<'a> Splicer<'a> {
             .to_vec()
             .into_iter()
             .map(|held| NamedExpr {
+                at: held.at,
                 name: self.symbol(dest, held.name, rename),
                 value: self.expression(dest, held.value, rename),
             })

@@ -1525,6 +1525,61 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             }
             fid = next_field
         }
+        // A field left out is storage that is never written, and reading it
+        // afterwards reads whatever was on the stack. Nothing downstream could
+        // catch that, so the literal has to be complete. An enum's literal
+        // fills the fields of the one variant it names, and the others are
+        // left alone because the tag says which is live.
+        // An enum instance made from a generic template carries no `is_enum`
+        // mark, so what tells one is the tag every enum's struct starts with.
+        if (is_struct_ty(struct_ty)
+            && arena_at(p.structs, struct_index_of(struct_ty)).is_enum != 1
+            && struct_holds_tag(p, struct_ty) == false) {
+            def := arena_at(p.structs, struct_index_of(struct_ty))
+            mut want := def.field_head
+            mut absent: i64 = 0
+            while (want != (-1)) {
+                field := arena_at(p.fields, want)
+                mut given := node.a
+                mut seen: i64 = 0
+                while (given != (-1)) {
+                    gnode := arena_at(p.arena, given)
+                    if (gnode.c == field.name_len
+                        && bytes_equal(
+                            p.src,
+                            gnode.val,
+                            field.name_off,
+                            field.name_len
+                        )) {
+                        seen = 1
+                    }
+                    given = gnode.next
+                }
+                if (seen == 0) {
+                    if (absent == 0) {
+                        report_where(p.modules, p.src, node.pos)
+                        report("struct '")
+                        report_src(p.src, def.name_off, def.name_len)
+                        report("' is missing field")
+                    }
+                    if (absent == 1) {
+                        report("s")
+                    }
+                    if (absent > 0) {
+                        report(",")
+                    }
+                    report(" '")
+                    report_src(p.src, field.name_off, field.name_len)
+                    report("'")
+                    absent = absent + 1
+                }
+                want = field.next
+            }
+            if (absent > 0) {
+                report("; a field left out would be read uninitialized")
+                frost_rt_recover_escape()
+            }
+        }
         return
     }
     if (kind == NodeKind::ArrayLit) {
@@ -8949,4 +9004,33 @@ check_calls :: fn(mut p: Parser) {
         }
         i = i + 1
     }
+}
+
+// Whether a struct is the shape an enum is given: a tag beside the payloads.
+struct_holds_tag :: fn(mut p: Parser, ty: i64) -> bool {
+    def := arena_at(p.structs, struct_index_of(ty))
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.name_off == p.name_tag && field.name_len == 3) {
+            return true
+        }
+        fid = field.next
+    }
+    false
+}
+
+// Whether a struct carries a field of this name.
+struct_has_field :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> bool {
+    def := arena_at(p.structs, struct_index_of(ty))
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.name_len == len
+            && bytes_equal(p.src, field.name_off, off, len)) {
+            return true
+        }
+        fid = field.next
+    }
+    false
 }

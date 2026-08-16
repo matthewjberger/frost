@@ -2177,6 +2177,9 @@ impl<'a> Parser<'a> {
 
     fn parse_typed_declaration(&mut self, mutable: bool) -> Result<StmtId> {
         let start = self.mark();
+        // The binding's own place, taken before anything is read, since a
+        // report about it points at the name the reader wrote.
+        let at_binding = self.here(String::new());
         let name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier"),
@@ -2199,6 +2202,26 @@ impl<'a> Parser<'a> {
 
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
+        }
+
+        // A literal of a different length from the one the binding declares.
+        // The literal takes its type from the annotation, so by the time
+        // anything compared the two they agreed, and the elements the literal
+        // left out were storage nothing wrote.
+        if let Some(crate::types::Type::Array(element, wanted)) =
+            &type_annotation
+            && let Expression::Literal(crate::ast::Literal::Array(elements)) =
+                self.ast.expr(value)
+        {
+            let written = self.ast.exprs_in(*elements).len();
+            if written != *wanted {
+                return Err(self.reword(
+                    at_binding,
+                    &format!(
+                        "this binding is a '[{wanted}]{element}' and the value is a '[{written}]{element}'"
+                    ),
+                ));
+            }
         }
 
         let name = self.ast.intern(&name);
@@ -2762,6 +2785,7 @@ impl<'a> Parser<'a> {
                         NamedExpr {
                             name: self.ast.intern(field),
                             value,
+                            at: Default::default(),
                         }
                     })
                     .collect();
@@ -3173,7 +3197,11 @@ impl<'a> Parser<'a> {
                                 let value =
                                     self.parse_expression(Precedence::Lowest)?;
                                 let name = self.ast.intern(&field_name);
-                                fields.push(NamedExpr { name, value });
+                                fields.push(NamedExpr {
+                                    name,
+                                    value,
+                                    at: Default::default(),
+                                });
                                 if matches!(self.peek_nth(0), Token::Comma) {
                                     self.read_token();
                                 }
@@ -3483,6 +3511,7 @@ impl<'a> Parser<'a> {
         self.read_token();
         let mut fields = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
+            let at = self.current_position().unwrap_or_default();
             let field_name =
                 self.read_field_name("a field name in a struct literal")?;
             if !matches!(self.read_token(), Token::Assign) {
@@ -3490,7 +3519,7 @@ impl<'a> Parser<'a> {
             }
             let value = self.parse_expression(Precedence::Lowest)?;
             let name = self.ast.intern(&field_name);
-            fields.push(NamedExpr { name, value });
+            fields.push(NamedExpr { name, value, at });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             }

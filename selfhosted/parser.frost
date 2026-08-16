@@ -517,8 +517,9 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (is_struct_ty(struct_ty) == false) {
             struct_ty = -1
         }
+        at := cur_off(p)
         head := parse_field_inits(p, struct_ty)
-        return new_struct_lit(p, struct_ty, head)
+        return new_struct_lit(p, struct_ty, head, at)
     }
     // `(a: i64) -> i64 { a + 1 }` is the same function written without the `fn`
     // in front of it. A body is what tells it from a group, and a group with a
@@ -1062,7 +1063,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         inits := parse_field_inits(p, struct_ty)
-        return new_struct_lit(p, struct_ty, inits)
+        return new_struct_lit(p, struct_ty, inits, offset)
     }
     if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
@@ -1081,10 +1082,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 offset,
                 length
             )
-            return new_struct_lit(p, made, inits)
+            return new_struct_lit(p, made, inits, offset)
         }
         inits := parse_field_inits(p, struct_ty)
-        return new_struct_lit(p, struct_ty, inits)
+        return new_struct_lit(p, struct_ty, inits, offset)
     }
     // An occurrence of a value generic parameter in an expression, like the `N`
     // in `while (i < N)`, is the bound number once the body is re-parsed with
@@ -1865,8 +1866,31 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
         // A field's value is parsed with the field's own type expected, so a
         // nested generic literal like the inner `Pair { ... }` in a
         // `Pair<i64, Pair<i64, i64>>` resolves to the right instance.
+        mut absent: i64 = 0
+        // A field the struct does not carry, said before its type is asked
+        // for. Asking unwinds out of the parse, so the rest of the function
+        // read as declarations and one refusal became two. Reported without
+        // unwinding, since the parse is refused as a whole once it is done.
+        if (is_struct_ty(struct_ty)
+            && struct_has_field(p, struct_ty, offset, length) == false) {
+            def := arena_at(p.structs, struct_index_of(struct_ty))
+            report_where(p.modules, p.src, offset)
+            report("struct '")
+            report_src(p.src, def.name_off, def.name_len)
+            report("' has no field '")
+            report_src(p.src, offset, length)
+            report("'")
+            frost_rt_recover_note()
+            absent = 1
+        }
         saved_expected := p.expected_type
-        p.expected_type = field_type(p, struct_ty, offset, length)
+        // Asking for the type of a field that is not there is what unwinds, so
+        // the value is parsed against nothing instead.
+        if (absent == 1) {
+            p.expected_type = TY_I64
+        } else {
+            p.expected_type = field_type(p, struct_ty, offset, length)
+        }
         value_at := written_at(p)
         value := parse_expr(p)
         // The same as an argument: a node carries where the cursor was when it
@@ -5598,7 +5622,9 @@ parse_for_live :: fn(
         tail = bump_rank
     }
 
+    p.loop_depth = p.loop_depth + 1
     body := parse_block(p)
+    p.loop_depth = p.loop_depth - 1
     set_next(p, tail, body)
 
     loop := new_node(p, NodeKind::While, condition, refill, 0)
@@ -5657,7 +5683,9 @@ parse_for_range :: fn(
     }
     condition := new_node(p, NodeKind::Bin, index_var, end_var, compare)
 
+    p.loop_depth = p.loop_depth + 1
     body := parse_block(p)
+    p.loop_depth = p.loop_depth - 1
 
     at_again := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
     bind_item := new_let_node(p, at_again, item_off, item_len, -1)
@@ -6252,7 +6280,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             && bytes_equal(p.src, seq_off, p.decl_pack_off, p.decl_pack_len)) {
             p.unbound_pack_for = 1
         }
+        p.loop_depth = p.loop_depth + 1
         body := parse_block(p)
+        p.loop_depth = p.loop_depth - 1
         p.unbound_pack_for = held_pack_for
 
         // The element, bound under the name the reader wrote, ahead of the
@@ -6292,10 +6322,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // Leaving a loop, and going round it again. Which loop is the innermost
     // one, so there is nothing to carry: the emitters know where they are.
     if (kind == TokenKind::KwBreak) {
+        if (p.loop_depth == 0) {
+            report_where(p.modules, p.src, start)
+            report("break outside loop")
+            frost_rt_recover_note()
+        }
         advance(p)
         return new_node(p, NodeKind::Break, 0, 0, 0)
     }
     if (kind == TokenKind::KwContinue) {
+        if (p.loop_depth == 0) {
+            report_where(p.modules, p.src, start)
+            report("continue outside loop")
+            frost_rt_recover_note()
+        }
         advance(p)
         return new_node(p, NodeKind::Continue, 0, 0, 0)
     }
@@ -6309,7 +6349,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         condition := parse_expr(p)
         preamble := flush_pending(p, mark, -1)
         advance(p)
+        p.loop_depth = p.loop_depth + 1
         body := parse_block(p)
+        p.loop_depth = p.loop_depth - 1
         loop := new_node(p, NodeKind::While, condition, body, 0)
         set_while_preamble(p, loop, preamble)
         return loop
@@ -8314,7 +8356,7 @@ parse_variant_body :: fn(
         }
         advance(p)
     }
-    lit := new_struct_lit(p, enum_ty, head)
+    lit := new_struct_lit(p, enum_ty, head, cur_off(p))
     // An unresolved dot carries the variant it named, so the fixup pass can
     // look it up in the enum the callee's parameter turns out to be.
     if (enum_ty == (-1)) {
@@ -8907,7 +8949,7 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
         report("this `return` lists a different number of values than the function returns")
         frost_rt_recover_escape()
     }
-    new_struct_lit(p, p.multi_ty, init)
+    new_struct_lit(p, p.multi_ty, init, cur_off(p))
 }
 
 set_next_field :: fn(mut p: Parser, id: i64, following: i64) {
@@ -8961,7 +9003,7 @@ new_result_value :: fn(
     tag_init := new_field_init(p, which_node, p.name_tag, 3)
     payload_init := new_field_init(p, payload, name_off, name_len)
     set_next(p, tag_init, payload_init)
-    new_struct_lit(p, result_ty, tag_init)
+    new_struct_lit(p, result_ty, tag_init, cur_off(p))
 }
 
 // Whether the source at `offset` begins with `text`, for the two name spaces a
@@ -9664,9 +9706,9 @@ folded_const_node :: fn(
                 type_off,
                 type_len
             )
-            return new_struct_lit(p, made, head)
+            return new_struct_lit(p, made, head, type_off)
         }
-        return new_struct_lit(p, struct_ty, head)
+        return new_struct_lit(p, struct_ty, head, type_off)
     }
     new_node(p, NodeKind::Num, 0, 0, value)
 }
@@ -11218,4 +11260,19 @@ record_mono_rets :: fn(mut p: Parser) {
         }
         gi = gi + 1
     }
+}
+
+// Whether a struct carries a field of this name.
+struct_has_field :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> bool {
+    def := arena_at(p.structs, struct_index_of(ty))
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.name_len == len
+            && bytes_equal(p.src, field.name_off, off, len)) {
+            return true
+        }
+        fid = field.next
+    }
+    false
 }

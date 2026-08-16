@@ -341,6 +341,7 @@ impl Lowerer {
         let fields = ast.add_named_exprs(&[NamedExpr {
             name: field_symbol,
             value: inner,
+            at: Default::default(),
         }]);
         ast.expressions[value.0 as usize] =
             Expression::EnumVariantInit(result_symbol, variant_symbol, fields);
@@ -569,6 +570,7 @@ impl Lowerer {
         let err_fields = ast.add_named_exprs(&[NamedExpr {
             name: error_field,
             value: carried,
+            at: Default::default(),
         }]);
         let err_value = ast.push_expr(
             Expression::EnumVariantInit(

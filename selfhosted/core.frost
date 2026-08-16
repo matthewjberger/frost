@@ -2350,6 +2350,10 @@ Parser :: struct {
     // How many brackets are open, so an expression knows whether a line break
     // between its parts says anything.
     bracket_depth: i64,
+    // How many loops the statement being parsed is inside. `break` and
+    // `continue` name the innermost one, and outside every loop they name
+    // nothing.
+    loop_depth: i64,
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {

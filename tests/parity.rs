@@ -57,6 +57,54 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A struct literal that leaves a field out.
+    //
+    // The self-hosted compiler weighed only the fields the literal wrote, so a
+    // field left out was storage nothing wrote and reading it afterwards read
+    // whatever was on the stack.
+    (
+        "a_struct_literal_that_leaves_a_field_out",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         main :: fn() -> i64 {
+             p := Point { x = 1 }
+             print(\"{}\\n\", p.x)
+             0
+         }
+        ",
+        "struct 'Point' is missing field 'y'; a field left out would be read uninitialized",
+    ),
+    // `break` where there is no loop to leave.
+    //
+    // The self-hosted compiler had no count of the loops a statement is
+    // inside, so it took one and the emitters wrote a jump to a label that was
+    // not there.
+    (
+        "a_break_where_there_is_no_loop",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             break
+             0
+         }
+        ",
+        "break outside loop",
+    ),
+    // An array literal of a different length from the binding's.
+    //
+    // The bootstrap gave the literal its type from the annotation, so the two
+    // agreed by the time anything compared them and the elements the literal
+    // left out were storage nothing wrote.
+    (
+        "an_array_literal_shorter_than_the_binding",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a: [3]i64 = [1, 2]
+             print(\"{}\\n\", a[0])
+             0
+         }
+        ",
+        "this binding is a '[3]i64' and the value is a '[2]i64'",
+    ),
     // A function declared inside a body.
     //
     // The bootstrap parsed it as a name bound to a function value and refused

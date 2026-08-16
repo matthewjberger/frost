@@ -246,6 +246,7 @@ impl Lowering {
                         fields.push(NamedExpr {
                             name: ast.intern(&field_name),
                             value: held,
+                            at: Default::default(),
                         });
                     }
                     let fields = ast.add_named_exprs(&fields);

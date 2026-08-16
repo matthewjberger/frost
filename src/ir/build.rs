@@ -511,6 +511,7 @@ fn write_value_back(
                     crate::ast::NamedExpr {
                         name: ast.intern(field),
                         value,
+                        at: Default::default(),
                     }
                 })
                 .collect();
@@ -3688,6 +3689,7 @@ impl Expansion<'_> {
                     expanded_fields.push(NamedExpr {
                         name: entry.name,
                         value: self.expression(ast, entry.value)?,
+                        at: entry.at,
                     });
                 }
                 Expression::StructInit(
@@ -3702,6 +3704,7 @@ impl Expansion<'_> {
                     expanded_fields.push(NamedExpr {
                         name: entry.name,
                         value: self.expression(ast, entry.value)?,
+                        at: entry.at,
                     });
                 }
                 Expression::EnumVariantInit(
@@ -3923,6 +3926,7 @@ fn rename_expression(
                 renamed_fields.push(NamedExpr {
                     name: entry.name,
                     value: rename_expression(ast, entry.value, subst),
+                    at: entry.at,
                 });
             }
             Expression::StructInit(name, ast.add_named_exprs(&renamed_fields))
@@ -3934,6 +3938,7 @@ fn rename_expression(
                 renamed_fields.push(NamedExpr {
                     name: entry.name,
                     value: rename_expression(ast, entry.value, subst),
+                    at: entry.at,
                 });
             }
             Expression::EnumVariantInit(
@@ -5144,6 +5149,7 @@ fn substitute_expression(
                 substituted.push(NamedExpr {
                     name: entry.name,
                     value: substitute_expression(ast, entry.value, subst),
+                    at: entry.at,
                 });
             }
             Expression::StructInit(name, ast.add_named_exprs(&substituted))
@@ -5155,6 +5161,7 @@ fn substitute_expression(
                 substituted.push(NamedExpr {
                     name: entry.name,
                     value: substitute_expression(ast, entry.value, subst),
+                    at: entry.at,
                 });
             }
             Expression::EnumVariantInit(
@@ -11794,7 +11801,12 @@ impl<'a> FunctionLowering<'a> {
             let Some((_, offset, field_type)) =
                 fields.iter().find(|(name, _, _)| *name == field_name)
             else {
-                bail!("struct '{struct_name}' has no field '{field_name}'");
+                bail!(crate::diagnostic::LocatedError {
+                    position: given.at,
+                    message: format!(
+                        "struct '{struct_name}' has no field '{field_name}'"
+                    ),
+                });
             };
             let address =
                 self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
