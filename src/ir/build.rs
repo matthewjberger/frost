@@ -2111,12 +2111,25 @@ fn specialized_param_type(
     match (&substituted, declared) {
         (Type::Ref(inner), Type::Ref(under))
             if mode == crate::parser::ParamMode::Read
-                && matches!(under.as_ref(), Type::TypeParam(_))
+                && bound_here(under.as_ref(), subst)
                 && inner.is_copy() =>
         {
             inner.as_ref().clone()
         }
         _ => substituted,
+    }
+}
+
+/// Whether a type is one of the names this specialization binds. A bare `T` in
+/// `v: T` reads as an ordinary type name, because nothing else there says what
+/// it is, so asking only about a `TypeParam` left the instance taking an
+/// address where the call hands over a number.
+fn bound_here(ty: &Type, subst: &HashMap<String, Type>) -> bool {
+    match ty {
+        Type::TypeParam(name) | Type::Struct(name) | Type::Enum(name) => {
+            subst.contains_key(name)
+        }
+        _ => false,
     }
 }
 
@@ -8566,6 +8579,7 @@ impl<'a> FunctionLowering<'a> {
 
         let mut subst: HashMap<String, Type> = HashMap::new();
         let mut plans: Vec<ArgPlan> = Vec::new();
+        let mut passed_types: Vec<Type> = Vec::new();
         // Checked after the loop rather than inside it. A declared signature
         // may name type parameters that other arguments bind, and value
         // arguments are what bind most of them, so `subst` is not complete
@@ -8718,6 +8732,12 @@ impl<'a> FunctionLowering<'a> {
                 }
                 other => other,
             };
+            // What this parameter turned out to take, kept so the instance is
+            // declared taking the same thing. The unwrap above hands a scalar
+            // over by value; declaring the instance from the parameter as
+            // written left it taking an address, and the body read through a
+            // number.
+            passed_types.push(param_ty.clone());
             // Auto-borrow. A value place passed to a `read`/`mut` reference
             // parameter has its address taken. An argument that is already a
             // reference is forwarded as-is. The type parameter is inferred from
@@ -9008,14 +9028,9 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
-        let mut value_parameter_types: Vec<Type> = generic_parameters
+        let mut value_parameter_types: Vec<Type> = passed_types
             .iter()
-            .filter(|parameter| {
-                !is_type_parameter(self.ast, parameter) && !parameter.pack
-            })
-            .map(|parameter| {
-                substitute_type(&parameter_type(parameter), &subst)
-            })
+            .map(|held| substitute_type(held, &subst))
             .collect();
         for element in &pack_elements {
             if let PackElement::Value(_, ty) = element {

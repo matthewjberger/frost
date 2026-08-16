@@ -5259,14 +5259,14 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     (
         "a_compile_time_parameter_settled_by_a_literal",
         "import \"io.frost\"
-         hold :: fn($T: Type, v: T) -> i64 { 7 }
+         hold :: fn($T: Type, v: T) -> T { v }
          main :: fn() -> i64 {
              x: i64 = 4
              print(\"{} {}\\n\", hold(3), hold(x))
              0
          }
         ",
-        "7 7\n",
+        "3 4\n",
     ),
     // A borrow of a borrow, named where a value is wanted.
     //
