@@ -17,7 +17,8 @@ export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources,
     check_reference_fields, check_regions, check_types, check_types_in,
-    check_recursive_structs, check_unsafety, refuse_indirect_calls
+    check_recursive_structs, check_unsafety, refuse_indirect_calls,
+    report_bad_derefs
 
 // A pool whose elements are resources.
 //
@@ -1733,6 +1734,18 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         // Whether a field is reached through a raw pointer is the same
         // question indexing asks, and it has the same answer only here, so it
         // is written onto the node the same way.
+        // What a `^` reads through, asked where the locals answer it and said
+        // where the gate has already had its word. Nothing weighed this, so
+        // `a^` on a number answered the number's own type and the only report
+        // was the gate's, about a pointer that is not there.
+        if (kind == NodeKind::Deref) {
+            held := type_of(p, node.a)
+            if (is_pointer(held) == false && held != TY_PARAM) {
+                mut mark := arena_at(p.arena, id)
+                mark.c = 1
+                mark.val = held
+            }
+        }
         if (kind == NodeKind::Field && is_raw_pointer(type_of(p, node.a))) {
             mut held := arena_at(p.arena, id)
             held.b = 1
@@ -8495,7 +8508,11 @@ check_unsafety :: fn(mut p: Parser) {
                 report_cstr(what)
                 report(" is unchecked, so it belongs in an `unsafe` block")
             }
-            frost_rt_recover_escape()
+            // Said without unwinding, so the checks after this one still run
+            // over the same body: an operation the gate refused may also be one
+            // the types have something to say about, and the reader is told
+            // both.
+            frost_rt_recover_note()
         }
         if (gated == 1) {
             mark_span_used(p, node.pos)
@@ -9132,4 +9149,21 @@ type_reaches :: fn(mut p: Parser, ty: i64, wanted: i64, depth: i64) -> bool {
         return true
     }
     struct_reaches(p, held, wanted, depth + 1)
+}
+
+// Every `^` over something that is not a pointer, marked while the locals were
+// in hand and said here, after the gate, so the two reports about one of them
+// come out in the order the other compiler writes them.
+report_bad_derefs :: fn(mut p: Parser) {
+    mut id: i64 = 0
+    while (id < p.arena.count) {
+        node := arena_at(p.arena, id)
+        if (node.kind == NodeKind::Deref && node.c == 1) {
+            report_where(p.modules, p.src, arena_at(p.arena, node.a).pos)
+            report("cannot dereference a value of type ")
+            report_type_name(p, node.val)
+            frost_rt_recover_note()
+        }
+        id = id + 1
+    }
 }

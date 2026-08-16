@@ -57,6 +57,23 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A `^` over something that is not a pointer.
+    //
+    // The self-hosted compiler had only the gate's word about it, which is
+    // about a pointer that is not there. The question the types answer is
+    // marked where the locals answer it and said after the gate, so the two
+    // reports come out in one order.
+    (
+        "a_read_through_something_that_is_not_a_pointer",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a := 3
+             print(\"{}\\n\", a^)
+             0
+         }
+        ",
+        "cannot dereference a value of type i64",
+    ),
     // A generic named with fewer type arguments than it binds.
     //
     // The self-hosted compiler read the bindings past their end and died on the
@@ -5231,6 +5248,24 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A borrow of a borrow, named where a value is wanted.
+    //
+    // The bootstrap made the second an address of an address, so printing it
+    // wrote out a number nothing in the program put there. No `unsafe`
+    // anywhere: safe code with the wrong answer rather than a refusal.
+    (
+        "a_borrow_of_a_borrow_names_the_place_it_points_at",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             mut a: i64 = 41
+             ref b := a
+             ref c := b
+             print(\"{} {}\\n\", c, c + 1)
+             0
+         }
+        ",
+        "41 42\n",
+    ),
     // A borrow of a borrow, written where a value is wanted.
     //
     // The bootstrap read it as the pointer it is and told the reader a format

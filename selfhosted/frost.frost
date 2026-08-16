@@ -1234,6 +1234,7 @@ main :: fn() -> i64 {
     // it would have, so what this can miss is a second report on a declaration
     // already being refused.
     check_unsafety(parser)
+    report_bad_derefs(parser)
     // Every fault reported so far, refused here, before any backend writes a
     // word.
     if (frost_rt_recover_failures() > 0) {
