@@ -129,17 +129,27 @@ provider_for :: fn(mut p: Parser, fn_index: i64, index: i64) -> i64 {
 report_missing_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
     sym := arena_at(p.fns, fn_index)
     wanted := cap_at(p, fn_index, index)
-    report_where(p.modules, p.src, sym.off)
-    report("calling ")
+    // At the call rather than at the function it goes to, since that is where
+    // the reader acts: the `with` block goes around the call and the `uses`
+    // goes on the function holding it.
+    report_where(p.modules, p.src, p.call_at)
+    report("calling '")
     report_src(p.src, sym.off, sym.len)
+    report("'")
     if (p.providers.count == 0) {
-        report(" needs an allocation capability, so declare `uses` on ")
-        report("the caller or wrap the call in a `with` block")
+        // The type, which is what a `uses` clause is written with. The name
+        // beside it is what the capability is reached by inside the body, and
+        // writing that after `uses` names nothing.
+        report(" needs an allocation capability; declare `uses ")
+        report_type_name(p, wanted.ty)
+        report("` on the caller or wrap the call in a `with` block")
         frost_rt_die()
     }
-    report(" needs the allocation capability ")
+    report(" needs the allocation capability '")
     report_src(p.src, wanted.off, wanted.len)
-    report(", and what is in scope here is ")
+    report("' of type '")
+    report_type_name(p, wanted.ty)
+    report("', and what is in scope here is ")
     mut i: i64 = 0
     while (i < p.providers.count) {
         held := arena_at(p.providers, i)

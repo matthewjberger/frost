@@ -66,6 +66,18 @@ report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
         }
         return
     }
+    // A columns container holds one array per field of the element, so the
+    // element's own type is nowhere among its fields: `columns<Session, 4>`
+    // over a `Session { id: i64 }` holds an `[4]i64` and nothing that reads as
+    // a resource. What the instance was asked for is the question, and the
+    // instance is what recorded it.
+    element := instance_element_of(p, struct_ty)
+    if (element >= 0 && is_linear_type(p, element)) {
+        report_pool(p, struct_ty, element)
+        return
+    }
+    // A container written out by hand rather than asked for as an instance,
+    // whose columns are the element's fields already.
     def := arena_at(p.structs, struct_index_of(struct_ty))
     mut field := def.field_head
     while (field != (-1)) {
@@ -81,6 +93,21 @@ report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
         }
         field = next_field
     }
+}
+
+// The type an instance of a generic container was asked for, or -1 where this
+// struct is not one.
+instance_element_of :: fn(mut p: Parser, struct_ty: i64) -> i64 {
+    index := struct_index_of(struct_ty)
+    mut i: i64 = 0
+    while (i < p.instances.count) {
+        held := arena_at(p.instances, i)
+        if (held.struct_index == index) {
+            return held.arg
+        }
+        i = i + 1
+    }
+    -1
 }
 
 // Whether a field of a columns container is one of the element's rather than the

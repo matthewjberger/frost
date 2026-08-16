@@ -1024,6 +1024,7 @@ fn build_module_inner(
             let return_sig = ReturnSignature {
                 bound: None,
                 bound_text: String::new(),
+                at: generic_signature.at,
                 kind: match ast.signature_to_type(&generic_signature) {
                     Some(ty) => ReturnKind::Single(substitute_type(
                         &ty,

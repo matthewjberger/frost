@@ -1363,8 +1363,6 @@ instance_text :: fn(mut p: Parser, struct_ty: i64) -> str {
 // after it, so a walk that is part way through a larger name can use it.
 write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
     index := struct_index_of(struct_ty)
-    def := arena_at(p.structs, index)
-    synth_range(p, def.name_off, def.name_len)
     mut found: i64 = -1
     mut i: i64 = 0
     while (i < p.instances.count) {
@@ -1376,6 +1374,38 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
         }
         i = i + 1
     }
+    // The template's name, which is what the reader wrote before the `<`. An
+    // instance carries a name this compiler chose, and a container built out
+    // of the element's own fields is named after the element: a
+    // `columns<Session, 4>` read that way came out as `Session<Session>`.
+    mut named := index
+    mut of_columns: bool = false
+    if (found >= 0) {
+        held := arena_at(p.instances, found).generic_index
+        if (held == COLUMNS_OF) {
+            of_columns = true
+        }
+        if (held >= 0) {
+            named = held
+        }
+    }
+    // A columns container is asked for by a word rather than declared as a
+    // template, so there is no entry holding its name.
+    if (of_columns) {
+        synth_bytes(p, "columns")
+        made := arena_at(p.instances, found)
+        synth_bytes(p, "<")
+        write_argument_name(p, made.arg)
+        synth_bytes(p, ", ")
+        synth_digits(
+            p,
+            array_length(p, slab_field_type(p, struct_ty, "generations"))
+        )
+        synth_bytes(p, ">")
+        return
+    }
+    def := arena_at(p.structs, named)
+    synth_range(p, def.name_off, def.name_len)
     if (found >= 0) {
         made := arena_at(p.instances, found)
         synth_bytes(p, "<")
@@ -2195,7 +2225,9 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // program can hold, so it is read here and named nowhere.
     if (p.type_check_names == 1 && p.gbindings.count == 0
         && names_gparam(p, offset, length) == false
-        && str_range_eq(p.src, offset, length, "Type") == false) {
+        && str_range_eq(p.src, offset, length, "Type") == false
+        && said_unknown_before(p, offset) == false) {
+        arena_push(p.said_unknown, Cap { ty = 0, off = offset, len = length })
         report_where(p.modules, p.src, offset)
         report("'")
         report_src(p.src, offset, length)
@@ -2205,6 +2237,20 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         frost_rt_recover_note()
     }
     TY_I64
+}
+
+// Whether the name written at this offset has already been reported as naming
+// no type. The offset is what tells one written name from another: the same
+// name written twice is two mistakes, and one name read twice is one.
+said_unknown_before :: fn(p: Parser, offset: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.said_unknown.count) {
+        if (arena_at(p.said_unknown, i).off == offset) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 // True when two argument runs in the `gargs` arena hold the same values.

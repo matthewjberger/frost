@@ -916,6 +916,7 @@ main :: fn() -> i64 {
         generic_fns = arena_make($GenericFn, 4096),
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),
+        said_unknown = arena_make($Cap, 256),
         aliases = arena_make($Alias, 64),
         frame_used = 0,
         emit_module = -1,
@@ -994,6 +995,7 @@ main :: fn() -> i64 {
         last_return_type = 0,
         no_struct_lit = false,
         stmt_at = 0,
+        call_at = 0,
         last_type_was_generic = 0,
         last_type_was_param = 0,
         unsafe_spans = arena_make($UnsafeSpan, 4096),
@@ -1211,10 +1213,19 @@ main :: fn() -> i64 {
     // of the two that read a whole program: a body whose calls are not settled
     // is not one to ask about moves or types.
     refuse_indirect_calls(parser)
+    // It walks functions the way the emitters do, and the passes before it read
+    // whatever local table the parse left behind.
+    //
+    // Ahead of the moves, because what a call may be written with at all is
+    // asked here: `fixed_over` over a run of resources is declared
+    // `where !is_linear(T)`, and asked after the moves the reader was told the
+    // run is never consumed - which is so, and is so because the call the run
+    // was written for is one the language does not have.
     check_moves(parser)
     // Last of the checks, because it is the one that walks functions the way
     // the emitters do, and the passes before it read whatever local table the
-    // parse left behind.
+    // parse left behind. It also reads what `check_moves` settles about runs
+    // and summaries, so the two are in this order and not the other.
     check_types(parser, program)
     // After the types. What a format call was given is worked out from the
     // types around it, so a value whose type came out of something else that

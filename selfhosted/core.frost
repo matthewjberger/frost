@@ -1788,6 +1788,11 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // The names already reported as naming no type. A signature is read
+    // more than once - a generic's is read again for every instance - and
+    // one name written once is one mistake, however many times a pass goes
+    // back over the line it is written on.
+    said_unknown: Arena<Cap>,
     // The names in force while a compile-time `for` reads its body again.
     aliases: Arena<Alias>,
     // How much of the frame the locals recorded so far take, which is what
@@ -1955,6 +1960,12 @@ Parser :: struct {
     // the middle of one, and what a report about the instance names is the
     // statement that wanted it rather than the type position inside it.
     stmt_at: i64,
+    // Where the call being emitted is written. A capability a call cannot
+    // draw is found while the call is written out, by which point what is
+    // in hand is the callee's symbol rather than the line the reader has to
+    // act on: the `with` block goes around the call and the `uses` goes on
+    // the function holding it.
+    call_at: i64,
     last_type_was_generic: i64,
     // Whether the type just read was the template's own compile-time parameter,
     // written bare. A parameter node records whichever instantiation was made

@@ -45,11 +45,13 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                         report_unknown(ty, &known, parameter.at, &mut found);
                     }
                 }
+                let signature = ast.signature(*signature);
                 if let crate::ast::ReturnKind::Single(ty)
-                | crate::ast::ReturnKind::Fallible(ty, _) =
-                    &ast.signature(*signature).kind
+                | crate::ast::ReturnKind::Fallible(ty, _) = &signature.kind
                 {
-                    report_unknown(ty, &known, position, &mut found);
+                    // At the type, which is what the report names, the way a
+                    // parameter's already is.
+                    report_unknown(ty, &known, signature.at, &mut found);
                 }
             }
             Statement::Struct(_, _, fields) => {

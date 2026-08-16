@@ -471,6 +471,11 @@ pub enum ReturnKind {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ReturnSignature {
+    /// Where the answer's type is written, so a report about a name nothing
+    /// declares says it at the name. The declaration's own place put the caret
+    /// on the word the reader wrote first, which is the function's name.
+    #[serde(default)]
+    pub at: crate::lexer::Position,
     pub kind: ReturnKind,
     pub uses: Vec<crate::types::Type>,
     pub bound: Option<ExprId>,
@@ -852,6 +857,7 @@ impl ReturnSignature {
             uses: Vec::new(),
             bound: None,
             bound_text: String::new(),
+            at: crate::lexer::Position::default(),
         }
     }
 
@@ -1445,6 +1451,10 @@ impl<'a> Splicer<'a> {
             uses: held.uses,
             bound,
             bound_text: held.bound_text,
+            // Carried, not dropped: this copy is what every check reads once
+            // the modules are one program, so a place left behind here is a
+            // place no pass can ever see.
+            at: held.at,
         })
     }
 

@@ -529,6 +529,9 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Call) {
         fn_index := node.val
         args := node.a
+        // Where this call is written, for a report made while it is written
+        // out. Refer to `call_at`.
+        p.call_at = node.pos
         // A call whose name is a local of function-pointer type is indirect: the
         // value is cast back to the signature and called through.
         csym := arena_at(p.fns, fn_index)

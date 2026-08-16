@@ -2656,6 +2656,7 @@ impl<'a> Parser<'a> {
                     uses: Vec::new(),
                     bound: None,
                     bound_text: String::new(),
+                    at: Default::default(),
                 });
                 let body = self.ast.push_expr(
                     Expression::Proc(params, signature, block),
@@ -4369,6 +4370,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_return_signature(&mut self) -> Result<ReturnSignature> {
+        // Where the answer's type begins, read before it, since reading it
+        // moves the cursor to whatever follows. The token after the arrow is
+        // the type, so its place is the one a report about that type wants.
+        let at = if matches!(self.peek_nth(0), Token::Arrow) {
+            self.position_at(self.mark() + 1).unwrap_or_default()
+        } else {
+            crate::lexer::Position::default()
+        };
         let kind = self.parse_return_kind()?;
         let mut uses = Vec::new();
         while matches!(self.peek_nth(0), Token::Uses) {
@@ -4398,6 +4407,7 @@ impl<'a> Parser<'a> {
             uses,
             bound,
             bound_text,
+            at,
         })
     }
 

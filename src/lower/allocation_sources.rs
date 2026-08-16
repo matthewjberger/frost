@@ -449,20 +449,37 @@ impl Threader {
                 source = provider.innermost();
             }
             let Some(source) = source else {
+                // At the call, which is where the reader has to act: the `with`
+                // block goes around it and the `uses` goes on the function
+                // holding it. Said with no place at all, the report named a
+                // file the reader then had to go looking for.
+                //
+                // The capability is demangled, since a type reached through an
+                // import carries the tag this compiler tells modules apart by
+                // and the reader wrote `Arena`.
+                let at = ast.position_of(span);
+                let capability =
+                    crate::demangle_private_names(&capability.to_string());
                 if provider.sources.is_empty() {
-                    bail!(
-                        "calling '{callee}' needs an allocation capability; declare `uses {capability}` on the caller or wrap the call in a `with` block"
-                    )
+                    bail!(crate::diagnostic::LocatedError {
+                        position: at,
+                        message: format!(
+                            "calling '{callee}' needs an allocation capability; declare `uses {capability}` on the caller or wrap the call in a `with` block"
+                        ),
+                    })
                 }
                 let available: Vec<&str> = provider
                     .sources
                     .iter()
                     .map(|source| source.name.as_str())
                     .collect();
-                bail!(
-                    "calling '{callee}' needs the allocation capability '{wanted}' of type '{capability}', and what is in scope here is {}",
-                    available.join(", ")
-                )
+                bail!(crate::diagnostic::LocatedError {
+                    position: at,
+                    message: format!(
+                        "calling '{callee}' needs the allocation capability '{wanted}' of type '{capability}', and what is in scope here is {}",
+                        available.join(", ")
+                    ),
+                })
             };
             arguments.push(source.expression(ast, span));
         }

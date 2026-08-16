@@ -244,6 +244,54 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "a function is declared where a file's other declarations are, and 'twice' is declared inside a body",
     ),
+    // A call to a function that draws an allocation capability, from a caller
+    // that has none.
+    //
+    // The bootstrap said it with no place at all, so the reader was given a
+    // file to go looking through, and named the capability by the tag this
+    // compiler tells modules apart by rather than by the word `Arena` that was
+    // written. The self-hosted compiler pointed at the function being called
+    // rather than at the call, which is where the `with` block goes.
+    (
+        "a_call_needing_a_capability_that_is_not_there",
+        "import \"arena.frost\"
+         make :: fn(n: i64) -> i64 uses Arena { n }
+         main :: fn() -> i64 { make(3) }
+        ",
+        "calling 'make' needs an allocation capability; declare `uses Arena` on the caller or wrap the call in a `with` block",
+    ),
+    // A pool whose element is a resource, held as one array per field.
+    //
+    // A columns container holds no field of the element's own type, so asking
+    // its fields found nothing to refuse and the self-hosted compiler took it.
+    // What the instance was asked for is the question. Naming it then read the
+    // container by the name this compiler gave it, which for one built out of
+    // the element's fields is the element: `Session<Session>`.
+    (
+        "a_columns_container_of_a_resource",
+        "import \"columns.frost\"
+         Session :: linear struct { id: i64 }
+         main :: fn() -> i64 {
+             mut c: columns<Session, 4> = columns_new()
+             columns_reset(c)
+             0
+         }
+        ",
+        "'columns<Session, 4>' is a pool of 'Session', which is a resource.",
+    ),
+    // A name a signature answers with that nothing declares.
+    //
+    // Both reported it, and neither reported it where the other did: the
+    // bootstrap at the declaration's first word, which is the function's name,
+    // and the self-hosted compiler twice, because a generic's signature is read
+    // again for every instance.
+    (
+        "a_signature_answering_a_name_nothing_declares",
+        "make :: fn($T: Type) -> U { 0 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'U' is not a type this program declares",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

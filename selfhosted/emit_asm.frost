@@ -2297,6 +2297,9 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::Call) {
+        // Where this call is written, for a report made while it is written
+        // out. Refer to `call_at`.
+        p.call_at = node.pos
         emit_asm_call(p, node.a, node.val)
         return
     }
