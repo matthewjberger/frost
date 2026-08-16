@@ -57,6 +57,35 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // What follows `ref`, when it is not a name.
+    //
+    // Both compilers took the token where the name goes on trust. The
+    // self-hosted one made a name out of whatever sat there and stepped over
+    // whatever sat where `:=` goes, so `ref 7` walked off the end of the
+    // statement; the bootstrap said "Expected identifier after 'ref'" at the
+    // line below the one holding it, because it read the position after
+    // consuming the token rather than before.
+    (
+        "a_ref_binding_needs_a_name_after_the_word",
+        "main :: fn() -> i64 {
+             mut a := 1
+             ref 7 := a
+             0
+         }
+",
+        "a name goes after `ref`, and this is not one",
+    ),
+    // The token that binds a `ref`, when it is not `:=`.
+    (
+        "a_ref_binding_needs_the_bind_arrow",
+        "main :: fn() -> i64 {
+             mut a := 1
+             ref b a
+             0
+         }
+",
+        "`:=` goes after the name a `ref` binds",
+    ),
     // A write to something that names no storage.
     //
     // The self-hosted compiler had no such rule: a write to a literal, to an
@@ -4917,6 +4946,30 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A borrow named where a value is wanted.
+    //
+    // The bootstrap read the name as the pointer it is and refused the answer
+    // as frame storage leaving the frame, while the same name inside
+    // arithmetic was read through and taken. One read written two ways got two
+    // answers, and the self-hosted compiler took both.
+    (
+        "a_borrow_named_where_a_value_is_wanted_is_read_through",
+        "import \"io.frost\"
+         read :: fn() -> i64 {
+             mut a := 48
+             ref b := a
+             b
+         }
+         main :: fn() -> i64 {
+             mut a := 48
+             ref b := a
+             print(\"{} {}\n\", read(), b - 41)
+             0
+         }
+        ",
+        "48 7
+",
+    ),
     // Writing through a call that answers `ref T`.
     //
     // Reading one worked, and writing one of its fields worked, and writing the

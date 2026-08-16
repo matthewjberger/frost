@@ -2261,6 +2261,27 @@ impl Frame<'_> {
         if self.answers_place {
             held = held.max(self.place_provenance(value));
         }
+        // A borrow named where a value is wanted is read through, so what
+        // leaves is a copy of what it points at and nothing points into this
+        // frame. `ref b := a` then `b` as the answer of a function answering an
+        // `i64` was refused as a pointer escaping, and the same `b` in `b - 41`
+        // was taken, which is the same read written two ways.
+        //
+        // Only a name reaches this: every other shape that carries frame
+        // storage out is the pointer itself. The answer has to be a plain
+        // value, so a borrow, a raw pointer and anything holding a view are all
+        // still weighed.
+        if held == Provenance::Frame
+            && !self.answers_place
+            && !self.answers_view
+            && matches!(self.ast.expr(value), Expression::Identifier(_))
+            && self
+                .answers
+                .as_ref()
+                .is_some_and(|ty| !matches!(ty, Type::Ptr(_)))
+        {
+            return;
+        }
         match held {
             Provenance::Frame => self.escape(how, at),
             Provenance::Unknown if self.answers_view => self.unproven(at),
