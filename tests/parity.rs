@@ -57,6 +57,25 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A function declared inside a body.
+    //
+    // The bootstrap parsed it as a name bound to a function value and refused
+    // every use of that name instead, which is a second sentence about the
+    // declaration. The self-hosted compiler read `twice :: fn` as a name
+    // reaching into a type and said the type has no variant called `fn`, then
+    // that `->` is not a token an expression can hold. A nested type already
+    // had this refusal; a nested function now has the same one.
+    (
+        "a_function_declared_inside_a_body",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             twice :: fn(a: i64) -> i64 { a * 2 }
+             print(\"{}\n\", twice(3))
+             0
+         }
+        ",
+        "a function is declared where a file's other declarations are, and 'twice' is declared inside a body",
+    ),
     // A case binding a field the variant does not carry.
     //
     // The self-hosted compiler left it to the field read, which came back as
@@ -5036,6 +5055,41 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // `errdefer` before a `return` that hands back the failure.
+    //
+    // The self-hosted compiler passed a written-out `return` as an ordinary
+    // exit, so the deferred copies were left out of it and the session the
+    // `errdefer` was written to close read as never closed. The `?` path
+    // already said so; this is the same exit written by hand.
+    (
+        "an_errdefer_runs_where_a_return_hands_back_the_failure",
+        "import \"io.frost\"
+         Session :: linear struct { id: i64 }
+         Blocked :: struct { at: i64 }
+         close :: fn(move s: Session) -> i64 { s.id }
+         run :: fn(hp: i64) -> i64 ! Blocked {
+             s := Session { id = 3 }
+             errdefer close(s)
+             if (hp <= 0) { return { at = hp } }
+             close(s)
+             hp
+         }
+         main :: fn() -> i64 {
+             match run(5) {
+                 case Result::Ok { value }: print(\"{}\n\", value)
+                 case Result::Err { error }: print(\"e{}\n\", error.at)
+             }
+             match run(-2) {
+                 case Result::Ok { value }: print(\"{}\n\", value)
+                 case Result::Err { error }: print(\"e{}\n\", error.at)
+             }
+             0
+         }
+        ",
+        "5
+e-2
+",
+    ),
     // A borrow named where a value is wanted.
     //
     // The bootstrap read the name as the pointer it is and refused the answer

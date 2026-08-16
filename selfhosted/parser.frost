@@ -5716,6 +5716,22 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         frost_rt_recover_escape()
     }
 
+    // A function is declared where every other declaration is, for the same
+    // reason. Written in a body it read as a name reaching into a type, and the
+    // reader was told the type has no variant called `fn`, then that `->` is
+    // not a token an expression can hold.
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloncolon
+        && peek_kind(p, 2) == TokenKind::KwFn) {
+        report_where(p.modules, p.src, start)
+        report(
+            "a function is declared where a file's other declarations are, and '"
+        )
+        report_src(p.src, start, cur_len(p))
+        report("' is declared inside a body")
+        skip_declaration(p)
+        frost_rt_recover_escape()
+    }
+
     // `ref x := place` binds a borrow of a place: an address that types as a
     // borrow, so reading a field through it needs no `unsafe` block, unlike a
     // raw pointer. It is how an arena element is reached without ptr_to.
@@ -6037,10 +6053,19 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TokenKind::Comma) {
             value = multi_return_value(p, value)
         }
+        // A `return` handing back the failure side is the function leaving
+        // through its failure set, which is the exit an `errdefer` names.
+        // Passed as an ordinary exit, the copies were left out and the resource
+        // the `errdefer` was written to release was read as never released.
+        // The `?` path already says so; this is the same exit written out.
+        mut failing: i64 = 0
         if (p.result_ty != (-1)) {
+            if (returns_failure(p, value)) {
+                failing = 1
+            }
             value = wrap_result(p, value)
         }
-        return defer_before_return(p, value, start, 0)
+        return defer_before_return(p, value, start, failing)
     }
     if (kind == TokenKind::KwIf) {
         // An `if` over what a type is has an answer here, and the branch that

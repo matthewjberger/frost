@@ -162,8 +162,17 @@ fn report_unknown_in_block(
     values: &HashSet<&str>,
     found: &mut Vec<Diagnostic>,
 ) {
+    // What this block declares. A body may bind a name to a value the way the
+    // top level does, and `apply($twice, 3)` names one of those, so the set of
+    // names bound to values grows as the walk goes inward.
+    let mut inner = values.clone();
     for statement in ast.stmts_in(block) {
-        report_unknown_in_statement(ast, *statement, known, values, found);
+        if let Statement::Constant(name, _) = ast.stmt(*statement) {
+            inner.insert(ast.name(*name));
+        }
+    }
+    for statement in ast.stmts_in(block) {
+        report_unknown_in_statement(ast, *statement, known, &inner, found);
     }
 }
 

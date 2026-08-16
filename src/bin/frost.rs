@@ -560,10 +560,13 @@ fn lowered_and_checked(
     // a width and a layout, so what it says about one that is not there is the
     // same fault told a second way: `sizeof(Widget)` reported the missing name
     // and then reported that `sizeof` has no layout for it.
-    if collected
-        .iter()
-        .any(|held| held.message.contains("is not a type this program declares"))
-    {
+    // A function declared inside a body stops it for the same reason: every use
+    // of the name is refused, and those refusals are what follows from the
+    // declaration rather than anything else to fix.
+    if collected.iter().any(|held| {
+        held.message.contains("is not a type this program declares")
+            || held.message.contains("is declared inside a body")
+    }) {
         let mut faults = collected.to_vec();
         suggest_names(program, &program.roots.clone(), &mut faults);
         refuse(&faults)?;
@@ -1380,6 +1383,10 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.roots,
     ));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
+    faults.extend(frost::check_nested_functions(
+        &program.ast,
+        &program.roots,
+    ));
     faults.extend(frost::check_entry_point(&program.ast, &program.roots));
     let (unchecked, idle) =
         frost::check_unsafety_and_audit(&program.ast, &program.roots);
