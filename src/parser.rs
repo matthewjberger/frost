@@ -6158,17 +6158,31 @@ mod tests {
 
     #[test]
     fn defer_statement() -> Result<()> {
-        let module = parse_module("defer return 5;")?;
+        let module = parse_module("defer close(held);")?;
         assert_eq!(module.roots.len(), 1);
         if let Statement::Defer(inner) = module.ast.stmt(module.roots[0]) {
-            if let Statement::Return(value) = module.ast.stmt(*inner) {
-                assert_integer(&module.ast, *value, 5)?;
-            } else {
-                bail!("Expected return inside defer");
-            }
+            let Statement::Expression(_) = module.ast.stmt(*inner) else {
+                bail!("Expected a call inside defer");
+            };
         } else {
             bail!("Expected defer statement");
         }
+        Ok(())
+    }
+
+    // A `defer` runs where the function leaves, so one that leaves the function
+    // is read again at the exit it makes, which makes another exit. This used
+    // to parse, and both compilers ran out of stack on it.
+    #[test]
+    fn a_defer_may_not_leave_the_function() -> Result<()> {
+        let held = parse_module("defer return 5;");
+        let Err(error) = held else {
+            bail!("Expected a `defer return` to be refused");
+        };
+        assert!(
+            format!("{error}").contains("would leave it again"),
+            "got: {error}"
+        );
         Ok(())
     }
 
